@@ -1,9 +1,13 @@
-//! 展开引擎主循环（M1-6 ~ M1-11）。
+//! 展开引擎主循环（M1-6 ~ M1-11 + M2 字节码轨道）。
 //!
-//! 职责：消费 token 流（源码 / 宏展开 / token 列表），
+//! 职责：消费 token 流（源码 / 宏展开 / 字节码 / token 列表），
 //! 展开可展开项（宏、`\expandafter`、`\noexpand`、`\the`），
 //! 执行不可展开原语（`\def`/`\let`/`\catcode`/寄存器/组等），
 //! 其余 token 原样输出。
+//!
+//! **M2 双轨**：宏调用优先走预编译字节码（[`crate::bytecode`]），
+//! 解释器轨道（[`Expander::new_interpreter`]）用于双轨等价验证；
+//! 全部测试用例自动双轨重跑断言输出一致。
 //!
 //! M1 范围说明（后续里程碑补齐）：
 //! - M1-7 扫描顺序原语：`\futurelet`/`\aftergroup`/`\afterassignment` 已实现；
@@ -15,6 +19,7 @@
 
 use std::sync::Arc;
 
+use crate::bytecode::{compile, Bytecode, Instruction};
 use crate::catcode::{Catcode, CatcodeTable};
 use crate::eqtb::{EqSlot, Eqtb, Primitive};
 use crate::error::{Error, Result};
@@ -35,6 +40,12 @@ enum InputFrame {
     Macro {
         body: TokenArray,
         pos: usize,
+        args: Vec<TokenArray>,
+    },
+    /// 字节码帧（M2）：预编译指令 + 实参（解释器轨道的替代）。
+    Bytecode {
+        code: Arc<Bytecode>,
+        pc: usize,
         args: Vec<TokenArray>,
     },
     /// token 列表帧：`(token, noexpand 标记)`。
@@ -160,11 +171,22 @@ pub struct Expander {
     afterassignment: Option<Token>,
     /// 寄存器文件（M1-10）。
     registers: Registers,
+    /// 是否启用字节码轨道（M2；解释器轨道用于双轨等价验证）。
+    use_bytecode: bool,
 }
 
 impl Expander {
-    /// 创建引擎并注册 M1 内建原语。
+    /// 创建引擎（字节码轨道）并注册 M1 内建原语。
     pub fn new() -> Self {
+        Self::with_bytecode(true)
+    }
+
+    /// 创建解释器轨道引擎（M2 双轨等价验证用）。
+    pub fn new_interpreter() -> Self {
+        Self::with_bytecode(false)
+    }
+
+    fn with_bytecode(use_bytecode: bool) -> Self {
         let mut e = Self {
             intern: InternTable::new(),
             eqtb: Eqtb::new(),
@@ -180,6 +202,7 @@ impl Expander {
             aftergroup: Vec::new(),
             afterassignment: None,
             registers: Registers::new(),
+            use_bytecode,
         };
         e.register_builtins();
         e
@@ -256,6 +279,17 @@ impl Expander {
                         } else {
                             Vec::new()
                         };
+                        // M2 双轨：字节码优先（未编译则回退解释器轨道）
+                        if self.use_bytecode {
+                            if let Some(code) = &def.code {
+                                self.stack.push(InputFrame::Bytecode {
+                                    code: code.clone(),
+                                    pc: 0,
+                                    args,
+                                });
+                                return Ok(());
+                            }
+                        }
                         self.stack.push(InputFrame::Macro {
                             body: def.body.clone(),
                             pos: 0,
@@ -333,6 +367,39 @@ impl Expander {
                         continue;
                     }
                     return Ok(Some((tok, false)));
+                }
+                InputFrame::Bytecode { code, pc, args } => {
+                    if *pc >= code.instructions().len() {
+                        self.stack.pop();
+                        continue;
+                    }
+                    match code.instructions()[*pc] {
+                        Instruction::Emit { token } => {
+                            *pc += 1;
+                            return Ok(Some((token, false)));
+                        }
+                        Instruction::EmitArg { n } => {
+                            *pc += 1;
+                            let arg = args
+                                .get((n.saturating_sub(1)) as usize)
+                                .cloned()
+                                .unwrap_or_default();
+                            if arg.is_empty() {
+                                continue;
+                            }
+                            let items: Vec<(Token, bool)> =
+                                arg.iter().map(|&t| (t, false)).collect();
+                            self.stack.push(InputFrame::TokenList {
+                                items: Arc::from(items),
+                                pos: 0,
+                            });
+                            continue;
+                        }
+                        Instruction::End => {
+                            self.stack.pop();
+                            continue;
+                        }
+                    }
                 }
                 InputFrame::TokenList { items, pos } => {
                     if *pos >= items.len() {
@@ -521,14 +588,19 @@ impl Expander {
             Arc::from(body_raw)
         };
 
-        let def = MacroDef {
+        let mut def = MacroDef {
             params: ParamSpec {
                 num_params,
                 long: false,
                 delimiter: None,
             },
             body,
+            code: None,
         };
+        // M2：编译期预编译字节码（常量条件折叠等），解释器轨道不编译
+        if self.use_bytecode {
+            def.code = Some(Arc::new(compile(&def.body, &self.eqtb)));
+        }
         self.define_macro_scoped(csid, def);
         Ok(())
     }
@@ -1697,9 +1769,21 @@ fn compare(a: i64, b: i64, rel: Relation) -> bool {
 mod tests {
     use super::*;
 
-    /// 运行源码并输出为字符串（字符 token 按 char 输出；非字符标记为 `�`）。
+    /// 运行源码（**双轨等价**）：字节码与解释器轨道各跑一次并断言输出一致，
+    /// 返回字节码轨道结果。全部用例自动覆盖 M2 双轨验证。
     fn expand(src: &str) -> Result<String> {
-        let mut e = Expander::new();
+        let bytecode = expand_track(src, true)?;
+        let interp = expand_track(src, false)?;
+        assert_eq!(bytecode, interp, "双轨输出不一致：{src}");
+        Ok(bytecode)
+    }
+
+    fn expand_track(src: &str, use_bytecode: bool) -> Result<String> {
+        let mut e = if use_bytecode {
+            Expander::new()
+        } else {
+            Expander::new_interpreter()
+        };
         e.run_source(src)?;
         Ok(e.output()
             .iter()
@@ -2018,5 +2102,46 @@ mod tests {
     fn conditional_inside_group_must_close() {
         // 组内开 \if 未闭合就 \endgroup → 错误
         assert!(expand("\\begingroup\\iftrue A\\endgroup").is_err());
+    }
+
+    // ---------- M2-6 展开吞吐基准（手动运行：cargo test -p ntex-core -- --ignored） ----------
+
+    #[test]
+    #[ignore]
+    fn bytecode_vs_interpreter_throughput() {
+        use std::time::Instant;
+
+        // 高频宏调用语料：2000 个含参数宏调用 + 常量条件
+        let mut src =
+            String::from("\\def\\foo#1{#1X}\\def\\bar{\\iftrue Y\\else N\\fi}\\def\\run{");
+        for _ in 0..2000 {
+            src.push_str("\\foo{a}\\bar\\foo{b}\\bar");
+        }
+        src.push_str("}\\run");
+
+        let run_track = |use_bytecode: bool| -> f64 {
+            let mut e = if use_bytecode {
+                Expander::new()
+            } else {
+                Expander::new_interpreter()
+            };
+            e.run_source("\\def\\__warm{1}").unwrap(); // 预热（代码路径加载）
+            let t0 = Instant::now();
+            e.run_source(&src).unwrap();
+            let elapsed = t0.elapsed().as_secs_f64();
+            e.output().len() as f64 / elapsed
+        };
+
+        // 预热各一次后正式计时（各 3 次取最大吞吐）
+        let _ = run_track(true);
+        let _ = run_track(false);
+        let bc = (0..3).map(|_| run_track(true)).fold(0.0f64, f64::max);
+        let ip = (0..3).map(|_| run_track(false)).fold(0.0f64, f64::max);
+
+        eprintln!(
+            "字节码吞吐：{bc:.0} token/s；解释器吞吐：{ip:.0} token/s；比值 {:.2}x",
+            bc / ip
+        );
+        // 不设硬断言（CI 波动大），仅报告数字
     }
 }

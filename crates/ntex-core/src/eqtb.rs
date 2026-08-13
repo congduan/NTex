@@ -151,6 +151,7 @@ mod tests {
                 delimiter: None,
             },
             body: Arc::from([Token::char(Catcode::Letter, b'A' as u32)]),
+            code: None,
         }
     }
 

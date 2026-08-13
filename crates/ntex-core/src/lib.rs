@@ -16,6 +16,7 @@
 
 #![deny(unsafe_code)]
 
+pub mod bytecode;
 pub mod catcode;
 pub mod eqtb;
 pub mod error;
