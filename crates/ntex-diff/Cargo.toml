@@ -1,0 +1,20 @@
+[package]
+name = "ntex-diff"
+description = "差分测试工具：参考引擎 vs 本引擎输出比对"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "ntex-diff"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+ntex-test-support.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

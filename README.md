@@ -1,0 +1,87 @@
+# NTex
+
+**100% 兼容 LaTeX/TeX 宏机制的现代排版 & 渲染引擎**——不修改宏语义，只换掉它的"运行平台"：
+把 1970 年代的单线程 C 解释器（Web2C），重写为 **现代 VM + 增量计算 + 并行布局 + GPU 渲染** 的现代排版内核。
+
+> 最简概括：**"一个基于状态快照的 TeX 虚拟机（求值）+ 纯节点流的多线程增量布局（排版）+ GPU/Canvas（渲染）"**
+
+## 核心架构
+
+```
+TeX/LaTeX 源码
+    ▼
+0. 输入层（VFS / 文件抽象）
+    ▼
+1. TeX 虚拟机（阶段 1：求值）
+   ┌────────────┐   ┌──────────────────────┐
+   │ Token 流    │◄─►│ 不可变状态（catcode/  │
+   │ (8B token) │   │ 宏字典/寄存器）快照    │
+   └─────┬──────┘   └──────────────────────┘
+         ▼ 宏展开 + 执行循环
+   纯排版节点流（Node List）
+    ▼
+2. 增量缓存层（Salsa 式求值图）
+    ▼
+3. 布局引擎（阶段 2：排版，并行）
+   段落折行 Knuth-Plass │ 断页 │ 数学排版 │ 断字 │ 字体
+    ▼
+4. 盒子树 + 输出例程（\shipout）
+    ▼
+5. 渲染后端（阶段 3：渲染）Skia / WebGPU / pdf-writer
+```
+
+## 四大性能支柱
+
+1. **状态快照 + CoW**：不可变状态表，微秒级快照，为增量编译与撤销/重做铺路
+2. **预编译 `.fmt` 内存 Dump + mmap**：毫秒级完成 latex.ltx 初始化
+3. **Salsa 式记忆化增量求值**：改第 50 页的一个字，前 49 页 0 毫秒跳过
+4. **Arena 内存池**：token/节点连续分配，零 GC 暂停
+
+## 工作区结构
+
+```
+crates/
+  ntex-core        引擎基础类型 + TeX VM 数据模型 + 展开引擎（RFC-1）
+  ntex-test-support 测试/差分/基准基础设施（EngineDriver 抽象）
+  ntex-trip        TRIP 一致性测试框架
+  ntex-diff        差分测试工具（参考引擎 vs 本引擎）
+  ntex-bench       基准框架
+fixtures/          测试 fixtures（diff 示例 / trip 获取脚本）
+scripts/           辅助脚本（如 fetch-trip-fixtures.sh）
+docs（RFC）        RFC-1 token 表示 / RFC-4 字节码指令集
+```
+
+后续里程碑将按计划加入：`ntex-vm`（字节码）、`ntex-layout`、`ntex-font`、`ntex-format`、`ntex-incremental`、`ntex-io`、`ntex-backend`、`ntex-cli`、`ntex-wasm`。
+
+## 快速开始
+
+```bash
+make check      # 质量门禁：fmt + clippy(-D warnings) + 单元测试
+make fixtures   # 获取 TRIP 测试 fixtures
+make trip       # TRIP 一致性测试（stub 驱动验证管路）
+make diff       # 差分测试（示例 fixtures）
+make bench      # 基准（stub 驱动验证管路）
+
+# 接真实参考引擎
+cargo run -p ntex-diff -- --fixtures fixtures/diff --reference external=pdflatex --engine stub
+cargo run -p ntex-bench --release -- --driver external=pdflatex
+```
+
+## 设计文档
+
+- [idea.md](idea.md) — 总体架构构想（三阶段解耦 / 增量计算 / 并行布局）
+- [plan.md](plan.md) — 实施计划（M0~M9 里程碑与验收标准）
+- [RFC-1-token.md](RFC-1-token.md) — Token 表示与内存布局（8B tagged union）
+- [RFC-4-bytecode.md](RFC-4-bytecode.md) — 字节码指令集设计（宏展开 VM IR）
+
+## 里程碑状态
+
+| 里程碑 | 内容 | 状态 |
+|---|---|---|
+| M0 地基 | workspace / CI / 基准 / TRIP / 差分工具链 | ✅ 完成 |
+| M1 内核 | Token/InternTable/eqtb/catcode/扫描器/展开引擎 | 🔄 进行中（M1-1~M1-6 完成） |
+| M2+ | 字节码编译 / 排版 / 数学 / 增量 / 并行 / 渲染 / 生态 | ⏳ 待实施 |
+
+## License
+
+MIT OR Apache-2.0

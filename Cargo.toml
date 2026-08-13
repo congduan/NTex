@@ -1,0 +1,38 @@
+# NTex 工作区。
+#
+# 模块划分遵循 plan.md §12：每个里程碑只新增实际有交付物的 crate，避免空壳 crate。
+# M0 交付：ntex-core（基础类型）+ 测试/差分/基准工具链（ntex-test-support / ntex-trip / ntex-diff / ntex-bench）。
+# M1+ 陆续加入：ntex-vm（字节码）、ntex-layout、ntex-font、ntex-format、ntex-incremental、
+#              ntex-io、ntex-backend、ntex-cli、ntex-wasm。
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/ntex-core",
+    "crates/ntex-test-support",
+    "crates/ntex-trip",
+    "crates/ntex-diff",
+    "crates/ntex-bench",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.80"
+
+[workspace.dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+regex = "1.10"
+similar = "2.5"
+tempfile = "3.10"
+ntex-core = { path = "crates/ntex-core", version = "0.1.0" }
+ntex-test-support = { path = "crates/ntex-test-support", version = "0.1.0" }
+
+# 工程级 lint：所有成员 crate 统一禁用 unsafe（排版引擎安全性第一）。
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

@@ -1,0 +1,10 @@
+[package]
+name = "ntex-core"
+description = "NTex 引擎基础类型：错误、源码位置、版本号（RFC-1 前置）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true

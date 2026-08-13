@@ -1,0 +1,16 @@
+# 构建产物
+/target
+**/*.rs.bk
+
+# macOS
+.DS_Store
+
+# TRIP fixtures（由 scripts/fetch-trip-fixtures.sh 获取）
+fixtures/trip/
+
+# 编译临时文件
+/trip.*
+*.aux
+*.log
+*.out
+*.toc

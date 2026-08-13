@@ -1,0 +1,20 @@
+[package]
+name = "ntex-bench"
+description = "NTex 基准框架（M0 基准集）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "ntex-bench"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+ntex-test-support.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

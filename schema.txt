@@ -1,0 +1,46 @@
+如果你决定100% 完全兼容 LaTeX（含 TeX 底层宏机制），且用现代技术实现极致的性能，最简洁的技术方案可以概括为：
+
+“一个基于状态快照的 TeX 虚拟机（求值） + 纯节点流的多线程增量布局（排版） + GPU/Canvas（渲染）”
+
+1. 核心架构（三阶段解耦）
+阶段 1：TeX 虚拟机 (TeX VM / Evaluator)
+
+职责：只负责跑宏展开、条件分支、\catcode 和状态修改。
+
+产出：吃进原生 .tex 代码，吐出不含任何宏命令的“纯排版节点流（Node List）”（如 Char、Glue、MathBox）。
+
+阶段 2：并行布局引擎 (Layout Engine)
+
+职责：拿到纯 Node List 后，交由 CPU 多核并行跑 Knuth-Plass 全局折行算法 与 OpenType 数学排版算法。
+
+产出：生成明确坐标的绝对布局树（Box Tree / Page Tree）。
+
+阶段 3：现代渲染后端 (Render Backend)
+
+职责：利用 WebGPU / Canvas / Skia / pdf-writer 将布局树直接绘制成矢量图像或导出 PDF。
+
+2. 关键性能突破技术
+状态快照与 COW（写时复制）
+
+将 \catcode 和宏定义表做成持久化/不可变数据结构。支持微秒级内存快照（Snapshot），为增量编译和实时撤销提供基础。
+
+预编译内存 Dump (.fmt 机制)
+
+将 latex.ltx 和常用宏包运行完毕后的 VM 内存状态序列化。启动时通过 mmap 直接载入，毫秒级完成 LaTeX 基础环境初始化。
+
+Salsa / Memoization 记忆化增量求值
+
+对宏展开结果进行缓存。用户修改文档时，未受影响的段落和前文直接命中缓存，跳过 99% 重复的宏展开过程。
+
+Arena 内存池 (Bump Allocation)
+
+Token 和 Node 全部在连续内存块中分配，彻底解决动态宏展开过程中内存频繁申请与 GC 暂停卡顿的问题。
+
+3. 推荐技术栈
+核心语言：Rust（无 GC 暂停、极致内存控制、原生支持 WASM 编译）
+
+文本与字体：ttf-parser + harfbuzz-rs（字形整形）
+
+增量框架：salsa（增量计算引擎）
+
+前端/预览：Rust 编译为 WebAssembly (WASM)，配合 WebGPU/Canvas 实现浏览器端毫秒级实时预览。

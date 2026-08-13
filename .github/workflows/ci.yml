@@ -1,0 +1,38 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: fmt
+        run: cargo fmt --all -- --check
+
+      - name: clippy（-D warnings）
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: 单元测试
+        run: cargo test --workspace
+
+      - name: 冒烟：TRIP 管路（stub 驱动）
+        run: cargo run -p ntex-trip -- --driver stub
+
+      - name: 冒烟：差分管路（stub vs stub）
+        run: cargo run -p ntex-diff -- --fixtures fixtures/diff --reference stub --engine stub
+
+      - name: 冒烟：基准管路（stub 驱动）
+        run: cargo run -p ntex-bench -- --driver stub
