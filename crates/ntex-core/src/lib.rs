@@ -11,7 +11,8 @@
 //! - [`macrodef`]：宏体 TokenArray + 参数规格（RFC-1 §5）
 //! - [`eqtb`]：等价槽，版本化 + `\let` 别名（RFC-1 §5）
 //! - [`input`]：字节 → token 扫描器
-//! - [`expand`]：展开引擎主循环（M1-6）
+//! - [`register`]：寄存器文件（\count/\dimen/\skip/\toks）与内部量格式化
+//! - [`expand`]：展开引擎主循环（M1-6 ~ M1-11）
 
 #![deny(unsafe_code)]
 
@@ -22,6 +23,7 @@ pub mod expand;
 pub mod input;
 pub mod intern;
 pub mod macrodef;
+pub mod register;
 pub mod span;
 pub mod token;
 pub mod version;
@@ -32,6 +34,7 @@ pub use error::{Error, Result};
 pub use expand::Expander;
 pub use intern::InternTable;
 pub use macrodef::{MacroDef, ParamSpec, TokenArray};
+pub use register::{format_dimen, format_glue, Glue, Registers, SP_PER_PT};
 pub use span::{BytePos, LineCol, SourceId, Span};
 pub use token::{meaning, Token, TokenKind};
 pub use version::{Version, VersionCounter, Versioned};

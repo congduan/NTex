@@ -11,7 +11,7 @@ use crate::catcode::Catcode;
 use crate::macrodef::MacroDef;
 use crate::version::{Version, Versioned};
 
-/// M1 最小原语集（随里程碑扩充）。
+/// M1 原语集（随里程碑扩充）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Primitive {
@@ -24,12 +24,39 @@ pub enum Primitive {
     Noexpand,
     Catcode,
     End,
+    // M1-7 扫描顺序原语
+    Futurelet,
+    Aftergroup,
+    Afterassignment,
+    // M1-9 条件原语
+    If,
+    IfCat,
+    IfNum,
+    IfDim,
+    IfX,
+    IfOdd,
+    IfCase,
+    IfTrue,
+    IfFalse,
+    Else,
+    Fi,
+    Or,
+    // M1-10 寄存器
+    Count,
+    Dimen,
+    Skip,
+    Toks,
+    The,
+    Global,
+    // M1-11 组
+    BeginGroup,
+    EndGroup,
 }
 
 impl Primitive {
     /// 参与展开的原语（其余为不可展开，直接执行）。
     pub fn is_expandable(self) -> bool {
-        matches!(self, Self::Expandafter | Self::Noexpand)
+        matches!(self, Self::Expandafter | Self::Noexpand | Self::The)
     }
 }
 
