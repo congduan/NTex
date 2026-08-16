@@ -51,6 +51,25 @@ pub enum Primitive {
     // M1-11 组
     BeginGroup,
     EndGroup,
+    // M3-2 排版原语：参数扫描在 VM 侧（结果经 sink 输出）；
+    // hbox/vbox/vtop/par 直通 sink 由排版器解释。
+    HBox,
+    VBox,
+    VTop,
+    HSkip,
+    VSkip,
+    Kern,
+    Penalty,
+    HRule,
+    VRule,
+    Par,
+    // M3-2-2 内部参数与段落
+    ParIndent,
+    BaselineSkip,
+    LineSkip,
+    LineSkipLimit,
+    Indent,
+    NoIndent,
 }
 
 impl Primitive {

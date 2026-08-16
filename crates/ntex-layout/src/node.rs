@@ -1,0 +1,380 @@
+//! 排版节点模型（M3-1）。
+//!
+//! 语义对齐 TeX the Program 的节点体系，用 Rust enum 表达：
+//!
+//! | TeX 节点        | 本模块                  |
+//! |-----------------|-------------------------|
+//! | `char_node`     | [`Node::Char`]          |
+//! | `hlist/vlist`   | [`Node::Box`]           |
+//! | `rule_node`     | [`Node::Rule`]          |
+//! | `glue_node`     | [`Node::Glue`]          |
+//! | `kern_node`     | [`Node::Kern`]          |
+//! | `penalty_node`  | [`Node::Penalty`]       |
+//! | `leader_node`   | [`Node::Leaders`]       |
+//!
+//! 所有维度（width/height/depth）与胶水量统一以 scaled point（sp）为单位，
+//! `1pt = 65536sp`（见 [`ntex_core::register::SP_PER_PT`]），与展开引擎的
+//! 寄存器模型一致。
+//!
+//! # 盒子维度（TeXbook p.81 / tex.web hpackage / vpackage）
+//!
+//! **hbox**：`width` = 子节点 width 之和；`height` = 有纵向维度的子节点
+//! （char/box/rule/leaders）height 最大值；`depth` = 同集合 depth 最大值。
+//!
+//! **vbox**：`width` = 子节点 width 最大值；`height + depth` 总和 =
+//! 有纵向维度的子节点各自 `height + depth` 之和；`height` = 第一个有纵向维度
+//! 的子节点的 height（无则 0）；`depth` = 总和 − height。
+//!
+//! 胶水/字距/惩罚不参与 height/depth：水平列表里它们有 width，垂直列表里无维度。
+
+/// 字体标识：由字体表（M3-4 TFM 解析）分配；`FontId(0)` 为默认字体。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FontId(pub u32);
+
+/// 盒子种类（`\hbox` / `\vbox`；`\vtop` 通过 [`BoxNode`] 的 `shift` 表达）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoxKind {
+    HBox,
+    VBox,
+}
+
+/// 盒子的宽/高/深（单位 sp）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BoxDimensions {
+    pub width: i64,
+    pub height: i64,
+    pub depth: i64,
+}
+
+impl BoxDimensions {
+    /// 全零维度。
+    pub const ZERO: Self = Self { width: 0, height: 0, depth: 0 };
+
+    /// height + depth：垂直方向总占据。
+    pub fn total(self) -> i64 {
+        self.height + self.depth
+    }
+}
+
+/// 引导符（`\leaders`/`\cleaders`/`\xleaders`）种类。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeadersKind {
+    /// `\leaders`：被重复的 box 与间隙等宽。
+    Leaders,
+    /// `\cleaders`：box 居中。
+    Cleaders,
+    /// `\xleaders`：box 与间隙交替至两端。
+    Xleaders,
+}
+
+/// 盒子节点：维度在构建时固化并存储（与 TeX 的 box 节点一致），
+/// `\raise`/`\lower`/`\vtop` 等通过 `shift` 表达参考点位移。
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoxNode {
+    pub kind: BoxKind,
+    pub width: i64,
+    pub height: i64,
+    pub depth: i64,
+    /// 参考点位移（sp），默认 0。
+    pub shift: i64,
+    pub children: Vec<Node>,
+}
+
+impl BoxNode {
+    /// 构建 hbox，维度按 [`hbox_dimensions`] 计算。
+    pub fn new_hbox(children: Vec<Node>) -> Self {
+        let d = hbox_dimensions(&children);
+        Self {
+            kind: BoxKind::HBox,
+            width: d.width,
+            height: d.height,
+            depth: d.depth,
+            shift: 0,
+            children,
+        }
+    }
+
+    /// 构建 vbox，维度按 [`vbox_dimensions`] 计算。
+    pub fn new_vbox(children: Vec<Node>) -> Self {
+        let d = vbox_dimensions(&children);
+        Self {
+            kind: BoxKind::VBox,
+            width: d.width,
+            height: d.height,
+            depth: d.depth,
+            shift: 0,
+            children,
+        }
+    }
+
+    /// 已固化的维度。
+    pub fn dimensions(&self) -> BoxDimensions {
+        BoxDimensions {
+            width: self.width,
+            height: self.height,
+            depth: self.depth,
+        }
+    }
+}
+
+/// 排版节点（TeX 节点体系的 Rust 表达）。
+#[derive(Debug, Clone, PartialEq)]
+pub enum Node {
+    /// 字符：维度来自字体表（TFM，M3-4 实现）；在此由调用方填充。
+    Char {
+        font: FontId,
+        charcode: u32,
+        width: i64,
+        height: i64,
+        depth: i64,
+    },
+    /// 盒子（hlist / vlist）。
+    Box(BoxNode),
+    /// 规则（`\hrule` / `\vrule`）。
+    Rule { width: i64, height: i64, depth: i64 },
+    /// 胶水：可拉伸 / 可收缩。
+    Glue { width: i64, stretch: i64, shrink: i64 },
+    /// 字距（不可拉伸）。
+    Kern { width: i64 },
+    /// 断行惩罚；`penalty < 0` 表示可选断行点，`penalty >= 10000` 禁止断行。
+    Penalty { penalty: i64 },
+    /// 引导符：行为类似胶水（width/stretch/shrink），内部重复 box 提供 height/depth。
+    Leaders {
+        kind: LeadersKind,
+        /// 被重复的 box。
+        inner: BoxNode,
+        /// 胶水规格。
+        width: i64,
+        stretch: i64,
+        shrink: i64,
+    },
+}
+
+impl Node {
+    /// 该节点的 width/height/depth。
+    pub fn dimensions(&self) -> BoxDimensions {
+        match self {
+            Node::Char { width, height, depth, .. } => BoxDimensions {
+                width: *width,
+                height: *height,
+                depth: *depth,
+            },
+            Node::Box(b) => b.dimensions(),
+            Node::Rule { width, height, depth } => BoxDimensions {
+                width: *width,
+                height: *height,
+                depth: *depth,
+            },
+            Node::Glue { width, .. } => BoxDimensions {
+                width: *width,
+                height: 0,
+                depth: 0,
+            },
+            Node::Kern { width } => BoxDimensions {
+                width: *width,
+                height: 0,
+                depth: 0,
+            },
+            Node::Penalty { .. } => BoxDimensions::ZERO,
+            Node::Leaders { width, inner, .. } => BoxDimensions {
+                width: *width,
+                height: inner.height,
+                depth: inner.depth,
+            },
+        }
+    }
+
+    /// 是否具有纵向维度（参与盒子 height/depth 计算）。
+    pub fn has_vertical_extent(&self) -> bool {
+        matches!(
+            self,
+            Node::Char { .. } | Node::Box(_) | Node::Rule { .. } | Node::Leaders { .. }
+        )
+    }
+
+    /// 是否可丢弃节点（折行时 glue/kern/penalty 在断行点可被丢弃）。
+    pub fn is_discardable(&self) -> bool {
+        matches!(self, Node::Glue { .. } | Node::Kern { .. } | Node::Penalty { .. })
+    }
+}
+
+/// hbox 维度计算（TeXbook p.81 / tex.web `hpackage`）：
+/// `width` = Σ 子节点 width；`height`/`depth` = 有纵向维度的子节点各自的最大值。
+pub fn hbox_dimensions(children: &[Node]) -> BoxDimensions {
+    let mut dims = BoxDimensions::ZERO;
+    for c in children {
+        let d = c.dimensions();
+        dims.width += d.width;
+        if c.has_vertical_extent() {
+            dims.height = dims.height.max(d.height);
+            dims.depth = dims.depth.max(d.depth);
+        }
+    }
+    dims
+}
+
+/// vbox 维度计算（tex.web `vpackage`）：
+/// `width` = max 子节点 width；`total` = Σ 有纵向维度的子节点（height+depth）；
+/// `height` = 第一个有纵向维度的子节点的 height（无则 0）；`depth` = total − height。
+pub fn vbox_dimensions(children: &[Node]) -> BoxDimensions {
+    let mut width = 0;
+    let mut total = 0;
+    let mut first_height = 0;
+    let mut found = false;
+    for c in children {
+        let d = c.dimensions();
+        width = width.max(d.width);
+        if c.has_vertical_extent() {
+            total += d.total();
+            if !found {
+                first_height = d.height;
+                found = true;
+            }
+        }
+    }
+    BoxDimensions {
+        width,
+        height: first_height,
+        depth: total - first_height,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ntex_core::register::SP_PER_PT;
+
+    fn char_of(w: i64, h: i64, d: i64) -> Node {
+        Node::Char {
+            font: FontId(0),
+            charcode: 65,
+            width: w,
+            height: h,
+            depth: d,
+        }
+    }
+
+    fn glue(w: i64) -> Node {
+        Node::Glue {
+            width: w,
+            stretch: 0,
+            shrink: 0,
+        }
+    }
+
+    fn kern(w: i64) -> Node {
+        Node::Kern { width: w }
+    }
+
+    /// 单位一致性：1pt = 65536sp，与 `ntex_core::register` 常量一致。
+    #[test]
+    fn sp_units_match_register() {
+        let d = hbox_dimensions(&[char_of(SP_PER_PT, 0, 0)]);
+        assert_eq!(d.width, SP_PER_PT);
+        assert_eq!(d.width, 65_536);
+    }
+
+    #[test]
+    fn hbox_width_is_sum() {
+        let d = hbox_dimensions(&[
+            char_of(100, 10, 2),
+            glue(30),
+            kern(7),
+            Node::Penalty { penalty: -50 },
+            char_of(3, 5, 1),
+        ]);
+        assert_eq!(d.width, 140);
+    }
+
+    #[test]
+    fn hbox_height_depth_are_max() {
+        let d = hbox_dimensions(&[
+            char_of(10, 12, 3),
+            char_of(10, 7, 9),
+            Node::Rule { width: 4, height: 20, depth: 1 },
+            glue(5),
+        ]);
+        assert_eq!(d.height, 20);
+        assert_eq!(d.depth, 9);
+        // 胶水不参与 height/depth。
+        let only_glue = hbox_dimensions(&[glue(50), kern(50), Node::Penalty { penalty: 0 }]);
+        assert_eq!(only_glue.height, 0);
+        assert_eq!(only_glue.depth, 0);
+    }
+
+    #[test]
+    fn hbox_empty_is_zero() {
+        assert_eq!(hbox_dimensions(&[]), BoxDimensions::ZERO);
+    }
+
+    #[test]
+    fn vbox_width_is_max() {
+        let d = vbox_dimensions(&[char_of(10, 5, 0), char_of(40, 5, 0), glue(25)]);
+        assert_eq!(d.width, 40);
+    }
+
+    #[test]
+    fn vbox_total_is_sum_height_first_depth_remainder() {
+        // 首盒 h=10 d=2，次盒 h=3 d=1：total=16，height=10，depth=6。
+        let d = vbox_dimensions(&[char_of(5, 10, 2), char_of(5, 3, 1)]);
+        assert_eq!(d.height, 10);
+        assert_eq!(d.depth, 6);
+        assert_eq!(d.total(), 16);
+    }
+
+    #[test]
+    fn vbox_glue_only_has_width_but_no_height_depth() {
+        // vpackage 对 width 取所有子节点（含胶水）最大值；胶水不贡献 height/depth。
+        let d = vbox_dimensions(&[glue(10), kern(5), Node::Penalty { penalty: 0 }]);
+        assert_eq!(d.width, 10);
+        assert_eq!(d.height, 0);
+        assert_eq!(d.depth, 0);
+    }
+
+    #[test]
+    fn vbox_empty_is_zero() {
+        assert_eq!(vbox_dimensions(&[]), BoxDimensions::ZERO);
+    }
+
+    #[test]
+    fn box_node_constructors_fix_dimensions() {
+        let hb = BoxNode::new_hbox(vec![char_of(10, 4, 1), char_of(20, 6, 3)]);
+        assert_eq!(hb.width, 30);
+        assert_eq!(hb.height, 6);
+        assert_eq!(hb.depth, 3);
+        assert_eq!(hb.shift, 0);
+        assert_eq!(hb.kind, BoxKind::HBox);
+
+        let vb = BoxNode::new_vbox(vec![char_of(8, 9, 1), char_of(8, 2, 2)]);
+        assert_eq!(vb.width, 8);
+        assert_eq!(vb.height, 9);
+        assert_eq!(vb.depth, 5);
+        assert_eq!(vb.kind, BoxKind::VBox);
+    }
+
+    #[test]
+    fn leaders_dimensions_come_from_inner_box() {
+        let inner = BoxNode::new_hbox(vec![char_of(12, 3, 4)]);
+        let ld = Node::Leaders {
+            kind: LeadersKind::Leaders,
+            inner: inner.clone(),
+            width: 120,
+            stretch: 0,
+            shrink: 0,
+        };
+        let d = ld.dimensions();
+        assert_eq!(d.width, 120);
+        assert_eq!(d.height, 3);
+        assert_eq!(d.depth, 4);
+        assert!(ld.has_vertical_extent());
+    }
+
+    #[test]
+    fn discardable_classification() {
+        assert!(Node::Glue { width: 0, stretch: 0, shrink: 0 }.is_discardable());
+        assert!(Node::Kern { width: 0 }.is_discardable());
+        assert!(Node::Penalty { penalty: 0 }.is_discardable());
+        assert!(!char_of(1, 1, 1).is_discardable());
+        assert!(!Node::Box(BoxNode::new_hbox(vec![])).is_discardable());
+    }
+}

@@ -215,13 +215,13 @@
 
 **目标**：能产出与 TeX 一致的页面，输出 DVI。
 
-- [ ] 排版节点：Char/Glue/Kern/Box/Leaders/Penalty 等，Arena 分配
-- [ ] `\hbox`/`\vbox`/`\vtop` + 维度计算（width/height/depth）
-- [ ] 胶水拉伸/收缩 + badness + 断行点（breakpoints）
+- [x] 排版节点：Char/Glue/Kern/Box/Leaders/Penalty（M3-1，Arena 分配后续做）
+- [x] `\hbox`/`\vbox`/`\vtop` + 维度计算（width/height/depth）（M3-1/2-1；`\vtop` shift、`to/spread` 规格留待 M3-2-2/M3-5）
+- [x] 基础：`\par`、`\indent`、`\baselineskip`、`\lineskip`（M3-2-2；`\parindent` 等内部参数 + interline glue；段落形状 `\hangindent` 等留待）
+- [x] 胶水拉伸/收缩 + badness + 断行点（breakpoints）（M3-2-3：`badness`/`collect_breakpoints`；词间空白 glue）
 - [ ] Knuth-Plass 折行（单线程，先保证逐位一致）
 - [ ] 断页：page builder 状态机 + 断页 DP
 - [ ] TFM 解析 + 字体表（`\font`）；`\shipout` → DVI 写出
-- [ ] 基础：`\par`、`\indent`、`\baselineskip`、`\lineskip`、段落形状
 - [ ] **VFS 层 + 副作用模型落地**（RFC-3）：`\write`/`\read`/`\input` 走 VFS
 - [ ] `.fmt v1`：状态快照序列化 + mmap（此时仍是"快照"级）
 
@@ -295,6 +295,7 @@
 
 **目标**：三种输出端，交互预览可用。
 
+- [x] 临时切片先行（M3 中途）：`ntex-pdf` 已产出可看 PDF（Helvetica 标准字体 + 贪心折行；M3-3 Knuth-Plass / M3-4 TFM / M3-5 DVI 后替换）
 - [ ] PDF 后端：直接生成（跳过 xdv→xdvipdfmx 中间步），对象批量缓冲写
 - [ ] L2 字节兼容：简单文档对照 pdfTeX 逐字节 diff（关闭时间戳/元数据随机性）
 - [ ] Skia 渲染后端（桌面/服务端）

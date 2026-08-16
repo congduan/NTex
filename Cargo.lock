@@ -207,6 +207,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ntex-layout"
+version = "0.1.0"
+dependencies = [
+ "ntex-core",
+]
+
+[[package]]
+name = "ntex-pdf"
+version = "0.1.0"
+dependencies = [
+ "ntex-core",
+ "ntex-layout",
+]
+
+[[package]]
 name = "ntex-test-support"
 version = "0.1.0"
 dependencies = [

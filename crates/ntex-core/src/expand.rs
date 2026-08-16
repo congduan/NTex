@@ -26,9 +26,11 @@ use crate::error::{Error, Result};
 use crate::input::scan_token;
 use crate::intern::InternTable;
 use crate::macrodef::{MacroDef, ParamSpec, TokenArray};
+use crate::param::{ParamKind, ParamValue, Params};
 use crate::register::{
     format_count, format_dimen, format_glue, unit_to_sp, Glue, Registers, REGISTER_COUNT, SP_PER_PT,
 };
+use crate::sink::{TokenSink, VecSink};
 use crate::token::{Token, TokenKind};
 
 /// 输入帧：token 来源栈（LIFO，栈顶为当前帧）。
@@ -132,6 +134,7 @@ enum SavedValue {
     Skip { idx: usize, prev: Glue },
     Toks { idx: usize, prev: TokenArray },
     Catcode { byte: u8, prev: Catcode },
+    Param { kind: ParamKind, prev: ParamValue },
 }
 
 /// `\ifx` 语义键：解析别名后比较含义（TeX：同含义即相等）。
@@ -151,7 +154,8 @@ pub struct Expander {
     eqtb: Eqtb,
     catcodes: CatcodeTable,
     stack: Vec<InputFrame>,
-    output: Vec<Token>,
+    /// 输出 sink（M3-2）：token/组/原语事件流；默认 [`VecSink`] 收集 token。
+    sink: Box<dyn TokenSink>,
     /// 读取下限：`fetch` 只允许从下标 >= 该值的帧读取；
     /// 用于划分子展开（`\edef`/`\expandafter` 区域）的边界。
     read_floor: usize,
@@ -171,6 +175,8 @@ pub struct Expander {
     afterassignment: Option<Token>,
     /// 寄存器文件（M1-10）。
     registers: Registers,
+    /// 内部参数（M3-2-2）：`\parindent`/`\baselineskip`/`\lineskip`/`\lineskiplimit`。
+    params: Params,
     /// 是否启用字节码轨道（M2；解释器轨道用于双轨等价验证）。
     use_bytecode: bool,
 }
@@ -192,7 +198,7 @@ impl Expander {
             eqtb: Eqtb::new(),
             catcodes: CatcodeTable::new(),
             stack: Vec::new(),
-            output: Vec::new(),
+            sink: Box::new(VecSink::default()),
             read_floor: 0,
             cond_stack: Vec::new(),
             group_level: 0,
@@ -202,6 +208,7 @@ impl Expander {
             aftergroup: Vec::new(),
             afterassignment: None,
             registers: Registers::new(),
+            params: Params::default(),
             use_bytecode,
         };
         e.register_builtins();
@@ -247,7 +254,7 @@ impl Expander {
                 }
                 if noexpand {
                     // \noexpand：临时不可展开，原样输出
-                    self.output.push(tok);
+                    self.sink.token(tok)?;
                 } else {
                     self.process_token(tok)?;
                 }
@@ -269,8 +276,7 @@ impl Expander {
                     ))),
                     EqSlot::Alias(target) => self.process_token(Token::control_sequence(target)),
                     EqSlot::Char { catcode, charcode } => {
-                        self.output.push(Token::char(catcode, charcode));
-                        Ok(())
+                        self.sink.token(Token::char(catcode, charcode))
                     }
                     EqSlot::Macro(m) => {
                         let def = m.value.clone();
@@ -303,21 +309,12 @@ impl Expander {
             TokenKind::Char => {
                 // 组定界符（cat 1/2）在主流层建立/结束组（M1-11）
                 match tok.catcode() {
-                    Some(Catcode::BeginGroup) => {
-                        self.begin_group();
-                        Ok(())
-                    }
+                    Some(Catcode::BeginGroup) => self.begin_group(),
                     Some(Catcode::EndGroup) => self.end_group(),
-                    _ => {
-                        self.output.push(tok);
-                        Ok(())
-                    }
+                    _ => self.sink.token(tok),
                 }
             }
-            _ => {
-                self.output.push(tok);
-                Ok(())
-            }
+            _ => self.sink.token(tok),
         }
     }
 
@@ -562,12 +559,102 @@ impl Expander {
                 Ok(())
             }
             // M1-11 组
-            Primitive::BeginGroup => {
-                self.begin_group();
-                Ok(())
-            }
+            Primitive::BeginGroup => self.begin_group(),
             Primitive::EndGroup => self.end_group(),
+            // M3-2 排版原语
+            // 盒子：直通 sink（规格 to/spread 属 M3-2-2，暂拒）
+            Primitive::HBox | Primitive::VBox | Primitive::VTop => {
+                self.reject_box_spec()?;
+                self.sink.primitive(prim)
+            }
+            Primitive::Par => self.sink.primitive(prim),
+            // 带参数扫描的排版原语：扫描在 VM 侧完成，结果交给 sink
+            Primitive::HSkip | Primitive::VSkip => {
+                let g = self.scan_glue()?;
+                self.sink.glue(g)
+            }
+            Primitive::Kern => {
+                let w = self.scan_dimen()?;
+                self.sink.kern(w)
+            }
+            Primitive::Penalty => {
+                let p = self.scan_number()?;
+                self.sink.penalty(p)
+            }
+            Primitive::HRule | Primitive::VRule => {
+                let [h, d, w] = self.scan_rule_specs()?;
+                self.sink.rule(w, h, d)
+            }
+            // M3-2-2 内部参数赋值
+            Primitive::ParIndent | Primitive::LineSkipLimit => {
+                let v = self.scan_dimen()?;
+                let kind = if prim == Primitive::ParIndent {
+                    ParamKind::ParIndent
+                } else {
+                    ParamKind::LineSkipLimit
+                };
+                self.assign_param(kind, ParamValue::Dimen(v))
+            }
+            Primitive::BaselineSkip | Primitive::LineSkip => {
+                let g = self.scan_glue()?;
+                let kind = if prim == Primitive::BaselineSkip {
+                    ParamKind::BaselineSkip
+                } else {
+                    ParamKind::LineSkip
+                };
+                self.assign_param(kind, ParamValue::Glue(g))
+            }
+            // 段落缩进：直通 sink 由排版器解释
+            Primitive::Indent | Primitive::NoIndent => self.sink.primitive(prim),
         }
+    }
+
+    /// 内部参数赋值（组作用域 + sink 镜像通知）。
+    fn assign_param(&mut self, kind: ParamKind, value: ParamValue) -> Result<()> {
+        let global = self.is_global();
+        if !global && self.group_level > 0 {
+            self.save_stack.push((
+                self.group_level,
+                SavedValue::Param {
+                    kind,
+                    prev: self.params.get(kind),
+                },
+            ));
+        }
+        self.params.set(kind, value);
+        self.sink.param_changed(kind, value)?;
+        self.finish_assignment();
+        Ok(())
+    }
+
+    /// 暂拒 `\hbox to <glue>` / `\hbox spread <glue>` 规格（待实现）。
+    fn reject_box_spec(&mut self) -> Result<()> {
+        if self.scan_keyword(|w| w == "to" || w == "spread")?.is_some() {
+            return Err(Error::invalid_input(
+                "\\hbox/\\vbox 的 to/spread 规格暂不支持（M3-2-2）",
+            ));
+        }
+        Ok(())
+    }
+
+    /// 扫描 `\hrule`/`\vrule` 的可选规格：
+    /// `height <dimen> depth <dimen> width <dimen>`（任意顺序、可省略，缺省 0）。
+    /// 返回 `[height, depth, width]`。
+    fn scan_rule_specs(&mut self) -> Result<[i64; 3]> {
+        let mut specs = [0i64; 3];
+        for _ in 0..3 {
+            let Some(kw) = self.scan_keyword(|w| matches!(w, "height" | "depth" | "width"))?
+            else {
+                break;
+            };
+            let idx = match kw.as_str() {
+                "height" => 0,
+                "depth" => 1,
+                _ => 2,
+            };
+            specs[idx] = self.scan_dimen()?;
+        }
+        Ok(specs)
     }
 
     /// `\def`/`\edef`：扫描控制序列名 + 参数文本 + 替换文本并定义。
@@ -686,7 +773,8 @@ impl Expander {
         let depth = self.stack.len();
         let cond_depth = self.cond_stack.len();
         self.read_floor = depth;
-        let saved = std::mem::take(&mut self.output);
+        // 区域输出重定向到临时 VecSink（M3-2：sink 替代 output 字段）
+        let saved = std::mem::replace(&mut self.sink, Box::new(VecSink::default()));
 
         let items: Vec<(Token, bool)> = tokens.into_iter().map(|t| (t, false)).collect();
         self.stack.push(InputFrame::TokenList {
@@ -696,11 +784,14 @@ impl Expander {
         while self.process_one()? {}
 
         if self.cond_stack.len() != cond_depth {
+            self.sink = saved;
             self.read_floor = saved_floor;
             return Err(Error::invalid_input("条件未闭合（缺少 \\fi）"));
         }
-        let result = std::mem::take(&mut self.output);
-        self.output = saved;
+        let temp = std::mem::replace(&mut self.sink, saved);
+        let result = temp
+            .take_tokens()
+            .expect("expand_region 安装了 VecSink");
         self.read_floor = saved_floor;
         Ok(result)
     }
@@ -906,13 +997,10 @@ impl Expander {
         Ok(if neg { -val } else { val })
     }
 
-    /// 跳过前导空格 token。
+    /// 跳过前导空格 token（输入耗尽视为合法，返回 Ok）。
     fn skip_spaces(&mut self) -> Result<()> {
         loop {
-            let tok = self
-                .fetch()?
-                .ok_or_else(|| Error::invalid_input("扫描到输入末尾"))?
-                .0;
+            let Some((tok, _)) = self.fetch()? else { return Ok(()) };
             if tok.catcode() != Some(Catcode::Space) {
                 self.unread(tok);
                 return Ok(());
@@ -951,7 +1039,7 @@ impl Expander {
 
     /// 注册 M1 内建原语。
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 32] = [
+        const BUILTINS: [(&str, Primitive); 48] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -988,6 +1076,24 @@ impl Expander {
             // M1-11
             ("begingroup", Primitive::BeginGroup),
             ("endgroup", Primitive::EndGroup),
+            // M3-2 排版原语
+            ("hbox", Primitive::HBox),
+            ("vbox", Primitive::VBox),
+            ("vtop", Primitive::VTop),
+            ("hskip", Primitive::HSkip),
+            ("vskip", Primitive::VSkip),
+            ("kern", Primitive::Kern),
+            ("penalty", Primitive::Penalty),
+            ("hrule", Primitive::HRule),
+            ("vrule", Primitive::VRule),
+            ("par", Primitive::Par),
+            // M3-2-2 内部参数与段落
+            ("parindent", Primitive::ParIndent),
+            ("baselineskip", Primitive::BaselineSkip),
+            ("lineskip", Primitive::LineSkip),
+            ("lineskiplimit", Primitive::LineSkipLimit),
+            ("indent", Primitive::Indent),
+            ("noindent", Primitive::NoIndent),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);
@@ -1208,8 +1314,23 @@ impl Expander {
                     let idx = self.scan_register_index()?;
                     Ok(self.registers.toks(idx).to_vec())
                 }
+                Primitive::ParIndent
+                | Primitive::BaselineSkip
+                | Primitive::LineSkip
+                | Primitive::LineSkipLimit => {
+                    let kind = match p {
+                        Primitive::ParIndent => ParamKind::ParIndent,
+                        Primitive::BaselineSkip => ParamKind::BaselineSkip,
+                        Primitive::LineSkip => ParamKind::LineSkip,
+                        _ => ParamKind::LineSkipLimit,
+                    };
+                    Ok(match self.params.get(kind) {
+                        ParamValue::Dimen(v) => emit_dimen(v),
+                        ParamValue::Glue(g) => emit_glue(g),
+                    })
+                }
                 _ => Err(Error::invalid_input(
-                    "\\the 只支持 \\count\\dimen\\skip\\toks",
+                    "\\the 只支持 \\count\\dimen\\skip\\toks 与内部参数",
                 )),
             },
             _ => Err(Error::invalid_input("\\the 需要寄存器参数")),
@@ -1217,10 +1338,12 @@ impl Expander {
     }
 
     /// 组作用域（M1-11）。
-    fn begin_group(&mut self) {
+    fn begin_group(&mut self) -> Result<()> {
         self.group_level += 1;
         // 记录组开始时的条件栈深度：组结束时条件必须回到该深度（跨组开条件 → 错误）
         self.group_cond_depth.push(self.cond_stack.len());
+        // M3-2：通知 sink 组开始（排版器据此构建盒子内容）
+        self.sink.group_begin()
     }
 
     fn end_group(&mut self) -> Result<()> {
@@ -1258,7 +1381,9 @@ impl Expander {
             });
         }
         self.group_level -= 1;
-        Ok(())
+        // M3-2：通知 sink 组结束（排版器封装盒子内容）。
+        // 放在 `\aftergroup` 之后：其 token 在组外上下文继续处理，不落入盒子。
+        self.sink.group_end()
     }
 
     fn restore(&mut self, v: SavedValue) {
@@ -1271,6 +1396,7 @@ impl Expander {
             SavedValue::Skip { idx, prev } => self.registers.set_skip(idx, prev),
             SavedValue::Toks { idx, prev } => self.registers.set_toks(idx, prev),
             SavedValue::Catcode { byte, prev } => self.catcodes.set(byte, prev),
+            SavedValue::Param { kind, prev } => self.params.set(kind, prev),
         }
     }
 
@@ -1623,20 +1749,19 @@ impl Expander {
     }
 
     /// 扫描胶水：width + 可选 `plus <dimen>` / `minus <dimen>`。
+    /// 非 plus/minus 字母（如正文）原样放回（TeX `scan_keyword` 语义）。
     fn scan_glue(&mut self) -> Result<Glue> {
         let width = self.scan_dimen()?;
         let mut stretch = 0i64;
         let mut shrink = 0i64;
         for _ in 0..2 {
-            let Some(word) = self.scan_word()? else { break };
-            match word.as_str() {
-                "plus" => stretch = self.scan_dimen()?,
-                "minus" => shrink = self.scan_dimen()?,
-                _ => {
-                    return Err(Error::invalid_input(format!(
-                        "预期 plus/minus，得到 {word}"
-                    )))
-                }
+            let Some(word) = self.scan_keyword(|w| w == "plus" || w == "minus")? else {
+                break;
+            };
+            if word == "plus" {
+                stretch = self.scan_dimen()?;
+            } else {
+                shrink = self.scan_dimen()?;
             }
         }
         Ok(Glue {
@@ -1646,25 +1771,35 @@ impl Expander {
         })
     }
 
-    /// 扫描一个字母单词；无则返回 None（非字母 token 放回）。
-    fn scan_word(&mut self) -> Result<Option<String>> {
+    /// 跳过空格后读取一个裸字母词（TeX `scan_keyword` 语义：`\hskip 5pt plus 2pt`
+    /// 中的 `plus`、`\hrule height 1pt` 中的 `height` 都是裸字母词）。
+    /// `is_kw` 判定是否为关键字；非关键字时字母原样放回（保持顺序）并返回 None。
+    fn scan_keyword(&mut self, is_kw: impl Fn(&str) -> bool) -> Result<Option<String>> {
         self.skip_spaces()?;
         let mut word = String::new();
-        loop {
-            let tok = self
-                .fetch()?
-                .ok_or_else(|| Error::invalid_input("扫描到输入末尾"))?
-                .0;
+        let mut letters: Vec<(Token, bool)> = Vec::new();
+        while let Some((tok, _)) = self.fetch()? {
             if let Some(ch) = tok.charcode().and_then(char::from_u32) {
                 if ch.is_ascii_alphabetic() {
                     word.push(ch);
+                    letters.push((tok, false));
                     continue;
                 }
             }
             self.unread(tok);
             break;
         }
-        Ok((!word.is_empty()).then_some(word))
+        if word.is_empty() {
+            return Ok(None);
+        }
+        if is_kw(&word) {
+            return Ok(Some(word));
+        }
+        self.stack.push(InputFrame::TokenList {
+            items: Arc::from(letters),
+            pos: 0,
+        });
+        Ok(None)
     }
 
     /// 窥视下一个 token 是否为控制序列（fetch + unread）。
@@ -1689,7 +1824,17 @@ impl Expander {
     }
 
     pub fn output(&self) -> &[Token] {
-        &self.output
+        self.sink.tokens()
+    }
+
+    /// 替换输出 sink（排版器接入点，M3-2）。
+    pub fn set_sink(&mut self, sink: Box<dyn TokenSink>) {
+        self.sink = sink;
+    }
+
+    /// 取出输出 sink（排版器运行结束后取回 builder）。
+    pub fn take_sink(&mut self) -> Box<dyn TokenSink> {
+        std::mem::replace(&mut self.sink, Box::new(VecSink::default()))
     }
 }
 
@@ -2143,5 +2288,48 @@ mod tests {
             bc / ip
         );
         // 不设硬断言（CI 波动大），仅报告数字
+    }
+
+    // ---------- M3-2-2 内部参数 ----------
+
+    #[test]
+    fn param_assignment_and_the() {
+        assert_eq!(expand("\\parindent 20pt\\the\\parindent").unwrap(), "20.0pt");
+        assert_eq!(
+            expand("\\baselineskip 10pt plus 2pt\\the\\baselineskip").unwrap(),
+            "10.0pt plus 2.0pt"
+        );
+        assert_eq!(expand("\\lineskip 3pt\\the\\lineskip").unwrap(), "3.0pt");
+        assert_eq!(
+            expand("\\lineskiplimit -1pt\\the\\lineskiplimit").unwrap(),
+            "-1.0pt"
+        );
+    }
+
+    #[test]
+    fn param_defaults() {
+        assert_eq!(expand("\\the\\parindent").unwrap(), "0.0pt");
+        assert_eq!(expand("\\the\\baselineskip").unwrap(), "12.0pt");
+        assert_eq!(expand("\\the\\lineskip").unwrap(), "0.0pt");
+        assert_eq!(expand("\\the\\lineskiplimit").unwrap(), "0.0pt");
+    }
+
+    #[test]
+    fn param_local_scoped_at_group_end() {
+        let src = "\\parindent 20pt\\begingroup\\parindent 30pt\\endgroup\\the\\parindent";
+        assert_eq!(expand(src).unwrap(), "20.0pt");
+    }
+
+    #[test]
+    fn param_global_scoped() {
+        let src = "\\parindent 20pt\\begingroup\\global\\parindent 30pt\\endgroup\\the\\parindent";
+        assert_eq!(expand(src).unwrap(), "30.0pt");
+    }
+
+    #[test]
+    fn param_afterassignment_fires() {
+        // \afterassignment 在参数赋值后触发（与寄存器一致）
+        let src = "\\def\\x{Y}\\afterassignment\\x\\parindent 10pt\\the\\parindent";
+        assert_eq!(expand(src).unwrap(), "Y10.0pt");
     }
 }

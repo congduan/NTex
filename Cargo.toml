@@ -9,6 +9,8 @@
 resolver = "2"
 members = [
     "crates/ntex-core",
+    "crates/ntex-layout",
+    "crates/ntex-pdf",
     "crates/ntex-test-support",
     "crates/ntex-trip",
     "crates/ntex-diff",
@@ -28,6 +30,7 @@ regex = "1.10"
 similar = "2.5"
 tempfile = "3.10"
 ntex-core = { path = "crates/ntex-core", version = "0.1.0" }
+ntex-layout = { path = "crates/ntex-layout", version = "0.1.0" }
 ntex-test-support = { path = "crates/ntex-test-support", version = "0.1.0" }
 
 # 工程级 lint：所有成员 crate 统一禁用 unsafe（排版引擎安全性第一）。

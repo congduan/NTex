@@ -1,0 +1,13 @@
+[package]
+name = "ntex-layout"
+description = "NTex 排版核心：节点模型、盒子维度、折行（Knuth-Plass）、断页"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ntex-core.workspace = true
+
+[lints]
+workspace = true

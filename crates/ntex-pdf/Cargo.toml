@@ -1,0 +1,14 @@
+[package]
+name = "ntex-pdf"
+description = "NTex 最小 PDF 输出（切片）：Helvetica 标准字体 + 贪心折行"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ntex-core.workspace = true
+ntex-layout.workspace = true
+
+[lints]
+workspace = true
