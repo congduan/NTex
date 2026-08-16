@@ -606,6 +606,15 @@ impl Expander {
             }
             // 段落缩进：直通 sink 由排版器解释
             Primitive::Indent | Primitive::NoIndent => self.sink.primitive(prim),
+            // M3-3 折行参数
+            Primitive::HSize => {
+                let v = self.scan_dimen()?;
+                self.assign_param(ParamKind::HSize, ParamValue::Dimen(v))
+            }
+            Primitive::Tolerance => {
+                let v = self.scan_number()?;
+                self.assign_param(ParamKind::Tolerance, ParamValue::Number(v))
+            }
         }
     }
 
@@ -1039,7 +1048,7 @@ impl Expander {
 
     /// 注册 M1 内建原语。
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 48] = [
+        const BUILTINS: [(&str, Primitive); 50] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -1094,6 +1103,9 @@ impl Expander {
             ("lineskiplimit", Primitive::LineSkipLimit),
             ("indent", Primitive::Indent),
             ("noindent", Primitive::NoIndent),
+            // M3-3 折行参数
+            ("hsize", Primitive::HSize),
+            ("tolerance", Primitive::Tolerance),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);
@@ -1317,16 +1329,21 @@ impl Expander {
                 Primitive::ParIndent
                 | Primitive::BaselineSkip
                 | Primitive::LineSkip
-                | Primitive::LineSkipLimit => {
+                | Primitive::LineSkipLimit
+                | Primitive::HSize
+                | Primitive::Tolerance => {
                     let kind = match p {
                         Primitive::ParIndent => ParamKind::ParIndent,
                         Primitive::BaselineSkip => ParamKind::BaselineSkip,
                         Primitive::LineSkip => ParamKind::LineSkip,
-                        _ => ParamKind::LineSkipLimit,
+                        Primitive::LineSkipLimit => ParamKind::LineSkipLimit,
+                        Primitive::HSize => ParamKind::HSize,
+                        _ => ParamKind::Tolerance,
                     };
                     Ok(match self.params.get(kind) {
                         ParamValue::Dimen(v) => emit_dimen(v),
                         ParamValue::Glue(g) => emit_glue(g),
+                        ParamValue::Number(v) => emit_count(v),
                     })
                 }
                 _ => Err(Error::invalid_input(
@@ -2331,5 +2348,15 @@ mod tests {
         // \afterassignment 在参数赋值后触发（与寄存器一致）
         let src = "\\def\\x{Y}\\afterassignment\\x\\parindent 10pt\\the\\parindent";
         assert_eq!(expand(src).unwrap(), "Y10.0pt");
+    }
+
+    // ---------- M3-3 折行参数 ----------
+
+    #[test]
+    fn hsize_and_tolerance_assignment() {
+        assert_eq!(expand("\\hsize 100pt\\the\\hsize").unwrap(), "100.0pt");
+        assert_eq!(expand("\\tolerance 300\\the\\tolerance").unwrap(), "300");
+        // 默认值（TeX initex）：\hsize=6.5in、\tolerance=10000
+        assert!(expand("\\the\\tolerance").unwrap().ends_with("10000"));
     }
 }

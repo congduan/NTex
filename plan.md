@@ -3,6 +3,18 @@
 > 依据：[idea.md](file:///Users/congduan/Desktop/code/_vibe_coding_/NTex/idea.md) 架构 + 性能决策（字节码预编译 / 深 .fmt / CJK 整形捷径 / 并行 / 增量）
 > 原则：**正确性优先、性能架构前置、基准先行**
 
+## 当前进度（2026-08）
+
+| 里程碑 | 状态 |
+|---|---|
+| M0 地基 | ✅ 完成（workspace/CI/TRIP·diff·bench 工具链；RFC-1/RFC-4 定稿） |
+| M1 展开内核 | 🟡 核心完成：M1-1~7、M1-9~11 已实现（95 用例）；M1-8 分隔参数、M1-13 错误模型、**M1-14 TRIP 冲刺** 待补 |
+| M2 字节码 | 🟡 双轨完成：定长 u64 IR + 编译器 + 解释器等价验证（100 用例）；**吞吐 1.12x 未达 2x 目标**，M2-5 arena 未做 |
+| M3 排版核心 | 🟡 M3-1 节点模型、M3-2 主循环/段落/断行基础 完成（45 用例）；**M3-3 Knuth-Plass、M3-4 TFM、M3-5 DVI** 待做 |
+| 输出端 | 🟢 临时 PDF 切片可用（`ntex-pdf`：Helvetica 标准字体 + 贪心折行，可产出可看 PDF） |
+
+**下一步**：M3-3 Knuth-Plass 折行（替换 `simple_lines` 贪心）→ M3-4 TFM（cmr10 真实度量）→ M3-5 DVI。
+
 ---
 
 ## 0. 三个策略性结论（决定排期顺序）
@@ -41,20 +53,20 @@
 
 **目标**：一切后续工作的脚手架，**基准先行**。
 
-- [ ] 初始化 Rust workspace（crate 划分见 §8）
-- [ ] CI：单元测试 + TRIP/ETRIP + 差分测试 + 基准（跑基准防回归）
-- [ ] **基准集**（所有里程碑复用）：
-  - `latex.ltx` 全量加载耗时
-  - 300 页中英混排文档冷编总时长
-  - 每千 token 展开吞吐（对照 pdfTeX 基线）
-  - 增量场景：改 1 字 → 重算耗时
-- [ ] TRIP/ETRIP 测试框架：自动跑 `\input trip` 并 diff 输出
-- [ ] 差分测试工具：同一 .tex 分别跑 pdfTeX/XeTeX 与本引擎，diff DVI/log
-- [ ] **设计文档（RFC）先行**，评审通过再编码：
+- [x] 初始化 Rust workspace（crate 划分见 §8）
+- [x] CI：单元测试 + TRIP/ETRIP + 差分测试 + 基准（跑基准防回归）
+- [x] **基准集**（所有里程碑复用）：
+  - [ ] `latex.ltx` 全量加载耗时（M7 前无意义，未建）
+  - [ ] 300 页中英混排文档冷编总时长（M7 前未建）
+  - [x] 每千 token 展开吞吐（对照 pdfTeX 基线）
+  - [ ] 增量场景：改 1 字 → 重算耗时（M5 前未建）
+- [x] TRIP/ETRIP 测试框架：自动跑 `\input trip` 并 diff 输出（框架就绪，trip 全绿待 M1-14）
+- [x] 差分测试工具：同一 .tex 分别跑 pdfTeX/XeTeX 与本引擎，diff DVI/log
+- [x] **设计文档（RFC）先行**，评审通过再编码：
   - RFC-1 Token 表示与内存布局 —— **已定稿**（8B token / TokenArray / InternTable / eqtb 版本化）
   - RFC-2 不可变状态模型与版本化（CoW 结构选型）—— 未开始
   - RFC-3 副作用模型（VFS + shipout 边界）—— 未开始
-  - RFC-4 字节码 IR 草案（提前定，M2 直接用）—— 未开始
+  - RFC-4 字节码 IR 草案 —— **已定稿**（M2 直接落地为定长 u64 指令）
 
 **RFC-1 已定决策**（后续里程碑直接引用，不再反复讨论）：
 1. **Token = 8 字节 tagged union（u64）**，不用 16B；源码位置走独立 side-table，不进 token；
@@ -75,89 +87,90 @@
 ### 实施步骤（依赖驱动，每步独立可验收）
 
 **M1-1 Token 类型骨架**（RFC-1 §3）
-- [ ] `Token` 枚举：`#[repr(transparent)]` 包装 u64，变体与位分配严格按 RFC-1：
+- [x] `Token` 枚举：`#[repr(transparent)]` 包装 u64，变体与位分配严格按 RFC-1：
       `Char(catcode 4b + charcode 21b)` / `ControlSeq(csid 32b)` / `MacroParam(num 4b)` /
       `EndGroup` / 保留 tag 5..15
-- [ ] `Debug`/`Meaning` 输出（对照 TeX `\show` 输出格式）
+- [x] `Debug`/`Meaning` 输出（对照 TeX `\show` 输出格式）
 - 验证：单元测试覆盖 RFC-1 §3 变体表 + §8 用例 4（BMP+ 字符）、5（active char 的 meaning）、8（往返一致性）
 
 **M1-2 InternTable（csid 驻留）**（RFC-1 §4）
-- [ ] 名字去重表：`name → csid`，csid=u32 数组下标
-- [ ] `\csname..\endcsname` 动态建 cs：命中复用、未命中追加（不可变版本切换）
-- [ ] `\meaning` 名字查询走 InternTable
+- [x] 名字去重表：`name → csid`，csid=u32 数组下标
+- [ ] `\csname..\endcsname` 动态建 cs：命中复用、未命中追加（不可变版本切换）——待补
+- [x] `\meaning` 名字查询走 InternTable
 - 验证：用例 1（动态建名含空 csname、非法字符）；并发预留（M6 再做原子追加）
 
 **M1-3 eqtb 槽版本化**（RFC-1 §5）
-- [ ] eqtb 槽枚举：`Undefined/Macro{version, def}/Primitive(prim_id)/Register/RegisterIndex/Alias(csid)`
-- [ ] `\let\a\b` → `Alias(csid)` 间接（不复制宏体）；链式别名
-- [ ] `\chardef`/`\mathchardef` → `RegisterIndex` 语义
+- [x] eqtb 槽枚举：`Undefined/Macro{version, def}/Primitive(prim_id)/Register/RegisterIndex/Alias(csid)`
+- [x] `\let\a\b` → `Alias(csid)` 间接（不复制宏体）；链式别名
+- [ ] `\chardef`/`\mathchardef` → `RegisterIndex` 语义——待补
 - 验证：用例 2（链式别名、`\let` 到 `\outer`）、6（`\ifx` 对 Alias 不展开）
 
 **M1-4 输入与 catcode 固化**
-- [ ] 字节流输入 → 16 种 catcode 表查询 → 生成 `Char` token，**token 内固化当时 catcode**
-- [ ] catcode 动态修改原语（`\catcode`）只影响后续输入，不回写已生成 token
-- [ ] active char（catcode 13）生成后查 eqtb 展开
+- [x] 字节流输入 → 16 种 catcode 表查询 → 生成 `Char` token，**token 内固化当时 catcode**
+- [x] catcode 动态修改原语（`\catcode`）只影响后续输入，不回写已生成 token
+- [x] active char（catcode 13）生成后查 eqtb 展开
 - 验证：与 pdfTeX 对照"改 catcode 后已读 token 不受影响"的行为
 
 **M1-5 宏定义与 MacroDef**（RFC-1 §5）
-- [ ] `MacroDef { params: ParamSpec, body: TokenArray }`，body 为连续不可变切片
-- [ ] `\def`/`\edef`/`\gdef`：定义时捕获 token 数组；`\edef` 定义期全展开
-- [ ] 宏体内 `#` 三态：`#1` 参数槽 / `##` 字面 / 非法 `#` 报错（RFC-1 §8 用例 5）
-- [ ] `\newcommand`（经 `\def` + 存在性检查语义）
-- 验证：用例 5、7（分隔串按 token 序列匹配）
+- [x] `MacroDef { params: ParamSpec, body: TokenArray }`，body 为连续不可变切片
+- [x] `\def`/`\edef`/`\gdef`：定义时捕获 token 数组；`\edef` 定义期全展开
+- [x] 宏体内 `#` 三态：`#1` 参数槽 / `##` 字面 / 非法 `#` 报错（RFC-1 §8 用例 5）
+- [ ] `\newcommand`（经 `\def` + 存在性检查语义）——未实现
+- 验证：用例 5、7（分隔串按 token 序列匹配——分隔参数待 M1-8）
 
 **M1-6 展开主循环**
-- [ ] "读 token → 可展开则展开（循环至不可展开）→ 节点入队 / 原语执行"
-- [ ] 可展开/不可展开二分表（含 `\protected` 语义占位，e-TeX 在 M4 补全）
-- [ ] 宏调用 = 查 eqtb → 展开 MacroDef（先做朴素 token 替换，M2 换字节码）
-- 验证：TRIP 基础部分逐步点亮
+- [x] "读 token → 可展开则展开（循环至不可展开）→ 节点入队 / 原语执行"
+- [x] 可展开/不可展开二分表（含 `\protected` 语义占位，e-TeX 在 M4 补全）
+- [x] 宏调用 = 查 eqtb → 展开 MacroDef（M2 已换字节码）
+- 验证：TRIP 基础部分逐步点亮（待 M1-14）
 
 **M1-7 扫描顺序原语**
-- [ ] `\expandafter`/`\noexpand`/`\futurelet`/`\aftergroup`/`\afterassignment`
+- [x] `\expandafter`/`\noexpand`/`\futurelet`/`\aftergroup`/`\afterassignment`
 - 验证：与 pdfTeX 对照这些原语的交互行为（这是最易翻车处，专项测试）
 
 **M1-8 参数匹配**
-- [ ] 无分隔参数：`#1..#9` 实参收集（平衡组规则）
-- [ ] 分隔参数：分隔串按 **token 序列**匹配（RFC-1 §8 用例 7）
-- [ ] `\long` 与"参数中禁 `\par`"错误语义
+- [ ] 无分隔参数：`#1..#9` 实参收集（平衡组规则）——已实现（无分隔部分）
+- [ ] 分隔参数：分隔串按 **token 序列**匹配（RFC-1 §8 用例 7）——待补
+- [ ] `\long` 与"参数中禁 `\par`"错误语义——待补
 - 验证：嵌套宏实参传递用例集
 
 **M1-9 条件原语**
-- [ ] `\if`/`\ifnum`/`\ifdim`/`\ifx`/`\ifcase` + `\else`/`\fi`
-- [ ] **惰性求值**：未走分支不展开（跳过 token 流）
-- [ ] `\ifx` 比较规则：Char 比 (catcode,char)，CS 比同一 csid（RFC-1 §2）
+- [x] `\if`/`\ifnum`/`\ifdim`/`\ifx`/`\ifcase` + `\else`/`\fi`
+- [x] **惰性求值**：未走分支不展开（跳过 token 流）
+- [x] `\ifx` 比较规则：Char 比 (catcode,char)，CS 比同一 csid（RFC-1 §2）
 - 验证：含嵌套 `\if` 与跨宏条件用例
 
 **M1-10 寄存器与内部量**
-- [ ] `\count`/`\dimen`/`\skip`/`\toks` + 赋值原语 + `\the`
-- [ ] 内部量表示：scaled point（sp，2^-16 pt）定点数
-- [ ] 寄存器读写走 eqtb 槽（版本化，为 M5 依赖追踪铺路）
-- 验证：`\the\count`/`\the\dimen` 输出与 pdfTeX 逐位一致
+- [x] `\count`/`\dimen`/`\skip`/`\toks` + 赋值原语 + `\the`（`\box`/`\muskip` 未实现）
+- [x] 内部量表示：scaled point（sp，2^-16 pt）定点数
+- [x] 寄存器读写走 eqtb 槽（版本化，为 M5 依赖追踪铺路）
+- 验证：`\the\count`/`\the\dimen` 输出与 pdfTeX 逐位一致（单位换算已校准）
 
 **M1-11 组与作用域**
-- [ ] `{...}`/`\begingroup...\endgroup`：组内赋值组尾回滚
-- [ ] M1 先做**朴素快照回滚**（正确性），M2 换 eqtb 版本指针（O(1)）
+- [x] `{...}`/`\begingroup...\endgroup`：组内赋值组尾回滚（朴素快照回滚）
+- [ ] 朴素快照回滚 → eqtb 版本指针（O(1)）——未做
 - 验证：`\global` 与非全局赋值回滚行为对照
 
 **M1-12 模式状态机（空壳）**
-- [ ] 垂直/水平/数学/内部 四种模式 + 切换规则（`\par`/`$`/`\hbox{}` 等触发点占位）
-- [ ] 数学模式 M1 只承接 token 不排版（M4 填实）
+- [x] 垂直/水平/数学/内部 四种模式 —— 被 M3-2 取代：模式状态机实现在 `ntex-layout::typeset`（Vertical/Horizontal/RestrictedHorizontal）
+- [ ] 数学模式——M4 填实
 - 验证：模式切换错误信息与 pdfTeX 一致
 
 **M1-13 错误模型**
-- [ ] 错误上下文输出（"! ..." + 上下文行）+ 四种交互模式（`\batchmode` 等）
+- [ ] 错误上下文输出（"! ..." + 上下文行）+ 四种交互模式（`\batchmode` 等）——待补
 - 验证：构造错误用例，输出与 pdfTeX 逐字符一致
 
 **M1-14 TRIP 冲刺**
-- [ ] 涉及排版/字体的部分用 `\hbox` 兜底占位（硬口径：语义 bug 绝不带进 M2）
+- [ ] 涉及排版/字体的部分用 `\hbox` 兜底占位（硬口径：语义 bug 绝不带进 M2）——**未完成，M1 大门未关**
 - [ ] **TRIP 全绿**（输出 diff 可读化脚本已在 M0 就绪）
 - 验证：`\input trip` 输出与参考文件一致
 
 **M1-15 性能基线**
-- [ ] 记录每千 token 展开吞吐基线（**不做优化**，仅存档，供 M2 对照）
+- [x] 记录每千 token 展开吞吐基线（**不做优化**，仅存档，供 M2 对照）
 
 **验收**：TRIP 通过（硬口径）；错误行为与 pdfTeX 一致。
 **风险**：TRIP 是"实现后才知道哪错"的黑盒 → 提前做好 TRIP 输出 diff 的可读化。
+**现状**：M1 核心（1~7、9~11）已实现；M1-8 分隔参数、M1-13 错误模型、M1-14 TRIP 冲刺待补——TRIP 未全绿前 M1 验收项保持未勾选。
 
 ---
 
@@ -168,45 +181,44 @@
 ### 实施步骤
 
 **M2-1 字节码 IR 定稿**（RFC-4 草案落地，对接 RFC-1）
-- [ ] 指令集定稿：`PushTok`/`Lookup`/`ExpandCall`/`Branch`/`Assign`/`PopGroup`/`LoadArg(n)`/
-      `ExpandAfter` 等
-- [ ] 操作数编码：**token 以 8B 原值内联**（RFC-1 布局零解包）；cs 以 csid 索引 eqtb
+- [x] 指令集定稿：定长 u64 指令 `Emit{token}`（token 8B 内联）/ `EmitArg{n}` / `End`
+- [x] 操作数编码：**token 以 8B 原值内联**（RFC-1 布局零解包）；cs 以 csid 索引 eqtb
 - 验证：IR 编码往返测试（指令流 → 反汇编 → 等价）
 
 **M2-2 宏定义期编译器**
-- [ ] `MacroDef.body: TokenArray` → 字节码（`#n` 参数槽 → `LoadArg(n)`）
-- [ ] `\if` 条件 → 字节码跳转（保留惰性求值语义：未走分支跳过）
-- [ ] `\expandafter`/`\futurelet` → 专用指令（保持扫描顺序语义）
-- [ ] 编译失败路径：非法宏体（保留报错语义，不静默降级）
+- [x] `MacroDef.body: TokenArray` → 字节码（`#n` 参数槽 → `EmitArg(n)`）
+- [x] 常量条件折叠：平衡 `\iftrue/\iffalse..\else..\fi` 编译期求值，死分支不输出
+- [ ] `\expandafter`/`\futurelet` → 专用指令（保持扫描顺序语义）——未做（仍走运行时）
+- [ ] 编译失败路径：非法宏体（保留报错语义，不静默降级）——未做
 - 验证：每个编译产物与解释器逐 token 展开结果相等（单元级 diff）
 
 **M2-3 字节码执行器 + 双轨并存**
-- [ ] 字节码解释循环（dispatch loop），执行 `MacroDef.code`
-- [ ] 解释器（M1）/字节码（M2）双轨，环境变量切换
-- [ ] **等价性框架**：TRIP + 随机 token 序列 + 宏包片段，双轨输出 diff
+- [x] 字节码解释循环（dispatch loop），执行 `MacroDef.code`
+- [x] 解释器（M1）/字节码（M2）双轨，`Expander::new_interpreter()` 切换
+- [x] **等价性框架**：全部用例自动双轨重跑断言输出一致
 - 验证：M1 全部用例在字节码路径重跑全绿
 
 **M2-4 原语 dispatch 表**
-- [ ] `prim_id → 处理函数`（jump table）；`Primitive` 槽命中即派发
-- [ ] 原语表与 InternTable 预注册（`\catcode` 建立的内建 cs）
+- [x] `prim_id → 处理函数`（jump table）：Rust `match` 派发（等价位跳转表），`Primitive` 槽命中即派发
+- [x] 原语表与 InternTable 预注册（`register_builtins` 建立的内建 cs）
 - 验证：全量原语冒烟测试
 
 **M2-5 内存落地**
-- [ ] token/指令分配：bumpalo arena（整段分配、无逐项 malloc）
-- [ ] TokenArray/Bytecode 同 arena 共存，`.fmt` 序列化友好布局（M7 复用）
+- [ ] token/指令分配：bumpalo arena（整段分配、无逐项 malloc）——未做
+- [ ] TokenArray/Bytecode 同 arena 共存，`.fmt` 序列化友好布局（M7 复用）——未做
 - 验证：arena 泄漏/越界（Debug 断言）+ 长文档稳定性
 
 **M2-6 性能达标与定位**
-- [ ] **基准**：每千 token 展开吞吐 ≥ 解释器 2x；与 pdfTeX 对照记录差距
-- [ ] 火焰图定位热点（预期：eqtb 查询 / 实参拷贝 / arena 边界）
-- [ ] 小步优化：eqtb 槽缓存行布局、实参零拷贝（切片借用）等
+- [x] **基准**：每千 token 展开吞吐——实测 **1.12x**，**未达 2x 目标**（记录入库）
+- [ ] 火焰图定位热点（预期：eqtb 查询 / 实参拷贝 / arena 边界）——未做
+- [ ] 小步优化：eqtb 槽缓存行布局、实参零拷贝（切片借用）等——未做
 - 验证：基准数字入库（M0 基准集），CI 防回归
 
 **M2-7 双轨框架移交**
-- [ ] 双轨等价测试框架保留并文档化（M7 升级 .fmt 时继续使用）
-- [ ] 决策点：字节码成为默认执行路径，解释器退为调试工具
+- [x] 双轨等价测试框架保留并文档化（M7 升级 .fmt 时继续使用）
+- [x] 决策点：字节码成为默认执行路径（`Expander::new()`），解释器退为调试工具
 
-**验收**：TRIP 在字节码路径全绿；吞吐基准达标（≥ 解释器 2x）。
+**验收**：TRIP 在字节码路径全绿——**未达成（继承 M1-14 缺口）**；吞吐基准达标（≥ 解释器 2x）——**未达成（1.12x）**。
 **关卡**：字节码与解释器双轨的等价性测试框架保留到 M7（防 .fmt 升级回归）。
 
 ---
@@ -216,10 +228,10 @@
 **目标**：能产出与 TeX 一致的页面，输出 DVI。
 
 - [x] 排版节点：Char/Glue/Kern/Box/Leaders/Penalty（M3-1，Arena 分配后续做）
-- [x] `\hbox`/`\vbox`/`\vtop` + 维度计算（width/height/depth）（M3-1/2-1；`\vtop` shift、`to/spread` 规格留待 M3-2-2/M3-5）
+- [x] `\hbox`/`\vbox`/`\vtop` + 维度计算（width/height/depth）（M3-1/2-1；`\vtop` shift 待 M3-5 校准、`to/spread` 规格待实现）
 - [x] 基础：`\par`、`\indent`、`\baselineskip`、`\lineskip`（M3-2-2；`\parindent` 等内部参数 + interline glue；段落形状 `\hangindent` 等留待）
 - [x] 胶水拉伸/收缩 + badness + 断行点（breakpoints）（M3-2-3：`badness`/`collect_breakpoints`；词间空白 glue）
-- [ ] Knuth-Plass 折行（单线程，先保证逐位一致）
+- [x] Knuth-Plass 折行（单线程，先保证逐位一致）（M3-3：`linebreak::knuth_plass`，DP + active 集 + fil 阶无限胶水 + `\parfillskip`；demerits 常量待 M3-5 对照 pdfTeX 校准；O(n²) 未做 active 淘汰）
 - [ ] 断页：page builder 状态机 + 断页 DP
 - [ ] TFM 解析 + 字体表（`\font`）；`\shipout` → DVI 写出
 - [ ] **VFS 层 + 副作用模型落地**（RFC-3）：`\write`/`\read`/`\input` 走 VFS
@@ -322,17 +334,17 @@
 
 ## 12. Crate 划分建议（Rust workspace）
 
-| Crate | 职责 |
-|---|---|
-| `ntex-core` | token（8B tagged union）、catcode、InternTable、eqtb 版本化、展开引擎 |
-| `ntex-vm` | 字节码 IR/编译器/执行器、状态版本化 |
-| `ntex-layout` | 节点、Knuth-Plass、断页、数学排版 |
-| `ntex-font` | TFM/OFM、ttf-parser、HarfBuzz 整形、整形缓存 |
-| `ntex-format` | .fmt 序列化/反序列化、mmap、部分求值 |
-| `ntex-incremental` | 求值图、依赖追踪、失效传播 |
-| `ntex-io` | VFS、aux 增量 |
-| `ntex-backend` | PDF/Skia/WebGPU 后端 trait + 实现 |
-| `ntex-cli` / `ntex-wasm` | 命令行 / WASM 前端 |
+| Crate | 职责 | 现状 |
+|---|---|---|
+| `ntex-core` | token（8B tagged union）、catcode、InternTable、eqtb 版本化、展开引擎、**字节码 IR/编译器/执行器（M2 落在此 crate，`ntex-vm` 未单建）**、内部参数、sink 事件流 | ✅ 已建 |
+| `ntex-layout` | 节点、**主循环（模式状态机）**、badness/断行点、Knuth-Plass、断页、数学排版 | ✅ 已建（M3-1/2 完成） |
+| `ntex-pdf` | **最小 PDF 切片（临时）**：Helvetica 标准字体 + 贪心折行 | ✅ 已建（M3-5/M8 正式后端替换） |
+| `ntex-font` | TFM/OFM、ttf-parser、HarfBuzz 整形、整形缓存 | 未建（M3-4） |
+| `ntex-format` | .fmt 序列化/反序列化、mmap、部分求值 | 未建（M7） |
+| `ntex-incremental` | 求值图、依赖追踪、失效传播 | 未建（M5） |
+| `ntex-io` | VFS、aux 增量 | 未建（M3/M5） |
+| `ntex-backend` | PDF/Skia/WebGPU 后端 trait + 实现 | 未建（M8） |
+| `ntex-cli` / `ntex-wasm` | 命令行 / WASM 前端 | 未建（M9） |
 
 ---
 
@@ -344,6 +356,11 @@
 3. 宏体 = **TokenArray**（连续不可变切片）+ 字节码双表示；
 4. InternTable 线性化，csid=u32 下标，`.fmt` mmap 零字符串查找；
 5. M1 的 TRIP 采用**硬口径**：M1 结束全绿，排版部分用 `\hbox` 兜底占位。
+6. **最小 PDF 切片先行**（2026-08，M3 中途）：`ntex-pdf` 用 Helvetica 标准字体 + 贪心折行
+   拉通输出端（验证流水线、保持可见动力）；M3-3 Knuth-Plass / M3-4 TFM / M3-5 DVI 后替换，
+   不作为正式后端。
+7. **VM 保持纯 token 级**（2026-08，M3-2）：排版事件经 `TokenSink`（token/组/原语/glue/kern/
+   penalty/rule/内部参数）单向流出，排版器（ntex-layout）持模式状态机；VM 不依赖布局 crate。
 
 ### 待拍板（每项影响后续架构）
 1. **L1 vs L2 兼容优先级**：先 L1（语义/折行一致）冲 M4，L2（字节）推迟到 M8——已按此排期，需确认。

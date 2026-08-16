@@ -67,6 +67,12 @@ pub enum LeadersKind {
     Xleaders,
 }
 
+/// 胶水无穷阶（tex.web `glue_ord`）：0=普通，1=fil，2=fill，3=filll。
+pub type GlueOrder = u8;
+
+/// `fil` 阶常量。
+pub const GLUE_ORDER_FIL: GlueOrder = 1;
+
 /// 盒子节点：维度在构建时固化并存储（与 TeX 的 box 节点一致），
 /// `\raise`/`\lower`/`\vtop` 等通过 `shift` 表达参考点位移。
 #[derive(Debug, Clone, PartialEq)]
@@ -133,7 +139,15 @@ pub enum Node {
     /// 规则（`\hrule` / `\vrule`）。
     Rule { width: i64, height: i64, depth: i64 },
     /// 胶水：可拉伸 / 可收缩。
-    Glue { width: i64, stretch: i64, shrink: i64 },
+    Glue {
+        width: i64,
+        stretch: i64,
+        shrink: i64,
+        /// 拉伸无穷阶（0=普通，1=fil，2=fill，3=filll）。
+        stretch_order: GlueOrder,
+        /// 收缩无穷阶。
+        shrink_order: GlueOrder,
+    },
     /// 字距（不可拉伸）。
     Kern { width: i64 },
     /// 断行惩罚；`penalty < 0` 表示可选断行点，`penalty >= 10000` 禁止断行。
@@ -259,6 +273,8 @@ mod tests {
             width: w,
             stretch: 0,
             shrink: 0,
+            stretch_order: 0,
+            shrink_order: 0,
         }
     }
 
@@ -371,7 +387,16 @@ mod tests {
 
     #[test]
     fn discardable_classification() {
-        assert!(Node::Glue { width: 0, stretch: 0, shrink: 0 }.is_discardable());
+        assert!(
+            Node::Glue {
+                width: 0,
+                stretch: 0,
+                shrink: 0,
+                stretch_order: 0,
+                shrink_order: 0,
+            }
+            .is_discardable()
+        );
         assert!(Node::Kern { width: 0 }.is_discardable());
         assert!(Node::Penalty { penalty: 0 }.is_discardable());
         assert!(!char_of(1, 1, 1).is_discardable());

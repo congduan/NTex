@@ -13,7 +13,6 @@ pub mod font;
 use std::io;
 
 use ntex_core::SP_PER_PT;
-use ntex_layout::linebreak::simple_lines;
 use ntex_layout::node::{BoxKind, Node};
 use ntex_layout::typeset::Typesetter;
 
@@ -52,51 +51,49 @@ fn build_content(main: &[Node]) -> String {
 }
 
 /// 渲染垂直列表（递归处理 vbox 内容）。
-fn render_vlist(nodes: &[Node], out: &mut String, y: &mut f64, max_width: i64) {
+/// 段落已由排版器（Knuth-Plass）拆成行 hbox，此处每个 hbox 渲染为一行。
+fn render_vlist(nodes: &[Node], out: &mut String, y: &mut f64, _max_width: i64) {
     for node in nodes {
         match node {
             Node::Box(b) if b.kind == BoxKind::HBox => {
-                // 切片：段落 hbox 拆成行（局限：所有顶层 hbox 都被折行）
-                for (s, e) in simple_lines(&b.children, max_width) {
-                    let mut x = MARGIN_PT;
-                    for n in &b.children[s..e] {
-                        match n {
-                            Node::Char { charcode, .. } => {
-                                let s = escape_char(*charcode);
-                                out.push_str(&format!(
-                                    "BT /F1 {} Tf {x:.3} {:.3} Td ({s}) Tj ET\n",
-                                    font::FONT_SIZE_PT,
-                                    y
-                                ));
-                                x += font::char_width_pt(*charcode);
-                            }
-                            Node::Glue { width, .. } | Node::Kern { width } => {
-                                x += *width as f64 / SP_PER_PT as f64;
-                            }
-                            // 行内盒（缩进盒等）：按其宽度推进
-                            Node::Box(inner) => {
-                                x += inner.width as f64 / SP_PER_PT as f64;
-                            }
-                            Node::Rule { width, height, depth } => {
-                                draw_rule(
-                                    out,
-                                    x,
-                                    *y,
-                                    *width as f64 / SP_PER_PT as f64,
-                                    *height as f64 / SP_PER_PT as f64,
-                                    *depth as f64 / SP_PER_PT as f64,
-                                );
-                                x += *width as f64 / SP_PER_PT as f64;
-                            }
-                            _ => {}
+                let mut x = MARGIN_PT;
+                for n in &b.children {
+                    match n {
+                        Node::Char { charcode, .. } => {
+                            let s = escape_char(*charcode);
+                            out.push_str(&format!(
+                                "BT /F1 {} Tf {x:.3} {:.3} Td ({s}) Tj ET\n",
+                                font::FONT_SIZE_PT,
+                                y
+                            ));
+                            x += font::char_width_pt(*charcode);
                         }
+                        Node::Glue { width, .. } | Node::Kern { width } => {
+                            x += *width as f64 / SP_PER_PT as f64;
+                        }
+                        // 行内盒（缩进盒等）：按其宽度推进
+                        Node::Box(inner) => {
+                            x += inner.width as f64 / SP_PER_PT as f64;
+                        }
+                        Node::Rule { width, height, depth } => {
+                            draw_rule(
+                                out,
+                                x,
+                                *y,
+                                *width as f64 / SP_PER_PT as f64,
+                                *height as f64 / SP_PER_PT as f64,
+                                *depth as f64 / SP_PER_PT as f64,
+                            );
+                            x += *width as f64 / SP_PER_PT as f64;
+                        }
+                        _ => {}
                     }
-                    *y -= font::LINE_ADVANCE_PT;
                 }
+                *y -= font::LINE_ADVANCE_PT;
             }
             Node::Box(b) if b.kind == BoxKind::VBox => {
                 // vbox 内容在当前位置渲染；基线推进由内部行/胶水完成（切片近似）
-                render_vlist(&b.children, out, y, max_width);
+                render_vlist(&b.children, out, y, _max_width);
             }
             // 垂直列表里的胶水/字距：基线推进
             Node::Glue { width, .. } | Node::Kern { width } => {

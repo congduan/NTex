@@ -23,7 +23,8 @@ use ntex_core::register::Glue;
 use ntex_core::token::Token;
 use ntex_core::{Primitive, TokenSink};
 
-use crate::node::{BoxKind, BoxNode, FontId, Node};
+use crate::linebreak::knuth_plass;
+use crate::node::{BoxKind, BoxNode, FontId, Node, GLUE_ORDER_FIL};
 
 /// 模式（TeX 模式状态机的 M3-2 子集）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,11 +112,33 @@ impl NodeBuilder {
         self.lists.last_mut().expect("列表栈非空").push(node);
     }
 
-    /// 结束开放段落：把水平列表封装为 hbox 并追加到上层列表。
+    /// 结束开放段落：Knuth-Plass 折行成行 hbox 并追加到上层列表（行间插 interline glue）。
+    /// 段落末尾：裁剪尾部可丢弃节点 + 追加 `\parfillskip`（0pt plus 1fil，末行无限拉伸）。
     fn close_paragraph(&mut self) {
-        let children = self.lists.pop().expect("段落列表");
+        let mut children = self.lists.pop().expect("段落列表");
         self.list_modes.pop();
-        self.push_box(Node::Box(BoxNode::new_hbox(children)));
+        while children.last().is_some_and(Node::is_discardable) {
+            children.pop();
+        }
+        if children.is_empty() {
+            return; // 空段落不产生盒子
+        }
+        children.push(Node::Glue {
+            width: 0,
+            stretch: 1,
+            shrink: 0,
+            stretch_order: GLUE_ORDER_FIL,
+            shrink_order: 0,
+        });
+        let lines = knuth_plass(&children, self.params.hsize, self.params.tolerance);
+        for (s, e) in lines {
+            let mut line: Vec<Node> = children[s..e].to_vec();
+            // 丢弃断点胶水（parfillskip 等）：TeX 折行后断点胶水不入行
+            while line.last().is_some_and(Node::is_discardable) {
+                line.pop();
+            }
+            self.push_box(Node::Box(BoxNode::new_hbox(line)));
+        }
     }
 
     /// 封装盒子内容（group_end 用）。
@@ -157,6 +180,8 @@ impl NodeBuilder {
                     width: g.width,
                     stretch: g.stretch,
                     shrink: g.shrink,
+                    stretch_order: 0,
+                    shrink_order: 0,
                 });
             }
         }
@@ -218,6 +243,8 @@ impl TokenSink for NodeBuilder {
                             width: g.width,
                             stretch: g.stretch,
                             shrink: g.shrink,
+                            stretch_order: 0,
+                            shrink_order: 0,
                         });
                     }
                 }
@@ -320,6 +347,8 @@ impl TokenSink for NodeBuilder {
             width: g.width,
             stretch: g.stretch,
             shrink: g.shrink,
+            stretch_order: 0,
+            shrink_order: 0,
         });
         Ok(())
     }
@@ -715,7 +744,6 @@ mod tests {
             shrink: 3 * SP_PER_PT,
         }
     }
-
     fn typeset_spaced(text: &str) -> Result<Vec<Node>> {
         Typesetter::with_metrics(metrics).with_space(space).typeset(text)
     }
@@ -730,7 +758,12 @@ mod tests {
         let children = spaced_box_children(r"\hbox{a b}");
         assert_eq!(children.len(), 3);
         match &children[1] {
-            Node::Glue { width, stretch, shrink } => {
+            Node::Glue {
+                width,
+                stretch,
+                shrink,
+                ..
+            } => {
                 assert_eq!(*width, 10 * SP_PER_PT);
                 assert_eq!(*stretch, 5 * SP_PER_PT);
                 assert_eq!(*shrink, 3 * SP_PER_PT);
@@ -773,5 +806,35 @@ mod tests {
         let children = spaced_box_children(r"\hbox{a\kern 7pt b}");
         assert_eq!(children.len(), 3); // a + kern + b
         assert!(matches!(children[1], Node::Kern { .. }));
+    }
+
+    // ---------- M3-3 Knuth-Plass 段落折行 ----------
+
+    #[test]
+    fn paragraph_wraps_at_hsize() {
+        // "ab cd" 总宽 5394sp、首行"ab"2195、末行含起点胶水 3199；
+        // \hsize 4000 → 折两行（单行过满 10⁸ > 两行有限 demerits）
+        let src = r"\hsize 4000sp ab cd";
+        let main = Typesetter::with_metrics(metrics)
+            .with_space(|_| Glue {
+                width: 1000,
+                stretch: 500,
+                shrink: 300,
+            })
+            .typeset(src)
+            .unwrap();
+        let lines: Vec<&Node> = main.iter().filter(|n| matches!(n, Node::Box(_))).collect();
+        assert_eq!(lines.len(), 2, "段落应折成两行：{main:?}");
+    }
+
+    #[test]
+    fn paragraph_single_line_when_fits() {
+        let src = r"ab\par cd";
+        let main = typeset(src).unwrap();
+        // 默认 \hsize=6.5in 极大：两段各一行，段间 interline glue
+        assert_eq!(main.len(), 3);
+        assert!(matches!(main[0], Node::Box(_)));
+        assert!(matches!(main[1], Node::Glue { .. }));
+        assert!(matches!(main[2], Node::Box(_)));
     }
 }

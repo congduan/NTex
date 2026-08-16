@@ -15,8 +15,9 @@ pub mod linebreak;
 pub mod node;
 pub mod typeset;
 
-pub use linebreak::{badness, collect_breakpoints, BreakPoint};
+pub use linebreak::{badness, knuth_plass};
 pub use node::{
-    hbox_dimensions, vbox_dimensions, BoxDimensions, BoxKind, BoxNode, FontId, LeadersKind, Node,
+    hbox_dimensions, vbox_dimensions, BoxDimensions, BoxKind, BoxNode, FontId, GlueOrder,
+    LeadersKind, Node, GLUE_ORDER_FIL,
 };
 pub use typeset::{MetricsFn, SpaceFn, Typesetter};

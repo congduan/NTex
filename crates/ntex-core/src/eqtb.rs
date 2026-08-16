@@ -70,6 +70,9 @@ pub enum Primitive {
     LineSkipLimit,
     Indent,
     NoIndent,
+    // M3-3 折行参数
+    HSize,
+    Tolerance,
 }
 
 impl Primitive {

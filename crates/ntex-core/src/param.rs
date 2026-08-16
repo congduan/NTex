@@ -1,8 +1,9 @@
-//! 内部参数（M3-2-2）：`\parindent`、`\baselineskip`、`\lineskip`、`\lineskiplimit`。
+//! 内部参数（M3-2-2/3-3）：`\parindent`、`\baselineskip`、`\lineskip`、
+//! `\lineskiplimit`、`\hsize`、`\tolerance`。
 //!
 //! TeX 的内部参数存储在 eqtb；这里用独立结构体持有。赋值走组作用域
 //! （`SavedValue::Param`），值变化经 [`TokenSink::param_changed`] 事件
-//! 镜像给排版器（ntex-layout），排版器据此计算段落缩进与 interline glue。
+//! 镜像给排版器（ntex-layout），排版器据此计算段落缩进、interline glue 与折行。
 
 use crate::register::{Glue, SP_PER_PT};
 
@@ -13,13 +14,18 @@ pub enum ParamKind {
     BaselineSkip,
     LineSkip,
     LineSkipLimit,
+    /// `\hsize`：行目标宽度（折行用）。
+    HSize,
+    /// `\tolerance`：可接受的最大 badness（折行用）。
+    Tolerance,
 }
 
-/// 参数值：尺寸（dimen）或胶水（glue）。
+/// 参数值：尺寸（dimen）、胶水（glue）或整数（number）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParamValue {
     Dimen(i64),
     Glue(Glue),
+    Number(i64),
 }
 
 /// 内部参数集合（单位 sp）。
@@ -33,11 +39,15 @@ pub struct Params {
     pub lineskip: Glue,
     /// `\lineskiplimit`：行间胶水切换阈值。
     pub lineskiplimit: i64,
+    /// `\hsize`：行目标宽度（TeX initex 默认 6.5in）。
+    pub hsize: i64,
+    /// `\tolerance`：可接受最大 badness（TeX initex 默认 10000）。
+    pub tolerance: i64,
 }
 
 impl Default for Params {
     /// TeX initex 默认值：`\parindent=0`、`\baselineskip=12pt`、
-    /// `\lineskip=0`、`\lineskiplimit=0`。
+    /// `\lineskip=0`、`\lineskiplimit=0`、`\hsize=6.5in`、`\tolerance=10000`。
     fn default() -> Self {
         Self {
             parindent: 0,
@@ -52,6 +62,9 @@ impl Default for Params {
                 shrink: 0,
             },
             lineskiplimit: 0,
+            // 6.5in = 13/2 × 4_736_286 sp
+            hsize: 13 * 4_736_286 / 2,
+            tolerance: 10_000,
         }
     }
 }
@@ -63,6 +76,8 @@ impl Params {
             ParamKind::BaselineSkip => ParamValue::Glue(self.baselineskip),
             ParamKind::LineSkip => ParamValue::Glue(self.lineskip),
             ParamKind::LineSkipLimit => ParamValue::Dimen(self.lineskiplimit),
+            ParamKind::HSize => ParamValue::Dimen(self.hsize),
+            ParamKind::Tolerance => ParamValue::Number(self.tolerance),
         }
     }
 
@@ -72,6 +87,8 @@ impl Params {
             (ParamKind::BaselineSkip, ParamValue::Glue(g)) => self.baselineskip = g,
             (ParamKind::LineSkip, ParamValue::Glue(g)) => self.lineskip = g,
             (ParamKind::LineSkipLimit, ParamValue::Dimen(v)) => self.lineskiplimit = v,
+            (ParamKind::HSize, ParamValue::Dimen(v)) => self.hsize = v,
+            (ParamKind::Tolerance, ParamValue::Number(v)) => self.tolerance = v,
             // 类型不匹配忽略（VM 侧保证参数种类与值类型匹配）
             _ => {}
         }
