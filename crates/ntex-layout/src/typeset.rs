@@ -128,6 +128,10 @@ struct NodeBuilder {
     fonts: Fonts,
     /// 当前字体（TFM 模式由 `font_selected` 事件更新；fn 指针模式恒为 FontId(0)）。
     current_font: FontId,
+    /// `\shipout`：下一个封装盒子作为页面（DVI shipout，M3-5）。
+    shipout_next: bool,
+    /// 已 \shipout 的页面（按顺序）。
+    shipped: Vec<BoxNode>,
 }
 
 impl NodeBuilder {
@@ -141,6 +145,8 @@ impl NodeBuilder {
             param_stack: Vec::new(),
             noindent_next: false,
             current_font: FontId(0),
+            shipout_next: false,
+            shipped: Vec::new(),
             fonts,
         }
     }
@@ -196,6 +202,14 @@ impl NodeBuilder {
                 Node::Box(b)
             }
         };
+        // M3-5：\shipout<box> 把盒子封装为页面而非追加到列表
+        if self.shipout_next {
+            self.shipout_next = false;
+            if let Node::Box(b) = node {
+                self.shipped.push(b);
+            }
+            return;
+        }
         self.push_box(node);
     }
 
@@ -372,6 +386,8 @@ impl TokenSink for NodeBuilder {
                     self.noindent_next = true;
                 }
             }
+            // M3-5：\shipout 后的下一个盒子封装为页面
+            Primitive::ShipOut => self.shipout_next = true,
             // 参数扫描型原语经 glue/kern/penalty/rule 事件处理
             _ => {}
         }
@@ -434,8 +450,9 @@ impl FontLoader for TfmLoader {
         let path = ntex_font::find_tfm(name)
             .ok_or_else(|| Error::invalid_input(format!("找不到 TFM 文件：{name}")))?;
         let bytes = std::fs::read(&path).map_err(|e| Error::io("读取 TFM", path, e))?;
-        let fm = ntex_font::parse_tfm(&bytes)
+        let mut fm = ntex_font::parse_tfm(&bytes)
             .map_err(|e| Error::invalid_input(format!("解析 {name}: {e}")))?;
+        fm.name = name.to_owned(); // DVI fnt_def 的字体名
         // at：目标尺寸/设计字号；scaled：千分比
         let fm = match (at, scaled) {
             (Some(at_sp), None) => {
@@ -502,7 +519,7 @@ impl Typesetter {
         self.expander
             .set_sink(Box::new(NodeBuilder::new(self.fonts.clone())));
         self.expander.run_source(text)?;
-        self.finish()
+        self.finish().map(|o| o.main)
     }
 
     /// 排版字节源码。
@@ -512,7 +529,18 @@ impl Typesetter {
             .set_sink(Box::new(NodeBuilder::new(self.fonts.clone())));
         self.expander.feed_source(bytes);
         self.expander.run()?;
-        self.finish()
+        self.finish().map(|o| o.main)
+    }
+
+    /// 排版源码并取回 `\shipout` 页面（DVI 输出，M3-5）：
+    /// 返回 (页面列表, 字体表快照)。需 [`Self::with_tfm`] 模式（否则字体表为空）。
+    pub fn typeset_dvi(&mut self, text: &str) -> Result<(Vec<BoxNode>, Vec<FontMetrics>)> {
+        self.install_font_loader();
+        self.expander
+            .set_sink(Box::new(NodeBuilder::new(self.fonts.clone())));
+        self.expander.run_source(text)?;
+        let out = self.finish()?;
+        Ok((out.shipped, out.fonts))
     }
 
     /// TFM 模式：把共享字体表接给 VM 的 `\font` 加载器。
@@ -523,8 +551,8 @@ impl Typesetter {
         }
     }
 
-    /// 运行结束收尾：关闭开放段落、校验盒子/组闭合，取回主垂直列表。
-    fn finish(&mut self) -> Result<Vec<Node>> {
+    /// 运行结束收尾：关闭开放段落、校验盒子/组闭合，取回主列表与页面。
+    fn finish(&mut self) -> Result<FinishOutput> {
         let mut sink = self.expander.take_sink();
         let builder = sink
             .as_any_mut()
@@ -532,6 +560,9 @@ impl Typesetter {
             .ok_or_else(|| Error::internal("typesetter 安装了 NodeBuilder"))?;
         if builder.pending_box.is_some() {
             return Err(Error::invalid_input("\\hbox/\\vbox 后缺少组"));
+        }
+        if builder.shipout_next {
+            return Err(Error::invalid_input("\\shipout 后缺少盒子"));
         }
         if !builder.groups.is_empty() {
             return Err(Error::invalid_input("组未闭合（缺少 }）"));
@@ -541,8 +572,24 @@ impl Typesetter {
         }
         let mut lists = std::mem::take(&mut builder.lists);
         debug_assert_eq!(lists.len(), 1, "收尾后应只剩主列表");
-        Ok(lists.pop().expect("主列表"))
+        let shipped = std::mem::take(&mut builder.shipped);
+        let fonts = match &self.fonts {
+            Fonts::Tfm(table) => table.borrow().clone(),
+            Fonts::Fn { .. } => Vec::new(),
+        };
+        Ok(FinishOutput {
+            main: lists.pop().expect("主列表"),
+            shipped,
+            fonts,
+        })
     }
+}
+
+/// `finish` 的返回：主垂直列表 + `\shipout` 页面 + 字体表快照。
+struct FinishOutput {
+    main: Vec<Node>,
+    shipped: Vec<BoxNode>,
+    fonts: Vec<FontMetrics>,
 }
 
 impl Default for Typesetter {

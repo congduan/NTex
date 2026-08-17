@@ -1,0 +1,14 @@
+[package]
+name = "ntex-dvi"
+description = "NTex DVI 写出器（M3-5）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ntex-layout.workspace = true
+ntex-font.workspace = true
+
+[lints]
+workspace = true

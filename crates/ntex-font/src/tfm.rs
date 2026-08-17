@@ -71,9 +71,16 @@ impl<'a> Reader<'a> {
 /// 解析后的字体度量（维度已按设计字号换算为 sp）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FontMetrics {
-    /// 设计字号（sp）。
+    /// 设计字号（sp，**未缩放**的原设计字号；DVI `fnt_def` 的 d 字段）。
     pub design_size_sp: i64,
-    /// charcode → (width, height, depth)（sp）。
+    /// DVI `fnt_def` 的 s 字段：实际尺寸/设计字号 × 2^20（`scaled_by` 更新；
+    /// 原尺寸 = 2^20）。
+    pub scale: i64,
+    /// TFM 头部校验和（header[0]；DVI `fnt_def` 的 c 字段）。
+    pub checksum: u32,
+    /// 外部字体名（如 "cmr10"；加载器填充，DVI `fnt_def` 的 name）。
+    pub name: String,
+    /// charcode → (width, height, depth)（sp，已按当前缩放换算）。
     pub chars: Vec<Option<(i64, i64, i64)>>,
     /// 字体参数（TeX 参数 1..=7，sp；缺失为 0）。
     pub slant: i64,
@@ -106,6 +113,9 @@ impl FontMetrics {
 
     /// 按 `num/den` 缩放全部维度（`\font..at 12pt`：num=12pt, den=design_size_sp；
     /// `\font..scaled 1200`：num=1200, den=1000）。逐项四舍五入（远离零）。
+    ///
+    /// 设计字号（`design_size_sp`）保持原值——DVI `fnt_def` 的 d 用原设计字号、
+    /// s 用 [`Self::scale`]（= round(num/den × 2^20)）。
     pub fn scaled_by(&self, num: i64, den: i64) -> FontMetrics {
         let scale = |v: i64| {
             let n = v as i128 * num as i128;
@@ -116,8 +126,12 @@ impl FontMetrics {
                 -(((-n) + d / 2) / d) as i64
             }
         };
+        let scale_s = scale(1 << 20);
         FontMetrics {
-            design_size_sp: scale(self.design_size_sp),
+            design_size_sp: self.design_size_sp,
+            scale: scale_s,
+            checksum: self.checksum,
+            name: self.name.clone(),
             chars: self
                 .chars
                 .iter()
@@ -163,18 +177,28 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
         )));
     }
 
-    // 头部字：header[1] = 设计字号（fix_word，pt）
+    // 头部字：header[0] = checksum，header[1] = 设计字号（fix_word，pt）
     let mut design_word: i64 = 0;
+    let mut checksum: u32 = 0;
     for i in 0..lh {
-        let w = r.u32()? as i32 as i64;
-        if i == 1 {
-            design_word = w;
+        let w = r.u32()?;
+        if i == 0 {
+            checksum = w;
+        } else if i == 1 {
+            design_word = w as i32 as i64;
         }
     }
     // design_sp = design_pt × 2^16 = (word / 2^20) × 2^16 = word / 16
     let design_size_sp = design_word / 16;
-    // fix_word（设计字号单位）→ sp（四舍五入）
-    let scale = |v: i64| (v * design_size_sp + (1 << 19)) >> 20;
+    // fix_word（设计字号单位）→ sp：**截断**（对照真实 TeX：cmr10 'H' 高
+    // 0xAEEEE×0.625=447828.75 → 447828，而非四舍五入 447829）
+    let scale = |v: i64| {
+        if v >= 0 {
+            (v * design_size_sp) >> 20
+        } else {
+            -(((-v) as i128 * design_size_sp as i128 + (1 << 19)) >> 20) as i64
+        }
+    };
 
     // 字符信息表：(ec - bc + 1) 个 32 位字
     let mut char_info: Vec<(usize, usize, usize)> = Vec::with_capacity(count);
@@ -214,6 +238,9 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
     let p = |i: usize| params.get(i).map(|&v| scale(v)).unwrap_or(0);
     Ok(FontMetrics {
         design_size_sp,
+        scale: 1 << 20, // 设计字号 = 原尺寸
+        checksum,
+        name: String::new(), // 加载器（ntex-layout TfmLoader）填充
         chars,
         slant: p(0),
         space: p(1),
@@ -384,17 +411,20 @@ mod tests {
     #[test]
     fn scaled_by_scales_all_dims() {
         let fm = parse_tfm(&synthetic_tfm()).expect("解析合成 TFM");
-        // scaled 1200 → 1.2×：设计 10pt → 12pt；A 宽 375000 → 450000
+        assert_eq!(fm.scale, 1 << 20, "解析默认原尺寸");
+        // scaled 1200 → 1.2×：A 宽 375000 → 450000；设计字号保持 10pt
         let s = fm.scaled_by(1200, 1000);
-        assert_eq!(s.design_size_sp, 12 * 65_536);
+        assert_eq!(s.design_size_sp, 10 * 65_536, "设计字号不随缩放改变");
+        assert_eq!(s.scale, 1_258_291, "DVI s = round(1.2 × 2^20)");
         assert_eq!(s.char_metrics(65), (450_000, 300_000, 75_000));
         assert_eq!(s.space, 225_000);
         assert_eq!(s.quad, 525_000);
         // scaled 1000 → 恒等
         assert_eq!(fm.scaled_by(1000, 1000), fm);
-        // scaled 0 → 全零
+        // scaled 0 → 全零维度，scale 0
         let z = fm.scaled_by(0, 1000);
-        assert_eq!(z.design_size_sp, 0);
+        assert_eq!(z.design_size_sp, 10 * 65_536);
+        assert_eq!(z.scale, 0);
         assert_eq!(z.char_metrics(65), (0, 0, 0));
     }
 }

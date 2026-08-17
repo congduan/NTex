@@ -628,6 +628,8 @@ impl Expander {
             }
             // M3-4 字体
             Primitive::Font => self.exec_font(),
+            // M3-5 输出：\shipout 直通 sink（排版器解释：封装下一盒子为页面）
+            Primitive::ShipOut => self.sink.primitive(prim),
         }
     }
 
@@ -1135,7 +1137,7 @@ impl Expander {
 
     /// 注册 M1 内建原语。
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 51] = [
+        const BUILTINS: [(&str, Primitive); 52] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -1195,6 +1197,8 @@ impl Expander {
             ("tolerance", Primitive::Tolerance),
             // M3-4 字体
             ("font", Primitive::Font),
+            // M3-5 输出
+            ("shipout", Primitive::ShipOut),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);

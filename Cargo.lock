@@ -207,6 +207,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ntex-dvi"
+version = "0.1.0"
+dependencies = [
+ "ntex-font",
+ "ntex-layout",
+]
+
+[[package]]
 name = "ntex-font"
 version = "0.1.0"
 dependencies = [

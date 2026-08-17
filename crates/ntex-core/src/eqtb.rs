@@ -75,6 +75,8 @@ pub enum Primitive {
     Tolerance,
     // M3-4 字体：\font<cs>=<名字>[at/scaled]
     Font,
+    // M3-5 输出：\shipout<box>（直通 sink，由排版器封装页面）
+    ShipOut,
 }
 
 impl Primitive {
