@@ -12,16 +12,20 @@
 //! 经 `param_changed` 事件镜像，随组作用域快照/恢复。
 //!
 //! M3-2 范围说明（后续子步补齐）：
-//! - 字体度量（M3-4 TFM）前，字符维度由 [`Typesetter::with_metrics`] 提供，默认全零；
-//! - 词间空白（M3-3）未实现，空格 token 被忽略；
+//! - 字体度量：M3-4 TFM 前由 [`Typesetter::with_metrics`] 提供 fn 指针（默认全零）；
+//!   [`Typesetter::with_tfm`] 启用真实 TFM 度量（`\font\cs=cmr10` + 词间距来自字体参数）；
 //! - `\hbox to <glue>` / `\hbox spread <glue>` 规格暂拒。
+
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use ntex_core::error::{Error, Result};
 use ntex_core::expand::Expander;
 use ntex_core::param::{ParamKind, ParamValue, Params};
 use ntex_core::register::Glue;
 use ntex_core::token::Token;
-use ntex_core::{Primitive, TokenSink};
+use ntex_core::{FontLoader, Primitive, TokenSink};
+use ntex_font::FontMetrics;
 
 use crate::linebreak::knuth_plass;
 use crate::node::{BoxKind, BoxNode, FontId, Node, GLUE_ORDER_FIL};
@@ -64,6 +68,43 @@ pub type MetricsFn = fn(FontId, u32) -> (i64, i64, i64);
 /// 词间空白胶水函数（空格 token → 胶水；M3-4 TFM 前由调用方提供）。
 pub type SpaceFn = fn(FontId) -> Glue;
 
+/// 字体度量来源：fn 指针占位（M3-4 前 / ntex-pdf 临时切片）或 TFM 字体表（M3-4）。
+#[derive(Debug, Clone)]
+enum Fonts {
+    /// fn 指针占位：字符维度/词间距由调用方提供（`with_metrics`/`with_space`）。
+    Fn {
+        metrics: MetricsFn,
+        space: SpaceFn,
+    },
+    /// TFM 字体表（`with_tfm`）：FontId → 度量；`\font` 加载时追加。
+    /// `Rc<RefCell>` 让加载器（[`TfmLoader`]）与节点构建器共享同一张表。
+    Tfm(Rc<RefCell<Vec<FontMetrics>>>),
+}
+
+impl Fonts {
+    fn metrics(&self, font: FontId, charcode: u32) -> (i64, i64, i64) {
+        match self {
+            Fonts::Fn { metrics, .. } => (metrics)(font, charcode),
+            Fonts::Tfm(table) => table
+                .borrow()
+                .get(font.0 as usize)
+                .map(|fm| fm.char_metrics(charcode))
+                .unwrap_or((0, 0, 0)),
+        }
+    }
+
+    fn space(&self, font: FontId) -> Glue {
+        match self {
+            Fonts::Fn { space, .. } => (space)(font),
+            Fonts::Tfm(table) => table
+                .borrow()
+                .get(font.0 as usize)
+                .map(|fm| fm.space_glue())
+                .unwrap_or(Glue::ZERO),
+        }
+    }
+}
+
 /// 节点构建 sink：把 VM 排版事件转成节点列表。
 #[derive(Debug)]
 struct NodeBuilder {
@@ -83,14 +124,14 @@ struct NodeBuilder {
     param_stack: Vec<Params>,
     /// `\noindent`：下一个段落不缩进。
     noindent_next: bool,
-    /// 字符度量（M3-4 TFM 前占位）。
-    metrics: MetricsFn,
-    /// 词间空白胶水（M3-4 TFM 前占位）。
-    space: SpaceFn,
+    /// 字体度量来源（M3-4：fn 指针占位或 TFM 字体表）。
+    fonts: Fonts,
+    /// 当前字体（TFM 模式由 `font_selected` 事件更新；fn 指针模式恒为 FontId(0)）。
+    current_font: FontId,
 }
 
 impl NodeBuilder {
-    fn new(metrics: MetricsFn, space: SpaceFn) -> Self {
+    fn new(fonts: Fonts) -> Self {
         Self {
             lists: vec![Vec::new()],
             list_modes: vec![Mode::Vertical],
@@ -99,8 +140,8 @@ impl NodeBuilder {
             params: Params::default(),
             param_stack: Vec::new(),
             noindent_next: false,
-            metrics,
-            space,
+            current_font: FontId(0),
+            fonts,
         }
     }
 
@@ -213,9 +254,9 @@ impl NodeBuilder {
     /// 字符 token → Char 节点；非字符（控制序列等）返回 None。
     fn char_node(&self, tok: Token) -> Option<Node> {
         let charcode = tok.charcode()?;
-        let (w, h, d) = (self.metrics)(FontId(0), charcode);
+        let (w, h, d) = self.fonts.metrics(self.current_font, charcode);
         Some(Node::Char {
-            font: FontId(0),
+            font: self.current_font,
             charcode,
             width: w,
             height: h,
@@ -238,7 +279,7 @@ impl TokenSink for NodeBuilder {
                         Some(_) => false,
                     };
                     if !ignorable {
-                        let g = (self.space)(FontId(0));
+                        let g = self.fonts.space(self.current_font);
                         self.append(Node::Glue {
                             width: g.width,
                             stretch: g.stretch,
@@ -342,6 +383,12 @@ impl TokenSink for NodeBuilder {
         Ok(())
     }
 
+    fn font_selected(&mut self, font: u32) -> Result<()> {
+        // fn 指针模式恒为 FontId(0)；TFM 模式更新当前字体
+        self.current_font = FontId(font);
+        Ok(())
+    }
+
     fn glue(&mut self, g: Glue) -> Result<()> {
         self.append(Node::Glue {
             width: g.width,
@@ -373,11 +420,46 @@ impl TokenSink for NodeBuilder {
     }
 }
 
+/// TFM 字体加载器（M3-4）：`\font` 执行时按名字查找/解析 TFM，追加到共享字体表。
+#[derive(Debug)]
+struct TfmLoader {
+    table: Rc<RefCell<Vec<FontMetrics>>>,
+}
+
+impl FontLoader for TfmLoader {
+    fn load(&mut self, name: &str, at: Option<i64>, scaled: Option<i64>) -> Result<u32> {
+        if at.is_some() && scaled.is_some() {
+            return Err(Error::invalid_input("\\font 的 at 与 scaled 不能同时给出"));
+        }
+        let path = ntex_font::find_tfm(name)
+            .ok_or_else(|| Error::invalid_input(format!("找不到 TFM 文件：{name}")))?;
+        let bytes = std::fs::read(&path).map_err(|e| Error::io("读取 TFM", path, e))?;
+        let fm = ntex_font::parse_tfm(&bytes)
+            .map_err(|e| Error::invalid_input(format!("解析 {name}: {e}")))?;
+        // at：目标尺寸/设计字号；scaled：千分比
+        let fm = match (at, scaled) {
+            (Some(at_sp), None) => {
+                let den = fm.design_size_sp;
+                if den <= 0 {
+                    return Err(Error::invalid_input(format!("{name} 设计字号非法")));
+                }
+                fm.scaled_by(at_sp, den)
+            }
+            (None, Some(s)) => fm.scaled_by(s, 1000),
+            _ => fm,
+        };
+        let mut table = self.table.borrow_mut();
+        let id = u32::try_from(table.len())
+            .map_err(|_| Error::internal("字体表溢出（> 2^32 字体）"))?;
+        table.push(fm);
+        Ok(id)
+    }
+}
+
 /// 排版器：VM token 流 → 节点树（主垂直列表）。
 pub struct Typesetter {
     expander: Expander,
-    metrics: MetricsFn,
-    space: SpaceFn,
+    fonts: Fonts,
 }
 
 impl Typesetter {
@@ -390,36 +472,55 @@ impl Typesetter {
     pub fn with_metrics(metrics: MetricsFn) -> Self {
         Self {
             expander: Expander::new(),
-            metrics,
-            space: |_| Glue {
-                width: 0,
-                stretch: 0,
-                shrink: 0,
+            fonts: Fonts::Fn {
+                metrics,
+                space: |_| Glue::ZERO,
             },
         }
     }
 
-    /// 指定词间空白胶水函数（空格 token → 胶水）。
+    /// 指定词间空白胶水函数（空格 token → 胶水；仅 fn 指针模式生效）。
     pub fn with_space(mut self, space: SpaceFn) -> Self {
-        self.space = space;
+        if let Fonts::Fn { space: s, .. } = &mut self.fonts {
+            *s = space;
+        }
         self
+    }
+
+    /// TFM 字体模式（M3-4）：`\font\cs=cmr10` 加载真实度量，
+    /// 字符维度/词间空白来自 TFM；`\font` 定义的 cs 作为字体选择器。
+    pub fn with_tfm() -> Self {
+        Self {
+            expander: Expander::new(),
+            fonts: Fonts::Tfm(Rc::new(RefCell::new(Vec::new()))),
+        }
     }
 
     /// 排版源码，返回主垂直列表节点。
     pub fn typeset(&mut self, text: &str) -> Result<Vec<Node>> {
+        self.install_font_loader();
         self.expander
-            .set_sink(Box::new(NodeBuilder::new(self.metrics, self.space)));
+            .set_sink(Box::new(NodeBuilder::new(self.fonts.clone())));
         self.expander.run_source(text)?;
         self.finish()
     }
 
     /// 排版字节源码。
     pub fn typeset_bytes(&mut self, bytes: impl Into<Vec<u8>>) -> Result<Vec<Node>> {
+        self.install_font_loader();
         self.expander
-            .set_sink(Box::new(NodeBuilder::new(self.metrics, self.space)));
+            .set_sink(Box::new(NodeBuilder::new(self.fonts.clone())));
         self.expander.feed_source(bytes);
         self.expander.run()?;
         self.finish()
+    }
+
+    /// TFM 模式：把共享字体表接给 VM 的 `\font` 加载器。
+    fn install_font_loader(&mut self) {
+        if let Fonts::Tfm(table) = &self.fonts {
+            self.expander
+                .set_font_loader(Box::new(TfmLoader { table: table.clone() }));
+        }
     }
 
     /// 运行结束收尾：关闭开放段落、校验盒子/组闭合，取回主垂直列表。
@@ -836,5 +937,119 @@ mod tests {
         assert!(matches!(main[0], Node::Box(_)));
         assert!(matches!(main[1], Node::Glue { .. }));
         assert!(matches!(main[2], Node::Box(_)));
+    }
+
+    // ---------- M3-4 TFM（cmr10） ----------
+
+    /// 解析真实 cmr10 度量（无 TeX 安装则 None，测试跳过）。
+    fn cmr10_metrics() -> Option<FontMetrics> {
+        let path = ntex_font::find_tfm("cmr10")?;
+        let bytes = std::fs::read(path).ok()?;
+        ntex_font::parse_tfm(&bytes).ok()
+    }
+
+    fn tfm_chars(src: &str) -> (Vec<u32>, i64, i64, i64) {
+        let mut ts = Typesetter::with_tfm();
+        let main = ts.typeset(src).unwrap();
+        assert_eq!(main.len(), 1);
+        let b = as_box(&main[0]);
+        let chars: Vec<u32> = b.children.iter().map(as_char).collect();
+        (chars, b.width, b.height, b.depth)
+    }
+
+    #[test]
+    fn tfm_char_metrics_from_cmr10() {
+        let Some(fm) = cmr10_metrics() else {
+            eprintln!("未找到 cmr10.tfm，跳过");
+            return;
+        };
+        let (chars, width, height, depth) = tfm_chars(r"\font\cmr=cmr10\cmr abc");
+        assert_eq!(chars, vec![b'a' as u32, b'b' as u32, b'c' as u32]);
+        let (wa, ha, da) = fm.char_metrics(b'a' as u32);
+        let (wb, hb, db) = fm.char_metrics(b'b' as u32);
+        let (wc, hc, dc) = fm.char_metrics(b'c' as u32);
+        assert_eq!(width, wa + wb + wc);
+        assert_eq!(height, ha.max(hb).max(hc));
+        assert_eq!(depth, da.max(db).max(dc));
+    }
+
+    #[test]
+    fn tfm_at_scales_metrics() {
+        let Some(fm) = cmr10_metrics() else {
+            eprintln!("未找到 cmr10.tfm，跳过");
+            return;
+        };
+        // at 12pt：缩放因子 = 12pt / 10pt（= 1.2）
+        let scaled = fm.scaled_by(12 * SP_PER_PT, fm.design_size_sp);
+        let (chars, width, height, _) = tfm_chars(r"\font\cmr=cmr10 at 12pt\cmr a");
+        assert_eq!(chars, vec![b'a' as u32]);
+        let (w, h, _) = scaled.char_metrics(b'a' as u32);
+        assert_eq!(width, w);
+        assert_eq!(height, h);
+    }
+
+    #[test]
+    fn tfm_scaled_1200_matches() {
+        let Some(fm) = cmr10_metrics() else {
+            eprintln!("未找到 cmr10.tfm，跳过");
+            return;
+        };
+        let scaled = fm.scaled_by(1200, 1000);
+        let (_, width, _, _) = tfm_chars(r"\font\cmr=cmr10 scaled 1200\cmr a");
+        let (w, _, _) = scaled.char_metrics(b'a' as u32);
+        assert_eq!(width, w);
+    }
+
+    #[test]
+    fn tfm_space_glue_from_font_params() {
+        let Some(fm) = cmr10_metrics() else {
+            eprintln!("未找到 cmr10.tfm，跳过");
+            return;
+        };
+        let g = fm.space_glue();
+        let mut ts = Typesetter::with_tfm();
+        let main = ts.typeset(r"\font\cmr=cmr10\hbox{\cmr a b}").unwrap();
+        let b = as_box(&main[0]);
+        assert_eq!(b.children.len(), 3);
+        match &b.children[1] {
+            Node::Glue {
+                width,
+                stretch,
+                shrink,
+                ..
+            } => {
+                assert_eq!(*width, g.width, "词间距来自字体 space 参数");
+                assert_eq!(*stretch, g.stretch);
+                assert_eq!(*shrink, g.shrink);
+            }
+            other => panic!("预期词间 Glue，得到 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tfm_missing_font_errors() {
+        let mut ts = Typesetter::with_tfm();
+        assert!(ts.typeset(r"\font\x=definitely_not_a_font").is_err());
+    }
+
+    #[test]
+    fn tfm_fonts_persist_across_typeset_calls() {
+        let Some(fm) = cmr10_metrics() else {
+            eprintln!("未找到 cmr10.tfm，跳过");
+            return;
+        };
+        let mut ts = Typesetter::with_tfm();
+        ts.typeset(r"\font\cmr=cmr10").unwrap();
+        let (_, width, _, _) = tfm_chars_in(&mut ts, r"\cmr a");
+        let (w, _, _) = fm.char_metrics(b'a' as u32);
+        assert_eq!(width, w);
+    }
+
+    fn tfm_chars_in(ts: &mut Typesetter, src: &str) -> (Vec<u32>, i64, i64, i64) {
+        let main = ts.typeset(src).unwrap();
+        assert_eq!(main.len(), 1);
+        let b = as_box(&main[0]);
+        let chars: Vec<u32> = b.children.iter().map(as_char).collect();
+        (chars, b.width, b.height, b.depth)
     }
 }

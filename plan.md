@@ -10,10 +10,10 @@
 | M0 地基 | ✅ 完成（workspace/CI/TRIP·diff·bench 工具链；RFC-1/RFC-4 定稿） |
 | M1 展开内核 | 🟡 核心完成：M1-1~7、M1-9~11 已实现（95 用例）；M1-8 分隔参数、M1-13 错误模型、**M1-14 TRIP 冲刺** 待补 |
 | M2 字节码 | 🟡 双轨完成：定长 u64 IR + 编译器 + 解释器等价验证（100 用例）；**吞吐 1.12x 未达 2x 目标**，M2-5 arena 未做 |
-| M3 排版核心 | 🟡 M3-1 节点模型、M3-2 主循环/段落/断行基础 完成（45 用例）；**M3-3 Knuth-Plass、M3-4 TFM、M3-5 DVI** 待做 |
+| M3 排版核心 | 🟡 M3-1 节点模型、M3-2 主循环/段落/断行基础、M3-3 Knuth-Plass、M3-4 TFM（cmr10）完成（58+ 用例）；**M3-5 DVI** 待做 |
 | 输出端 | 🟢 临时 PDF 切片可用（`ntex-pdf`：Helvetica 标准字体 + 贪心折行，可产出可看 PDF） |
 
-**下一步**：M3-3 Knuth-Plass 折行（替换 `simple_lines` 贪心）→ M3-4 TFM（cmr10 真实度量）→ M3-5 DVI。
+**下一步**：M3-5 DVI（断页 + `\shipout` → DVI 写出，用 cmr10 真实度量与 pdfTeX 差分对照）。
 
 ---
 
@@ -232,8 +232,9 @@
 - [x] 基础：`\par`、`\indent`、`\baselineskip`、`\lineskip`（M3-2-2；`\parindent` 等内部参数 + interline glue；段落形状 `\hangindent` 等留待）
 - [x] 胶水拉伸/收缩 + badness + 断行点（breakpoints）（M3-2-3：`badness`/`collect_breakpoints`；词间空白 glue）
 - [x] Knuth-Plass 折行（单线程，先保证逐位一致）（M3-3：`linebreak::knuth_plass`，DP + active 集 + fil 阶无限胶水 + `\parfillskip`；demerits 常量待 M3-5 对照 pdfTeX 校准；O(n²) 未做 active 淘汰）
+- [x] TFM 解析 + 字体表（M3-4：`ntex-font` 解析 cmr10；`\font<cs>=<名字>[at/scaled]` 原语 + `EqSlot::Font` 选择器；字符维度/词间距来自真实度量）
 - [ ] 断页：page builder 状态机 + 断页 DP
-- [ ] TFM 解析 + 字体表（`\font`）；`\shipout` → DVI 写出
+- [ ] `\shipout` → DVI 写出
 - [ ] **VFS 层 + 副作用模型落地**（RFC-3）：`\write`/`\read`/`\input` 走 VFS
 - [ ] `.fmt v1`：状态快照序列化 + mmap（此时仍是"快照"级）
 
@@ -337,9 +338,9 @@
 | Crate | 职责 | 现状 |
 |---|---|---|
 | `ntex-core` | token（8B tagged union）、catcode、InternTable、eqtb 版本化、展开引擎、**字节码 IR/编译器/执行器（M2 落在此 crate，`ntex-vm` 未单建）**、内部参数、sink 事件流 | ✅ 已建 |
-| `ntex-layout` | 节点、**主循环（模式状态机）**、badness/断行点、Knuth-Plass、断页、数学排版 | ✅ 已建（M3-1/2 完成） |
+| `ntex-layout` | 节点、**主循环（模式状态机）**、badness/断行点、Knuth-Plass、TFM 字体接入、断页、数学排版 | ✅ 已建（M3-1~4 完成） |
 | `ntex-pdf` | **最小 PDF 切片（临时）**：Helvetica 标准字体 + 贪心折行 | ✅ 已建（M3-5/M8 正式后端替换） |
-| `ntex-font` | TFM/OFM、ttf-parser、HarfBuzz 整形、整形缓存 | 未建（M3-4） |
+| `ntex-font` | TFM/OFM、ttf-parser、HarfBuzz 整形、整形缓存 | ✅ 已建（M3-4：TFM 解析 + `\font` 加载 + 缩放；ttf/HarfBuzz 待 M9） |
 | `ntex-format` | .fmt 序列化/反序列化、mmap、部分求值 | 未建（M7） |
 | `ntex-incremental` | 求值图、依赖追踪、失效传播 | 未建（M5） |
 | `ntex-io` | VFS、aux 增量 | 未建（M3/M5） |

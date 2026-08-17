@@ -207,10 +207,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ntex-font"
+version = "0.1.0"
+dependencies = [
+ "ntex-core",
+]
+
+[[package]]
 name = "ntex-layout"
 version = "0.1.0"
 dependencies = [
  "ntex-core",
+ "ntex-font",
 ]
 
 [[package]]

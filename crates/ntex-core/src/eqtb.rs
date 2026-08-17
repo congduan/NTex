@@ -73,6 +73,8 @@ pub enum Primitive {
     // M3-3 折行参数
     HSize,
     Tolerance,
+    // M3-4 字体：\font<cs>=<名字>[at/scaled]
+    Font,
 }
 
 impl Primitive {
@@ -95,6 +97,8 @@ pub enum EqSlot {
     Alias(u32),
     /// `\let` 到字符（cs 等价于某字符 token，保留其 catcode）。
     Char { catcode: Catcode, charcode: u32 },
+    /// 字体选择器（M3-4）：`\font\cs=cmr10` 定义；执行时设置当前字体。
+    Font(u32),
 }
 
 /// eqtb：按 csid 索引的等价槽数组。
@@ -148,6 +152,11 @@ impl Eqtb {
     /// `\let\cs=x`：cs 等价于字符 token。
     pub fn char_alias(&mut self, csid: u32, catcode: Catcode, charcode: u32) {
         *self.slot_mut(csid) = EqSlot::Char { catcode, charcode };
+    }
+
+    /// `\font\cs=<名字>`：cs 定义为字体选择器。
+    pub fn set_font(&mut self, csid: u32, font: u32) {
+        *self.slot_mut(csid) = EqSlot::Font(font);
     }
 
     /// 槽版本（供 M5 依赖追踪；Undefined 返回 None）。
@@ -220,5 +229,12 @@ mod tests {
         assert_eq!(e.slot(50), &EqSlot::Primitive(Primitive::Relax));
         // 中间槽保持 Undefined
         assert_eq!(e.slot(49), &EqSlot::Undefined);
+    }
+
+    #[test]
+    fn set_font_slot() {
+        let mut e = Eqtb::new();
+        e.set_font(7, 3);
+        assert_eq!(e.slot(7), &EqSlot::Font(3));
     }
 }

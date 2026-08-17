@@ -23,6 +23,7 @@ use crate::bytecode::{compile, Bytecode, Instruction};
 use crate::catcode::{Catcode, CatcodeTable};
 use crate::eqtb::{EqSlot, Eqtb, Primitive};
 use crate::error::{Error, Result};
+use crate::font::{FontLoader, NoFontLoader};
 use crate::input::scan_token;
 use crate::intern::InternTable;
 use crate::macrodef::{MacroDef, ParamSpec, TokenArray};
@@ -145,6 +146,7 @@ enum MeaningKey {
     Primitive(Primitive),
     Char { catcode: Catcode, charcode: u32 },
     Alias(u32),
+    Font(u32),
 }
 
 /// 展开引擎。
@@ -177,6 +179,8 @@ pub struct Expander {
     registers: Registers,
     /// 内部参数（M3-2-2）：`\parindent`/`\baselineskip`/`\lineskip`/`\lineskiplimit`。
     params: Params,
+    /// 字体加载器（M3-4）：`\font` 执行时把字体名解析为 FontId。
+    font_loader: Box<dyn FontLoader>,
     /// 是否启用字节码轨道（M2；解释器轨道用于双轨等价验证）。
     use_bytecode: bool,
 }
@@ -209,6 +213,7 @@ impl Expander {
             afterassignment: None,
             registers: Registers::new(),
             params: Params::default(),
+            font_loader: Box::new(NoFontLoader),
             use_bytecode,
         };
         e.register_builtins();
@@ -236,6 +241,11 @@ impl Expander {
             return Err(Error::invalid_input("条件未闭合（缺少 \\fi）"));
         }
         Ok(())
+    }
+
+    /// 安装字体加载器（M3-4）：`\font` 执行时把字体名解析为 FontId。
+    pub fn set_font_loader(&mut self, loader: Box<dyn FontLoader>) {
+        self.font_loader = loader;
     }
 
     /// 单步处理一个 token；返回 false 表示输入耗尽。
@@ -303,6 +313,7 @@ impl Expander {
                         });
                         Ok(())
                     }
+                    EqSlot::Font(font) => self.sink.font_selected(font),
                     EqSlot::Primitive(p) => self.exec_primitive(p),
                 }
             }
@@ -615,7 +626,83 @@ impl Expander {
                 let v = self.scan_number()?;
                 self.assign_param(ParamKind::Tolerance, ParamValue::Number(v))
             }
+            // M3-4 字体
+            Primitive::Font => self.exec_font(),
         }
+    }
+
+    /// `\font<cs>[=]<名字>[at <dimen>|scaled <int>]`：加载字体并定义 cs 为字体选择器。
+    ///
+    /// 语法扫描在 VM 侧（cs、可选 `=`、字体名、可选 at/scaled），实际加载交给
+    /// [`FontLoader`]（ntex-layout 的 TFM 加载器维护字体表并返回 FontId）。
+    fn exec_font(&mut self) -> Result<()> {
+        let name = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input("\\font 后缺少控制序列"))?
+            .0;
+        let csid = name
+            .csid()
+            .ok_or_else(|| Error::invalid_input("\\font 后必须是控制序列"))?;
+        // 可选赋值符 '='
+        self.skip_spaces()?;
+        let probe = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input("\\font 后缺少字体名"))?
+            .0;
+        if probe.charcode() != Some(b'=' as u32) {
+            self.unread(probe);
+        }
+        let font_name = self.scan_font_name()?;
+        // 可选 at / scaled（互斥）
+        let keyword = self.scan_keyword(|w| w == "at" || w == "scaled")?;
+        let (at, scaled) = match keyword.as_deref() {
+            Some("at") => (Some(self.scan_dimen()?), None),
+            Some("scaled") => (None, Some(self.scan_number()?)),
+            _ => (None, None),
+        };
+        let font = self.font_loader.load(&font_name, at, scaled)?;
+        // 组作用域 + \global 语义（同 \def）
+        let global = self.is_global();
+        if !global && self.group_level > 0 {
+            self.save_stack.push((
+                self.group_level,
+                SavedValue::Eqtb {
+                    csid,
+                    prev: self.eqtb.slot(csid).clone(),
+                },
+            ));
+        }
+        self.eqtb.set_font(csid, font);
+        self.finish_assignment();
+        Ok(())
+    }
+
+    /// 扫描外部字体名：连续 cat 11（字母）/ cat 12（其他）字符，遇空格/组/控制序列结束。
+    fn scan_font_name(&mut self) -> Result<String> {
+        self.skip_spaces()?;
+        let mut name = String::new();
+        while let Some((tok, _)) = self.fetch()? {
+            match tok.catcode() {
+                Some(Catcode::Letter) | Some(Catcode::Other) => {
+                    let ch = tok
+                        .charcode()
+                        .and_then(char::from_u32)
+                        .ok_or_else(|| Error::invalid_input("字体名含非法字符"))?;
+                    if !ch.is_ascii() {
+                        return Err(Error::invalid_input("字体名仅支持 ASCII（M3-4 范围）"));
+                    }
+                    name.push(ch);
+                }
+                _ => {
+                    self.unread(tok);
+                    break;
+                }
+            }
+        }
+        if name.is_empty() {
+            return Err(Error::invalid_input("\\font 后缺少字体名"));
+        }
+        Ok(name)
     }
 
     /// 内部参数赋值（组作用域 + sink 镜像通知）。
@@ -1048,7 +1135,7 @@ impl Expander {
 
     /// 注册 M1 内建原语。
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 50] = [
+        const BUILTINS: [(&str, Primitive); 51] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -1106,6 +1193,8 @@ impl Expander {
             // M3-3 折行参数
             ("hsize", Primitive::HSize),
             ("tolerance", Primitive::Tolerance),
+            // M3-4 字体
+            ("font", Primitive::Font),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);
@@ -1671,6 +1760,7 @@ impl Expander {
             EqSlot::Primitive(p) => MeaningKey::Primitive(p),
             EqSlot::Char { catcode, charcode } => MeaningKey::Char { catcode, charcode },
             EqSlot::Alias(t) => MeaningKey::Alias(t),
+            EqSlot::Font(font) => MeaningKey::Font(font),
         }
     }
 
@@ -1930,6 +2020,8 @@ fn compare(a: i64, b: i64, rel: Relation) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     /// 运行源码（**双轨等价**）：字节码与解释器轨道各跑一次并断言输出一致，
     /// 返回字节码轨道结果。全部用例自动覆盖 M2 双轨验证。
@@ -2358,5 +2450,107 @@ mod tests {
         assert_eq!(expand("\\tolerance 300\\the\\tolerance").unwrap(), "300");
         // 默认值（TeX initex）：\hsize=6.5in、\tolerance=10000
         assert!(expand("\\the\\tolerance").unwrap().ends_with("10000"));
+    }
+
+    // ---------- M3-4 字体 ----------
+
+    /// 记录事件流的测试 sink（`font_selected` 事件用）。
+    #[derive(Debug, Default)]
+    struct EventSink {
+        chars: Vec<char>,
+        fonts: Vec<u32>,
+    }
+
+    impl TokenSink for EventSink {
+        fn token(&mut self, tok: Token) -> Result<()> {
+            if let Some(c) = tok.charcode().and_then(char::from_u32) {
+                self.chars.push(c);
+            }
+            Ok(())
+        }
+        fn font_selected(&mut self, font: u32) -> Result<()> {
+            self.fonts.push(font);
+            Ok(())
+        }
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
+    }
+
+    /// 记录加载请求的测试加载器（每次加载返回递增 FontId）。
+    /// 调用记录经 `Rc<RefCell>` 共享，移入 Expander 后仍可读取。
+    type FontCall = (String, Option<i64>, Option<i64>);
+
+    #[derive(Debug, Clone, Default)]
+    struct MockLoader {
+        calls: Rc<RefCell<Vec<FontCall>>>,
+    }
+
+    impl FontLoader for MockLoader {
+        fn load(&mut self, name: &str, at: Option<i64>, scaled: Option<i64>) -> Result<u32> {
+            let mut calls = self.calls.borrow_mut();
+            calls.push((name.to_owned(), at, scaled));
+            Ok(calls.len() as u32 - 1)
+        }
+    }
+
+    /// 用 MockLoader 运行源码，返回 (输出字符, 字体选择事件, 加载请求)。
+    fn font_run(src: &str) -> Result<(String, Vec<u32>, Vec<FontCall>)> {
+        let loader = MockLoader::default();
+        let calls = loader.calls.clone();
+        let mut e = Expander::new();
+        e.set_font_loader(Box::new(loader));
+        let sink = EventSink::default();
+        e.set_sink(Box::new(sink));
+        e.run_source(src)?;
+        let mut sink = e.take_sink();
+        let sink = sink.as_any_mut().downcast_mut::<EventSink>().unwrap();
+        let chars: String = sink.chars.iter().copied().collect();
+        let fonts = sink.fonts.clone();
+        let loaded = calls.borrow().clone();
+        Ok((chars, fonts, loaded))
+    }
+
+    #[test]
+    fn font_defines_selector_and_emits_selection() {
+        let (chars, fonts, calls) = font_run("\\font\\foo=cmr10\\foo a").unwrap();
+        assert_eq!(calls, vec![("cmr10".to_owned(), None, None)]);
+        assert_eq!(fonts, vec![0], "执行 \\foo 应触发 font_selected");
+        assert!(chars.contains('a'));
+    }
+
+    #[test]
+    fn font_at_and_scaled_variants() {
+        let src = r"\font\a=cmr10 at 12pt \font\b=cmr10 scaled 1200";
+        let (_, _, calls) = font_run(src).unwrap();
+        assert_eq!(
+            calls,
+            vec![
+                ("cmr10".to_owned(), Some(12 * SP_PER_PT), None),
+                ("cmr10".to_owned(), None, Some(1200)),
+            ]
+        );
+    }
+
+    #[test]
+    fn font_equals_is_optional() {
+        let (_, _, calls) = font_run("\\font\\foo cmr10").unwrap();
+        assert_eq!(calls, vec![("cmr10".to_owned(), None, None)]);
+    }
+
+    #[test]
+    fn font_without_loader_errors() {
+        let mut e = Expander::new(); // 默认 NoFontLoader
+        assert!(e.run_source("\\font\\foo=cmr10").is_err());
+    }
+
+    #[test]
+    fn ifx_compares_font_meanings() {
+        // 同一 cs 与自身相等（Font(0) == Font(0)）
+        let out = font_run(r"\font\a=cmr10\ifx\a\a yes\else no\fi").unwrap().0;
+        assert_eq!(out, "yes");
+        // 两次加载得到不同 FontId → 不等
+        let out = font_run(r"\font\a=cmr10\font\b=cmr10\ifx\a\b yes\else no\fi").unwrap().0;
+        assert_eq!(out, "no");
     }
 }

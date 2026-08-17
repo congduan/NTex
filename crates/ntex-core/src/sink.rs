@@ -62,6 +62,10 @@ pub trait TokenSink: std::fmt::Debug {
     fn param_changed(&mut self, _kind: ParamKind, _value: ParamValue) -> Result<()> {
         Ok(())
     }
+    /// 字体选择器执行（M3-4）：`\font` 定义的 cs 被使用，设置当前字体。
+    fn font_selected(&mut self, _font: u32) -> Result<()> {
+        Ok(())
+    }
     /// 已收集的输出 token（默认空；测试与 `Expander::output` 用）。
     fn tokens(&self) -> &[Token] {
         &[]

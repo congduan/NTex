@@ -8,6 +8,10 @@
 //!
 //! M3-2 交付：
 //! - [`typeset`]：排版器（模式状态机 + token→节点构建）。
+//!
+//! M3-4 交付：
+//! - [`typeset::Typesetter::with_tfm`]：TFM 字体模式——`\font\cs=cmr10` 经
+//!   `ntex-font` 解析真实度量，字符维度/词间空白来自 TFM。
 
 #![deny(unsafe_code)]
 
