@@ -25,3 +25,8 @@ tmp-*.pdf
 gluesim*.py
 dvicmp2.py
 dviprint.py
+tmp_pngcmp.py
+
+# 引擎本地构建产物（站点素材在 site/public/ 内另行跟踪）
+/demo.dvi
+/demo.pdf
