@@ -112,6 +112,16 @@ impl CatcodeTable {
     pub fn set(&mut self, byte: u8, cat: Catcode) {
         self.0[byte as usize] = cat.as_u8();
     }
+
+    /// 原始字节表（`.fmt` 快照导出）。
+    pub fn raw(&self) -> &[u8; 256] {
+        &self.0
+    }
+
+    /// 从原始字节表重建（`.fmt` 快照导入）。
+    pub fn from_raw(raw: [u8; 256]) -> Self {
+        Self(raw)
+    }
 }
 
 impl Default for CatcodeTable {

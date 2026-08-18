@@ -116,6 +116,44 @@ impl Registers {
     }
 }
 
+/// 寄存器状态快照（`.fmt` v1 序列化载体）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegisterState {
+    pub counts: [i64; REGISTER_COUNT],
+    pub dimens: [i64; REGISTER_COUNT],
+    pub skips: [Glue; REGISTER_COUNT],
+    /// 非空 `\toks` 项（(下标, 内容)）。
+    pub toks: Vec<(usize, TokenArray)>,
+}
+
+impl Registers {
+    pub fn export(&self) -> RegisterState {
+        RegisterState {
+            counts: self.counts,
+            dimens: self.dimens,
+            skips: self.skips,
+            toks: self
+                .toks
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| !t.is_empty())
+                .map(|(i, t)| (i, t.clone()))
+                .collect(),
+        }
+    }
+
+    pub fn import(state: RegisterState) -> Self {
+        let mut r = Self::new();
+        r.counts = state.counts;
+        r.dimens = state.dimens;
+        r.skips = state.skips;
+        for (i, t) in state.toks {
+            r.toks[i] = t;
+        }
+        r
+    }
+}
+
 /// 整数 → `\the` 输出（十进制）。
 pub fn format_count(v: i64) -> String {
     v.to_string()

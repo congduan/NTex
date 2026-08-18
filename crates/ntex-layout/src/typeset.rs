@@ -879,6 +879,16 @@ impl Typesetter {
         self.expander.take_vfs()
     }
 
+    /// 导出展开引擎状态快照（`.fmt` v1；供 `ntex-format` 序列化）。
+    pub fn export_state(&self) -> ntex_core::expand::FmtState {
+        self.expander.export_state()
+    }
+
+    /// 加载展开引擎状态快照（`.fmt` v1）。
+    pub fn import_state(&mut self, state: ntex_core::expand::FmtState) {
+        self.expander.import_state(state);
+    }
+
     /// TFM 字体模式（M3-4）：`\font\cs=cmr10` 加载真实度量，
     /// 字符维度/词间空白来自 TFM；`\font` 定义的 cs 作为字体选择器。
     pub fn with_tfm() -> Self {
@@ -1744,5 +1754,36 @@ mod tests {
                 _ => {}
             }
         }
+    }
+
+    #[test]
+    fn fmt_snapshot_preserves_typeset_behavior() {
+        // preamble（宏集）→ 快照 → 新排版器加载 → 同一文档排版一致
+        let preamble = r"\def\emph#1{[#1]}\def\hi{Hi}";
+        let doc = r"\emph{Hello} \hi there.";
+
+        let mut ts1 = Typesetter::with_tfm();
+        ts1.typeset_dvi(preamble).unwrap();
+        let state = ts1.export_state();
+
+        let mut ts2 = Typesetter::with_tfm();
+        ts2.import_state(state);
+        let (pages2, _) = ts2.typeset_dvi(doc).unwrap();
+
+        let mut ts3 = Typesetter::with_tfm();
+        let (pages3, _) = ts3.typeset_dvi(&format!("{preamble} {doc}")).unwrap();
+
+        let text_of = |pages: &[BoxNode]| {
+            let mut s = String::new();
+            for p in pages {
+                collect_text(p, &mut s);
+            }
+            s
+        };
+        assert_eq!(
+            text_of(&pages2),
+            text_of(&pages3),
+            "加载 .fmt 快照后排版应与全新排版一致"
+        );
     }
 }

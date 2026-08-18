@@ -105,6 +105,87 @@ impl Primitive {
     pub fn is_expandable(self) -> bool {
         matches!(self, Self::Expandafter | Self::Noexpand | Self::The)
     }
+
+    /// 原始值（`.fmt` 快照序列化；变体自 1 起连续）。
+    pub const fn as_u8(self) -> u8 {
+        self as u8
+    }
+
+    /// 从原始值恢复（`.fmt` 快照反序列化）。
+    pub const fn from_u8(v: u8) -> Option<Self> {
+        Some(match v {
+            1 => Self::Def,
+            2 => Self::Edef,
+            3 => Self::Gdef,
+            4 => Self::Let,
+            5 => Self::Relax,
+            6 => Self::Expandafter,
+            7 => Self::Noexpand,
+            8 => Self::Catcode,
+            9 => Self::End,
+            10 => Self::Futurelet,
+            11 => Self::Aftergroup,
+            12 => Self::Afterassignment,
+            13 => Self::If,
+            14 => Self::IfCat,
+            15 => Self::IfNum,
+            16 => Self::IfDim,
+            17 => Self::IfX,
+            18 => Self::IfOdd,
+            19 => Self::IfCase,
+            20 => Self::IfTrue,
+            21 => Self::IfFalse,
+            22 => Self::Else,
+            23 => Self::Fi,
+            24 => Self::Or,
+            25 => Self::Count,
+            26 => Self::Dimen,
+            27 => Self::Skip,
+            28 => Self::Toks,
+            29 => Self::The,
+            30 => Self::Global,
+            31 => Self::BeginGroup,
+            32 => Self::EndGroup,
+            33 => Self::HBox,
+            34 => Self::VBox,
+            35 => Self::VTop,
+            36 => Self::HSkip,
+            37 => Self::VSkip,
+            38 => Self::Kern,
+            39 => Self::Penalty,
+            40 => Self::HRule,
+            41 => Self::VRule,
+            42 => Self::Par,
+            43 => Self::ParIndent,
+            44 => Self::BaselineSkip,
+            45 => Self::LineSkip,
+            46 => Self::LineSkipLimit,
+            47 => Self::Indent,
+            48 => Self::NoIndent,
+            49 => Self::HSize,
+            50 => Self::Tolerance,
+            51 => Self::Font,
+            52 => Self::ShipOut,
+            53 => Self::VSize,
+            54 => Self::TopSkip,
+            55 => Self::MaxDepth,
+            56 => Self::ParSkip,
+            57 => Self::SfCode,
+            58 => Self::Output,
+            59 => Self::Box,
+            60 => Self::Input,
+            61 => Self::OpenIn,
+            62 => Self::CloseIn,
+            63 => Self::NewRead,
+            64 => Self::Read,
+            65 => Self::NewWrite,
+            66 => Self::OpenOut,
+            67 => Self::CloseOut,
+            68 => Self::Write,
+            69 => Self::Immediate,
+            _ => return None,
+        })
+    }
 }
 
 /// 控制序列的等价槽。
@@ -199,6 +280,16 @@ impl Eqtb {
             EqSlot::Macro(v) => Some(v.version),
             _ => None,
         }
+    }
+
+    /// 全部槽（`.fmt` 快照：导出用）。
+    pub fn slots(&self) -> &[EqSlot] {
+        &self.slots
+    }
+
+    /// 整体替换槽（`.fmt` 快照：加载用）。
+    pub fn replace_slots(&mut self, slots: Vec<EqSlot>) {
+        self.slots = slots;
     }
 }
 

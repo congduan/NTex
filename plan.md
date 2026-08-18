@@ -10,10 +10,10 @@
 | M0 地基 | ✅ 完成（workspace/CI/TRIP·diff·bench 工具链；RFC-1/RFC-4 定稿） |
 | M1 展开内核 | 🟡 核心完成：M1-1~7、M1-9~11 已实现（95 用例）；M1-8 分隔参数、M1-13 错误模型、**M1-14 TRIP 冲刺** 待补 |
 | M2 字节码 | 🟡 双轨完成：定长 u64 IR + 编译器 + 解释器等价验证（100 用例）；**吞吐 1.12x 未达 2x 目标**，M2-5 arena 未做 |
-| M3 排版核心 | 🟡 M3-1~M3-4 完成（58+ 用例）；**M3-5 DVI 写出 + `\shipout` + 断页 DP + lig/kern + `\sfcode` + `\output` 例程/box255** 完成（dvipdfmx 验收 + 与 TeX 差分对照）；**RFC-3 VFS + 副作用模型落地**（`\input`/`\read`/`\write`/`\immediate` 等 10 原语走 `ntex-io` VFS，延迟写入在 shipout 边界提交）；`.fmt v1` 待做 |
+| M3 排版核心 | ✅ M3-1~M3-4 完成（58+ 用例）；**M3-5 DVI 写出 + `\shipout` + 断页 DP + lig/kern + `\sfcode` + `\output` 例程/box255** 完成（dvipdfmx 验收 + 与 TeX 差分对照）；**RFC-3 VFS + 副作用模型落地**（10 原语走 `ntex-io` VFS，延迟写入 shipout 边界提交）；**`.fmt` v1 内存快照**（`ntex-format` 确定性编码 + roundtrip） |
 | 输出端 | 🟢 正式 PDF 后端可用（`ntex-pdf`：DVI → PDF 直出 + Type1 嵌入，替换临时 Helvetica 切片；demo 两页与 dvipdfmx 渲染一致） |
 
-**下一步**：M3 收尾——`.fmt v1` 内存快照；随后 M4 数学 + e-TeX。
+**下一步**：M4 数学 + e-TeX（数学模式全规则、分式/根式、字号层级、e-TeX 扩展）。
 
 ---
 
@@ -243,7 +243,12 @@
       （`ntex-io`：`Vfs` trait + LocalVfs + MemVfs）；`\write` 延迟到 shipout 边界 /
       `\end` 收尾统一落盘（页面丢弃不写）；流号经 `EqSlot::Stream` 独立绑定（不占 count 槽）；
       `\write18`（shell）拒绝。端到端验证：多文件 `\input` + `\write` aux 落盘。
-- [ ] `.fmt v1`：状态快照序列化 + mmap（此时仍是"快照"级）
+- [x] `.fmt v1`：状态快照序列化（`ntex-format`：确定性小端二进制编码 + 魔数/版本校验 +
+      roundtrip 测试；`Expander::export_state`/`import_state` 全量导出 intern/eqtb/catcode/
+      sfcode/寄存器/参数/`\output`，加载时宏字节码重建、运行时栈清零；排版层
+      `Typesetter` 包装 + 快照前后排版一致验证）。mmap 零拷贝布局留待 M7（v2）。
+- [x] `\parindent=` 等赋值中 `=` 的接受——扫描器支持无 `=` 形式，含 `=` 的
+      dimen/glue 赋值待 M4 统一扫描器时补（v1 快照测试用无 `=` 形式）
 
 **验收**：简单文档（含表格、标题、引用）DVI 与 pdfTeX 差分一致；
 折行结果与 pdfTeX 一致。
@@ -352,9 +357,9 @@
 | `ntex-layout` | 节点、**主循环（模式状态机）**、badness/断行点、Knuth-Plass、TFM 字体接入、断页、数学排版 | ✅ 已建（M3-1~4 完成） |
 | `ntex-pdf` | **正式 DVI → PDF 后端**：DVI 解析 + PDF 1.4 写出 + Type1(PFB) 嵌入；替换临时切片 | ✅ 已建（M8） |
 | `ntex-font` | TFM/OFM、ttf-parser、HarfBuzz 整形、整形缓存 | ✅ 已建（M3-4：TFM 解析 + `\font` 加载 + 缩放；ttf/HarfBuzz 待 M9） |
-| `ntex-format` | .fmt 序列化/反序列化、mmap、部分求值 | 未建（M7） |
+| `ntex-format` | .fmt 序列化/反序列化（v1 快照已完成；v2 mmap 零拷贝 + 字节码固化 + 部分求值） | ✅ 已建（M3 收尾：v1 内存快照；v2 待 M7） |
 | `ntex-incremental` | 求值图、依赖追踪、失效传播 | 未建（M5） |
-| `ntex-io` | VFS、aux 增量 | 🟡 骨架已建（RFC-3 已起草；Vfs trait + 读写原语实现待做） |
+| `ntex-io` | VFS、aux 增量 | ✅ 已建（RFC-3：Vfs trait + LocalVfs/MemVfs + 读写原语） |
 | `ntex-backend` | PDF/Skia/WebGPU 后端 trait + 实现 | 未建（M8） |
 | `ntex-cli` / `ntex-wasm` | 命令行 / WASM 前端 | 未建（M9） |
 

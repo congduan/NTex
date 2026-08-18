@@ -1,0 +1,13 @@
+[package]
+name = "ntex-format"
+description = "NTex .fmt 序列化/反序列化（v1 内存快照；v2 将支持 mmap 零拷贝与字节码固化）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ntex-core.workspace = true
+
+[lints]
+workspace = true

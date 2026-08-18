@@ -29,8 +29,8 @@ use crate::intern::InternTable;
 use crate::macrodef::{MacroDef, ParamSpec, TokenArray};
 use crate::param::{ParamKind, ParamValue, Params};
 use crate::register::{
-    format_count, format_dimen, format_glue, unit_to_sp, Glue, RegKind, Registers, REGISTER_COUNT,
-    SP_PER_PT,
+    format_count, format_dimen, format_glue, unit_to_sp, Glue, RegKind, RegisterState, Registers,
+    REGISTER_COUNT, SP_PER_PT,
 };
 use crate::sink::{TokenSink, VecSink};
 use crate::token::{Token, TokenKind};
@@ -182,6 +182,28 @@ struct WriteStream {
     pending: Vec<TokenArray>,
 }
 
+/// 展开引擎状态快照（`.fmt` v1，M3 收尾）：可序列化的全部展开状态。
+///
+/// 数据由 `ntex-format` crate 编码/解码；本结构只承载数据。
+/// 限制：字体度量（`EqSlot::Font`）与字节码不随快照（加载时重建）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct FmtState {
+    /// 驻留表名字（csid = 下标；加载时按序重建）。
+    pub intern_names: Vec<String>,
+    /// catcode 表。
+    pub catcodes: CatcodeTable,
+    /// `\sfcode` 表。
+    pub sfcodes: [u32; 256],
+    /// eqtb 全部槽（含原语、宏、别名、字体选择器、寄存器/流引用）。
+    pub eqtb: Vec<EqSlot>,
+    /// 寄存器文件（count/dimen/skip/toks）。
+    pub registers: RegisterState,
+    /// 内部参数。
+    pub params: Params,
+    /// `\output` 例程 token 列表。
+    pub output_toks: Option<TokenArray>,
+}
+
 /// 展开引擎。
 #[derive(Debug)]
 pub struct Expander {
@@ -286,6 +308,82 @@ impl Expander {
     /// 取回 VFS（测试断言写入内容用）。
     pub fn take_vfs(&mut self) -> Box<dyn Vfs> {
         std::mem::replace(&mut self.vfs, Box::new(LocalVfs))
+    }
+
+    // ---------- M3 收尾（`.fmt` v1 内存快照） ----------
+
+    /// 导出引擎状态快照（`.fmt` v1）。
+    ///
+    /// 范围：intern 表、catcode、sfcode、eqtb（含宏定义/版本）、寄存器、内部参数、
+    /// `\output` 例程。**不含**：字体表（`EqSlot::Font` 的度量在排版器侧，
+    /// 加载后需重新 `\font`）、字节码（加载时按需重建）、VFS 与流状态（运行时）。
+    pub fn export_state(&self) -> FmtState {
+        FmtState {
+            intern_names: self.intern.names_vec(),
+            catcodes: self.catcodes.clone(),
+            sfcodes: self.sfcodes,
+            eqtb: self.eqtb.slots().to_vec(),
+            registers: self.registers.export(),
+            params: self.params,
+            output_toks: self.output_toks.clone(),
+        }
+    }
+
+    /// 加载引擎状态快照（`.fmt` v1）：整体替换展开状态，运行时栈清零。
+    ///
+    /// 宏定义在字节码轨道下重建预编译字节码（`code` 不随快照序列化）。
+    pub fn import_state(&mut self, state: FmtState) {
+        // 重建 intern（按名字顺序驻留 → csid 与导出时一致）
+        let mut intern = InternTable::new();
+        for name in &state.intern_names {
+            intern.intern(name);
+        }
+        self.intern = intern;
+        self.catcodes = state.catcodes;
+        self.sfcodes = state.sfcodes;
+        // eqtb 替换；字节码轨道下补编译缺失的宏字节码
+        let mut eqtb = Eqtb::new();
+        eqtb.replace_slots(state.eqtb);
+        if self.use_bytecode {
+            for csid in 0..eqtb.slots().len() as u32 {
+                // 先取出待编译的宏体，再重建 MacroDef（保留版本号）
+                let pending = match eqtb.slot(csid) {
+                    EqSlot::Macro(v) if v.value.code.is_none() => {
+                        Some((v.value.params.clone(), v.value.body.clone()))
+                    }
+                    _ => None,
+                };
+                if let Some((params, body)) = pending {
+                    let code = Arc::new(compile(&body, &eqtb));
+                    if let EqSlot::Macro(v) = eqtb.slot_mut(csid) {
+                        v.value = Arc::new(MacroDef {
+                            params,
+                            body,
+                            code: Some(code),
+                        });
+                    }
+                }
+            }
+        }
+        self.eqtb = eqtb;
+        self.registers = Registers::import(state.registers);
+        self.params = state.params;
+        self.output_toks = state.output_toks;
+        // 运行时状态重置（新文档起点）
+        self.stack.clear();
+        self.read_floor = 0;
+        self.cond_stack.clear();
+        self.group_level = 0;
+        self.group_cond_depth.clear();
+        self.save_stack.clear();
+        self.global_pending = false;
+        self.aftergroup.clear();
+        self.afterassignment = None;
+        self.output_active = false;
+        self.output_prev_count = usize::MAX;
+        self.immediate_pending = false;
+        self.read_streams.clear();
+        self.write_streams.clear();
     }
 
     /// 追加一个源码输入（后续 `\input`/VFS 在 M3 接入）。

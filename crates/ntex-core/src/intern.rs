@@ -45,6 +45,11 @@ impl InternTable {
         self.names.len()
     }
 
+    /// 全部名字（`.fmt` 快照：按 csid 顺序导出，加载时按序重建 csid 一致）。
+    pub fn names_vec(&self) -> Vec<String> {
+        self.names.iter().map(|s| s.to_string()).collect()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.names.is_empty()
     }

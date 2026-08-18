@@ -225,6 +225,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ntex-format"
+version = "0.1.0"
+dependencies = [
+ "ntex-core",
+]
+
+[[package]]
 name = "ntex-io"
 version = "0.1.0"
 

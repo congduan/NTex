@@ -26,8 +26,13 @@ impl Version {
     }
 
     /// 原始值。
-    pub fn get(self) -> u64 {
+    pub const fn get(self) -> u64 {
         self.0
+    }
+
+    /// 从原始值构造（`.fmt` 快照反序列化）。
+    pub const fn from_raw(v: u64) -> Self {
+        Self(v)
     }
 }
 
