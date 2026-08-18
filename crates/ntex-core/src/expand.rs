@@ -626,6 +626,25 @@ impl Expander {
                 let v = self.scan_number()?;
                 self.assign_param(ParamKind::Tolerance, ParamValue::Number(v))
             }
+            // M3-5 断页参数
+            Primitive::VSize | Primitive::MaxDepth => {
+                let v = self.scan_dimen()?;
+                let kind = if prim == Primitive::VSize {
+                    ParamKind::VSize
+                } else {
+                    ParamKind::MaxDepth
+                };
+                self.assign_param(kind, ParamValue::Dimen(v))
+            }
+            Primitive::TopSkip | Primitive::ParSkip => {
+                let g = self.scan_glue()?;
+                let kind = if prim == Primitive::TopSkip {
+                    ParamKind::TopSkip
+                } else {
+                    ParamKind::ParSkip
+                };
+                self.assign_param(kind, ParamValue::Glue(g))
+            }
             // M3-4 字体
             Primitive::Font => self.exec_font(),
             // M3-5 输出：\shipout 直通 sink（排版器解释：封装下一盒子为页面）
@@ -1137,7 +1156,7 @@ impl Expander {
 
     /// 注册 M1 内建原语。
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 52] = [
+        const BUILTINS: [(&str, Primitive); 56] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -1199,6 +1218,11 @@ impl Expander {
             ("font", Primitive::Font),
             // M3-5 输出
             ("shipout", Primitive::ShipOut),
+            // M3-5 断页参数
+            ("vsize", Primitive::VSize),
+            ("topskip", Primitive::TopSkip),
+            ("maxdepth", Primitive::MaxDepth),
+            ("parskip", Primitive::ParSkip),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);
@@ -1424,14 +1448,22 @@ impl Expander {
                 | Primitive::LineSkip
                 | Primitive::LineSkipLimit
                 | Primitive::HSize
-                | Primitive::Tolerance => {
+                | Primitive::Tolerance
+                | Primitive::VSize
+                | Primitive::TopSkip
+                | Primitive::MaxDepth
+                | Primitive::ParSkip => {
                     let kind = match p {
                         Primitive::ParIndent => ParamKind::ParIndent,
                         Primitive::BaselineSkip => ParamKind::BaselineSkip,
                         Primitive::LineSkip => ParamKind::LineSkip,
                         Primitive::LineSkipLimit => ParamKind::LineSkipLimit,
                         Primitive::HSize => ParamKind::HSize,
-                        _ => ParamKind::Tolerance,
+                        Primitive::Tolerance => ParamKind::Tolerance,
+                        Primitive::VSize => ParamKind::VSize,
+                        Primitive::TopSkip => ParamKind::TopSkip,
+                        Primitive::MaxDepth => ParamKind::MaxDepth,
+                        _ => ParamKind::ParSkip,
                     };
                     Ok(match self.params.get(kind) {
                         ParamValue::Dimen(v) => emit_dimen(v),

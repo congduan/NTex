@@ -28,7 +28,8 @@ use ntex_core::{FontLoader, Primitive, TokenSink};
 use ntex_font::FontMetrics;
 
 use crate::linebreak::knuth_plass;
-use crate::node::{BoxKind, BoxNode, FontId, Node, GLUE_ORDER_FIL};
+use crate::node::{hpack, BoxKind, BoxNode, FontId, Node, GLUE_ORDER_FIL};
+use crate::page::PageBuilder;
 
 /// 模式（TeX 模式状态机的 M3-2 子集）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,10 +133,19 @@ struct NodeBuilder {
     shipout_next: bool,
     /// 已 \shipout 的页面（按顺序）。
     shipped: Vec<BoxNode>,
+    /// M3-5-2 断页：启用自动分页（`typeset_dvi` 打开；旧 `typeset` 保持切片行为）。
+    pagination: bool,
+    /// 页面构建器（`pagination` 时把顶层垂直列表拆成页面）。
+    page: PageBuilder,
 }
 
 impl NodeBuilder {
     fn new(fonts: Fonts) -> Self {
+        Self::with_pagination(fonts, false)
+    }
+
+    /// 创建构建器；`pagination` 打开 M3-5-2 断页（自动分页 + parskip + 收尾冲页）。
+    fn with_pagination(fonts: Fonts, pagination: bool) -> Self {
         Self {
             lists: vec![Vec::new()],
             list_modes: vec![Mode::Vertical],
@@ -147,6 +157,8 @@ impl NodeBuilder {
             current_font: FontId(0),
             shipout_next: false,
             shipped: Vec::new(),
+            pagination,
+            page: PageBuilder::new(),
             fonts,
         }
     }
@@ -157,6 +169,13 @@ impl NodeBuilder {
 
     fn append(&mut self, node: Node) {
         self.lists.last_mut().expect("列表栈非空").push(node);
+        // M3-5-2：顶层垂直模式追加后运行页面构建器（TeX build_page 的触发点）。
+        if self.pagination && self.mode() == Mode::Vertical && self.lists.len() == 1 {
+            let pages = self.page.feed(&mut self.lists[0], &self.params);
+            for p in pages {
+                self.shipped.push(p);
+            }
+        }
     }
 
     /// 结束开放段落：Knuth-Plass 折行成行 hbox 并追加到上层列表（行间插 interline glue）。
@@ -179,12 +198,10 @@ impl NodeBuilder {
         });
         let lines = knuth_plass(&children, self.params.hsize, self.params.tolerance);
         for (s, e) in lines {
-            let mut line: Vec<Node> = children[s..e].to_vec();
-            // 丢弃断点胶水（parfillskip 等）：TeX 折行后断点胶水不入行
-            while line.last().is_some_and(Node::is_discardable) {
-                line.pop();
-            }
-            self.push_box(Node::Box(BoxNode::new_hbox(line)));
+            // 断点胶水已在折行时排除；末行保留 \parfillskip（fil 拉伸填满行宽）
+            let line: Vec<Node> = children[s..e].to_vec();
+            // 行盒 = `\hbox to \hsize`（tex.web line_break：恰好 hsize 宽，胶水拉伸/收缩）
+            self.push_box(Node::Box(hpack(&line, self.params.hsize)));
         }
     }
 
@@ -218,12 +235,21 @@ impl NodeBuilder {
     /// d < \lineskiplimit 用 \lineskip，否则用宽度调整为 d 的 \baselineskip）。
     fn push_box(&mut self, node: Node) {
         if self.mode() == Mode::Vertical {
-            if let Some(Node::Box(prev)) = self.lists.last().and_then(|l| l.last()) {
+            // 分页模式下顶层前驱盒子的深度/类型在页面构建器里（贡献列表已被搬走）。
+            let (prev_is_box, prev_depth) = if self.pagination && self.lists.len() == 1 {
+                (self.page.prev_depth() > crate::page::IGNORE_DEPTH, self.page.prev_depth())
+            } else {
+                match self.lists.last().and_then(|l| l.last()) {
+                    Some(Node::Box(prev)) => (true, prev.depth),
+                    _ => (false, 0),
+                }
+            };
+            if prev_is_box {
                 let height = match &node {
                     Node::Box(b) => b.height,
                     _ => 0,
                 };
-                let d = self.params.baselineskip.width - (prev.depth + height);
+                let d = self.params.baselineskip.width - (prev_depth + height);
                 let g = if d < self.params.lineskiplimit {
                     self.params.lineskip
                 } else {
@@ -241,6 +267,32 @@ impl NodeBuilder {
             }
         }
         self.append(node);
+    }
+
+    /// M3-5-2 `\end` 冲页（tex.web `its_all_over`）：页或贡献非空时追加
+    /// `\hbox to \hsize{}\vfill\penalty-'10000000000` 强制断页；触发节点（penalty）
+    /// 面对新空页被页面构建器丢弃，故不产生多余空页。
+    fn eject_remaining_pages(&mut self) {
+        while !self.page.is_empty() || !self.lists[0].is_empty() {
+            let hsize = self.params.hsize;
+            let mut empty_box = BoxNode::new_hbox(Vec::new());
+            empty_box.width = hsize; // \hbox to \hsize{}
+            self.lists[0].push(Node::Box(empty_box));
+            self.lists[0].push(Node::Glue {
+                width: 0,
+                stretch: 1,
+                shrink: 0,
+                stretch_order: GLUE_ORDER_FIL,
+                shrink_order: 0,
+            });
+            self.lists[0].push(Node::Penalty {
+                penalty: -(1 << 30), // \penalty-'10000000000
+            });
+            let pages = self.page.feed(&mut self.lists[0], &self.params);
+            for p in pages {
+                self.shipped.push(p);
+            }
+        }
     }
 
     /// 插入段落缩进（TeX `new_graf`）：\parindent>0 空盒，<0 kern，=0 无；
@@ -312,6 +364,17 @@ impl TokenSink for NodeBuilder {
         match self.mode() {
             Mode::Vertical => {
                 // 垂直模式字符触发段落（TeX new_graf）
+                // M3-5-2：段落起始追加上下段间距 \parskip（空页上被页面构建器丢弃）
+                if self.pagination {
+                    let ps = self.params.parskip;
+                    self.append(Node::Glue {
+                        width: ps.width,
+                        stretch: ps.stretch,
+                        shrink: ps.shrink,
+                        stretch_order: 0,
+                        shrink_order: 0,
+                    });
+                }
                 self.lists.push(Vec::new());
                 self.list_modes.push(Mode::Horizontal);
                 self.insert_indent();
@@ -534,10 +597,14 @@ impl Typesetter {
 
     /// 排版源码并取回 `\shipout` 页面（DVI 输出，M3-5）：
     /// 返回 (页面列表, 字体表快照)。需 [`Self::with_tfm`] 模式（否则字体表为空）。
+    /// 启用 M3-5-2 断页：顶层垂直列表经页面构建器自动分页（`\vsize`），
+    /// 输入结束按 `\end` 语义冲页（`\hbox to \hsize{}\vfill\penalty-2^30`）。
     pub fn typeset_dvi(&mut self, text: &str) -> Result<(Vec<BoxNode>, Vec<FontMetrics>)> {
         self.install_font_loader();
-        self.expander
-            .set_sink(Box::new(NodeBuilder::new(self.fonts.clone())));
+        self.expander.set_sink(Box::new(NodeBuilder::with_pagination(
+            self.fonts.clone(),
+            true,
+        )));
         self.expander.run_source(text)?;
         let out = self.finish()?;
         Ok((out.shipped, out.fonts))
@@ -569,6 +636,11 @@ impl Typesetter {
         }
         if builder.mode() == Mode::Horizontal {
             builder.close_paragraph();
+        }
+        // M3-5-2：输入结束按 `\end` 冲掉残余页面（tex.web `its_all_over`）：
+        // 页或贡献非空时追加 `\hbox to \hsize{}\vfill\penalty-2^30` 强制断页。
+        if builder.pagination {
+            builder.eject_remaining_pages();
         }
         let mut lists = std::mem::take(&mut builder.lists);
         debug_assert_eq!(lists.len(), 1, "收尾后应只剩主列表");
@@ -646,7 +718,8 @@ mod tests {
         let main = typeset(r"ab\par cd").unwrap();
         assert_eq!(main.len(), 3);
         let p1 = as_box(&main[0]);
-        assert_eq!(p1.children.len(), 2);
+        // 行盒 = [a, b, \parfillskip]（M3-5 对齐 TeX：parfillskip 留在末行）
+        assert_eq!(p1.children.len(), 3);
         assert_eq!(as_char(&p1.children[0]), b'a' as u32);
         match &main[1] {
             Node::Glue { width, .. } => {
@@ -662,7 +735,7 @@ mod tests {
     fn paragraph_closed_at_eof() {
         let main = typeset("ab").unwrap();
         assert_eq!(main.len(), 1);
-        assert_eq!(as_box(&main[0]).children.len(), 2);
+        assert_eq!(as_box(&main[0]).children.len(), 3); // a b + \parfillskip
     }
 
     #[test]
@@ -699,7 +772,7 @@ mod tests {
     fn scoping_group_does_not_create_box() {
         let main = typeset(r"{\def\x{ab}\x}").unwrap();
         assert_eq!(main.len(), 1);
-        assert_eq!(as_box(&main[0]).children.len(), 2);
+        assert_eq!(as_box(&main[0]).children.len(), 3); // a b + \parfillskip
     }
 
     #[test]
@@ -792,7 +865,7 @@ mod tests {
         let main = typeset(r"\parindent 20pt\indent a").unwrap();
         assert_eq!(main.len(), 1);
         let para = as_box(&main[0]);
-        assert_eq!(para.children.len(), 2);
+        assert_eq!(para.children.len(), 3); // 缩进盒 + a + \parfillskip
         match &para.children[0] {
             Node::Box(b) => assert_eq!(b.width, 20 * SP_PER_PT),
             other => panic!("预期缩进空盒，得到 {other:?}"),
@@ -804,7 +877,7 @@ mod tests {
     fn automatic_parindent_on_paragraph_start() {
         let main = typeset(r"\parindent 10pt ab").unwrap();
         let para = as_box(&main[0]);
-        assert_eq!(para.children.len(), 3);
+        assert_eq!(para.children.len(), 4); // 缩进盒 + a + b + \parfillskip
         match &para.children[0] {
             Node::Box(b) => assert_eq!(b.width, 10 * SP_PER_PT),
             other => panic!("预期缩进空盒，得到 {other:?}"),
@@ -815,7 +888,7 @@ mod tests {
     fn noindent_suppresses_indent() {
         let main = typeset(r"\parindent 10pt\noindent ab").unwrap();
         let para = as_box(&main[0]);
-        assert_eq!(para.children.len(), 2); // 无缩进盒
+        assert_eq!(para.children.len(), 3); // a + b + \parfillskip
         assert_eq!(as_char(&para.children[0]), b'a' as u32);
     }
 
@@ -1000,8 +1073,9 @@ mod tests {
         let main = ts.typeset(src).unwrap();
         assert_eq!(main.len(), 1);
         let b = as_box(&main[0]);
-        let chars: Vec<u32> = b.children.iter().map(as_char).collect();
-        (chars, b.width, b.height, b.depth)
+        // 行盒含 \parfillskip（M3-5 对齐 TeX）；字符宽度取字符节点之和
+        let (chars, width) = chars_width(&b.children);
+        (chars, width, b.height, b.depth)
     }
 
     #[test]
@@ -1096,7 +1170,28 @@ mod tests {
         let main = ts.typeset(src).unwrap();
         assert_eq!(main.len(), 1);
         let b = as_box(&main[0]);
-        let chars: Vec<u32> = b.children.iter().map(as_char).collect();
-        (chars, b.width, b.height, b.depth)
+        // 行盒含 \parfillskip 胶水（M3-5 对齐 TeX）；字符宽度取字符节点之和
+        let (chars, width) = chars_width(&b.children);
+        (chars, width, b.height, b.depth)
+    }
+
+    /// 行盒内的字符序列与自然宽度（忽略 \parfillskip 等胶水）。
+    fn chars_width(children: &[Node]) -> (Vec<u32>, i64) {
+        let mut w = 0i64;
+        let mut chars = Vec::new();
+        for c in children {
+            match c {
+                Node::Char {
+                    charcode,
+                    width,
+                    ..
+                } => {
+                    chars.push(*charcode);
+                    w += width;
+                }
+                _ => {}
+            }
+        }
+        (chars, w)
     }
 }

@@ -68,29 +68,6 @@ fn highest(hi: [i64; 4], lo: [i64; 4]) -> (u8, i64) {
     (0, 0)
 }
 
-/// 行 badness：行 `(a, b)` 相对 `hsize` 需拉伸/收缩时的坏度。
-/// 高阶（fil/fill/filll）胶水视为无限 → badness 0。
-fn line_badness(bi: &BreakSpec, ap: &BreakSpec, hsize: i64) -> u16 {
-    let w = bi.width - ap.width;
-    if w < hsize {
-        let (o, amt) = highest(bi.stretch, ap.stretch);
-        if o > 0 {
-            0
-        } else {
-            badness(hsize - w, amt)
-        }
-    } else if w > hsize {
-        let (o, amt) = highest(bi.shrink, ap.shrink);
-        if o > 0 {
-            0
-        } else {
-            badness(w - hsize, amt)
-        }
-    } else {
-        0
-    }
-}
-
 /// 预处理：水平列表 → 断点序列（TeX §845 语义）。
 /// 尾部裁剪/parfillskip 由排版器负责；末尾追加强制断点。
 fn preprocess(hlist: &[Node]) -> Vec<BreakSpec> {
@@ -164,49 +141,137 @@ fn preprocess(hlist: &[Node]) -> Vec<BreakSpec> {
     out
 }
 
-/// 单行 demerits（Knuth-Plass 论文 / TeXbook p.97：`(penalty+badness)²`；
-/// 过满行 badness=10000 → 约 10⁸，仅在强制断点被接受）。**待 M3-5 对照 pdfTeX 校准**。
-/// 强制断点（`\penalty≤-10000`）不另计惩罚（penalty 按 0）。
-/// 相邻惩罚调整 / 标记（flag）惩罚未实现（M4 断字时补）。
-fn line_demerits(bad: u16, penalty: i64, forced: bool) -> i64 {
-    let p = if forced { 0 } else { penalty };
-    let d = p + i64::from(bad);
-    d * d
+/// 拟合类（tex.web §16099-16105）：very_loose=0, loose=1, decent=2, tight=3。
+type FitClass = u8;
+const VERY_LOOSE: FitClass = 0;
+const LOOSE: FitClass = 1;
+const DECENT: FitClass = 2;
+const TIGHT: FitClass = 3;
+
+/// 强制断点惩罚（tex.web `eject_penalty`）。
+const EJECT_PENALTY: i64 = -10_000;
+
+/// `\linepenalty`（plain 默认 10）与 `\adjdemerits`（plain 默认 10000）。
+const LINE_PENALTY: i64 = 10;
+const ADJ_DEMERITS: i64 = 10_000;
+
+/// 行伸缩方向（tex.web §16790-16813）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LineKind {
+    Stretch,
+    Shrink,
+}
+
+/// 行 badness + 伸缩方向（tex.web §16790-16813）：
+/// 需拉伸时 fil/fill/filll 视为无限 → badness 0；收缩只用普通阶。
+fn line_badness_kind(bi: &BreakSpec, ap: &BreakSpec, hsize: i64) -> (u16, LineKind) {
+    let w = bi.width - ap.width;
+    if w < hsize {
+        let (o, amt) = highest(bi.stretch, ap.stretch);
+        if o > 0 {
+            (0, LineKind::Stretch)
+        } else {
+            (badness(hsize - w, amt), LineKind::Stretch)
+        }
+    } else {
+        let (o, amt) = highest(bi.shrink, ap.shrink);
+        if o > 0 {
+            (0, LineKind::Shrink)
+        } else {
+            (badness(w - hsize, amt), LineKind::Shrink)
+        }
+    }
+}
+
+/// 拟合类（tex.web §16790-16813）：收缩 `b>12` → tight；拉伸 `b>12` →
+/// `b>99` → very_loose 否则 loose；其余 decent（含 fil 无限拉伸 b=0）。
+fn fit_class_of(bad: u16, kind: LineKind) -> FitClass {
+    if bad > 12 {
+        match kind {
+            LineKind::Shrink => TIGHT,
+            LineKind::Stretch => {
+                if bad > 99 {
+                    VERY_LOOSE
+                } else {
+                    LOOSE
+                }
+            }
+        }
+    } else {
+        DECENT
+    }
+}
+
+/// 单行 demerits（tex.web §16900-16910 精确算法）：
+///
+/// `d = (line_penalty + badness)²`（|和| ≥ 10000 时钳为 10⁸）；
+/// 断点惩罚 `pi≠0` 时附加 `pi²`（`pi<0` 且非强制时等价于加 `pi²`；
+/// 强制断点 pi=eject 不加）；相邻行拟合类差 > 1 时加 `\adjdemerits`。
+/// 参数常量取 plain 默认：`\linepenalty=10`、`\adjdemerits=10000`。
+fn line_demerits(bad: u16, pi: i64, fit: FitClass, prev_fit: FitClass) -> i64 {
+    let mut d = LINE_PENALTY + i64::from(bad);
+    d = if d.abs() >= 10_000 {
+        100_000_000
+    } else {
+        d * d
+    };
+    if pi != 0 {
+        if pi > 0 {
+            d += pi * pi;
+        } else if pi > EJECT_PENALTY {
+            d -= pi * pi;
+        }
+    }
+    if (fit as i64 - prev_fit as i64).abs() > 1 {
+        d += ADJ_DEMERITS;
+    }
+    d
 }
 
 /// 核心 DP：返回（最优断点路径下标序列，最小总 demerits）。
 ///
 /// active 集保存可作行起点的断点；badness ≤ tolerance 且非强制时行可接受；
-/// 强制断点处冲洗 active（此前路径定案）。
+/// 强制断点处冲洗 active（此前路径定案）。每个断点按末行拟合类分别保留最优
+/// （tex.web `minimal_demerits[fit_class]`，`\adjdemerits` 依赖相邻行拟合类差）。
 fn best_path(breaks: &[BreakSpec], hsize: i64, tolerance: i64) -> (Vec<usize>, i64) {
     let n = breaks.len();
-    let mut best_demerits = vec![i64::MAX; n];
-    let mut best_prev: Vec<Option<usize>> = vec![None; n];
+    // best[i][fc]：断点 i 结束、末行拟合类 fc 的最小总 demerits。
+    let mut best: Vec<[i64; 4]> = vec![[i64::MAX; 4]; n];
+    // best_prev[i][fc]：(前一断点下标, 前一行拟合类)。
+    let mut best_prev: Vec<[Option<(usize, FitClass)>; 4]> = vec![[None; 4]; n];
     let mut active: Vec<usize> = vec![0];
-    best_demerits[0] = 0;
+    best[0][DECENT as usize] = 0; // 虚拟起点拟合类 = decent（tex.web §17032）
 
     for i in 1..n {
         let bi = breaks[i];
-        let mut best: Option<(i64, usize)> = None;
+        // 按本行拟合类分槽的候选（tex.web `minimal_demerits`/`best_place`）。
+        let mut champion: [Option<(i64, usize, FitClass)>; 4] = [None; 4];
         for &a in &active {
             let ap = breaks[a];
-            let bad = line_badness(&bi, &ap, hsize);
+            let (bad, kind) = line_badness_kind(&bi, &ap, hsize);
             // 强制断点即使过满也可接受
             if bad as i64 > tolerance && !bi.is_forced {
                 continue;
             }
-            let d = best_demerits[a] + line_demerits(bad, bi.penalty, bi.is_forced);
-            let better = match best {
-                None => true,
-                Some((bd, _)) => d < bd,
-            };
-            if better {
-                best = Some((d, a));
+            let fit = fit_class_of(bad, kind);
+            for (af, &ad) in best[a].iter().enumerate() {
+                if ad == i64::MAX {
+                    continue;
+                }
+                let d = ad + line_demerits(bad, bi.penalty, fit, af as FitClass);
+                let slot = &mut champion[fit as usize];
+                if slot.map_or(true, |(bd, _, _)| d < bd) {
+                    *slot = Some((d, a, af as FitClass));
+                }
             }
         }
-        if let Some((d, a)) = best {
-            best_demerits[i] = d;
-            best_prev[i] = Some(a);
+        for (fc, c) in champion.iter().enumerate() {
+            if let Some((d, a, af)) = *c {
+                best[i][fc] = d;
+                best_prev[i][fc] = Some((a, af));
+            }
+        }
+        if champion.iter().any(|c| c.is_some()) {
             active.push(i);
             if bi.is_forced {
                 // 强制断行：此前的路径已定案，后续只能从本断点起行
@@ -216,14 +281,20 @@ fn best_path(breaks: &[BreakSpec], hsize: i64, tolerance: i64) -> (Vec<usize>, i
         }
     }
 
+    // 末点（末尾强制断点）：取总 demerits 最小的拟合类回溯
+    let (total, fc0) = (0..4)
+        .map(|fc| (best[n - 1][fc], fc as FitClass))
+        .min_by_key(|(d, _)| *d)
+        .expect("末尾强制断点必有路径");
     let mut path = vec![n - 1];
     let mut cur = n - 1;
-    while let Some(p) = best_prev[cur] {
+    let mut cur_fit = fc0;
+    while let Some((p, pf)) = best_prev[cur][cur_fit as usize] {
         path.push(p);
         cur = p;
+        cur_fit = pf;
     }
     path.reverse();
-    let total = best_demerits[n - 1];
     (path, total)
 }
 
@@ -299,40 +370,42 @@ mod tests {
 
     // ---------- Knuth-Plass vs 暴力最优 ----------
 
-    /// 独立暴力实现：最小总 demerits（同一接受规则）。
+    /// 独立暴力实现：最小总 demerits（同一接受规则；状态 = (断点, 末行拟合类)）。
     fn brute_min(breaks: &[BreakSpec], hsize: i64, tolerance: i64) -> i64 {
         let n = breaks.len();
-        let mut memo = vec![None; n];
+        let mut memo = vec![[None; 4]; n];
         fn dfs(
             breaks: &[BreakSpec],
             hsize: i64,
             tolerance: i64,
             i: usize,
-            memo: &mut Vec<Option<i64>>,
+            prev_fit: FitClass,
+            memo: &mut Vec<[Option<i64>; 4]>,
         ) -> i64 {
-            if let Some(v) = memo[i] {
+            if let Some(v) = memo[i][prev_fit as usize] {
                 return v;
             }
             if i == breaks.len() - 1 {
-                memo[i] = Some(0);
+                memo[i][prev_fit as usize] = Some(0);
                 return 0; // 末尾强制断点：无需再断
             }
             let bi = breaks[i];
             let mut best = i64::MAX;
             for j in (i + 1)..breaks.len() {
                 let bj = breaks[j];
-                let bad = line_badness(&bj, &bi, hsize);
+                let (bad, kind) = line_badness_kind(&bj, &bi, hsize);
                 if bad as i64 > tolerance && !bj.is_forced {
                     continue;
                 }
-                let d = line_demerits(bad, bj.penalty, bj.is_forced)
-                    + dfs(breaks, hsize, tolerance, j, memo);
+                let fit = fit_class_of(bad, kind);
+                let d = line_demerits(bad, bj.penalty, fit, prev_fit)
+                    + dfs(breaks, hsize, tolerance, j, fit, memo);
                 best = best.min(d);
             }
-            memo[i] = Some(best);
+            memo[i][prev_fit as usize] = Some(best);
             best
         }
-        dfs(breaks, hsize, tolerance, 0, &mut memo)
+        dfs(breaks, hsize, tolerance, 0, DECENT, &mut memo)
     }
 
     fn dp_min(hlist: &[Node], hsize: i64, tolerance: i64) -> i64 {
@@ -424,12 +497,13 @@ mod tests {
 
     #[test]
     fn fil_glue_makes_line_acceptable() {
-        // 两词 + parfillskip（0pt plus 1fil）：末行靠 fil 无限拉伸 → badness 0
+        // 两词 + parfillskip（0pt plus 1fil）：
+        // 1 行（23 宽，需收缩 1、可用 5 → badness 1 → demerits (10+1)²=121）
+        // vs 2 行（各 0 badness → demerits 100+100=200）→ 1 行胜（TeX 精确 demerits）
         let mut hlist = words(&[10, 10]);
         hlist.push(fil_glue());
-        // 1 行（23 宽，需收缩 1，可用 5 → badness 1）vs 2 行（总 demerits 0）→ 2 行胜
         let lines = knuth_plass(&hlist, 22, 200);
-        assert_eq!(lines, vec![(0, 1), (2, 4)]);
+        assert_eq!(lines, vec![(0, 4)]);
     }
 
     #[test]

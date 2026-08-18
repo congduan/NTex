@@ -253,6 +253,105 @@ pub fn vbox_dimensions(children: &[Node]) -> BoxDimensions {
     }
 }
 
+/// `hpack`（tex.web §656 "hpackage"）：把水平列表打包成**恰好** `width` 宽的 hbox。
+///
+/// 行盒语义（`\hbox to \hsize`）：宽度锁定为目标值，胶水按 glue_set 拉伸/收缩，
+/// 调整量按累积舍入（tex.web `hlist_out` 的 `cur_g`）烘焙进胶水宽度。
+/// height/depth 保持自然值（hbox_dimensions）。
+pub fn hpack(children: &[Node], width: i64) -> BoxNode {
+    let natural = hbox_dimensions(children);
+    let mut total_stretch = [0i64; 4];
+    let mut total_shrink = [0i64; 4];
+    for c in children {
+        if let Node::Glue {
+            stretch,
+            shrink,
+            stretch_order,
+            shrink_order,
+            ..
+        } = c
+        {
+            total_stretch[*stretch_order as usize] += stretch;
+            total_shrink[*shrink_order as usize] += shrink;
+        }
+    }
+    let excess = width - natural.width;
+    #[derive(Clone, Copy)]
+    enum Sign {
+        Normal,
+        Stretch,
+        Shrink,
+    }
+    let (sign, order, gs) = if excess == 0 {
+        (Sign::Normal, 0, 0.0)
+    } else if excess > 0 {
+        match (0..4).rev().find(|&o| total_stretch[o] != 0) {
+            Some(o) => (Sign::Stretch, o, excess as f64 / total_stretch[o] as f64),
+            None => (Sign::Normal, 0, 0.0),
+        }
+    } else {
+        match (0..4).rev().find(|&o| total_shrink[o] != 0) {
+            Some(o) => {
+                let gs = (-excess) as f64 / total_shrink[o] as f64;
+                let gs = if o == 0 && total_shrink[o] < -excess {
+                    1.0
+                } else {
+                    gs
+                };
+                (Sign::Shrink, o, gs)
+            }
+            None => (Sign::Normal, 0, 0.0),
+        }
+    };
+    let mut out: Vec<Node> = Vec::with_capacity(children.len());
+    let mut cum = 0f64;
+    let mut prev_g = 0f64;
+    for c in children {
+        match c {
+            Node::Glue {
+                width: w,
+                stretch,
+                shrink,
+                stretch_order,
+                shrink_order,
+            } => {
+                let mut w = *w;
+                match sign {
+                    Sign::Stretch if *stretch_order as usize == order => {
+                        cum += *stretch as f64;
+                        let g = (gs * cum).round();
+                        w += g as i64 - prev_g as i64;
+                        prev_g = g;
+                    }
+                    Sign::Shrink if *shrink_order as usize == order => {
+                        cum -= *shrink as f64;
+                        let g = (gs * cum).round();
+                        w += g as i64 - prev_g as i64;
+                        prev_g = g;
+                    }
+                    _ => {}
+                }
+                out.push(Node::Glue {
+                    width: w,
+                    stretch: *stretch,
+                    shrink: *shrink,
+                    stretch_order: *stretch_order,
+                    shrink_order: *shrink_order,
+                });
+            }
+            other => out.push(other.clone()),
+        }
+    }
+    BoxNode {
+        kind: BoxKind::HBox,
+        width,
+        height: natural.height,
+        depth: natural.depth,
+        shift: 0,
+        children: out,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

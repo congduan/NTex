@@ -77,6 +77,11 @@ pub enum Primitive {
     Font,
     // M3-5 输出：\shipout<box>（直通 sink，由排版器封装页面）
     ShipOut,
+    // M3-5 断页参数：\vsize/\topskip/\maxdepth/\parskip
+    VSize,
+    TopSkip,
+    MaxDepth,
+    ParSkip,
 }
 
 impl Primitive {

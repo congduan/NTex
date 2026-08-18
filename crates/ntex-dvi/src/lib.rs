@@ -1,18 +1,20 @@
-//! # ntex-dvi：DVI 写出器（M3-5-1）。
+//! # ntex-dvi：DVI 写出器（M3-5）。
 //!
-//! 把 `ntex-layout` 的 `\shipout` 页面（[`BoxNode`] 树）+ 字体表
-//! （[`FontMetrics`]）写成 DVI 二进制（dvitype.web / TeXbook 格式）。
+//! 把 `ntex-layout` 的页面（[`BoxNode`] 树）+ 字体表（[`FontMetrics`]）写成
+//! DVI 二进制（dvitype.web / TeXbook 格式），逐字节对照真实 TeX（tex.web
+//! `ship_out`/`hlist_out`/`vlist_out`/`movement`）：
 //!
-//! 关键约定：
-//! - `pre` 的 num/den = 25400000/473628672（TeX 默认），此时 **1 DVI 单位 = 1 sp**
-//!   （1/65536 pt），页面坐标（x 向右、y 向下，原点 = 盒子参考点）直接取节点维度；
-//! - 支持的指令子集：`set_char` / `set_rule` / `push` / `pop` / `right` / `down` /
-//!   `fnt_def` / `fnt_num` / `pre` / `bop` / `eop` / `post` / `post_post`；
-//! - 页面参考点：`\shipout\hbox{...}` 的基线在原点（升部向上为负 y）；
-//!   `\shipout\vbox{...}` 的首行基线在原点——与 TeX `\shipout` 语义一致，
-//!   驱动（dvipdfmx 等）据内容求页面包围盒。
+//! - 坐标惰性模型：`cur_h`/`cur_v` 累积未输出的位移，仅在字符/规则等需要
+//!   定位时经 [`synch_h`/`synch_v`] 发出 `movement`（tex.web §261-280）；
+//! - `movement` 用 down/right 栈做 w/x/y/z 命中优化（tex.web §297-366）：
+//!   相同位移在命中时可改写为 w0/y0 等一字节指令；
+//! - `set_rule` 语义：当前点为矩形**左下角**，向上画高、向右画宽，h 自动前进
+//!   （dvitype.web §456）；`put_rule` 同但不前进；
+//! - `fnt_def` 在字体**首次使用处**惰性发出（`font_used` 全局标记），post 段
+//!   只列使用过的字体（TeX 倒序）；
+//! - push/pop 对空盒自动抵消（tex.web `dvi_pop` §371）。
 //!
-//! M3-5 范围：断页 DP（`\vsize` 自动分页）与 `\box` 寄存器留待后续子步。
+//! M3-5 范围：自动分页（`\vsize`）与 `\shipout` 页面；insert/mark/leaders 留待。
 
 #![deny(unsafe_code)]
 
@@ -25,45 +27,72 @@ const DVI_DEN: u32 = 473_628_672;
 
 /// 把页面与字体表写成 DVI 字节。
 ///
-/// - `pages`：`\shipout` 的页面（顺序 = DVI 页面顺序）；
-/// - `fonts`：字体表快照（`FontId` 下标 = DVI 字体编号）。
+/// - `pages`：`\shipout` / 自动分页的页面（顺序 = DVI 页面顺序）；
+/// - `fonts`：字体表快照（下标 = 字体编号）。
 pub fn write_dvi(pages: &[BoxNode], fonts: &[FontMetrics]) -> Vec<u8> {
-    let mut w = Writer::new();
+    let mut w = Writer::new(fonts);
     w.pre();
     let mut prev_bop = -1i64; // 首页无前一 bop（TeX 写 -1）
-    let mut last_bop = 0i64; // 最后（当前）一页的 bop 位置
-    let mut max_h = 0i64; // post 的 l：最大页高
-    let mut max_w = 0i64; // post 的 u：最大页宽
+    let mut last_bop = 0i64;
+    let mut max_h = 0i64; // post 的 l = max(页高+深)
+    let mut max_w = 0i64; // post 的 u = max 页宽
     for page in pages {
         let pos = w.out.len() as i64;
-        w.page(page, fonts, prev_bop);
+        w.page(page, prev_bop);
         prev_bop = pos;
         last_bop = pos;
         max_h = max_h.max(page.height + page.depth);
         max_w = max_w.max(page.width);
     }
-    w.post(fonts, pages.len(), last_bop, max_h, max_w);
+    w.post(pages.len(), last_bop, max_h, max_w);
     w.out
 }
 
-/// DVI 写出器（内部状态：字节缓冲 + push/pop 栈深 + 当前字体 + 已定义字体）。
-struct Writer {
-    out: Vec<u8>,
-    stack: u16,
-    max_stack: u16,
-    font: Option<u32>,
-    /// 已发出过 fnt_def 的字体（TeX 每个字体只在首次使用页定义一次）。
-    defined: Vec<bool>,
+/// 移动栈条目（tex.web `movement_node`）：width/location/info。
+#[derive(Debug, Clone, Copy)]
+struct MoveEntry {
+    width: i64,
+    /// 指令字节位置（补丁改写用）。
+    loc: usize,
+    /// yz_OK=3 / y_OK=4 / z_OK=5 / d_fixed=6 / y_here=1 / z_here=2。
+    info: u8,
 }
 
-impl Writer {
-    fn new() -> Self {
+/// DVI 写出器（tex.web `ship_out` 的 Rust 表达）。
+struct Writer<'a> {
+    out: Vec<u8>,
+    fonts: &'a [FontMetrics],
+    /// 逻辑坐标与已输出坐标（tex.web `cur_h`/`dvi_h` 等）。
+    cur_h: i64,
+    cur_v: i64,
+    dvi_h: i64,
+    dvi_v: i64,
+    /// 当前字体（`dvi_f`）与字体使用标记（`font_used`，全局）。
+    font: Option<u32>,
+    used: Vec<bool>,
+    /// push 栈深（`cur_s`，初始 -1）与最大栈深（post 的 s）。
+    stack: i16,
+    max_stack: i16,
+    /// 横向/纵向移动栈（w/x 与 y/z 命中优化）。
+    h_moves: Vec<MoveEntry>,
+    v_moves: Vec<MoveEntry>,
+}
+
+impl<'a> Writer<'a> {
+    fn new(fonts: &'a [FontMetrics]) -> Self {
         Self {
             out: Vec::new(),
-            stack: 0,
-            max_stack: 0,
+            fonts,
+            cur_h: 0,
+            cur_v: 0,
+            dvi_h: 0,
+            dvi_v: 0,
             font: None,
-            defined: Vec::new(),
+            used: vec![false; fonts.len()],
+            stack: -1,
+            max_stack: 0,
+            h_moves: Vec::new(),
+            v_moves: Vec::new(),
         }
     }
 
@@ -80,10 +109,9 @@ impl Writer {
     }
 
     /// 一页：bop（10 个计数 + 前一 bop 指针）→ 页面内容 → eop。
-    /// 页面原点 (0,0) = 盒子**顶**；先 `down(height)` 把参考点（hbox 基线 /
-    /// vbox 首行基线）移到 y=height（对照真实 TeX 的 `\shipout` 输出）。
-    /// `\count0` = 1（plain TeX 格式默认；真实值随 `\count0` 赋值，切片固定 1）。
-    fn page(&mut self, page: &BoxNode, fonts: &[FontMetrics], prev_bop: i64) {
+    /// 参考点（tex.web `ship_out` §736-739）：hbox 基线在 `height`、vbox 顶在 0，
+    /// 首个 down 由第一个字符/规则的 `synch_v` 惰性发出。
+    fn page(&mut self, page: &BoxNode, prev_bop: i64) {
         self.out.push(139); // bop
         self.out.extend(1u32.to_be_bytes()); // \count0 = 页码（plain 默认 1）
         for _ in 1..10 {
@@ -91,55 +119,57 @@ impl Writer {
         }
         self.out.extend((prev_bop as u32).to_be_bytes()); // 首页 -1（0xFFFFFFFF）
         self.font = None;
-        self.down(page.height); // 盒子顶在原点，参考点下移 height
-        // 页面内定义首次使用的字体（TeX 行为：每个字体只在首个使用页 fnt_def）
-        for (k, fm) in fonts.iter().enumerate() {
-            if self.defined.len() <= k {
-                self.defined.resize(k + 1, false);
-            }
-            if !self.defined[k] {
-                self.fnt_def(k as u8, fm);
-                self.defined[k] = true;
-            }
-        }
+        self.cur_h = 0;
+        self.cur_v = 0;
+        self.dvi_h = 0;
+        self.dvi_v = 0;
         match page.kind {
-            BoxKind::HBox => self.hlist(&page.children),
-            BoxKind::VBox => self.vlist(&page.children),
+            BoxKind::HBox => {
+                self.cur_v = page.height; // 基线在页高
+                self.hlist(page);
+            }
+            // vbox 页：ship_out 先置 cur_v=height，vlist_out 内 `cur_v -= height` 回到 0
+            BoxKind::VBox => {
+                self.cur_v = page.height;
+                self.vlist(page);
+            }
         }
         self.out.push(140); // eop
+        // 跨页清空移动栈（TeX 每页的 down/right 栈独立）
+        self.h_moves.clear();
+        self.v_moves.clear();
     }
 
-    /// `post`：指针→post_post、num、den、mag、l/u/s/t，随后重复字体定义。
-    ///
+    /// `post`：指针→post_post、num、den、mag、l/u/s/t，随后**使用过的**字体
+    /// 定义（TeX 倒序），尾部 `post_post` + 版本 2 + 4×223 哨兵。
     /// 对照真实 TeX / dvipdfmx 实测约定：
-    /// - post 的 4 字节指针字段 = **最后一页 bop 的位置**（dvipdfmx 用其回溯页面；
-    ///   填"正确"的 post_post 位置反而被拒）；
-    /// - 尾部 = `post_post` 块（249+指针4+版本2+4×223 哨兵），文件必须恰好以其
-    ///   结尾，**全文不得出现 nop(0)**（dvipdfmx 报 "Unexpected op code: 0"；
-    ///   故不追求 4 字节对齐）。
-    fn post(&mut self, fonts: &[FontMetrics], total_pages: usize, last_bop: i64, max_h: i64, max_w: i64) {
+    /// - post 的 4 字节指针字段 = 最后一页 bop 位置（dvipdfmx 用其回溯页面）；
+    /// - 尾部 = `post_post` 块（249+指针4+版本2+4×223），文件必须恰好以其结尾，
+    ///   全文不得出现 nop(0)（dvipdfmx 报 "Unexpected op code: 0"）。
+    fn post(&mut self, total_pages: usize, last_bop: i64, max_h: i64, max_w: i64) {
         let post_pos = self.out.len() as u32;
         self.out.push(248);
-        self.out.extend((last_bop as u32).to_be_bytes()); // dvipdfmx：最后一页 bop 位置
+        self.out.extend((last_bop as u32).to_be_bytes());
         self.out.extend(DVI_NUM.to_be_bytes());
         self.out.extend(DVI_DEN.to_be_bytes());
         self.out.extend(1000u32.to_be_bytes()); // mag
-        self.out.extend((max_h as u32).to_be_bytes()); // l = 最大页高（height+depth）
-        self.out.extend((max_w as u32).to_be_bytes()); // u = 最大页宽
-        self.out.extend(self.max_stack.to_be_bytes()); // s = 最大栈深
-        self.out.extend((total_pages as u16).to_be_bytes()); // t = 页数
-        for (k, fm) in fonts.iter().enumerate() {
-            self.fnt_def(k as u8, fm);
+        self.out.extend((max_h as u32).to_be_bytes()); // l
+        self.out.extend((max_w as u32).to_be_bytes()); // u
+        self.out.extend((self.max_stack as u16).to_be_bytes()); // s
+        self.out.extend((total_pages as u16).to_be_bytes()); // t
+        // 仅使用过的字体、倒序（tex.web `@<Output the font definitions...@>`）
+        for (k, fm) in self.fonts.iter().enumerate().rev() {
+            if self.used[k] {
+                self.fnt_def(k as u8, fm);
+            }
         }
         self.out.push(249);
-        self.out.extend(post_pos.to_be_bytes()); // post_post → post 指针
+        self.out.extend(post_pos.to_be_bytes());
         self.out.push(2); // 版本
-        self.out.extend([223, 223, 223, 223]); // 尾部哨兵（dvipdfmx 严格校验）
+        self.out.extend([223, 223, 223, 223]); // 尾部哨兵
     }
 
     /// `fnt_def1`：k(1) c(4) s(4) d(4) a(1) l(1) name。
-    /// 对照真实 TeX 输出：`s` = 当前字号（sp）= design×scale/2^20；
-    /// `d` = 设计字号（sp）。驱动按 `fix_word × s/2^20` 求字符宽度（DVI 单位 = sp）。
     fn fnt_def(&mut self, k: u8, fm: &FontMetrics) {
         self.out.push(243);
         self.out.push(k);
@@ -152,75 +182,136 @@ impl Writer {
         self.out.extend(fm.name.bytes());
     }
 
-    // ---------- 水平/垂直列表渲染 ----------
+    // ---------- 盒子输出（tex.web hlist_out/vlist_out） ----------
 
-    /// 水平列表：参考点 = 基线（x 向右推进）。
-    /// 注意：`set_char` 后**不**输出 right——驱动按 TFM `fix_word × s/2^20`
-    /// 自动前进字符宽度（对照真实 TeX DVI；重复输出会双倍间距）。
-    fn hlist(&mut self, nodes: &[Node]) {
-        for n in nodes {
+    /// 水平列表：参考点 = 基线（x 向右推进，y 保持基线）。
+    fn hlist(&mut self, bx: &BoxNode) {
+        self.enter_box();
+        let save_loc = self.out.len();
+        let base_line = self.cur_v;
+        for n in &bx.children {
             match n {
                 Node::Char {
                     font,
                     charcode,
+                    width,
                     ..
                 } => {
+                    self.synch_h();
+                    self.synch_v();
                     self.select_font(font.0);
                     self.set_char(*charcode);
+                    // 驱动按 TFM 宽度自动前进（tex.web §375）
+                    self.cur_h += width;
+                    self.dvi_h = self.cur_h;
                 }
-                Node::Glue { width, .. } | Node::Kern { width } => self.right(*width),
+                Node::Glue { width, .. } | Node::Kern { width } => self.cur_h += width,
+                Node::Box(inner) => {
+                    if inner.children.is_empty() {
+                        self.cur_h += inner.width;
+                    } else {
+                        let save_h = self.dvi_h;
+                        let save_v = self.dvi_v;
+                        let edge = self.cur_h;
+                        self.cur_v = base_line + inner.shift; // 盒下移 shift
+                        match inner.kind {
+                            BoxKind::HBox => self.hlist(inner),
+                            BoxKind::VBox => self.vlist(inner),
+                        }
+                        self.dvi_h = save_h;
+                        self.dvi_v = save_v;
+                        self.cur_h = edge + inner.width;
+                        self.cur_v = base_line;
+                    }
+                }
                 Node::Rule {
                     width,
                     height,
                     depth,
                 } => {
-                    self.push();
-                    self.down(-*height); // 规则顶在基线之上 height
-                    self.set_rule(*width, *height + *depth);
-                    self.pop();
-                    self.right(*width);
-                }
-                Node::Box(inner) => {
-                    self.push();
-                    self.down(-inner.shift); // shift > 0 = 抬高参考点
-                    match inner.kind {
-                        BoxKind::HBox => self.hlist(&inner.children),
-                        BoxKind::VBox => self.vlist(&inner.children),
+                    if *height + *depth > 0 && *width > 0 {
+                        self.synch_h();
+                        self.cur_v = base_line + depth; // 规则底在基线+depth
+                        self.synch_v();
+                        self.set_rule(*height + *depth, *width);
+                        self.cur_v = base_line;
+                        self.dvi_h += width; // set_rule 自动前进 h
                     }
-                    self.pop();
-                    self.right(inner.width);
+                    self.cur_h += width;
                 }
-                _ => {} // Penalty/Leaders：切片不输出
+                Node::Penalty { .. } | Node::Leaders { .. } => {}
             }
         }
+        self.prune_movements(save_loc);
+        self.leave_box(save_loc);
     }
 
-    /// 垂直列表：参考点 = 首行基线（y 向下推进）。
-    fn vlist(&mut self, nodes: &[Node]) {
-        for n in nodes {
+    /// 垂直列表：参考点 = 页顶（y 向下推进，x 保持左边）。
+    fn vlist(&mut self, bx: &BoxNode) {
+        self.enter_box();
+        let save_loc = self.out.len();
+        let left_edge = self.cur_h;
+        self.cur_v -= bx.height; // 顶 = 参考点 − height
+        for n in &bx.children {
             match n {
-                Node::Box(b) => {
-                    match b.kind {
-                        BoxKind::HBox => self.hlist(&b.children),
-                        BoxKind::VBox => self.vlist(&b.children),
+                Node::Box(inner) => {
+                    if inner.children.is_empty() {
+                        self.cur_v += inner.height + inner.depth;
+                    } else {
+                        self.cur_v += inner.height;
+                        self.synch_v();
+                        let save_h = self.dvi_h;
+                        let save_v = self.dvi_v;
+                        self.cur_h = left_edge + inner.shift;
+                        match inner.kind {
+                            BoxKind::HBox => self.hlist(inner),
+                            BoxKind::VBox => self.vlist(inner),
+                        }
+                        self.dvi_h = save_h;
+                        self.dvi_v = save_v;
+                        self.cur_v = save_v + inner.depth;
+                        self.cur_h = left_edge;
                     }
-                    self.down(-(b.height + b.depth));
                 }
-                Node::Glue { width, .. } | Node::Kern { width } => self.down(-*width),
+                Node::Glue { width, .. } | Node::Kern { width } => self.cur_v += width,
                 Node::Rule {
                     width,
                     height,
                     depth,
                 } => {
-                    self.push();
-                    self.down(-*height);
-                    self.set_rule(*width, *height + *depth);
-                    self.pop();
-                    self.down(-(*height + *depth));
+                    self.cur_v += height + depth; // 移到规则底
+                    if *height + *depth > 0 && *width > 0 {
+                        self.synch_h();
+                        self.synch_v();
+                        self.put_rule(*height + *depth, *width);
+                    }
                 }
-                _ => {}
+                Node::Penalty { .. } | Node::Leaders { .. } | Node::Char { .. } => {}
             }
         }
+        self.prune_movements(save_loc);
+        self.leave_box(save_loc);
+    }
+
+    /// 进入盒子（tex.web §351-353）：栈深 +1，非顶层发 push。
+    fn enter_box(&mut self) {
+        self.stack += 1;
+        if self.stack > 0 {
+            self.out.push(141); // push
+        }
+        self.max_stack = self.max_stack.max(self.stack);
+    }
+
+    /// 离开盒子（tex.web §357-371）：prune 已在调用方做；空盒抵消 push/pop。
+    fn leave_box(&mut self, save_loc: usize) {
+        if self.stack > 0 {
+            if self.out.len() == save_loc {
+                self.out.pop(); // 抵消 `push pop` 对（tex.web dvi_pop §371）
+            } else {
+                self.out.push(142); // pop
+            }
+        }
+        self.stack -= 1;
     }
 
     // ---------- 指令字节 ----------
@@ -234,16 +325,31 @@ impl Writer {
         }
     }
 
-    /// `set_rule`：顶-左角在当前位置。
-    fn set_rule(&mut self, w: i64, h: i64) {
+    /// `set_rule`：当前点 = 矩形**左下角**，向上画 h、向右画 w（dvitype.web §456）。
+    fn set_rule(&mut self, h: i64, w: i64) {
         self.out.push(132);
         self.out.extend((h as u32).to_be_bytes());
         self.out.extend((w as u32).to_be_bytes());
     }
 
+    /// `put_rule`：同 set_rule 但不前进。
+    fn put_rule(&mut self, h: i64, w: i64) {
+        self.out.push(137);
+        self.out.extend((h as u32).to_be_bytes());
+        self.out.extend((w as u32).to_be_bytes());
+    }
+
+    /// 字体选择（tex.web §383-391）：首次使用时惰性 `fnt_def`。
     fn select_font(&mut self, f: u32) {
         if self.font == Some(f) {
             return;
+        }
+        // 字体表外（如 fn 指针占位模式）只发 fnt_num，不发 fnt_def
+        if let Some(fm) = self.fonts.get(f as usize) {
+            if !self.used[f as usize] {
+                self.fnt_def(f as u8, fm);
+                self.used[f as usize] = true;
+            }
         }
         if f < 64 {
             self.out.push(171 + f as u8); // fnt_num_0..63
@@ -254,45 +360,136 @@ impl Writer {
         self.font = Some(f);
     }
 
-    /// 横向移动（跳过 0；按大小选 right1..right4，与 TeX 一致）。
-    fn right(&mut self, dx: i64) {
-        if dx == 0 {
-            return;
+    /// `synch_h` / `synch_v`（tex.web §276-280）：把累积位移以 movement 发出。
+    fn synch_h(&mut self) {
+        if self.cur_h != self.dvi_h {
+            let d = self.cur_h - self.dvi_h;
+            self.movement(d, false);
+            self.dvi_h = self.cur_h;
         }
-        let (op, n) = match dx {
-            -128..=127 => (143, 1),
-            -32768..=32767 => (144, 2),
-            -8_388_608..=8_388_607 => (145, 3),
-            _ => (146, 4),
-        };
-        self.out.push(op);
-        self.out.extend((dx as u32).to_be_bytes()[4 - n..].to_vec());
     }
 
-    /// 纵向移动（跳过 0；按大小选 down1..down4，与 TeX 一致）。正 = 向下。
-    fn down(&mut self, dy: i64) {
-        if dy == 0 {
-            return;
+    fn synch_v(&mut self) {
+        if self.cur_v != self.dvi_v {
+            let d = self.cur_v - self.dvi_v;
+            self.movement(d, true);
+            self.dvi_v = self.cur_v;
         }
-        let (op, n) = match dy {
-            -128..=127 => (157, 1),
-            -32768..=32767 => (158, 2),
-            -8_388_608..=8_388_607 => (159, 3),
-            _ => (160, 4),
+    }
+
+    /// `movement`（tex.web §297-366）：带 w/x/y/z 命中优化的位移输出。
+    ///
+    /// `o` = down1/right1；栈搜索命中时把先前 down/right 改写成 y/w（+5）
+    /// 或 z/x（+10）并发出 y0/w0、z0/x0 一字节指令；否则发普通 down/right。
+    fn movement(&mut self, w: i64, vert: bool) {
+        let o: u8 = if vert { 157 } else { 143 };
+        let stack: &mut Vec<MoveEntry> = if vert {
+            &mut self.v_moves
+        } else {
+            &mut self.h_moves
         };
-        self.out.push(op);
-        self.out.extend((dy as u32).to_be_bytes()[4 - n..].to_vec());
+        // 搜索（tex.web §360-366）：mstate 0=无、6=y_seen、12=z_seen
+        let mut mstate = 0u8;
+        let mut found: Option<usize> = None;
+        let mut p = stack.len();
+        while p > 0 {
+            p -= 1;
+            let (width, loc, info) = {
+                let e = &stack[p];
+                (e.width, e.loc, e.info)
+            };
+            if width == w {
+                let v = mstate + info;
+                match v {
+                    // none+yz_OK, none+y_OK, z_seen+yz_OK, z_seen+y_OK → 改 y/w
+                    3 | 4 | 15 | 16 => {
+                        self.out[loc] += 5; // y1-down1（w1-right1 同 5）
+                        stack[p].info = 1; // y_here
+                        found = Some(p);
+                        break;
+                    }
+                    // none+z_OK, y_seen+yz_OK, y_seen+z_OK → 改 z/x
+                    5 | 9 | 11 => {
+                        self.out[loc] += 10; // z1-down1（x1-right1 同 10）
+                        stack[p].info = 2; // z_here
+                        found = Some(p);
+                        break;
+                    }
+                    // none+y_here, none+z_here, y_seen+z_here, z_seen+y_here → 命中
+                    1 | 2 | 8 | 13 => {
+                        found = Some(p);
+                        break;
+                    }
+                    _ => {} // 其余信息不做处理
+                }
+            } else {
+                match mstate + info {
+                    1 => mstate = 6,  // none+y_here → y_seen
+                    2 => mstate = 12, // none+z_here → z_seen
+                    8 | 13 => break,  // y_seen+z_here / z_seen+y_here → not_found
+                    _ => {}
+                }
+            }
+        }
+        let q_loc = self.out.len();
+        let q_info = match found {
+            Some(p) => {
+                let p_info = stack[p].info;
+                if p_info == 1 {
+                    self.out.push(o + 4); // y0 / w0（y0-down1 = w0-right1 = 4）
+                    for k in ((p + 1)..stack.len()).rev() {
+                        match stack[k].info {
+                            3 => stack[k].info = 5, // yz_OK → z_OK
+                            4 => stack[k].info = 6, // y_OK → d_fixed
+                            _ => {}
+                        }
+                    }
+                } else {
+                    self.out.push(o + 9); // z0 / x0（z0-down1 = x0-right1 = 9）
+                    for k in ((p + 1)..stack.len()).rev() {
+                        match stack[k].info {
+                            3 => stack[k].info = 4, // yz_OK → y_OK
+                            5 => stack[k].info = 6, // z_OK → d_fixed
+                            _ => {}
+                        }
+                    }
+                }
+                p_info
+            }
+            None => {
+                emit_move(&mut self.out, o, w);
+                3 // yz_OK
+            }
+        };
+        stack.push(MoveEntry {
+            width: w,
+            loc: q_loc,
+            info: q_info,
+        });
     }
 
-    fn push(&mut self) {
-        self.out.push(141);
-        self.stack += 1;
-        self.max_stack = self.max_stack.max(self.stack);
+    /// `prune_movements`（tex.web §439-451）：删除本盒内产生的移动栈条目。
+    fn prune_movements(&mut self, l: usize) {
+        self.h_moves.retain(|e| e.loc < l);
+        self.v_moves.retain(|e| e.loc < l);
     }
+}
 
-    fn pop(&mut self) {
-        self.out.push(142);
-        self.stack -= 1;
+/// 普通 down/right 编码（tex.web §355-359）：|w| 分档 1/2/3/4 字节。
+fn emit_move(out: &mut Vec<u8>, o: u8, w: i64) {
+    let abs = w.abs();
+    if abs >= (1 << 23) {
+        out.push(o + 3); // down4/right4
+        out.extend((w as i32).to_be_bytes());
+    } else if abs >= (1 << 15) {
+        out.push(o + 2); // down3/right3
+        out.extend(((w as u32) & 0xFF_FFFF).to_be_bytes()[1..].to_vec());
+    } else if abs >= (1 << 7) {
+        out.push(o + 1); // down2/right2
+        out.extend((w as u16).to_be_bytes());
+    } else {
+        out.push(o); // down1/right1
+        out.push((w as i8) as u8);
     }
 }
 
@@ -344,7 +541,6 @@ mod tests {
             dvi.ends_with(&[2, 223, 223, 223, 223]),
             "尾部应为版本 2 + 4×223 哨兵：{dvi:?}"
         );
-        // post 与 post_post 都存在
         assert!(dvi.contains(&248));
         assert!(dvi.contains(&249));
     }
@@ -354,7 +550,6 @@ mod tests {
         let fonts = vec![cmr_metrics("cmr10")];
         let page = hbox_page(vec![char_node(b'H', 500_000), char_node(b'i', 260_000)]);
         let dvi = write_dvi(&[page], &fonts);
-        // fnt_def1(243) + k=0 + checksum + s=10pt(sp) + d=10pt(sp) + a=0 + l=5 + "cmr10"
         let mut fnt_def = vec![243, 0];
         fnt_def.extend(0x1234_5678u32.to_be_bytes());
         fnt_def.extend(655_360u32.to_be_bytes()); // s = 当前字号 10pt
@@ -366,11 +561,11 @@ mod tests {
             dvi.windows(fnt_def.len()).any(|w| w == fnt_def),
             "fnt_def 应有 cmr10 的 checksum/scale/design/name：{dvi:?}"
         );
-        // fnt_num_0 = 171 + 0；set_char 'H'(72)、'i'(105)（相邻，宽度由驱动按 TFM 前进）
+        // fnt_num_0 = 171 + 0；H、i 相邻（set_char 后无 right，驱动按 TFM 前进）
         assert!(dvi.contains(&171), "fnt_num(0) 应出现");
         assert!(
             dvi.windows(3).any(|w| w == [171, 72, 105]),
-            "H、i 应相邻（set_char 后无 right）：{dvi:?}"
+            "H、i 应相邻：{dvi:?}"
         );
     }
 
@@ -394,10 +589,10 @@ mod tests {
             char_node(b'b', 100),
         ]);
         let dvi = write_dvi(&[page], &fonts);
-        // set_rule(132) 出现；push(141)/pop(142) 用于规则定位
-        assert!(dvi.contains(&132));
-        assert!(dvi.contains(&141));
-        assert!(dvi.contains(&142));
+        // 规则（tex.web §421-429）：down(+depth) → set_rule(h+d, w) → down(-depth)，
+        // 无 push/pop（set_rule 的 h 自动前进 w）。测试数据为 sp：h=40+5=45、w=30。
+        assert!(dvi.contains(&132), "set_rule 应出现");
+        assert!(dvi.windows(9).any(|w| w == [132, 0, 0, 0, 45, 0, 0, 0, 30]));
     }
 
     #[test]
@@ -406,7 +601,6 @@ mod tests {
         let p1 = hbox_page(vec![char_node(b'a', 100)]);
         let p2 = hbox_page(vec![char_node(b'b', 100)]);
         let dvi = write_dvi(&[p1, p2], &fonts);
-        // 两个 bop(139) 与两个 eop(140)
         assert_eq!(dvi.iter().filter(|&&b| b == 139).count(), 2);
         assert_eq!(dvi.iter().filter(|&&b| b == 140).count(), 2);
         // post 的 t = 2：248(1) + pp(4) + num/den/mag(12) + l/u(8) + s(2)，t 在 +27
@@ -414,7 +608,7 @@ mod tests {
         assert_eq!(&dvi[t_pos..t_pos + 2], &[0, 2]);
     }
 
-    // ---------- 与排版器集成（真实 cmr10） ----------
+    // ---------- 与排版器集成（真实 cmr10 + 自动分页） ----------
 
     #[test]
     fn typeset_shipout_to_dvi_with_cmr10() {
@@ -435,7 +629,6 @@ mod tests {
         assert_eq!(fonts[0].checksum, fm.checksum, "checksum 应来自 TFM 头");
 
         let dvi = write_dvi(&pages, &fonts);
-        // 页面上应含 N/T/e/x 的 set_char
         for ch in [b'N', b'T', b'e', b'x'] {
             assert!(dvi.contains(&ch), "缺字符 {ch} 的 set_char");
         }
@@ -446,5 +639,43 @@ mod tests {
             2,
             "cmr10 应在页面与 post 各定义一次"
         );
+    }
+
+    #[test]
+    fn automatic_pagination_ships_pages() {
+        let Some(path) = ntex_font::find_tfm("cmr10") else {
+            eprintln!("未找到 cmr10.tfm，跳过");
+            return;
+        };
+        let bytes = std::fs::read(path).expect("读取 cmr10.tfm");
+        let fm = ntex_font::parse_tfm(&bytes).expect("解析 cmr10.tfm");
+
+        let mut ts = Typesetter::with_tfm();
+        // 小 \vsize + 窄 \hsize：长文本自动分多页
+        let src = r"\font\cmr=cmr10\hsize 200pt\vsize 80pt\cmr ".to_owned()
+            + "This is the first paragraph of a test document that has to be "
+            + "long enough to wrap around into several lines of text, so that "
+            + "the page builder will eventually overflow the rather small "
+            + "vertical size and fire up a page break at the best place. "
+            + "More words are needed to make the paragraph really long. "
+            + "\\par\\cmr "
+            + "And here is the second paragraph to be paginated separately. "
+            + "It also has some words to fill up a few more lines, since the "
+            + "pagination logic must handle the remainder of the first page.";
+        let (pages, fonts) = ts.typeset_dvi(&src).expect("排版失败");
+        assert!(
+            pages.len() >= 2,
+            "小 \\vsize 应至少分两页，实际 {} 页",
+            pages.len()
+        );
+        assert_eq!(fonts.len(), 1);
+        assert_eq!(fonts[0].checksum, fm.checksum);
+        // 每页为 vbox（自动分页），高度 = vsize
+        for p in &pages {
+            assert_eq!(p.kind, BoxKind::VBox, "自动分页页面应为 vbox");
+            assert_eq!(p.height, 80 * 65_536, "页高应为 \\vsize");
+        }
+        let dvi = write_dvi(&pages, &fonts);
+        assert!(dvi.len() > 0);
     }
 }
