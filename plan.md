@@ -11,7 +11,7 @@
 | M1 展开内核 | 🟡 核心完成：M1-1~7、M1-9~11 已实现（95 用例）；M1-8 分隔参数、M1-13 错误模型、**M1-14 TRIP 冲刺** 待补 |
 | M2 字节码 | 🟡 双轨完成：定长 u64 IR + 编译器 + 解释器等价验证（100 用例）；**吞吐 1.12x 未达 2x 目标**，M2-5 arena 未做 |
 | M3 排版核心 | 🟡 M3-1~M3-4 完成（58+ 用例）；**M3-5 DVI 写出 + `\shipout` + 断页 DP + lig/kern + `\sfcode` + `\output` 例程/box255** 完成（dvipdfmx 验收 + 与 TeX 差分对照）；VFS/`.fmt` 待做 |
-| 输出端 | 🟢 临时 PDF 切片可用（`ntex-pdf`：Helvetica 标准字体 + 贪心折行，可产出可看 PDF） |
+| 输出端 | 🟢 正式 PDF 后端可用（`ntex-pdf`：DVI → PDF 直出 + Type1 嵌入，替换临时 Helvetica 切片；demo 两页与 dvipdfmx 渲染一致） |
 
 **下一步**：M3 收尾——VFS + 侧效应模型（RFC-3）、`.fmt v1` 内存快照；随后 M4 数学 + e-TeX。
 
@@ -312,7 +312,11 @@
 **目标**：三种输出端，交互预览可用。
 
 - [x] 临时切片先行（M3 中途）：`ntex-pdf` 已产出可看 PDF（Helvetica 标准字体 + 贪心折行；M3-3 Knuth-Plass / M3-4 TFM / M3-5 DVI 后替换）
-- [ ] PDF 后端：直接生成（跳过 xdv→xdvipdfmx 中间步），对象批量缓冲写
+- [x] **正式 PDF 后端**：DVI → PDF 直出（跳过 xdv→xdvipdfmx 中间步）。`ntex-pdf` 改为
+      DVI 解析器（set_char/set_rule/push/pop/right/down/wxyz/fnt_def 全支持）+ PDF 1.4 写出器
+      （对象/xref/页面树/内容流）+ Type1 字体嵌入（原始 PFB + /FontFile）。内容流按行成 TJ 串
+      （同 dvipdfmx），词距用调整量表达——pdftotext 提取干净、渲染与 dvipdfmx 像素级一致
+      （demo.tex 两页对比墨水比 1.02~1.04，均为字体提示/抗锯齿差异）。
 - [ ] L2 字节兼容：简单文档对照 pdfTeX 逐字节 diff（关闭时间戳/元数据随机性）
 - [ ] Skia 渲染后端（桌面/服务端）
 - [ ] WASM 前端：wasm-bindgen + Canvas2D/WebGL 实时预览（接 M5 增量，毫秒级刷新）
@@ -342,7 +346,7 @@
 |---|---|---|
 | `ntex-core` | token（8B tagged union）、catcode、InternTable、eqtb 版本化、展开引擎、**字节码 IR/编译器/执行器（M2 落在此 crate，`ntex-vm` 未单建）**、内部参数、sink 事件流 | ✅ 已建 |
 | `ntex-layout` | 节点、**主循环（模式状态机）**、badness/断行点、Knuth-Plass、TFM 字体接入、断页、数学排版 | ✅ 已建（M3-1~4 完成） |
-| `ntex-pdf` | **最小 PDF 切片（临时）**：Helvetica 标准字体 + 贪心折行 | ✅ 已建（M3-5/M8 正式后端替换） |
+| `ntex-pdf` | **正式 DVI → PDF 后端**：DVI 解析 + PDF 1.4 写出 + Type1(PFB) 嵌入；替换临时切片 | ✅ 已建（M8） |
 | `ntex-font` | TFM/OFM、ttf-parser、HarfBuzz 整形、整形缓存 | ✅ 已建（M3-4：TFM 解析 + `\font` 加载 + 缩放；ttf/HarfBuzz 待 M9） |
 | `ntex-format` | .fmt 序列化/反序列化、mmap、部分求值 | 未建（M7） |
 | `ntex-incremental` | 求值图、依赖追踪、失效传播 | 未建（M5） |

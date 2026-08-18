@@ -25,9 +25,9 @@ TeX/LaTeX 源码
 3. 布局引擎（阶段 2：排版，并行）
    段落折行 Knuth-Plass │ 断页 │ 数学排版 │ 断字 │ 字体
     ▼
-4. 盒子树 + 输出例程（\shipout）
+4. 盒子树 + 输出例程（\shipout）→ DVI
     ▼
-5. 渲染后端（阶段 3：渲染）Skia / WebGPU / pdf-writer
+5. 渲染后端（阶段 3：渲染）ntex-pdf（DVI→PDF）/ Skia / WASM
 ```
 
 ## 四大性能支柱
@@ -41,7 +41,11 @@ TeX/LaTeX 源码
 
 ```
 crates/
-  ntex-core        引擎基础类型 + TeX VM 数据模型 + 展开引擎（RFC-1）
+  ntex-core        引擎基础类型 + TeX VM 数据模型 + 展开引擎 + 字节码 VM（RFC-1 / RFC-4）
+  ntex-layout      排版核心：主循环（模式状态机）/ 折行 / 断页 / 输出例程（M3）
+  ntex-font        TFM 解析与真实字体度量（M3-4；ttf/HarfBuzz 待 M9）
+  ntex-dvi         DVI 写出器，与真实 TeX 逐字节一致（M3-5）
+  ntex-pdf         DVI → PDF 正式后端：Type1 字体嵌入（M8 提前落地）
   ntex-test-support 测试/差分/基准基础设施（EngineDriver 抽象）
   ntex-trip        TRIP 一致性测试框架
   ntex-diff        差分测试工具（参考引擎 vs 本引擎）
@@ -51,7 +55,7 @@ scripts/           辅助脚本（如 fetch-trip-fixtures.sh）
 docs（RFC）        RFC-1 token 表示 / RFC-4 字节码指令集
 ```
 
-后续里程碑将按计划加入：`ntex-vm`（字节码）、`ntex-layout`、`ntex-font`、`ntex-format`、`ntex-incremental`、`ntex-io`、`ntex-backend`、`ntex-cli`、`ntex-wasm`。
+后续里程碑按计划加入：`ntex-format`（.fmt，M7）、`ntex-incremental`（增量计算，M5）、`ntex-io`（VFS，M3/M5）、`ntex-backend`（Skia/WebGPU，M8）、`ntex-cli` / `ntex-wasm`（M9）。
 
 ## 快速开始
 
@@ -61,6 +65,10 @@ make fixtures   # 获取 TRIP 测试 fixtures
 make trip       # TRIP 一致性测试（stub 驱动验证管路）
 make diff       # 差分测试（示例 fixtures）
 make bench      # 基准（stub 驱动验证管路）
+
+# 端到端演示：demo.tex → DVI → PDF（正式后端）
+cargo run -p ntex-dvi -- demo.tex     # 排版（TFM / Knuth-Plass / 断页 / \shipout）→ demo.dvi
+cargo run -p ntex-pdf -- demo.dvi     # DVI → PDF（Type1 字体嵌入）→ demo.pdf
 
 # 接真实参考引擎
 cargo run -p ntex-diff -- --fixtures fixtures/diff --reference external=pdflatex --engine stub
@@ -79,8 +87,11 @@ cargo run -p ntex-bench --release -- --driver external=pdflatex
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
 | M0 地基 | workspace / CI / 基准 / TRIP / 差分工具链 | ✅ 完成 |
-| M1 内核 | Token/InternTable/eqtb/catcode/扫描器/展开引擎 | 🔄 进行中（M1-1~M1-6 完成） |
-| M2+ | 字节码编译 / 排版 / 数学 / 增量 / 并行 / 渲染 / 生态 | ⏳ 待实施 |
+| M1 内核 | Token/InternTable/eqtb/catcode/扫描器/展开引擎 | � 核心完成；TRIP 未全绿（分隔参数 / 错误模型待补） |
+| M2 字节码 | 定长 u64 IR + 编译器 + 双轨等价 | 🟡 等价 100 用例全绿；吞吐 1.12x 未达 2x，arena 未做 |
+| M3 排版 | 折行/TFM/断页/lig+kern/\output/shipout→DVI | 🟡 核心完成（DVI 逐字节对照一致）；VFS / .fmt v1 待做 |
+| 输出端 | DVI→PDF 正式后端（Type1 嵌入） | 🔄 M8 提前推进中 |
+| M4+ | 数学+e-TeX / 增量 / 并行 / .fmt v2 / 渲染 / 生态 | ⏳ 待实施 |
 
 ## License
 

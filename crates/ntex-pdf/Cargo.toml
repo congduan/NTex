@@ -1,14 +1,13 @@
 [package]
 name = "ntex-pdf"
-description = "NTex 最小 PDF 输出（切片）：Helvetica 标准字体 + 贪心折行"
+description = "NTex DVI → PDF 转换器（正式后端）：DVI 解析 + Type1 字体嵌入 + PDF 写出"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-ntex-core.workspace = true
-ntex-layout.workspace = true
+ntex-font.workspace = true
 
 [lints]
 workspace = true
