@@ -10,10 +10,10 @@
 | M0 地基 | ✅ 完成（workspace/CI/TRIP·diff·bench 工具链；RFC-1/RFC-4 定稿） |
 | M1 展开内核 | 🟡 核心完成：M1-1~7、M1-9~11 已实现（95 用例）；M1-8 分隔参数、M1-13 错误模型、**M1-14 TRIP 冲刺** 待补 |
 | M2 字节码 | 🟡 双轨完成：定长 u64 IR + 编译器 + 解释器等价验证（100 用例）；**吞吐 1.12x 未达 2x 目标**，M2-5 arena 未做 |
-| M3 排版核心 | 🟡 M3-1~M3-4 完成（58+ 用例）；**M3-5 DVI 写出 + `\shipout` + 断页 DP + lig/kern + `\sfcode` + `\output` 例程/box255** 完成（dvipdfmx 验收 + 与 TeX 差分对照）；VFS/`.fmt` 待做 |
+| M3 排版核心 | 🟡 M3-1~M3-4 完成（58+ 用例）；**M3-5 DVI 写出 + `\shipout` + 断页 DP + lig/kern + `\sfcode` + `\output` 例程/box255** 完成（dvipdfmx 验收 + 与 TeX 差分对照）；**RFC-3 VFS + 副作用模型落地**（`\input`/`\read`/`\write`/`\immediate` 等 10 原语走 `ntex-io` VFS，延迟写入在 shipout 边界提交）；`.fmt v1` 待做 |
 | 输出端 | 🟢 正式 PDF 后端可用（`ntex-pdf`：DVI → PDF 直出 + Type1 嵌入，替换临时 Helvetica 切片；demo 两页与 dvipdfmx 渲染一致） |
 
-**下一步**：M3 收尾——VFS + 侧效应模型（RFC-3）、`.fmt v1` 内存快照；随后 M4 数学 + e-TeX。
+**下一步**：M3 收尾——`.fmt v1` 内存快照；随后 M4 数学 + e-TeX。
 
 ---
 
@@ -65,7 +65,7 @@
 - [x] **设计文档（RFC）先行**，评审通过再编码：
   - RFC-1 Token 表示与内存布局 —— **已定稿**（8B token / TokenArray / InternTable / eqtb 版本化）
   - RFC-2 不可变状态模型与版本化（CoW 结构选型）—— 未开始
-  - RFC-3 副作用模型（VFS + shipout 边界）—— 未开始
+  - RFC-3 副作用模型（VFS + 输出边界提交）—— **已定稿**（M3 收尾落地；见 [RFC-3-side-effects.md](RFC-3-side-effects.md)）
   - RFC-4 字节码 IR 草案 —— **已定稿**（M2 直接落地为定长 u64 指令）
 
 **RFC-1 已定决策**（后续里程碑直接引用，不再反复讨论）：
@@ -238,7 +238,11 @@
 - [x] `\output` 例程 + box255（M3-5-3：token 列表存储 + fire_up 改道 + 引擎 token 边界注入；`\box<n>` 寄存器；例程不消费 box255 → 页面丢弃）
 - [x] `\shipout` → DVI 写出（M3-5-1：`ntex-dvi` 写出器 + `\shipout` 原语 + `Typesetter::typeset_dvi`；dvipdfmx 实机验收，`pre/bop/fnt_def/set_char/right/down/push/pop/post/post_post` 与真实 TeX 逐字节一致，残余差异仅排版器未实现字体 kern 表）
 - [x] `\vtop` shift 对照 DVI 校准（M3-5-1：vtop 首行基线 = shift=height，见 `package_box`）
-- [ ] **VFS 层 + 副作用模型落地**（RFC-3）：`\write`/`\read`/`\input` 走 VFS
+- [x] **VFS 层 + 副作用模型落地**（RFC-3）：`\input`/`\openin`/`\closein`/`\newread`/
+      `\read...to`/`\newwrite`/`\openout`/`\closeout`/`\write`/`\immediate` 全实现，走 VFS
+      （`ntex-io`：`Vfs` trait + LocalVfs + MemVfs）；`\write` 延迟到 shipout 边界 /
+      `\end` 收尾统一落盘（页面丢弃不写）；流号经 `EqSlot::Stream` 独立绑定（不占 count 槽）；
+      `\write18`（shell）拒绝。端到端验证：多文件 `\input` + `\write` aux 落盘。
 - [ ] `.fmt v1`：状态快照序列化 + mmap（此时仍是"快照"级）
 
 **验收**：简单文档（含表格、标题、引用）DVI 与 pdfTeX 差分一致；
@@ -350,7 +354,7 @@
 | `ntex-font` | TFM/OFM、ttf-parser、HarfBuzz 整形、整形缓存 | ✅ 已建（M3-4：TFM 解析 + `\font` 加载 + 缩放；ttf/HarfBuzz 待 M9） |
 | `ntex-format` | .fmt 序列化/反序列化、mmap、部分求值 | 未建（M7） |
 | `ntex-incremental` | 求值图、依赖追踪、失效传播 | 未建（M5） |
-| `ntex-io` | VFS、aux 增量 | 未建（M3/M5） |
+| `ntex-io` | VFS、aux 增量 | 🟡 骨架已建（RFC-3 已起草；Vfs trait + 读写原语实现待做） |
 | `ntex-backend` | PDF/Skia/WebGPU 后端 trait + 实现 | 未建（M8） |
 | `ntex-cli` / `ntex-wasm` | 命令行 / WASM 前端 | 未建（M9） |
 
@@ -364,9 +368,9 @@
 3. 宏体 = **TokenArray**（连续不可变切片）+ 字节码双表示；
 4. InternTable 线性化，csid=u32 下标，`.fmt` mmap 零字符串查找；
 5. M1 的 TRIP 采用**硬口径**：M1 结束全绿，排版部分用 `\hbox` 兜底占位。
-6. **最小 PDF 切片先行**（2026-08，M3 中途）：`ntex-pdf` 用 Helvetica 标准字体 + 贪心折行
-   拉通输出端（验证流水线、保持可见动力）；M3-3 Knuth-Plass / M3-4 TFM / M3-5 DVI 后替换，
-   不作为正式后端。
+6. **输出端两段式**（2026-08）：先临时 Helvetica 切片拉通输出端（验证流水线）；M3-5 DVI 就绪后
+   `ntex-pdf` 改造为**正式 DVI → PDF 后端**（Type1 嵌入，dvipdfmx 渲染一致）并提前推进（M8 前移），
+   临时切片已下线。
 7. **VM 保持纯 token 级**（2026-08，M3-2）：排版事件经 `TokenSink`（token/组/原语/glue/kern/
    penalty/rule/内部参数）单向流出，排版器（ntex-layout）持模式状态机；VM 不依赖布局 crate。
 

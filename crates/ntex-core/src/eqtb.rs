@@ -87,6 +87,17 @@ pub enum Primitive {
     // M3-5-3 输出例程：\output=<general text>（token 列表存储）；\box<n>（盒子寄存器）
     Output,
     Box,
+    // M3 收尾（RFC-3）：VFS 副作用原语
+    Input,
+    OpenIn,
+    CloseIn,
+    NewRead,
+    Read,
+    NewWrite,
+    OpenOut,
+    CloseOut,
+    Write,
+    Immediate,
 }
 
 impl Primitive {
@@ -111,6 +122,17 @@ pub enum EqSlot {
     Char { catcode: Catcode, charcode: u32 },
     /// 字体选择器（M3-4）：`\font\cs=cmr10` 定义；执行时设置当前字体。
     Font(u32),
+    /// 寄存器引用（M3 收尾）：`\newcount\cs` 等把 cs 绑定到某寄存器槽。
+    Register(crate::register::RegKind, usize),
+    /// 流引用（RFC-3）：`\newwrite`/`\newread` 分配的流号（独立于 count 槽）。
+    Stream(StreamKind, usize),
+}
+
+/// 流类别（RFC-3）：读流（`\openin`/`\read`）与写流（`\openout`/`\write`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamKind {
+    Read,
+    Write,
 }
 
 /// eqtb：按 csid 索引的等价槽数组。

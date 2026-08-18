@@ -179,6 +179,8 @@ struct NodeBuilder {
     /// 排队，`\box255` 逐页取出，例程反复运行直至队列清空。队列而非单槽——
     /// `close_paragraph` 一次推入多行可能连续产出多页，逐页交错执行例程。
     pending_pages: VecDeque<BoxNode>,
+    /// RFC-3：页面真正输出（`\shipout` 边界）时置位，通知引擎 flush 延迟写流。
+    write_flush_pending: bool,
 }
 
 impl NodeBuilder {
@@ -218,6 +220,7 @@ impl NodeBuilder {
             boxes: vec![None; REGISTER_COUNT],
             output_defined: false,
             pending_pages: VecDeque::new(),
+            write_flush_pending: false,
             fonts,
         }
     }
@@ -245,6 +248,7 @@ impl NodeBuilder {
             self.pending_pages.push_back(p);
         } else {
             self.shipped.push(p);
+            self.write_flush_pending = true;
         }
     }
 
@@ -293,6 +297,7 @@ impl NodeBuilder {
         if ship {
             if let Node::Box(b) = node {
                 self.shipped.push(b);
+                self.write_flush_pending = true;
             }
             return;
         }
@@ -746,6 +751,7 @@ impl TokenSink for NodeBuilder {
         if self.shipout_next {
             self.shipout_next = false;
             self.shipped.push(b);
+            self.write_flush_pending = true;
         } else {
             self.append(Node::Box(b));
         }
@@ -756,6 +762,12 @@ impl TokenSink for NodeBuilder {
         // fn 指针模式恒为 FontId(0)；TFM 模式更新当前字体
         self.current_font = FontId(font);
         Ok(())
+    }
+
+    fn take_write_flush_pending(&mut self) -> bool {
+        let v = self.write_flush_pending;
+        self.write_flush_pending = false;
+        v
     }
 
     fn glue(&mut self, g: Glue) -> Result<()> {
@@ -855,6 +867,16 @@ impl Typesetter {
             *s = space;
         }
         self
+    }
+
+    /// 注入 VFS 后端（RFC-3；`\input`/`\write` 等副作用原语的文件接口）。
+    pub fn set_vfs(&mut self, vfs: Box<dyn ntex_io::Vfs>) {
+        self.expander.set_vfs(vfs);
+    }
+
+    /// 取回 VFS（测试断言写入内容用）。
+    pub fn take_vfs(&mut self) -> Box<dyn ntex_io::Vfs> {
+        self.expander.take_vfs()
     }
 
     /// TFM 字体模式（M3-4）：`\font\cs=cmr10` 加载真实度量，
@@ -971,6 +993,8 @@ impl Typesetter {
             Fonts::Tfm(table) => table.borrow().clone(),
             Fonts::Fn { .. } => Vec::new(),
         };
+        // RFC-3：排版结束收尾 flush 残留延迟写流（TeX \end final_cleanup 语义）
+        self.expander.flush_writes()?;
         Ok(FinishOutput {
             main: lists.pop().expect("主列表"),
             shipped,
@@ -1638,5 +1662,87 @@ mod tests {
         // 组内定义 \output，组结束恢复未定义 → 行为与默认一致（直通 shipout）
         let with = paginated(&format!(r"{{\output={{\shipout\box255}}}} {src}")).unwrap();
         assert_eq!(with, default, "组结束应恢复未定义 \\output");
+    }
+
+    // ---------- M3 收尾（RFC-3）：VFS 集成 ----------
+
+    fn ts_with_vfs() -> (Typesetter, ntex_io::MemVfs) {
+        let mut ts = Typesetter::with_tfm();
+        let vfs = ntex_io::MemVfs::new();
+        ts.set_vfs(Box::new(vfs));
+        let mut vfs = ts.take_vfs();
+        let vfs = vfs
+            .as_any_mut()
+            .downcast_mut::<ntex_io::MemVfs>()
+            .expect("MemVfs");
+        (ts, vfs.clone())
+    }
+
+    #[test]
+    fn vfs_input_splits_document() {
+        let (mut ts, mut vfs) = ts_with_vfs();
+        vfs.insert("ch1.tex", "Chapter One. ");
+        vfs.insert("ch2.tex", "Chapter Two. ");
+        ts.set_vfs(Box::new(vfs));
+        let (pages, _) = ts
+            .typeset_dvi("\\input{ch1}\\input{ch2}\\end")
+            .unwrap();
+        assert!(!pages.is_empty(), "\\input 分章文档应产出页面");
+        // 页面文本应包含两章内容（合并后页数 ≥ 1，且文本含 Chapter）
+        let mut text = String::new();
+        for p in &pages {
+            collect_text(p, &mut text);
+        }
+        assert!(text.contains("Chapter"), "页面应含输入文本：{text}");
+    }
+
+    #[test]
+    fn vfs_write_flushed_on_shipout_boundary() {
+        let (mut ts, vfs) = ts_with_vfs();
+        ts.set_vfs(Box::new(vfs));
+        // \write 延迟 → \shipout 边界 flush（first）→ 再 \write → \end flush（second）
+        ts.typeset_dvi(
+            "\\newwrite\\aux\\openout\\aux=o.aux\\write\\aux{first}\
+             \\shipout\\hbox{A}\\write\\aux{second}\\end",
+        )
+        .unwrap();
+        let mut vfs = ts.take_vfs();
+        let vfs = vfs
+            .as_any_mut()
+            .downcast_mut::<ntex_io::MemVfs>()
+            .expect("MemVfs");
+        assert_eq!(vfs.get("o.aux"), Some(b"first\nsecond\n".as_slice()));
+    }
+
+    #[test]
+    fn vfs_read_then_write_roundtrip() {
+        let (mut ts, mut vfs) = ts_with_vfs();
+        vfs.insert("data.txt", "42\n");
+        ts.set_vfs(Box::new(vfs));
+        // \read 一行 → \line，\write 回显（延迟，\end flush）
+        ts.typeset_dvi(
+            "\\newread\\r\\openin\\r=data.txt\\read\\r to \\line\
+             \\newwrite\\w\\openout\\w=o.txt\\write\\w{\\line}\\end",
+        )
+        .unwrap();
+        let mut vfs = ts.take_vfs();
+        let vfs = vfs
+            .as_any_mut()
+            .downcast_mut::<ntex_io::MemVfs>()
+            .expect("MemVfs");
+        assert_eq!(vfs.get("o.txt"), Some(b"42\n".as_slice()));
+    }
+
+    /// 收集盒子树全部文本（集成断言用）。
+    fn collect_text(b: &BoxNode, out: &mut String) {
+        for c in &b.children {
+            match c {
+                Node::Char { charcode, .. } => {
+                    out.push(char::from_u32(*charcode).unwrap_or('\u{FFFD}'))
+                }
+                Node::Box(inner) => collect_text(inner, out),
+                _ => {}
+            }
+        }
     }
 }

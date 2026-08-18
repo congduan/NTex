@@ -13,6 +13,7 @@ members = [
     "crates/ntex-font",
     "crates/ntex-dvi",
     "crates/ntex-pdf",
+    "crates/ntex-io",
     "crates/ntex-test-support",
     "crates/ntex-trip",
     "crates/ntex-diff",
@@ -35,6 +36,7 @@ ntex-core = { path = "crates/ntex-core", version = "0.1.0" }
 ntex-layout = { path = "crates/ntex-layout", version = "0.1.0" }
 ntex-font = { path = "crates/ntex-font", version = "0.1.0" }
 ntex-dvi = { path = "crates/ntex-dvi", version = "0.1.0" }
+ntex-io = { path = "crates/ntex-io", version = "0.1.0" }
 ntex-test-support = { path = "crates/ntex-test-support", version = "0.1.0" }
 
 # 工程级 lint：所有成员 crate 统一禁用 unsafe（排版引擎安全性第一）。

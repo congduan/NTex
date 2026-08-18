@@ -195,6 +195,9 @@ dependencies = [
 [[package]]
 name = "ntex-core"
 version = "0.1.0"
+dependencies = [
+ "ntex-io",
+]
 
 [[package]]
 name = "ntex-diff"
@@ -222,11 +225,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ntex-io"
+version = "0.1.0"
+
+[[package]]
 name = "ntex-layout"
 version = "0.1.0"
 dependencies = [
  "ntex-core",
  "ntex-font",
+ "ntex-io",
 ]
 
 [[package]]

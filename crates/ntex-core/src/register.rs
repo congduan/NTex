@@ -49,6 +49,15 @@ pub fn unit_to_sp(unit: &str) -> Option<i64> {
     }
 }
 
+/// 寄存器类别（`\count`/`\dimen`/`\skip`/`\toks`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegKind {
+    Count,
+    Dimen,
+    Skip,
+    Toks,
+}
+
 /// 寄存器文件（固定 256 槽，索引越界由调用方保证）。
 #[derive(Debug, Clone)]
 pub struct Registers {

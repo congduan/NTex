@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use crate::bytecode::{compile, Bytecode, Instruction};
 use crate::catcode::{Catcode, CatcodeTable};
-use crate::eqtb::{EqSlot, Eqtb, Primitive};
+use crate::eqtb::{EqSlot, Eqtb, Primitive, StreamKind};
 use crate::error::{Error, Result};
 use crate::font::{FontLoader, NoFontLoader};
 use crate::input::scan_token;
@@ -29,10 +29,12 @@ use crate::intern::InternTable;
 use crate::macrodef::{MacroDef, ParamSpec, TokenArray};
 use crate::param::{ParamKind, ParamValue, Params};
 use crate::register::{
-    format_count, format_dimen, format_glue, unit_to_sp, Glue, Registers, REGISTER_COUNT, SP_PER_PT,
+    format_count, format_dimen, format_glue, unit_to_sp, Glue, RegKind, Registers, REGISTER_COUNT,
+    SP_PER_PT,
 };
 use crate::sink::{TokenSink, VecSink};
 use crate::token::{Token, TokenKind};
+use ntex_io::{LocalVfs, Vfs};
 
 /// 输入帧：token 来源栈（LIFO，栈顶为当前帧）。
 #[derive(Debug)]
@@ -156,6 +158,28 @@ enum MeaningKey {
     Char { catcode: Catcode, charcode: u32 },
     Alias(u32),
     Font(u32),
+    Register(RegKind, usize),
+    Stream(StreamKind, usize),
+}
+
+/// 读流（RFC-3）：`\openin` 时读入内存，`\read` 逐行消费。
+#[derive(Debug)]
+struct ReadStream {
+    /// 目标路径（错误信息用）。
+    _path: String,
+    /// 文件内容。
+    data: Vec<u8>,
+    /// 当前字节位置。
+    pos: usize,
+}
+
+/// 写流（RFC-3）：`\openout` 登记路径，`\write` 入队，flush 边界落盘。
+#[derive(Debug)]
+struct WriteStream {
+    /// 目标路径；None = 未 `\openout`（`\write` 到该流报错）。
+    path: Option<String>,
+    /// 延迟待写 token 列表（`\write` 入队；flush 时展开落盘）。
+    pending: Vec<TokenArray>,
 }
 
 /// 展开引擎。
@@ -201,6 +225,14 @@ pub struct Expander {
     output_prev_count: usize,
     /// 是否启用字节码轨道（M2；解释器轨道用于双轨等价验证）。
     use_bytecode: bool,
+    /// VFS（RFC-3）：文件读写唯一入口。
+    vfs: Box<dyn Vfs>,
+    /// 读流表（`\openin`/`\read`；下标 = 流号）。
+    read_streams: Vec<Option<ReadStream>>,
+    /// 写流表（`\openout`/`\write`；下标 = 流号）。
+    write_streams: Vec<Option<WriteStream>>,
+    /// `\immediate` 前缀（作用于下一个 write/openout/closeout）。
+    immediate_pending: bool,
 }
 
 impl Expander {
@@ -237,9 +269,23 @@ impl Expander {
             output_active: false,
             output_prev_count: usize::MAX,
             use_bytecode,
+            vfs: Box::new(LocalVfs),
+            read_streams: Vec::new(),
+            write_streams: Vec::new(),
+            immediate_pending: false,
         };
         e.register_builtins();
         e
+    }
+
+    /// 注入 VFS 后端（RFC-3；默认本地文件系统）。
+    pub fn set_vfs(&mut self, vfs: Box<dyn Vfs>) {
+        self.vfs = vfs;
+    }
+
+    /// 取回 VFS（测试断言写入内容用）。
+    pub fn take_vfs(&mut self) -> Box<dyn Vfs> {
+        std::mem::replace(&mut self.vfs, Box::new(LocalVfs))
     }
 
     /// 追加一个源码输入（后续 `\input`/VFS 在 M3 接入）。
@@ -266,6 +312,10 @@ impl Expander {
             if !self.output_active && self.maybe_inject_output()? {
                 continue;
             }
+            // RFC-3：页面真正输出（shipout 边界）时 flush 延迟写流
+            if self.sink.take_write_flush_pending() {
+                self.flush_writes()?;
+            }
             if !self.process_one()? {
                 break;
             }
@@ -281,6 +331,10 @@ impl Expander {
         while !self.output_active && self.maybe_inject_output()? {
             // 运行例程帧直到其耗尽（output_active 复位）
             while self.output_active && self.process_one()? {}
+            // RFC-3：例程内 `\shipout` 产出页面 → flush 延迟写流
+            if self.sink.take_write_flush_pending() {
+                self.flush_writes()?;
+            }
         }
         Ok(())
     }
@@ -365,6 +419,9 @@ impl Expander {
                     EqSlot::Char { catcode, charcode } => {
                         self.sink.token(Token::char(catcode, charcode))
                     }
+                    EqSlot::Register(..) | EqSlot::Stream(..) => Err(Error::invalid_input(
+                        "寄存器/流引用不能直接使用（需在数字/尺寸扫描上下文中）",
+                    )),
                     EqSlot::Macro(m) => {
                         let def = m.value.clone();
                         let args = if def.params.num_params > 0 {
@@ -620,6 +677,8 @@ impl Expander {
             Primitive::End => {
                 self.stack.clear();
                 self.output_active = false;
+                // TeX `\end` 收尾：flush 所有延迟写流（final_cleanup 语义）
+                self.flush_writes()?;
                 Ok(())
             }
             // M1-7 扫描顺序原语
@@ -754,6 +813,20 @@ impl Expander {
                 let idx = self.scan_register_index()?;
                 self.sink.box_register(idx)
             }
+            // M3 收尾（RFC-3）：VFS 副作用原语
+            Primitive::Input => self.exec_input(),
+            Primitive::OpenIn => self.exec_openin(),
+            Primitive::CloseIn => self.exec_closein(),
+            Primitive::NewRead => self.exec_new_stream(StreamKind::Read),
+            Primitive::Read => self.exec_read(),
+            Primitive::NewWrite => self.exec_new_stream(StreamKind::Write),
+            Primitive::OpenOut => self.exec_openout(),
+            Primitive::CloseOut => self.exec_closeout(),
+            Primitive::Write => self.exec_write(),
+            Primitive::Immediate => {
+                self.immediate_pending = true;
+                Ok(())
+            }
         }
     }
 
@@ -829,6 +902,394 @@ impl Expander {
             return Err(Error::invalid_input("\\font 后缺少字体名"));
         }
         Ok(name)
+    }
+
+    // ---------- M3 收尾（RFC-3）：VFS 副作用原语 ----------
+
+    /// `\input<file>`：读文件内容推入 `Source` 输入帧（支持嵌套）。
+    ///
+    /// 文件名扫描（TeX `scan_file_name`）：`{file}` 花括号形式或普通形式
+    /// （cat 11/12 字符，空格终止）。找不到时先试原名、再补 `.tex`。
+    fn exec_input(&mut self) -> Result<()> {
+        let name = self.scan_file_name()?;
+        let mut content = self
+            .vfs
+            .read(&name)
+            .map_err(|e| Error::io("VFS 读取", &name, e))?;
+        if content.is_none() {
+            let alt = format!("{name}.tex");
+            content = self
+                .vfs
+                .read(&alt)
+                .map_err(|e| Error::io("VFS 读取", &alt, e))?;
+        }
+        match content {
+            Some(bytes) => {
+                self.stack.push(InputFrame::Source {
+                    bytes: Arc::from(bytes),
+                    pos: 0,
+                });
+                Ok(())
+            }
+            None => Err(Error::invalid_input(format!("找不到文件：{name}"))),
+        }
+    }
+
+    /// 扫描文件名：`{...}` 或连续 cat 11/12 字符（空格终止）。
+    fn scan_file_name(&mut self) -> Result<String> {
+        self.skip_spaces()?;
+        let first = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input("扫描到输入末尾"))?
+            .0;
+        let mut name = String::new();
+        if first.catcode() == Some(Catcode::BeginGroup) {
+            // {file}：组内字符原样收集（含空格）
+            loop {
+                let t = self
+                    .fetch()?
+                    .ok_or_else(|| Error::invalid_input("文件名组未闭合"))?
+                    .0;
+                match t.catcode() {
+                    Some(Catcode::EndGroup) => break,
+                    Some(Catcode::Letter) | Some(Catcode::Other) | Some(Catcode::Space) => {
+                        let ch = t
+                            .charcode()
+                            .and_then(char::from_u32)
+                            .ok_or_else(|| Error::invalid_input("文件名含非法字符"))?;
+                        name.push(ch);
+                    }
+                    _ => return Err(Error::invalid_input("文件名含非法 token")),
+                }
+            }
+        } else {
+            self.unread(first);
+            loop {
+                let Some((t, _)) = self.fetch()? else { break };
+                match t.catcode() {
+                    Some(Catcode::Letter) | Some(Catcode::Other) => {
+                        let ch = t
+                            .charcode()
+                            .and_then(char::from_u32)
+                            .ok_or_else(|| Error::invalid_input("文件名含非法字符"))?;
+                        name.push(ch);
+                    }
+                    _ => {
+                        self.unread(t);
+                        break;
+                    }
+                }
+            }
+        }
+        if name.is_empty() {
+            return Err(Error::invalid_input("缺少文件名"));
+        }
+        Ok(name)
+    }
+
+    /// 扫描流号（0..=max）。
+    fn scan_stream_index(&mut self, what: &str, max: i64) -> Result<usize> {
+        let n = self.scan_number()?;
+        if !(0..=max).contains(&n) {
+            return Err(Error::invalid_input(format!("{what} 流号越界：{n}")));
+        }
+        Ok(n as usize)
+    }
+
+    /// `\openin<n>=<file>`：文件存在 → 读入内存打开；不存在 → 流保持未打开（不报错）。
+    fn exec_openin(&mut self) -> Result<()> {
+        let idx = self.scan_stream_index("\\openin", 15)?;
+        self.expect_equals()?;
+        let name = self.scan_file_name()?;
+        let content = self
+            .vfs
+            .read(&name)
+            .map_err(|e| Error::io("VFS 读取", &name, e))?;
+        self.ensure_read_stream(idx);
+        self.read_streams[idx] = content.map(|data| ReadStream {
+            _path: name,
+            data,
+            pos: 0,
+        });
+        Ok(())
+    }
+
+    /// `\closein<n>`：关闭读流。
+    fn exec_closein(&mut self) -> Result<()> {
+        let idx = self.scan_stream_index("\\closein", 15)?;
+        self.ensure_read_stream(idx);
+        self.read_streams[idx] = None;
+        Ok(())
+    }
+
+    /// `\newwrite<cs>` / `\newread<cs>`：分配最小空闲流号，绑定到 cs（流引用）。
+    fn exec_new_stream(&mut self, s: StreamKind) -> Result<()> {
+        let t = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input("流分配后缺少控制序列"))?
+            .0;
+        let csid = t
+            .csid()
+            .ok_or_else(|| Error::invalid_input("流分配后必须是控制序列"))?;
+        let free = match s {
+            StreamKind::Read => (0..=15)
+                .find(|&i| self.read_streams.get(i).is_none_or(|s| s.is_none())),
+            StreamKind::Write => (0..=17)
+                .find(|&i| self.write_streams.get(i).is_none_or(|s| s.is_none())),
+        };
+        let n = free.ok_or_else(|| Error::invalid_input("无空闲流号"))?;
+        // cs 绑定为流引用（组作用域回滚，独立于 count 槽）
+        let global = self.is_global();
+        if !global && self.group_level > 0 {
+            self.save_stack.push((
+                self.group_level,
+                SavedValue::Eqtb {
+                    csid,
+                    prev: self.eqtb.slot(csid).clone(),
+                },
+            ));
+        }
+        *self.eqtb.slot_mut(csid) = EqSlot::Stream(s, n);
+        self.finish_assignment();
+        Ok(())
+    }
+
+    /// `\read<n> to <cs>`：从流读一行，按当前 catcode 表 token 化，`\def` 赋给 cs。
+    fn exec_read(&mut self) -> Result<()> {
+        let idx = self.scan_stream_index("\\read", 15)?;
+        self.scan_keyword(|w| w == "to")?;
+        self.skip_spaces()?;
+        let t = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input("\\read 后缺少控制序列"))?
+            .0;
+        let csid = t
+            .csid()
+            .ok_or_else(|| Error::invalid_input("\\read to 后必须是控制序列"))?;
+        // 取下一行（到 \n 或文件末尾）
+        let line = {
+            let Some(stream) = self.read_streams.get_mut(idx).and_then(|s| s.as_mut()) else {
+                return Err(Error::invalid_input("\\read 流未打开"));
+            };
+            if stream.pos >= stream.data.len() {
+                return Err(Error::invalid_input("\\read 到文件末尾（EOF）"));
+            }
+            let start = stream.pos;
+            let end = stream.data[start..]
+                .iter()
+                .position(|&b| b == b'\n')
+                .map(|i| start + i)
+                .unwrap_or(stream.data.len());
+            let line = stream.data[start..end].to_vec();
+            stream.pos = if end < stream.data.len() { end + 1 } else { end };
+            line
+        };
+        // token 化（catcode 表）
+        let mut pos = 0usize;
+        let mut toks = Vec::new();
+        while let Some(tok) = scan_token(&line, &mut pos, &self.catcodes, &mut self.intern)? {
+            toks.push(tok);
+        }
+        // \def 语义赋值
+        let def = MacroDef {
+            params: ParamSpec {
+                num_params: 0,
+                long: false,
+                delimiter: None,
+            },
+            body: Arc::from(toks),
+            code: None,
+        };
+        self.define_macro_scoped(csid, def);
+        Ok(())
+    }
+
+    /// `\openout<n>=<file>`：登记写流目标路径（不立即创建文件）。
+    fn exec_openout(&mut self) -> Result<()> {
+        let idx = self.scan_stream_index("\\openout", 17)?;
+        self.expect_equals()?;
+        let name = self.scan_file_name()?;
+        let immediate = self.take_immediate();
+        self.ensure_write_stream(idx);
+        self.write_streams[idx] = Some(WriteStream {
+            path: Some(name.clone()),
+            pending: Vec::new(),
+        });
+        if immediate {
+            // \immediate\openout：立即创建（TeX 语义）
+            self.vfs
+                .write(&name, b"")
+                .map_err(|e| Error::io("VFS 写入", &name, e))?;
+        }
+        Ok(())
+    }
+
+    /// `\closeout<n>`：flush 待写内容并关闭。
+    fn exec_closeout(&mut self) -> Result<()> {
+        let idx = self.scan_stream_index("\\closeout", 17)?;
+        let immediate = self.take_immediate();
+        if !immediate {
+            self.flush_write_stream(idx)?;
+        } else {
+            self.flush_write_stream(idx)?;
+        }
+        self.ensure_write_stream(idx);
+        self.write_streams[idx] = None;
+        Ok(())
+    }
+
+    /// `\write<n><general text>`：token 列表入队（延迟）或立即展开落盘（`\immediate`）。
+    fn exec_write(&mut self) -> Result<()> {
+        let idx = self.scan_stream_index("\\write", 18)?;
+        if idx == 18 {
+            return Err(Error::invalid_input("\\write18（shell 转义）暂不支持"));
+        }
+        let toks = Arc::from(self.scan_general_text()?);
+        self.ensure_write_stream(idx);
+        if self.take_immediate() {
+            let s = self.expand_to_string(&toks)?;
+            let path = self
+                .write_streams
+                .get(idx)
+                .and_then(|s| s.as_ref())
+                .and_then(|st| st.path.clone())
+                .ok_or_else(|| Error::invalid_input("\\write 到未打开的流"))?;
+            let mut out = s;
+            out.push('\n');
+            self.vfs
+                .append(&path, out.as_bytes())
+                .map_err(|e| Error::io("VFS 写入", &path, e))?;
+        } else {
+            self.write_streams[idx]
+                .as_mut()
+                .expect("exec_write 已 ensure 流槽")
+                .pending
+                .push(toks);
+        }
+        Ok(())
+    }
+
+    /// 扫描 `<general text>`：到 `\relax`（无条件）或外层组结束（吸收 `}`）为止。
+    fn scan_general_text(&mut self) -> Result<Vec<Token>> {
+        self.skip_spaces()?;
+        let mut toks = Vec::new();
+        let mut depth = 0usize;
+        loop {
+            let t = self
+                .fetch()?
+                .ok_or_else(|| Error::invalid_input("\\write 文本未闭合"))?
+                .0;
+            match t.catcode() {
+                Some(Catcode::BeginGroup) => {
+                    depth += 1;
+                    toks.push(t);
+                }
+                Some(Catcode::EndGroup) => {
+                    if depth == 0 {
+                        break; // 组外 }：终止
+                    }
+                    depth -= 1;
+                    if depth == 0 {
+                        break; // 匹配到最外层 {：终止并吸收
+                    }
+                    toks.push(t);
+                }
+                _ => {
+                    // \relax 无条件终止
+                    if t.csid()
+                        .is_some_and(|c| self.eqtb.slot(c) == &EqSlot::Primitive(Primitive::Relax))
+                    {
+                        break;
+                    }
+                    toks.push(t);
+                }
+            }
+        }
+        Ok(toks)
+    }
+
+    /// 把 token 列表展开成字符串（flush 边界写文件用）：完全展开后
+    /// 字符 token → 字节、空格 → ` `；不可展开的 cs → 报错。
+    fn expand_to_string(&mut self, toks: &[Token]) -> Result<String> {
+        let expanded = self.expand_region(toks.to_vec())?;
+        let mut s = String::new();
+        for t in expanded {
+            match t.catcode() {
+                Some(Catcode::Space) => s.push(' '),
+                Some(Catcode::Letter) | Some(Catcode::Other) => {
+                    let ch = t
+                        .charcode()
+                        .and_then(char::from_u32)
+                        .ok_or_else(|| Error::invalid_input("\\write 输出含非法字符"))?;
+                    s.push(ch);
+                }
+                _ => {
+                    return Err(Error::invalid_input(
+                        "\\write 输出含不可展开的 token（宏/原语泄漏）",
+                    ));
+                }
+            }
+        }
+        Ok(s)
+    }
+
+    /// flush 单个写流：展开全部待写 token 并追加到目标文件（每条后加换行）。
+    fn flush_write_stream(&mut self, idx: usize) -> Result<()> {
+        let (path, pending) = {
+            let Some(stream) = self.write_streams.get_mut(idx).and_then(|s| s.as_mut()) else {
+                return Ok(()); // 未打开：无操作
+            };
+            if stream.pending.is_empty() {
+                return Ok(());
+            }
+            (stream.path.clone(), std::mem::take(&mut stream.pending))
+        };
+        let Some(path) = path else {
+            return Err(Error::invalid_input("\\write 到未打开的流"));
+        };
+        let mut out = String::new();
+        for toks in pending {
+            out.push_str(&self.expand_to_string(&toks)?);
+            out.push('\n');
+        }
+        self.vfs
+            .append(&path, out.as_bytes())
+            .map_err(|e| Error::io("VFS 写入", &path, e))
+    }
+
+    /// flush 所有打开且有待写内容的写流（shipout 边界 / `\end` / 排版结束调用）。
+    pub fn flush_writes(&mut self) -> Result<()> {
+        for i in 0..self.write_streams.len() {
+            self.flush_write_stream(i)?;
+        }
+        Ok(())
+    }
+
+    /// 消费 `\immediate` 前缀。
+    fn take_immediate(&mut self) -> bool {
+        let v = self.immediate_pending;
+        self.immediate_pending = false;
+        v
+    }
+
+    /// 确保读流槽存在。
+    fn ensure_read_stream(&mut self, idx: usize) {
+        while self.read_streams.len() <= idx {
+            self.read_streams.push(None);
+        }
+    }
+
+    /// 确保写流槽存在（未打开时补空槽）。
+    fn ensure_write_stream(&mut self, idx: usize) {
+        while self.write_streams.len() <= idx {
+            self.write_streams.push(None);
+        }
+        if self.write_streams[idx].is_none() {
+            self.write_streams[idx] = Some(WriteStream {
+                path: None,
+                pending: Vec::new(),
+            });
+        }
     }
 
     /// 内部参数赋值（组作用域 + sink 镜像通知）。
@@ -1211,13 +1672,26 @@ impl Expander {
                 self.unread(tok);
             }
         }
-        // 寄存器引用：\count<idx>
+        // 寄存器引用：\count<idx> 或 \count\cs（\newcount 分配的 cs）
         if let Some(csid) = self.peek_csid()? {
-            if let EqSlot::Primitive(Primitive::Count) = self.eqtb.slot(csid) {
-                self.fetch()?; // 消费 \count
-                let idx = self.scan_register_index()?;
-                let v = self.registers.count(idx);
-                return Ok(if neg { -v } else { v });
+            let slot = self.eqtb.slot(csid).clone();
+            match slot {
+                EqSlot::Register(RegKind::Count, idx) => {
+                    self.fetch()?; // 消费 cs
+                    let v = self.registers.count(idx);
+                    return Ok(if neg { -v } else { v });
+                }
+                EqSlot::Stream(_, n) => {
+                    self.fetch()?; // 消费 cs
+                    return Ok(if neg { -(n as i64) } else { n as i64 });
+                }
+                EqSlot::Primitive(Primitive::Count) => {
+                    self.fetch()?; // 消费 \count
+                    let idx = self.scan_register_index()?;
+                    let v = self.registers.count(idx);
+                    return Ok(if neg { -v } else { v });
+                }
+                _ => {}
             }
         }
         let mut val: i64 = 0;
@@ -1284,7 +1758,7 @@ impl Expander {
 
     /// 注册 M1 内建原语。
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 59] = [
+        const BUILTINS: [(&str, Primitive); 69] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -1356,6 +1830,17 @@ impl Expander {
             // M3-5-3 输出例程
             ("output", Primitive::Output),
             ("box", Primitive::Box),
+            // M3 收尾（RFC-3）：VFS 副作用原语
+            ("input", Primitive::Input),
+            ("openin", Primitive::OpenIn),
+            ("closein", Primitive::CloseIn),
+            ("newread", Primitive::NewRead),
+            ("read", Primitive::Read),
+            ("newwrite", Primitive::NewWrite),
+            ("openout", Primitive::OpenOut),
+            ("closeout", Primitive::CloseOut),
+            ("write", Primitive::Write),
+            ("immediate", Primitive::Immediate),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);
@@ -1411,7 +1896,14 @@ impl Expander {
 
     /// `\count/\dimen/\skip/\toks` 赋值。
     fn exec_register(&mut self, prim: Primitive) -> Result<()> {
-        let idx = self.scan_register_index()?;
+        let kind = match prim {
+            Primitive::Count => RegKind::Count,
+            Primitive::Dimen => RegKind::Dimen,
+            Primitive::Skip => RegKind::Skip,
+            Primitive::Toks => RegKind::Toks,
+            _ => unreachable!("exec_register 只处理寄存器原语"),
+        };
+        let idx = self.scan_register_target(kind)?;
         self.expect_equals()?;
         match prim {
             Primitive::Count => {
@@ -1433,6 +1925,26 @@ impl Expander {
             _ => unreachable!("exec_register 只处理寄存器原语"),
         }
         Ok(())
+    }
+
+    /// 扫描寄存器目标：数字下标（`\count0`）或 cs 引用（`\count\foo`，须已分配）。
+    fn scan_register_target(&mut self, kind: RegKind) -> Result<usize> {
+        self.skip_spaces()?;
+        let t = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input("预期寄存器下标"))?
+            .0;
+        if let Some(csid) = t.csid() {
+            match self.eqtb.slot(csid) {
+                EqSlot::Register(k, idx) if *k == kind => Ok(*idx),
+                _ => Err(Error::invalid_input(
+                    "寄存器未分配（先 \\newcount 等分配）",
+                )),
+            }
+        } else {
+            self.unread(t);
+            self.scan_register_index()
+        }
     }
 
     /// 扫描寄存器下标（0..=255）。
@@ -1955,6 +2467,8 @@ impl Expander {
             EqSlot::Char { catcode, charcode } => MeaningKey::Char { catcode, charcode },
             EqSlot::Alias(t) => MeaningKey::Alias(t),
             EqSlot::Font(font) => MeaningKey::Font(font),
+            EqSlot::Register(k, n) => MeaningKey::Register(k, n),
+            EqSlot::Stream(k, n) => MeaningKey::Stream(k, n),
         }
     }
 
@@ -2221,6 +2735,7 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
     use std::rc::Rc;
+    use ntex_io::MemVfs;
 
     /// 运行源码（**双轨等价**）：字节码与解释器轨道各跑一次并断言输出一致，
     /// 返回字节码轨道结果。全部用例自动覆盖 M2 双轨验证。
@@ -2751,5 +3266,125 @@ mod tests {
         // 两次加载得到不同 FontId → 不等
         let out = font_run(r"\font\a=cmr10\font\b=cmr10\ifx\a\b yes\else no\fi").unwrap().0;
         assert_eq!(out, "no");
+    }
+
+    // ---------- M3 收尾（RFC-3）：VFS 副作用原语 ----------
+
+    /// 运行源码（MemVfs 后端），返回 (输出字符串, VFS)。副作用用例不跑双轨。
+    fn expand_vfs(src: &str, mut vfs: MemVfs) -> Result<(String, MemVfs)> {
+        let mut e = Expander::new();
+        e.set_vfs(Box::new(vfs));
+        e.run_source(src)?;
+        let out = e
+            .output()
+            .iter()
+            .map(|t| t.charcode().and_then(char::from_u32).unwrap_or('\u{FFFD}'))
+            .collect();
+        let mut vfs = e.take_vfs();
+        let vfs = vfs
+            .as_any_mut()
+            .downcast_mut::<MemVfs>()
+            .ok_or_else(|| Error::internal("测试 VFS 应为 MemVfs"))?;
+        Ok((out, vfs.clone()))
+    }
+
+    #[test]
+    fn input_reads_file_from_vfs() {
+        let mut vfs = MemVfs::new();
+        vfs.insert("ch1.tex", "Chapter One");
+        let (out, _) = expand_vfs("\\input{ch1}", vfs).unwrap();
+        assert_eq!(out, "Chapter One");
+    }
+
+    #[test]
+    fn input_falls_back_to_tex_extension() {
+        let mut vfs = MemVfs::new();
+        vfs.insert("ch2.tex", "Ch2");
+        let (out, _) = expand_vfs("\\input ch2", vfs).unwrap();
+        assert_eq!(out, "Ch2");
+    }
+
+    #[test]
+    fn input_nests_and_returns() {
+        let mut vfs = MemVfs::new();
+        vfs.insert("a.tex", "A\\input{b}B");
+        vfs.insert("b.tex", "X");
+        let (out, _) = expand_vfs("\\input{a}", vfs).unwrap();
+        assert_eq!(out, "AXB");
+    }
+
+    #[test]
+    fn input_missing_file_errors() {
+        let vfs = MemVfs::new();
+        assert!(expand_vfs("\\input{nope}", vfs).is_err());
+    }
+
+    #[test]
+    fn immediate_write_appends() {
+        let vfs = MemVfs::new();
+        let (_, vfs) = expand_vfs(
+            "\\newwrite\\f\\immediate\\openout\\f=out.txt\\immediate\\write\\f{abc}\\closeout\\f",
+            vfs,
+        )
+        .unwrap();
+        assert_eq!(vfs.get("out.txt"), Some(b"abc\n".as_slice()));
+    }
+
+    #[test]
+    fn write_defers_until_end() {
+        let vfs = MemVfs::new();
+        // 无 \immediate：\write 入队，\end 收尾统一 flush
+        let (_, vfs) = expand_vfs(
+            "\\newwrite\\f\\openout\\f=out.txt\\write\\f{abc}\\write\\f{def}\\end",
+            vfs,
+        )
+        .unwrap();
+        assert_eq!(vfs.get("out.txt"), Some(b"abc\ndef\n".as_slice()));
+    }
+
+    #[test]
+    fn write_expands_the_at_write_time() {
+        let vfs = MemVfs::new();
+        // \write 时展开 \the\count0 与宏（TeX 语义：写文件时展开）
+        let (_, vfs) = expand_vfs(
+            "\\count0=42\\def\\mark{X}\\newwrite\\f\\openout\\f=o.txt\\write\\f{\\the\\count0\\mark}\\end",
+            vfs,
+        )
+        .unwrap();
+        assert_eq!(vfs.get("o.txt"), Some(b"42X\n".as_slice()));
+    }
+
+    #[test]
+    fn write_to_unopened_stream_errors() {
+        let vfs = MemVfs::new();
+        assert!(expand_vfs("\\write0{abc}\\end", vfs).is_err());
+    }
+
+    #[test]
+    fn read_line_defines_cs() {
+        let mut vfs = MemVfs::new();
+        vfs.insert("data.txt", "Hello\nWorld\n");
+        let (out, _) = expand_vfs(
+            "\\newread\\r\\openin\\r=data.txt\\read\\r to \\line\\line",
+            vfs,
+        )
+        .unwrap();
+        assert_eq!(out, "Hello");
+    }
+
+    #[test]
+    fn read_eof_errors() {
+        let mut vfs = MemVfs::new();
+        vfs.insert("empty.txt", "");
+        assert!(
+            expand_vfs("\\newread\\r\\openin\\r=empty.txt\\read\\r to \\line", vfs)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn write18_shell_escape_rejected() {
+        let vfs = MemVfs::new();
+        assert!(expand_vfs("\\write18{echo hi}\\end", vfs).is_err());
     }
 }

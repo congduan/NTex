@@ -1,0 +1,13 @@
+[package]
+name = "ntex-io"
+description = "NTex VFS：排版内核与真实/虚拟文件系统的唯一接口（RFC-3）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "ntex_io"
+
+[lints]
+workspace = true
