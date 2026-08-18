@@ -56,6 +56,11 @@ enum InputFrame {
         items: Arc<[(Token, bool)]>,
         pos: usize,
     },
+    /// 输出例程帧（M3-5-3）：同 TokenList，但耗尽时复位输出例程激活标志。
+    OutputRoutine {
+        items: Arc<[(Token, bool)]>,
+        pos: usize,
+    },
 }
 
 /// 条件分支状态。
@@ -138,6 +143,8 @@ enum SavedValue {
     Param { kind: ParamKind, prev: ParamValue },
     /// `\sfcode`：spacefactor 表项（M3-4 词间距）。
     Sfcode { byte: u8, prev: u32 },
+    /// `\output`：输出例程 token 列表（M3-5-3）。
+    Output { prev: Option<TokenArray> },
 }
 
 /// `\ifx` 语义键：解析别名后比较含义（TeX：同含义即相等）。
@@ -186,6 +193,12 @@ pub struct Expander {
     params: Params,
     /// 字体加载器（M3-4）：`\font` 执行时把字体名解析为 FontId。
     font_loader: Box<dyn FontLoader>,
+    /// `\output` 例程 token 列表（M3-5-3）；None = 未定义（断页直通 shipout）。
+    output_toks: Option<TokenArray>,
+    /// 输出例程正在执行（防嵌套：例程内再次断页报错）。
+    output_active: bool,
+    /// 上一轮注入输出例程时待处理页面的数量（判断例程是否消费了 box255）。
+    output_prev_count: usize,
     /// 是否启用字节码轨道（M2；解释器轨道用于双轨等价验证）。
     use_bytecode: bool,
 }
@@ -220,6 +233,9 @@ impl Expander {
             registers: Registers::new(),
             params: Params::default(),
             font_loader: Box::new(NoFontLoader),
+            output_toks: None,
+            output_active: false,
+            output_prev_count: usize::MAX,
             use_bytecode,
         };
         e.register_builtins();
@@ -241,12 +257,67 @@ impl Expander {
     }
 
     /// 运行主循环直到输入耗尽。
+    ///
+    /// 输出例程（M3-5-3）在 token 边界注入：fire_up（发生在 sink 调用内）把页面
+    /// 放入 box255 并置 pending；本循环在每次取 token 前检查并注入例程 token 帧。
     pub fn run(&mut self) -> Result<()> {
-        while self.process_one()? {}
+        loop {
+            // 输出例程激活期间（例程帧在栈上）不重复注入
+            if !self.output_active && self.maybe_inject_output()? {
+                continue;
+            }
+            if !self.process_one()? {
+                break;
+            }
+        }
         if !self.cond_stack.is_empty() {
             return Err(Error::invalid_input("条件未闭合（缺少 \\fi）"));
         }
         Ok(())
+    }
+
+    /// 输入耗尽后的收尾：执行所有待执行的输出例程（`finish` 冲页产生）。
+    pub fn run_pending_output(&mut self) -> Result<()> {
+        while !self.output_active && self.maybe_inject_output()? {
+            // 运行例程帧直到其耗尽（output_active 复位）
+            while self.output_active && self.process_one()? {}
+        }
+        Ok(())
+    }
+
+    /// 若存在待执行的输出例程，注入其 token 帧并返回 true。
+    ///
+    /// 注入前比较队列长度与上一轮注入时的长度：未减少（例程没取用 box255）说明
+    /// 例程不会处理剩余页面（如 `\output={}`）→ 丢弃剩余并停止（TeX：例程不
+    /// ship box255 则页面消失）。丢弃在 token 边界进行，避免例程末 token 的
+    /// 参数扫描（如 `\box255` 的数字）误触"例程结束"。
+    fn maybe_inject_output(&mut self) -> Result<bool> {
+        if self.output_toks.is_none() || !self.sink.output_pending() {
+            self.output_prev_count = usize::MAX;
+            return Ok(false);
+        }
+        if self.output_active {
+            return Err(Error::invalid_input(
+                "输出例程内再次触发了断页（嵌套输出例程）",
+            ));
+        }
+        let count = self.sink.output_pending_count();
+        if count >= self.output_prev_count {
+            // 例程未消费任何待处理页面 → 剩余页面被丢弃（TeX 语义）
+            self.sink.discard_pending_pages();
+            self.output_prev_count = usize::MAX;
+            return Ok(false);
+        }
+        self.output_prev_count = count;
+        let toks = self.output_toks.clone().expect("已检查 is_some");
+        self.sink.take_output_pending();
+        self.output_active = true;
+        let items: Vec<(Token, bool)> = toks.iter().map(|&t| (t, false)).collect();
+        self.stack.push(InputFrame::OutputRoutine {
+            items: Arc::from(items),
+            pos: 0,
+        });
+        Ok(true)
     }
 
     /// 安装字体加载器（M3-4）：`\font` 执行时把字体名解析为 FontId。
@@ -424,6 +495,20 @@ impl Expander {
                     *pos += 1;
                     return Ok(Some(item));
                 }
+                InputFrame::OutputRoutine { items, pos } => {
+                    if *pos >= items.len() {
+                        // 例程帧耗尽：复位输出例程激活标志（可再次注入）。
+                        // 剩余待处理页面是否丢弃由 maybe_inject_output 按进度判断
+                        // （例程未取用 box255 时），不在帧弹出时处理——例程末 token
+                        // 的参数扫描（如 \box255 数字）会 fetch 到帧外。
+                        self.stack.pop();
+                        self.output_active = false;
+                        continue;
+                    }
+                    let item = items[*pos];
+                    *pos += 1;
+                    return Ok(Some(item));
+                }
             }
         }
     }
@@ -534,6 +619,7 @@ impl Expander {
             Primitive::SfCode => self.exec_sfcode(),
             Primitive::End => {
                 self.stack.clear();
+                self.output_active = false;
                 Ok(())
             }
             // M1-7 扫描顺序原语
@@ -656,6 +742,18 @@ impl Expander {
             Primitive::Font => self.exec_font(),
             // M3-5 输出：\shipout 直通 sink（排版器解释：封装下一盒子为页面）
             Primitive::ShipOut => self.sink.primitive(prim),
+            // M3-5-3 输出例程：\output=<general text> 存储 token 列表
+            Primitive::Output => {
+                self.expect_equals()?;
+                let val = self.scan_group_contents()?;
+                self.assign_output(Arc::from(val));
+                Ok(())
+            }
+            // M3-5-3 盒子寄存器：\box<n> 交给 sink（shipout_next 时封装为页面）
+            Primitive::Box => {
+                let idx = self.scan_register_index()?;
+                self.sink.box_register(idx)
+            }
         }
     }
 
@@ -1186,7 +1284,7 @@ impl Expander {
 
     /// 注册 M1 内建原语。
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 57] = [
+        const BUILTINS: [(&str, Primitive); 59] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -1255,6 +1353,9 @@ impl Expander {
             ("parskip", Primitive::ParSkip),
             // M3-4 词间距
             ("sfcode", Primitive::SfCode),
+            // M3-5-3 输出例程
+            ("output", Primitive::Output),
+            ("box", Primitive::Box),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);
@@ -1437,6 +1538,23 @@ impl Expander {
         self.finish_assignment();
     }
 
+    /// `\output=<general text>`：设置输出例程 token 列表（M3-5-3）。
+    /// 通知排版器：fire_up 改道 box255 + 待执行；组内局部、可 `\global`。
+    fn assign_output(&mut self, val: TokenArray) {
+        let global = self.is_global();
+        if !global && self.group_level > 0 {
+            self.save_stack.push((
+                self.group_level,
+                SavedValue::Output {
+                    prev: self.output_toks.clone(),
+                },
+            ));
+        }
+        self.output_toks = Some(val);
+        let _ = self.sink.output_defined(true);
+        self.finish_assignment();
+    }
+
     /// `\the<寄存器>`：把寄存器值展开为 token 流。
     fn exec_the(&mut self) -> Result<()> {
         let tokens = self.the_tokens()?;
@@ -1574,6 +1692,10 @@ impl Expander {
             SavedValue::Sfcode { byte, prev } => {
                 self.sfcodes[byte as usize] = prev;
                 let _ = self.sink.sfcode_changed(byte, prev);
+            }
+            SavedValue::Output { prev } => {
+                self.output_toks = prev;
+                let _ = self.sink.output_defined(self.output_toks.is_some());
             }
         }
     }
@@ -2014,6 +2136,11 @@ impl Expander {
     /// 取出输出 sink（排版器运行结束后取回 builder）。
     pub fn take_sink(&mut self) -> Box<dyn TokenSink> {
         std::mem::replace(&mut self.sink, Box::new(VecSink::default()))
+    }
+
+    /// 可变访问输出 sink（收尾冲页/输出例程交错期间仍挂在引擎上）。
+    pub fn sink_mut(&mut self) -> &mut dyn TokenSink {
+        &mut *self.sink
     }
 }
 

@@ -12,7 +12,8 @@
 //!   触发节点（eject 的 penalty 等）留待对（新）空页重处理并被丢弃——
 //!   这正是 `\end` 不产生多余空页的机制。
 //!
-//! 不支持：insert/mark/whatsit（M4+）；用户 output routine（恒用默认 \shipout）。
+//! 不支持：insert/mark/whatsit（M4+）。用户 output routine（M3-5-3）由
+//! [crate::typeset::NodeBuilder] 在页面产出后路由到 box255 + 引擎 token 注入。
 
 use ntex_core::param::Params;
 
@@ -91,6 +92,12 @@ enum Outcome {
     FireUp,
 }
 
+impl Default for PageBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PageBuilder {
     pub fn new() -> Self {
         Self {
@@ -127,23 +134,22 @@ impl PageBuilder {
 
     /// 把贡献列表逐节点搬入当前页（tex.web `build_page` 主循环）。
     ///
-    /// 返回本批次产出的所有页面（通常 0 或 1；eject 场景可能多页）。
-    pub fn feed(&mut self, contrib: &mut Vec<Node>, params: &Params) -> Vec<BoxNode> {
-        let mut shipped = Vec::new();
+    /// 增量版：每产出**一页**即返回（M3-5-3 输出例程需要页面产出后暂停，
+    /// 让引擎在 token 边界执行例程，再继续处理剩余贡献）。
+    /// 返回 `None` 表示贡献耗尽且无页面产出。
+    pub fn feed_one(&mut self, contrib: &mut Vec<Node>, params: &Params) -> Option<BoxNode> {
         loop {
             if contrib.is_empty() {
-                break;
+                return None;
             }
             match self.process(contrib, params) {
                 Outcome::Continue => {}
                 Outcome::FireUp => {
-                    shipped.push(self.fire_up(contrib));
-                    // fire_up 已把页内剩余节点拼回贡献前端；循环继续，
-                    // 触发节点（eject penalty 等）面对新空页会被丢弃。
+                    // fire_up 已把页内剩余节点拼回贡献前端，由调用方继续处理
+                    return Some(self.fire_up(contrib));
                 }
             }
         }
-        shipped
     }
 
     /// 处理贡献列表头节点（tex.web "Move node p to the current page"）。
@@ -219,10 +225,8 @@ impl PageBuilder {
                     return Outcome::Continue;
                 }
                 // 胶水是断点 iff 前驱是盒子/规则（tex.web §496）
-                if self.last_is_box {
-                    if self.try_break(0) == Some(Outcome::FireUp) {
-                        return Outcome::FireUp;
-                    }
+                if self.last_is_box && self.try_break(0) == Some(Outcome::FireUp) {
+                    return Outcome::FireUp;
                 }
                 contrib.remove(0);
                 self.page.push(Node::Glue {
@@ -248,10 +252,8 @@ impl PageBuilder {
                 // kern 仅在后继为胶水时才是断点（tex.web §498，需前瞻贡献）
                 let followed_by_glue =
                     matches!(contrib.get(1), Some(Node::Glue { .. }));
-                if followed_by_glue {
-                    if self.try_break(0) == Some(Outcome::FireUp) {
-                        return Outcome::FireUp;
-                    }
+                if followed_by_glue && self.try_break(0) == Some(Outcome::FireUp) {
+                    return Outcome::FireUp;
                 }
                 contrib.remove(0);
                 self.page.push(Node::Kern { width });
@@ -265,10 +267,10 @@ impl PageBuilder {
                     contrib.remove(0);
                     return Outcome::Continue;
                 }
-                if penalty < INF_PENALTY {
-                    if self.try_break(penalty) == Some(Outcome::FireUp) {
-                        return Outcome::FireUp;
-                    }
+                if penalty < INF_PENALTY
+                    && self.try_break(penalty) == Some(Outcome::FireUp)
+                {
+                    return Outcome::FireUp;
                 }
                 contrib.remove(0);
                 self.page.push(Node::Penalty { penalty });

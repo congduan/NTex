@@ -10,10 +10,10 @@
 | M0 地基 | ✅ 完成（workspace/CI/TRIP·diff·bench 工具链；RFC-1/RFC-4 定稿） |
 | M1 展开内核 | 🟡 核心完成：M1-1~7、M1-9~11 已实现（95 用例）；M1-8 分隔参数、M1-13 错误模型、**M1-14 TRIP 冲刺** 待补 |
 | M2 字节码 | 🟡 双轨完成：定长 u64 IR + 编译器 + 解释器等价验证（100 用例）；**吞吐 1.12x 未达 2x 目标**，M2-5 arena 未做 |
-| M3 排版核心 | 🟡 M3-1~M3-4 完成（58+ 用例）；**M3-5-1 DVI 写出 + `\shipout`** 完成（dvipdfmx 验收 + 与 TeX 逐字节对比）；断页 DP 待做 |
+| M3 排版核心 | 🟡 M3-1~M3-4 完成（58+ 用例）；**M3-5 DVI 写出 + `\shipout` + 断页 DP + lig/kern + `\sfcode` + `\output` 例程/box255** 完成（dvipdfmx 验收 + 与 TeX 差分对照）；VFS/`.fmt` 待做 |
 | 输出端 | 🟢 临时 PDF 切片可用（`ntex-pdf`：Helvetica 标准字体 + 贪心折行，可产出可看 PDF） |
 
-**下一步**：M3-5 断页 DP（`\vsize` 自动分页 → `\shipout`，与 pdfTeX 差分对照）。
+**下一步**：M3 收尾——VFS + 侧效应模型（RFC-3）、`.fmt v1` 内存快照；随后 M4 数学 + e-TeX。
 
 ---
 
@@ -233,7 +233,9 @@
 - [x] 胶水拉伸/收缩 + badness + 断行点（breakpoints）（M3-2-3：`badness`/`collect_breakpoints`；词间空白 glue）
 - [x] Knuth-Plass 折行（单线程，先保证逐位一致）（M3-3：`linebreak::knuth_plass`，DP + active 集 + fil 阶无限胶水 + `\parfillskip`；demerits 常量待 M3-5 对照 pdfTeX 校准；O(n²) 未做 active 淘汰）
 - [x] TFM 解析 + 字体表（M3-4：`ntex-font` 解析 cmr10；`\font<cs>=<名字>[at/scaled]` 原语 + `EqSlot::Font` 选择器；字符维度/词间距来自真实度量）
-- [ ] 断页：page builder 状态机 + 断页 DP
+- [x] 断页：page builder 状态机 + 断页 DP（M3-5-2：`page::PageBuilder` 的 build_page/fire_up/vpackage，`\vsize`/`\topskip`/`\maxdepth`/`\parskip`，`\end` 冲页不产生多余空页）
+- [x] lig/kern 连字字距 + `\sfcode` 词间距（M3-4 补：TFM lig_kern 表解析 + `append_char` 应用 + spacefactor 词间胶水）
+- [x] `\output` 例程 + box255（M3-5-3：token 列表存储 + fire_up 改道 + 引擎 token 边界注入；`\box<n>` 寄存器；例程不消费 box255 → 页面丢弃）
 - [x] `\shipout` → DVI 写出（M3-5-1：`ntex-dvi` 写出器 + `\shipout` 原语 + `Typesetter::typeset_dvi`；dvipdfmx 实机验收，`pre/bop/fnt_def/set_char/right/down/push/pop/post/post_post` 与真实 TeX 逐字节一致，残余差异仅排版器未实现字体 kern 表）
 - [x] `\vtop` shift 对照 DVI 校准（M3-5-1：vtop 首行基线 = shift=height，见 `package_box`）
 - [ ] **VFS 层 + 副作用模型落地**（RFC-3）：`\write`/`\read`/`\input` 走 VFS

@@ -66,6 +66,29 @@ pub trait TokenSink: std::fmt::Debug {
     fn sfcode_changed(&mut self, _charcode: u8, _value: u32) -> Result<()> {
         Ok(())
     }
+    /// `\output` 例程定义状态变化（M3-5-3）：true 时 fire_up 改道 box255 + 待执行，
+    /// false 时直通 shipout（默认）。
+    fn output_defined(&mut self, _defined: bool) -> Result<()> {
+        Ok(())
+    }
+    /// 是否有待执行的输出例程（fire_up 已把页面放入 box255）。
+    fn output_pending(&self) -> bool {
+        false
+    }
+    /// 清除待执行标记并返回是否曾有（expander 注入输出例程 token 时调用）。
+    fn take_output_pending(&mut self) -> bool {
+        false
+    }
+    /// 待输出例程处理的页面数量（expander 按进度判断例程是否消费了 box255）。
+    fn output_pending_count(&self) -> usize {
+        0
+    }
+    /// 丢弃所有待输出例程处理的页面（例程不消费 box255 时）。
+    fn discard_pending_pages(&mut self) {}
+    /// `\box<n>`：取盒子寄存器（`\shipout` 前缀时封装为页面，否则作为节点追加）。
+    fn box_register(&mut self, _idx: usize) -> Result<()> {
+        Ok(())
+    }
     /// 字体选择器执行（M3-4）：`\font` 定义的 cs 被使用，设置当前字体。
     fn font_selected(&mut self, _font: u32) -> Result<()> {
         Ok(())

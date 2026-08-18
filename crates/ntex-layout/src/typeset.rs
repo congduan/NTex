@@ -17,12 +17,13 @@
 //! - `\hbox to <glue>` / `\hbox spread <glue>` 规格暂拒。
 
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 use ntex_core::error::{Error, Result};
 use ntex_core::expand::Expander;
 use ntex_core::param::{ParamKind, ParamValue, Params};
-use ntex_core::register::Glue;
+use ntex_core::register::{Glue, REGISTER_COUNT};
 use ntex_core::token::Token;
 use ntex_core::{FontLoader, Primitive, TokenSink};
 use ntex_font::{FontMetrics, LigKern};
@@ -61,6 +62,9 @@ impl PendingBox {
 struct GroupCtx {
     /// 本组是否为盒子内容（`\hbox`/`\vbox`/`\vtop` 紧邻的组）。
     box_kind: Option<PendingBox>,
+    /// 本组是否为 `\shipout` 的目标（封装的盒子作为页面而非追加）。
+    /// 随组传递：`\shipout\vbox{...\box255...}` 内层盒子不被 shipout。
+    shipout: bool,
 }
 
 /// 字符度量函数：`(width, height, depth)`，单位 sp。
@@ -166,6 +170,15 @@ struct NodeBuilder {
     pagination: bool,
     /// 页面构建器（`pagination` 时把顶层垂直列表拆成页面）。
     page: PageBuilder,
+    /// 盒子寄存器（M3-5-3）：`\box<n>` 读写（box255 为待输出例程页面队列，见
+    /// [`Self::pending_pages`]，不占此表）。
+    boxes: Vec<Option<BoxNode>>,
+    /// `\output` 例程是否已定义（true：fire_up 改道 box255 + 待执行）。
+    output_defined: bool,
+    /// 待输出例程处理的页面队列（M3-5-3）：`\output` 定义时 fire_up 产出的页面
+    /// 排队，`\box255` 逐页取出，例程反复运行直至队列清空。队列而非单槽——
+    /// `close_paragraph` 一次推入多行可能连续产出多页，逐页交错执行例程。
+    pending_pages: VecDeque<BoxNode>,
 }
 
 impl NodeBuilder {
@@ -202,6 +215,9 @@ impl NodeBuilder {
             shipped: Vec::new(),
             pagination,
             page: PageBuilder::new(),
+            boxes: vec![None; REGISTER_COUNT],
+            output_defined: false,
+            pending_pages: VecDeque::new(),
             fonts,
         }
     }
@@ -213,11 +229,22 @@ impl NodeBuilder {
     fn append(&mut self, node: Node) {
         self.lists.last_mut().expect("列表栈非空").push(node);
         // M3-5-2：顶层垂直模式追加后运行页面构建器（TeX build_page 的触发点）。
+        // 增量（feed_one）：每产出一页即暂停——若定义了输出例程，让引擎在 token
+        // 边界执行例程（ship box255）后再继续；未定义时页面直通 shipped。
         if self.pagination && self.mode() == Mode::Vertical && self.lists.len() == 1 {
-            let pages = self.page.feed(&mut self.lists[0], &self.params);
-            for p in pages {
-                self.shipped.push(p);
+            if let Some(p) = self.page.feed_one(&mut self.lists[0], &self.params) {
+                self.accept_page(p);
             }
+        }
+    }
+
+    /// 接收一个已产出的页面（M3-5-3）：定义了输出例程 → 进入待处理队列
+    /// （`\box255` 逐页取出）；否则直接进 shipped（与 M3-5-2 默认行为一致）。
+    fn accept_page(&mut self, p: BoxNode) {
+        if self.output_defined {
+            self.pending_pages.push_back(p);
+        } else {
+            self.shipped.push(p);
         }
     }
 
@@ -248,8 +275,9 @@ impl NodeBuilder {
         }
     }
 
-    /// 封装盒子内容（group_end 用）。
-    fn package_box(&mut self, kind: PendingBox) {
+    /// 封装盒子内容（group_end 用）。`ship` 为本组是否为 `\shipout` 目标
+    /// （M3-5）：是则封装为页面进 shipped，否则追加到上层列表。
+    fn package_box(&mut self, kind: PendingBox, ship: bool) {
         let children = self.lists.pop().expect("盒子列表");
         self.list_modes.pop();
         let node = match kind {
@@ -262,9 +290,7 @@ impl NodeBuilder {
                 Node::Box(b)
             }
         };
-        // M3-5：\shipout<box> 把盒子封装为页面而非追加到列表
-        if self.shipout_next {
-            self.shipout_next = false;
+        if ship {
             if let Node::Box(b) = node {
                 self.shipped.push(b);
             }
@@ -278,9 +304,22 @@ impl NodeBuilder {
     /// d < \lineskiplimit 用 \lineskip，否则用宽度调整为 d 的 \baselineskip）。
     fn push_box(&mut self, node: Node) {
         if self.mode() == Mode::Vertical {
-            // 分页模式下顶层前驱盒子的深度/类型在页面构建器里（贡献列表已被搬走）。
+            // 分页模式下顶层前驱盒子的深度/类型：页面构建器里的盒子，或
+            // 断页后仍在贡献列表中的残余盒子（未入页，interline glue 的依据）。
             let (prev_is_box, prev_depth) = if self.pagination && self.lists.len() == 1 {
-                (self.page.prev_depth() > crate::page::IGNORE_DEPTH, self.page.prev_depth())
+                match self
+                    .lists[0]
+                    .iter()
+                    .rev()
+                    .find(|n| matches!(n, Node::Box(_) | Node::Rule { .. }))
+                {
+                    Some(Node::Box(prev)) => (true, prev.depth),
+                    Some(Node::Rule { depth, .. }) => (true, *depth),
+                    _ => (
+                        self.page.prev_depth() > crate::page::IGNORE_DEPTH,
+                        self.page.prev_depth(),
+                    ),
+                }
             } else {
                 match self.lists.last().and_then(|l| l.last()) {
                     Some(Node::Box(prev)) => (true, prev.depth),
@@ -312,11 +351,34 @@ impl NodeBuilder {
         self.append(node);
     }
 
+    /// 冲页后清理：新空页上的 glue/kern/penalty 本就会被页面构建器丢弃，
+    /// 但 feed_one 在 fire_up 后即返回（触发节点残留在贡献前端），若不主动
+    /// 清除，eject 循环会把这些可丢弃节点误判为"有待冲材料"而反复追加
+    /// eject 节点 → 空页死循环。
+    fn drop_empty_page_discardables(&mut self) {
+        if !self.page.is_empty() {
+            return;
+        }
+        while let Some(n) = self.lists[0].first() {
+            if matches!(n, Node::Glue { .. } | Node::Kern { .. } | Node::Penalty { .. }) {
+                self.lists[0].remove(0);
+            } else {
+                break;
+            }
+        }
+    }
+
     /// M3-5-2 `\end` 冲页（tex.web `its_all_over`）：页或贡献非空时追加
     /// `\hbox to \hsize{}\vfill\penalty-'10000000000` 强制断页；触发节点（penalty）
     /// 面对新空页被页面构建器丢弃，故不产生多余空页。
-    fn eject_remaining_pages(&mut self) {
-        while !self.page.is_empty() || !self.lists[0].is_empty() {
+    ///
+    /// 增量版：每调用最多冲出一页（返回是否冲出）；`finish` 与输出例程
+    /// 交错执行——页面经 [`Self::accept_page`] 路由（box255+例程 或 直通 shipout）。
+    fn eject_one_page(&mut self) -> Result<bool> {
+        loop {
+            if self.page.is_empty() && self.lists[0].is_empty() {
+                return Ok(false);
+            }
             let hsize = self.params.hsize;
             let mut empty_box = BoxNode::new_hbox(Vec::new());
             empty_box.width = hsize; // \hbox to \hsize{}
@@ -331,9 +393,11 @@ impl NodeBuilder {
             self.lists[0].push(Node::Penalty {
                 penalty: -(1 << 30), // \penalty-'10000000000
             });
-            let pages = self.page.feed(&mut self.lists[0], &self.params);
-            for p in pages {
-                self.shipped.push(p);
+            // 产出一页则返回；材料全部入页但未触发断页 → 补充 eject 节点再试
+            if let Some(p) = self.page.feed_one(&mut self.lists[0], &self.params) {
+                self.accept_page(p);
+                self.drop_empty_page_discardables();
+                return Ok(true);
             }
         }
     }
@@ -549,7 +613,16 @@ impl TokenSink for NodeBuilder {
 
     fn group_begin(&mut self) -> Result<()> {
         let kind = self.pending_box.take();
-        self.groups.push(GroupCtx { box_kind: kind });
+        // `\shipout` 目标 = 紧邻的盒子组（内层盒子不消费该标记）
+        let ship = if kind.is_some() {
+            std::mem::take(&mut self.shipout_next)
+        } else {
+            false
+        };
+        self.groups.push(GroupCtx {
+            box_kind: kind,
+            shipout: ship,
+        });
         self.param_stack.push(self.params);
         if let Some(k) = kind {
             let new_mode = match k {
@@ -580,7 +653,7 @@ impl TokenSink for NodeBuilder {
             self.close_paragraph();
         }
         if let Some(kind) = ctx.box_kind {
-            self.package_box(kind);
+            self.package_box(kind, ctx.shipout);
         }
         Ok(())
     }
@@ -630,6 +703,52 @@ impl TokenSink for NodeBuilder {
 
     fn sfcode_changed(&mut self, charcode: u8, value: u32) -> Result<()> {
         self.sfcodes[charcode as usize] = value;
+        Ok(())
+    }
+
+    fn output_defined(&mut self, defined: bool) -> Result<()> {
+        self.output_defined = defined;
+        if !defined {
+            // 例程恢复未定义：未处理页面无法再经例程产出，直接丢弃（TeX 语义）
+            self.pending_pages.clear();
+        }
+        Ok(())
+    }
+
+    fn output_pending(&self) -> bool {
+        !self.pending_pages.is_empty()
+    }
+
+    fn take_output_pending(&mut self) -> bool {
+        !self.pending_pages.is_empty()
+    }
+
+    fn output_pending_count(&self) -> usize {
+        self.pending_pages.len()
+    }
+
+    fn discard_pending_pages(&mut self) {
+        self.pending_pages.clear();
+    }
+
+    /// `\box<n>`（M3-5-3）：取出盒子寄存器；`\shipout` 前缀时封装为页面，
+    /// 否则作为节点追加到当前列表。void 盒子报错（TeX "Box n is void"）。
+    /// box255 = 待输出例程处理页面的队首。
+    fn box_register(&mut self, idx: usize) -> Result<()> {
+        let b = if idx == 255 {
+            self.pending_pages.pop_front()
+        } else {
+            self.boxes.get_mut(idx).and_then(|s| s.take())
+        };
+        let Some(b) = b else {
+            return Err(Error::invalid_input(format!("盒子 {idx} 为空（void）")));
+        };
+        if self.shipout_next {
+            self.shipout_next = false;
+            self.shipped.push(b);
+        } else {
+            self.append(Node::Box(b));
+        }
         Ok(())
     }
 
@@ -789,30 +908,62 @@ impl Typesetter {
         }
     }
 
-    /// 运行结束收尾：关闭开放段落、校验盒子/组闭合，取回主列表与页面。
+    /// 运行结束收尾：关闭开放段落、校验盒子/组闭合，冲掉残余页面，取回主列表与页面。
+    ///
+    /// 输出例程（M3-5-3）需要引擎在 token 边界执行，因此校验/冲页都在
+    /// sink 仍挂接引擎时进行：close_paragraph / eject_one_page 产出的页面
+    /// 经 box255+例程（或直通 shipout），随后 `run_pending_output` 执行例程。
     fn finish(&mut self) -> Result<FinishOutput> {
+        // 1) 校验 + 关闭开放段落（可能产出页面 → box255 + pending）
+        {
+            let builder = self
+                .expander
+                .sink_mut()
+                .as_any_mut()
+                .downcast_mut::<NodeBuilder>()
+                .ok_or_else(|| Error::internal("typesetter 安装了 NodeBuilder"))?;
+            if builder.pending_box.is_some() {
+                return Err(Error::invalid_input("\\hbox/\\vbox 后缺少组"));
+            }
+            if builder.shipout_next {
+                return Err(Error::invalid_input("\\shipout 后缺少盒子"));
+            }
+            if !builder.groups.is_empty() {
+                return Err(Error::invalid_input("组未闭合（缺少 }）"));
+            }
+            if builder.mode() == Mode::Horizontal {
+                builder.close_paragraph();
+            }
+        }
+        // 2) 执行 close_paragraph 产出的待执行输出例程
+        self.expander.run_pending_output()?;
+        // 3) 输入结束按 `\end` 冲掉残余页面（tex.web `its_all_over`），
+        //    与输出例程交错：冲一页 → 执行例程 → 再冲。
+        loop {
+            let ejected = {
+                let builder = self
+                    .expander
+                    .sink_mut()
+                    .as_any_mut()
+                    .downcast_mut::<NodeBuilder>()
+                    .ok_or_else(|| Error::internal("typesetter 安装了 NodeBuilder"))?;
+                if builder.pagination {
+                    builder.eject_one_page()?
+                } else {
+                    false
+                }
+            };
+            if !ejected {
+                break;
+            }
+            self.expander.run_pending_output()?;
+        }
+        // 4) 取走 sink，收集主列表/页面/字体表
         let mut sink = self.expander.take_sink();
         let builder = sink
             .as_any_mut()
             .downcast_mut::<NodeBuilder>()
             .ok_or_else(|| Error::internal("typesetter 安装了 NodeBuilder"))?;
-        if builder.pending_box.is_some() {
-            return Err(Error::invalid_input("\\hbox/\\vbox 后缺少组"));
-        }
-        if builder.shipout_next {
-            return Err(Error::invalid_input("\\shipout 后缺少盒子"));
-        }
-        if !builder.groups.is_empty() {
-            return Err(Error::invalid_input("组未闭合（缺少 }）"));
-        }
-        if builder.mode() == Mode::Horizontal {
-            builder.close_paragraph();
-        }
-        // M3-5-2：输入结束按 `\end` 冲掉残余页面（tex.web `its_all_over`）：
-        // 页或贡献非空时追加 `\hbox to \hsize{}\vfill\penalty-2^30` 强制断页。
-        if builder.pagination {
-            builder.eject_remaining_pages();
-        }
         let mut lists = std::mem::take(&mut builder.lists);
         debug_assert_eq!(lists.len(), 1, "收尾后应只剩主列表");
         let shipped = std::mem::take(&mut builder.shipped);
@@ -1403,5 +1554,89 @@ mod tests {
             }
         }
         (chars, w)
+    }
+
+    // ---------- M3-5-3 \output 例程 + box255 ----------
+
+    /// 分页排版（fn 指针度量 + 词间距）；返回 \shipout 页面。
+    fn paginated(src: &str) -> Result<Vec<BoxNode>> {
+        let mut ts = Typesetter::with_metrics(metrics).with_space(|_| Glue {
+            width: 1000,
+            stretch: 500,
+            shrink: 300,
+        });
+        ts.typeset_dvi(src).map(|(pages, _)| pages)
+    }
+
+    /// 小 \vsize + 窄 \hsize 的填充文本（必然分多页）。
+    fn fill_words() -> String {
+        let words = [
+            "aa", "bb", "cc", "dd", "ee", "ff", "gg", "hh", "ii", "jj", "kk", "ll", "mm", "nn",
+            "oo", "pp", "qq", "rr", "ss", "tt", "uu", "vv", "ww", "xx", "yy", "zz",
+        ];
+        format!(
+            r"\vsize 100000sp\hsize 20000sp {}",
+            words.join(" ")
+        )
+    }
+
+    #[test]
+    fn output_routine_shipout_box255_equals_default() {
+        let src = fill_words();
+        let default = paginated(&src).unwrap();
+        assert!(
+            default.len() >= 2,
+            "小 \\vsize 应分多页，实际 {}",
+            default.len()
+        );
+        // \output={\shipout\box255} ≡ 默认 shipout
+        let with = paginated(&format!(r"\output={{\shipout\box255}} {src}")).unwrap();
+        assert_eq!(with, default, r"\output={{\shipout\box255}} 应与默认完全一致");
+    }
+
+    #[test]
+    fn output_routine_empty_swallows_pages() {
+        let src = format!(r"\output={{}} {}", fill_words());
+        let pages = paginated(&src).unwrap();
+        assert!(pages.is_empty(), "空 \\output 例程应吞掉所有页面");
+    }
+
+    #[test]
+    fn output_routine_custom_header() {
+        let src = fill_words();
+        let default = paginated(&src).unwrap();
+        // 例程给每页包一个页眉：\output={\shipout\vbox{\hbox{Header}\box255}}
+        let with =
+            paginated(&format!(r"\output={{\shipout\vbox{{\hbox{{Header}}\box255}}}} {src}"))
+                .unwrap();
+        assert_eq!(with.len(), default.len(), "例程不改变页数");
+        for (p, d) in with.iter().zip(&default) {
+            assert_eq!(p.children.len(), 2, "页面应包 Header + 原页：{p:?}");
+            match &p.children[0] {
+                Node::Box(h) => {
+                    assert_eq!(h.children.len(), 6, "Header 为 6 字符 hbox");
+                }
+                other => panic!("首子节点应为 Header hbox，得到 {other:?}"),
+            }
+            assert_eq!(&p.children[1], &Node::Box(d.clone()), "box255 应为原页面");
+        }
+    }
+
+    #[test]
+    fn box_register_void_errors() {
+        // \box255 在无页面（void）时取用 → 报错
+        assert!(
+            paginated(r"\shipout\box255").is_err(),
+            "void \\box255 应报错"
+        );
+    }
+
+    #[test]
+    fn output_local_restores_after_group() {
+        let src = fill_words();
+        let default = paginated(&src).unwrap();
+        // 组内定义 \output，组结束恢复未定义 → 行为与默认一致（直通 shipout）
+        let with = paginated(&format!(r"{{\output={{\shipout\box255}}}} {src}")).unwrap();
+        assert_eq!(with, default, "组结束应恢复未定义 \\output");
     }
 }

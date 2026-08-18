@@ -84,6 +84,9 @@ pub enum Primitive {
     ParSkip,
     // M3-4 词间距：\sfcode<字符>=<spacefactor>
     SfCode,
+    // M3-5-3 输出例程：\output=<general text>（token 列表存储）；\box<n>（盒子寄存器）
+    Output,
+    Box,
 }
 
 impl Primitive {
