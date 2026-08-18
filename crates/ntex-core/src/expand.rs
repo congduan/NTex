@@ -136,6 +136,8 @@ enum SavedValue {
     Toks { idx: usize, prev: TokenArray },
     Catcode { byte: u8, prev: Catcode },
     Param { kind: ParamKind, prev: ParamValue },
+    /// `\sfcode`：spacefactor 表项（M3-4 词间距）。
+    Sfcode { byte: u8, prev: u32 },
 }
 
 /// `\ifx` 语义键：解析别名后比较含义（TeX：同含义即相等）。
@@ -155,6 +157,9 @@ pub struct Expander {
     intern: InternTable,
     eqtb: Eqtb,
     catcodes: CatcodeTable,
+    /// `\sfcode` 表（M3-4 词间距 spacefactor；TeX 默认全 1000，plain 对
+    /// .,?!=3000、:=2000、;=1500、,=1250，由排版器按 plain 默认初始化）。
+    sfcodes: [u32; 256],
     stack: Vec<InputFrame>,
     /// 输出 sink（M3-2）：token/组/原语事件流；默认 [`VecSink`] 收集 token。
     sink: Box<dyn TokenSink>,
@@ -201,6 +206,7 @@ impl Expander {
             intern: InternTable::new(),
             eqtb: Eqtb::new(),
             catcodes: CatcodeTable::new(),
+            sfcodes: [1000; 256],
             stack: Vec::new(),
             sink: Box::new(VecSink::default()),
             read_floor: 0,
@@ -525,6 +531,7 @@ impl Expander {
             }
             Primitive::Let => self.exec_let(),
             Primitive::Catcode => self.exec_catcode(),
+            Primitive::SfCode => self.exec_sfcode(),
             Primitive::End => {
                 self.stack.clear();
                 Ok(())
@@ -993,6 +1000,29 @@ impl Expander {
         Ok(())
     }
 
+    /// `\sfcode<字符>=<值>`：设置字符的 spacefactor（TeX define_char_code 类）。
+    fn exec_sfcode(&mut self) -> Result<()> {
+        let byte = self.scan_number()?;
+        let byte = u8::try_from(byte).map_err(|_| Error::invalid_input("\\sfcode 字符码越界"))?;
+        self.expect_equals()?;
+        let value = self.scan_number()?;
+        let value = u32::try_from(value).map_err(|_| Error::invalid_input("\\sfcode 值越界"))?;
+        let global = self.is_global();
+        if !global && self.group_level > 0 {
+            self.save_stack.push((
+                self.group_level,
+                SavedValue::Sfcode {
+                    byte,
+                    prev: self.sfcodes[byte as usize],
+                },
+            ));
+        }
+        self.sfcodes[byte as usize] = value;
+        self.sink.sfcode_changed(byte, value)?;
+        self.finish_assignment();
+        Ok(())
+    }
+
     /// `\expandafter a b`：输出 a，再输出 b 的一次展开结果。
     ///
     /// 展开"一次"：宏 → 实参替换后的宏体（不再递归展开）；`\expandafter` → 递归；
@@ -1156,7 +1186,7 @@ impl Expander {
 
     /// 注册 M1 内建原语。
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 56] = [
+        const BUILTINS: [(&str, Primitive); 57] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -1223,6 +1253,8 @@ impl Expander {
             ("topskip", Primitive::TopSkip),
             ("maxdepth", Primitive::MaxDepth),
             ("parskip", Primitive::ParSkip),
+            // M3-4 词间距
+            ("sfcode", Primitive::SfCode),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);
@@ -1539,6 +1571,10 @@ impl Expander {
             SavedValue::Toks { idx, prev } => self.registers.set_toks(idx, prev),
             SavedValue::Catcode { byte, prev } => self.catcodes.set(byte, prev),
             SavedValue::Param { kind, prev } => self.params.set(kind, prev),
+            SavedValue::Sfcode { byte, prev } => {
+                self.sfcodes[byte as usize] = prev;
+                let _ = self.sink.sfcode_changed(byte, prev);
+            }
         }
     }
 

@@ -14,3 +14,14 @@ fixtures/trip/
 *.log
 *.out
 *.toc
+
+# 测试/调试临时产物
+tmp-*.tex
+tmp-*.dvi
+tmp-*.pdf
+/ntex-out.dvi
+/dec-ntex.txt
+/dec-tex.txt
+gluesim*.py
+dvicmp2.py
+dviprint.py

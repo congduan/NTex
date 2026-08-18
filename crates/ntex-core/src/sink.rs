@@ -62,6 +62,10 @@ pub trait TokenSink: std::fmt::Debug {
     fn param_changed(&mut self, _kind: ParamKind, _value: ParamValue) -> Result<()> {
         Ok(())
     }
+    /// `\sfcode<字符>=<值>` 赋值（M3-4 词间距 spacefactor 表）。
+    fn sfcode_changed(&mut self, _charcode: u8, _value: u32) -> Result<()> {
+        Ok(())
+    }
     /// 字体选择器执行（M3-4）：`\font` 定义的 cs 被使用，设置当前字体。
     fn font_selected(&mut self, _font: u32) -> Result<()> {
         Ok(())

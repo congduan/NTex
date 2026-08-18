@@ -92,22 +92,20 @@ fn preprocess(hlist: &[Node]) -> Vec<BreakSpec> {
                 stretch_order: so,
                 shrink_order: ro,
             } => {
-                let mut st_total = stretch;
-                st_total[(*so as usize).min(3)] += st;
-                let mut sh_total = shrink;
-                sh_total[(*ro as usize).min(3)] += sh;
+                // 断点胶水不入行：stretch/shrink 与 width 一样**不含**本胶水
+                // （tex.web line_break：try_break 在胶水加入累计宽度之前调用）。
                 out.push(BreakSpec {
                     index: i,
                     content_start: i + 1,
                     width,
-                    stretch: st_total,
-                    shrink: sh_total,
+                    stretch,
+                    shrink,
                     penalty: 0,
                     is_forced: false,
                 });
                 width += w;
-                stretch = st_total;
-                shrink = sh_total;
+                stretch[(*so as usize).min(3)] += st;
+                shrink[(*ro as usize).min(3)] += sh;
             }
             Node::Penalty { penalty } => {
                 // penalty ≥ 10000：禁止断（不算断点）
@@ -455,10 +453,11 @@ mod tests {
 
     #[test]
     fn knuth_plass_breaks_at_spaces() {
-        // 三词 a b c：hsize 25 下 "a" | "b c" 为最优（末行含起点胶水拉伸）
+        // 三词 a b c：hsize 25 下 "a b" | "c" 为最优（断点胶水不入行——
+        // 行 "a" 无内部胶水、badness 10000，故两词行更优）
         let hlist = words(&[10, 10, 10]);
         let lines = knuth_plass(&hlist, 25, 200);
-        assert_eq!(lines, vec![(0, 1), (2, 5)]);
+        assert_eq!(lines, vec![(0, 3), (4, 5)]);
     }
 
     #[test]

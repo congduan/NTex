@@ -10,4 +10,4 @@
 
 pub mod tfm;
 
-pub use tfm::{find_tfm, parse_tfm, FontMetrics, TfmError};
+pub use tfm::{find_tfm, parse_tfm, FontMetrics, LigKern, LigKernStep, TfmError};

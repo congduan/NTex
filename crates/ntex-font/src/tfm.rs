@@ -10,7 +10,8 @@
 //! 换算到 sp：`sp = word × design_size_sp / 2^20`（四舍五入）。
 //!
 //! M3-4 范围：字符 width/height/depth + 字体参数（space/space_stretch/
-//! space_shrink/x_height/quad/extra_space）；连字/字距程序跳过（M4 断字时补）。
+//! space_shrink/x_height/quad/extra_space）+ **连字/字距程序**（lig_kern 表：
+//! cmr10 的 fi/fl 连字与 kern 对）。lig_kern 程序在字符追加时由排版器执行。
 
 use std::fmt;
 
@@ -29,6 +30,30 @@ impl fmt::Display for TfmError {
 impl std::error::Error for TfmError {}
 
 type Result<T> = std::result::Result<T, TfmError>;
+
+/// lig/kern 程序步（TFM lig_kern 表的一个 32 位字；tex.web §10583-10605）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LigKernStep {
+    /// skip 字节：≥128 = 程序结束（stop_flag，无命令）；否则为右字符不匹配时
+    /// 跳过的条目数（下一步 = 当前 + skip + 1）。
+    pub skip_byte: u8,
+    /// next_char：待匹配的右字符（匹配则执行命令并停止）。
+    pub next_char: u8,
+    /// 操作码：≥128 = kern 步（kern 索引 = 256×(op−128) + remainder）；
+    /// <128 = 连字步（op = 4a+2b+c：b=0 删左字符、c=0 删右字符、a 越过的字符数）。
+    pub op_byte: u8,
+    /// remainder：kern → 索引低字节；连字 → 结果字符码。
+    pub remainder: u8,
+}
+
+/// lig/kern 程序匹配结果（排版器应用）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LigKern {
+    /// 字距：在左字符后插入 kern（sp）。
+    Kern(i64),
+    /// 连字：左字符替换为结果字符码，右字符被丢弃。
+    Lig(u8),
+}
 
 /// 字节读取器（大端）。
 struct Reader<'a> {
@@ -90,6 +115,12 @@ pub struct FontMetrics {
     pub x_height: i64,
     pub quad: i64,
     pub extra_space: i64,
+    /// lig/kern 程序（TFM lig_kern 表，原样；缩放不改变）。
+    pub lig_kern_steps: Vec<LigKernStep>,
+    /// 字距值表（TFM 字距表，已按当前缩放换算为 sp）。
+    pub kern_values: Vec<i64>,
+    /// charcode → lig/kern 程序起始索引（char_info tag=1/2；无程序为 None）。
+    pub lig_kern_index: Vec<Option<u16>>,
 }
 
 impl FontMetrics {
@@ -108,6 +139,42 @@ impl FontMetrics {
             width: self.space,
             stretch: self.space_stretch,
             shrink: self.space_shrink,
+        }
+    }
+
+    /// 执行左字符的 lig/kern 程序查右字符（tex.web main_loop 的
+    /// "ligature/kern command relevant to cur_l and cur_r"）：
+    /// 从程序起点逐条目：stop（skip≥128）→ 无命令；next_char 匹配 → kern/连字；
+    /// 不匹配 → 跳 skip+1。连字仅支持 `x y =: z`（a=b=c=0，左右都删）。
+    pub fn apply_lig_kern(&self, left: u8, right: u8) -> Option<LigKern> {
+        let start = self
+            .lig_kern_index
+            .get(left as usize)
+            .copied()
+            .flatten()? as usize;
+        let mut k = start;
+        loop {
+            let s = *self.lig_kern_steps.get(k)?;
+            if s.skip_byte >= 128 {
+                return None; // stop_flag：程序结束，无命令
+            }
+            if s.next_char == right {
+                if s.op_byte >= 128 {
+                    // kern 步：kern 索引 = 256×(op−128) + remainder
+                    let ki = 256 * (s.op_byte as usize - 128) + s.remainder as usize;
+                    return Some(LigKern::Kern(
+                        self.kern_values.get(ki).copied().unwrap_or(0),
+                    ));
+                }
+                // 连字步 op = 4a+2b+c：仅支持 a=0、b=0、c=0（删左右、插 remainder）
+                let (a, b, c) = (s.op_byte / 4, (s.op_byte / 2) % 2, s.op_byte % 2);
+                if a == 0 && b == 0 && c == 0 {
+                    return Some(LigKern::Lig(s.remainder));
+                }
+                return None; // 保留左/右字符的连字（罕见）暂不支持
+            }
+            // 不匹配：跳过 skip 个中间条目（tex.web `main_k + skip + 1`）
+            k += s.skip_byte as usize + 1;
         }
     }
 
@@ -144,6 +211,9 @@ impl FontMetrics {
             x_height: scale(self.x_height),
             quad: scale(self.quad),
             extra_space: scale(self.extra_space),
+            lig_kern_steps: self.lig_kern_steps.clone(),
+            kern_values: self.kern_values.iter().map(|&v| scale(v)).collect(),
+            lig_kern_index: self.lig_kern_index.clone(),
         }
     }
 }
@@ -201,13 +271,23 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
     };
 
     // 字符信息表：(ec - bc + 1) 个 32 位字
-    let mut char_info: Vec<(usize, usize, usize)> = Vec::with_capacity(count);
+    // 布局：byte0 = width 索引；byte1 = height(高4位)|depth(低4位)；
+    // byte2 = italic(高6位)|tag(低2位)；byte3 = remainder。
+    // tag=1/2 → remainder = lig/kern 程序索引（TeXbook 附录 F）。
+    let mut char_info: Vec<(usize, usize, usize, Option<u16>)> = Vec::with_capacity(count);
     for _ in 0..count {
         let w = r.u32()?;
         let width_index = ((w >> 24) & 0xFF) as usize;
         let height_index = ((w >> 20) & 0x0F) as usize;
         let depth_index = ((w >> 16) & 0x0F) as usize;
-        char_info.push((width_index, height_index, depth_index));
+        let tag = (w >> 8) & 0x03;
+        let remainder = (w & 0xFF) as u16;
+        let lig_kern = if tag == 1 || tag == 2 {
+            Some(remainder)
+        } else {
+            None
+        };
+        char_info.push((width_index, height_index, depth_index, lig_kern));
     }
 
     // 维度表（fix_word）：widths / heights / depths / italics
@@ -215,22 +295,38 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
     let heights = read_words(&mut r, nh)?;
     let depths = read_words(&mut r, nd)?;
     let _italics = read_words(&mut r, ni)?;
-    // 跳过连字/字距程序与可扩展表（各 32 位字）
-    r.skip(nl as usize * 4)?;
-    r.skip(nk as usize * 4)?;
+    // lig/kern 程序（nl 字）：b0 = skip 字节，b1 = next_char，b2 = op 字节，b3 = remainder
+    let mut lig_kern_steps = Vec::with_capacity(nl as usize);
+    for _ in 0..nl {
+        let w = r.u32()?;
+        lig_kern_steps.push(LigKernStep {
+            skip_byte: (w >> 24) as u8,
+            next_char: (w >> 16) as u8,
+            op_byte: (w >> 8) as u8,
+            remainder: w as u8,
+        });
+    }
+    // 字距表（nk 字，fix_word → sp）
+    let kern_values = read_words(&mut r, nk)?
+        .iter()
+        .map(|&v| scale(v))
+        .collect::<Vec<_>>();
+    // 跳过可扩展表（M4 起用）
     r.skip(ne as usize * 4)?;
     // 参数表（fix_word）
     let params = read_words(&mut r, np)?;
 
     // 字符度量组装
     let mut chars = vec![None; 256];
-    for (i, &(wi, hi, di)) in char_info.iter().enumerate() {
+    let mut lig_kern_index = vec![None; 256];
+    for (i, &(wi, hi, di, lk)) in char_info.iter().enumerate() {
         let charcode = bc as usize + i;
         if charcode < chars.len() {
             let width = widths.get(wi).map(|&w| scale(w)).unwrap_or(0);
             let height = heights.get(hi).map(|&h| scale(h)).unwrap_or(0);
             let depth = depths.get(di).map(|&d| scale(d)).unwrap_or(0);
             chars[charcode] = Some((width, height, depth));
+            lig_kern_index[charcode] = lk;
         }
     }
     // 参数：TeX 参数 1=slant 2=space 3=space_stretch 4=space_shrink
@@ -249,6 +345,9 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
         x_height: p(4),
         quad: p(5),
         extra_space: p(6),
+        lig_kern_steps,
+        kern_values,
+        lig_kern_index,
     })
 }
 
@@ -406,6 +505,20 @@ mod tests {
         let (sw, _, _) = fm.char_metrics(32);
         assert!((175_000..190_000).contains(&sw), "空格字符宽 {sw}");
         assert_ne!(sw, fm.space);
+        // lig/kern：'f'+'i' → fi（字符 12）、'f'+'l' → fl（13）、'f'+'f' → ff（11）
+        assert_eq!(fm.apply_lig_kern(b'f', b'i'), Some(LigKern::Lig(12)));
+        assert_eq!(fm.apply_lig_kern(b'f', b'l'), Some(LigKern::Lig(13)));
+        assert_eq!(fm.apply_lig_kern(b'f', b'f'), Some(LigKern::Lig(11)));
+        // kern 对（与 pdfTeX DVI 实测一致）：v→e、w→o、n→t = -18205 sp；
+        // o→c、b→e = +18205 sp
+        assert_eq!(fm.apply_lig_kern(b'v', b'e'), Some(LigKern::Kern(-18_205)));
+        assert_eq!(fm.apply_lig_kern(b'w', b'o'), Some(LigKern::Kern(-18_205)));
+        assert_eq!(fm.apply_lig_kern(b'n', b't'), Some(LigKern::Kern(-18_205)));
+        assert_eq!(fm.apply_lig_kern(b'o', b'c'), Some(LigKern::Kern(18_205)));
+        assert_eq!(fm.apply_lig_kern(b'b', b'e'), Some(LigKern::Kern(18_205)));
+        // 无程序的字符（如 'a'）或未命中 → None
+        assert_eq!(fm.apply_lig_kern(b'a', b'b'), None);
+        assert_eq!(fm.apply_lig_kern(b'v', b'x'), None);
     }
 
     #[test]

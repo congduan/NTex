@@ -82,6 +82,8 @@ pub enum Primitive {
     TopSkip,
     MaxDepth,
     ParSkip,
+    // M3-4 词间距：\sfcode<字符>=<spacefactor>
+    SfCode,
 }
 
 impl Primitive {

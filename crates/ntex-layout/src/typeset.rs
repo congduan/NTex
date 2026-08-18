@@ -25,7 +25,7 @@ use ntex_core::param::{ParamKind, ParamValue, Params};
 use ntex_core::register::Glue;
 use ntex_core::token::Token;
 use ntex_core::{FontLoader, Primitive, TokenSink};
-use ntex_font::FontMetrics;
+use ntex_font::{FontMetrics, LigKern};
 
 use crate::linebreak::knuth_plass;
 use crate::node::{hpack, BoxKind, BoxNode, FontId, Node, GLUE_ORDER_FIL};
@@ -104,6 +104,29 @@ impl Fonts {
                 .unwrap_or(Glue::ZERO),
         }
     }
+
+    /// `\sfcode≥2000` 空格追加的 extra_space（cmr10 = 72818 sp；M3-4 词间距）。
+    fn extra_space(&self, font: FontId) -> i64 {
+        match self {
+            Fonts::Fn { .. } => 0,
+            Fonts::Tfm(table) => table
+                .borrow()
+                .get(font.0 as usize)
+                .map(|fm| fm.extra_space)
+                .unwrap_or(0),
+        }
+    }
+
+    /// 查左字符的 lig/kern 程序（TFM 模式；fn 指针占位无程序）。
+    fn lig_kern(&self, font: FontId, left: u8, right: u8) -> Option<LigKern> {
+        match self {
+            Fonts::Fn { .. } => None,
+            Fonts::Tfm(table) => table
+                .borrow()
+                .get(font.0 as usize)
+                .and_then(|fm| fm.apply_lig_kern(left, right)),
+        }
+    }
 }
 
 /// 节点构建 sink：把 VM 排版事件转成节点列表。
@@ -123,6 +146,12 @@ struct NodeBuilder {
     params: Params,
     /// 组开始时的参数快照（group_end 恢复）。
     param_stack: Vec<Params>,
+    /// `\sfcode` 表（随 `sfcode_changed` 事件更新；plain 默认 .,?!=3000、:=2000、
+    /// ;=1500、,=1250，其余 1000）。
+    sfcodes: [u32; 256],
+    /// 当前 spacefactor（tex.web `space_factor`；段落/\hbox 开始 = 1000，
+    /// 随字符 sfcode 更新，控制词间空格胶水）。
+    space_factor: i64,
     /// `\noindent`：下一个段落不缩进。
     noindent_next: bool,
     /// 字体度量来源（M3-4：fn 指针占位或 TFM 字体表）。
@@ -146,6 +175,18 @@ impl NodeBuilder {
 
     /// 创建构建器；`pagination` 打开 M3-5-2 断页（自动分页 + parskip + 收尾冲页）。
     fn with_pagination(fonts: Fonts, pagination: bool) -> Self {
+        // plain 格式 \sfcode 默认（TeXbook p.75）：.,?! = 3000、: = 2000、; = 1500、, = 1250
+        let mut sfcodes = [1000u32; 256];
+        for (c, v) in [
+            (b'.', 3000),
+            (b'?', 3000),
+            (b'!', 3000),
+            (b':', 2000),
+            (b';', 1500),
+            (b',', 1250),
+        ] {
+            sfcodes[c as usize] = v;
+        }
         Self {
             lists: vec![Vec::new()],
             list_modes: vec![Mode::Vertical],
@@ -153,6 +194,8 @@ impl NodeBuilder {
             pending_box: None,
             params: Params::default(),
             param_stack: Vec::new(),
+            sfcodes,
+            space_factor: 1000,
             noindent_next: false,
             current_font: FontId(0),
             shipout_next: false,
@@ -329,6 +372,131 @@ impl NodeBuilder {
             depth: d,
         })
     }
+
+    /// 词间空白胶水（tex.web `append_normal_space` / `app_space`）：
+    /// spacefactor = 1000 → 字体空格原样；否则按 `app_space` 调整——sf≥2000
+    /// 宽度加 extra_space；stretch ×= sf/1000；shrink ×= 1000/sf（xn_over_d 舍入）。
+    fn append_space_glue(&mut self) {
+        let g = self.fonts.space(self.current_font);
+        let (width, stretch, shrink) = if self.space_factor == 1000 {
+            (g.width, g.stretch, g.shrink)
+        } else {
+            let sf = self.space_factor;
+            let width = if sf >= 2000 {
+                g.width + self.fonts.extra_space(self.current_font)
+            } else {
+                g.width
+            };
+            (
+                width,
+                xn_over_d(g.stretch, sf, 1000),
+                xn_over_d(g.shrink, 1000, sf),
+            )
+        };
+        self.append(Node::Glue {
+            width,
+            stretch,
+            shrink,
+            stretch_order: 0,
+            shrink_order: 0,
+        });
+    }
+
+    /// 水平模式追加字符（tex.web main_loop 子集）：
+    /// 1. 更新 spacefactor（adjust_space_factor，对被连字消费的字符也执行）；
+    /// 2. 与列表尾同字体字符查 lig/kern 程序——kern 在其前插入 kern 节点；
+    ///    lig 把尾字符替换为结果字符并丢弃当前字符（ffi/ffl 由结果字符的
+    ///    程序在下一字符到来时自然连续匹配）。
+    fn append_char(&mut self, node: Node) {
+        if let Node::Char {
+            font,
+            charcode,
+            width,
+            height,
+            depth,
+        } = node
+        {
+            self.adjust_space_factor(charcode);
+            // 先取出前驱 (font, charcode)，避免借用冲突
+            let prev = match self.lists.last().and_then(|l| l.last()) {
+                Some(Node::Char {
+                    font: pf,
+                    charcode: pc,
+                    ..
+                }) if *pf == font => Some((*pf, *pc)),
+                _ => None,
+            };
+            let mut drop_cur = false;
+            if let Some((pf, pc)) = prev {
+                if let Some(action) =
+                    self.fonts.lig_kern(pf, pc as u8, charcode as u8)
+                {
+                    match action {
+                        LigKern::Kern(kern) => self.append(Node::Kern { width: kern }),
+                        LigKern::Lig(result) => {
+                            // 尾字符替换为结果字符（fi/fl/ff 等），当前字符丢弃
+                            let (w, h, d) = self.fonts.metrics(font, result as u32);
+                            if let Some(Node::Char {
+                                charcode: rc,
+                                width: rw,
+                                height: rh,
+                                depth: rd,
+                                ..
+                            }) = self.lists.last_mut().and_then(|l| l.last_mut())
+                            {
+                                *rc = result as u32;
+                                *rw = w;
+                                *rh = h;
+                                *rd = d;
+                            }
+                            drop_cur = true;
+                        }
+                    }
+                }
+            }
+            if !drop_cur {
+                self.append(Node::Char {
+                    font,
+                    charcode,
+                    width,
+                    height,
+                    depth,
+                });
+            }
+        } else {
+            self.append(node);
+        }
+    }
+
+    /// tex.web `adjust_space_factor`：sfcode=0 不变；=1000 → 1000；<1000 且 >0
+    /// → 取该值；>1000 且当前 <1000 → 1000；否则取该值。
+    fn adjust_space_factor(&mut self, charcode: u32) {
+        let s = self
+            .sfcodes
+            .get(charcode as usize)
+            .copied()
+            .unwrap_or(1000) as i64;
+        if s == 1000 {
+            self.space_factor = 1000;
+        } else if s < 1000 {
+            if s > 0 {
+                self.space_factor = s;
+            }
+        } else if self.space_factor < 1000 {
+            self.space_factor = 1000;
+        } else {
+            self.space_factor = s;
+        }
+    }
+}
+
+/// `xn_over_d`（tex.web）：t×n/d 四舍五入（负值按远离零）。
+fn xn_over_d(t: i64, n: i64, d: i64) -> i64 {
+    if t >= 0 {
+        (t * n + d / 2) / d
+    } else {
+        -(((-t) * n + d / 2) / d)
+    }
 }
 
 impl TokenSink for NodeBuilder {
@@ -345,14 +513,7 @@ impl TokenSink for NodeBuilder {
                         Some(_) => false,
                     };
                     if !ignorable {
-                        let g = self.fonts.space(self.current_font);
-                        self.append(Node::Glue {
-                            width: g.width,
-                            stretch: g.stretch,
-                            shrink: g.shrink,
-                            stretch_order: 0,
-                            shrink_order: 0,
-                        });
+                        self.append_space_glue();
                     }
                 }
             }
@@ -377,10 +538,11 @@ impl TokenSink for NodeBuilder {
                 }
                 self.lists.push(Vec::new());
                 self.list_modes.push(Mode::Horizontal);
+                self.space_factor = 1000; // new_graf：段落开始重置 spacefactor
                 self.insert_indent();
-                self.append(node);
+                self.append_char(node);
             }
-            Mode::Horizontal | Mode::RestrictedHorizontal => self.append(node),
+            Mode::Horizontal | Mode::RestrictedHorizontal => self.append_char(node),
         }
         Ok(())
     }
@@ -396,6 +558,10 @@ impl TokenSink for NodeBuilder {
             };
             self.lists.push(Vec::new());
             self.list_modes.push(new_mode);
+            // \hbox 内容从 spacefactor=1000 开始（tex.web：进入受限水平模式重置）
+            if new_mode == Mode::RestrictedHorizontal {
+                self.space_factor = 1000;
+            }
         }
         Ok(())
     }
@@ -459,6 +625,11 @@ impl TokenSink for NodeBuilder {
 
     fn param_changed(&mut self, kind: ParamKind, value: ParamValue) -> Result<()> {
         self.params.set(kind, value);
+        Ok(())
+    }
+
+    fn sfcode_changed(&mut self, charcode: u8, value: u32) -> Result<()> {
+        self.sfcodes[charcode as usize] = value;
         Ok(())
     }
 
@@ -1033,8 +1204,9 @@ mod tests {
 
     #[test]
     fn paragraph_wraps_at_hsize() {
-        // "ab cd" 总宽 5394sp、首行"ab"2195、末行含起点胶水 3199；
-        // \hsize 4000 → 折两行（单行过满 10⁸ > 两行有限 demerits）
+        // "ab cd" 总宽 5394sp、\hsize 4000sp：断点胶水不入行（tex.web try_break
+        // 先于胶水累计调用），首行 "ab" 无内部胶水 → badness 10000（demerits 10⁸），
+        // 单行（末行强制断点 d=0）更优 → 只折一行（与 pdfTeX 语义一致）
         let src = r"\hsize 4000sp ab cd";
         let main = Typesetter::with_metrics(metrics)
             .with_space(|_| Glue {
@@ -1045,7 +1217,7 @@ mod tests {
             .typeset(src)
             .unwrap();
         let lines: Vec<&Node> = main.iter().filter(|n| matches!(n, Node::Box(_))).collect();
-        assert_eq!(lines.len(), 2, "段落应折成两行：{main:?}");
+        assert_eq!(lines.len(), 1, "断点胶水不含入行时单行更优：{main:?}");
     }
 
     #[test]
@@ -1092,6 +1264,44 @@ mod tests {
         assert_eq!(width, wa + wb + wc);
         assert_eq!(height, ha.max(hb).max(hc));
         assert_eq!(depth, da.max(db).max(dc));
+    }
+
+    /// 行盒 children（\hbox{\cmr ...}；连字/字距/词间距均在此层）。
+    fn tfm_line_children(text: &str) -> Vec<Node> {
+        let mut ts = Typesetter::with_tfm();
+        let main = ts.typeset(text).unwrap();
+        assert_eq!(main.len(), 1);
+        as_box(&main[0]).children.clone()
+    }
+
+    #[test]
+    fn tfm_lig_kern_and_sfcode_applied() {
+        if cmr10_metrics().is_none() {
+            eprintln!("未找到 cmr10.tfm，跳过");
+            return;
+        }
+        // 连字：f + i → 单字符 12（fi）；v + e → 字距 -18205sp 插入在 'e' 前
+        let children = tfm_line_children(r"\font\cmr=cmr10\cmr \hbox{fi ve}");
+        match &children[0] {
+            Node::Char { charcode, .. } => assert_eq!(*charcode, 12, "f+i 应连字为字符 12（fi）"),
+            other => panic!("预期 Char，得到 {other:?}"),
+        }
+        assert_eq!(as_char(&children[2]), b'v' as u32);
+        assert_eq!(
+            children[3],
+            Node::Kern { width: -18_205 },
+            "v→e 应插入 -18205sp 字距"
+        );
+        assert_eq!(as_char(&children[4]), b'e' as u32);
+        // \sfcode：逗号（sf=1250）后空格 stretch = round(space_stretch × 1250/1000)；
+        // cmr10 space_stretch = 109226 sp → 136533
+        let children = tfm_line_children(r"\font\cmr=cmr10\cmr \hbox{a, b}");
+        match &children[2] {
+            Node::Glue { stretch, .. } => {
+                assert_eq!(*stretch, 136_533, "逗号后空格 stretch 按 sfcode 放大");
+            }
+            other => panic!("预期词间 Glue，得到 {other:?}"),
+        }
     }
 
     #[test]

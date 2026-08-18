@@ -514,6 +514,9 @@ mod tests {
             x_height: 430_965,
             quad: 655_360,
             extra_space: 109_227,
+            lig_kern_steps: Vec::new(),
+            kern_values: Vec::new(),
+            lig_kern_index: Vec::new(),
         }
     }
 
