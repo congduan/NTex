@@ -290,6 +290,18 @@ impl Fonts {
                 .unwrap_or(0),
         }
     }
+
+    /// 字体参数（fontdimen，M4-3）：`idx` 为 TeX 参数号（1 起）；无则 0。
+    fn font_param(&self, font: FontId, idx: usize) -> i64 {
+        match self {
+            Fonts::Fn { .. } => 0,
+            Fonts::Tfm(table) => table
+                .borrow()
+                .get(font.0 as usize)
+                .and_then(|fm| fm.font_params.get(idx.saturating_sub(1)).copied())
+                .unwrap_or(0),
+        }
+    }
 }
 
 /// 节点构建 sink：把 VM 排版事件转成节点列表。
@@ -356,6 +368,9 @@ struct NodeBuilder {
     class_pending: Option<MathClass>,
     /// `\nonscript`：下一个数学空格在脚本模式丢弃。
     nonscript_pending: bool,
+    /// 数学字体族表（M4-3）：16 族 × 3 阶（text/script/scriptscript）。
+    /// `\textfont<fam>=<cs>` 等原语分配；字符按族+字阶选字体。
+    math_fonts: Vec<[Option<FontId>; 3]>,
 }
 
 impl NodeBuilder {
@@ -404,6 +419,7 @@ impl NodeBuilder {
             sqrt_pending: false,
             class_pending: None,
             nonscript_pending: false,
+            math_fonts: vec![[None; 3]; 16],
             fonts,
         }
     }
@@ -1006,10 +1022,10 @@ impl NodeBuilder {
     fn math_atom_nodes(&self, atom: &MathAtom, style: MathStyle) -> Vec<Node> {
         match atom {
             MathAtom::Char(mc) => {
-                let (num, den) = style.scale();
-                let (w, h, d) = self.math_metrics(self.current_font, mc.charcode, num, den);
+                let (font, num, den) = self.math_char_font(mc, style);
+                let (w, h, d) = self.math_metrics(font, mc.charcode, num, den);
                 vec![Node::Char {
-                    font: self.current_font,
+                    font,
                     charcode: mc.charcode,
                     width: w,
                     height: h,
@@ -1174,8 +1190,27 @@ impl NodeBuilder {
         )
     }
 
-    /// 上标提升量（M4-1 近似：script 字阶的 x_height；M4-3 用 fontdimen）。
+    /// 数学字符的字体（M4-3）：族+字阶查 `\textfont` 表；未分配回退当前字体+比例缩放。
+    fn math_char_font(&self, mc: &MathChar, style: MathStyle) -> (FontId, i64, i64) {
+        let kind = match style {
+            MathStyle::Display | MathStyle::Text => 0,
+            MathStyle::Script => 1,
+            _ => 2,
+        };
+        if let Some(Some(f)) = self.math_fonts.get(mc.fam as usize).map(|s| s[kind]) {
+            (f, 1, 1) // 族字体已按字阶设计字号，不缩放
+        } else {
+            let (num, den) = style.scale();
+            (self.current_font, num, den)
+        }
+    }
+
+    /// 上标提升量（M4-3）：fontdimen sup1（参数 11，无上标时 sup2/3）；回退 x_height×字阶。
     fn script_rise(&self, style: MathStyle) -> i64 {
+        let sup1 = self.fonts.font_param(self.current_font, 11);
+        if sup1 != 0 {
+            return sup1;
+        }
         let xh = self.fonts.x_height(self.current_font);
         let (num, den) = style.scale();
         xn_over_d(xh, num, den)
@@ -1389,6 +1424,14 @@ impl TokenSink for NodeBuilder {
             6 => MathClass::Punct,
             _ => MathClass::Inner,
         });
+        Ok(())
+    }
+
+    /// 数学字体族分配（`\textfont<fam>=<fontcs>` 等；M4-3）。
+    fn math_font(&mut self, kind: u8, fam: u8, font: u32) -> Result<()> {
+        if let Some(slot) = self.math_fonts.get_mut(fam as usize) {
+            slot[kind as usize] = Some(FontId(font));
+        }
         Ok(())
     }
 
@@ -3032,5 +3075,44 @@ mod tests {
         // TeX 允许空分母：$a\over$ → 分式盒（只有分子）
         let (_, has_rule) = fraction_box(r"$a\over$");
         assert!(has_rule);
+    }
+
+    // ---------- M4-3 数学字体族 + fontdimen ----------
+
+    #[test]
+    fn math_textfont_family_uses_family_font() {
+        let Some(fm) = cmr10_metrics() else {
+            eprintln!("未找到 cmr10.tfm，跳过");
+            return;
+        };
+        // \textfont0=\twelve（12pt）→ $x$ 的 x 用族 0 的 12pt 字体度量
+        let mut ts = Typesetter::with_tfm();
+        let main = ts
+            .typeset(r"\font\tenrm=cmr10\font\twelve=cmr10 at 12pt\textfont0=\twelve\tenrm $x$")
+            .unwrap();
+        let line = as_box(&main[0]);
+        let x = &line.children[0];
+        let (w10, _, _) = fm.char_metrics(b'x' as u32);
+        let w12 = xn_over_d(w10, 12 * SP_PER_PT, 10 * SP_PER_PT);
+        assert_eq!(x.dimensions().width, w12, "族 0 字体应为 12pt cmr10");
+    }
+
+    #[test]
+    fn math_sup_rise_uses_fontdimen_sup1() {
+        let Some(fm) = cmr10_metrics() else {
+            eprintln!("未找到 cmr10.tfm，跳过");
+            return;
+        };
+        // cmr10 的 sup1 = 参数 11（font_params[10]）；上标提升量应取该值
+        let sup1 = fm.font_params.get(10).copied().unwrap_or(0);
+        if sup1 == 0 {
+            eprintln!("cmr10 无 sup1 参数，跳过");
+            return;
+        }
+        let mut ts = Typesetter::with_tfm();
+        let main = ts.typeset(r"\font\tenrm=cmr10\tenrm $x^2$").unwrap();
+        let line = as_box(&main[0]);
+        let sup = as_box(&line.children[1]);
+        assert_eq!(sup.shift, -sup1, "上标提升量应为 fontdimen sup1");
     }
 }

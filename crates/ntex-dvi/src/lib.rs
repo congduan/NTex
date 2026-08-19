@@ -517,6 +517,7 @@ mod tests {
             lig_kern_steps: Vec::new(),
             kern_values: Vec::new(),
             lig_kern_index: Vec::new(),
+            font_params: Vec::new(),
         }
     }
 

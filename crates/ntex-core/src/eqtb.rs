@@ -127,6 +127,10 @@ pub enum Primitive {
     Unexpanded,
     ETeXVersion,
     ETeXRevision,
+    // M4-3 数学字体族
+    TextFont,
+    ScriptFont,
+    ScriptScriptFont,
 }
 
 impl Primitive {
@@ -239,6 +243,9 @@ impl Primitive {
             94 => Self::Unexpanded,
             95 => Self::ETeXVersion,
             96 => Self::ETeXRevision,
+            97 => Self::TextFont,
+            98 => Self::ScriptFont,
+            99 => Self::ScriptScriptFont,
             _ => return None,
         })
     }

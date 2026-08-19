@@ -60,6 +60,11 @@ pub trait TokenSink: std::fmt::Debug {
     fn math_class(&mut self, _class: u8) -> Result<()> {
         Ok(())
     }
+    /// 数学字体族分配（M4-3）：`\textfont<fam>=<fontcs>` 等。
+    /// `kind`：0=text、1=script、2=scriptscript；`fam` 0-15。
+    fn math_font(&mut self, _kind: u8, _fam: u8, _font: u32) -> Result<()> {
+        Ok(())
+    }
     /// 组开始（`{`）：VM 已完成组作用域簿记。
     fn group_begin(&mut self) -> Result<()> {
         Ok(())

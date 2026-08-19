@@ -121,6 +121,9 @@ pub struct FontMetrics {
     pub kern_values: Vec<i64>,
     /// charcode → lig/kern 程序起始索引（char_info tag=1/2；无程序为 None）。
     pub lig_kern_index: Vec<Option<u16>>,
+    /// 全量字体参数（fontdimen；`font_params[i-1]` = TFM 参数 i，已缩放）。
+    /// 数学字体用：参数 8+（sup/sub 高度、分式间距、delimiter 等）。
+    pub font_params: Vec<i64>,
 }
 
 impl FontMetrics {
@@ -214,6 +217,7 @@ impl FontMetrics {
             lig_kern_steps: self.lig_kern_steps.clone(),
             kern_values: self.kern_values.iter().map(|&v| scale(v)).collect(),
             lig_kern_index: self.lig_kern_index.clone(),
+            font_params: self.font_params.iter().map(|&v| scale(v)).collect(),
         }
     }
 }
@@ -332,6 +336,7 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
     // 参数：TeX 参数 1=slant 2=space 3=space_stretch 4=space_shrink
     //       5=x_height 6=quad 7=extra_space（params[0] 即参数 1）
     let p = |i: usize| params.get(i).map(|&v| scale(v)).unwrap_or(0);
+    let font_params = params.iter().map(|&v| scale(v)).collect();
     Ok(FontMetrics {
         design_size_sp,
         scale: 1 << 20, // 设计字号 = 原尺寸
@@ -348,6 +353,7 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
         lig_kern_steps,
         kern_values,
         lig_kern_index,
+        font_params,
     })
 }
 

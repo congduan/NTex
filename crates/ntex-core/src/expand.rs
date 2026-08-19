@@ -1020,7 +1020,51 @@ impl Expander {
             Primitive::ETeXVersion | Primitive::ETeXRevision => {
                 Err(Error::invalid_input("\\eTeXversion/\\eTeXrevision 需经 \\the 读取"))
             }
+            // M4-3 数学字体族：\textfont<fam>=<fontcs>（直通 sink 分配）
+            Primitive::TextFont | Primitive::ScriptFont | Primitive::ScriptScriptFont => {
+                let kind = match prim {
+                    Primitive::TextFont => 0,
+                    Primitive::ScriptFont => 1,
+                    _ => 2,
+                };
+                self.exec_math_font(kind)
+            }
         }
+    }
+
+    /// `\textfont<fam>=<fontcs>` 族分配：扫描 fam 号、可选 `=`、字体选择器 cs。
+    fn exec_math_font(&mut self, kind: u8) -> Result<()> {
+        let fam = self.scan_number()?;
+        if !(0..=15).contains(&fam) {
+            return Err(Error::invalid_input("数学字体族号必须为 0..15"));
+        }
+        // 可选赋值符 '='
+        self.skip_spaces()?;
+        let probe = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input("\\textfont 后缺少字体"))?
+            .0;
+        if probe.charcode() == Some(b'=' as u32) {
+            self.skip_spaces()?;
+        } else {
+            self.unread(probe);
+        }
+        let (tok, _) = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input("\\textfont 后缺少字体选择器"))?;
+        let csid = tok
+            .csid()
+            .ok_or_else(|| Error::invalid_input("\\textfont 后必须是 \\font 定义的 cs"))?;
+        let font = match self.eqtb.slot(csid) {
+            EqSlot::Font(f) => *f,
+            _ => {
+                return Err(Error::invalid_input(format!(
+                    "\\textfont 的 \\{} 不是字体选择器",
+                    self.intern.name(csid)
+                )));
+            }
+        };
+        self.sink.math_font(kind, fam as u8, font)
     }
 
     /// `\left`/`\right` 的定界符参数：字符 → charcode（`.` 为空定界符）；`\.` → None。
@@ -2092,7 +2136,7 @@ impl Expander {
 
     /// 注册 M1 内建原语。
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 96] = [
+        const BUILTINS: [(&str, Primitive); 99] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -2204,6 +2248,10 @@ impl Expander {
             ("unexpanded", Primitive::Unexpanded),
             ("eTeXversion", Primitive::ETeXVersion),
             ("eTeXrevision", Primitive::ETeXRevision),
+            // M4-3 数学字体族
+            ("textfont", Primitive::TextFont),
+            ("scriptfont", Primitive::ScriptFont),
+            ("scriptscriptfont", Primitive::ScriptScriptFont),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);
