@@ -1,5 +1,6 @@
-//! 内部参数（M3-2-2/3-3/M3-5）：`\parindent`、`\baselineskip`、`\lineskip`、
-//! `\lineskiplimit`、`\hsize`、`\tolerance`、`\vsize`、`\topskip`、`\maxdepth`、`\parskip`。
+//! 内部参数（M3-2-2/3-3/M3-5/M4-4）：`\parindent`、`\baselineskip`、`\lineskip`、
+//! `\lineskiplimit`、`\hsize`、`\tolerance`、`\vsize`、`\topskip`、`\maxdepth`、`\parskip`、
+//! 显示数学间距（`\abovedisplayskip` 等 4 个 glue + 前后 penalty）。
 //!
 //! TeX 的内部参数存储在 eqtb；这里用独立结构体持有。赋值走组作用域
 //! （`SavedValue::Param`），值变化经 [`TokenSink::param_changed`] 事件
@@ -26,6 +27,19 @@ pub enum ParamKind {
     MaxDepth,
     /// `\parskip`：段落之间的胶水（M3-5）。
     ParSkip,
+    // M4-4 显示数学间距
+    /// `\abovedisplayskip`：显示公式上方间距（末行不短时）。
+    AboveDisplaySkip,
+    /// `\belowdisplayskip`：显示公式下方间距（末行不短时）。
+    BelowDisplaySkip,
+    /// `\abovedisplayshortskip`：显示公式上方间距（末行短时）。
+    AboveDisplayShortSkip,
+    /// `\belowdisplayshortskip`：显示公式下方间距（末行短时）。
+    BelowDisplayShortSkip,
+    /// `\predisplaypenalty`：显示公式前断页惩罚（plain 默认 10000 = 禁断）。
+    PreDisplayPenalty,
+    /// `\postdisplaypenalty`：显示公式后断页惩罚（plain 默认 0）。
+    PostDisplayPenalty,
 }
 
 /// 参数值：尺寸（dimen）、胶水（glue）或整数（number）。
@@ -59,6 +73,19 @@ pub struct Params {
     pub maxdepth: i64,
     /// `\parskip`：段落间胶水（plain 默认 0pt plus 1pt）。
     pub parskip: Glue,
+    // M4-4 显示数学间距（plain 默认）
+    /// `\abovedisplayskip`（plain 默认 12pt plus 3pt minus 9pt）。
+    pub abovedisplayskip: Glue,
+    /// `\belowdisplayskip`（plain 默认 12pt plus 3pt minus 9pt）。
+    pub belowdisplayskip: Glue,
+    /// `\abovedisplayshortskip`（plain 默认 0pt plus 3pt）。
+    pub abovedisplayshortskip: Glue,
+    /// `\belowdisplayshortskip`（plain 默认 7pt plus 3pt minus 4pt）。
+    pub belowdisplayshortskip: Glue,
+    /// `\predisplaypenalty`（plain 默认 10000）。
+    pub predisplaypenalty: i64,
+    /// `\postdisplaypenalty`（plain 默认 0）。
+    pub postdisplaypenalty: i64,
 }
 
 impl Default for Params {
@@ -95,6 +122,29 @@ impl Default for Params {
                 stretch: SP_PER_PT,
                 shrink: 0,
             },
+            // M4-4 显示数学间距（plain：TeXbook p.189）
+            abovedisplayskip: Glue {
+                width: 12 * SP_PER_PT,
+                stretch: 3 * SP_PER_PT,
+                shrink: 9 * SP_PER_PT,
+            },
+            belowdisplayskip: Glue {
+                width: 12 * SP_PER_PT,
+                stretch: 3 * SP_PER_PT,
+                shrink: 9 * SP_PER_PT,
+            },
+            abovedisplayshortskip: Glue {
+                width: 0,
+                stretch: 3 * SP_PER_PT,
+                shrink: 0,
+            },
+            belowdisplayshortskip: Glue {
+                width: 7 * SP_PER_PT,
+                stretch: 3 * SP_PER_PT,
+                shrink: 4 * SP_PER_PT,
+            },
+            predisplaypenalty: 10_000,
+            postdisplaypenalty: 0,
         }
     }
 }
@@ -112,6 +162,12 @@ impl Params {
             ParamKind::TopSkip => ParamValue::Glue(self.topskip),
             ParamKind::MaxDepth => ParamValue::Dimen(self.maxdepth),
             ParamKind::ParSkip => ParamValue::Glue(self.parskip),
+            ParamKind::AboveDisplaySkip => ParamValue::Glue(self.abovedisplayskip),
+            ParamKind::BelowDisplaySkip => ParamValue::Glue(self.belowdisplayskip),
+            ParamKind::AboveDisplayShortSkip => ParamValue::Glue(self.abovedisplayshortskip),
+            ParamKind::BelowDisplayShortSkip => ParamValue::Glue(self.belowdisplayshortskip),
+            ParamKind::PreDisplayPenalty => ParamValue::Number(self.predisplaypenalty),
+            ParamKind::PostDisplayPenalty => ParamValue::Number(self.postdisplaypenalty),
         }
     }
 
@@ -127,6 +183,12 @@ impl Params {
             (ParamKind::TopSkip, ParamValue::Glue(g)) => self.topskip = g,
             (ParamKind::MaxDepth, ParamValue::Dimen(v)) => self.maxdepth = v,
             (ParamKind::ParSkip, ParamValue::Glue(g)) => self.parskip = g,
+            (ParamKind::AboveDisplaySkip, ParamValue::Glue(g)) => self.abovedisplayskip = g,
+            (ParamKind::BelowDisplaySkip, ParamValue::Glue(g)) => self.belowdisplayskip = g,
+            (ParamKind::AboveDisplayShortSkip, ParamValue::Glue(g)) => self.abovedisplayshortskip = g,
+            (ParamKind::BelowDisplayShortSkip, ParamValue::Glue(g)) => self.belowdisplayshortskip = g,
+            (ParamKind::PreDisplayPenalty, ParamValue::Number(v)) => self.predisplaypenalty = v,
+            (ParamKind::PostDisplayPenalty, ParamValue::Number(v)) => self.postdisplaypenalty = v,
             // 类型不匹配忽略（VM 侧保证参数种类与值类型匹配）
             _ => {}
         }

@@ -30,7 +30,7 @@ use ntex_font::{FontMetrics, LigKern};
 
 use crate::hyphen::PatternTrie;
 use crate::linebreak::knuth_plass;
-use crate::node::{hpack, BoxKind, BoxNode, FontId, Node, GLUE_ORDER_FIL};
+use crate::node::{hbox_dimensions, hpack, BoxKind, BoxNode, FontId, Node, GLUE_ORDER_FIL};
 use crate::page::PageBuilder;
 
 /// 模式（TeX 模式状态机的 M3-2 子集 + M4 数学）。
@@ -374,6 +374,10 @@ struct NodeBuilder {
     math_fonts: Vec<[Option<FontId>; 3]>,
     /// 断字模式表（M4-6）：`\patterns{...}` 解析后的 Liang trie。
     patterns: PatternTrie,
+    /// M4-4 显示数学：本次公式用短间距（前一段末行短于 `\displaywidth`）。
+    display_short: bool,
+    /// M4-4 显示数学：公式刚闭合，后续文字续排（不开新段：无 parskip/缩进）。
+    after_display: bool,
 }
 
 /// 断字候选字符：ASCII 字母（catcode 11 的近似；ligature/非字母不参与断字 run）。
@@ -429,6 +433,8 @@ impl NodeBuilder {
             nonscript_pending: false,
             math_fonts: vec![[None; 3]; 16],
             patterns: PatternTrie::default(),
+            display_short: false,
+            after_display: false,
             fonts,
         }
     }
@@ -462,14 +468,15 @@ impl NodeBuilder {
 
     /// 结束开放段落：Knuth-Plass 折行成行 hbox 并追加到上层列表（行间插 interline glue）。
     /// 段落末尾：裁剪尾部可丢弃节点 + 追加 `\parfillskip`（0pt plus 1fil，末行无限拉伸）。
-    fn close_paragraph(&mut self) {
+    /// 返回末行**自然宽度**（未拉伸前；显示数学 short 判定用），空段落返回 None。
+    fn close_paragraph(&mut self) -> Option<i64> {
         let mut children = self.lists.pop().expect("段落列表");
         self.list_modes.pop();
         while children.last().is_some_and(Node::is_discardable) {
             children.pop();
         }
         if children.is_empty() {
-            return; // 空段落不产生盒子
+            return None; // 空段落不产生盒子
         }
         // M4-6 断字：\patterns 非空时对字母 run 插入 discretionary 节点（折行断点）
         if !self.patterns.is_empty() {
@@ -483,6 +490,7 @@ impl NodeBuilder {
             shrink_order: 0,
         });
         let lines = knuth_plass(&children, self.params.hsize, self.params.tolerance);
+        let mut last_natural: Option<i64> = None;
         for (s, e) in lines {
             // 断点胶水已在折行时排除；末行保留 \parfillskip（fil 拉伸填满行宽）。
             // discretionary 物化：行首补前一断点的 post、行内用 replace、行尾断点补 pre
@@ -501,9 +509,11 @@ impl NodeBuilder {
             if let Some(Node::Discretionary { pre, .. }) = children.get(e) {
                 line.extend(pre.iter().cloned());
             }
+            last_natural = Some(hbox_dimensions(&line).width);
             // 行盒 = `\hbox to \hsize`（tex.web line_break：恰好 hsize 宽，胶水拉伸/收缩）
             self.push_box(Node::Box(hpack(&line, self.params.hsize)));
         }
+        last_natural
     }
 
     /// M4-6 断字：对连续字母 run（同字体、ASCII 字母）调用模式表计算断点，
@@ -878,7 +888,30 @@ impl NodeBuilder {
         Ok(())
     }
 
-    /// 退出数学模式：数学列表转 hlist 追加到上层列表（行内/显示公式）。
+    /// M4-4 进入显示数学：先插 `\predisplaypenalty` + `\abovedisplayskip`（或短变体），
+    /// 再进入 DisplayMath 模式（公式原子收集，退出时经 [`Self::close_math`] 落垂直列表）。
+    fn enter_display_math(&mut self) -> Result<()> {
+        self.append(Node::Penalty {
+            penalty: self.params.predisplaypenalty,
+        });
+        let above = if self.display_short {
+            self.params.abovedisplayshortskip
+        } else {
+            self.params.abovedisplayskip
+        };
+        self.append(Node::Glue {
+            width: above.width,
+            stretch: above.stretch,
+            shrink: above.shrink,
+            stretch_order: 0,
+            shrink_order: 0,
+        });
+        self.enter_math(Mode::DisplayMath)
+    }
+
+    /// 退出数学模式：数学列表转节点追加到上层列表。
+    /// 显示公式（M4-4）：收为 `\hbox to \hsize` 居中盒 + `\belowdisplayskip` +
+    /// `\postdisplaypenalty`（垂直元素）；行内公式：节点直通当前列表。
     fn close_math(&mut self) -> Result<()> {
         if self.pending_script.is_some() {
             return Err(Error::invalid_input(
@@ -890,7 +923,7 @@ impl NodeBuilder {
             .pop()
             .ok_or_else(|| Error::internal("close_math 无数学层"))?;
         let style = self.math_style;
-        self.list_modes.pop();
+        let was_display = self.list_modes.pop() == Some(Mode::DisplayMath);
         self.lists.pop();
         // 公式末尾收尾：未闭合 \left 报错；待定分式收尾（TeX 允许空分母）
         if self.left_pending.is_some() {
@@ -898,8 +931,47 @@ impl NodeBuilder {
         }
         Self::math_finish_fraction(&mut self.fraction_pending, &mut level);
         let nodes = self.math_to_hlist(&level.atoms, style);
-        for n in nodes {
-            self.append(n);
+        if was_display {
+            // 公式盒 = `\hbox to \hsize`（两侧 \hfil 居中；displaywidth≈\hsize）
+            let mut line: Vec<Node> = Vec::with_capacity(nodes.len() + 2);
+            line.push(Node::Glue {
+                width: 0,
+                stretch: 1,
+                shrink: 0,
+                stretch_order: GLUE_ORDER_FIL,
+                shrink_order: 0,
+            });
+            line.extend(nodes);
+            line.push(Node::Glue {
+                width: 0,
+                stretch: 1,
+                shrink: 0,
+                stretch_order: GLUE_ORDER_FIL,
+                shrink_order: 0,
+            });
+            self.append(Node::Box(hpack(&line, self.params.hsize)));
+            // \belowdisplayskip（或短变体）+ \postdisplaypenalty
+            let below = if self.display_short {
+                self.params.belowdisplayshortskip
+            } else {
+                self.params.belowdisplayskip
+            };
+            self.append(Node::Glue {
+                width: below.width,
+                stretch: below.stretch,
+                shrink: below.shrink,
+                stretch_order: 0,
+                shrink_order: 0,
+            });
+            self.append(Node::Penalty {
+                penalty: self.params.postdisplaypenalty,
+            });
+            // 后续文字续排：无 parskip/缩进（TeX 公式仍在段内）
+            self.after_display = true;
+        } else {
+            for n in nodes {
+                self.append(n);
+            }
         }
         Ok(())
     }
@@ -1383,7 +1455,7 @@ impl TokenSink for NodeBuilder {
     /// 数学移位（`$`，cat 3）：VM 已 peek 出 `display`（连续 `$$`）。
     /// - Math：结束行内公式；
     /// - DisplayMath：`$$` 结束显示公式，单 `$` 报错（TeX "Display math should end with $$"）；
-    /// - 非数学模式：display → 显示数学（垂直模式开段），否则行内数学。
+    /// - 非数学模式：display → 显示数学（M4-4：收尾段落/开段，公式作垂直元素），否则行内数学。
     fn math_shift(&mut self, display: bool) -> Result<()> {
         match self.mode() {
             Mode::Math => self.close_math(),
@@ -1395,32 +1467,60 @@ impl TokenSink for NodeBuilder {
                 }
             }
             Mode::Vertical => {
-                // 开段（TeX new_graf）：公式属于段落（显示数学 M4-4 改独立段）
-                if self.pagination {
-                    let ps = self.params.parskip;
-                    self.append(Node::Glue {
-                        width: ps.width,
-                        stretch: ps.stretch,
-                        shrink: ps.shrink,
-                        stretch_order: 0,
-                        shrink_order: 0,
-                    });
-                }
-                self.lists.push(Vec::new());
-                self.list_modes.push(Mode::Horizontal);
-                self.space_factor = 1000; // new_graf：段落开始重置 spacefactor
-                self.insert_indent();
-                self.enter_math(if display {
-                    Mode::DisplayMath
+                if display {
+                    // M4-4 显示数学：垂直模式 = TeX new_graf 开段（parskip），公式作段首
+                    // 垂直元素（predisplaypenalty + abovedisplayskip + 公式盒 + 下间距）。
+                    // 垂直列表为空（文档开头）时不加 parskip。
+                    if self.pagination && !self.lists.last().is_some_and(Vec::is_empty) {
+                        let ps = self.params.parskip;
+                        self.append(Node::Glue {
+                            width: ps.width,
+                            stretch: ps.stretch,
+                            shrink: ps.shrink,
+                            stretch_order: 0,
+                            shrink_order: 0,
+                        });
+                    }
+                    self.enter_display_math()
                 } else {
-                    Mode::Math
-                })
+                    // 行内数学：开段（TeX new_graf）
+                    if self.pagination {
+                        let ps = self.params.parskip;
+                        self.append(Node::Glue {
+                            width: ps.width,
+                            stretch: ps.stretch,
+                            shrink: ps.shrink,
+                            stretch_order: 0,
+                            shrink_order: 0,
+                        });
+                    }
+                    self.lists.push(Vec::new());
+                    self.list_modes.push(Mode::Horizontal);
+                    self.space_factor = 1000; // new_graf：段落开始重置 spacefactor
+                    self.insert_indent();
+                    self.enter_math(Mode::Math)
+                }
             }
-            Mode::Horizontal | Mode::RestrictedHorizontal => self.enter_math(if display {
-                Mode::DisplayMath
-            } else {
-                Mode::Math
-            }),
+            Mode::Horizontal => {
+                if display {
+                    // M4-4 显示数学：TeX $$ 在水平模式先 \par 收尾段落，公式作垂直元素。
+                    // short 判定：末行自然宽度（未拉伸）< \displaywidth（≈\hsize）。
+                    let last_natural = self.close_paragraph();
+                    self.display_short = last_natural.is_some_and(|w| w < self.params.hsize);
+                    self.enter_display_math()
+                } else {
+                    self.enter_math(Mode::Math)
+                }
+            }
+            Mode::RestrictedHorizontal => {
+                if display {
+                    Err(Error::invalid_input(
+                        "显示数学不允许出现在 \\hbox 内（restricted horizontal mode）",
+                    ))
+                } else {
+                    self.enter_math(Mode::Math)
+                }
+            }
         }
     }
 
@@ -1566,22 +1666,31 @@ impl TokenSink for NodeBuilder {
         match self.mode() {
             Mode::Vertical => {
                 // 垂直模式字符触发段落（TeX new_graf）
-                // M3-5-2：段落起始追加上下段间距 \parskip（空页上被页面构建器丢弃）
-                if self.pagination {
-                    let ps = self.params.parskip;
-                    self.append(Node::Glue {
-                        width: ps.width,
-                        stretch: ps.stretch,
-                        shrink: ps.shrink,
-                        stretch_order: 0,
-                        shrink_order: 0,
-                    });
+                if self.after_display {
+                    // M4-4：显示公式后续文字仍在段内——无 parskip、无缩进（续排）
+                    self.after_display = false;
+                    self.lists.push(Vec::new());
+                    self.list_modes.push(Mode::Horizontal);
+                    self.space_factor = 1000;
+                    self.append_char(node);
+                } else {
+                    // M3-5-2：段落起始追加上下段间距 \parskip（空页上被页面构建器丢弃）
+                    if self.pagination {
+                        let ps = self.params.parskip;
+                        self.append(Node::Glue {
+                            width: ps.width,
+                            stretch: ps.stretch,
+                            shrink: ps.shrink,
+                            stretch_order: 0,
+                            shrink_order: 0,
+                        });
+                    }
+                    self.lists.push(Vec::new());
+                    self.list_modes.push(Mode::Horizontal);
+                    self.space_factor = 1000; // new_graf：段落开始重置 spacefactor
+                    self.insert_indent();
+                    self.append_char(node);
                 }
-                self.lists.push(Vec::new());
-                self.list_modes.push(Mode::Horizontal);
-                self.space_factor = 1000; // new_graf：段落开始重置 spacefactor
-                self.insert_indent();
-                self.append_char(node);
             }
             Mode::Horizontal | Mode::RestrictedHorizontal => self.append_char(node),
             Mode::Math | Mode::DisplayMath => unreachable!("数学模式已在上面分支返回"),
@@ -1707,7 +1816,9 @@ impl TokenSink for NodeBuilder {
             Primitive::VBox => self.pending_box = Some(PendingBox::VBox),
             Primitive::VTop => self.pending_box = Some(PendingBox::VTop),
             Primitive::Par => match self.mode() {
-                Mode::Horizontal => self.close_paragraph(),
+                Mode::Horizontal => {
+                    self.close_paragraph();
+                }
                 // 垂直模式 \par 无操作；受限水平/数学模式拒绝
                 Mode::Vertical => {}
                 Mode::RestrictedHorizontal => {
@@ -2984,13 +3095,113 @@ mod tests {
 
     #[test]
     fn math_display_formula() {
+        // $$x$$（垂直模式，无前驱）：predisplaypenalty + abovedisplayskip +
+        // 居中公式盒 + belowdisplayskip + postdisplaypenalty
         let main = typeset(r"$$x$$").unwrap();
-        assert_eq!(main.len(), 1);
-        let line = as_box(&main[0]);
-        assert_eq!(line.children.len(), 2, "x + parfillskip");
-        let cx = &line.children[0];
-        // 显示样式：不缩放（Display → 1,1）
-        assert_eq!(cx.dimensions().width, 1000 + b'x' as i64);
+        assert_eq!(main.len(), 5, "显示公式 = 前后 penalty + 上下间距 + 公式盒：{main:?}");
+        match &main[0] {
+            Node::Penalty { penalty } => assert_eq!(*penalty, 10_000, "predisplaypenalty 默认 10000"),
+            other => panic!("预期 predisplaypenalty，得到 {other:?}"),
+        }
+        match &main[1] {
+            Node::Glue { width, stretch, shrink, .. } => {
+                assert_eq!(*width, 12 * SP_PER_PT, "abovedisplayskip");
+                assert_eq!(*stretch, 3 * SP_PER_PT);
+                assert_eq!(*shrink, 9 * SP_PER_PT);
+            }
+            other => panic!("预期 abovedisplayskip，得到 {other:?}"),
+        }
+        let boxed = as_box(&main[2]);
+        // 公式盒 = \hbox to \hsize 居中（两侧 \hfil），中为 x
+        assert_eq!(boxed.width, 13 * 4_736_286 / 2, "公式盒宽 = \\hsize");
+        assert_eq!(boxed.children.len(), 3, "hfil + x + hfil");
+        assert_eq!(as_char(&boxed.children[1]), b'x' as u32);
+        match &main[3] {
+            Node::Glue { width, .. } => assert_eq!(*width, 12 * SP_PER_PT, "belowdisplayskip"),
+            other => panic!("预期 belowdisplayskip，得到 {other:?}"),
+        }
+        match &main[4] {
+            Node::Penalty { penalty } => assert_eq!(*penalty, 0, "postdisplaypenalty 默认 0"),
+            other => panic!("预期 postdisplaypenalty，得到 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn math_display_short_skip_after_short_line() {
+        // 段中 $$：前段末行自然宽度 < \hsize → 短间距
+        // （abovedisplayshortskip = 0pt plus 3pt、belowdisplayshortskip = 7pt plus 3pt minus 4pt）
+        let main = typeset(r"\hsize 10000sp a $$x$$").unwrap();
+        // [行(a), penalty, above-glue, 公式盒, below-glue, penalty]
+        assert_eq!(main.len(), 6, "段中短行公式：{main:?}");
+        match &main[2] {
+            Node::Glue { width, stretch, shrink, .. } => {
+                assert_eq!(*width, 0, "abovedisplayshortskip 宽 0");
+                assert_eq!(*stretch, 3 * SP_PER_PT);
+                assert_eq!(*shrink, 0);
+            }
+            other => panic!("预期 abovedisplayshortskip，得到 {other:?}"),
+        }
+        match &main[4] {
+            Node::Glue { width, .. } => assert_eq!(*width, 7 * SP_PER_PT, "belowdisplayshortskip"),
+            other => panic!("预期 belowdisplayshortskip，得到 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn math_display_long_skip_after_full_line() {
+        // 段中 $$：前段末行自然宽度 ≥ \hsize（过满）→ 长间距（abovedisplayskip）
+        let main = typeset(r"\hsize 500sp a $$x$$").unwrap();
+        assert_eq!(main.len(), 6, "段中满行公式：{main:?}");
+        match &main[2] {
+            Node::Glue { width, .. } => assert_eq!(*width, 12 * SP_PER_PT, "abovedisplayskip"),
+            other => panic!("预期 abovedisplayskip，得到 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn math_display_skips_configurable() {
+        // \abovedisplayskip/\belowdisplayskip 可赋值（无 = 形式，同现有测试风格）
+        let main = typeset(r"\abovedisplayskip 5pt\belowdisplayskip 3pt$$x$$").unwrap();
+        match &main[1] {
+            Node::Glue { width, .. } => assert_eq!(*width, 5 * SP_PER_PT),
+            other => panic!("abovedisplayskip 应生效：{other:?}"),
+        }
+        match &main[3] {
+            Node::Glue { width, .. } => assert_eq!(*width, 3 * SP_PER_PT),
+            other => panic!("belowdisplayskip 应生效：{other:?}"),
+        }
+    }
+
+    #[test]
+    fn math_display_paragraph_continues_after_formula() {
+        // 段中公式：ab $$x$$ cd → 行(ab) + 公式垂直元素 + 行(cd)，续排无 parskip/缩进
+        let main = typeset(r"ab $$x$$ cd").unwrap();
+        assert_eq!(main.len(), 7, "公式前后文字各成行：{main:?}");
+        let l1 = as_box(&main[0]);
+        assert_eq!(as_char(&l1.children[0]), b'a' as u32);
+        assert!(matches!(main[1], Node::Penalty { .. }));
+        assert!(matches!(main[2], Node::Glue { .. }));
+        assert!(matches!(main[3], Node::Box(_)), "公式盒");
+        assert!(matches!(main[4], Node::Glue { .. }));
+        assert!(matches!(main[5], Node::Penalty { .. }));
+        let l3 = as_box(&main[6]);
+        assert_eq!(as_char(&l3.children[0]), b'c' as u32, "公式后续文字续排");
+        assert_eq!(as_char(&l3.children[1]), b'd' as u32);
+    }
+
+    #[test]
+    fn math_display_paginated_smoke() {
+        // 分页模式：显示公式序列（penalty/glue/box/glue/penalty）正常入页
+        let pages = paginated(r"$$\hbox{ab}$$").unwrap();
+        assert_eq!(pages.len(), 1, "小公式应单页：{pages:?}");
+        // 页面 = [公式盒, belowdisplayskip, postdisplaypenalty]（页首可丢弃节点被丢弃）
+        assert!(pages[0].children.iter().any(|n| matches!(n, Node::Box(_))), "页面含公式盒");
+    }
+
+    #[test]
+    fn math_display_inside_hbox_rejected() {
+        // $$ 不允许出现在 \hbox（restricted horizontal mode）内
+        assert!(typeset(r"\hbox{$$x$$}").is_err(), "显示数学不能在 \\hbox 内");
     }
 
     #[test]

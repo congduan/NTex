@@ -133,6 +133,13 @@ pub enum Primitive {
     ScriptScriptFont,
     // M4-6 断字：\patterns 模式表
     Patterns,
+    // M4-4 显示数学间距参数
+    AboveDisplaySkip,
+    BelowDisplaySkip,
+    AboveDisplayShortSkip,
+    BelowDisplayShortSkip,
+    PreDisplayPenalty,
+    PostDisplayPenalty,
 }
 
 impl Primitive {
@@ -249,6 +256,12 @@ impl Primitive {
             98 => Self::ScriptFont,
             99 => Self::ScriptScriptFont,
             100 => Self::Patterns,
+            101 => Self::AboveDisplaySkip,
+            102 => Self::BelowDisplaySkip,
+            103 => Self::AboveDisplayShortSkip,
+            104 => Self::BelowDisplayShortSkip,
+            105 => Self::PreDisplayPenalty,
+            106 => Self::PostDisplayPenalty,
             _ => return None,
         })
     }

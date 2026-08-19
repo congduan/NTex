@@ -942,6 +942,29 @@ impl Expander {
                 };
                 self.assign_param(kind, ParamValue::Glue(g))
             }
+            // M4-4 显示数学间距参数
+            Primitive::AboveDisplaySkip
+            | Primitive::BelowDisplaySkip
+            | Primitive::AboveDisplayShortSkip
+            | Primitive::BelowDisplayShortSkip => {
+                let g = self.scan_glue()?;
+                let kind = match prim {
+                    Primitive::AboveDisplaySkip => ParamKind::AboveDisplaySkip,
+                    Primitive::BelowDisplaySkip => ParamKind::BelowDisplaySkip,
+                    Primitive::AboveDisplayShortSkip => ParamKind::AboveDisplayShortSkip,
+                    _ => ParamKind::BelowDisplayShortSkip,
+                };
+                self.assign_param(kind, ParamValue::Glue(g))
+            }
+            Primitive::PreDisplayPenalty | Primitive::PostDisplayPenalty => {
+                let p = self.scan_number()?;
+                let kind = if prim == Primitive::PreDisplayPenalty {
+                    ParamKind::PreDisplayPenalty
+                } else {
+                    ParamKind::PostDisplayPenalty
+                };
+                self.assign_param(kind, ParamValue::Number(p))
+            }
             // M3-4 字体
             Primitive::Font => self.exec_font(),
             // M3-5 输出：\shipout 直通 sink（排版器解释：封装下一盒子为页面）
@@ -2170,7 +2193,7 @@ impl Expander {
 
     /// 注册 M1 内建原语。
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 100] = [
+        const BUILTINS: [(&str, Primitive); 106] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -2288,6 +2311,13 @@ impl Expander {
             ("scriptscriptfont", Primitive::ScriptScriptFont),
             // M4-6 断字：\patterns 模式表
             ("patterns", Primitive::Patterns),
+            // M4-4 显示数学间距参数
+            ("abovedisplayskip", Primitive::AboveDisplaySkip),
+            ("belowdisplayskip", Primitive::BelowDisplaySkip),
+            ("abovedisplayshortskip", Primitive::AboveDisplayShortSkip),
+            ("belowdisplayshortskip", Primitive::BelowDisplayShortSkip),
+            ("predisplaypenalty", Primitive::PreDisplayPenalty),
+            ("postdisplaypenalty", Primitive::PostDisplayPenalty),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);
@@ -2561,7 +2591,13 @@ impl Expander {
                 | Primitive::VSize
                 | Primitive::TopSkip
                 | Primitive::MaxDepth
-                | Primitive::ParSkip => {
+                | Primitive::ParSkip
+                | Primitive::AboveDisplaySkip
+                | Primitive::BelowDisplaySkip
+                | Primitive::AboveDisplayShortSkip
+                | Primitive::BelowDisplayShortSkip
+                | Primitive::PreDisplayPenalty
+                | Primitive::PostDisplayPenalty => {
                     let kind = match p {
                         Primitive::ParIndent => ParamKind::ParIndent,
                         Primitive::BaselineSkip => ParamKind::BaselineSkip,
@@ -2572,7 +2608,13 @@ impl Expander {
                         Primitive::VSize => ParamKind::VSize,
                         Primitive::TopSkip => ParamKind::TopSkip,
                         Primitive::MaxDepth => ParamKind::MaxDepth,
-                        _ => ParamKind::ParSkip,
+                        Primitive::ParSkip => ParamKind::ParSkip,
+                        Primitive::AboveDisplaySkip => ParamKind::AboveDisplaySkip,
+                        Primitive::BelowDisplaySkip => ParamKind::BelowDisplaySkip,
+                        Primitive::AboveDisplayShortSkip => ParamKind::AboveDisplayShortSkip,
+                        Primitive::BelowDisplayShortSkip => ParamKind::BelowDisplayShortSkip,
+                        Primitive::PreDisplayPenalty => ParamKind::PreDisplayPenalty,
+                        _ => ParamKind::PostDisplayPenalty,
                     };
                     Ok(match self.params.get(kind) {
                         ParamValue::Dimen(v) => emit_dimen(v),
