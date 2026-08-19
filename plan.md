@@ -11,10 +11,10 @@
 | M1 展开内核       | 🟡 核心完成：M1-1\~7、M1-9\~11 已实现（95 用例）；M1-8 分隔参数、M1-13 错误模型、**M1-14 TRIP 冲刺** 待补                                                                                                                                                                                                                                                  |
 | M2 字节码        | 🟡 双轨完成：定长 u64 IR + 编译器 + 解释器等价验证（100 用例）；**吞吐 1.12x 未达 2x 目标**，M2-5 arena 未做                                                                                                                                                                                                                                                  |
 | M3 排版核心       | ✅ M3-1\~M3-4 完成（58+ 用例）；**M3-5 DVI 写出 +** **`\shipout`** **+ 断页 DP + lig/kern +** **`\sfcode`** **+** **`\output`** **例程/box255** 完成（dvipdfmx 验收 + 与 TeX 差分对照）；**RFC-3 VFS + 副作用模型落地**（10 原语走 `ntex-io` VFS，延迟写入 shipout 边界提交）；**`.fmt`** **v1 内存快照**（`ntex-format` 确定性编码 + roundtrip）                                         |
-| M4 数学 + e-TeX | 🟡 M4-1/2/3/4/5/6/7 完成：数学模式状态机（`$`/`$$`、8 类原子、spacing 表、上下标、字阶）、分式/根式/定界符、样式原语、fontdimen 数学参数 + 数学字体族、**显示数学细化**、**Liang 断字**、**错误模型（数学错误消息规范 + `Missing $ inserted`）**、e-TeX 核心（`\protected`/`\ifdefined`/`\ifcsname`/`\unless`/`\numexpr`/`\detokenize`/`\unexpanded`/`\eTeXversion`）；e-TeX 扩展（`\dimexpr` 等）待补（ETRIP 冲刺） |
+| M4 数学 + e-TeX | ✅ **全部完成**：数学模式状态机（`$`/`$$`、8 类原子、spacing 表、上下标、字阶）、分式/根式/定界符、样式原语、fontdimen 数学参数 + 数学字体族、显示数学细化、Liang 断字、错误模型、e-TeX 核心 + 扩展（`\protected`/`\ifdefined`/`\ifcsname`/`\unless`/`\numexpr`/`\detokenize`/`\unexpanded`/`\eTeXversion`/`\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens`）；验收 **ETRIP 全绿** 待冲 |
 | 输出端           | 🟢 正式 PDF 后端可用（`ntex-pdf`：DVI → PDF 直出 + Type1 嵌入，替换临时 Helvetica 切片；demo 两页与 dvipdfmx 渲染一致）                                                                                                                                                                                                                                    |
 
-**下一步**：M4 收尾（e-TeX 扩展 `\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens`），然后 ETRIP 冲刺。
+**下一步**：**ETRIP 冲刺**——先搭管线（fixtures 获取 + harness 泛化支持 etrip + ntex 引擎驱动），再按 diff 迭代。
 
 ***
 
@@ -301,9 +301,12 @@
   `.fmt` v2 序列化；short 判定 = 末行自然宽度 < `\displaywidth`（≈`\hsize`）；
   公式后文字续排（无 parskip/缩进）；`$$` 在 `\hbox` 内报错
 - [x] e-TeX 展开扩展（核心）：`\protected`（\edef/\write 抑制 + .fmt 保留）、
-  `\ifdefined`/`\ifcsname`/`\unless`、`\numexpr`（\the/\ifnum/任意整数上下文）、
-  `\detokenize`（控制词补空格）、`\unexpanded`、`\eTeXversion`/`\eTeXrevision`
-  —— `\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens` 待补
+      `\ifdefined`/`\ifcsname`/`\unless`、`\numexpr`（\the/\ifnum/任意整数上下文）、
+      `\detokenize`（控制词补空格）、`\unexpanded`、`\eTeXversion`/`\eTeXrevision`
+- [x] e-TeX 扩展补全：`\dimexpr`（尺寸表达式，可在任意尺寸上下文求值）、
+      `\glueexpr`（胶水表达式，width 求和 + stretch/shrink 取最后非零项）、
+      `\ifprimitive`（cs 是否为内建原语）、`\scantokens`（组内容 detokenize 后
+      按当前 catcode 重新扫描，等价于从字符串 `\input`）——M4 至此全部完成
 - [x] Liang 断字算法 + `\patterns` 语言包
   —— `\patterns` 语言包 + **断字接入段落折行**完成：sink 事件 + expand 原语
   （扫描平衡组、字母/数字/`.` 抽取、空格折叠分隔）+ `PatternTrie::parse` +
@@ -317,7 +320,7 @@
       8 个用例锁消息；完整上下文行（"l.N …"）留 M1-13
 
 **验收**：**ETRIP 全绿**；含数学的文档差分一致。
-**进度**：M4-1/2/3/4/5 已完成（13 + 16 + 20 + 14 + 6 用例）；M4-6 Liang 断字完成；M4-7 错误模型（数学错误消息规范 + `Missing $ inserted`）完成；e-TeX 扩展（`\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens`）待做。
+**进度**：**M4 全部完成**——M4-1/2/3/4/5（13 + 16 + 20 + 14 + 6 用例）、M4-6 Liang 断字、M4-7 错误模型、e-TeX 扩展（`\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens`，+6 用例）。下一步：**ETRIP 冲刺**（先搭管线：fixtures + harness 泛化 + 引擎驱动）。
 
 ***
 

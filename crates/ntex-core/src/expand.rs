@@ -103,6 +103,7 @@ enum CondOp {
     // e-TeX（M4-5）
     IfDefined,
     IfCsname,
+    IfPrimitive,
     Else,
     Fi,
     Or,
@@ -122,6 +123,7 @@ impl CondOp {
             Primitive::IfFalse => Self::IfFalse,
             Primitive::IfDefined => Self::IfDefined,
             Primitive::IfCsname => Self::IfCsname,
+            Primitive::IfPrimitive => Self::IfPrimitive,
             Primitive::Else => Self::Else,
             Primitive::Fi => Self::Fi,
             Primitive::Or => Self::Or,
@@ -1030,13 +1032,23 @@ impl Expander {
                 Ok(())
             }
             // 条件原语由 process_one 拦截
-            Primitive::IfDefined | Primitive::IfCsname => {
+            Primitive::IfDefined | Primitive::IfCsname | Primitive::IfPrimitive => {
                 Err(Error::internal("条件原语不应到达 exec_primitive"))
             }
             Primitive::NumExpr => {
                 let v = self.eval_int_expression()?;
                 self.emit_tokens(emit_count(v))
             }
+            // M4-5 e-TeX 扩展：\dimexpr/\glueexpr 可展开求值（\the 上下文由 the_tokens 直接读取）
+            Primitive::Dimexpr => {
+                let v = self.eval_dimen_expression()?;
+                self.emit_tokens(emit_dimen(v))
+            }
+            Primitive::Glueexpr => {
+                let g = self.eval_glue_expression()?;
+                self.emit_tokens(emit_glue(g))
+            }
+            Primitive::Scantokens => self.exec_scantokens(),
             Primitive::Detokenize => self.exec_detokenize(),
             Primitive::Unexpanded => self.exec_unexpanded(),
             // 内部量：仅 \the 上下文读取（the_tokens 处理）
@@ -2135,6 +2147,55 @@ impl Expander {
         Ok(None)
     }
 
+    /// `\dimexpr` 尺寸表达式：`<dimen> (('+'|'-') <dimen>)*`（e-TeX 文法子集：
+    /// 每项为 [`Self::scan_dimen`] 可识别的尺寸；`\relax` 或不可识别 token 结束，后者放回）。
+    fn eval_dimen_expression(&mut self) -> Result<i64> {
+        let mut value = self.scan_dimen()?;
+        loop {
+            let Some(op) = self.peek_int_op()? else { break };
+            if op != b'+' && op != b'-' {
+                // * / 不是尺寸运算符：放回结束
+                self.unread(Token::char(Catcode::Other, op as u32));
+                break;
+            }
+            let rhs = self.scan_dimen()?;
+            value = if op == b'+' { value + rhs } else { value - rhs };
+        }
+        Ok(value)
+    }
+
+    /// `\glueexpr` 胶水表达式：`<glue> (('+'|'-') <glue>)*`。
+    /// width 逐项求和；stretch/shrink 取**最后一个**非零项（含符号，eTeX 语义）。
+    fn eval_glue_expression(&mut self) -> Result<Glue> {
+        let mut result = self.scan_glue()?;
+        loop {
+            let Some(op) = self.peek_int_op()? else { break };
+            if op != b'+' && op != b'-' {
+                self.unread(Token::char(Catcode::Other, op as u32));
+                break;
+            }
+            let term = self.scan_glue()?;
+            if op == b'+' {
+                result.width += term.width;
+                if term.stretch != 0 {
+                    result.stretch = term.stretch;
+                }
+                if term.shrink != 0 {
+                    result.shrink = term.shrink;
+                }
+            } else {
+                result.width -= term.width;
+                if term.stretch != 0 {
+                    result.stretch = -term.stretch;
+                }
+                if term.shrink != 0 {
+                    result.shrink = -term.shrink;
+                }
+            }
+        }
+        Ok(result)
+    }
+
     /// `\detokenize{...}`：组内容转字符 token 流（字符 catcode 12、空格 10、
     /// 控制序列 → `\名字` 文本），作为输入继续处理。
     fn exec_detokenize(&mut self) -> Result<()> {
@@ -2152,6 +2213,25 @@ impl Expander {
         let items: Vec<(Token, bool)> = toks.into_iter().map(|t| (t, true)).collect();
         self.stack.push(InputFrame::TokenList {
             items: Arc::from(items),
+            pos: 0,
+        });
+        Ok(())
+    }
+
+    /// `\scantokens{...}`（M4-5 e-TeX）：组内容 detokenize 为文本后按**当前**
+    /// catcode 重新扫描（eTeX 语义：等价于从字符串 `\input`）。
+    fn exec_scantokens(&mut self) -> Result<()> {
+        let toks = self.scan_group_contents()?;
+        let mut text: Vec<Token> = Vec::new();
+        for t in toks {
+            detokenize_token(t, &self.intern, &mut text);
+        }
+        let bytes: Vec<u8> = text
+            .iter()
+            .filter_map(|t| t.charcode().and_then(|c| u8::try_from(c).ok()))
+            .collect();
+        self.stack.push(InputFrame::Source {
+            bytes: Arc::from(bytes),
             pos: 0,
         });
         Ok(())
@@ -2193,7 +2273,7 @@ impl Expander {
 
     /// 注册 M1 内建原语。
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 106] = [
+        const BUILTINS: [(&str, Primitive); 110] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -2318,6 +2398,11 @@ impl Expander {
             ("belowdisplayshortskip", Primitive::BelowDisplayShortSkip),
             ("predisplaypenalty", Primitive::PreDisplayPenalty),
             ("postdisplaypenalty", Primitive::PostDisplayPenalty),
+            // M4-5 e-TeX 扩展
+            ("dimexpr", Primitive::Dimexpr),
+            ("glueexpr", Primitive::Glueexpr),
+            ("ifprimitive", Primitive::IfPrimitive),
+            ("scantokens", Primitive::Scantokens),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);
@@ -2624,6 +2709,8 @@ impl Expander {
                 }
                 // M4-5 e-TeX：\numexpr 表达式、\eTeXversion/\eTeXrevision
                 Primitive::NumExpr => Ok(emit_count(self.eval_int_expression()?)),
+                Primitive::Dimexpr => Ok(emit_dimen(self.eval_dimen_expression()?)),
+                Primitive::Glueexpr => Ok(emit_glue(self.eval_glue_expression()?)),
                 Primitive::ETeXVersion => Ok(emit_count(2)),
                 Primitive::ETeXRevision => Ok(vec![Token::char(Catcode::Other, b'2' as u32)]),
                 _ => Err(Error::invalid_input(
@@ -2816,7 +2903,8 @@ impl Expander {
             | CondOp::IfTrue
             | CondOp::IfFalse
             | CondOp::IfDefined
-            | CondOp::IfCsname => {
+            | CondOp::IfCsname
+            | CondOp::IfPrimitive => {
                 if self.is_skipping() {
                     // 惰性：不评估测试，仅计数（未走的分支中的宏不被展开）
                     self.cond_stack.push(CondFrame {
@@ -2952,6 +3040,20 @@ impl Expander {
                     Some(id) if !matches!(self.eqtb.slot(id), EqSlot::Undefined)
                 ))
             }
+            // e-TeX（M4-5）：\ifprimitive <cs> —— cs 的 eqtb 槽是内建原语
+            CondOp::IfPrimitive => {
+                let tok = self
+                    .fetch()?
+                    .ok_or_else(|| Error::invalid_input("\\ifprimitive 缺操作数"))?
+                    .0;
+                match tok.kind() {
+                    TokenKind::ControlSeq => {
+                        let csid = tok.csid().expect("ControlSeq 必有 csid");
+                        Ok(matches!(self.eqtb.slot(csid), EqSlot::Primitive(_)))
+                    }
+                    _ => Ok(false),
+                }
+            }
             CondOp::IfCase | CondOp::Else | CondOp::Fi | CondOp::Or => {
                 unreachable!("step_conditional 已分流")
             }
@@ -3028,6 +3130,12 @@ impl Expander {
                 let v = self.registers.dimen(idx);
                 return Ok(if neg { -v } else { v });
             }
+            // M4-5 e-TeX：\dimexpr 可在任意尺寸上下文求值
+            if let EqSlot::Primitive(Primitive::Dimexpr) = self.eqtb.slot(csid) {
+                self.fetch()?; // 消费 \dimexpr
+                let v = self.eval_dimen_expression()?;
+                return Ok(if neg { -v } else { v });
+            }
         }
         // 数字：整数部分 + 可选小数
         let mut int_part: i64 = 0;
@@ -3087,6 +3195,14 @@ impl Expander {
     /// 扫描胶水：width + 可选 `plus <dimen>` / `minus <dimen>`。
     /// 非 plus/minus 字母（如正文）原样放回（TeX `scan_keyword` 语义）。
     fn scan_glue(&mut self) -> Result<Glue> {
+        // M4-5 e-TeX：\glueexpr 可在任意胶水上下文求值
+        self.skip_spaces()?;
+        if let Some(csid) = self.peek_csid()? {
+            if let EqSlot::Primitive(Primitive::Glueexpr) = self.eqtb.slot(csid) {
+                self.fetch()?; // 消费 \glueexpr
+                return self.eval_glue_expression();
+            }
+        }
         let width = self.scan_dimen()?;
         let mut stretch = 0i64;
         let mut shrink = 0i64;
@@ -4097,5 +4213,71 @@ ab5c}").unwrap();
     fn eTeXversion_and_revision() {
         assert_eq!(expand(r"\the\eTeXversion").unwrap(), "2");
         assert_eq!(expand(r"\the\eTeXrevision").unwrap(), "2");
+    }
+
+    // ---------- M4-5 e-TeX 扩展：\dimexpr/\glueexpr/\ifprimitive/\scantokens ----------
+
+    #[test]
+    fn dimexpr_basic_arithmetic() {
+        assert_eq!(expand(r"\the\dimexpr 1pt+2pt \relax").unwrap(), "3.0pt");
+        assert_eq!(expand(r"\the\dimexpr 10pt-2.5pt \relax").unwrap(), "7.5pt");
+        assert_eq!(expand(r"\the\dimexpr -1pt+2pt \relax").unwrap(), "1.0pt");
+    }
+
+    #[test]
+    fn dimexpr_in_dimen_assignment() {
+        // \dimen0=\dimexpr...：scan_dimen 识别 \dimexpr 原语
+        assert_eq!(
+            expand(r"\dimen0=\dimexpr 1pt+2pt \relax\the\dimen0").unwrap(),
+            "3.0pt"
+        );
+    }
+
+    #[test]
+    fn glueexpr_basic_and_last_stretch_wins() {
+        // width 求和；stretch/shrink 取最后一个非零项
+        assert_eq!(
+            expand(r"\the\glueexpr 1pt plus 2pt + 3pt minus 1pt \relax").unwrap(),
+            "4.0pt plus 2.0pt minus 1.0pt"
+        );
+        assert_eq!(
+            expand(r"\the\glueexpr 1pt plus 2pt + 3pt plus 4pt \relax").unwrap(),
+            "4.0pt plus 4.0pt"
+        );
+    }
+
+    #[test]
+    fn glueexpr_in_skip_assignment() {
+        // 减法项：stretch 符号随项翻转
+        assert_eq!(
+            expand(r"\skip0=\glueexpr 1pt plus 2pt - 0.5pt \relax\the\skip0").unwrap(),
+            "0.5pt plus 2.0pt"
+        );
+    }
+
+    #[test]
+    fn ifprimitive_tests_primitive_definition() {
+        assert_eq!(
+            expand(r"\ifprimitive\relax yes\else no\fi").unwrap(),
+            "yes"
+        );
+        assert_eq!(
+            expand(r"\ifprimitive\zzzundef123 yes\else no\fi").unwrap(),
+            "no"
+        );
+        assert_eq!(expand(r"\ifprimitive a yes\else no\fi").unwrap(), "no");
+        // \let 到原语：含义是原语但槽是 Alias → 非原语（TeX 语义）
+        assert_eq!(
+            expand(r"\let\pr=\relax\ifprimitive\pr yes\else no\fi").unwrap(),
+            "no"
+        );
+    }
+
+    #[test]
+    fn scantokens_rescans_text_with_current_catcodes() {
+        // 组内容 detokenize 后按当前 catcode 重新扫描（等价于从字符串 \input）
+        assert_eq!(expand(r"\def\x{abc}\scantokens{\x}").unwrap(), "abc");
+        // 扫描过程中定义并展开宏
+        assert_eq!(expand(r"\scantokens{a\def\y{b}\y}").unwrap(), "ab");
     }
 }

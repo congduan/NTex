@@ -140,6 +140,11 @@ pub enum Primitive {
     BelowDisplayShortSkip,
     PreDisplayPenalty,
     PostDisplayPenalty,
+    // M4-5 e-TeX 扩展：\dimexpr/\glueexpr/\ifprimitive/\scantokens
+    Dimexpr,
+    Glueexpr,
+    IfPrimitive,
+    Scantokens,
 }
 
 impl Primitive {
@@ -262,6 +267,10 @@ impl Primitive {
             104 => Self::BelowDisplayShortSkip,
             105 => Self::PreDisplayPenalty,
             106 => Self::PostDisplayPenalty,
+            107 => Self::Dimexpr,
+            108 => Self::Glueexpr,
+            109 => Self::IfPrimitive,
+            110 => Self::Scantokens,
             _ => return None,
         })
     }
