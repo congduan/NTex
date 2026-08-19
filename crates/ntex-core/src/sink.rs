@@ -30,6 +30,36 @@ use crate::token::Token;
 pub trait TokenSink: std::fmt::Debug {
     /// 输出 token（字符、未处理的控制序列等）。
     fn token(&mut self, tok: Token) -> Result<()>;
+    /// 数学移位（`$`，cat 3；M4-1）：进出数学模式。
+    /// `display`：VM 检测到连续 `$$`（进入显示数学/结束显示数学用；行内进出忽略）。
+    fn math_shift(&mut self, _display: bool) -> Result<()> {
+        Ok(())
+    }
+    /// 数学样式原语（`\displaystyle`=0/`\textstyle`=1/`\scriptstyle`=2/`\scriptscriptstyle`=3；M4-2）。
+    fn math_style(&mut self, _style: u8) -> Result<()> {
+        Ok(())
+    }
+    /// 分式原语（`\over`=None 默认厚度 / `\atop`=Some(0) / `\above`=显式；M4-2）。
+    fn math_fraction(&mut self, _thickness: Option<i64>) -> Result<()> {
+        Ok(())
+    }
+    /// `\left<delimiter>`：`None` = `\left.`（空定界符；M4-2）。
+    fn math_left(&mut self, _delim: Option<u32>) -> Result<()> {
+        Ok(())
+    }
+    /// `\right<delimiter>`：`None` = `\right.`（M4-2）。
+    fn math_right(&mut self, _delim: Option<u32>) -> Result<()> {
+        Ok(())
+    }
+    /// `\sqrt`：根式（M4-2）。
+    fn math_sqrt(&mut self) -> Result<()> {
+        Ok(())
+    }
+    /// `\mathord`=0/`\mathbin`=1/`\mathop`=2/`\mathrel`=3/`\mathopen`=4/
+    /// `\mathclose`=5/`\mathpunct`=6/`\mathinner`=7：给下一字段定类（M4-2）。
+    fn math_class(&mut self, _class: u8) -> Result<()> {
+        Ok(())
+    }
     /// 组开始（`{`）：VM 已完成组作用域簿记。
     fn group_begin(&mut self) -> Result<()> {
         Ok(())

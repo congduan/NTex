@@ -23,7 +23,7 @@ use std::rc::Rc;
 use ntex_core::error::{Error, Result};
 use ntex_core::expand::Expander;
 use ntex_core::param::{ParamKind, ParamValue, Params};
-use ntex_core::register::{Glue, REGISTER_COUNT};
+use ntex_core::register::{Glue, REGISTER_COUNT, SP_PER_PT};
 use ntex_core::token::Token;
 use ntex_core::{FontLoader, Primitive, TokenSink};
 use ntex_font::{FontMetrics, LigKern};
@@ -32,7 +32,7 @@ use crate::linebreak::knuth_plass;
 use crate::node::{hpack, BoxKind, BoxNode, FontId, Node, GLUE_ORDER_FIL};
 use crate::page::PageBuilder;
 
-/// 模式（TeX 模式状态机的 M3-2 子集）。
+/// 模式（TeX 模式状态机的 M3-2 子集 + M4 数学）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
     /// 垂直模式：垂直列表（页面主列表 / vbox 内容）；字符触发段落。
@@ -41,6 +41,141 @@ enum Mode {
     Horizontal,
     /// 受限水平模式：`\hbox{...}` 内容。
     RestrictedHorizontal,
+    /// 数学模式（行内 `$...$`，textstyle）。
+    Math,
+    /// 显示数学模式（`$$...$$`，displaystyle）。
+    DisplayMath,
+}
+
+/// 数学原子类别（TeXbook 附录 G：8 类原子）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MathClass {
+    Ord,
+    Bin,
+    Op,
+    Rel,
+    Open,
+    Close,
+    Punct,
+    Inner,
+}
+
+/// 数学样式（决定字阶与 spacing 表；TeXbook p.140-141）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MathStyle {
+    Display,
+    Text,
+    Script,
+    ScriptScript,
+}
+
+impl MathStyle {
+    /// 字阶缩放（相对 textfont；TeX 数学三阶字体 text/script/scriptscript，
+    /// 10pt 基字阶对应 7pt/5pt——ETRIP 前以比例近似，M4-3 用 fontdimen 精化）。
+    fn scale(self) -> (i64, i64) {
+        match self {
+            MathStyle::Display | MathStyle::Text => (1, 1),
+            MathStyle::Script => (7, 10),
+            MathStyle::ScriptScript => (5, 10),
+        }
+    }
+
+    /// 下一级（脚本的字阶）：Text→Script、Script→ScriptScript、Display→Script。
+    fn next(self) -> MathStyle {
+        match self {
+            MathStyle::Display | MathStyle::Text => MathStyle::Script,
+            MathStyle::Script => MathStyle::ScriptScript,
+            MathStyle::ScriptScript => MathStyle::ScriptScript,
+        }
+    }
+}
+
+/// 数学字符原子：类 + 族 + 字符码。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MathChar {
+    class: MathClass,
+    fam: u8,
+    charcode: u32,
+}
+
+/// 数学列表原子（M4-1/2：字符/上下标/分式/根式/定界符/类化/样式/空格）。
+#[derive(Debug, Clone, PartialEq)]
+enum MathAtom {
+    /// 字符原子（8 类之一）。
+    Char(MathChar),
+    /// 上下标：`x^a` / `x_b` / `x_a^b`（字段为子列表）。
+    Scripts {
+        base: Box<MathAtom>,
+        sub: Option<Vec<MathAtom>>,
+        sup: Option<Vec<MathAtom>>,
+    },
+    /// 分式（`\over`/`\atop`/`\above`）：num/den 子列表；thickness 为分式线厚度
+    /// （None=字体默认、Some(0)=`\atop` 无线）。
+    Fraction {
+        num: Vec<MathAtom>,
+        den: Vec<MathAtom>,
+        thickness: Option<i64>,
+    },
+    /// 根式（`\sqrt`）：radicand 子列表。
+    Radical { base: Vec<MathAtom> },
+    /// `\left<delim>...\right<delim>`：定界符为 None 表示空（`.`）。
+    Delimited {
+        left: Option<u32>,
+        body: Vec<MathAtom>,
+        right: Option<u32>,
+    },
+    /// 显式定类字段（`\mathbin{...}` 等）：内容作为一个指定类的原子。
+    Classed {
+        class: MathClass,
+        content: Vec<MathAtom>,
+    },
+    /// 样式切换（`\displaystyle`/`\textstyle`/`\scriptstyle`/`\scriptscriptstyle`）。
+    Style(MathStyle),
+    /// 数学空格（`\mskip`/`\mkern` 结果；`nonscript`：`\nonscript` 后脚本模式丢弃）。
+    MSkip {
+        width: i64,
+        stretch: i64,
+        shrink: i64,
+        nonscript: bool,
+    },
+    /// 已排版盒子（数学模式内 `\hbox{...}` 产出）。
+    Box(BoxNode),
+}
+
+/// 数学组字段类别（group_begin 压层时记录；group_end 按类别处理）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MathFieldKind {
+    /// 脚本字段（`^`/`_` 后的组）：Some(is_sup)。
+    Script(bool),
+    /// `\sqrt` 后的组（radicand）。
+    Sqrt,
+    /// `\mathbin` 等后的组：内容作为指定类原子。
+    Class(MathClass),
+}
+
+/// 数学列表层级：原子列表 + 是否为特殊字段组。
+#[derive(Debug, Default)]
+struct MathLevel {
+    atoms: Vec<MathAtom>,
+    /// 本组字段类别（`^`/`_`、`\sqrt`、`\mathbin` 后的 `{...}`）；None = 普通组。
+    field: Option<MathFieldKind>,
+}
+
+/// `\over`/`\atop` 中间态：numerator 已收集，当前数学层 atoms 继续收集 denominator。
+#[derive(Debug)]
+struct FractionPending {
+    thickness: Option<i64>,
+    num: Vec<MathAtom>,
+}
+
+/// 数学间距码（TeXbook 附录 G 规则 18）：0 无 / 1 thin / 2 med / 3 thick / 4 *（紧排）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpacingCode {
+    None,
+    Thin,
+    Med,
+    Thick,
+    Tight,
 }
 
 /// 待封装盒子种类（`\hbox`/`\vbox`/`\vtop` 的下一个组）。
@@ -131,6 +266,30 @@ impl Fonts {
                 .and_then(|fm| fm.apply_lig_kern(left, right)),
         }
     }
+
+    /// 数学 em（quad = fontdimen 6；数学间距 1em 基准）。fn 指针占位返回 0。
+    fn quad(&self, font: FontId) -> i64 {
+        match self {
+            Fonts::Fn { .. } => 0,
+            Fonts::Tfm(table) => table
+                .borrow()
+                .get(font.0 as usize)
+                .map(|fm| fm.quad)
+                .unwrap_or(0),
+        }
+    }
+
+    /// x 高度（fontdimen 5；数学上标提升基准）。fn 指针占位返回 0。
+    fn x_height(&self, font: FontId) -> i64 {
+        match self {
+            Fonts::Fn { .. } => 0,
+            Fonts::Tfm(table) => table
+                .borrow()
+                .get(font.0 as usize)
+                .map(|fm| fm.x_height)
+                .unwrap_or(0),
+        }
+    }
 }
 
 /// 节点构建 sink：把 VM 排版事件转成节点列表。
@@ -181,6 +340,22 @@ struct NodeBuilder {
     pending_pages: VecDeque<BoxNode>,
     /// RFC-3：页面真正输出（`\shipout` 边界）时置位，通知引擎 flush 延迟写流。
     write_flush_pending: bool,
+    /// 数学列表栈（M4-1）：数学模式期间一层；`{...}` 数学组/脚本字段压层。
+    math: Vec<MathLevel>,
+    /// 当前数学样式（进入 Math=Text、DisplayMath=Display；`\displaystyle` 等修改）。
+    math_style: MathStyle,
+    /// 待挂载的脚本方向（`^`=Some(true)、`_`=Some(false)）：等待下一个原子/组。
+    pending_script: Option<bool>,
+    /// `\over`/`\atop`：numerator 已收集，等待 denominator（当前 math 层 atoms）。
+    fraction_pending: Option<FractionPending>,
+    /// `\left<delim>`：等待 `\right`（嵌套 `\left` 暂不支持）。
+    left_pending: Option<Option<u32>>,
+    /// `\sqrt`：等待 radicand 字段（下一个原子或组）。
+    sqrt_pending: bool,
+    /// `\mathbin` 等：等待字段（下一个原子或组），应用指定类。
+    class_pending: Option<MathClass>,
+    /// `\nonscript`：下一个数学空格在脚本模式丢弃。
+    nonscript_pending: bool,
 }
 
 impl NodeBuilder {
@@ -221,6 +396,14 @@ impl NodeBuilder {
             output_defined: false,
             pending_pages: VecDeque::new(),
             write_flush_pending: false,
+            math: Vec::new(),
+            math_style: MathStyle::Text,
+            pending_script: None,
+            fraction_pending: None,
+            left_pending: None,
+            sqrt_pending: false,
+            class_pending: None,
+            nonscript_pending: false,
             fonts,
         }
     }
@@ -299,6 +482,15 @@ impl NodeBuilder {
                 self.shipped.push(b);
                 self.write_flush_pending = true;
             }
+            return;
+        }
+        // 数学模式内 `\hbox{...}`：结果盒子转数学原子（TeX 数学盒子）。
+        if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            let atom = match node {
+                Node::Box(b) => MathAtom::Box(b),
+                other => unreachable!("数学模式盒子封装必产出 Box 节点：{other:?}"),
+            };
+            self.math_push_atom(atom).expect("数学模式盒子挂载");
             return;
         }
         self.push_box(node);
@@ -557,6 +749,494 @@ impl NodeBuilder {
             self.space_factor = s;
         }
     }
+
+    // ---------- M4-1 数学模式 ----------
+
+    /// 进入数学模式：压数学层 + 占位列表层（公式节点经 close_math 落回上层列表）。
+    /// `mode` 为 Math（行内，textstyle）或 DisplayMath（显示，displaystyle）。
+    fn enter_math(&mut self, mode: Mode) -> Result<()> {
+        let style = match mode {
+            Mode::DisplayMath => MathStyle::Display,
+            _ => MathStyle::Text,
+        };
+        self.math.push(MathLevel::default());
+        self.math_style = style;
+        self.lists.push(Vec::new());
+        self.list_modes.push(mode);
+        Ok(())
+    }
+
+    /// 退出数学模式：数学列表转 hlist 追加到上层列表（行内/显示公式）。
+    fn close_math(&mut self) -> Result<()> {
+        if self.pending_script.is_some() {
+            return Err(Error::invalid_input(
+                "数学模式中 ^/_ 后缺少上标/下标（Missing { inserted）",
+            ));
+        }
+        let mut level = self
+            .math
+            .pop()
+            .ok_or_else(|| Error::internal("close_math 无数学层"))?;
+        let style = self.math_style;
+        self.list_modes.pop();
+        self.lists.pop();
+        // 公式末尾收尾：未闭合 \left 报错；待定分式收尾（TeX 允许空分母）
+        if self.left_pending.is_some() {
+            return Err(Error::invalid_input("\\left 后缺少 \\right（Extra } or forgotten \\right）"));
+        }
+        Self::math_finish_fraction(&mut self.fraction_pending, &mut level);
+        let nodes = self.math_to_hlist(&level.atoms, style);
+        for n in nodes {
+            self.append(n);
+        }
+        Ok(())
+    }
+
+    /// 数学模式字符：`^`/`_` 设待挂脚本；字母/其他 → Ord 原子（M4-2 原子类化）。
+    fn math_char_tok(&mut self, tok: Token) -> Result<()> {
+        let (Some(cat), Some(ch)) = (tok.catcode(), tok.charcode()) else {
+            return Ok(());
+        };
+        match cat {
+            ntex_core::Catcode::Superscript => {
+                self.pending_script = Some(true);
+                Ok(())
+            }
+            ntex_core::Catcode::Subscript => {
+                self.pending_script = Some(false);
+                Ok(())
+            }
+            ntex_core::Catcode::Letter | ntex_core::Catcode::Other => self
+                .math_push_atom(MathAtom::Char(MathChar {
+                    class: MathClass::Ord,
+                    fam: 0,
+                    charcode: ch,
+                })),
+            _ => Ok(()), // active 等已在展开侧处理；其余忽略
+        }
+    }
+
+    /// 追加原子到当前数学层；处理待定字段（`\sqrt`/`\mathbin`/`\nonscript`）与
+    /// 脚本挂载（`x^2`/`x_i`/`x_i^2`）。
+    fn math_push_atom(&mut self, atom: MathAtom) -> Result<()> {
+        // `\sqrt` 单原子字段：`\sqrt x`
+        if self.sqrt_pending {
+            self.sqrt_pending = false;
+            let level = self
+                .math
+                .last_mut()
+                .ok_or_else(|| Error::internal("数学原子无数学层"))?;
+            level.atoms.push(MathAtom::Radical { base: vec![atom] });
+            return Ok(());
+        }
+        // `\mathbin` 等单原子字段：`\mathbin+`（Char 改类，其余包 Classed）
+        if let Some(class) = self.class_pending.take() {
+            let atom = match atom {
+                MathAtom::Char(mut mc) => {
+                    mc.class = class;
+                    MathAtom::Char(mc)
+                }
+                other => MathAtom::Classed {
+                    class,
+                    content: vec![other],
+                },
+            };
+            return self.math_push_atom_raw(atom);
+        }
+        // `\nonscript`：下一个数学空格标记为脚本模式丢弃
+        let atom = match atom {
+            MathAtom::MSkip {
+                width,
+                stretch,
+                shrink,
+                ..
+            } if self.nonscript_pending => MathAtom::MSkip {
+                width,
+                stretch,
+                shrink,
+                nonscript: true,
+            },
+            other => other,
+        };
+        self.nonscript_pending = false;
+        self.math_push_atom_raw(atom)
+    }
+
+    /// 原始追加（含脚本挂载）：`x^2`/`x_i`/`x_i^2`。
+    fn math_push_atom_raw(&mut self, atom: MathAtom) -> Result<()> {
+        let level = self
+            .math
+            .last_mut()
+            .ok_or_else(|| Error::internal("数学原子无数学层"))?;
+        if let Some(is_sup) = self.pending_script.take() {
+            let mut base = level.atoms.pop().ok_or_else(|| {
+                Error::invalid_input("数学模式中 ^/_ 前缺少原子（Missing { inserted）")
+            })?;
+            if let MathAtom::Scripts { sub, sup, .. } = &mut base {
+                if is_sup {
+                    if sup.is_some() {
+                        return Err(Error::invalid_input("双重上标（Double superscript）"));
+                    }
+                    *sup = Some(vec![atom]);
+                } else {
+                    if sub.is_some() {
+                        return Err(Error::invalid_input("双重下标（Double subscript）"));
+                    }
+                    *sub = Some(vec![atom]);
+                }
+                level.atoms.push(base);
+            } else {
+                let (sub, sup) = if is_sup {
+                    (None, Some(vec![atom]))
+                } else {
+                    (Some(vec![atom]), None)
+                };
+                level.atoms.push(MathAtom::Scripts {
+                    base: Box::new(base),
+                    sub,
+                    sup,
+                });
+            }
+        } else {
+            level.atoms.push(atom);
+        }
+        Ok(())
+    }
+
+    /// 完成待定分式：denominator = 当前数学层 atoms → Fraction 原子（TeX fin_mlist）。
+    fn math_finish_fraction(fraction_pending: &mut Option<FractionPending>, level: &mut MathLevel) {
+        if let Some(fp) = fraction_pending.take() {
+            let den = std::mem::take(&mut level.atoms);
+            level.atoms.push(MathAtom::Fraction {
+                num: fp.num,
+                den,
+                thickness: fp.thickness,
+            });
+        }
+    }
+
+    /// 脚本字段组结束（`x^{...}`/`x_{...}`）：字段挂到外层末尾原子。
+    fn math_attach_script(
+        parent: &mut MathLevel,
+        is_sup: bool,
+        field: Vec<MathAtom>,
+    ) -> Result<()> {
+        let mut base = parent.atoms.pop().ok_or_else(|| {
+            Error::invalid_input("数学模式中 ^/_ 前缺少原子（Missing { inserted）")
+        })?;
+        if let MathAtom::Scripts { sub, sup, .. } = &mut base {
+            if is_sup {
+                if sup.is_some() {
+                    return Err(Error::invalid_input("双重上标（Double superscript）"));
+                }
+                *sup = Some(field);
+            } else {
+                if sub.is_some() {
+                    return Err(Error::invalid_input("双重下标（Double subscript）"));
+                }
+                *sub = Some(field);
+            }
+            parent.atoms.push(base);
+        } else {
+            let (sub, sup) = if is_sup {
+                (None, Some(field))
+            } else {
+                (Some(field), None)
+            };
+            parent.atoms.push(MathAtom::Scripts {
+                base: Box::new(base),
+                sub,
+                sup,
+            });
+        }
+        Ok(())
+    }
+
+    /// 原子类别（spacing 表用；脚本原子取 base 的类）。
+    fn math_class(atom: &MathAtom) -> Option<MathClass> {
+        match atom {
+            MathAtom::Char(mc) => Some(mc.class),
+            MathAtom::Scripts { base, .. } => Self::math_class(base),
+            MathAtom::Classed { class, .. } => Some(*class),
+            MathAtom::Fraction { .. } => Some(MathClass::Inner),
+            MathAtom::Delimited { .. } => Some(MathClass::Inner),
+            MathAtom::Radical { .. } => Some(MathClass::Ord),
+            MathAtom::Box(_) => Some(MathClass::Ord),
+            MathAtom::MSkip { .. } | MathAtom::Style(_) => None,
+        }
+    }
+
+    /// 数学列表 → 水平节点（M4-1：spacing 胶水 + 字符 + 上下标盒）。
+    fn math_to_hlist(&self, atoms: &[MathAtom], style: MathStyle) -> Vec<Node> {
+        let mut out = Vec::new();
+        let mut style = style;
+        let mut prev: Option<MathClass> = None;
+        for atom in atoms {
+            // 样式切换原子就地生效（影响后续原子字阶与 spacing）
+            if let MathAtom::Style(s) = atom {
+                style = *s;
+                continue;
+            }
+            let cur = Self::math_class(atom);
+            if let (Some(p), Some(c)) = (prev, cur) {
+                match spacing_code(p, c, style) {
+                    SpacingCode::None | SpacingCode::Tight => {}
+                    code => {
+                        let quad = self.fonts.quad(self.current_font);
+                        let (w, st, sh) = muskip(code, quad);
+                        out.push(Node::Glue {
+                            width: w,
+                            stretch: st,
+                            shrink: sh,
+                            stretch_order: 0,
+                            shrink_order: 0,
+                        });
+                    }
+                }
+            }
+            if cur.is_some() {
+                prev = cur;
+            }
+            out.extend(self.math_atom_nodes(atom, style));
+        }
+        out
+    }
+
+    /// 原子 → 节点（M4-1/2：Char/Scripts/Fraction/Radical/Delimited/Classed/MSkip/Box）。
+    fn math_atom_nodes(&self, atom: &MathAtom, style: MathStyle) -> Vec<Node> {
+        match atom {
+            MathAtom::Char(mc) => {
+                let (num, den) = style.scale();
+                let (w, h, d) = self.math_metrics(self.current_font, mc.charcode, num, den);
+                vec![Node::Char {
+                    font: self.current_font,
+                    charcode: mc.charcode,
+                    width: w,
+                    height: h,
+                    depth: d,
+                }]
+            }
+            MathAtom::Scripts { base, sub, sup } => {
+                let mut out = self.math_atom_nodes(base, style);
+                let s_style = style.next();
+                // 上标：内容打包为 hbox，shift 上移（hlist 内 Box.shift 为垂直位移）
+                if let Some(sup_atoms) = sup {
+                    let nodes = self.math_to_hlist(sup_atoms, s_style);
+                    let mut b = BoxNode::new_hbox(nodes);
+                    b.shift = -self.script_rise(style);
+                    out.push(Node::Box(b));
+                }
+                if let Some(sub_atoms) = sub {
+                    let nodes = self.math_to_hlist(sub_atoms, s_style);
+                    let mut b = BoxNode::new_hbox(nodes);
+                    b.shift = self.script_drop();
+                    out.push(Node::Box(b));
+                }
+                out
+            }
+            MathAtom::Fraction {
+                num,
+                den,
+                thickness,
+            } => self.fraction_nodes(num, den, *thickness, style),
+            MathAtom::Radical { base } => self.radical_nodes(base, style),
+            MathAtom::Delimited { left, body, right } => {
+                let mut out = Vec::new();
+                if let Some(d) = left {
+                    out.extend(self.delim_nodes(*d, style));
+                }
+                out.extend(self.math_to_hlist(body, style));
+                if let Some(d) = right {
+                    out.extend(self.delim_nodes(*d, style));
+                }
+                out
+            }
+            MathAtom::Classed { content, .. } => self.math_to_hlist(content, style),
+            MathAtom::MSkip {
+                width,
+                stretch,
+                shrink,
+                nonscript,
+            } => {
+                if *nonscript
+                    && matches!(style, MathStyle::Script | MathStyle::ScriptScript)
+                {
+                    Vec::new()
+                } else {
+                    vec![Node::Glue {
+                        width: *width,
+                        stretch: *stretch,
+                        shrink: *shrink,
+                        stretch_order: 0,
+                        shrink_order: 0,
+                    }]
+                }
+            }
+            MathAtom::Box(b) => vec![Node::Box(b.clone())],
+            MathAtom::Style(_) => unreachable!("Style 原子在 math_to_hlist 循环中处理"),
+        }
+    }
+
+    /// 分式 → 节点（M4-2 简化：分子/分式线/分母垂直堆叠；M4-3 用 fontdimen 精化）。
+    fn fraction_nodes(
+        &self,
+        num: &[MathAtom],
+        den: &[MathAtom],
+        thickness: Option<i64>,
+        style: MathStyle,
+    ) -> Vec<Node> {
+        let num_b = BoxNode::new_hbox(self.math_to_hlist(num, style));
+        let den_b = BoxNode::new_hbox(self.math_to_hlist(den, style));
+        let width = num_b.width.max(den_b.width);
+        let num_height = num_b.height;
+        let t = thickness.unwrap_or(SP_PER_PT * 2 / 5); // 默认分式线 0.4pt
+        let gap = 2 * SP_PER_PT; // 分子/分母与线的间隙（M4-3 用 fontdimen num1 等）
+        let mut children = Vec::new();
+        children.push(Node::Box(num_b));
+        // 垂直间隙（vbox 内 x 不推进；宽度 0 避免抬高 vbox 总宽）
+        children.push(Node::Glue {
+            width: 0,
+            stretch: 0,
+            shrink: 0,
+            stretch_order: 0,
+            shrink_order: 0,
+        });
+        if t > 0 {
+            children.push(Node::Rule {
+                width,
+                height: t,
+                depth: 0,
+            });
+        }
+        children.push(Node::Glue {
+            width: 0,
+            stretch: 0,
+            shrink: 0,
+            stretch_order: 0,
+            shrink_order: 0,
+        });
+        children.push(Node::Box(den_b));
+        let mut b = BoxNode::new_vbox(children);
+        // 参考点 = 分式线：顶部（num 顶）到线 = num 高 + gap + t/2（hlist 内 shift 为垂直位移）
+        b.shift = num_height + gap + t / 2;
+        vec![Node::Box(b)]
+    }
+
+    /// 根式 → 节点（M4-2 简化：内容上方画分式线式横线；M4-3 换 cmex10 根号）。
+    fn radical_nodes(&self, base: &[MathAtom], style: MathStyle) -> Vec<Node> {
+        let base_b = BoxNode::new_hbox(self.math_to_hlist(base, style));
+        let base_height = base_b.height;
+        let t = 2 * SP_PER_PT / 5; // 0.4pt
+        let gap = SP_PER_PT; // 内容上缘到线的间隙
+        let mut children = Vec::new();
+        children.push(Node::Rule {
+            width: base_b.width,
+            height: t,
+            depth: 0,
+        });
+        children.push(Node::Glue {
+            width: 0,
+            stretch: 0,
+            shrink: 0,
+            stretch_order: 0,
+            shrink_order: 0,
+        });
+        children.push(Node::Box(base_b));
+        let mut b = BoxNode::new_vbox(children);
+        // 参考点 = 内容基线：线在基线上方 base 高 + gap + t 处（shift 为负 = 上移）
+        b.shift = -(base_height + gap + t);
+        vec![Node::Box(b)]
+    }
+
+    /// 定界符字符节点（当前字体 + 字阶缩放；M4-3 换 cmex10 变体伸缩）。
+    fn delim_nodes(&self, d: u32, style: MathStyle) -> Vec<Node> {
+        let (num, den) = style.scale();
+        let (w, h, dd) = self.math_metrics(self.current_font, d, num, den);
+        vec![Node::Char {
+            font: self.current_font,
+            charcode: d,
+            width: w,
+            height: h,
+            depth: dd,
+        }]
+    }
+
+    /// 按字阶缩放字符度量（M4-1 比例近似；M4-3 换真实 scriptfont）。
+    fn math_metrics(&self, font: FontId, ch: u32, num: i64, den: i64) -> (i64, i64, i64) {
+        let (w, h, d) = self.fonts.metrics(font, ch);
+        if num == den {
+            return (w, h, d);
+        }
+        (
+            xn_over_d(w, num, den),
+            xn_over_d(h, num, den),
+            xn_over_d(d, num, den),
+        )
+    }
+
+    /// 上标提升量（M4-1 近似：script 字阶的 x_height；M4-3 用 fontdimen）。
+    fn script_rise(&self, style: MathStyle) -> i64 {
+        let xh = self.fonts.x_height(self.current_font);
+        let (num, den) = style.scale();
+        xn_over_d(xh, num, den)
+    }
+
+    /// 下标下降量（M4-1 近似：0.5pt；M4-3 用 fontdimen sub_drop）。
+    fn script_drop(&self) -> i64 {
+        0
+    }
+}
+
+/// 数学间距（TeXbook 附录 G 规则 18；text/script 模式；display 对 op 修正）。
+/// 行 = 左原子类、列 = 右原子类；0 无 / 1 thin / 2 med / 3 thick / 4 *（紧排）。
+fn spacing_code(l: MathClass, r: MathClass, style: MathStyle) -> SpacingCode {
+    const TABLE: [[u8; 8]; 8] = [
+        //          ord op  bin rel open close punct inner
+        /*ord*/    [0, 1, 2, 3, 0, 0, 0, 1],
+        /*op*/     [1, 1, 4, 3, 0, 0, 0, 1],
+        /*bin*/    [2, 2, 4, 4, 2, 2, 2, 2],
+        /*rel*/    [3, 3, 4, 0, 3, 3, 3, 3],
+        /*open*/   [0, 0, 4, 0, 0, 0, 0, 0],
+        /*close*/  [0, 1, 2, 3, 0, 0, 0, 1],
+        /*punct*/  [1, 1, 4, 1, 1, 1, 1, 1],
+        /*inner*/  [1, 1, 2, 3, 1, 0, 1, 1],
+    ];
+    let idx = |c: MathClass| match c {
+        MathClass::Ord => 0,
+        MathClass::Op => 1,
+        MathClass::Bin => 2,
+        MathClass::Rel => 3,
+        MathClass::Open => 4,
+        MathClass::Close => 5,
+        MathClass::Punct => 6,
+        MathClass::Inner => 7,
+    };
+    let raw = TABLE[idx(l)][idx(r)];
+    // display 模式（TeXbook p.170）：op 前后的 thin(1) 升为 thick(3)。
+    if style == MathStyle::Display
+        && raw == 1
+        && (l == MathClass::Op || r == MathClass::Op)
+    {
+        return SpacingCode::Thick;
+    }
+    match raw {
+        0 => SpacingCode::None,
+        1 => SpacingCode::Thin,
+        2 => SpacingCode::Med,
+        3 => SpacingCode::Thick,
+        _ => SpacingCode::Tight,
+    }
+}
+
+/// muskip 宽度（1mu = quad/18）：thin=3mu、med=4mu±2mu∓4mu、thick=5mu±5mu。
+fn muskip(code: SpacingCode, quad: i64) -> (i64, i64, i64) {
+    let mu = quad / 18;
+    match code {
+        SpacingCode::Thin => (3 * mu, 0, 0),
+        SpacingCode::Med => (4 * mu, 2 * mu, 4 * mu),
+        SpacingCode::Thick => (5 * mu, 5 * mu, 0),
+        _ => (0, 0, 0),
+    }
 }
 
 /// `xn_over_d`（tex.web）：t×n/d 四舍五入（负值按远离零）。
@@ -569,12 +1249,155 @@ fn xn_over_d(t: i64, n: i64, d: i64) -> i64 {
 }
 
 impl TokenSink for NodeBuilder {
+    /// 数学移位（`$`，cat 3）：VM 已 peek 出 `display`（连续 `$$`）。
+    /// - Math：结束行内公式；
+    /// - DisplayMath：`$$` 结束显示公式，单 `$` 报错（TeX "Display math should end with $$"）；
+    /// - 非数学模式：display → 显示数学（垂直模式开段），否则行内数学。
+    fn math_shift(&mut self, display: bool) -> Result<()> {
+        match self.mode() {
+            Mode::Math => self.close_math(),
+            Mode::DisplayMath => {
+                if display {
+                    self.close_math()
+                } else {
+                    Err(Error::invalid_input("Display math should end with $$."))
+                }
+            }
+            Mode::Vertical => {
+                // 开段（TeX new_graf）：公式属于段落（显示数学 M4-4 改独立段）
+                if self.pagination {
+                    let ps = self.params.parskip;
+                    self.append(Node::Glue {
+                        width: ps.width,
+                        stretch: ps.stretch,
+                        shrink: ps.shrink,
+                        stretch_order: 0,
+                        shrink_order: 0,
+                    });
+                }
+                self.lists.push(Vec::new());
+                self.list_modes.push(Mode::Horizontal);
+                self.space_factor = 1000; // new_graf：段落开始重置 spacefactor
+                self.insert_indent();
+                self.enter_math(if display {
+                    Mode::DisplayMath
+                } else {
+                    Mode::Math
+                })
+            }
+            Mode::Horizontal | Mode::RestrictedHorizontal => self.enter_math(if display {
+                Mode::DisplayMath
+            } else {
+                Mode::Math
+            }),
+        }
+    }
+
+    /// 数学样式原语：数学模式内 push 样式原子（影响后续字阶与 spacing）。
+    fn math_style(&mut self, style: u8) -> Result<()> {
+        if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            return Ok(()); // TeX 报错，简化忽略（非数学模式样式无意义）
+        }
+        let s = match style {
+            0 => MathStyle::Display,
+            1 => MathStyle::Text,
+            2 => MathStyle::Script,
+            _ => MathStyle::ScriptScript,
+        };
+        self.math_push_atom(MathAtom::Style(s))
+    }
+
+    /// `\over`/`\atop`/`\above`：numerator 已收集（当前 math 层），等待 denominator。
+    fn math_fraction(&mut self, thickness: Option<i64>) -> Result<()> {
+        if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            return Err(Error::invalid_input("\\over 只能在数学模式使用"));
+        }
+        if self.fraction_pending.is_some() {
+            return Err(Error::invalid_input(
+                "\\over 歧义（Ambiguous; you need another { and }）",
+            ));
+        }
+        if self.pending_script.is_some() {
+            return Err(Error::invalid_input("\\over 前不能有未挂脚本（Missing { inserted）"));
+        }
+        let level = self
+            .math
+            .last_mut()
+            .ok_or_else(|| Error::internal("\\over 无数学层"))?;
+        let num = std::mem::take(&mut level.atoms);
+        self.fraction_pending = Some(FractionPending { thickness, num });
+        Ok(())
+    }
+
+    /// `\left<delim>`：记录定界符，等待 `\right`（嵌套暂不支持）。
+    fn math_left(&mut self, delim: Option<u32>) -> Result<()> {
+        if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            return Err(Error::invalid_input("\\left 只能在数学模式使用"));
+        }
+        if self.left_pending.is_some() {
+            return Err(Error::invalid_input("\\left 不能嵌套（Extra \\left）"));
+        }
+        self.left_pending = Some(delim);
+        Ok(())
+    }
+
+    /// `\right<delim>`：当前 math 层内容收为 \left...\right 的 body。
+    fn math_right(&mut self, delim: Option<u32>) -> Result<()> {
+        if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            return Err(Error::invalid_input("\\right 只能在数学模式使用"));
+        }
+        let left = self
+            .left_pending
+            .take()
+            .ok_or_else(|| Error::invalid_input("\\right 前缺少 \\left（Missing \\left inserted）"))?;
+        let level = self
+            .math
+            .last_mut()
+            .ok_or_else(|| Error::internal("\\right 无数学层"))?;
+        // 先收 \left(...\over...\right) 的分式
+        Self::math_finish_fraction(&mut self.fraction_pending, level);
+        let body = std::mem::take(&mut level.atoms);
+        level.atoms.push(MathAtom::Delimited {
+            left,
+            body,
+            right: delim,
+        });
+        Ok(())
+    }
+
+    /// `\sqrt`：等待 radicand 字段（下一个原子或组）。
+    fn math_sqrt(&mut self) -> Result<()> {
+        if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            return Err(Error::invalid_input("\\sqrt 只能在数学模式使用"));
+        }
+        self.sqrt_pending = true;
+        Ok(())
+    }
+
+    /// `\mathord` 等：给下一个字段定类。
+    fn math_class(&mut self, class: u8) -> Result<()> {
+        if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            return Err(Error::invalid_input("\\mathord 等只能在数学模式使用"));
+        }
+        self.class_pending = Some(match class {
+            0 => MathClass::Ord,
+            1 => MathClass::Bin,
+            2 => MathClass::Op,
+            3 => MathClass::Rel,
+            4 => MathClass::Open,
+            5 => MathClass::Close,
+            6 => MathClass::Punct,
+            _ => MathClass::Inner,
+        });
+        Ok(())
+    }
+
     fn token(&mut self, tok: Token) -> Result<()> {
-        // 空格（cat 10）：垂直模式忽略；水平模式转词间空白胶水
+        // 空格（cat 10）：垂直/数学模式忽略；水平模式转词间空白胶水
         // （行首或胶水/惩罚之后忽略，TeX spacer 语义）。
         if tok.catcode() == Some(ntex_core::Catcode::Space) {
             match self.mode() {
-                Mode::Vertical => {}
+                Mode::Vertical | Mode::Math | Mode::DisplayMath => {}
                 Mode::Horizontal | Mode::RestrictedHorizontal => {
                     let ignorable = match self.lists.last().and_then(|l| l.last()) {
                         None => true,
@@ -587,6 +1410,10 @@ impl TokenSink for NodeBuilder {
                 }
             }
             return Ok(());
+        }
+        // 数学模式：字符转数学原子（^/_ 挂脚本，字母/其他 → Ord）。
+        if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            return self.math_char_tok(tok);
         }
         let Some(node) = self.char_node(tok) else {
             return Ok(()); // 控制序列等无可排版语义
@@ -612,6 +1439,7 @@ impl TokenSink for NodeBuilder {
                 self.append_char(node);
             }
             Mode::Horizontal | Mode::RestrictedHorizontal => self.append_char(node),
+            Mode::Math | Mode::DisplayMath => unreachable!("数学模式已在上面分支返回"),
         }
         Ok(())
     }
@@ -640,6 +1468,22 @@ impl TokenSink for NodeBuilder {
             if new_mode == Mode::RestrictedHorizontal {
                 self.space_factor = 1000;
             }
+        } else if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            // 数学组：`{...}`（含脚本/根式/定类字段）压 math 层。
+            let field = if let Some(is_sup) = self.pending_script.take() {
+                Some(MathFieldKind::Script(is_sup))
+            } else if self.sqrt_pending {
+                self.sqrt_pending = false;
+                Some(MathFieldKind::Sqrt)
+            } else if let Some(class) = self.class_pending.take() {
+                Some(MathFieldKind::Class(class))
+            } else {
+                None
+            };
+            self.math.push(MathLevel {
+                atoms: Vec::new(),
+                field,
+            });
         }
         Ok(())
     }
@@ -652,6 +1496,55 @@ impl TokenSink for NodeBuilder {
         // 先恢复参数镜像（与 VM 的 save_stack 恢复对齐），随后的缩进/interline 用外层值
         if let Some(prev) = self.param_stack.pop() {
             self.params = prev;
+        }
+        // 数学组：内容并入外层（普通组）或作为字段挂到外层 base（^/_ 后组等）。
+        if ctx.box_kind.is_none() && matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            let level = self
+                .math
+                .pop()
+                .ok_or_else(|| Error::internal("数学组结束无配对 math 层"))?;
+            let parent = self
+                .math
+                .last_mut()
+                .ok_or_else(|| Error::internal("数学组结束无外层 math 层"))?;
+            let field_atoms = match level.field {
+                Some(MathFieldKind::Script(is_sup)) => {
+                    // `x^{...}`：先收组内分式（`x^{a\over b}`），再作为脚本字段挂载
+                    let mut lv = level;
+                    Self::math_finish_fraction(&mut self.fraction_pending, &mut lv);
+                    let field = lv.atoms;
+                    if !field.is_empty() {
+                        // `x^{}`：空字段合法（TeX 空组字段）
+                        Self::math_attach_script(parent, is_sup, field)?;
+                    }
+                    return Ok(());
+                }
+                Some(MathFieldKind::Sqrt) => {
+                    // `\sqrt{...}`：先收组内分式（`\sqrt{a\over b}`），再作 radicand
+                    let mut lv = level;
+                    Self::math_finish_fraction(&mut self.fraction_pending, &mut lv);
+                    parent.atoms.push(MathAtom::Radical { base: lv.atoms });
+                    return Ok(());
+                }
+                Some(MathFieldKind::Class(class)) => {
+                    // `\mathbin{...}`：内容作为一个指定类原子
+                    let mut lv = level;
+                    Self::math_finish_fraction(&mut self.fraction_pending, &mut lv);
+                    parent.atoms.push(MathAtom::Classed {
+                        class,
+                        content: lv.atoms,
+                    });
+                    return Ok(());
+                }
+                None => {
+                    // 普通数学组：先收组内分式（`{a\over b}`），再并入外层
+                    let mut lv = level;
+                    Self::math_finish_fraction(&mut self.fraction_pending, &mut lv);
+                    lv.atoms
+                }
+            };
+            parent.atoms.extend(field_atoms);
+            return Ok(());
         }
         // 垂直盒子内容结束时，开放段落先封装（\vbox{a} → vbox[hbox(a)]）
         if ctx.box_kind.is_some_and(PendingBox::is_vertical) && self.mode() == Mode::Horizontal {
@@ -670,11 +1563,16 @@ impl TokenSink for NodeBuilder {
             Primitive::VTop => self.pending_box = Some(PendingBox::VTop),
             Primitive::Par => match self.mode() {
                 Mode::Horizontal => self.close_paragraph(),
-                // 垂直模式 \par 无操作；受限水平模式拒绝
+                // 垂直模式 \par 无操作；受限水平/数学模式拒绝
                 Mode::Vertical => {}
                 Mode::RestrictedHorizontal => {
                     return Err(Error::invalid_input(
                         "\\par 不允许出现在受限水平模式（\\hbox 内）",
+                    ));
+                }
+                Mode::Math | Mode::DisplayMath => {
+                    return Err(Error::invalid_input(
+                        "\\par 不允许出现在数学模式（\\par 应在 $ 外）",
                     ));
                 }
             },
@@ -686,6 +1584,7 @@ impl TokenSink for NodeBuilder {
                     self.insert_indent();
                 }
                 Mode::Horizontal | Mode::RestrictedHorizontal => self.insert_indent(),
+                Mode::Math | Mode::DisplayMath => {}
             },
             Primitive::NoIndent => {
                 // 垂直模式：下一个段落不缩进；水平模式无操作
@@ -695,6 +1594,12 @@ impl TokenSink for NodeBuilder {
             }
             // M3-5：\shipout 后的下一个盒子封装为页面
             Primitive::ShipOut => self.shipout_next = true,
+            // M4-2：\nonscript 使下一个数学空格在脚本模式丢弃
+            Primitive::Nonscript => {
+                if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+                    self.nonscript_pending = true;
+                }
+            }
             // 参数扫描型原语经 glue/kern/penalty/rule 事件处理
             _ => {}
         }
@@ -771,6 +1676,16 @@ impl TokenSink for NodeBuilder {
     }
 
     fn glue(&mut self, g: Glue) -> Result<()> {
+        // 数学模式 `\hskip`：转数学空格原子（TeX 数学模式 \hskip ≡ \mskip）。
+        if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            self.math_push_atom(MathAtom::MSkip {
+                width: g.width,
+                stretch: g.stretch,
+                shrink: g.shrink,
+                nonscript: false,
+            })?;
+            return Ok(());
+        }
         self.append(Node::Glue {
             width: g.width,
             stretch: g.stretch,
@@ -782,16 +1697,34 @@ impl TokenSink for NodeBuilder {
     }
 
     fn kern(&mut self, width: i64) -> Result<()> {
+        // 数学模式 `\kern`：转数学空格原子（TeX 数学模式 \kern ≡ \mkern）。
+        if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            self.math_push_atom(MathAtom::MSkip {
+                width,
+                stretch: 0,
+                shrink: 0,
+                nonscript: false,
+            })?;
+            return Ok(());
+        }
         self.append(Node::Kern { width });
         Ok(())
     }
 
     fn penalty(&mut self, penalty: i64) -> Result<()> {
+        // 数学模式 `\penalty`：M4-1 忽略（数学断行点后续补）。
+        if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            return Ok(());
+        }
         self.append(Node::Penalty { penalty });
         Ok(())
     }
 
     fn rule(&mut self, width: i64, height: i64, depth: i64) -> Result<()> {
+        // 数学模式 `\vrule`：M4-1 忽略（规则原子后续补）。
+        if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            return Ok(());
+        }
         self.append(Node::Rule { width, height, depth });
         Ok(())
     }
@@ -962,6 +1895,9 @@ impl Typesetter {
             }
             if !builder.groups.is_empty() {
                 return Err(Error::invalid_input("组未闭合（缺少 }）"));
+            }
+            if !builder.math.is_empty() {
+                return Err(Error::invalid_input("数学模式未闭合（缺少 $）"));
             }
             if builder.mode() == Mode::Horizontal {
                 builder.close_paragraph();
@@ -1785,5 +2721,316 @@ mod tests {
             text_of(&pages3),
             "加载 .fmt 快照后排版应与全新排版一致"
         );
+    }
+
+    // ---------- M4-1 数学模式 ----------
+
+    /// 段落行盒 children（`$...$` 触发段落 → 主列表单行 hbox）。
+    fn math_line_children(text: &str) -> Vec<Node> {
+        let main = typeset(text).unwrap();
+        assert_eq!(main.len(), 1, "数学公式应封装为单行段落：{text:?}");
+        let line = as_box(&main[0]);
+        // 去掉行尾 \parfillskip 胶水
+        line.children
+            .iter()
+            .filter(|n| !matches!(n, Node::Glue { .. }))
+            .cloned()
+            .collect()
+    }
+
+    /// 段落行盒全部 children（含 spacing 胶水，排除行尾 \parfillskip；spacing 测试用）。
+    fn math_line_all_children(text: &str) -> Vec<Node> {
+        let main = typeset(text).unwrap();
+        assert_eq!(main.len(), 1, "数学公式应封装为单行段落：{text:?}");
+        let mut children = as_box(&main[0]).children.clone();
+        // 去掉行尾 \parfillskip（0pt plus 1fil；hpack 拉伸后宽度非 0，按 fil 阶识别）
+        while let Some(Node::Glue {
+            stretch,
+            stretch_order,
+            ..
+        }) = children.last()
+        {
+            if *stretch > 0 && *stretch_order == GLUE_ORDER_FIL {
+                children.pop();
+            } else {
+                break;
+            }
+        }
+        children
+    }
+
+    #[test]
+    fn math_inline_formula_in_paragraph() {
+        let children = math_line_children(r"$x$");
+        assert_eq!(children.len(), 1);
+        assert_eq!(as_char(&children[0]), b'x' as u32);
+    }
+
+    #[test]
+    fn math_superscript_builds_script_box() {
+        let children = math_line_children(r"$x^2$");
+        assert_eq!(children.len(), 2, "x 后应挂上标盒");
+        assert_eq!(as_char(&children[0]), b'x' as u32);
+        let sup = as_box(&children[1]);
+        assert_eq!(sup.kind, BoxKind::HBox);
+        assert_eq!(sup.children.len(), 1);
+        assert_eq!(as_char(&sup.children[0]), b'2' as u32);
+        // 脚本字阶缩放：宽 7/10 × (1000+50)；高 7/10 × 6000
+        assert_eq!(sup.children[0].dimensions().width, xn_over_d(1050, 7, 10));
+        assert_eq!(sup.children[0].dimensions().height, 4200);
+        // fn 指针模式 x_height=0 → 上标提升量 0（M4-3 用 fontdimen 精化）
+        assert_eq!(sup.shift, 0);
+    }
+
+    #[test]
+    fn math_sub_and_superscript_both() {
+        let children = math_line_children(r"$x_1^2$");
+        assert_eq!(children.len(), 3, "x + 上标盒 + 下标盒");
+        assert_eq!(as_char(&children[0]), b'x' as u32);
+        assert_eq!(as_char(&as_box(&children[1]).children[0]), b'2' as u32);
+        assert_eq!(as_char(&as_box(&children[2]).children[0]), b'1' as u32);
+    }
+
+    #[test]
+    fn math_sub_then_sup_attach_to_same_base() {
+        // x_1^2 与 x^2_1 等价：同一 base 双侧脚本
+        let a = math_line_children(r"$x_1^2$");
+        let b = math_line_children(r"$x^2_1$");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn math_group_script_field() {
+        let children = math_line_children(r"$x^{ab}$");
+        assert_eq!(children.len(), 2);
+        let sup = as_box(&children[1]);
+        assert_eq!(sup.children.len(), 2);
+        assert_eq!(as_char(&sup.children[0]), b'a' as u32);
+        assert_eq!(as_char(&sup.children[1]), b'b' as u32);
+    }
+
+    #[test]
+    fn math_group_splices_into_list() {
+        // {ab} 数学组直接并入外层（等价 ab）
+        let a = math_line_children(r"${ab}$");
+        let b = math_line_children(r"$ab$");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn math_ignores_spaces() {
+        let children = math_line_children(r"$a b$");
+        assert_eq!(children.len(), 2, "数学模式空格应忽略");
+        assert_eq!(as_char(&children[0]), b'a' as u32);
+        assert_eq!(as_char(&children[1]), b'b' as u32);
+    }
+
+    #[test]
+    fn math_nested_scripts_use_scriptscript_scale() {
+        // x_{y^z}：z 为第三级脚本（5/10 缩放）
+        let children = math_line_children(r"$x_{y^z}$");
+        assert_eq!(children.len(), 2);
+        let sub = as_box(&children[1]);
+        assert_eq!(sub.children.len(), 2, "y + z 上标盒");
+        let z = &sub.children[1];
+        let zw = z.dimensions().width;
+        assert_eq!(zw, xn_over_d(1000 + b'z' as i64, 5, 10));
+    }
+
+    #[test]
+    fn math_display_formula() {
+        let main = typeset(r"$$x$$").unwrap();
+        assert_eq!(main.len(), 1);
+        let line = as_box(&main[0]);
+        assert_eq!(line.children.len(), 2, "x + parfillskip");
+        let cx = &line.children[0];
+        // 显示样式：不缩放（Display → 1,1）
+        assert_eq!(cx.dimensions().width, 1000 + b'x' as i64);
+    }
+
+    #[test]
+    fn math_display_requires_double_dollar_end() {
+        assert!(typeset(r"$$x$").is_err(), "显示数学必须以 $$ 结束");
+    }
+
+    #[test]
+    fn math_unclosed_formula_rejected() {
+        let err = typeset(r"$x").unwrap_err();
+        assert!(
+            err.to_string().contains("数学模式未闭合"),
+            "未闭合公式应报错：{err}"
+        );
+    }
+
+    #[test]
+    fn math_script_without_base_rejected() {
+        assert!(typeset(r"$^2$").is_err(), "^ 前缺原子应报错");
+        assert!(typeset(r"$_{2}$").is_err(), "_ 前缺原子应报错");
+    }
+
+    #[test]
+    fn math_double_superscript_rejected() {
+        assert!(typeset(r"$x^2^3$").is_err(), "双重上标应报错");
+    }
+
+    #[test]
+    fn math_empty_inline_is_fine() {
+        // 空行内公式 $ $ 不产生节点
+        let main = typeset(r"a $ $ b").unwrap();
+        let line = as_box(&main[0]);
+        let chars: Vec<u32> = line
+            .children
+            .iter()
+            .filter_map(|n| match n {
+                Node::Char { charcode, .. } => Some(*charcode),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(chars, vec![b'a' as u32, b'b' as u32]);
+    }
+
+    // ---------- M4-2 数学原语 ----------
+
+    /// 分式盒（`\over`/`\atop`）：vbox = [num 盒, glue, rule?, glue, den 盒]。
+    fn fraction_box(text: &str) -> (BoxNode, bool) {
+        let children = math_line_children(text);
+        assert_eq!(children.len(), 1, "分式应封装为单盒：{text:?}");
+        let b = as_box(&children[0]);
+        assert_eq!(b.kind, BoxKind::VBox, "分式是垂直堆叠");
+        let has_rule = b.children.iter().any(|n| matches!(n, Node::Rule { .. }));
+        (b.clone(), has_rule)
+    }
+
+    #[test]
+    fn math_fraction_over_builds_vbox() {
+        let (b, has_rule) = fraction_box(r"$a\over b$");
+        assert!(has_rule, "\\over 应画分式线");
+        // num 盒含 a、den 盒含 b
+        assert_eq!(b.children.len(), 5);
+        let num = as_box(&b.children[0]);
+        assert_eq!(as_char(&num.children[0]), b'a' as u32);
+        let den = as_box(&b.children[4]);
+        assert_eq!(as_char(&den.children[0]), b'b' as u32);
+    }
+
+    #[test]
+    fn math_atop_has_no_rule() {
+        let (_, has_rule) = fraction_box(r"$a\atop b$");
+        assert!(!has_rule, "\\atop 无线");
+    }
+
+    #[test]
+    fn math_fraction_in_group() {
+        let a = math_line_children(r"${a\over b}$");
+        let b = math_line_children(r"$a\over b$");
+        assert_eq!(a, b, "组内分式应并入外层");
+    }
+
+    #[test]
+    fn math_fraction_with_scripts_in_sup() {
+        // x^{a\over b}：上标字段内含分式
+        let children = math_line_children(r"$x^{a\over b}$");
+        assert_eq!(children.len(), 2);
+        let sup = as_box(&children[1]);
+        assert_eq!(sup.children.len(), 1, "上标字段 = 单个分式盒");
+        assert!(matches!(sup.children[0], Node::Box(_)), "上标内应为分式盒");
+        let frac = as_box(&sup.children[0]);
+        assert_eq!(frac.kind, BoxKind::VBox);
+        assert!(frac.children.iter().any(|n| matches!(n, Node::Rule { .. })));
+    }
+
+    #[test]
+    fn math_sqrt_radical_box() {
+        let children = math_line_children(r"$\sqrt{x}$");
+        assert_eq!(children.len(), 1);
+        let b = as_box(&children[0]);
+        assert_eq!(b.kind, BoxKind::VBox);
+        // [横线 rule, glue, 内容盒]
+        assert!(matches!(b.children[0], Node::Rule { .. }));
+        let base = as_box(&b.children[2]);
+        assert_eq!(as_char(&base.children[0]), b'x' as u32);
+    }
+
+    #[test]
+    fn math_sqrt_single_atom() {
+        let children = math_line_children(r"$\sqrt x$");
+        assert_eq!(children.len(), 1);
+        assert_eq!(as_box(&children[0]).kind, BoxKind::VBox);
+    }
+
+    #[test]
+    fn math_left_right_delimited() {
+        let children = math_line_children(r"$\left(x\right)$");
+        // 定界符 + body + 定界符
+        assert_eq!(children.len(), 3);
+        assert_eq!(as_char(&children[0]), b'(' as u32);
+        assert_eq!(as_char(&children[1]), b'x' as u32);
+        assert_eq!(as_char(&children[2]), b')' as u32);
+    }
+
+    #[test]
+    fn math_left_right_dot_empty_delims() {
+        let children = math_line_children(r"$\left.x\right.$");
+        assert_eq!(children.len(), 1, "空定界符不产生字符");
+        assert_eq!(as_char(&children[0]), b'x' as u32);
+    }
+
+    #[test]
+    fn math_style_affects_scale() {
+        let children = math_line_children(r"$x{\scriptstyle y}$");
+        assert_eq!(children.len(), 2);
+        // y 在 script 样式：宽度 7/10 × (1000+121)
+        assert_eq!(children[1].dimensions().width, xn_over_d(1121, 7, 10));
+    }
+
+    #[test]
+    fn math_bin_class_inserts_medskip() {
+        // 默认 `+` 是 Ord → 无间距；\mathbin+ → Bin → 两侧 medmuskip
+        // （fn 指针模式 quad=0 → 胶水宽 0，但 Glue 节点仍插入）
+        let plain = math_line_all_children(r"$a+b$");
+        let bin = math_line_all_children(r"$a\mathbin+b$");
+        assert_eq!(plain.len(), 3, "全 Ord 无胶水");
+        assert_eq!(bin.len(), 5, "\\mathbin+ 两侧插入 medmuskip 胶水");
+        assert!(matches!(bin[1], Node::Glue { .. }));
+        assert!(matches!(bin[3], Node::Glue { .. }));
+        // \mathbin{+} 组形式等价
+        let bin_group = math_line_all_children(r"$a\mathbin{+}b$");
+        assert_eq!(bin_group.len(), 5);
+        assert!(matches!(bin_group[1], Node::Glue { .. }));
+    }
+
+    #[test]
+    fn math_rel_class_inserts_thickmuskip() {
+        let rel = math_line_all_children(r"$a\mathrel=b$");
+        assert_eq!(rel.len(), 5, "ord+rel+ord → 两侧 thickmuskip");
+        assert!(matches!(rel[1], Node::Glue { .. }));
+        assert!(matches!(rel[3], Node::Glue { .. }));
+    }
+
+    #[test]
+    fn math_over_outside_math_rejected() {
+        assert!(typeset(r"a\over b").is_err(), "\\over 只能在数学模式");
+    }
+
+    #[test]
+    fn math_over_ambiguous_rejected() {
+        assert!(typeset(r"$a\over b\over c$").is_err(), "连续 \\over 应歧义报错");
+    }
+
+    #[test]
+    fn math_left_without_right_rejected() {
+        assert!(typeset(r"$\left(x$").is_err(), "\\left 必须配 \\right");
+    }
+
+    #[test]
+    fn math_right_without_left_rejected() {
+        assert!(typeset(r"$x\right)$").is_err(), "\\right 前必须有 \\left");
+    }
+
+    #[test]
+    fn math_over_empty_denominator_is_fine() {
+        // TeX 允许空分母：$a\over$ → 分式盒（只有分子）
+        let (_, has_rule) = fraction_box(r"$a\over$");
+        assert!(has_rule);
     }
 }

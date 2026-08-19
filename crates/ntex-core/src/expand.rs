@@ -100,6 +100,9 @@ enum CondOp {
     IfCase,
     IfTrue,
     IfFalse,
+    // e-TeX（M4-5）
+    IfDefined,
+    IfCsname,
     Else,
     Fi,
     Or,
@@ -117,6 +120,8 @@ impl CondOp {
             Primitive::IfCase => Self::IfCase,
             Primitive::IfTrue => Self::IfTrue,
             Primitive::IfFalse => Self::IfFalse,
+            Primitive::IfDefined => Self::IfDefined,
+            Primitive::IfCsname => Self::IfCsname,
             Primitive::Else => Self::Else,
             Primitive::Fi => Self::Fi,
             Primitive::Or => Self::Or,
@@ -255,6 +260,13 @@ pub struct Expander {
     write_streams: Vec<Option<WriteStream>>,
     /// `\immediate` 前缀（作用于下一个 write/openout/closeout）。
     immediate_pending: bool,
+    /// e-TeX（M4-5）：
+    /// `\protected` 前缀：下一个 `\def` 定义的宏标记 protected。
+    protected_pending: bool,
+    /// `\unless` 前缀：取反下一个条件的结果。
+    unless_pending: bool,
+    /// protected 宏抑制展开的上下文深度（>0：`\edef`/`\write`/`\detokenize` 等）。
+    suppress_expansion: usize,
 }
 
 impl Expander {
@@ -295,6 +307,9 @@ impl Expander {
             read_streams: Vec::new(),
             write_streams: Vec::new(),
             immediate_pending: false,
+            protected_pending: false,
+            unless_pending: false,
+            suppress_expansion: 0,
         };
         e.register_builtins();
         e
@@ -348,18 +363,21 @@ impl Expander {
             for csid in 0..eqtb.slots().len() as u32 {
                 // 先取出待编译的宏体，再重建 MacroDef（保留版本号）
                 let pending = match eqtb.slot(csid) {
-                    EqSlot::Macro(v) if v.value.code.is_none() => {
-                        Some((v.value.params.clone(), v.value.body.clone()))
-                    }
+                    EqSlot::Macro(v) if v.value.code.is_none() => Some((
+                        v.value.params.clone(),
+                        v.value.body.clone(),
+                        v.value.protected,
+                    )),
                     _ => None,
                 };
-                if let Some((params, body)) = pending {
+                if let Some((params, body, protected)) = pending {
                     let code = Arc::new(compile(&body, &eqtb));
                     if let EqSlot::Macro(v) = eqtb.slot_mut(csid) {
                         v.value = Arc::new(MacroDef {
                             params,
                             body,
                             code: Some(code),
+                            protected,
                         });
                     }
                 }
@@ -521,6 +539,12 @@ impl Expander {
                         "寄存器/流引用不能直接使用（需在数字/尺寸扫描上下文中）",
                     )),
                     EqSlot::Macro(m) => {
+                        // e-TeX（M4-5）：protected 宏在展开抑制上下文（\edef/\write 等）
+                        // 不展开，原样输出。
+                        if m.value.protected && self.suppress_expansion > 0 {
+                            self.sink.token(Token::control_sequence(csid))?;
+                            return Ok(());
+                        }
                         let def = m.value.clone();
                         let args = if def.params.num_params > 0 {
                             self.collect_args(&def)?
@@ -550,6 +574,12 @@ impl Expander {
                 }
             }
             TokenKind::Char => {
+                // 数学移位（$，cat 3）：peek 下一个 token 判定 `$$`（显示数学），
+                // 交给 sink 按自身模式决定进出（M4-1）。
+                if tok.catcode() == Some(Catcode::MathShift) {
+                    let display = self.next_is_math_shift()?;
+                    return self.sink.math_shift(display);
+                }
                 // 组定界符（cat 1/2）在主流层建立/结束组（M1-11）
                 match tok.catcode() {
                     Some(Catcode::BeginGroup) => self.begin_group(),
@@ -562,6 +592,23 @@ impl Expander {
     }
 
     // ---------- 输入获取 ----------
+
+    /// 探测下一个 token 是否为数学移位（`$$` 检测）：
+    /// 是 → 消费该 `$`（连续 `$$` 由 sink 一并处理，不放回）；
+    /// 否 → 放回（不消费）。输入耗尽返回 false。
+    fn next_is_math_shift(&mut self) -> Result<bool> {
+        let Some((tok, ne)) = self.fetch()? else {
+            return Ok(false);
+        };
+        let is = tok.catcode() == Some(Catcode::MathShift);
+        if !is {
+            self.stack.push(InputFrame::TokenList {
+                items: Arc::from([(tok, ne)]),
+                pos: 0,
+            });
+        }
+        Ok(is)
+    }
 
     /// 取下一个 token；返回 `(token, noexpand)`。输入耗尽或越过读取下限返回 None。
     fn fetch(&mut self) -> Result<Option<(Token, bool)>> {
@@ -925,6 +972,83 @@ impl Expander {
                 self.immediate_pending = true;
                 Ok(())
             }
+            // M4-2 数学原语：直通 sink（排版器解释；delimiter 参数在 VM 侧扫描）
+            Primitive::DisplayStyle => self.sink.math_style(0),
+            Primitive::TextStyle => self.sink.math_style(1),
+            Primitive::ScriptStyle => self.sink.math_style(2),
+            Primitive::ScriptScriptStyle => self.sink.math_style(3),
+            Primitive::Over => self.sink.math_fraction(None),
+            Primitive::Atop => self.sink.math_fraction(Some(0)),
+            Primitive::Left => {
+                let d = self.scan_delimiter()?;
+                self.sink.math_left(d)
+            }
+            Primitive::Right => {
+                let d = self.scan_delimiter()?;
+                self.sink.math_right(d)
+            }
+            Primitive::Sqrt => self.sink.math_sqrt(),
+            Primitive::MathOrd => self.sink.math_class(0),
+            Primitive::MathBin => self.sink.math_class(1),
+            Primitive::MathOp => self.sink.math_class(2),
+            Primitive::MathRel => self.sink.math_class(3),
+            Primitive::MathOpen => self.sink.math_class(4),
+            Primitive::MathClose => self.sink.math_class(5),
+            Primitive::MathPunct => self.sink.math_class(6),
+            Primitive::MathInner => self.sink.math_class(7),
+            Primitive::Nonscript => self.sink.primitive(prim),
+            // M4-5 e-TeX 展开扩展
+            Primitive::Protected => {
+                self.protected_pending = true;
+                Ok(())
+            }
+            Primitive::Unless => {
+                self.unless_pending = true;
+                Ok(())
+            }
+            // 条件原语由 process_one 拦截
+            Primitive::IfDefined | Primitive::IfCsname => {
+                Err(Error::internal("条件原语不应到达 exec_primitive"))
+            }
+            Primitive::NumExpr => {
+                let v = self.eval_int_expression()?;
+                self.emit_tokens(emit_count(v))
+            }
+            Primitive::Detokenize => self.exec_detokenize(),
+            Primitive::Unexpanded => self.exec_unexpanded(),
+            // 内部量：仅 \the 上下文读取（the_tokens 处理）
+            Primitive::ETeXVersion | Primitive::ETeXRevision => {
+                Err(Error::invalid_input("\\eTeXversion/\\eTeXrevision 需经 \\the 读取"))
+            }
+        }
+    }
+
+    /// `\left`/`\right` 的定界符参数：字符 → charcode（`.` 为空定界符）；`\.` → None。
+    fn scan_delimiter(&mut self) -> Result<Option<u32>> {
+        self.skip_spaces()?;
+        let (tok, _) = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input("\\left/\\right 后缺少定界符"))?;
+        match tok.kind() {
+            TokenKind::Char => {
+                let ch = tok.charcode().expect("Char 必有 charcode");
+                if ch == b'.' as u32 {
+                    Ok(None) // \left.：空定界符
+                } else {
+                    Ok(Some(ch))
+                }
+            }
+            TokenKind::ControlSeq => {
+                let name = self.intern.name(tok.csid().expect("ControlSeq 必有 csid"));
+                if name == "." {
+                    Ok(None)
+                } else {
+                    Err(Error::invalid_input(format!(
+                        "\\left/\\right 定界符暂不支持 \\{name}"
+                    )))
+                }
+            }
+            _ => Err(Error::invalid_input("\\left/\\right 后必须是定界符")),
         }
     }
 
@@ -1197,6 +1321,7 @@ impl Expander {
             },
             body: Arc::from(toks),
             code: None,
+            protected: false,
         };
         self.define_macro_scoped(csid, def);
         Ok(())
@@ -1321,11 +1446,8 @@ impl Expander {
                         .ok_or_else(|| Error::invalid_input("\\write 输出含非法字符"))?;
                     s.push(ch);
                 }
-                _ => {
-                    return Err(Error::invalid_input(
-                        "\\write 输出含不可展开的 token（宏/原语泄漏）",
-                    ));
-                }
+                // 不可转字符的 token（\protected 宏、原语等）：TeX 语义为丢弃（不写内容）
+                _ => {}
             }
         }
         Ok(s)
@@ -1456,6 +1578,8 @@ impl Expander {
             Arc::from(body_raw)
         };
 
+        // e-TeX（M4-5）：`\protected` 前缀标记宏（`\edef`/`\write` 等上下文不展开）
+        let protected = std::mem::take(&mut self.protected_pending);
         let mut def = MacroDef {
             params: ParamSpec {
                 num_params,
@@ -1464,6 +1588,7 @@ impl Expander {
             },
             body,
             code: None,
+            protected,
         };
         // M2：编译期预编译字节码（常量条件折叠等），解释器轨道不编译
         if self.use_bytecode {
@@ -1554,27 +1679,27 @@ impl Expander {
         let depth = self.stack.len();
         let cond_depth = self.cond_stack.len();
         self.read_floor = depth;
+        // e-TeX（M4-5）：\edef/\write 等展开上下文抑制 protected 宏展开
+        self.suppress_expansion += 1;
         // 区域输出重定向到临时 VecSink（M3-2：sink 替代 output 字段）
         let saved = std::mem::replace(&mut self.sink, Box::new(VecSink::default()));
-
-        let items: Vec<(Token, bool)> = tokens.into_iter().map(|t| (t, false)).collect();
-        self.stack.push(InputFrame::TokenList {
-            items: Arc::from(items),
-            pos: 0,
-        });
-        while self.process_one()? {}
-
-        if self.cond_stack.len() != cond_depth {
-            self.sink = saved;
-            self.read_floor = saved_floor;
-            return Err(Error::invalid_input("条件未闭合（缺少 \\fi）"));
-        }
-        let temp = std::mem::replace(&mut self.sink, saved);
-        let result = temp
-            .take_tokens()
-            .expect("expand_region 安装了 VecSink");
+        let outcome = (|| -> Result<Vec<Token>> {
+            let items: Vec<(Token, bool)> = tokens.into_iter().map(|t| (t, false)).collect();
+            self.stack.push(InputFrame::TokenList {
+                items: Arc::from(items),
+                pos: 0,
+            });
+            while self.process_one()? {}
+            if self.cond_stack.len() != cond_depth {
+                return Err(Error::invalid_input("条件未闭合（缺少 \\fi）"));
+            }
+            let temp = std::mem::replace(&mut self.sink, saved);
+            Ok(temp.take_tokens().expect("expand_region 安装了 VecSink"))
+        })();
+        // 统一恢复（错误路径下 sink 保持区域 VecSink，引擎随之终止）
+        self.suppress_expansion -= 1;
         self.read_floor = saved_floor;
-        Ok(result)
+        outcome
     }
 
     /// `\let\cs<token>`：cs 别名到控制序列或等价于字符。
@@ -1774,6 +1899,12 @@ impl Expander {
         if let Some(csid) = self.peek_csid()? {
             let slot = self.eqtb.slot(csid).clone();
             match slot {
+                // e-TeX（M4-5）：\numexpr 可在任意整数上下文求值
+                EqSlot::Primitive(Primitive::NumExpr) => {
+                    self.fetch()?; // 消费 \numexpr
+                    let v = self.eval_int_expression()?;
+                    return Ok(if neg { -v } else { v });
+                }
                 EqSlot::Register(RegKind::Count, idx) => {
                     self.fetch()?; // 消费 cs
                     let v = self.registers.count(idx);
@@ -1841,6 +1972,111 @@ impl Expander {
         }
     }
 
+    // ---------- M4-5 e-TeX 展开扩展 ----------
+
+    /// 把 token 序列压入输入流（可展开项将被展开）。
+    fn emit_tokens(&mut self, tokens: Vec<Token>) -> Result<()> {
+        let items: Vec<(Token, bool)> = tokens.into_iter().map(|t| (t, false)).collect();
+        self.stack.push(InputFrame::TokenList {
+            items: Arc::from(items),
+            pos: 0,
+        });
+        Ok(())
+    }
+
+    /// `\numexpr` 整数表达式求值：`expr := term (('+'|'-') term)*`、
+    /// `term := factor (('*'|'/') factor)*`（TeX：* / 优先，左结合，截断除法）。
+    /// 以 `\relax` 或不可识别 token 结束（后者放回）。
+    fn eval_int_expression(&mut self) -> Result<i64> {
+        let mut value = self.expr_mul_term()?;
+        loop {
+            let Some(op) = self.peek_int_op()? else { break };
+            if op != b'+' && op != b'-' {
+                self.unread(Token::char(Catcode::Other, op as u32));
+                break;
+            }
+            let rhs = self.expr_mul_term()?;
+            value = if op == b'+' { value + rhs } else { value - rhs };
+        }
+        Ok(value)
+    }
+
+    /// 乘法项：`factor (('*'|'/') factor)*`。
+    fn expr_mul_term(&mut self) -> Result<i64> {
+        let mut value = self.scan_number()?;
+        loop {
+            let Some(op) = self.peek_int_op()? else { break };
+            if op != b'*' && op != b'/' {
+                self.unread(Token::char(Catcode::Other, op as u32));
+                break;
+            }
+            let rhs = self.scan_number()?;
+            value = if op == b'*' { value * rhs } else { value / rhs };
+        }
+        Ok(value)
+    }
+
+    /// 取下一个整数运算符（`+ - * /`）或 `\relax`（结束符，吸收）；其余 token 放回。
+    fn peek_int_op(&mut self) -> Result<Option<u8>> {
+        let Some((tok, _)) = self.fetch()? else { return Ok(None) };
+        if tok.csid().is_some_and(|id| self.intern.name(id) == "relax") {
+            return Ok(None); // \relax 吸收
+        }
+        if tok.catcode() == Some(Catcode::Other) {
+            if let Some(ch) = tok.charcode() {
+                if matches!(ch, 0x2B | 0x2D | 0x2A | 0x2F) {
+                    // + - * /
+                    return Ok(Some(ch as u8));
+                }
+            }
+        }
+        self.unread(tok);
+        Ok(None)
+    }
+
+    /// `\detokenize{...}`：组内容转字符 token 流（字符 catcode 12、空格 10、
+    /// 控制序列 → `\名字` 文本），作为输入继续处理。
+    fn exec_detokenize(&mut self) -> Result<()> {
+        let toks = self.scan_group_contents()?;
+        let mut out = Vec::new();
+        for t in toks {
+            detokenize_token(t, &self.intern, &mut out);
+        }
+        self.emit_tokens(out)
+    }
+
+    /// `\unexpanded{...}`：组内容作为 noexpand token 流输出（不展开、保留 catcode）。
+    fn exec_unexpanded(&mut self) -> Result<()> {
+        let toks = self.scan_group_contents()?;
+        let items: Vec<(Token, bool)> = toks.into_iter().map(|t| (t, true)).collect();
+        self.stack.push(InputFrame::TokenList {
+            items: Arc::from(items),
+            pos: 0,
+        });
+        Ok(())
+    }
+
+    /// `\csname` 名字扫描（`\ifcsname` 用）：收集直到 `\endcsname` 的名字字符。
+    fn scan_csname(&mut self) -> Result<String> {
+        let mut name = String::new();
+        loop {
+            let tok = self
+                .fetch()?
+                .ok_or_else(|| Error::invalid_input("\\csname 未闭合（缺少 \\endcsname）"))?
+                .0;
+            if let Some(csid) = tok.csid() {
+                if self.intern.name(csid) == "endcsname" {
+                    break;
+                }
+                return Err(Error::invalid_input("\\csname 名字中含控制序列"));
+            }
+            if let Some(ch) = tok.charcode().and_then(char::from_u32) {
+                name.push(ch);
+            }
+        }
+        Ok(name)
+    }
+
     /// 期望赋值符 `=`（允许前后空格）。
     fn expect_equals(&mut self) -> Result<()> {
         self.skip_spaces()?;
@@ -1856,7 +2092,7 @@ impl Expander {
 
     /// 注册 M1 内建原语。
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 69] = [
+        const BUILTINS: [(&str, Primitive); 96] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -1939,6 +2175,35 @@ impl Expander {
             ("closeout", Primitive::CloseOut),
             ("write", Primitive::Write),
             ("immediate", Primitive::Immediate),
+            // M4-2 数学原语
+            ("displaystyle", Primitive::DisplayStyle),
+            ("textstyle", Primitive::TextStyle),
+            ("scriptstyle", Primitive::ScriptStyle),
+            ("scriptscriptstyle", Primitive::ScriptScriptStyle),
+            ("over", Primitive::Over),
+            ("atop", Primitive::Atop),
+            ("left", Primitive::Left),
+            ("right", Primitive::Right),
+            ("sqrt", Primitive::Sqrt),
+            ("mathord", Primitive::MathOrd),
+            ("mathbin", Primitive::MathBin),
+            ("mathop", Primitive::MathOp),
+            ("mathrel", Primitive::MathRel),
+            ("mathopen", Primitive::MathOpen),
+            ("mathclose", Primitive::MathClose),
+            ("mathpunct", Primitive::MathPunct),
+            ("mathinner", Primitive::MathInner),
+            ("nonscript", Primitive::Nonscript),
+            // M4-5 e-TeX 展开扩展
+            ("protected", Primitive::Protected),
+            ("ifdefined", Primitive::IfDefined),
+            ("ifcsname", Primitive::IfCsname),
+            ("unless", Primitive::Unless),
+            ("numexpr", Primitive::NumExpr),
+            ("detokenize", Primitive::Detokenize),
+            ("unexpanded", Primitive::Unexpanded),
+            ("eTeXversion", Primitive::ETeXVersion),
+            ("eTeXrevision", Primitive::ETeXRevision),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);
@@ -2231,6 +2496,10 @@ impl Expander {
                         ParamValue::Number(v) => emit_count(v),
                     })
                 }
+                // M4-5 e-TeX：\numexpr 表达式、\eTeXversion/\eTeXrevision
+                Primitive::NumExpr => Ok(emit_count(self.eval_int_expression()?)),
+                Primitive::ETeXVersion => Ok(emit_count(2)),
+                Primitive::ETeXRevision => Ok(vec![Token::char(Catcode::Other, b'2' as u32)]),
                 _ => Err(Error::invalid_input(
                     "\\the 只支持 \\count\\dimen\\skip\\toks 与内部参数",
                 )),
@@ -2419,7 +2688,9 @@ impl Expander {
             | CondOp::IfX
             | CondOp::IfOdd
             | CondOp::IfTrue
-            | CondOp::IfFalse => {
+            | CondOp::IfFalse
+            | CondOp::IfDefined
+            | CondOp::IfCsname => {
                 if self.is_skipping() {
                     // 惰性：不评估测试，仅计数（未走的分支中的宏不被展开）
                     self.cond_stack.push(CondFrame {
@@ -2431,7 +2702,12 @@ impl Expander {
                     });
                     return Ok(());
                 }
-                let truth = self.evaluate_if(op)?;
+                let mut truth = self.evaluate_if(op)?;
+                // e-TeX（M4-5）：`\unless` 取反下一个条件
+                if self.unless_pending {
+                    self.unless_pending = false;
+                    truth = !truth;
+                }
                 self.cond_stack.push(CondFrame {
                     is_case: false,
                     state: if truth {
@@ -2529,6 +2805,27 @@ impl Expander {
                 Ok(compare(a, b, rel))
             }
             CondOp::IfOdd => Ok(self.scan_number()? % 2 != 0),
+            // e-TeX（M4-5）
+            CondOp::IfDefined => {
+                let tok = self
+                    .fetch()?
+                    .ok_or_else(|| Error::invalid_input("\\ifdefined 缺操作数"))?
+                    .0;
+                match tok.kind() {
+                    TokenKind::ControlSeq => {
+                        let csid = tok.csid().expect("ControlSeq 必有 csid");
+                        Ok(!matches!(self.eqtb.slot(csid), EqSlot::Undefined))
+                    }
+                    _ => Ok(false),
+                }
+            }
+            CondOp::IfCsname => {
+                let name = self.scan_csname()?;
+                Ok(matches!(
+                    self.intern.lookup(&name),
+                    Some(id) if !matches!(self.eqtb.slot(id), EqSlot::Undefined)
+                ))
+            }
             CondOp::IfCase | CondOp::Else | CondOp::Fi | CondOp::Or => {
                 unreachable!("step_conditional 已分流")
             }
@@ -2825,6 +3122,39 @@ fn compare(a: i64, b: i64, rel: Relation) -> bool {
         Relation::Lt => a < b,
         Relation::Eq => a == b,
         Relation::Gt => a > b,
+    }
+}
+
+/// `\detokenize` 单 token 转换：字符 → catcode 12（空格 10）；控制序列 → `\名字`。
+/// e-TeX：控制词（名字以字母开头）后补一个空格分隔符（TeX `\detokenize{a\relax b}`
+/// 输出 "a\relax b"——控制词后的空格 token 已被扫描吞掉）。
+fn detokenize_token(tok: Token, intern: &InternTable, out: &mut Vec<Token>) {
+    match tok.kind() {
+        TokenKind::Char => {
+            let ch = tok.charcode().expect("Char 必有 charcode");
+            let cat = if ch == b' ' as u32 {
+                Catcode::Space
+            } else {
+                Catcode::Other
+            };
+            out.push(Token::char(cat, ch));
+        }
+        TokenKind::ControlSeq => {
+            let name = intern.name(tok.csid().expect("ControlSeq 必有 csid"));
+            out.push(Token::char(Catcode::Other, u32::from(b'\\')));
+            for b in name.bytes() {
+                out.push(Token::char(Catcode::Other, u32::from(b)));
+            }
+            if name.bytes().next().is_some_and(|c| c.is_ascii_alphabetic()) {
+                out.push(Token::char(Catcode::Space, u32::from(b' ')));
+            }
+        }
+        TokenKind::MacroParam => {
+            let n = tok.param_number().unwrap_or(0);
+            out.push(Token::char(Catcode::Other, u32::from(b'#')));
+            out.push(Token::char(Catcode::Other, u32::from(b'0' + n)));
+        }
+        TokenKind::EndGroup => out.push(Token::char(Catcode::Other, u32::from(b'}'))),
     }
 }
 
@@ -3369,7 +3699,7 @@ mod tests {
     // ---------- M3 收尾（RFC-3）：VFS 副作用原语 ----------
 
     /// 运行源码（MemVfs 后端），返回 (输出字符串, VFS)。副作用用例不跑双轨。
-    fn expand_vfs(src: &str, mut vfs: MemVfs) -> Result<(String, MemVfs)> {
+    fn expand_vfs(src: &str, vfs: MemVfs) -> Result<(String, MemVfs)> {
         let mut e = Expander::new();
         e.set_vfs(Box::new(vfs));
         e.run_source(src)?;
@@ -3484,5 +3814,122 @@ mod tests {
     fn write18_shell_escape_rejected() {
         let vfs = MemVfs::new();
         assert!(expand_vfs("\\write18{echo hi}\\end", vfs).is_err());
+    }
+
+    // ---------- M4-5 e-TeX 展开扩展 ----------
+
+    #[test]
+    fn protected_macro_not_expanded_in_edef() {
+        // \protected\def\foo{Hi} → \edef\x{\foo} 时 \foo 不展开，\x = \foo
+        let out = expand(r"\protected\def\foo{Hi}\edef\x{\foo}\expandafter\detokenize\expandafter{\x}")
+            .unwrap();
+        assert_eq!(out, r"\foo ", "宏 x 应保留 \\foo（detokenize 控制词后补空格）而非展开为 Hi");
+    }
+
+    #[test]
+    fn unprotected_macro_expands_in_edef() {
+        let out = expand(r"\def\foo{Hi}\edef\x{\foo}\expandafter\detokenize\expandafter{\x}").unwrap();
+        assert_eq!(out, "Hi");
+    }
+
+    #[test]
+    fn protected_macro_not_expanded_in_write() {
+        // \write 参数展开抑制 protected 宏：\foo 不展开，输出为空（TeX 语义丢弃）
+        let mut vfs = MemVfs::new();
+        let (_, vfs) = expand_vfs(
+            r"\protected\def\foo{Hi}\newwrite\w\openout\w=out.txt\write\w{\foo}\closeout\w",
+            vfs,
+        )
+        .unwrap();
+        assert_eq!(
+            vfs.get("out.txt").map(|b| String::from_utf8_lossy(b).into_owned()),
+            Some("\n".to_owned()),
+            "protected 宏不展开 → 写空行（TeX 语义）"
+        );
+    }
+
+    #[test]
+    fn protected_macro_still_expands_normally() {
+        // 正常展开（非抑制上下文）不受影响
+        assert_eq!(expand(r"\protected\def\foo{Hi}\foo").unwrap(), "Hi");
+    }
+
+    #[test]
+    fn ifdefined_true_and_false() {
+        assert_eq!(
+            expand(r"\ifdefined\relax yes\else no\fi").unwrap(),
+            "yes"
+        );
+        assert_eq!(
+            expand(r"\ifdefined\neverdefinedcs123 yes\else no\fi").unwrap(),
+            "no"
+        );
+    }
+
+    #[test]
+    fn ifcsname_true_and_false() {
+        assert_eq!(
+            expand(r"\ifcsname relax\endcsname yes\else no\fi").unwrap(),
+            "yes"
+        );
+        assert_eq!(
+            expand(r"\ifcsname neverdefinedxyz\endcsname yes\else no\fi").unwrap(),
+            "no"
+        );
+    }
+
+    #[test]
+    fn unless_reverses_condition() {
+        assert_eq!(expand(r"\unless\iftrue yes\else no\fi").unwrap(), "no");
+        assert_eq!(expand(r"\unless\iffalse yes\else no\fi").unwrap(), "yes");
+    }
+
+    #[test]
+    fn numexpr_basic_arithmetic() {
+        assert_eq!(expand(r"\the\numexpr 2+3*4 \relax").unwrap(), "14");
+        assert_eq!(expand(r"\the\numexpr 10/3 \relax").unwrap(), "3");
+        assert_eq!(expand(r"\the\numexpr 20-7 \relax").unwrap(), "13");
+    }
+
+    #[test]
+    fn numexpr_with_register() {
+        assert_eq!(
+            expand(r"\count0=7\the\numexpr \count0*2 \relax").unwrap(),
+            "14"
+        );
+    }
+
+    #[test]
+    fn numexpr_in_ifnum() {
+        assert_eq!(
+            expand(r"\ifnum\numexpr 2*3 \relax > 5 yes\else no\fi").unwrap(),
+            "yes"
+        );
+    }
+
+    #[test]
+    fn detokenize_converts_to_character_tokens() {
+        assert_eq!(expand(r"\detokenize{abc}").unwrap(), "abc");
+        // 控制序列 → \名字 文本
+        assert_eq!(
+            expand(r"\detokenize{a\relax b}").unwrap(),
+            r"a\relax b"
+        );
+    }
+
+    #[test]
+    fn unexpanded_in_edef_keeps_tokens() {
+        // \unexpanded{\foo} 在 \edef 里不展开 → \x = \foo
+        let out = expand(
+            r"\def\foo{Hi}\edef\x{\unexpanded{\foo}}\expandafter\detokenize\expandafter{\x}",
+        )
+        .unwrap();
+        assert_eq!(out, r"\foo ");
+    }
+
+    #[test]
+    fn eTeXversion_and_revision() {
+        assert_eq!(expand(r"\the\eTeXversion").unwrap(), "2");
+        assert_eq!(expand(r"\the\eTeXrevision").unwrap(), "2");
     }
 }

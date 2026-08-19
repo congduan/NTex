@@ -203,6 +203,7 @@ fn write_slot(w: &mut impl Write, slot: &EqSlot) -> io::Result<()> {
             let def: &MacroDef = &v.value;
             w.write_all(&[def.params.num_params])?;
             w.write_all(&[def.params.long as u8])?;
+            w.write_all(&[def.protected as u8])?; // e-TeX \protected（M4-5）
             match &def.params.delimiter {
                 Some(d) => {
                     w.write_all(&[1])?;
@@ -254,6 +255,7 @@ fn read_slot(r: &mut impl Read) -> io::Result<EqSlot> {
             let version = Version::from_raw(read_u64(r)?);
             let num_params = read_u8(r)?;
             let long = read_u8(r)? != 0;
+            let protected = read_u8(r)? != 0; // e-TeX \protected（M4-5）
             let delimiter = match read_u8(r)? {
                 0 => None,
                 1 => Some(ntex_core::macrodef::TokenArray::from(read_tokens(r)?)),
@@ -269,6 +271,7 @@ fn read_slot(r: &mut impl Read) -> io::Result<EqSlot> {
                     },
                     body,
                     code: None,
+                    protected,
                 }),
                 version,
             }))

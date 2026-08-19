@@ -11,9 +11,10 @@
 | M1 展开内核 | 🟡 核心完成：M1-1~7、M1-9~11 已实现（95 用例）；M1-8 分隔参数、M1-13 错误模型、**M1-14 TRIP 冲刺** 待补 |
 | M2 字节码 | 🟡 双轨完成：定长 u64 IR + 编译器 + 解释器等价验证（100 用例）；**吞吐 1.12x 未达 2x 目标**，M2-5 arena 未做 |
 | M3 排版核心 | ✅ M3-1~M3-4 完成（58+ 用例）；**M3-5 DVI 写出 + `\shipout` + 断页 DP + lig/kern + `\sfcode` + `\output` 例程/box255** 完成（dvipdfmx 验收 + 与 TeX 差分对照）；**RFC-3 VFS + 副作用模型落地**（10 原语走 `ntex-io` VFS，延迟写入 shipout 边界提交）；**`.fmt` v1 内存快照**（`ntex-format` 确定性编码 + roundtrip） |
+| M4 数学 + e-TeX | 🟡 M4-1/2/5 完成：数学模式状态机（`$`/`$$`、8 类原子、spacing 表、上下标、字阶）、分式/根式/定界符、样式原语、e-TeX 核心（`\protected`/`\ifdefined`/`\ifcsname`/`\unless`/`\numexpr`/`\detokenize`/`\unexpanded`/`\eTeXversion`）；**fontdimen/字体族、断字、错误模型待补（ETRIP 冲刺）** |
 | 输出端 | 🟢 正式 PDF 后端可用（`ntex-pdf`：DVI → PDF 直出 + Type1 嵌入，替换临时 Helvetica 切片；demo 两页与 dvipdfmx 渲染一致） |
 
-**下一步**：M4 数学 + e-TeX（数学模式全规则、分式/根式、字号层级、e-TeX 扩展）。
+**下一步**：M4 收尾（fontdimen 数学参数 + `\textfont` 族、显示数学细化、Liang 断字、错误模型），然后 ETRIP 冲刺。
 
 ---
 
@@ -260,15 +261,24 @@
 
 **目标**：ETRIP 通过。
 
-- [ ] 数学模式全规则：8 类原子 + spacing 表 + 上下标（脚本分层）
-- [ ] 分式/根式/矩阵/括号伸缩（delimiter 变体）
-- [ ] `\displaystyle`/`\textstyle`/字号层级（font size 阶梯）
-- [ ] 数学字体参数表（fontdimen）
-- [ ] e-TeX 扩展：`\protected`、`\ifdefined`、`\numexpr`/`\dimexpr`、`\detokenize` 等
+- [x] 数学模式全规则：8 类原子 + spacing 表 + 上下标（脚本分层）
+      —— M4-1/2 落地：`Mode::Math/DisplayMath`、`$`/`$$` 进出（expand peek 判定）、
+      8 类原子 + 附录 G spacing 表、`^`/`_` 脚本（脚本字段组）、字阶缩放（text/script/scriptscript）
+- [x] 分式/根式/括号伸缩（delimiter 变体）
+      —— `\over`/`\atop`（组内/脚本内/`\left...\right` 内收尾）、`\sqrt`、`\left.\right.` 定界符；
+      **矩阵未做**
+- [x] `\displaystyle`/`\textstyle`/字号层级（font size 阶梯）
+      —— 4 样式原语 + 字阶比例缩放（10/7/5pt）；**真实 scriptfont 待 M4-3**
+- [ ] 数学字体参数表（fontdimen）+ 数学字体族（`\textfont` 等）
+- [x] e-TeX 展开扩展（核心）：`\protected`（\edef/\write 抑制 + .fmt 保留）、
+      `\ifdefined`/`\ifcsname`/`\unless`、`\numexpr`（\the/\ifnum/任意整数上下文）、
+      `\detokenize`（控制词补空格）、`\unexpanded`、`\eTeXversion`/`\eTeXrevision`
+      —— `\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens` 待补
 - [ ] Liang 断字算法 + `\patterns` 语言包
 - [ ] 错误模型补全（数学相关错误信息）
 
 **验收**：**ETRIP 全绿**；含数学的文档差分一致。
+**进度**：M4-1/2/5 已完成（13 + 16 + 14 用例）；M4-3（fontdimen/字体族）、M4-4（显示数学细化）、M4-6（断字）、M4-7（错误模型）待做。
 
 ---
 

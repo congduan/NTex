@@ -31,6 +31,8 @@ pub struct MacroDef {
     pub body: TokenArray,
     /// 预编译字节码（解释器轨道为 `None`）。
     pub code: Option<Arc<Bytecode>>,
+    /// e-TeX `\protected`：在 `\edef`/`\write`/`\detokenize` 等展开上下文不展开。
+    pub protected: bool,
 }
 
 impl PartialEq for MacroDef {
@@ -58,6 +60,7 @@ mod tests {
             },
             body: body.clone(),
             code: None,
+            protected: false,
         };
         assert_eq!(def.params.num_params, 1);
         assert!(def.params.long);
@@ -78,6 +81,7 @@ mod tests {
             },
             body: body.clone(),
             code: Some(Arc::new(Bytecode::default())),
+            protected: false,
         };
         let b = MacroDef {
             params: ParamSpec {
@@ -87,6 +91,7 @@ mod tests {
             },
             body,
             code: None,
+            protected: false,
         };
         assert_eq!(a, b, "\\ifx 语义不应受编译产物影响");
     }
