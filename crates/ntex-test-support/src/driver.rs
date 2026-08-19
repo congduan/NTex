@@ -5,6 +5,7 @@
 //! 这使得引擎本体接入时零改动工具逻辑。
 
 use std::fmt;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -204,17 +205,95 @@ fn collect_artifacts(dir: &Path, extensions: &[&str]) -> Result<Vec<PathBuf>> {
     Ok(found)
 }
 
+/// 本引擎驱动：in-process 运行 [`ntex_layout::Typesetter`]，把引擎转录
+/// （版本横幅 + 运行结果/首个错误）写入 `.log`/`.typ` 产物。
+///
+/// TRIP/ETRIP 需要逐 token 转录（`\show`/`\message`/错误上下文与恢复）——
+/// 引擎目前是"首个错误即停"，本驱动先跑通管线、让 diff 展示引擎停在哪、
+/// 差多远，随后按 diff 迭代补齐转录能力。
+#[derive(Debug, Clone)]
+pub struct NtexDriver {
+    pub name: String,
+}
+
+impl Default for NtexDriver {
+    fn default() -> Self {
+        Self {
+            name: "ntex".to_owned(),
+        }
+    }
+}
+
+impl EngineDriver for NtexDriver {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn run(&self, request: &RunRequest) -> Result<RunOutput> {
+        let source = std::fs::read(&request.source)
+            .with_context(|| format!("读取源文件失败：{}", request.source.display()))?;
+        let base = request
+            .source
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("input")
+            .to_owned();
+
+        let mut log = String::new();
+        log.push_str("This is NTex, Version 0.1.0 (TRIP/ETRIP pipeline v1)\n");
+        log.push_str(&format!("(input: {})\n", request.source.display()));
+
+        let mut ts = ntex_layout::Typesetter::new();
+        let run = ts.typeset_bytes(source);
+        let (status, produced) = match run {
+            Ok(_) => {
+                log.push_str("Engine: run completed.\n");
+                (
+                    DriverStatus::Success,
+                    vec![format!("{base}.log"), format!("{base}.typ")],
+                )
+            }
+            Err(e) => {
+                log.push_str(&format!("Engine error: {e}\n"));
+                // 首个错误即停：产物保留以便 diff 展示差距；状态标记失败
+                (
+                    DriverStatus::Failure { code: None },
+                    vec![format!("{base}.log"), format!("{base}.typ")],
+                )
+            }
+        };
+
+        fs::write(request.working_dir.join(format!("{base}.log")), &log)
+            .with_context(|| "写入 .log 产物失败")?;
+        // .typ（终端输出转录）待引擎转录能力就绪后填充
+        fs::write(request.working_dir.join(format!("{base}.typ")), "")
+            .with_context(|| "写入 .typ 产物失败")?;
+
+        Ok(RunOutput {
+            status,
+            produced: produced
+                .into_iter()
+                .map(|f| request.working_dir.join(f))
+                .collect(),
+        })
+    }
+}
+
 /// 从 CLI 规格字符串构造驱动：
 /// - `stub` → 占位驱动
+/// - `ntex` → 本引擎驱动（in-process Typesetter）
 /// - `pdflatex` / `external=pdflatex` → 外部驱动
 pub fn build_driver(spec: &str) -> Result<Box<dyn EngineDriver>> {
     let spec = spec.trim();
     if spec == "stub" {
         return Ok(Box::<StubDriver>::default());
     }
+    if spec == "ntex" {
+        return Ok(Box::<NtexDriver>::default());
+    }
     let program = spec.strip_prefix("external=").unwrap_or(spec);
     if program.is_empty() {
-        anyhow::bail!("驱动规格无效：{spec:?}（应为 stub 或程序名）");
+        anyhow::bail!("驱动规格无效：{spec:?}（应为 stub、ntex 或程序名）");
     }
     Ok(Box::new(ExternalDriver::new(program)))
 }

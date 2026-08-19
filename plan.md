@@ -62,6 +62,10 @@
   - [x] 每千 token 展开吞吐（对照 pdfTeX 基线）
   - [ ] 增量场景：改 1 字 → 重算耗时（M5 前未建）
 - [x] TRIP/ETRIP 测试框架：自动跑 `\input trip` 并 diff 输出（框架就绪，trip 全绿待 M1-14）
+      —— **ETRIP 冲刺管线已跑通**：fixtures 获取（CTAN knuth dist + TeX Live 镜像，
+      `scripts/fetch-trip-fixtures.sh`）+ harness 泛化（`ntex-trip --test trip|etrip|both`）+
+      **ntex 引擎驱动**（in-process Typesetter，产出 .log/.typ，首个错误即停）；
+      首次实跑：TRIP/ETRIP 均在首个未支持构造处停下（错误上下文/转录能力待补）
 - [x] 差分测试工具：同一 .tex 分别跑 pdfTeX/XeTeX 与本引擎，diff DVI/log
 - [x] **设计文档（RFC）先行**，评审通过再编码：
   - RFC-1 Token 表示与内存布局 —— **已定稿**（8B token / TokenArray / InternTable / eqtb 版本化）

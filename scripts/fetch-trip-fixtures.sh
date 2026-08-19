@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# 获取 TRIP 一致性测试 fixtures（trip.tex / trip.typ / trip.log）。
+# 获取 TRIP / ETRIP 一致性测试 fixtures。
 #
-# 策略（尽力而为，失败不致命——框架在 fixtures 缺失时返回"跳过"）：
-# 1. trip.tex 优先用系统 TeX 的 `kpsewhich` 定位；
-# 2. 其余从 CTAN / TeX Live 源码镜像下载。
+# - TRIP（Knuth 官方）：trip.tex / trip.typ / trip.log —— CTAN knuth dist
+#   （raw.githubusercontent 在部分网络不可达，改用 CTAN 与 jsdelivr CDN）。
+# - ETRIP（e-TeX）：etrip.tex / etrip.log —— TeX Live 源码 texk/web2c/etexdir/etrip/。
+#
+# 策略（尽力而为，失败不致命——框架在 fixtures 缺失时返回"跳过"）。
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TARGET="${NTEX_FIXTURES_DIR:-$REPO_ROOT/fixtures/trip}"
-mkdir -p "$TARGET"
+TARGET="${NTEX_FIXTURES_DIR:-$REPO_ROOT/fixtures}"
+TL="https://cdn.jsdelivr.net/gh/TeX-Live/texlive-source@trunk"
 
 fetch() { # url -> dest（成功返回 0）
   echo "  下载 $2 <- $1"
@@ -27,30 +29,42 @@ fetch_first_of() { # dest, url...
   return 1
 }
 
-echo "目标目录：$TARGET"
-
-# trip.tex
+# ---------- TRIP ----------
+mkdir -p "$TARGET/trip"
+echo "== TRIP fixtures =="
 if command -v kpsewhich >/dev/null 2>&1 && kpsewhich trip.tex >/dev/null 2>&1; then
-  cp "$(kpsewhich trip.tex)" "$TARGET/trip.tex"
+  cp "$(kpsewhich trip.tex)" "$TARGET/trip/trip.tex"
   echo "trip.tex <- kpsewhich"
 else
-  fetch_first_of "$TARGET/trip.tex" \
+  fetch_first_of "$TARGET/trip/trip.tex" \
+    "https://mirrors.ctan.org/systems/knuth/dist/tex/trip.tex" \
     "https://mirrors.ctan.org/macros/plain/base/trip.tex" || true
 fi
+fetch_first_of "$TARGET/trip/trip.typ" \
+  "https://mirrors.ctan.org/systems/knuth/dist/tex/trip.typ" \
+  "$TL/texk/web2c/triptrap/trip.typ" || true
+fetch_first_of "$TARGET/trip/trip.log" \
+  "https://mirrors.ctan.org/systems/knuth/dist/tex/trip.log" \
+  "$TL/texk/web2c/triptrap/trip.log" || true
 
-# trip.typ / trip.log（参考输出，来自 TeX Live 源码树的 web2c 测试）
-fetch_first_of "$TARGET/trip.typ" \
-  "https://raw.githubusercontent.com/TeX-Live/texlive-source/trunk/texk/web2c/trip.typ" \
-  "https://raw.githubusercontent.com/TeX-Live/texlive-source/master/texk/web2c/trip.typ" || true
-
-fetch_first_of "$TARGET/trip.log" \
-  "https://raw.githubusercontent.com/TeX-Live/texlive-source/trunk/texk/web2c/trip.log" \
-  "https://raw.githubusercontent.com/TeX-Live/texlive-source/master/texk/web2c/trip.log" || true
+# ---------- ETRIP ----------
+mkdir -p "$TARGET/etrip"
+echo "== ETRIP fixtures =="
+fetch_first_of "$TARGET/etrip/etrip.tex" \
+  "$TL/texk/web2c/etexdir/etrip/etrip.tex" || true
+fetch_first_of "$TARGET/etrip/etrip.log" \
+  "$TL/texk/web2c/etexdir/etrip/etrip.log" || true
 
 echo "---- fixtures ----"
-ls -la "$TARGET"
-if [ -s "$TARGET/trip.tex" ] && [ -s "$TARGET/trip.typ" ] && [ -s "$TARGET/trip.log" ]; then
-  echo "TRIP fixtures 就绪。"
-else
-  echo "TRIP fixtures 不完整：请检查网络或手动放置 trip.tex/trip.typ/trip.log 到 $TARGET" >&2
-fi
+for dir in trip etrip; do
+  echo "[$dir]"
+  ls -la "$TARGET/$dir"
+done
+
+trip_ok=1
+[ -s "$TARGET/trip/trip.tex" ] && [ -s "$TARGET/trip/trip.typ" ] && [ -s "$TARGET/trip/trip.log" ] || trip_ok=0
+etrip_ok=1
+[ -s "$TARGET/etrip/etrip.tex" ] && [ -s "$TARGET/etrip/etrip.log" ] || etrip_ok=0
+
+[ "$trip_ok" = 1 ] && echo "TRIP fixtures 就绪。" || echo "TRIP fixtures 不完整。" >&2
+[ "$etrip_ok" = 1 ] && echo "ETRIP fixtures 就绪。" || echo "ETRIP fixtures 不完整。" >&2

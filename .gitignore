@@ -5,8 +5,9 @@
 # macOS
 .DS_Store
 
-# TRIP fixtures（由 scripts/fetch-trip-fixtures.sh 获取）
+# TRIP/ETRIP fixtures（由 scripts/fetch-trip-fixtures.sh 获取）
 fixtures/trip/
+fixtures/etrip/
 
 # 编译临时文件
 /trip.*

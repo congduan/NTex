@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+ntex-layout.workspace = true
 regex.workspace = true
 similar.workspace = true
 tempfile.workspace = true
