@@ -12,6 +12,48 @@ use crate::error::{Error, Result};
 use crate::intern::InternTable;
 use crate::token::Token;
 
+/// `^^` 转义解码（TeXbook p.45）：`pos` 指向第一个 `^`（catcode 7）。
+///
+/// 命中 `^^` 时消费字节并返回解码后的字符码：
+/// - 后随两位十六进制数字（`^^5e`）→ 按十六进制取值；
+/// - 否则单字符规则：字符码 <64 加 64，64..=127 减 64（如 `^^A`→1、`^^@`→0、`^^?`→127）。
+///
+/// 非 `^^` 情形返回 `None` 且不消费任何字节。
+fn decode_circumflex(bytes: &[u8], pos: &mut usize, catcodes: &CatcodeTable) -> Option<u8> {
+    // 第一个 `^` 必须 catcode 7（superscript），第二个仅按字符码 94 匹配（tex.web 同规则）
+    if catcodes.get(*bytes.get(*pos)?) != Catcode::Superscript {
+        return None;
+    }
+    if *bytes.get(*pos + 1)? != b'^' {
+        return None;
+    }
+    let x = *bytes.get(*pos + 2)?;
+    let hex = |b: u8| -> Option<u8> {
+        match b {
+            b'0'..=b'9' => Some(b - b'0'),
+            b'a'..=b'f' => Some(b - b'a' + 10),
+            b'A'..=b'F' => Some(b - b'A' + 10),
+            _ => None,
+        }
+    };
+    // 十六进制对：^^5e → 0x5E
+    if let (Some(hi), Some(&lo)) = (hex(x), bytes.get(*pos + 3)) {
+        if let Some(lo) = hex(lo) {
+            *pos += 4;
+            return Some(hi * 16 + lo);
+        }
+    }
+    // 单字符规则
+    *pos += 3;
+    Some(if x < 64 {
+        x + 64
+    } else if x < 128 {
+        x - 64
+    } else {
+        x
+    })
+}
+
 /// 从字节流扫描下一个 token；输入耗尽返回 `None`。
 ///
 /// `pos` 指向下一个待读字节；`intern` 用于驻留控制词/控制符号/active 名字。
@@ -44,16 +86,34 @@ pub fn scan_token(
             }
             Catcode::Escape => {
                 *pos += 1;
-                let Some(&c) = bytes.get(*pos) else {
+                let Some(&c0) = bytes.get(*pos) else {
                     return Err(Error::invalid_input("输入以反斜杠结束"));
                 };
-                if catcodes.get(c).is_letter() {
-                    // 控制词：连续字母（cat 11）
-                    let start = *pos;
-                    while *pos < bytes.len() && catcodes.get(bytes[*pos]).is_letter() {
-                        *pos += 1;
+                // ^^ 转义（\^^@、\^^? 等）：控制符号名取解码后的字符
+                let mut first = c0;
+                let mut advanced = false;
+                if c0 == b'^'
+                    && catcodes.get(c0) == Catcode::Superscript
+                    && bytes.get(*pos + 1) == Some(&b'^')
+                {
+                    if let Some(d) = decode_circumflex(bytes, pos, catcodes) {
+                        first = d;
+                        advanced = true;
                     }
-                    let name = std::str::from_utf8(&bytes[start..*pos])
+                }
+                if catcodes.get(first).is_letter() {
+                    // 控制词：首字符（可能为 ^^ 解码）+ 连续字母（cat 11）
+                    if !advanced {
+                        *pos += 1; // 首字符未解码：越过它再读后续字母
+                    }
+                    let mut name = vec![first];
+                    let mut i = *pos;
+                    while i < bytes.len() && catcodes.get(bytes[i]).is_letter() {
+                        name.push(bytes[i]);
+                        i += 1;
+                    }
+                    *pos = i;
+                    let name = std::str::from_utf8(&name)
                         .map_err(|_| Error::invalid_input("控制词含非 UTF-8 字节"))?;
                     let csid = intern.intern(name);
                     // TeX：控制词后跟随的空格被吞掉（含行尾转换的空格）
@@ -66,13 +126,30 @@ pub fn scan_token(
                     }
                     return Ok(Some(Token::control_sequence(csid)));
                 }
-                // 控制符号：单个任意非字母字符（含空格、`\` 自身）
-                *pos += 1;
-                let csid = intern.intern(&char::from(c).to_string());
+                // 控制符号：单个任意非字母字符（含空格、`\` 自身、^^ 解码字符）
+                if !advanced {
+                    *pos += 1;
+                }
+                let csid = intern.intern(&char::from(first).to_string());
                 return Ok(Some(Token::control_sequence(csid)));
             }
             _ => {
-                *pos += 1;
+                // ^^ 转义：catcode 7 的 ^ 后随 ^ → 解码为单个字符 token
+                let mut ch = b;
+                let mut cat = cat;
+                if cat == Catcode::Superscript
+                    && b == b'^'
+                    && bytes.get(*pos + 1) == Some(&b'^')
+                {
+                    if let Some(d) = decode_circumflex(bytes, pos, catcodes) {
+                        ch = d;
+                        cat = catcodes.get(d);
+                    } else {
+                        *pos += 1; // 非 ^^（如行尾）：按单字符处理
+                    }
+                } else {
+                    *pos += 1;
+                }
                 // 行尾 → 空格（M1 简化）
                 let cat = if cat == Catcode::EndOfLine {
                     Catcode::Space
@@ -81,10 +158,10 @@ pub fn scan_token(
                 };
                 let tok = if cat == Catcode::Active {
                     // active 字符视作同名控制序列
-                    let csid = intern.intern(&char::from(b).to_string());
+                    let csid = intern.intern(&char::from(ch).to_string());
                     Token::control_sequence(csid)
                 } else {
-                    Token::char(cat, b as u32)
+                    Token::char(cat, ch as u32)
                 };
                 return Ok(Some(tok));
             }
@@ -175,6 +252,54 @@ mod tests {
         let toks = scan_all("~");
         assert_eq!(toks.len(), 1);
         assert_eq!(toks[0].kind(), TokenKind::ControlSeq);
+    }
+
+    #[test]
+    fn circumflex_escape_decodes_char() {
+        // ^^A → 字符码 1（A=65 − 64）
+        let toks = scan_all("^^A");
+        assert_eq!(toks.len(), 1);
+        assert_eq!(toks[0].kind(), TokenKind::Char);
+        assert_eq!(toks[0].charcode(), Some(1));
+        // ^^@ → 字符码 0（@=64 − 64）
+        let toks = scan_all("^^@");
+        assert_eq!(toks[0].charcode(), Some(0));
+        // ^^? → 字符码 127（?=63 + 64）
+        let toks = scan_all("^^?");
+        assert_eq!(toks[0].charcode(), Some(127));
+        // 十六进制对：^^5e → 0x5E
+        let toks = scan_all("^^5e");
+        assert_eq!(toks[0].charcode(), Some(0x5E));
+        // 单个 ^ 不转义
+        let toks = scan_all("^A");
+        assert_eq!(toks.len(), 2);
+        assert_eq!(toks[0].charcode(), Some(b'^' as u32));
+    }
+
+    #[test]
+    fn circumflex_escape_after_escape_char() {
+        let mut intern = InternTable::new();
+        let catcodes = CatcodeTable::new();
+        // \^^@ → 控制符号，名字为字符码 0
+        let mut pos = 0usize;
+        let tok = scan_token(b"\\^^@", &mut pos, &catcodes, &mut intern)
+            .unwrap()
+            .unwrap();
+        assert_eq!(tok.kind(), TokenKind::ControlSeq);
+        let csid = tok.csid().unwrap();
+        assert_eq!(intern.name(csid), "\0");
+        // \^^? → 控制符号，名字为字符码 127
+        let mut pos = 0usize;
+        let tok = scan_token(b"\\^^?", &mut pos, &catcodes, &mut intern)
+            .unwrap()
+            .unwrap();
+        assert_eq!(intern.name(tok.csid().unwrap()), "\u{7f}");
+        // \^^A：A 解码为 1，非字母 → 控制符号
+        let mut pos = 0usize;
+        let tok = scan_token(b"\\^^A", &mut pos, &catcodes, &mut intern)
+            .unwrap()
+            .unwrap();
+        assert_eq!(intern.name(tok.csid().unwrap()), "\u{1}");
     }
 
     #[test]

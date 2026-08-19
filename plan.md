@@ -5,14 +5,14 @@
 
 ## 当前进度（2026-08）
 
-| 里程碑           | 状态                                                                                                                                                                                                                                                                                                                             |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| M0 地基         | ✅ 完成（workspace/CI/TRIP·diff·bench 工具链；RFC-1/RFC-4 定稿）                                                                                                                                                                                                                                                                          |
-| M1 展开内核       | 🟡 核心完成：M1-1\~7、M1-9\~11 已实现（95 用例）；M1-8 分隔参数、M1-13 错误模型、**M1-14 TRIP 冲刺** 待补                                                                                                                                                                                                                                                  |
-| M2 字节码        | 🟡 双轨完成：定长 u64 IR + 编译器 + 解释器等价验证（100 用例）；**吞吐 1.12x 未达 2x 目标**，M2-5 arena 未做                                                                                                                                                                                                                                                  |
-| M3 排版核心       | ✅ M3-1\~M3-4 完成（58+ 用例）；**M3-5 DVI 写出 +** **`\shipout`** **+ 断页 DP + lig/kern +** **`\sfcode`** **+** **`\output`** **例程/box255** 完成（dvipdfmx 验收 + 与 TeX 差分对照）；**RFC-3 VFS + 副作用模型落地**（10 原语走 `ntex-io` VFS，延迟写入 shipout 边界提交）；**`.fmt`** **v1 内存快照**（`ntex-format` 确定性编码 + roundtrip）                                         |
+| 里程碑           | 状态                                                                                                                                                                                                                                                                                                         |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M0 地基         | ✅ 完成（workspace/CI/TRIP·diff·bench 工具链；RFC-1/RFC-4 定稿）                                                                                                                                                                                                                                                      |
+| M1 展开内核       | 🟡 核心完成：M1-1\~7、M1-9\~11 已实现（95 用例）；M1-8 分隔参数、M1-13 错误模型、**M1-14 TRIP 冲刺** 待补                                                                                                                                                                                                                              |
+| M2 字节码        | 🟡 双轨完成：定长 u64 IR + 编译器 + 解释器等价验证（100 用例）；**吞吐 1.12x 未达 2x 目标**，M2-5 arena 未做                                                                                                                                                                                                                              |
+| M3 排版核心       | ✅ M3-1\~M3-4 完成（58+ 用例）；**M3-5 DVI 写出 +** **`\shipout`** **+ 断页 DP + lig/kern +** **`\sfcode`** **+** **`\output`** **例程/box255** 完成（dvipdfmx 验收 + 与 TeX 差分对照）；**RFC-3 VFS + 副作用模型落地**（10 原语走 `ntex-io` VFS，延迟写入 shipout 边界提交）；**`.fmt`** **v1 内存快照**（`ntex-format` 确定性编码 + roundtrip）                     |
 | M4 数学 + e-TeX | ✅ **全部完成**：数学模式状态机（`$`/`$$`、8 类原子、spacing 表、上下标、字阶）、分式/根式/定界符、样式原语、fontdimen 数学参数 + 数学字体族、显示数学细化、Liang 断字、错误模型、e-TeX 核心 + 扩展（`\protected`/`\ifdefined`/`\ifcsname`/`\unless`/`\numexpr`/`\detokenize`/`\unexpanded`/`\eTeXversion`/`\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens`）；验收 **ETRIP 全绿** 待冲 |
-| 输出端           | 🟢 正式 PDF 后端可用（`ntex-pdf`：DVI → PDF 直出 + Type1 嵌入，替换临时 Helvetica 切片；demo 两页与 dvipdfmx 渲染一致）                                                                                                                                                                                                                                    |
+| 输出端           | 🟢 正式 PDF 后端可用（`ntex-pdf`：DVI → PDF 直出 + Type1 嵌入，替换临时 Helvetica 切片；demo 两页与 dvipdfmx 渲染一致）                                                                                                                                                                                                                |
 
 **下一步**：**ETRIP 冲刺**——先搭管线（fixtures 获取 + harness 泛化支持 etrip + ntex 引擎驱动），再按 diff 迭代。
 
@@ -62,10 +62,10 @@
   - [x] 每千 token 展开吞吐（对照 pdfTeX 基线）
   - [ ] 增量场景：改 1 字 → 重算耗时（M5 前未建）
 - [x] TRIP/ETRIP 测试框架：自动跑 `\input trip` 并 diff 输出（框架就绪，trip 全绿待 M1-14）
-      —— **ETRIP 冲刺管线已跑通**：fixtures 获取（CTAN knuth dist + TeX Live 镜像，
-      `scripts/fetch-trip-fixtures.sh`）+ harness 泛化（`ntex-trip --test trip|etrip|both`）+
-      **ntex 引擎驱动**（in-process Typesetter，产出 .log/.typ，首个错误即停）；
-      首次实跑：TRIP/ETRIP 均在首个未支持构造处停下（错误上下文/转录能力待补）
+  —— **ETRIP 冲刺管线已跑通**：fixtures 获取（CTAN knuth dist + TeX Live 镜像，
+  `scripts/fetch-trip-fixtures.sh`）+ harness 泛化（`ntex-trip --test trip|etrip|both`）+
+  **ntex 引擎驱动**（in-process Typesetter，产出 .log/.typ，首个错误即停）；
+  首次实跑：TRIP/ETRIP 均在首个未支持构造处停下（错误上下文/转录能力待补）
 - [x] 差分测试工具：同一 .tex 分别跑 pdfTeX/XeTeX 与本引擎，diff DVI/log
 - [x] **设计文档（RFC）先行**，评审通过再编码：
   - RFC-1 Token 表示与内存布局 —— **已定稿**（8B token / TokenArray / InternTable / eqtb 版本化）
@@ -305,12 +305,12 @@
   `.fmt` v2 序列化；short 判定 = 末行自然宽度 < `\displaywidth`（≈`\hsize`）；
   公式后文字续排（无 parskip/缩进）；`$$` 在 `\hbox` 内报错
 - [x] e-TeX 展开扩展（核心）：`\protected`（\edef/\write 抑制 + .fmt 保留）、
-      `\ifdefined`/`\ifcsname`/`\unless`、`\numexpr`（\the/\ifnum/任意整数上下文）、
-      `\detokenize`（控制词补空格）、`\unexpanded`、`\eTeXversion`/`\eTeXrevision`
+  `\ifdefined`/`\ifcsname`/`\unless`、`\numexpr`（\the/\ifnum/任意整数上下文）、
+  `\detokenize`（控制词补空格）、`\unexpanded`、`\eTeXversion`/`\eTeXrevision`
 - [x] e-TeX 扩展补全：`\dimexpr`（尺寸表达式，可在任意尺寸上下文求值）、
-      `\glueexpr`（胶水表达式，width 求和 + stretch/shrink 取最后非零项）、
-      `\ifprimitive`（cs 是否为内建原语）、`\scantokens`（组内容 detokenize 后
-      按当前 catcode 重新扫描，等价于从字符串 `\input`）——M4 至此全部完成
+  `\glueexpr`（胶水表达式，width 求和 + stretch/shrink 取最后非零项）、
+  `\ifprimitive`（cs 是否为内建原语）、`\scantokens`（组内容 detokenize 后
+  按当前 catcode 重新扫描，等价于从字符串 `\input`）——M4 至此全部完成
 - [x] Liang 断字算法 + `\patterns` 语言包
   —— `\patterns` 语言包 + **断字接入段落折行**完成：sink 事件 + expand 原语
   （扫描平衡组、字母/数字/`.` 抽取、空格折叠分隔）+ `PatternTrie::parse` +
@@ -318,10 +318,10 @@
   `close_paragraph` 物化（行尾补 pre 连字符、行内 replace）端到端接线；
   **词界规则（`\lefthyphenmin`/`\righthyphenmin`）留待 ETRIP 校准**
 - [x] 错误模型补全（数学相关错误信息）
-      —— 数学模式外 `^`/`_`（cat 7/8）报 "Missing $ inserted"（不再静默渲染字面）；
-      数学错误消息统一为 TeX 标准原文（Double superscript/Missing { inserted/
-      Missing \left inserted/Ambiguous…/Display math should end with $$），
-      8 个用例锁消息；完整上下文行（"l.N …"）留 M1-13
+  —— 数学模式外 `^`/`_`（cat 7/8）报 "Missing $ inserted"（不再静默渲染字面）；
+  数学错误消息统一为 TeX 标准原文（Double superscript/Missing { inserted/
+  Missing \left inserted/Ambiguous…/Display math should end with $$），
+  8 个用例锁消息；完整上下文行（"l.N …"）留 M1-13
 
 **验收**：**ETRIP 全绿**；含数学的文档差分一致。
 **进度**：**M4 全部完成**——M4-1/2/3/4/5（13 + 16 + 20 + 14 + 6 用例）、M4-6 Liang 断字、M4-7 错误模型、e-TeX 扩展（`\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens`，+6 用例）。下一步：**ETRIP 冲刺**（先搭管线：fixtures + harness 泛化 + 引擎驱动）。

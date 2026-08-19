@@ -19,8 +19,8 @@ use ntex_core::version::Version;
 
 /// 文件魔数（8 字节）。
 const MAGIC: &[u8; 8] = b"NTEXFMT1";
-/// 格式版本（v2：M4-4 显示数学间距参数）。
-const VERSION: u8 = 2;
+/// 格式版本（v2：M4-4 显示数学间距参数；v3：ETRIP 内部整数参数）。
+const VERSION: u8 = 3;
 
 /// 编码一个 `.fmt` 快照。
 pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
@@ -77,6 +77,15 @@ pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
         write_glue(w, *g)?;
     }
     for v in [p.predisplaypenalty, p.postdisplaypenalty] {
+        w.write_all(&v.to_le_bytes())?;
+    }
+    // ETRIP 冲刺（v3 追加）：TeX 内部整数参数
+    for v in [
+        p.endlinechar,
+        p.newlinechar,
+        p.defaulthyphenchar,
+        p.defaultskewchar,
+    ] {
         w.write_all(&v.to_le_bytes())?;
     }
 
@@ -158,6 +167,11 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
         belowdisplayshortskip: read_glue(r)?,
         predisplaypenalty: read_i64(r)?,
         postdisplaypenalty: read_i64(r)?,
+        // ETRIP 冲刺（v3）
+        endlinechar: read_i64(r)?,
+        newlinechar: read_i64(r)?,
+        defaulthyphenchar: read_i64(r)?,
+        defaultskewchar: read_i64(r)?,
     };
 
     // output_toks

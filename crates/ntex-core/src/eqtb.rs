@@ -145,6 +145,18 @@ pub enum Primitive {
     Glueexpr,
     IfPrimitive,
     Scantokens,
+    // ETRIP 冲刺：TeX 内部整数参数
+    EndlineChar,
+    NewlineChar,
+    DefaultHyphenChar,
+    DefaultSkewChar,
+    // ETRIP 冲刺：宏定义前缀与变体
+    Outer,
+    Xdef,
+    // ETRIP 冲刺：内部只读整数
+    Badness,
+    // ETRIP 冲刺：字体参数
+    FontDimen,
 }
 
 impl Primitive {
@@ -271,6 +283,14 @@ impl Primitive {
             108 => Self::Glueexpr,
             109 => Self::IfPrimitive,
             110 => Self::Scantokens,
+            111 => Self::EndlineChar,
+            112 => Self::NewlineChar,
+            113 => Self::DefaultHyphenChar,
+            114 => Self::DefaultSkewChar,
+            115 => Self::Outer,
+            116 => Self::Xdef,
+            117 => Self::Badness,
+            118 => Self::FontDimen,
             _ => return None,
         })
     }

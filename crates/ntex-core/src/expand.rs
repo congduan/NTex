@@ -17,6 +17,7 @@
 //! - M1-11 组作用域（朴素快照回滚 + `\global`）已实现；
 //! - 空行 → `\par` 语义未实现（M1-14 修）。
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::bytecode::{compile, Bytecode, Instruction};
@@ -154,6 +155,8 @@ enum SavedValue {
     Sfcode { byte: u8, prev: u32 },
     /// `\output`：输出例程 token 列表（M3-5-3）。
     Output { prev: Option<TokenArray> },
+    /// `\fontdimen`：字体参数覆盖（prev None = 此前无覆盖）。
+    FontDimen { font: u32, num: u32, prev: Option<i64> },
 }
 
 /// `\ifx` 语义键：解析别名后比较含义（TeX：同含义即相等）。
@@ -265,6 +268,12 @@ pub struct Expander {
     /// e-TeX（M4-5）：
     /// `\protected` 前缀：下一个 `\def` 定义的宏标记 protected。
     protected_pending: bool,
+    /// `\outer` 前缀：下一个 `\def`/`\xdef` 等定义的宏标记 outer。
+    /// （当前仅消费前缀；outer 语义限制——实参不得含 outer 宏——后续迭代补。）
+    outer_pending: bool,
+    /// `\fontdimen` 覆盖表：(font_id, 参数号) → 值（sp）。TFM 度量在排版层，
+    /// 此处仅存覆盖项；无覆盖读回 0（后续接入 TFM 时回退真实参数）。
+    fontdimens: HashMap<(u32, u32), i64>,
     /// `\unless` 前缀：取反下一个条件的结果。
     unless_pending: bool,
     /// protected 宏抑制展开的上下文深度（>0：`\edef`/`\write`/`\detokenize` 等）。
@@ -310,6 +319,8 @@ impl Expander {
             write_streams: Vec::new(),
             immediate_pending: false,
             protected_pending: false,
+            outer_pending: false,
+            fontdimens: HashMap::new(),
             unless_pending: false,
             suppress_expansion: 0,
         };
@@ -397,6 +408,9 @@ impl Expander {
         self.group_cond_depth.clear();
         self.save_stack.clear();
         self.global_pending = false;
+        self.protected_pending = false;
+        self.outer_pending = false;
+        self.fontdimens.clear();
         self.aftergroup.clear();
         self.afterassignment = None;
         self.output_active = false;
@@ -800,6 +814,9 @@ impl Expander {
     fn exec_primitive(&mut self, prim: Primitive) -> Result<()> {
         match prim {
             Primitive::Relax => Ok(()),
+            // 内部只读整数单独出现：no-op（TeX 在 no_mode——输出例程中——忽略；
+            // 其余模式应报错，模式状态在排版器侧，M1 宽松处理）
+            Primitive::Badness => Ok(()),
             Primitive::Expandafter => self.exec_expandafter(),
             Primitive::Noexpand => {
                 let t = self
@@ -813,10 +830,19 @@ impl Expander {
             }
             Primitive::Def => self.exec_def(false),
             Primitive::Edef => self.exec_def(true),
-            // \gdef ≡ \global\def
+            // \gdef ≡ \global\def；\xdef ≡ \global\edef
             Primitive::Gdef => {
                 self.global_pending = true;
                 self.exec_def(false)
+            }
+            Primitive::Xdef => {
+                self.global_pending = true;
+                self.exec_def(true)
+            }
+            // \outer：宏定义前缀（TeX 限制宏在实参中出现；当前仅消费，语义后续补）
+            Primitive::Outer => {
+                self.outer_pending = true;
+                Ok(())
             }
             Primitive::Let => self.exec_let(),
             Primitive::Catcode => self.exec_catcode(),
@@ -967,8 +993,24 @@ impl Expander {
                 };
                 self.assign_param(kind, ParamValue::Number(p))
             }
+            // ETRIP 冲刺：TeX 内部整数参数
+            Primitive::EndlineChar
+            | Primitive::NewlineChar
+            | Primitive::DefaultHyphenChar
+            | Primitive::DefaultSkewChar => {
+                let v = self.scan_number()?;
+                let kind = match prim {
+                    Primitive::EndlineChar => ParamKind::EndlineChar,
+                    Primitive::NewlineChar => ParamKind::NewlineChar,
+                    Primitive::DefaultHyphenChar => ParamKind::DefaultHyphenChar,
+                    _ => ParamKind::DefaultSkewChar,
+                };
+                self.assign_param(kind, ParamValue::Number(v))
+            }
             // M3-4 字体
             Primitive::Font => self.exec_font(),
+            // ETRIP 冲刺：字体参数 \fontdimen<num><font>=<dimen>
+            Primitive::FontDimen => self.exec_fontdimen(),
             // M3-5 输出：\shipout 直通 sink（排版器解释：封装下一盒子为页面）
             Primitive::ShipOut => self.sink.primitive(prim),
             // M3-5-3 输出例程：\output=<general text> 存储 token 列表
@@ -1237,6 +1279,50 @@ impl Expander {
             return Err(Error::invalid_input("\\font 后缺少字体名"));
         }
         Ok(name)
+    }
+
+    /// `\fontdimen<num><font>=<dimen>`：设置字体的 fontdimen 参数
+    /// （TeX `assign_font_dimen`；组内局部、可 `\global`）。
+    fn exec_fontdimen(&mut self) -> Result<()> {
+        let num = self.scan_number()?;
+        let num = u32::try_from(num).map_err(|_| Error::invalid_input("\\fontdimen 参数号越界"))?;
+        let font = self.scan_font_ident()?;
+        self.expect_equals()?;
+        let value = self.scan_dimen()?;
+        let prev = self.fontdimens.get(&(font, num)).copied();
+        let global = self.is_global();
+        if !global && self.group_level > 0 {
+            self.save_stack.push((
+                self.group_level,
+                SavedValue::FontDimen { font, num, prev },
+            ));
+        }
+        self.fontdimens.insert((font, num), value);
+        self.finish_assignment();
+        Ok(())
+    }
+
+    /// 扫描字体标识符（TeX `scan_font_ident`）：`\font` 定义的 cs 或 `\nullfont`。
+    fn scan_font_ident(&mut self) -> Result<u32> {
+        self.skip_spaces()?;
+        let tok = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input("预期字体标识符"))?
+            .0;
+        let csid = tok
+            .csid()
+            .ok_or_else(|| Error::invalid_input("预期字体标识符（\\font 定义的 cs 或 \\nullfont）"))?;
+        match self.eqtb.slot(csid) {
+            EqSlot::Font(f) => Ok(*f),
+            _ => Err(Error::invalid_input(
+                "预期字体标识符（\\font 定义的 cs 或 \\nullfont）",
+            )),
+        }
+    }
+
+    /// 读 fontdimen：覆盖表优先；无覆盖返回 0（TFM 真实参数在排版层，后续接入）。
+    fn fontdimen(&self, font: u32, num: u32) -> i64 {
+        self.fontdimens.get(&(font, num)).copied().unwrap_or(0)
     }
 
     // ---------- M3 收尾（RFC-3）：VFS 副作用原语 ----------
@@ -1691,8 +1777,10 @@ impl Expander {
             Arc::from(body_raw)
         };
 
-        // e-TeX（M4-5）：`\protected` 前缀标记宏（`\edef`/`\write` 等上下文不展开）
+        // e-TeX（M4-5）：`\protected` 前缀标记宏（`\edef`/`\write` 等上下文不展开）；
+        // `\outer` 前缀仅消费（outer 语义限制后续迭代补）。
         let protected = std::mem::take(&mut self.protected_pending);
+        let _ = std::mem::take(&mut self.outer_pending);
         let mut def = MacroDef {
             params: ParamSpec {
                 num_params,
@@ -1872,7 +1960,7 @@ impl Expander {
 
     /// `\catcode<byte>=<num>`：修改 catcode 表（组内局部、可 `\global`）。
     fn exec_catcode(&mut self) -> Result<()> {
-        let byte = self.scan_number()?;
+        let byte = self.scan_char_code()?;
         let byte = u8::try_from(byte).map_err(|_| Error::invalid_input("\\catcode 字符码越界"))?;
         self.expect_equals()?;
         let code = self.scan_number()?;
@@ -1897,7 +1985,7 @@ impl Expander {
 
     /// `\sfcode<字符>=<值>`：设置字符的 spacefactor（TeX define_char_code 类）。
     fn exec_sfcode(&mut self) -> Result<()> {
-        let byte = self.scan_number()?;
+        let byte = self.scan_char_code()?;
         let byte = u8::try_from(byte).map_err(|_| Error::invalid_input("\\sfcode 字符码越界"))?;
         self.expect_equals()?;
         let value = self.scan_number()?;
@@ -2000,6 +2088,12 @@ impl Expander {
     /// 扫描十进制整数；支持 `\count<idx>` 寄存器引用（M1 简化版）。
     fn scan_number(&mut self) -> Result<i64> {
         self.skip_spaces()?;
+        // TeX scan_int：跳过可选 `=` 赋值符（`\count0=5` 与 `\count0 5` 等价）
+        if let Some((tok, _)) = self.fetch()? {
+            if tok.charcode() != Some(b'=' as u32) {
+                self.unread(tok);
+            }
+        }
         let mut neg = false;
         if let Some(tok) = self.fetch()?.map(|t| t.0) {
             if tok.charcode() == Some(b'-' as u32) {
@@ -2007,6 +2101,10 @@ impl Expander {
             } else {
                 self.unread(tok);
             }
+        }
+        // 反引号字符码：`<char>（TeX scan_int 的 alphabetic constant，TeXbook p.267）
+        if let Some(code) = self.try_scan_backquote()? {
+            return Ok(if neg { -code } else { code });
         }
         // 寄存器引用：\count<idx> 或 \count\cs（\newcount 分配的 cs）
         if let Some(csid) = self.peek_csid()? {
@@ -2017,6 +2115,21 @@ impl Expander {
                     self.fetch()?; // 消费 \numexpr
                     let v = self.eval_int_expression()?;
                     return Ok(if neg { -v } else { v });
+                }
+                // 内部整数：\catcode<char> → 该字符当前 catcode 值
+                EqSlot::Primitive(Primitive::Catcode) => {
+                    self.fetch()?; // 消费 \catcode
+                    let byte = self.scan_char_code()?;
+                    let byte =
+                        u8::try_from(byte).map_err(|_| Error::invalid_input("\\catcode 字符码越界"))?;
+                    let v = i64::from(self.catcodes.get(byte).as_u8());
+                    return Ok(if neg { -v } else { v });
+                }
+                // 内部只读整数：\badness → 最近盒子的 badness（当前恒 0：
+                // 展开侧尚未跟踪盒排版 badness，trip.tex 第 20 行无盒子时为 0）。
+                EqSlot::Primitive(Primitive::Badness) => {
+                    self.fetch()?; // 消费 \badness
+                    return Ok(0);
                 }
                 EqSlot::Register(RegKind::Count, idx) => {
                     self.fetch()?; // 消费 cs
@@ -2056,6 +2169,48 @@ impl Expander {
         // TeX 规则：数字后跟随的空格被吞掉（实测 pdfTeX `\ifnum3>2 yes` → "yes"）
         self.skip_trailing_spaces()?;
         Ok(if neg { -val } else { val })
+    }
+
+    /// 若下一 token 是反引号（cat 12、charcode 96），消费并按 TeX 规则返回其后的
+    /// 字符码（`{ → 123、`- → 45、`\@ → 64、`\^^@ → 0）；否则不消费并返回 `None`。
+    ///
+    /// 反引号后可跟任意字符 token（取其字符码），或单字符控制符号（取其字符）；
+    /// 控制词（如 `` `\par ``）报 "Improper alphabetic constant"（TeX 同规则）。
+    fn try_scan_backquote(&mut self) -> Result<Option<i64>> {
+        let tok = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input("扫描到输入末尾"))?
+            .0;
+        if tok.catcode() != Some(Catcode::Other) || tok.charcode() != Some(b'`' as u32) {
+            self.unread(tok);
+            return Ok(None);
+        }
+        let t2 = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input("反引号后缺少字符"))?
+            .0;
+        match t2.kind() {
+            TokenKind::Char => Ok(Some(t2.charcode().expect("Char 必有 charcode") as i64)),
+            TokenKind::ControlSeq => {
+                let name = self.intern.name(t2.csid().expect("ControlSeq 必有 csid"));
+                if name.len() == 1 {
+                    Ok(Some(name.as_bytes()[0] as i64))
+                } else {
+                    Err(Error::invalid_input("Improper alphabetic constant"))
+                }
+            }
+            _ => Err(Error::invalid_input("反引号后必须是字符或单字符控制序列")),
+        }
+    }
+
+    /// 扫描字符码（`\catcode`/`\sfcode` 的左操作数，TeX `scan_char_num`）：
+    /// 十进制整数或 `` `X `` 反引号形式。
+    fn scan_char_code(&mut self) -> Result<i64> {
+        self.skip_spaces()?;
+        if let Some(code) = self.try_scan_backquote()? {
+            return Ok(code);
+        }
+        self.scan_number()
     }
 
     /// 跳过前导空格 token（输入耗尽视为合法，返回 Ok）。
@@ -2258,22 +2413,22 @@ impl Expander {
         Ok(name)
     }
 
-    /// 期望赋值符 `=`（允许前后空格）。
+    /// 可选赋值符 `=`（TeX：`=` 在赋值中可省略，如 `\catcode`X 13`），允许前后空格。
     fn expect_equals(&mut self) -> Result<()> {
         self.skip_spaces()?;
-        let tok = self
-            .fetch()?
-            .ok_or_else(|| Error::invalid_input("扫描到输入末尾"))?
-            .0;
-        if tok.charcode() != Some(b'=' as u32) {
-            return Err(Error::invalid_input("预期 '='（赋值符）"));
+        let Some((tok, _)) = self.fetch()? else {
+            return Ok(());
+        };
+        if tok.charcode() == Some(b'=' as u32) {
+            return Ok(());
         }
+        self.unread(tok);
         Ok(())
     }
 
     /// 注册 M1 内建原语。
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 110] = [
+        const BUILTINS: [(&str, Primitive); 118] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -2403,11 +2558,26 @@ impl Expander {
             ("glueexpr", Primitive::Glueexpr),
             ("ifprimitive", Primitive::IfPrimitive),
             ("scantokens", Primitive::Scantokens),
+            // ETRIP 冲刺：TeX 内部整数参数
+            ("endlinechar", Primitive::EndlineChar),
+            ("newlinechar", Primitive::NewlineChar),
+            ("defaulthyphenchar", Primitive::DefaultHyphenChar),
+            ("defaultskewchar", Primitive::DefaultSkewChar),
+            // ETRIP 冲刺：宏定义前缀与变体
+            ("outer", Primitive::Outer),
+            ("xdef", Primitive::Xdef),
+            // ETRIP 冲刺：内部只读整数
+            ("badness", Primitive::Badness),
+            // ETRIP 冲刺：字体参数
+            ("fontdimen", Primitive::FontDimen),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);
             self.eqtb.set_primitive(csid, prim);
         }
+        // \nullfont：内建空字体（TeX 的 null font，无字符；固定字体槽 0）
+        let nullfont = self.intern.intern("nullfont");
+        self.eqtb.set_font(nullfont, 0);
     }
 
     // ---------- M1-7 扫描顺序原语 ----------
@@ -2443,7 +2613,22 @@ impl Expander {
         match rhs.kind() {
             TokenKind::ControlSeq => {
                 let target = rhs.csid().expect("ControlSeq 必有 csid");
-                self.eqtb.alias(csid, target);
+                // TeX `\let` 复制右侧**当前**含义（而非 csid 引用）：
+                // 原语/字符/字体/寄存器等不可变含义直接复制，重定义后别名不漂移
+                // （trip.tex `\let\paR=\par` → 重定义 `\par` → `\let\par=\paR` 恢复）。
+                match self.eqtb.slot(target).clone() {
+                    EqSlot::Alias(t2) => self.eqtb.alias(csid, t2),
+                    EqSlot::Primitive(_)
+                    | EqSlot::Char { .. }
+                    | EqSlot::Font(_)
+                    | EqSlot::Register(..)
+                    | EqSlot::Stream(..) => {
+                        let slot = self.eqtb.slot(target).clone();
+                        *self.eqtb.slot_mut(csid) = slot;
+                    }
+                    // 宏/未定义：保持间接引用（宏不复制宏体，M1 简化）
+                    _ => self.eqtb.alias(csid, target),
+                }
             }
             TokenKind::Char => {
                 let catcode = rhs.catcode().expect("Char 必有 catcode");
@@ -2682,7 +2867,11 @@ impl Expander {
                 | Primitive::AboveDisplayShortSkip
                 | Primitive::BelowDisplayShortSkip
                 | Primitive::PreDisplayPenalty
-                | Primitive::PostDisplayPenalty => {
+                | Primitive::PostDisplayPenalty
+                | Primitive::EndlineChar
+                | Primitive::NewlineChar
+                | Primitive::DefaultHyphenChar
+                | Primitive::DefaultSkewChar => {
                     let kind = match p {
                         Primitive::ParIndent => ParamKind::ParIndent,
                         Primitive::BaselineSkip => ParamKind::BaselineSkip,
@@ -2699,7 +2888,12 @@ impl Expander {
                         Primitive::AboveDisplayShortSkip => ParamKind::AboveDisplayShortSkip,
                         Primitive::BelowDisplayShortSkip => ParamKind::BelowDisplayShortSkip,
                         Primitive::PreDisplayPenalty => ParamKind::PreDisplayPenalty,
-                        _ => ParamKind::PostDisplayPenalty,
+                        Primitive::PostDisplayPenalty => ParamKind::PostDisplayPenalty,
+                        Primitive::EndlineChar => ParamKind::EndlineChar,
+                        Primitive::NewlineChar => ParamKind::NewlineChar,
+                        Primitive::DefaultHyphenChar => ParamKind::DefaultHyphenChar,
+                        Primitive::DefaultSkewChar => ParamKind::DefaultSkewChar,
+                        _ => unreachable!("\\the 参数匹配已穷举"),
                     };
                     Ok(match self.params.get(kind) {
                         ParamValue::Dimen(v) => emit_dimen(v),
@@ -2713,6 +2907,15 @@ impl Expander {
                 Primitive::Glueexpr => Ok(emit_glue(self.eval_glue_expression()?)),
                 Primitive::ETeXVersion => Ok(emit_count(2)),
                 Primitive::ETeXRevision => Ok(vec![Token::char(Catcode::Other, b'2' as u32)]),
+                Primitive::Badness => Ok(emit_count(0)),
+                // \the\fontdimen<num><font>：字体参数值（sp）
+                Primitive::FontDimen => {
+                    let num = self.scan_number()?;
+                    let num =
+                        u32::try_from(num).map_err(|_| Error::invalid_input("\\fontdimen 参数号越界"))?;
+                    let font = self.scan_font_ident()?;
+                    Ok(emit_dimen(self.fontdimen(font, num)))
+                }
                 _ => Err(Error::invalid_input(
                     "\\the 只支持 \\count\\dimen\\skip\\toks 与内部参数",
                 )),
@@ -2789,6 +2992,14 @@ impl Expander {
                 self.output_toks = prev;
                 let _ = self.sink.output_defined(self.output_toks.is_some());
             }
+            SavedValue::FontDimen { font, num, prev } => match prev {
+                Some(v) => {
+                    self.fontdimens.insert((font, num), v);
+                }
+                None => {
+                    self.fontdimens.remove(&(font, num));
+                }
+            },
         }
     }
 
@@ -3114,6 +3325,12 @@ impl Expander {
     /// 换算对照 pdfTeX：`scaled = (int + frac/10^k) * unit_sp`（逐项截断）。
     fn scan_dimen(&mut self) -> Result<i64> {
         self.skip_spaces()?;
+        // TeX scan_dimen：跳过可选 `=` 赋值符（`\hsize=5in` 与 `\hsize 5in` 等价）
+        if let Some((tok, _)) = self.fetch()? {
+            if tok.charcode() != Some(b'=' as u32) {
+                self.unread(tok);
+            }
+        }
         let mut neg = false;
         if let Some(tok) = self.fetch()?.map(|t| t.0) {
             if tok.charcode() == Some(b'-' as u32) {
@@ -3134,6 +3351,16 @@ impl Expander {
             if let EqSlot::Primitive(Primitive::Dimexpr) = self.eqtb.slot(csid) {
                 self.fetch()?; // 消费 \dimexpr
                 let v = self.eval_dimen_expression()?;
+                return Ok(if neg { -v } else { v });
+            }
+            // ETRIP 冲刺：\fontdimen<num><font> 可在任意尺寸上下文读取
+            if let EqSlot::Primitive(Primitive::FontDimen) = self.eqtb.slot(csid) {
+                self.fetch()?; // 消费 \fontdimen
+                let num = self.scan_number()?;
+                let num =
+                    u32::try_from(num).map_err(|_| Error::invalid_input("\\fontdimen 参数号越界"))?;
+                let font = self.scan_font_ident()?;
+                let v = self.fontdimen(font, num);
                 return Ok(if neg { -v } else { v });
             }
         }
@@ -3461,6 +3688,59 @@ mod tests {
     }
 
     #[test]
+    fn outer_prefix_parses() {
+        assert_eq!(expand("\\outer\\def\\foo{XY}\\foo").unwrap(), "XY");
+        assert_eq!(expand("\\outer\\gdef\\foo{XY}\\foo").unwrap(), "XY");
+        assert_eq!(expand("\\outer\\global\\edef\\foo{XY}\\foo").unwrap(), "XY");
+    }
+
+    #[test]
+    fn xdef_expands_body_at_definition() {
+        // \xdef ≡ \global\edef：定义时展开宏体
+        assert_eq!(expand("\\def\\a{1}\\xdef\\b{\\a2}\\def\\a{3}\\b").unwrap(), "12");
+        // 全局：组内 \xdef 在组外可见
+        assert_eq!(
+            expand("{\\def\\a{1}\\xdef\\b{\\a2}}\\b").unwrap(),
+            "12"
+        );
+    }
+
+    #[test]
+    fn let_primitive_survives_redefinition() {
+        // trip.tex 第 6-10 行：\let\paR=\par → 重定义 \par → \let\par=\paR 恢复
+        assert_eq!(
+            expand(
+                "\\let\\paR=\\par\\outer\\xdef\\par{\\catcode`\\%14}\\let\\par=\\paR\\relax"
+            )
+            .unwrap(),
+            ""
+        );
+    }
+
+    #[test]
+    fn trip_lines_1_to_19_parse() {
+        // trip.tex 第 1-19 行（不含第 20 行 \badness）：验证 \outer/\xdef/\let 恢复后能继续
+        let src = "\\immediate\\catcode`{=1\\endlinechar=13\
+                   \\catcode`}=2\
+                   \\catcode`$=3{\\catcode`$13\\gdef\\dol{$}}\
+                   \\catcode`&=4\
+                   \\let\\paR=\\par\
+                   \\let\\%=\\relax\
+                   \\outer\\xdef\\par{\\catcode`\\%14}\
+                   \\let\\par=\\paR\\defaulthyphenchar=`-\\defaultskewchar=256\
+                   \\ifx\\initex\\undefined\\def\\initex{}\
+                   \\catcode`#=6\\catcode`U=\\catcode`#\
+                   \\catcode`^=7\\catcode`|=8\
+                   \\catcode`~=9\
+                   \\catcode`*=10\
+                   \\catcode`E=12\
+                   \\catcode`\\@=15\
+                   \\catcode`^^A=0008\
+                   \\catcode`\\^^@=11\\fi\\relax";
+        assert_eq!(expand(src).unwrap(), "");
+    }
+
+    #[test]
     fn let_to_char() {
         assert_eq!(expand("\\let\\X=x\\X").unwrap(), "x");
     }
@@ -3486,6 +3766,102 @@ mod tests {
         // \catcode92=12 后 `\` 变为普通字符。
         // 用 \relax 隔离数字与后续输入（数字扫描会预读紧邻 token，与真实 TeX 一致）。
         assert_eq!(expand("\\catcode92=12\\relax\\abc").unwrap(), "\\abc");
+    }
+
+    #[test]
+    fn catcode_backquote_syntax() {
+        // trip.tex 开头：\catcode `{ = 1（反引号字符码）
+        assert_eq!(expand("\\catcode`{=1\\relax").unwrap(), "");
+        // \catcode `$ = 3 {\catcode`$13 ...}：省略 `=` 的赋值
+        assert_eq!(expand("\\catcode`$13\\relax").unwrap(), "");
+        // 控制符号：\catcode`\@ = 15
+        assert_eq!(expand("\\catcode`\\@=15\\relax").unwrap(), "");
+        // ^^ 转义：\catcode `^^A = 8（另一写法）
+        assert_eq!(expand("\\catcode`^^A=0008\\relax").unwrap(), "");
+        // \sfcode 同样支持反引号
+        assert_eq!(expand("\\sfcode`x=1000\\relax").unwrap(), "");
+    }
+
+    #[test]
+    fn catcode_backquote_circumflex_control_symbol() {
+        // \catcode `\^^@ = 11：^^@ 解码为字符码 0，控制符号名 "\0"
+        assert_eq!(expand("\\catcode`\\^^@=11\\relax").unwrap(), "");
+        // 读回：\catcode 0 现在是 11（letter）
+        assert_eq!(
+            expand("\\catcode`\\^^@=11\\relax\\ifnum\\catcode`\\^^@=11 yes\\else no\\fi").unwrap(),
+            "yes"
+        );
+    }
+
+    #[test]
+    fn catcode_internal_int_reads_catcode() {
+        // \catcode `U = \catcode`#：把 U 的 catcode 设为 # 的当前 catcode（默认 6）
+        assert_eq!(
+            expand("\\catcode`U=\\catcode`#\\relax\\ifnum\\catcode`U=6 yes\\else no\\fi").unwrap(),
+            "yes"
+        );
+    }
+
+    #[test]
+    fn trip_opening_line_parses() {
+        // trip.tex 第 1 行原文：\immediate\catcode `{ = 1 \endlinechar=13
+        assert_eq!(expand("\\immediate\\catcode`{=1\\endlinechar=13").unwrap(), "");
+    }
+
+    #[test]
+    fn internal_int_params_assign_and_the() {
+        // \defaulthyphenchar=`- 与 \defaultskewchar=256；\the 读回
+        assert_eq!(
+            expand("\\defaulthyphenchar=`-\\the\\defaulthyphenchar").unwrap(),
+            "45"
+        );
+        assert_eq!(
+            expand("\\defaultskewchar=256\\the\\defaultskewchar").unwrap(),
+            "256"
+        );
+        assert_eq!(
+            expand("\\newlinechar=13\\the\\newlinechar").unwrap(),
+            "13"
+        );
+    }
+
+    #[test]
+    fn badness_internal_int() {
+        // trip.tex 第 20 行：\catcode `\^^? = \badness（无盒子时 badness = 0）
+        assert_eq!(
+            expand("\\catcode`\\^^?=\\badness\\ifnum\\catcode`\\^^?=0 yes\\else no\\fi").unwrap(),
+            "yes"
+        );
+        assert_eq!(expand("\\the\\badness").unwrap(), "0");
+    }
+
+    #[test]
+    fn fontdimen_assignment_and_the() {
+        // trip.tex 第 21 行：\fontdimen12\nullfont=13pt；\the 读回
+        assert_eq!(
+            expand("\\fontdimen12\\nullfont=13pt\\the\\fontdimen12\\nullfont").unwrap(),
+            "13.0pt"
+        );
+        // 组作用域恢复
+        assert_eq!(
+            expand(
+                "\\fontdimen12\\nullfont=13pt{\\fontdimen12\\nullfont=7pt}\\the\\fontdimen12\\nullfont"
+            )
+            .unwrap(),
+            "13.0pt"
+        );
+        // \global 前缀跨组生效
+        assert_eq!(
+            expand("{\\global\\fontdimen12\\nullfont=7pt}\\the\\fontdimen12\\nullfont").unwrap(),
+            "7.0pt"
+        );
+        // 无覆盖默认 0
+        assert_eq!(expand("\\the\\fontdimen1\\nullfont").unwrap(), "0.0pt");
+        // 尺寸上下文读取：\dimen0=\fontdimen12\nullfont
+        assert_eq!(
+            expand("\\fontdimen12\\nullfont=13pt\\dimen0=\\fontdimen12\\nullfont\\the\\dimen0").unwrap(),
+            "13.0pt"
+        );
     }
 
     #[test]

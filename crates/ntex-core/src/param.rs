@@ -40,6 +40,15 @@ pub enum ParamKind {
     PreDisplayPenalty,
     /// `\postdisplaypenalty`：显示公式后断页惩罚（plain 默认 0）。
     PostDisplayPenalty,
+    // ETRIP 冲刺：TeX 内部整数参数（非排版参数，仅存储/回读）
+    /// `\endlinechar`：行尾字符（TeX initex 默认 13 = CR；-1 表示不追加）。
+    EndlineChar,
+    /// `\newlinechar`：换行字符（TeX 默认 -1 = 未激活）。
+    NewlineChar,
+    /// `\defaulthyphenchar`：缺省断字符（TeX initex 默认 45 = `-`）。
+    DefaultHyphenChar,
+    /// `\defaultskewchar`：缺省 skew 字符（TeX 默认 -1 = 未激活）。
+    DefaultSkewChar,
 }
 
 /// 参数值：尺寸（dimen）、胶水（glue）或整数（number）。
@@ -86,6 +95,14 @@ pub struct Params {
     pub predisplaypenalty: i64,
     /// `\postdisplaypenalty`（plain 默认 0）。
     pub postdisplaypenalty: i64,
+    /// `\endlinechar`（TeX initex 默认 13）。
+    pub endlinechar: i64,
+    /// `\newlinechar`（TeX 默认 -1 = 未激活）。
+    pub newlinechar: i64,
+    /// `\defaulthyphenchar`（TeX initex 默认 45 = `-`）。
+    pub defaulthyphenchar: i64,
+    /// `\defaultskewchar`（TeX 默认 -1 = 未激活）。
+    pub defaultskewchar: i64,
 }
 
 impl Default for Params {
@@ -145,6 +162,11 @@ impl Default for Params {
             },
             predisplaypenalty: 10_000,
             postdisplaypenalty: 0,
+            // TeX 内部整数参数（initex 默认）
+            endlinechar: 13,
+            newlinechar: -1,
+            defaulthyphenchar: 45,
+            defaultskewchar: -1,
         }
     }
 }
@@ -168,6 +190,10 @@ impl Params {
             ParamKind::BelowDisplayShortSkip => ParamValue::Glue(self.belowdisplayshortskip),
             ParamKind::PreDisplayPenalty => ParamValue::Number(self.predisplaypenalty),
             ParamKind::PostDisplayPenalty => ParamValue::Number(self.postdisplaypenalty),
+            ParamKind::EndlineChar => ParamValue::Number(self.endlinechar),
+            ParamKind::NewlineChar => ParamValue::Number(self.newlinechar),
+            ParamKind::DefaultHyphenChar => ParamValue::Number(self.defaulthyphenchar),
+            ParamKind::DefaultSkewChar => ParamValue::Number(self.defaultskewchar),
         }
     }
 
@@ -189,6 +215,10 @@ impl Params {
             (ParamKind::BelowDisplayShortSkip, ParamValue::Glue(g)) => self.belowdisplayshortskip = g,
             (ParamKind::PreDisplayPenalty, ParamValue::Number(v)) => self.predisplaypenalty = v,
             (ParamKind::PostDisplayPenalty, ParamValue::Number(v)) => self.postdisplaypenalty = v,
+            (ParamKind::EndlineChar, ParamValue::Number(v)) => self.endlinechar = v,
+            (ParamKind::NewlineChar, ParamValue::Number(v)) => self.newlinechar = v,
+            (ParamKind::DefaultHyphenChar, ParamValue::Number(v)) => self.defaulthyphenchar = v,
+            (ParamKind::DefaultSkewChar, ParamValue::Number(v)) => self.defaultskewchar = v,
             // 类型不匹配忽略（VM 侧保证参数种类与值类型匹配）
             _ => {}
         }
