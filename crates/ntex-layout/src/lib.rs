@@ -19,6 +19,7 @@
 
 #![deny(unsafe_code)]
 
+pub mod hyphen;
 pub mod linebreak;
 pub mod node;
 pub mod page;

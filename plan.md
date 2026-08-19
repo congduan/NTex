@@ -275,10 +275,13 @@
       `\detokenize`（控制词补空格）、`\unexpanded`、`\eTeXversion`/`\eTeXrevision`
       —— `\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens` 待补
 - [ ] Liang 断字算法 + `\patterns` 语言包
+      —— `\patterns` 语言包完成：sink 事件 + expand 原语（扫描平衡组、字母/数字/`.` 抽取、
+      空格折叠分隔）+ `PatternTrie::parse` 端到端接线；**断字接入段落折行（词尾 discretionary）
+      待做**
 - [ ] 错误模型补全（数学相关错误信息）
 
 **验收**：**ETRIP 全绿**；含数学的文档差分一致。
-**进度**：M4-1/2/5 已完成（13 + 16 + 14 用例）；M4-3（fontdimen/字体族）、M4-4（显示数学细化）、M4-6（断字）、M4-7（错误模型）待做。
+**进度**：M4-1/2/5 已完成（13 + 16 + 14 用例）；M4-6 `\patterns` 语言包（sink + expand + trie 接线）完成，断字接入折行待做；M4-3（fontdimen/字体族）、M4-4（显示数学细化）、M4-7（错误模型）待做。
 
 ---
 

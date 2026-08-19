@@ -65,6 +65,11 @@ pub trait TokenSink: std::fmt::Debug {
     fn math_font(&mut self, _kind: u8, _fam: u8, _font: u32) -> Result<()> {
         Ok(())
     }
+    /// 断字模式表（M4-6）：`\patterns{...}` 的原始文本字节
+    /// （字母/数字/`.` 及空格分隔符；由 ntex-layout 的 Liang trie 解析）。
+    fn patterns(&mut self, _patterns: Vec<u8>) -> Result<()> {
+        Ok(())
+    }
     /// 组开始（`{`）：VM 已完成组作用域簿记。
     fn group_begin(&mut self) -> Result<()> {
         Ok(())

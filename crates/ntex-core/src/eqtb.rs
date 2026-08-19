@@ -131,6 +131,8 @@ pub enum Primitive {
     TextFont,
     ScriptFont,
     ScriptScriptFont,
+    // M4-6 断字：\patterns 模式表
+    Patterns,
 }
 
 impl Primitive {
@@ -246,6 +248,7 @@ impl Primitive {
             97 => Self::TextFont,
             98 => Self::ScriptFont,
             99 => Self::ScriptScriptFont,
+            100 => Self::Patterns,
             _ => return None,
         })
     }

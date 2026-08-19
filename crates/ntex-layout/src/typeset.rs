@@ -28,6 +28,7 @@ use ntex_core::token::Token;
 use ntex_core::{FontLoader, Primitive, TokenSink};
 use ntex_font::{FontMetrics, LigKern};
 
+use crate::hyphen::PatternTrie;
 use crate::linebreak::knuth_plass;
 use crate::node::{hpack, BoxKind, BoxNode, FontId, Node, GLUE_ORDER_FIL};
 use crate::page::PageBuilder;
@@ -371,6 +372,8 @@ struct NodeBuilder {
     /// 数学字体族表（M4-3）：16 族 × 3 阶（text/script/scriptscript）。
     /// `\textfont<fam>=<cs>` 等原语分配；字符按族+字阶选字体。
     math_fonts: Vec<[Option<FontId>; 3]>,
+    /// 断字模式表（M4-6）：`\patterns{...}` 解析后的 Liang trie。
+    patterns: PatternTrie,
 }
 
 impl NodeBuilder {
@@ -420,6 +423,7 @@ impl NodeBuilder {
             class_pending: None,
             nonscript_pending: false,
             math_fonts: vec![[None; 3]; 16],
+            patterns: PatternTrie::default(),
             fonts,
         }
     }
@@ -1432,6 +1436,12 @@ impl TokenSink for NodeBuilder {
         if let Some(slot) = self.math_fonts.get_mut(fam as usize) {
             slot[kind as usize] = Some(FontId(font));
         }
+        Ok(())
+    }
+
+    /// `\patterns{...}`（M4-6）：解析文本为 Liang trie（后续段落折行按需断字）。
+    fn patterns(&mut self, patterns: Vec<u8>) -> Result<()> {
+        self.patterns = PatternTrie::parse(&patterns);
         Ok(())
     }
 
@@ -3114,5 +3124,21 @@ mod tests {
         let line = as_box(&main[0]);
         let sup = as_box(&line.children[1]);
         assert_eq!(sup.shift, -sup1, "上标提升量应为 fontdimen sup1");
+    }
+
+    // ---------- M4-6 断字：\patterns ----------
+
+    #[test]
+    fn patterns_event_builds_hyphenation_trie() {
+        // 端到端：\patterns{...} → sink 事件 → Liang trie（词断点计算）
+        let mut b = NodeBuilder::new(Fonts::Fn {
+            metrics: |_, _| (0, 0, 0),
+            space: |_| Glue::ZERO,
+        });
+        b.patterns(b".ach4 hy3phen5ation".to_vec()).unwrap();
+        assert_eq!(b.patterns.count, 2);
+        // hy3phen5ation → hy-phen-ation（断点 2, 6）；.ach4 对 machine 无奇数 gap
+        assert_eq!(b.patterns.hyphenate(b"hyphenation"), vec![2, 6]);
+        assert_eq!(b.patterns.hyphenate(b"machine"), Vec::<usize>::new());
     }
 }

@@ -1029,6 +1029,8 @@ impl Expander {
                 };
                 self.exec_math_font(kind)
             }
+            // M4-6 断字：\patterns{...}（扫描组 + 直通 sink 文本）
+            Primitive::Patterns => self.exec_patterns(),
         }
     }
 
@@ -1065,6 +1067,38 @@ impl Expander {
             }
         };
         self.sink.math_font(kind, fam as u8, font)
+    }
+
+    /// `\patterns{...}`（M4-6）：扫描平衡组（不展开），抽取模式文本直通 sink。
+    ///
+    /// TeX `new_patterns`（tex.web）语义：字母/数字/`.` 是模式字符；
+    /// 其余 token（空格、控制序列等）是模式分隔符。文本交由 ntex-layout 的
+    /// Liang trie 解析（ntex-layout::hyphen::PatternTrie::parse）。
+    fn exec_patterns(&mut self) -> Result<()> {
+        let tokens = self.scan_group_contents()?;
+        let mut out: Vec<u8> = Vec::new();
+        for tok in tokens {
+            match tok.catcode() {
+                Some(Catcode::Letter) | Some(Catcode::Other) => {
+                    let ch = tok.charcode().expect("Char 必有 charcode");
+                    let is_pattern_char = u8::try_from(ch).is_ok_and(|b| {
+                        b.is_ascii_alphabetic() || b.is_ascii_digit() || b == b'.'
+                    });
+                    if is_pattern_char {
+                        out.push(ch as u8);
+                    } else if out.last() != Some(&b' ') {
+                        out.push(b' ');
+                    }
+                }
+                _ => {
+                    // 空格（cat 10）与任何其他 token：模式分隔符
+                    if out.last() != Some(&b' ') {
+                        out.push(b' ');
+                    }
+                }
+            }
+        }
+        self.sink.patterns(out)
     }
 
     /// `\left`/`\right` 的定界符参数：字符 → charcode（`.` 为空定界符）；`\.` → None。
@@ -2136,7 +2170,7 @@ impl Expander {
 
     /// 注册 M1 内建原语。
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 99] = [
+        const BUILTINS: [(&str, Primitive); 100] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -2252,6 +2286,8 @@ impl Expander {
             ("textfont", Primitive::TextFont),
             ("scriptfont", Primitive::ScriptFont),
             ("scriptscriptfont", Primitive::ScriptScriptFont),
+            // M4-6 断字：\patterns 模式表
+            ("patterns", Primitive::Patterns),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);
@@ -3649,6 +3685,7 @@ mod tests {
     struct EventSink {
         chars: Vec<char>,
         fonts: Vec<u32>,
+        patterns: Vec<Vec<u8>>,
     }
 
     impl TokenSink for EventSink {
@@ -3660,6 +3697,10 @@ mod tests {
         }
         fn font_selected(&mut self, font: u32) -> Result<()> {
             self.fonts.push(font);
+            Ok(())
+        }
+        fn patterns(&mut self, patterns: Vec<u8>) -> Result<()> {
+            self.patterns.push(patterns);
             Ok(())
         }
         fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
@@ -3742,6 +3783,41 @@ mod tests {
         // 两次加载得到不同 FontId → 不等
         let out = font_run(r"\font\a=cmr10\font\b=cmr10\ifx\a\b yes\else no\fi").unwrap().0;
         assert_eq!(out, "no");
+    }
+
+    // ---------- M4-6 断字：\patterns ----------
+
+    /// 运行 `\patterns{...}`，返回 sink 收到的模式文本。
+    fn pattern_run(src: &str) -> Result<Vec<u8>> {
+        let mut e = Expander::new();
+        let sink = EventSink::default();
+        e.set_sink(Box::new(sink));
+        e.run_source(src)?;
+        let mut sink = e.take_sink();
+        let sink = sink.as_any_mut().downcast_mut::<EventSink>().unwrap();
+        Ok(sink.patterns.last().cloned().unwrap_or_default())
+    }
+
+    #[test]
+    fn patterns_reads_group_and_forwards_text() {
+        let text = pattern_run(r"\patterns{.ach4 .ad4 % 注释换行
+ab5c}").unwrap();
+        // 字母/数字/`.` 保留；空格/% 注释/换行折叠为分隔空格
+        assert_eq!(text, b".ach4 .ad4 ab5c");
+    }
+
+    #[test]
+    fn patterns_multi_and_unclosed_group_errors() {
+        let mut e = Expander::new();
+        let sink = EventSink::default();
+        e.set_sink(Box::new(sink));
+        e.run_source(r"\patterns{ab5c xy7z}").unwrap();
+        let mut sink = e.take_sink();
+        let sink = sink.as_any_mut().downcast_mut::<EventSink>().unwrap();
+        assert_eq!(sink.patterns, vec![b"ab5c xy7z".to_vec()]);
+        // 未闭合组报错
+        let mut e = Expander::new();
+        assert!(e.run_source(r"\patterns{ab5c").is_err());
     }
 
     // ---------- M3 收尾（RFC-3）：VFS 副作用原语 ----------
