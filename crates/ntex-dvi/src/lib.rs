@@ -239,7 +239,7 @@ impl<'a> Writer<'a> {
                     }
                     self.cur_h += width;
                 }
-                Node::Penalty { .. } | Node::Leaders { .. } => {}
+                Node::Penalty { .. } | Node::Leaders { .. } | Node::Discretionary { .. } => {}
             }
         }
         self.prune_movements(save_loc);
@@ -286,7 +286,8 @@ impl<'a> Writer<'a> {
                         self.put_rule(*height + *depth, *width);
                     }
                 }
-                Node::Penalty { .. } | Node::Leaders { .. } | Node::Char { .. } => {}
+                Node::Penalty { .. } | Node::Leaders { .. } | Node::Char { .. }
+                | Node::Discretionary { .. } => {}
             }
         }
         self.prune_movements(save_loc);

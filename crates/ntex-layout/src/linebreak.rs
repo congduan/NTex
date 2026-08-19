@@ -8,7 +8,7 @@
 //! 行语义：行从断点 a 到断点 b，自然宽度 = `width(b)−width(a)`（断点自身胶水
 //! 被丢弃；其 stretch/shrink 计入行可用量，TeX §845 语义）。
 
-use crate::node::Node;
+use crate::node::{hbox_dimensions, Node};
 
 /// 无限坏度（tex.web `inf_bad`）。
 const INF_BAD: u16 = 10_000;
@@ -121,6 +121,20 @@ fn preprocess(hlist: &[Node]) -> Vec<BreakSpec> {
                     });
                 }
             }
+            // 断字节点（M4-6）：断点惩罚 = \hyphenpenalty（plain 默认 50）。
+            // 断在该点 → 行宽 = 累计 + pre（连字符）宽；未断 → 自身贡献 0
+            // （字母留在主列表，replace 为空）。
+            Node::Discretionary { pre, .. } => {
+                out.push(BreakSpec {
+                    index: i,
+                    content_start: i + 1,
+                    width: width + hbox_dimensions(pre).width,
+                    stretch,
+                    shrink,
+                    penalty: HYPHEN_PENALTY,
+                    is_forced: false,
+                });
+            }
             other => {
                 width += other.dimensions().width;
             }
@@ -152,6 +166,9 @@ const EJECT_PENALTY: i64 = -10_000;
 /// `\linepenalty`（plain 默认 10）与 `\adjdemerits`（plain 默认 10000）。
 const LINE_PENALTY: i64 = 10;
 const ADJ_DEMERITS: i64 = 10_000;
+
+/// `\hyphenpenalty`（plain 默认 50）：discretionary 断点的惩罚（M4-6）。
+const HYPHEN_PENALTY: i64 = 50;
 
 /// 行伸缩方向（tex.web §16790-16813）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -352,6 +369,21 @@ mod tests {
         }
     }
 
+    /// 断字 discretionary：pre = 连字符（宽 `w`），post/replace 空。
+    fn disc(w: i64) -> Node {
+        Node::Discretionary {
+            pre: vec![Node::Char {
+                font: FontId(0),
+                charcode: 45,
+                width: w,
+                height: 0,
+                depth: 0,
+            }],
+            post: Vec::new(),
+            replace: Vec::new(),
+        }
+    }
+
     // ---------- badness（tex.web §7 校准值） ----------
 
     #[test]
@@ -510,5 +542,39 @@ mod tests {
         let mut hlist = words(&[10, 10]);
         hlist.push(fil_glue());
         assert_eq!(knuth_plass(&hlist, 100, 200), vec![(0, 4)]);
+    }
+
+    // ---------- M4-6 断字：discretionary 断点 ----------
+
+    #[test]
+    fn discretionary_break_chosen_when_word_too_long() {
+        // "m abcdefgh n"（char 宽 10、词间 glue 3/1000/14、词 "abcdefgh" 断点 2 的
+        // discretionary 连字符宽 5），hsize 60：
+        // 不断字时整行/长行 badness > tolerance 被拒（或强制末行 demerits 巨大），
+        // 唯一可行路径断在词内 → 行1 = "m ab-"（行尾补连字符）、行2 = "cdefgh n"。
+        let mut hlist: Vec<Node> = vec![
+            char_of(10),              // m
+            glue(3, 1000, 14),        // 词间
+            char_of(10),              // a
+            char_of(10),              // b
+            disc(5),                  // 断点 2：pre = 连字符
+        ];
+        for _ in 0..6 {
+            hlist.push(char_of(10)); // c d e f g h
+        }
+        hlist.push(glue(3, 1000, 14)); // 词间
+        hlist.push(char_of(10));      // n
+        hlist.push(fil_glue());
+        let lines = knuth_plass(&hlist, 60, 200);
+        // 行1 = [0..4]（m 空格 a b）+ discretionary pre；行2 = [5..14]（c..h 空格 n fil）
+        assert_eq!(lines, vec![(0, 4), (5, 14)]);
+    }
+
+    #[test]
+    fn discretionary_ignored_when_word_fits() {
+        // 词宽 40 + 断点 discretionary：hsize 100 单行即可（fil 拉伸），不选断字
+        let mut hlist: Vec<Node> = vec![char_of(10), char_of(10), disc(5), char_of(10), char_of(10)];
+        hlist.push(fil_glue());
+        assert_eq!(knuth_plass(&hlist, 100, 200), vec![(0, 6)]);
     }
 }

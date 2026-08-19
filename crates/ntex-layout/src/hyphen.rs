@@ -50,6 +50,11 @@ fn parse_pattern(p: &[u8]) -> (Vec<u8>, Vec<u8>) {
 }
 
 impl PatternTrie {
+    /// 是否已加载模式（空表跳过断字）。
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
     /// 解析 `\patterns{...}` 的模式表（空格/换行分隔多条）。
     pub fn parse(patterns: &[u8]) -> Self {
         let mut trie = PatternTrie::default();

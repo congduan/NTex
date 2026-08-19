@@ -162,6 +162,16 @@ pub enum Node {
         stretch: i64,
         shrink: i64,
     },
+    /// 断字节点（M4-6）：三段式 pre/post/replace。
+    ///
+    /// - 折行断在该点：当前行行尾取 `pre`（含连字符）、下一行行首取 `post`；
+    /// - 未断：取 `replace`（本实现中字母留在主列表，pre 仅含连字符、post/replace 为空，
+    ///   故未断时自身宽度为 0，连字符只在断点处计入行宽）。
+    Discretionary {
+        pre: Vec<Node>,
+        post: Vec<Node>,
+        replace: Vec<Node>,
+    },
 }
 
 impl Node {
@@ -195,6 +205,14 @@ impl Node {
                 height: inner.height,
                 depth: inner.depth,
             },
+            // 断字节点：未断时宽度 = replace（本实现为空 → 0）；连字符只在断点计入行宽。
+            Node::Discretionary { replace, .. } => {
+                if replace.is_empty() {
+                    BoxDimensions::ZERO
+                } else {
+                    hbox_dimensions(replace)
+                }
+            }
         }
     }
 
