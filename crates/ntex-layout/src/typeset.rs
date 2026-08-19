@@ -1660,6 +1660,16 @@ impl TokenSink for NodeBuilder {
         if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
             return self.math_char_tok(tok);
         }
+        // M4-7 错误模型：数学模式外遇到 ^/_（cat 7/8）→ TeX "Missing $ inserted"，
+        // 而非静默渲染为字面字符（TeX 会插入 $ 恢复；我们直接报错）。
+        if matches!(
+            tok.catcode(),
+            Some(ntex_core::Catcode::Superscript) | Some(ntex_core::Catcode::Subscript)
+        ) {
+            return Err(Error::invalid_input(
+                "Missing $ inserted（^/_ 只能在数学模式内使用）",
+            ));
+        }
         let Some(node) = self.char_node(tok) else {
             return Ok(()); // 控制序列等无可排版语义
         };
@@ -3202,6 +3212,64 @@ mod tests {
     fn math_display_inside_hbox_rejected() {
         // $$ 不允许出现在 \hbox（restricted horizontal mode）内
         assert!(typeset(r"\hbox{$$x$$}").is_err(), "显示数学不能在 \\hbox 内");
+    }
+
+    // ---------- M4-7 错误模型：数学错误消息 ----------
+
+    /// 断言源码报错且消息含 `expected` 子串。
+    fn assert_math_error(src: &str, expected: &str) {
+        let err = typeset(src).unwrap_err();
+        assert!(
+            err.to_string().contains(expected),
+            "{src:?} 应报 {expected:?}，实际：{err}"
+        );
+    }
+
+    #[test]
+    fn math_caret_outside_math_rejected() {
+        // 数学模式外 ^/_（cat 7/8）：TeX "Missing $ inserted"（不再静默渲染字面）
+        assert_math_error(r"a^b", "Missing $ inserted");
+        assert_math_error(r"x_2", "Missing $ inserted");
+        assert_math_error(r"\hbox{a^b}", "Missing $ inserted");
+    }
+
+    #[test]
+    fn math_double_superscript_message() {
+        assert_math_error(r"$x^2^3$", "双重上标（Double superscript）");
+    }
+
+    #[test]
+    fn math_missing_base_message() {
+        assert_math_error(r"$^2$", "数学模式中 ^/_ 前缺少原子（Missing { inserted）");
+        assert_math_error(r"$_{2}$", "数学模式中 ^/_ 前缺少原子（Missing { inserted）");
+    }
+
+    #[test]
+    fn math_left_right_message() {
+        assert_math_error(r"$\right)$", "\\right 前缺少 \\left（Missing \\left inserted）");
+        assert_math_error(r"$\left(x$", "\\left 后缺少 \\right（Extra } or forgotten \\right）");
+    }
+
+    #[test]
+    fn math_over_ambiguous_message() {
+        assert_math_error(r"$a\over b\over c$", "\\over 歧义（Ambiguous; you need another { and }）");
+    }
+
+    #[test]
+    fn math_display_end_message() {
+        assert_math_error(r"$$x$", "Display math should end with $$.");
+    }
+
+    #[test]
+    fn math_unclosed_message() {
+        assert_math_error(r"$x", "数学模式未闭合（缺少 $）");
+    }
+
+    #[test]
+    fn math_primitive_outside_math_message() {
+        // 数学专用原语在文本模式使用 → 明确报错
+        assert_math_error(r"\over b", "\\over 只能在数学模式使用");
+        assert_math_error(r"\sqrt{x}", "\\sqrt 只能在数学模式使用");
     }
 
     #[test]
