@@ -245,6 +245,12 @@ impl EngineDriver for NtexDriver {
 
         let mut ts = ntex_layout::Typesetter::new();
         let run = ts.typeset_bytes(source);
+        // 终端转录（\message/\show/\showthe/\write16）→ .log 与 .typ 共用
+        let transcript = ts.take_transcript();
+        log.push_str(&transcript);
+        if !transcript.is_empty() && !transcript.ends_with('\n') {
+            log.push('\n');
+        }
         let (status, produced) = match run {
             Ok(_) => {
                 log.push_str("Engine: run completed.\n");
@@ -265,8 +271,8 @@ impl EngineDriver for NtexDriver {
 
         fs::write(request.working_dir.join(format!("{base}.log")), &log)
             .with_context(|| "写入 .log 产物失败")?;
-        // .typ（终端输出转录）待引擎转录能力就绪后填充
-        fs::write(request.working_dir.join(format!("{base}.typ")), "")
+        // .typ（终端转录）：\message/\show 等累积文本
+        fs::write(request.working_dir.join(format!("{base}.typ")), &transcript)
             .with_context(|| "写入 .typ 产物失败")?;
 
         Ok(RunOutput {

@@ -34,7 +34,7 @@ use crate::register::{
     REGISTER_COUNT, SP_PER_PT,
 };
 use crate::sink::{TokenSink, VecSink};
-use crate::token::{Token, TokenKind};
+use crate::token::{meaning, Token, TokenKind};
 use ntex_io::{LocalVfs, Vfs};
 
 /// 输入帧：token 来源栈（LIFO，栈顶为当前帧）。
@@ -1011,6 +1011,10 @@ impl Expander {
             Primitive::Font => self.exec_font(),
             // ETRIP 冲刺：字体参数 \fontdimen<num><font>=<dimen>
             Primitive::FontDimen => self.exec_fontdimen(),
+            // ETRIP 冲刺：终端转录
+            Primitive::Message => self.exec_message(),
+            Primitive::Show => self.exec_show(),
+            Primitive::ShowThe => self.exec_showthe(),
             // M3-5 输出：\shipout 直通 sink（排版器解释：封装下一盒子为页面）
             Primitive::ShipOut => self.sink.primitive(prim),
             // M3-5-3 输出例程：\output=<general text> 存储 token 列表
@@ -1325,6 +1329,87 @@ impl Expander {
         self.fontdimens.get(&(font, num)).copied().unwrap_or(0)
     }
 
+    // ---------- ETRIP 冲刺：终端转录（\message/\show/\showthe/\write16） ----------
+
+    /// `\message{<general text>}`：展开参数后输出到终端与日志（TeX：不换行）。
+    fn exec_message(&mut self) -> Result<()> {
+        let toks = self.scan_group_contents()?;
+        let s = self.expand_to_string(&toks)?;
+        self.sink.message(s)
+    }
+
+    /// `\show<token>`：显示下一个 token 的含义（TeX："> \cs=..."，不展开）。
+    fn exec_show(&mut self) -> Result<()> {
+        let tok = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input("\\show 后缺少 token"))?
+            .0;
+        self.sink.show(format!("> {}", self.show_meaning(tok)))
+    }
+
+    /// `\showthe<内部量>`：显示内部量当前值（TeX："> \count0=5."）。
+    fn exec_showthe(&mut self) -> Result<()> {
+        let tok = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input("\\showthe 后缺少内部量"))?
+            .0;
+        let csid = tok
+            .csid()
+            .ok_or_else(|| Error::invalid_input("\\showthe 需要内部量参数"))?;
+        let name = self.intern.name(csid).to_owned();
+        let value_toks = self.the_tokens_after(tok)?;
+        let value = detok_tokens(&value_toks, &self.intern);
+        self.sink.show(format!("> \\{name}={value}."))
+    }
+
+    /// `\show` 的含义描述（字符 / 控制序列的 eqtb 槽含义）。
+    fn show_meaning(&self, tok: Token) -> String {
+        match tok.kind() {
+            TokenKind::Char => meaning(tok, &self.intern),
+            TokenKind::ControlSeq => {
+                let csid = tok.csid().expect("ControlSeq 必有 csid");
+                let name = self.intern.name(csid).to_owned();
+                match self.eqtb.slot(csid).clone() {
+                    EqSlot::Undefined => format!("\\{name}=undefined."),
+                    EqSlot::Primitive(_) => format!("\\{name}=\\{name}."),
+                    EqSlot::Macro(m) => {
+                        let params: String = (1..=m.value.params.num_params)
+                            .map(|n| format!("#{n}"))
+                            .collect();
+                        let body = detok_tokens(&m.value.body, &self.intern);
+                        format!("\\{name}=macro:{params}->{body}.")
+                    }
+                    EqSlot::Char { catcode, charcode } => {
+                        let ch = char::from_u32(charcode).unwrap_or('\u{FFFD}');
+                        let desc = if catcode == Catcode::Letter {
+                            format!("the letter {ch}")
+                        } else {
+                            format!("the character {ch}")
+                        };
+                        format!("\\{name}={desc}.")
+                    }
+                    EqSlot::Font(f) => format!("\\{name}=select font {f}."),
+                    EqSlot::Register(k, n) => format!("\\{name}=\\{}{}.", reg_kind_name(k), n),
+                    EqSlot::Stream(_, n) => format!("\\{name}=write{n}."),
+                    EqSlot::Alias(_) => {
+                        // \let 别名：沿链解析（防环）后显示目标槽含义
+                        let mut id = csid;
+                        let mut hops = 0;
+                        while let EqSlot::Alias(t) = self.eqtb.slot(id) {
+                            id = *t;
+                            hops += 1;
+                            if hops > 64 {
+                                break;
+                            }
+                        }
+                        self.show_meaning(Token::control_sequence(id))
+                    }
+                }
+            }
+            _ => String::new(),
+        }
+    }
+
     // ---------- M3 收尾（RFC-3）：VFS 副作用原语 ----------
 
     /// `\input<file>`：读文件内容推入 `Source` 输入帧（支持嵌套）。
@@ -1567,6 +1652,11 @@ impl Expander {
             return Err(Error::invalid_input("\\write18（shell 转义）暂不支持"));
         }
         let toks = Arc::from(self.scan_general_text()?);
+        // 流 16 = 终端（TeX：\write16 写终端与日志，无需 \openout）
+        if idx == 16 {
+            let s = self.expand_to_string(&toks)?;
+            return self.sink.write16(s);
+        }
         self.ensure_write_stream(idx);
         if self.take_immediate() {
             let s = self.expand_to_string(&toks)?;
@@ -2428,7 +2518,7 @@ impl Expander {
 
     /// 注册 M1 内建原语。
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 118] = [
+        const BUILTINS: [(&str, Primitive); 121] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -2570,6 +2660,10 @@ impl Expander {
             ("badness", Primitive::Badness),
             // ETRIP 冲刺：字体参数
             ("fontdimen", Primitive::FontDimen),
+            // ETRIP 冲刺：终端转录原语
+            ("message", Primitive::Message),
+            ("show", Primitive::Show),
+            ("showthe", Primitive::ShowThe),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);
@@ -2831,6 +2925,11 @@ impl Expander {
             .fetch()?
             .ok_or_else(|| Error::invalid_input("\\the 后缺少参数"))?
             .0;
+        self.the_tokens_after(tok)
+    }
+
+    /// `\the` 求值（token 已取出的变体；`\showthe` 复用）。
+    fn the_tokens_after(&mut self, tok: Token) -> Result<Vec<Token>> {
         let csid = tok
             .csid()
             .ok_or_else(|| Error::invalid_input("\\the 需要寄存器参数"))?;
@@ -3506,6 +3605,11 @@ impl Expander {
         self.sink.tokens()
     }
 
+    /// 终端转录文本（`\message`/`\show`/`\write16` 累积；收集型 sink 实现）。
+    pub fn transcript(&self) -> &str {
+        self.sink.transcript()
+    }
+
     /// 替换输出 sink（排版器接入点，M3-2）。
     pub fn set_sink(&mut self, sink: Box<dyn TokenSink>) {
         self.sink = sink;
@@ -3583,6 +3687,41 @@ fn emit_glue(g: Glue) -> Vec<Token> {
         .bytes()
         .map(|b| Token::char(Catcode::Other, u32::from(b)))
         .collect()
+}
+
+/// 寄存器种类名（`\show` 显示用）。
+fn reg_kind_name(k: RegKind) -> &'static str {
+    match k {
+        RegKind::Count => "count",
+        RegKind::Dimen => "dimen",
+        RegKind::Skip => "skip",
+        RegKind::Toks => "toks",
+    }
+}
+
+/// token 列表 → 文本（`\show` 宏体/`\showthe` 值显示用）：
+/// 字符取字符、控制序列 → `\名字`、宏参数 → `#n`。
+fn detok_tokens(toks: &[Token], intern: &InternTable) -> String {
+    let mut s = String::new();
+    for t in toks {
+        match t.kind() {
+            TokenKind::Char => {
+                if let Some(ch) = t.charcode().and_then(char::from_u32) {
+                    s.push(ch);
+                }
+            }
+            TokenKind::ControlSeq => {
+                s.push('\\');
+                s.push_str(intern.name(t.csid().expect("ControlSeq 必有 csid")));
+            }
+            TokenKind::MacroParam => {
+                s.push('#');
+                s.push_str(&t.param_number().expect("MacroParam 必有参数号").to_string());
+            }
+            TokenKind::EndGroup => {}
+        }
+    }
+    s
 }
 
 /// 按关系符比较两个内部量。
@@ -3862,6 +4001,39 @@ mod tests {
             expand("\\fontdimen12\\nullfont=13pt\\dimen0=\\fontdimen12\\nullfont\\the\\dimen0").unwrap(),
             "13.0pt"
         );
+    }
+
+    #[test]
+    fn message_show_transcribe() {
+        // \message：不换行、可拼接
+        let mut e = Expander::new();
+        e.run_source("\\message{Hello}\\message{ world}").unwrap();
+        assert_eq!(e.transcript(), "Hello world");
+        // \message 参数展开宏（控制词后空格被吞）
+        let mut e = Expander::new();
+        e.run_source("\\def\\x{42}\\message{a\\x b}").unwrap();
+        assert_eq!(e.transcript(), "a42b");
+        // \message 的宏参数替换（ETRIP \def\stop#1{\message{... #1!}} 模式）
+        let mut e = Expander::new();
+        e.run_source("\\def\\stop#1{\\message{Emergency stop: #1!}}\\stop{x}")
+            .unwrap();
+        assert_eq!(e.transcript(), "Emergency stop: x!");
+        // \show：meaning 行（带换行）
+        let mut e = Expander::new();
+        e.run_source("\\show\\relax").unwrap();
+        assert_eq!(e.transcript(), "> \\relax=\\relax.\n");
+        // \show 未定义
+        let mut e = Expander::new();
+        e.run_source("\\show\\undefinedcs").unwrap();
+        assert_eq!(e.transcript(), "> \\undefinedcs=undefined.\n");
+        // \showthe：内部量值
+        let mut e = Expander::new();
+        e.run_source("\\count0=5\\showthe\\count0").unwrap();
+        assert_eq!(e.transcript(), "> \\count=5.\n");
+        // \write16：写终端（带换行）
+        let mut e = Expander::new();
+        e.run_source("\\write16{hi}").unwrap();
+        assert_eq!(e.transcript(), "hi\n");
     }
 
     #[test]

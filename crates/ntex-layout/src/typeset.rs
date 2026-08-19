@@ -378,6 +378,8 @@ struct NodeBuilder {
     display_short: bool,
     /// M4-4 显示数学：公式刚闭合，后续文字续排（不开新段：无 parskip/缩进）。
     after_display: bool,
+    /// ETRIP 冲刺：终端转录累积（`\message`/`\show`/`\write16`）。
+    transcript: String,
 }
 
 /// 断字候选字符：ASCII 字母（catcode 11 的近似；ligature/非字母不参与断字 run）。
@@ -435,6 +437,7 @@ impl NodeBuilder {
             patterns: PatternTrie::default(),
             display_short: false,
             after_display: false,
+            transcript: String::new(),
             fonts,
         }
     }
@@ -1941,6 +1944,28 @@ impl TokenSink for NodeBuilder {
         v
     }
 
+    // ETRIP 冲刺：终端转录（\message/\show/\showthe/\write16）
+    fn message(&mut self, text: String) -> Result<()> {
+        self.transcript.push_str(&text);
+        Ok(())
+    }
+
+    fn show(&mut self, text: String) -> Result<()> {
+        self.transcript.push_str(&text);
+        self.transcript.push('\n');
+        Ok(())
+    }
+
+    fn write16(&mut self, text: String) -> Result<()> {
+        self.transcript.push_str(&text);
+        self.transcript.push('\n');
+        Ok(())
+    }
+
+    fn transcript(&self) -> &str {
+        &self.transcript
+    }
+
     fn glue(&mut self, g: Glue) -> Result<()> {
         // 数学模式 `\hskip`：转数学空格原子（TeX 数学模式 \hskip ≡ \mskip）。
         if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
@@ -2114,6 +2139,16 @@ impl Typesetter {
         self.expander.feed_source(bytes);
         self.expander.run()?;
         self.finish().map(|o| o.main)
+    }
+
+    /// 取走终端转录（`\message`/`\show`/`\write16` 累积文本）。
+    pub fn take_transcript(&mut self) -> String {
+        self.expander
+            .sink_mut()
+            .as_any_mut()
+            .downcast_mut::<NodeBuilder>()
+            .map(|b| std::mem::take(&mut b.transcript))
+            .unwrap_or_default()
     }
 
     /// 排版源码并取回 `\shipout` 页面（DVI 输出，M3-5）：

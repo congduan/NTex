@@ -157,6 +157,10 @@ pub enum Primitive {
     Badness,
     // ETRIP 冲刺：字体参数
     FontDimen,
+    // ETRIP 冲刺：终端转录原语
+    Message,
+    Show,
+    ShowThe,
 }
 
 impl Primitive {
@@ -291,6 +295,9 @@ impl Primitive {
             116 => Self::Xdef,
             117 => Self::Badness,
             118 => Self::FontDimen,
+            119 => Self::Message,
+            120 => Self::Show,
+            121 => Self::ShowThe,
             _ => return None,
         })
     }

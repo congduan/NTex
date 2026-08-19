@@ -138,6 +138,23 @@ pub trait TokenSink: std::fmt::Debug {
     fn take_write_flush_pending(&mut self) -> bool {
         false
     }
+    // ETRIP 冲刺：终端转录（\message/\show/\showthe/\write16）
+    /// `\message{...}`：输出文本到终端与日志（TeX 语义：不换行）。
+    fn message(&mut self, _text: String) -> Result<()> {
+        Ok(())
+    }
+    /// `\show`/`\showthe`：输出 meaning 行（TeX："> ..."，带换行）。
+    fn show(&mut self, _text: String) -> Result<()> {
+        Ok(())
+    }
+    /// `\write16{...}`：写终端（流 16 = 终端，带换行）。
+    fn write16(&mut self, _text: String) -> Result<()> {
+        Ok(())
+    }
+    /// 累积的终端转录文本（默认空；收集型 sink 实现）。
+    fn transcript(&self) -> &str {
+        ""
+    }
     /// 已收集的输出 token（默认空；测试与 `Expander::output` 用）。
     fn tokens(&self) -> &[Token] {
         &[]
@@ -154,12 +171,35 @@ pub trait TokenSink: std::fmt::Debug {
 #[derive(Debug, Default)]
 pub struct VecSink {
     pub tokens: Vec<Token>,
+    /// 终端转录累积（\message/\show/\write16）。
+    pub transcript: String,
 }
 
 impl TokenSink for VecSink {
     fn token(&mut self, tok: Token) -> Result<()> {
         self.tokens.push(tok);
         Ok(())
+    }
+
+    fn message(&mut self, text: String) -> Result<()> {
+        self.transcript.push_str(&text);
+        Ok(())
+    }
+
+    fn show(&mut self, text: String) -> Result<()> {
+        self.transcript.push_str(&text);
+        self.transcript.push('\n');
+        Ok(())
+    }
+
+    fn write16(&mut self, text: String) -> Result<()> {
+        self.transcript.push_str(&text);
+        self.transcript.push('\n');
+        Ok(())
+    }
+
+    fn transcript(&self) -> &str {
+        &self.transcript
     }
 
     fn tokens(&self) -> &[Token] {
