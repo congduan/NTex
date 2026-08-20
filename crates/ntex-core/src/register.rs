@@ -3,6 +3,7 @@
 //! - `\count`：256 个整数
 //! - `\dimen`：256 个 scaled point（1pt = 65536sp）
 //! - `\skip`：256 个胶水（width + stretch + shrink）
+//! - `\muskip`：256 个 mu 胶水（1mu = 65536 单位；ETRIP，pdfTeX 实测 \mutoglue/\gluetomu 1:1）
 //! - `\toks`：256 个 token 列表
 //!
 //! 单位换算与 `\the` 输出格式均**对照真实 pdfTeX 实测校准**（见函数注释），
@@ -49,12 +50,13 @@ pub fn unit_to_sp(unit: &str) -> Option<i64> {
     }
 }
 
-/// 寄存器类别（`\count`/`\dimen`/`\skip`/`\toks`）。
+/// 寄存器类别（`\count`/`\dimen`/`\skip`/`\muskip`/`\toks`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegKind {
     Count,
     Dimen,
     Skip,
+    Muskip,
     Toks,
 }
 
@@ -64,6 +66,7 @@ pub struct Registers {
     counts: [i64; REGISTER_COUNT],
     dimens: [i64; REGISTER_COUNT],
     skips: [Glue; REGISTER_COUNT],
+    muskip: [Glue; REGISTER_COUNT],
     toks: [TokenArray; REGISTER_COUNT],
 }
 
@@ -79,6 +82,7 @@ impl Registers {
             counts: [0; REGISTER_COUNT],
             dimens: [0; REGISTER_COUNT],
             skips: [Glue::ZERO; REGISTER_COUNT],
+            muskip: [Glue::ZERO; REGISTER_COUNT],
             toks: std::array::from_fn(|_| Arc::from([])),
         }
     }
@@ -107,6 +111,14 @@ impl Registers {
         self.skips[idx] = v;
     }
 
+    pub fn muskip(&self, idx: usize) -> Glue {
+        self.muskip[idx]
+    }
+
+    pub fn set_muskip(&mut self, idx: usize, v: Glue) {
+        self.muskip[idx] = v;
+    }
+
     pub fn toks(&self, idx: usize) -> TokenArray {
         self.toks[idx].clone()
     }
@@ -122,6 +134,8 @@ pub struct RegisterState {
     pub counts: [i64; REGISTER_COUNT],
     pub dimens: [i64; REGISTER_COUNT],
     pub skips: [Glue; REGISTER_COUNT],
+    /// 非空 `\muskip` 项（(下标, 内容)；ETRIP）。
+    pub muskip: Vec<(usize, Glue)>,
     /// 非空 `\toks` 项（(下标, 内容)）。
     pub toks: Vec<(usize, TokenArray)>,
 }
@@ -132,6 +146,13 @@ impl Registers {
             counts: self.counts,
             dimens: self.dimens,
             skips: self.skips,
+            muskip: self
+                .muskip
+                .iter()
+                .enumerate()
+                .filter(|(_, g)| **g != Glue::ZERO)
+                .map(|(i, g)| (i, *g))
+                .collect(),
             toks: self
                 .toks
                 .iter()
@@ -147,6 +168,9 @@ impl Registers {
         r.counts = state.counts;
         r.dimens = state.dimens;
         r.skips = state.skips;
+        for (i, g) in state.muskip {
+            r.muskip[i] = g;
+        }
         for (i, t) in state.toks {
             r.toks[i] = t;
         }
@@ -191,6 +215,19 @@ pub fn format_glue(g: Glue) -> String {
     }
     if g.shrink != 0 {
         out.push_str(&format!(" minus {}pt", format_dimen(g.shrink)));
+    }
+    out
+}
+
+/// mu 胶水 → `\the` 输出（"1.0mu plus 2.0mu minus 0.5mu"；ETRIP）。
+/// pdfTeX 实测：mu 值定点存储（1mu = 65536 单位），数值直通。
+pub fn format_mu_glue(g: Glue) -> String {
+    let mut out = format!("{}mu", format_dimen(g.width));
+    if g.stretch != 0 {
+        out.push_str(&format!(" plus {}mu", format_dimen(g.stretch)));
+    }
+    if g.shrink != 0 {
+        out.push_str(&format!(" minus {}mu", format_dimen(g.shrink)));
     }
     out
 }

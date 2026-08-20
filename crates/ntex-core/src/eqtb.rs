@@ -204,6 +204,17 @@ pub enum Primitive {
     HyphenChar,
     // ETRIP 冲刺：\delcode<num>=<num>（字符定界符码）
     DelCode,
+    // ETRIP 冲刺：\muskip/\muskipdef（mu 胶量寄存器；1mu = 65536 单位）
+    Muskip,
+    Muskipdef,
+    // ETRIP 冲刺：\thinmuskip/\medmuskip/\thickmuskip（muskip 寄存器 0/1/2）
+    ThinMuskip,
+    MedMuskip,
+    ThickMuskip,
+    // ETRIP 冲刺：\lccode<char>=<num>（小写码表）
+    LcCode,
+    // ETRIP 冲刺：\advance<寄存器> <增量>（寄存器运算）
+    Advance,
 }
 
 impl Primitive {
@@ -392,6 +403,13 @@ impl Primitive {
             156 => Self::Toksdef,
             157 => Self::HyphenChar,
             158 => Self::DelCode,
+            159 => Self::Muskip,
+            160 => Self::Muskipdef,
+            161 => Self::ThinMuskip,
+            162 => Self::MedMuskip,
+            163 => Self::ThickMuskip,
+            164 => Self::LcCode,
+            165 => Self::Advance,
             _ => return None,
         })
     }

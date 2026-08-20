@@ -30,8 +30,8 @@ use crate::intern::InternTable;
 use crate::macrodef::{MacroDef, ParamSpec, TokenArray};
 use crate::param::{ParamKind, ParamValue, Params};
 use crate::register::{
-    format_count, format_dimen, format_glue, unit_to_sp, Glue, RegKind, RegisterState, Registers,
-    REGISTER_COUNT, SP_PER_PT,
+    format_count, format_dimen, format_glue, format_mu_glue, unit_to_sp, Glue, RegKind,
+    RegisterState, Registers, REGISTER_COUNT, SP_PER_PT,
 };
 use crate::sink::{TokenSink, VecSink};
 use crate::token::{meaning, Token, TokenKind};
@@ -148,6 +148,8 @@ enum SavedValue {
     Count { idx: usize, prev: i64 },
     Dimen { idx: usize, prev: i64 },
     Skip { idx: usize, prev: Glue },
+    /// `\muskip`：mu 胶量寄存器（ETRIP；1mu = 65536 单位）。
+    Muskip { idx: usize, prev: Glue },
     Toks { idx: usize, prev: TokenArray },
     Catcode { byte: u8, prev: Catcode },
     Param { kind: ParamKind, prev: ParamValue },
@@ -161,6 +163,8 @@ enum SavedValue {
     HyphenChar { font: u32, prev: Option<i64> },
     /// `\delcode`：定界符码表项（ETRIP；组内局部保存）。
     DelCode { byte: u8, prev: Option<u32> },
+    /// `\lccode`：小写码表项（ETRIP 断字；组内局部保存）。
+    LcCode { byte: u8, prev: i64 },
 }
 
 /// `\ifx` 语义键：解析别名后比较含义（TeX：同含义即相等）。
@@ -282,6 +286,8 @@ pub struct Expander {
     hyphenchars: HashMap<u32, i64>,
     /// `\delcode` 表：字符码 → 定界符码（TeX delcode；无覆盖 = 0x500000 默认）。
     delcodes: HashMap<u32, u32>,
+    /// `\lccode` 表：字符码 → 小写码（TeX 默认全 0；etrip 断字测试用）。
+    lccodes: [i64; 256],
     /// `\unless` 前缀：取反下一个条件的结果。
     unless_pending: bool,
     /// protected 宏抑制展开的上下文深度（>0：`\edef`/`\write`/`\detokenize` 等）。
@@ -334,6 +340,7 @@ impl Expander {
             fontdimens: HashMap::new(),
             hyphenchars: HashMap::new(),
             delcodes: HashMap::new(),
+            lccodes: [0; 256],
             unless_pending: false,
             suppress_expansion: 0,
             expand_only: false,
@@ -992,6 +999,9 @@ impl Expander {
             Primitive::Let => self.exec_let(),
             Primitive::Catcode => self.exec_catcode(),
             Primitive::SfCode => self.exec_sfcode(),
+            Primitive::LcCode => self.exec_lccode(),
+            // ETRIP 冲刺：\advance<寄存器> <增量>（寄存器运算）
+            Primitive::Advance => self.exec_advance(),
             Primitive::End => {
                 self.stack.clear();
                 self.output_active = false;
@@ -1031,9 +1041,17 @@ impl Expander {
             | Primitive::Fi
             | Primitive::Or => Err(Error::internal("条件原语不应到达 exec_primitive")),
             // M1-10 寄存器
-            Primitive::Count | Primitive::Dimen | Primitive::Skip | Primitive::Toks => {
-                self.exec_register(prim)
-            }
+            Primitive::Count
+            | Primitive::Dimen
+            | Primitive::Skip
+            | Primitive::Muskip
+            | Primitive::Toks => self.exec_register(prim),
+            // ETRIP 冲刺：\thinmuskip/\medmuskip/\thickmuskip（muskip 寄存器 0/1/2）
+            Primitive::ThinMuskip => self.exec_muskip_param(0),
+            Primitive::MedMuskip => self.exec_muskip_param(1),
+            Primitive::ThickMuskip => self.exec_muskip_param(2),
+            // ETRIP 冲刺：\advance<寄存器> <增量>
+            Primitive::Advance => self.exec_advance(),
             Primitive::The => self.exec_the(),
             Primitive::Global => {
                 self.global_pending = true;
@@ -1175,8 +1193,12 @@ impl Expander {
                 });
                 Ok(())
             }
-            // ETRIP 冲刺：\countdef/\dimendef/\skipdef/\toksdef\cs=<num>（cs 绑定寄存器）
-            Primitive::Countdef | Primitive::Dimendef | Primitive::Skipdef | Primitive::Toksdef => {
+            // ETRIP 冲刺：\countdef/\dimendef/\skipdef/\muskipdef/\toksdef\cs=<num>（cs 绑定寄存器）
+            Primitive::Countdef
+            | Primitive::Dimendef
+            | Primitive::Skipdef
+            | Primitive::Muskipdef
+            | Primitive::Toksdef => {
                 let csid = self.scan_cs_ident()?;
                 let idx = self.scan_number()?;
                 let idx = usize::try_from(idx)
@@ -1185,6 +1207,7 @@ impl Expander {
                     Primitive::Countdef => RegKind::Count,
                     Primitive::Dimendef => RegKind::Dimen,
                     Primitive::Skipdef => RegKind::Skip,
+                    Primitive::Muskipdef => RegKind::Muskip,
                     _ => RegKind::Toks,
                 };
                 self.set_slot_scoped(csid, EqSlot::Register(kind, idx));
@@ -2353,6 +2376,122 @@ impl Expander {
         Ok(())
     }
 
+    /// `\lccode<char>=<num>`：设置字符的小写码（TeX assign_int；etrip 断字用）。
+    /// 字符码接受反引号或寄存器值（如 `\lccode\count20=0`，TeX scan_char_num）。
+    fn exec_lccode(&mut self) -> Result<()> {
+        let byte = self.scan_char_code()?;
+        let byte = u8::try_from(byte).map_err(|_| Error::invalid_input("\\lccode 字符码越界"))?;
+        self.expect_equals()?;
+        let value = self.scan_number()?;
+        let global = self.is_global();
+        if !global && self.group_level > 0 {
+            self.save_stack.push((
+                self.group_level,
+                SavedValue::LcCode {
+                    byte,
+                    prev: self.lccodes[byte as usize],
+                },
+            ));
+        }
+        self.lccodes[byte as usize] = value;
+        self.finish_assignment();
+        Ok(())
+    }
+
+    /// `\advance<寄存器> <增量>`：寄存器运算（TeX arithmetic；etrip.tex 91 行
+    /// `\advance\count20 1`）。目标支持 `\count/\dimen/\skip/\muskip` 寄存器
+    /// （数字下标或 `\countdef` 等 cs 绑定）与内部整数参数。
+    fn exec_advance(&mut self) -> Result<()> {
+        self.skip_spaces()?;
+        let tok = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input("\\advance 后缺少寄存器"))?
+            .0;
+        let csid = tok
+            .csid()
+            .ok_or_else(|| Error::invalid_input("\\advance 后必须是寄存器"))?;
+        match self.eqtb.slot(csid).clone() {
+            EqSlot::Primitive(prim)
+                if matches!(
+                    prim,
+                    Primitive::Count | Primitive::Dimen | Primitive::Skip | Primitive::Muskip
+                ) =>
+            {
+                let kind = match prim {
+                    Primitive::Count => RegKind::Count,
+                    Primitive::Dimen => RegKind::Dimen,
+                    Primitive::Skip => RegKind::Skip,
+                    _ => RegKind::Muskip,
+                };
+                let idx = self.scan_register_index()?;
+                self.advance_register(kind, idx)
+            }
+            EqSlot::Register(kind, idx) => self.advance_register(kind, idx),
+            // 内部整数参数（\tracingstats/\language 等）也可 \advance
+            EqSlot::Primitive(p) if int_param_index(p).is_some() => {
+                let idx = int_param_index(p).expect("已检查 is_some");
+                let delta = self.scan_number()?;
+                let val = self.params.misc[idx] + delta;
+                let global = self.is_global();
+                if !global && self.group_level > 0 {
+                    self.save_stack.push((
+                        self.group_level,
+                        SavedValue::Param {
+                            kind: ParamKind::MiscInt(idx),
+                            prev: self.params.get(ParamKind::MiscInt(idx)),
+                        },
+                    ));
+                }
+                self.params.misc[idx] = val;
+                self.finish_assignment();
+                Ok(())
+            }
+            _ => Err(Error::invalid_input(
+                "\\advance 目标必须是寄存器或内部参数",
+            )),
+        }
+    }
+
+    /// `\advance` 的寄存器增量应用（TeX：`new = old + delta`，胶水逐分量加）。
+    fn advance_register(&mut self, kind: RegKind, idx: usize) -> Result<()> {
+        match kind {
+            RegKind::Count => {
+                let delta = self.scan_number()?;
+                self.assign_count(idx, self.registers.count(idx) + delta);
+            }
+            RegKind::Dimen => {
+                let delta = self.scan_dimen()?;
+                self.assign_dimen(idx, self.registers.dimen(idx) + delta);
+            }
+            RegKind::Skip => {
+                let delta = self.scan_glue()?;
+                let old = self.registers.skip(idx);
+                self.assign_skip(
+                    idx,
+                    Glue {
+                        width: old.width + delta.width,
+                        stretch: old.stretch + delta.stretch,
+                        shrink: old.shrink + delta.shrink,
+                    },
+                );
+            }
+            RegKind::Muskip => {
+                let delta = self.scan_glue()?;
+                let old = self.registers.muskip(idx);
+                self.assign_muskip(
+                    idx,
+                    Glue {
+                        width: old.width + delta.width,
+                        stretch: old.stretch + delta.stretch,
+                        shrink: old.shrink + delta.shrink,
+                    },
+                );
+            }
+            RegKind::Toks => return Err(Error::invalid_input("\\advance 不支持 \\toks")),
+        }
+        Ok(())
+    }
+
     /// `\expandafter a b`：输出 a，再输出 b 的一次展开结果。
     ///
     /// 展开"一次"：宏 → 实参替换后的宏体（不再递归展开）；`\expandafter` → 递归；
@@ -2483,6 +2622,8 @@ impl Expander {
         }
         // 反引号字符码：`<char>（TeX scan_int 的 alphabetic constant，TeXbook p.267）
         if let Some(code) = self.try_scan_backquote()? {
+            // TeX scan_int：数字（含反引号常量）后跟随的空格被吞
+            self.skip_trailing_spaces()?;
             return Ok(if neg { -code } else { code });
         }
         // 基数前缀：十六进制 `"`（radix 16）与八进制 `'`（radix 8），TeXbook p.267
@@ -2545,6 +2686,15 @@ impl Expander {
                     self.fetch()?; // 消费 \eTeXversion
                     return Ok(if neg { -2 } else { 2 });
                 }
+                // ETRIP 冲刺：\lccode<char>：字符的小写码（数字上下文读取）
+                EqSlot::Primitive(Primitive::LcCode) => {
+                    self.fetch()?; // 消费 \lccode
+                    let byte = self.scan_char_code()?;
+                    let byte =
+                        u8::try_from(byte).map_err(|_| Error::invalid_input("\\lccode 字符码越界"))?;
+                    let v = self.lccodes[byte as usize];
+                    return Ok(if neg { -v } else { v });
+                }
                 // ETRIP 冲刺：TeX/e-TeX 内部整数参数（\interactionmode/\language/\tracing* 等）
                 EqSlot::Primitive(p) if int_param_index(p).is_some() => {
                     self.fetch()?; // 消费原语
@@ -2565,6 +2715,13 @@ impl Expander {
                     self.fetch()?; // 消费 \count
                     let idx = self.scan_register_index()?;
                     let v = self.registers.count(idx);
+                    return Ok(if neg { -v } else { v });
+                }
+                // \count0=\dimen<idx>：尺寸以 sp 计的整数值（TeX scan_int 可读 \dimen）
+                EqSlot::Primitive(Primitive::Dimen) => {
+                    self.fetch()?; // 消费 \dimen
+                    let idx = self.scan_register_index()?;
+                    let v = self.registers.dimen(idx);
                     return Ok(if neg { -v } else { v });
                 }
                 _ => {}
@@ -2859,7 +3016,7 @@ impl Expander {
 
     /// 注册 M1 内建原语。
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 158] = [
+        const BUILTINS: [(&str, Primitive); 165] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -3048,6 +3205,17 @@ impl Expander {
             ("hyphenchar", Primitive::HyphenChar),
             // ETRIP 冲刺：\delcode<num>=<num>（字符定界符码）
             ("delcode", Primitive::DelCode),
+            // ETRIP 冲刺：\muskip/\muskipdef（mu 胶量寄存器）
+            ("muskip", Primitive::Muskip),
+            ("muskipdef", Primitive::Muskipdef),
+            // ETRIP 冲刺：\thinmuskip/\medmuskip/\thickmuskip（muskip 寄存器 0/1/2）
+            ("thinmuskip", Primitive::ThinMuskip),
+            ("medmuskip", Primitive::MedMuskip),
+            ("thickmuskip", Primitive::ThickMuskip),
+            // ETRIP 冲刺：\lccode<char>=<num>（小写码表，断字用）
+            ("lccode", Primitive::LcCode),
+            // ETRIP 冲刺：\advance<寄存器> <增量>（寄存器运算）
+            ("advance", Primitive::Advance),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);
@@ -3119,12 +3287,13 @@ impl Expander {
 
     // ---------- M1-10 寄存器 ----------
 
-    /// `\count/\dimen/\skip/\toks` 赋值。
+    /// `\count/\dimen/\skip/\muskip/\toks` 赋值。
     fn exec_register(&mut self, prim: Primitive) -> Result<()> {
         let kind = match prim {
             Primitive::Count => RegKind::Count,
             Primitive::Dimen => RegKind::Dimen,
             Primitive::Skip => RegKind::Skip,
+            Primitive::Muskip => RegKind::Muskip,
             Primitive::Toks => RegKind::Toks,
             _ => unreachable!("exec_register 只处理寄存器原语"),
         };
@@ -3143,12 +3312,24 @@ impl Expander {
                 let val = self.scan_glue()?;
                 self.assign_skip(idx, val);
             }
+            Primitive::Muskip => {
+                let val = self.scan_glue()?;
+                self.assign_muskip(idx, val);
+            }
             Primitive::Toks => {
                 let val = self.scan_group_contents()?;
                 self.assign_toks(idx, Arc::from(val));
             }
             _ => unreachable!("exec_register 只处理寄存器原语"),
         }
+        Ok(())
+    }
+
+    /// `\thinmuskip/\medmuskip/\thickmuskip=<mu glue>`：muskip 寄存器 0/1/2 赋值。
+    fn exec_muskip_param(&mut self, idx: usize) -> Result<()> {
+        self.expect_equals()?;
+        let val = self.scan_glue()?;
+        self.assign_muskip(idx, val);
         Ok(())
     }
 
@@ -3260,6 +3441,21 @@ impl Expander {
         self.finish_assignment();
     }
 
+    fn assign_muskip(&mut self, idx: usize, val: Glue) {
+        let global = self.is_global();
+        if !global && self.group_level > 0 {
+            self.save_stack.push((
+                self.group_level,
+                SavedValue::Muskip {
+                    idx,
+                    prev: self.registers.muskip(idx),
+                },
+            ));
+        }
+        self.registers.set_muskip(idx, val);
+        self.finish_assignment();
+    }
+
     fn assign_toks(&mut self, idx: usize, val: TokenArray) {
         let global = self.is_global();
         if !global && self.group_level > 0 {
@@ -3331,6 +3527,14 @@ impl Expander {
                     let idx = self.scan_register_index()?;
                     Ok(emit_glue(self.registers.skip(idx)))
                 }
+                Primitive::Muskip => {
+                    let idx = self.scan_register_index()?;
+                    Ok(emit_mu_glue(self.registers.muskip(idx)))
+                }
+                // \the\thinmuskip 等：muskip 寄存器 0/1/2
+                Primitive::ThinMuskip => Ok(emit_mu_glue(self.registers.muskip(0))),
+                Primitive::MedMuskip => Ok(emit_mu_glue(self.registers.muskip(1))),
+                Primitive::ThickMuskip => Ok(emit_mu_glue(self.registers.muskip(2))),
                 Primitive::Toks => {
                     let idx = self.scan_register_index()?;
                     Ok(self.registers.toks(idx).to_vec())
@@ -3421,6 +3625,13 @@ impl Expander {
                         self.delcodes.get(&u32::from(byte)).copied().unwrap_or(0x500000),
                     )))
                 }
+                // \the\lccode<char>：字符的小写码
+                Primitive::LcCode => {
+                    let byte = self.scan_char_code()?;
+                    let byte =
+                        u8::try_from(byte).map_err(|_| Error::invalid_input("\\lccode 字符码越界"))?;
+                    Ok(emit_count(self.lccodes[byte as usize]))
+                }
                 _ => Err(Error::invalid_input(
                     "\\the 只支持 \\count\\dimen\\skip\\toks 与内部参数",
                 )),
@@ -3432,6 +3643,7 @@ impl Expander {
                 RegKind::Count => emit_count(self.registers.count(*idx)),
                 RegKind::Dimen => emit_dimen(self.registers.dimen(*idx)),
                 RegKind::Skip => emit_glue(self.registers.skip(*idx)),
+                RegKind::Muskip => emit_mu_glue(self.registers.muskip(*idx)),
                 RegKind::Toks => self.registers.toks(*idx).to_vec(),
             }),
             // \let 别名：沿链解析
@@ -3500,6 +3712,7 @@ impl Expander {
             SavedValue::Count { idx, prev } => self.registers.set_count(idx, prev),
             SavedValue::Dimen { idx, prev } => self.registers.set_dimen(idx, prev),
             SavedValue::Skip { idx, prev } => self.registers.set_skip(idx, prev),
+            SavedValue::Muskip { idx, prev } => self.registers.set_muskip(idx, prev),
             SavedValue::Toks { idx, prev } => self.registers.set_toks(idx, prev),
             SavedValue::Catcode { byte, prev } => self.catcodes.set(byte, prev),
             SavedValue::Param { kind, prev } => self.params.set(kind, prev),
@@ -3535,6 +3748,7 @@ impl Expander {
                     self.delcodes.remove(&u32::from(byte));
                 }
             },
+            SavedValue::LcCode { byte, prev } => self.lccodes[byte as usize] = prev,
         }
     }
 
@@ -3957,12 +4171,23 @@ impl Expander {
         } else {
             unit_tokens.into_iter().collect()
         };
-        let unit_sp =
-            unit_to_sp(&unit).ok_or_else(|| Error::invalid_input(format!("未知单位：{unit}")))?;
-        // scaled = (int + frac/10^k) * unit_sp（i128 防溢出，截断）
-        let num_pt: i128 = (i128::from(int_part) * i128::from(SP_PER_PT))
-            + (i128::from(frac) * i128::from(SP_PER_PT)) / 10i128.pow(frac_len);
-        let scaled: i128 = num_pt * i128::from(unit_sp) / i128::from(SP_PER_PT);
+        // 整数部分 + 四舍五入的小数部分（pdfTeX 实测：3.6pt→235930、0.0001pt→7，
+        // 即 round(frac × 65536 / 10^k)）；i128 防溢出。
+        let num_pt: i128 = if frac_len == 0 {
+            i128::from(int_part) * i128::from(SP_PER_PT)
+        } else {
+            let denom = 10i128.pow(frac_len);
+            let frac_sp = (i128::from(frac) * i128::from(SP_PER_PT) + denom / 2) / denom;
+            i128::from(int_part) * i128::from(SP_PER_PT) + frac_sp
+        };
+        let scaled: i128 = if unit == "mu" {
+            // mu 单位：1mu = 65536 单位（pdfTeX 实测 \mutoglue/\gluetomu 1:1，无 quad 换算）
+            num_pt
+        } else {
+            let unit_sp =
+                unit_to_sp(&unit).ok_or_else(|| Error::invalid_input(format!("未知单位：{unit}")))?;
+            num_pt * i128::from(unit_sp) / i128::from(SP_PER_PT)
+        };
         let scaled = if neg { -scaled } else { scaled };
         let scaled = i64::try_from(scaled).map_err(|_| Error::invalid_input("尺寸溢出"))?;
         // TeX 规则：尺寸后跟随的空格被吞掉
@@ -4200,12 +4425,21 @@ fn emit_glue(g: Glue) -> Vec<Token> {
         .collect()
 }
 
+/// mu 胶水 → `\the` token 序列（如 "1.0mu plus 2.0mu minus 0.5mu"）。
+fn emit_mu_glue(g: Glue) -> Vec<Token> {
+    format_mu_glue(g)
+        .bytes()
+        .map(|b| Token::char(Catcode::Other, u32::from(b)))
+        .collect()
+}
+
 /// 寄存器种类名（`\show` 显示用）。
 fn reg_kind_name(k: RegKind) -> &'static str {
     match k {
         RegKind::Count => "count",
         RegKind::Dimen => "dimen",
         RegKind::Skip => "skip",
+        RegKind::Muskip => "muskip",
         RegKind::Toks => "toks",
     }
 }
@@ -4520,6 +4754,108 @@ mod tests {
     }
 
     #[test]
+    fn muskip_params_assign_and_the() {
+        // etrip.tex 78-80 行：mu 胶量参数（1mu = 65536 单位）
+        // 整数 mu 显示精确（18mu → 1179648/65536 = 18.0mu）；小数用可精确表示的值
+        assert_eq!(
+            expand("\\thinmuskip=18mu\\the\\thinmuskip").unwrap(),
+            "18.0mu"
+        );
+        assert_eq!(
+            expand("\\medmuskip=27mu plus 9mu minus 18mu\\the\\medmuskip").unwrap(),
+            "27.0mu plus 9.0mu minus 18.0mu"
+        );
+        assert_eq!(
+            expand("\\thickmuskip=36mu minus 7.5mu\\the\\thickmuskip").unwrap(),
+            "36.0mu minus 7.5mu"
+        );
+    }
+
+    #[test]
+    fn muskip_register_and_muskipdef() {
+        // \muskip 寄存器 + \muskipdef cs 绑定（fil/fill 无限单位属另一特性，此处用普通单位）
+        assert_eq!(
+            expand("\\muskip5=2.5mu plus 1mu\\the\\muskip5").unwrap(),
+            "2.5mu plus 1.0mu"
+        );
+        assert_eq!(
+            expand("\\muskipdef\\M=7\\muskip\\M=3mu minus 2mu\\the\\muskip7").unwrap(),
+            "3.0mu minus 2.0mu"
+        );
+        // 组作用域回滚
+        assert_eq!(
+            expand("\\muskip9=1mu{\\muskip9=9mu}\\the\\muskip9").unwrap(),
+            "1.0mu"
+        );
+    }
+
+    #[test]
+    fn lccode_assign_and_read() {
+        // etrip.tex 88 行：\lccode`A=`a；数字上下文读回
+        assert_eq!(
+            expand("\\lccode`A=`a\\relax\\ifnum\\lccode`A=`a yes\\else no\\fi").unwrap(),
+            "yes"
+        );
+        // 寄存器值作字符码：\lccode\count20=0（etrip.tex 91 行）
+        assert_eq!(
+            expand("\\count20=65\\lccode\\count20=0\\relax\\ifnum\\lccode`A=0 yes\\else no\\fi").unwrap(),
+            "yes"
+        );
+        // \the 读回
+        assert_eq!(expand("\\lccode`B=`b\\the\\lccode`B").unwrap(), "98");
+        // 组作用域回滚
+        assert_eq!(
+            expand("\\lccode`C=1{\\lccode`C=2}\\the\\lccode`C").unwrap(),
+            "1"
+        );
+    }
+
+    #[test]
+    fn advance_register_arithmetic() {
+        // etrip.tex 91 行惯用法：\count20=0 \advance\count20 1
+        assert_eq!(
+            expand("\\count20=0\\advance\\count20 1\\advance\\count20 1\\the\\count20").unwrap(),
+            "2"
+        );
+        // 负数增量
+        assert_eq!(
+            expand("\\count20=10\\advance\\count20 -3\\the\\count20").unwrap(),
+            "7"
+        );
+        // \countdef 绑定 + 内部整数参数
+        assert_eq!(
+            expand("\\countdef\\C=5\\count\\C=3\\advance\\C 4\\the\\count5").unwrap(),
+            "7"
+        );
+        assert_eq!(
+            expand("\\tracingstats=1\\advance\\tracingstats 2\\the\\tracingstats").unwrap(),
+            "3"
+        );
+        // \dimen 与 \skip 增量
+        assert_eq!(
+            expand("\\dimen0=1pt\\advance\\dimen0 2.5pt\\the\\dimen0").unwrap(),
+            "3.5pt"
+        );
+        assert_eq!(
+            expand("\\skip0=1pt plus 2pt\\advance\\skip0 3pt plus 1pt\\the\\skip0").unwrap(),
+            "4.0pt plus 3.0pt"
+        );
+    }
+
+    #[test]
+    fn dimen_fraction_rounds_to_nearest_sp() {
+        // pdfTeX 实测：3.6pt→235930、0.0001pt→7（四舍五入，非截断）
+        assert_eq!(
+            expand("\\dimen0=3.6pt\\count0=\\dimen0\\the\\count0").unwrap(),
+            "235930"
+        );
+        assert_eq!(
+            expand("\\dimen0=.0001pt\\count0=\\dimen0\\the\\count0").unwrap(),
+            "7"
+        );
+    }
+
+    #[test]
     fn internal_int_params_assign_and_the() {
         // \defaulthyphenchar=`- 与 \defaultskewchar=256；\the 读回
         assert_eq!(
@@ -4703,8 +5039,14 @@ mod tests {
     #[test]
     fn ifdim_with_units() {
         assert_eq!(expand("\\ifdim1pt<2pt yes\\else no\\fi").unwrap(), "yes");
+        // pdfTeX 实测：1in=4736286sp；72.27pt 四舍五入后 = 4736287sp ≠ 1in，
+        // 72.26999pt = 4736286sp == 1in
         assert_eq!(
             expand("\\ifdim1in=72.27pt yes\\else no\\fi").unwrap(),
+            "no"
+        );
+        assert_eq!(
+            expand("\\ifdim1in=72.26999pt yes\\else no\\fi").unwrap(),
             "yes"
         );
     }
