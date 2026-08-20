@@ -1,0 +1,1233 @@
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use ntex_io::MemVfs;
+
+    /// 运行源码（**双轨等价**）：字节码与解释器轨道各跑一次并断言输出一致，
+    /// 返回字节码轨道结果。全部用例自动覆盖 M2 双轨验证。
+    fn expand(src: &str) -> Result<String> {
+        let bytecode = expand_track(src, true)?;
+        let interp = expand_track(src, false)?;
+        assert_eq!(bytecode, interp, "双轨输出不一致：{src}");
+        Ok(bytecode)
+    }
+
+    fn expand_track(src: &str, use_bytecode: bool) -> Result<String> {
+        let mut e = if use_bytecode {
+            Expander::new()
+        } else {
+            Expander::new_interpreter()
+        };
+        e.run_source(src)?;
+        Ok(e.output()
+            .iter()
+            .map(|t| t.charcode().and_then(char::from_u32).unwrap_or('\u{FFFD}'))
+            .collect())
+    }
+
+    #[test]
+    fn simple_def_and_use() {
+        assert_eq!(expand("\\def\\foo{Hello}\\foo").unwrap(), "Hello");
+    }
+
+    #[test]
+    fn macro_with_argument() {
+        assert_eq!(
+            expand("\\def\\greet#1{Hi #1!}\\greet{World}").unwrap(),
+            "Hi World!"
+        );
+    }
+
+    #[test]
+    fn macro_with_two_arguments() {
+        assert_eq!(
+            expand("\\def\\pair#1#2{[#1:#2]}\\pair{x}{y}").unwrap(),
+            "[x:y]"
+        );
+    }
+
+    #[test]
+    fn edef_expands_at_definition() {
+        assert_eq!(expand("\\def\\a{1}\\edef\\y{\\a2}\\y").unwrap(), "12");
+    }
+
+    #[test]
+    fn edef_keeps_primitive_tokens() {
+        // TeX expand() 语义：\edef 不执行不可展开原语，保留在宏体
+        assert_eq!(expand("\\edef\\x{\\def\\y{Z}\\y}\\x").unwrap(), "Z");
+        // 保留组定界（花括号是宏体结构的一部分）
+        assert_eq!(
+            expand("\\edef\\x{a{b}}\\expandafter\\detokenize\\expandafter{\\x}").unwrap(),
+            "a{b}"
+        );
+        // 未定义 cs 保留不报错
+        assert_eq!(
+            expand("\\edef\\x{a\\undefinedcs}\\expandafter\\detokenize\\expandafter{\\x}").unwrap(),
+            "a\\undefinedcs "
+        );
+    }
+
+    #[test]
+    fn number_primitive_expands() {
+        assert_eq!(expand("\\count0=5\\number\\count0").unwrap(), "5");
+        // \edef 中 \number 展开（ETRIP \def\2{\number\eTeXversion\eTeXrevision} 模式）
+        assert_eq!(expand("\\count0=5\\edef\\x{\\number\\count0}\\x").unwrap(), "5");
+        assert_eq!(expand("\\number-7").unwrap(), "-7");
+    }
+
+    #[test]
+    fn bgroup_egroup_char_aliases_open_groups() {
+        // \let\bgroup={ \let\egroup=}：等价于组定界字符
+        assert_eq!(expand("\\let\\bgroup={\\let\\egroup=}\\bgroup a\\egroup").unwrap(), "a");
+    }
+
+    #[test]
+    fn etrip_version_macro_idiom() {
+        // etrip.tex 29-34 行：分隔参数 + \edef/\noexpand 宏重写 + \number
+        let src = "\\def\\etripversion{2.6}\
+                   \\let\\bgroup={\\let\\egroup=}\
+                   \\def\\1.#1#2\\relax{\\bgroup\
+                     \\edef\\1{\\egroup\
+                       \\def\\noexpand\\2{\\number\\eTeXversion\\eTeXrevision}\
+                       \\def\\noexpand\\1{\\number\\eTeXversion.#1}}\\1}\
+                   \\expandafter\\1\\eTeXrevision\\relax\
+                   \\message{(You are using e-TeX version/revision \\2)}\
+                   \\ifx\\1\\etripversion\\message{(VERSION OK)}\\else\\message{(VERSION MISMATCH)}\\fi";
+        let mut e = Expander::new();
+        e.run_source(src).unwrap();
+        assert_eq!(
+            e.transcript(),
+            "(You are using e-TeX version/revision 2.6)(VERSION OK)"
+        );
+    }
+
+    #[test]
+    fn let_alias() {
+        assert_eq!(expand("\\def\\a{XY}\\let\\b\\a\\b").unwrap(), "XY");
+    }
+
+    #[test]
+    fn outer_prefix_parses() {
+        assert_eq!(expand("\\outer\\def\\foo{XY}\\foo").unwrap(), "XY");
+        assert_eq!(expand("\\outer\\gdef\\foo{XY}\\foo").unwrap(), "XY");
+        assert_eq!(expand("\\outer\\global\\edef\\foo{XY}\\foo").unwrap(), "XY");
+    }
+
+    #[test]
+    fn xdef_expands_body_at_definition() {
+        // \xdef ≡ \global\edef：定义时展开宏体
+        assert_eq!(expand("\\def\\a{1}\\xdef\\b{\\a2}\\def\\a{3}\\b").unwrap(), "12");
+        // 全局：组内 \xdef 在组外可见
+        assert_eq!(
+            expand("{\\def\\a{1}\\xdef\\b{\\a2}}\\b").unwrap(),
+            "12"
+        );
+    }
+
+    #[test]
+    fn let_primitive_survives_redefinition() {
+        // trip.tex 第 6-10 行：\let\paR=\par → 重定义 \par → \let\par=\paR 恢复
+        assert_eq!(
+            expand(
+                "\\let\\paR=\\par\\outer\\xdef\\par{\\catcode`\\%14}\\let\\par=\\paR\\relax"
+            )
+            .unwrap(),
+            ""
+        );
+    }
+
+    #[test]
+    fn trip_lines_1_to_19_parse() {
+        // trip.tex 第 1-19 行（不含第 20 行 \badness）：验证 \outer/\xdef/\let 恢复后能继续
+        let src = "\\immediate\\catcode`{=1\\endlinechar=13\
+                   \\catcode`}=2\
+                   \\catcode`$=3{\\catcode`$13\\gdef\\dol{$}}\
+                   \\catcode`&=4\
+                   \\let\\paR=\\par\
+                   \\let\\%=\\relax\
+                   \\outer\\xdef\\par{\\catcode`\\%14}\
+                   \\let\\par=\\paR\\defaulthyphenchar=`-\\defaultskewchar=256\
+                   \\ifx\\initex\\undefined\\def\\initex{}\
+                   \\catcode`#=6\\catcode`U=\\catcode`#\
+                   \\catcode`^=7\\catcode`|=8\
+                   \\catcode`~=9\
+                   \\catcode`*=10\
+                   \\catcode`E=12\
+                   \\catcode`\\@=15\
+                   \\catcode`^^A=0008\
+                   \\catcode`\\^^@=11\\fi\\relax";
+        assert_eq!(expand(src).unwrap(), "");
+    }
+
+    #[test]
+    fn let_to_char() {
+        assert_eq!(expand("\\let\\X=x\\X").unwrap(), "x");
+    }
+
+    #[test]
+    fn expandafter_classic() {
+        // 经典：\expandafter\def\expandafter\x\expandafter{\b} 使 \x = \b 的展开。
+        // 注：\b 中 \a 与 C 之间的空格在扫描时被控制词吞掉，故为 "ABC"（与真实 TeX 一致）。
+        let src =
+            "\\def\\a{B}\\def\\b{A\\a C}\\expandafter\\def\\expandafter\\x\\expandafter{\\b}\\x";
+        assert_eq!(expand(src).unwrap(), "ABC");
+    }
+
+    #[test]
+    fn noexpand_defers_expansion() {
+        // \edef 时 \noexpand\y 使 \y 保持为 token；\z 使用时 \y 才展开
+        let src = "\\def\\y{YY}\\def\\x{A\\noexpand\\y B}\\edef\\z{\\x}\\z";
+        assert_eq!(expand(src).unwrap(), "AYYB");
+    }
+
+    #[test]
+    fn catcode_change_affects_later_input() {
+        // \catcode92=12 后 `\` 变为普通字符。
+        // 用 \relax 隔离数字与后续输入（数字扫描会预读紧邻 token，与真实 TeX 一致）。
+        assert_eq!(expand("\\catcode92=12\\relax\\abc").unwrap(), "\\abc");
+    }
+
+    #[test]
+    fn catcode_backquote_syntax() {
+        // trip.tex 开头：\catcode `{ = 1（反引号字符码）
+        assert_eq!(expand("\\catcode`{=1\\relax").unwrap(), "");
+        // \catcode `$ = 3 {\catcode`$13 ...}：省略 `=` 的赋值
+        assert_eq!(expand("\\catcode`$13\\relax").unwrap(), "");
+        // 控制符号：\catcode`\@ = 15
+        assert_eq!(expand("\\catcode`\\@=15\\relax").unwrap(), "");
+        // ^^ 转义：\catcode `^^A = 8（另一写法）
+        assert_eq!(expand("\\catcode`^^A=0008\\relax").unwrap(), "");
+        // \sfcode 同样支持反引号
+        assert_eq!(expand("\\sfcode`x=1000\\relax").unwrap(), "");
+    }
+
+    #[test]
+    fn catcode_backquote_circumflex_control_symbol() {
+        // \catcode `\^^@ = 11：^^@ 解码为字符码 0，控制符号名 "\0"
+        assert_eq!(expand("\\catcode`\\^^@=11\\relax").unwrap(), "");
+        // 读回：\catcode 0 现在是 11（letter）
+        assert_eq!(
+            expand("\\catcode`\\^^@=11\\relax\\ifnum\\catcode`\\^^@=11 yes\\else no\\fi").unwrap(),
+            "yes"
+        );
+    }
+
+    #[test]
+    fn catcode_internal_int_reads_catcode() {
+        // \catcode `U = \catcode`#：把 U 的 catcode 设为 # 的当前 catcode（默认 6）
+        assert_eq!(
+            expand("\\catcode`U=\\catcode`#\\relax\\ifnum\\catcode`U=6 yes\\else no\\fi").unwrap(),
+            "yes"
+        );
+    }
+
+    #[test]
+    fn trip_opening_line_parses() {
+        // trip.tex 第 1 行原文：\immediate\catcode `{ = 1 \endlinechar=13
+        assert_eq!(expand("\\immediate\\catcode`{=1\\endlinechar=13").unwrap(), "");
+    }
+
+    #[test]
+    fn delcode_assign_and_the() {
+        // etrip.tex 第 73 行：\delcode`\[="161361（hex 字符码 + hex 值）；\the 读回
+        assert_eq!(
+            expand("\\delcode`\\[=\"161361\\relax\\the\\delcode`\\[").unwrap(),
+            "1446753"
+        );
+        // 未赋值字符的默认 delcode = 0x500000
+        assert_eq!(expand("\\the\\delcode`x").unwrap(), "5242880");
+    }
+
+    #[test]
+    fn muskip_params_assign_and_the() {
+        // etrip.tex 78-80 行：mu 胶量参数（1mu = 65536 单位）
+        // 整数 mu 显示精确（18mu → 1179648/65536 = 18.0mu）；小数用可精确表示的值
+        assert_eq!(
+            expand("\\thinmuskip=18mu\\the\\thinmuskip").unwrap(),
+            "18.0mu"
+        );
+        assert_eq!(
+            expand("\\medmuskip=27mu plus 9mu minus 18mu\\the\\medmuskip").unwrap(),
+            "27.0mu plus 9.0mu minus 18.0mu"
+        );
+        assert_eq!(
+            expand("\\thickmuskip=36mu minus 7.5mu\\the\\thickmuskip").unwrap(),
+            "36.0mu minus 7.5mu"
+        );
+    }
+
+    #[test]
+    fn muskip_register_and_muskipdef() {
+        // \muskip 寄存器 + \muskipdef cs 绑定（fil/fill 无限单位属另一特性，此处用普通单位）
+        assert_eq!(
+            expand("\\muskip5=2.5mu plus 1mu\\the\\muskip5").unwrap(),
+            "2.5mu plus 1.0mu"
+        );
+        assert_eq!(
+            expand("\\muskipdef\\M=7\\muskip\\M=3mu minus 2mu\\the\\muskip7").unwrap(),
+            "3.0mu minus 2.0mu"
+        );
+        // 组作用域回滚
+        assert_eq!(
+            expand("\\muskip9=1mu{\\muskip9=9mu}\\the\\muskip9").unwrap(),
+            "1.0mu"
+        );
+    }
+
+    #[test]
+    fn lccode_assign_and_read() {
+        // etrip.tex 88 行：\lccode`A=`a；数字上下文读回
+        assert_eq!(
+            expand("\\lccode`A=`a\\relax\\ifnum\\lccode`A=`a yes\\else no\\fi").unwrap(),
+            "yes"
+        );
+        // 寄存器值作字符码：\lccode\count20=0（etrip.tex 91 行）
+        assert_eq!(
+            expand("\\count20=65\\lccode\\count20=0\\relax\\ifnum\\lccode`A=0 yes\\else no\\fi").unwrap(),
+            "yes"
+        );
+        // \the 读回
+        assert_eq!(expand("\\lccode`B=`b\\the\\lccode`B").unwrap(), "98");
+        // 组作用域回滚
+        assert_eq!(
+            expand("\\lccode`C=1{\\lccode`C=2}\\the\\lccode`C").unwrap(),
+            "1"
+        );
+    }
+
+    #[test]
+    fn advance_register_arithmetic() {
+        // etrip.tex 91 行惯用法：\count20=0 \advance\count20 1
+        assert_eq!(
+            expand("\\count20=0\\advance\\count20 1\\advance\\count20 1\\the\\count20").unwrap(),
+            "2"
+        );
+        // 负数增量
+        assert_eq!(
+            expand("\\count20=10\\advance\\count20 -3\\the\\count20").unwrap(),
+            "7"
+        );
+        // \countdef 绑定 + 内部整数参数
+        assert_eq!(
+            expand("\\countdef\\C=5\\count\\C=3\\advance\\C 4\\the\\count5").unwrap(),
+            "7"
+        );
+        assert_eq!(
+            expand("\\tracingstats=1\\advance\\tracingstats 2\\the\\tracingstats").unwrap(),
+            "3"
+        );
+        // \dimen 与 \skip 增量
+        assert_eq!(
+            expand("\\dimen0=1pt\\advance\\dimen0 2.5pt\\the\\dimen0").unwrap(),
+            "3.5pt"
+        );
+        assert_eq!(
+            expand("\\skip0=1pt plus 2pt\\advance\\skip0 3pt plus 1pt\\the\\skip0").unwrap(),
+            "4.0pt plus 3.0pt"
+        );
+    }
+
+    #[test]
+    fn dimen_fraction_rounds_to_nearest_sp() {
+        // pdfTeX 实测：3.6pt→235930、0.0001pt→7（四舍五入，非截断）
+        assert_eq!(
+            expand("\\dimen0=3.6pt\\count0=\\dimen0\\the\\count0").unwrap(),
+            "235930"
+        );
+        assert_eq!(
+            expand("\\dimen0=.0001pt\\count0=\\dimen0\\the\\count0").unwrap(),
+            "7"
+        );
+    }
+
+    #[test]
+    fn internal_int_params_assign_and_the() {
+        // \defaulthyphenchar=`- 与 \defaultskewchar=256；\the 读回
+        assert_eq!(
+            expand("\\defaulthyphenchar=`-\\the\\defaulthyphenchar").unwrap(),
+            "45"
+        );
+        assert_eq!(
+            expand("\\defaultskewchar=256\\the\\defaultskewchar").unwrap(),
+            "256"
+        );
+        assert_eq!(
+            expand("\\newlinechar=13\\the\\newlinechar").unwrap(),
+            "13"
+        );
+    }
+
+    #[test]
+    fn badness_internal_int() {
+        // trip.tex 第 20 行：\catcode `\^^? = \badness（无盒子时 badness = 0）
+        assert_eq!(
+            expand("\\catcode`\\^^?=\\badness\\ifnum\\catcode`\\^^?=0 yes\\else no\\fi").unwrap(),
+            "yes"
+        );
+        assert_eq!(expand("\\the\\badness").unwrap(), "0");
+    }
+
+    #[test]
+    fn fontdimen_assignment_and_the() {
+        // trip.tex 第 21 行：\fontdimen12\nullfont=13pt；\the 读回
+        assert_eq!(
+            expand("\\fontdimen12\\nullfont=13pt\\the\\fontdimen12\\nullfont").unwrap(),
+            "13.0pt"
+        );
+        // 组作用域恢复
+        assert_eq!(
+            expand(
+                "\\fontdimen12\\nullfont=13pt{\\fontdimen12\\nullfont=7pt}\\the\\fontdimen12\\nullfont"
+            )
+            .unwrap(),
+            "13.0pt"
+        );
+        // \global 前缀跨组生效
+        assert_eq!(
+            expand("{\\global\\fontdimen12\\nullfont=7pt}\\the\\fontdimen12\\nullfont").unwrap(),
+            "7.0pt"
+        );
+        // 无覆盖默认 0
+        assert_eq!(expand("\\the\\fontdimen1\\nullfont").unwrap(), "0.0pt");
+        // 尺寸上下文读取：\dimen0=\fontdimen12\nullfont
+        assert_eq!(
+            expand("\\fontdimen12\\nullfont=13pt\\dimen0=\\fontdimen12\\nullfont\\the\\dimen0").unwrap(),
+            "13.0pt"
+        );
+    }
+
+    #[test]
+    fn message_show_transcribe() {
+        // \message：不换行、可拼接
+        let mut e = Expander::new();
+        e.run_source("\\message{Hello}\\message{ world}").unwrap();
+        assert_eq!(e.transcript(), "Hello world");
+        // \message 参数展开宏（控制词后空格被吞）
+        let mut e = Expander::new();
+        e.run_source("\\def\\x{42}\\message{a\\x b}").unwrap();
+        assert_eq!(e.transcript(), "a42b");
+        // \message 的宏参数替换（ETRIP \def\stop#1{\message{... #1!}} 模式）
+        let mut e = Expander::new();
+        e.run_source("\\def\\stop#1{\\message{Emergency stop: #1!}}\\stop{x}")
+            .unwrap();
+        assert_eq!(e.transcript(), "Emergency stop: x!");
+        // \show：meaning 行（带换行）
+        let mut e = Expander::new();
+        e.run_source("\\show\\relax").unwrap();
+        assert_eq!(e.transcript(), "> \\relax=\\relax.\n");
+        // \show 未定义
+        let mut e = Expander::new();
+        e.run_source("\\show\\undefinedcs").unwrap();
+        assert_eq!(e.transcript(), "> \\undefinedcs=undefined.\n");
+        // \showthe：内部量值
+        let mut e = Expander::new();
+        e.run_source("\\count0=5\\showthe\\count0").unwrap();
+        assert_eq!(e.transcript(), "> \\count=5.\n");
+        // \write16：写终端（带换行）
+        let mut e = Expander::new();
+        e.run_source("\\write16{hi}").unwrap();
+        assert_eq!(e.transcript(), "hi\n");
+    }
+
+    #[test]
+    fn active_char_can_be_defined() {
+        let src = "\\def~{TILDE}\\def\\x{a~b}\\x";
+        assert_eq!(expand(src).unwrap(), "aTILDEb");
+    }
+
+    #[test]
+    fn undefined_control_sequence_errors() {
+        let err = expand("\\def\\foo{Hi}\\bar").unwrap_err();
+        assert!(err.to_string().contains("未定义的控制序列"));
+    }
+
+    #[test]
+    fn end_stops_processing() {
+        // \end 后内容不再处理
+        assert_eq!(
+            expand("\\def\\foo{Hi}\\foo\\end\\def\\bar{Bad}\\bar").unwrap(),
+            "Hi"
+        );
+    }
+
+    #[test]
+    fn nested_braces_in_argument() {
+        // 实参内层花括号在主流层建立组（不输出），与真实 TeX 一致
+        assert_eq!(expand("\\def\\wrap#1{[#1]}\\wrap{a{b}c}").unwrap(), "[abc]");
+    }
+
+    #[test]
+    fn empty_argument() {
+        assert_eq!(expand("\\def\\wrap#1{[#1]}\\wrap{}").unwrap(), "[]");
+    }
+
+    // ---------- M1-7 扫描顺序原语 ----------
+
+    #[test]
+    fn futurelet_captures_next_token() {
+        // \futurelet\next\relax a → \next := 字符 'a'（\let 语义），\relax 与 a 照常处理；
+        // 用 \ifx 与另一个 \let 到 'a' 的控制序列比较（\ifx CS vs 裸字符必为假）。
+        let src =
+            "\\futurelet\\next\\relax a\\let\\expected a\\ifx\\next\\expected yes\\else no\\fi";
+        assert_eq!(expand(src).unwrap(), "ayes");
+    }
+
+    #[test]
+    fn aftergroup_inserts_token_at_group_end() {
+        let src = "\\def\\X{Z}\\begingroup\\aftergroup\\X\\endgroup";
+        assert_eq!(expand(src).unwrap(), "Z");
+    }
+
+    #[test]
+    fn afterassignment_inserts_token_after_assignment() {
+        let src = "\\def\\X{done}\\afterassignment\\X\\count0=5";
+        assert_eq!(expand(src).unwrap(), "done");
+    }
+
+    #[test]
+    fn afterassignment_survives_group_scope() {
+        // \afterassignment 触发时已出组，赋值本身组内局部
+        let src = "\\count0=1\\def\\X{a}\\begingroup\\afterassignment\\X\\count0=2\\endgroup\\the\\count0";
+        assert_eq!(expand(src).unwrap(), "a1");
+    }
+
+    // ---------- M1-9 条件原语 ----------
+
+    #[test]
+    fn iftrue_else_branch() {
+        assert_eq!(expand("\\iftrue yes\\else no\\fi").unwrap(), "yes");
+        assert_eq!(expand("\\iffalse yes\\else no\\fi").unwrap(), "no");
+    }
+
+    #[test]
+    fn if_compares_char_tokens() {
+        // 操作数取紧邻两个 token；分支用花括号包裹以避开尾随空格歧义
+        assert_eq!(expand("\\if aa{y}\\else n\\fi").unwrap(), "y");
+        assert_eq!(expand("\\if ab{y}\\else n\\fi").unwrap(), "n");
+    }
+
+    #[test]
+    fn ifcat_compares_catcodes() {
+        // 'a' cat11 vs '1' cat12 → 不等；'a' vs 'b' → 相等
+        assert_eq!(expand("\\ifcat a1{y}\\else n\\fi").unwrap(), "n");
+        assert_eq!(expand("\\ifcat ab{y}\\else n\\fi").unwrap(), "y");
+    }
+
+    #[test]
+    fn ifnum_with_relations() {
+        assert_eq!(expand("\\ifnum3>2 yes\\else no\\fi").unwrap(), "yes");
+        assert_eq!(expand("\\ifnum2>3 yes\\else no\\fi").unwrap(), "no");
+        assert_eq!(expand("\\ifnum5=5 yes\\else no\\fi").unwrap(), "yes");
+        assert_eq!(expand("\\ifnum4<4 yes\\else no\\fi").unwrap(), "no");
+    }
+
+    #[test]
+    fn ifdim_with_units() {
+        assert_eq!(expand("\\ifdim1pt<2pt yes\\else no\\fi").unwrap(), "yes");
+        // pdfTeX 实测：1in=4736286sp；72.27pt 四舍五入后 = 4736287sp ≠ 1in，
+        // 72.26999pt = 4736286sp == 1in
+        assert_eq!(
+            expand("\\ifdim1in=72.27pt yes\\else no\\fi").unwrap(),
+            "no"
+        );
+        assert_eq!(
+            expand("\\ifdim1in=72.26999pt yes\\else no\\fi").unwrap(),
+            "yes"
+        );
+    }
+
+    #[test]
+    fn ifx_compares_meanings() {
+        // 相同定义的宏 → 相等；不同定义 → 不等
+        assert_eq!(
+            expand("\\def\\a{A}\\def\\b{A}\\ifx\\a\\b yes\\else no\\fi").unwrap(),
+            "yes"
+        );
+        assert_eq!(
+            expand("\\def\\a{A}\\def\\b{B}\\ifx\\a\\b yes\\else no\\fi").unwrap(),
+            "no"
+        );
+        // \let 别名解析后与目标同义
+        assert_eq!(
+            expand("\\def\\a{A}\\let\\c\\a\\ifx\\a\\c yes\\else no\\fi").unwrap(),
+            "yes"
+        );
+    }
+
+    #[test]
+    fn ifodd() {
+        assert_eq!(expand("\\ifodd3 yes\\else no\\fi").unwrap(), "yes");
+        assert_eq!(expand("\\ifodd4 yes\\else no\\fi").unwrap(), "no");
+    }
+
+    #[test]
+    fn ifcase_selects_branch() {
+        assert_eq!(
+            expand("\\ifcase2 zero\\or one\\or two\\or three\\else many\\fi").unwrap(),
+            "two"
+        );
+        assert_eq!(
+            expand("\\ifcase0 zero\\or one\\or two\\else many\\fi").unwrap(),
+            "zero"
+        );
+        assert_eq!(
+            expand("\\ifcase5 zero\\or one\\else many\\fi").unwrap(),
+            "many"
+        );
+    }
+
+    #[test]
+    fn conditional_skips_without_expanding() {
+        // 跳过分支中的 \def 与嵌套 \if 不得执行/展开
+        let src = "\\iffalse \\def\\bad{OOPS}\\bad \\ifnum1=1 hi\\else no\\fi \\else good\\fi";
+        assert_eq!(expand(src).unwrap(), "good");
+    }
+
+    #[test]
+    fn nested_conditionals() {
+        let src = "\\iftrue A\\ifnum2>1 B\\else C\\fi D\\else E\\fi";
+        assert_eq!(expand(src).unwrap(), "ABD");
+        let src2 = "\\iffalse A\\ifnum2>1 B\\else C\\fi D\\else E\\fi";
+        assert_eq!(expand(src2).unwrap(), "E");
+    }
+
+    #[test]
+    fn unbalanced_fi_errors() {
+        assert!(expand("\\iftrue A").is_err());
+        assert!(expand("\\fi").is_err());
+        assert!(expand("\\else").is_err());
+    }
+
+    // ---------- M1-10 寄存器 ----------
+
+    #[test]
+    fn count_assignment_and_the() {
+        assert_eq!(expand("\\count0=5\\the\\count0").unwrap(), "5");
+        assert_eq!(
+            expand("\\count0=42\\count1=\\count0\\the\\count1").unwrap(),
+            "42"
+        );
+        assert_eq!(expand("\\count0=-7\\the\\count0").unwrap(), "-7");
+    }
+
+    #[test]
+    fn dimen_assignment_and_the() {
+        assert_eq!(expand("\\dimen0=2.5pt\\the\\dimen0").unwrap(), "2.5pt");
+        assert_eq!(expand("\\dimen0=1pt\\the\\dimen0").unwrap(), "1.0pt");
+        assert_eq!(expand("\\dimen0=1in\\the\\dimen0").unwrap(), "72.26999pt");
+    }
+
+    #[test]
+    fn skip_assignment_and_the() {
+        assert_eq!(
+            expand("\\skip0=1pt plus 2pt minus 0.5pt\\the\\skip0").unwrap(),
+            "1.0pt plus 2.0pt minus 0.5pt"
+        );
+    }
+
+    #[test]
+    fn toks_assignment_and_the() {
+        assert_eq!(expand("\\toks0={Hi}\\the\\toks0").unwrap(), "Hi");
+    }
+
+    #[test]
+    fn the_in_edef_expands() {
+        assert_eq!(
+            expand("\\count0=7\\edef\\x{\\the\\count0}\\x").unwrap(),
+            "7"
+        );
+    }
+
+    // ---------- M1-11 组与作用域 ----------
+
+    #[test]
+    fn local_def_restored_at_group_end() {
+        let src = "\\def\\a{X}\\begingroup\\def\\a{Y}\\a\\endgroup\\a";
+        assert_eq!(expand(src).unwrap(), "YX");
+    }
+
+    #[test]
+    fn global_def_persists() {
+        let src = "\\def\\a{X}\\begingroup\\global\\def\\a{Y}\\a\\endgroup\\a";
+        assert_eq!(expand(src).unwrap(), "YY");
+    }
+
+    #[test]
+    fn gdef_is_global() {
+        let src = "\\def\\a{X}\\begingroup\\gdef\\a{Y}\\a\\endgroup\\a";
+        assert_eq!(expand(src).unwrap(), "YY");
+    }
+
+    #[test]
+    fn count_local_and_global_scoping() {
+        let local = "\\count0=1\\begingroup\\count0=2\\the\\count0\\endgroup\\the\\count0";
+        assert_eq!(expand(local).unwrap(), "21");
+        let global = "\\count0=1\\begingroup\\global\\count0=2\\endgroup\\the\\count0";
+        assert_eq!(expand(global).unwrap(), "2");
+    }
+
+    #[test]
+    fn begingroup_endgroup_primitives() {
+        let src = "\\def\\a{X}\\begingroup\\def\\a{Y}\\a\\endgroup\\a";
+        assert_eq!(expand(src).unwrap(), "YX");
+    }
+
+    #[test]
+    fn nested_groups() {
+        let src = "\\def\\a{X}\\begingroup\\begingroup\\def\\a{1}\\a\\endgroup\\a\\endgroup\\a";
+        assert_eq!(expand(src).unwrap(), "1XX");
+    }
+
+    #[test]
+    fn too_many_end_groups_errors() {
+        assert!(expand("\\def\\a{X}\\a}").is_err());
+    }
+
+    #[test]
+    fn conditional_inside_group_must_close() {
+        // 组内开 \if 未闭合就 \endgroup → 错误
+        assert!(expand("\\begingroup\\iftrue A\\endgroup").is_err());
+    }
+
+    // ---------- M2-6 展开吞吐基准（手动运行：cargo test -p ntex-core -- --ignored） ----------
+
+    #[test]
+    #[ignore]
+    fn bytecode_vs_interpreter_throughput() {
+        use std::time::Instant;
+
+        // 高频宏调用语料：2000 个含参数宏调用 + 常量条件
+        let mut src =
+            String::from("\\def\\foo#1{#1X}\\def\\bar{\\iftrue Y\\else N\\fi}\\def\\run{");
+        for _ in 0..2000 {
+            src.push_str("\\foo{a}\\bar\\foo{b}\\bar");
+        }
+        src.push_str("}\\run");
+
+        let run_track = |use_bytecode: bool| -> f64 {
+            let mut e = if use_bytecode {
+                Expander::new()
+            } else {
+                Expander::new_interpreter()
+            };
+            e.run_source("\\def\\__warm{1}").unwrap(); // 预热（代码路径加载）
+            let t0 = Instant::now();
+            e.run_source(&src).unwrap();
+            let elapsed = t0.elapsed().as_secs_f64();
+            e.output().len() as f64 / elapsed
+        };
+
+        // 预热各一次后正式计时（各 3 次取最大吞吐）
+        let _ = run_track(true);
+        let _ = run_track(false);
+        let bc = (0..3).map(|_| run_track(true)).fold(0.0f64, f64::max);
+        let ip = (0..3).map(|_| run_track(false)).fold(0.0f64, f64::max);
+
+        eprintln!(
+            "字节码吞吐：{bc:.0} token/s；解释器吞吐：{ip:.0} token/s；比值 {:.2}x",
+            bc / ip
+        );
+        // 不设硬断言（CI 波动大），仅报告数字
+    }
+
+    // ---------- M3-2-2 内部参数 ----------
+
+    #[test]
+    fn param_assignment_and_the() {
+        assert_eq!(expand("\\parindent 20pt\\the\\parindent").unwrap(), "20.0pt");
+        assert_eq!(
+            expand("\\baselineskip 10pt plus 2pt\\the\\baselineskip").unwrap(),
+            "10.0pt plus 2.0pt"
+        );
+        assert_eq!(expand("\\lineskip 3pt\\the\\lineskip").unwrap(), "3.0pt");
+        assert_eq!(
+            expand("\\lineskiplimit -1pt\\the\\lineskiplimit").unwrap(),
+            "-1.0pt"
+        );
+    }
+
+    #[test]
+    fn param_defaults() {
+        assert_eq!(expand("\\the\\parindent").unwrap(), "0.0pt");
+        assert_eq!(expand("\\the\\baselineskip").unwrap(), "12.0pt");
+        assert_eq!(expand("\\the\\lineskip").unwrap(), "0.0pt");
+        assert_eq!(expand("\\the\\lineskiplimit").unwrap(), "0.0pt");
+    }
+
+    #[test]
+    fn param_local_scoped_at_group_end() {
+        let src = "\\parindent 20pt\\begingroup\\parindent 30pt\\endgroup\\the\\parindent";
+        assert_eq!(expand(src).unwrap(), "20.0pt");
+    }
+
+    #[test]
+    fn param_global_scoped() {
+        let src = "\\parindent 20pt\\begingroup\\global\\parindent 30pt\\endgroup\\the\\parindent";
+        assert_eq!(expand(src).unwrap(), "30.0pt");
+    }
+
+    #[test]
+    fn param_afterassignment_fires() {
+        // \afterassignment 在参数赋值后触发（与寄存器一致）
+        let src = "\\def\\x{Y}\\afterassignment\\x\\parindent 10pt\\the\\parindent";
+        assert_eq!(expand(src).unwrap(), "Y10.0pt");
+    }
+
+    // ---------- M3-3 折行参数 ----------
+
+    #[test]
+    fn hsize_and_tolerance_assignment() {
+        assert_eq!(expand("\\hsize 100pt\\the\\hsize").unwrap(), "100.0pt");
+        assert_eq!(expand("\\tolerance 300\\the\\tolerance").unwrap(), "300");
+        // 默认值（TeX initex）：\hsize=6.5in、\tolerance=10000
+        assert!(expand("\\the\\tolerance").unwrap().ends_with("10000"));
+    }
+
+    // ---------- M3-4 字体 ----------
+
+    /// 记录事件流的测试 sink（`font_selected` 事件用）。
+    #[derive(Debug, Default)]
+    struct EventSink {
+        chars: Vec<char>,
+        fonts: Vec<u32>,
+        patterns: Vec<Vec<u8>>,
+    }
+
+    impl TokenSink for EventSink {
+        fn token(&mut self, tok: Token) -> Result<()> {
+            if let Some(c) = tok.charcode().and_then(char::from_u32) {
+                self.chars.push(c);
+            }
+            Ok(())
+        }
+        fn font_selected(&mut self, font: u32) -> Result<()> {
+            self.fonts.push(font);
+            Ok(())
+        }
+        fn patterns(&mut self, patterns: Vec<u8>) -> Result<()> {
+            self.patterns.push(patterns);
+            Ok(())
+        }
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
+    }
+
+    /// 记录加载请求的测试加载器（每次加载返回递增 FontId）。
+    /// 调用记录经 `Rc<RefCell>` 共享，移入 Expander 后仍可读取。
+    type FontCall = (String, Option<i64>, Option<i64>);
+
+    #[derive(Debug, Clone, Default)]
+    struct MockLoader {
+        calls: Rc<RefCell<Vec<FontCall>>>,
+    }
+
+    impl FontLoader for MockLoader {
+        fn load(&mut self, name: &str, at: Option<i64>, scaled: Option<i64>) -> Result<u32> {
+            let mut calls = self.calls.borrow_mut();
+            calls.push((name.to_owned(), at, scaled));
+            Ok(calls.len() as u32 - 1)
+        }
+    }
+
+    /// 用 MockLoader 运行源码，返回 (输出字符, 字体选择事件, 加载请求)。
+    fn font_run(src: &str) -> Result<(String, Vec<u32>, Vec<FontCall>)> {
+        let loader = MockLoader::default();
+        let calls = loader.calls.clone();
+        let mut e = Expander::new();
+        e.set_font_loader(Box::new(loader));
+        let sink = EventSink::default();
+        e.set_sink(Box::new(sink));
+        e.run_source(src)?;
+        let mut sink = e.take_sink();
+        let sink = sink.as_any_mut().downcast_mut::<EventSink>().unwrap();
+        let chars: String = sink.chars.iter().copied().collect();
+        let fonts = sink.fonts.clone();
+        let loaded = calls.borrow().clone();
+        Ok((chars, fonts, loaded))
+    }
+
+    #[test]
+    fn font_defines_selector_and_emits_selection() {
+        let (chars, fonts, calls) = font_run("\\font\\foo=cmr10\\foo a").unwrap();
+        assert_eq!(calls, vec![("cmr10".to_owned(), None, None)]);
+        assert_eq!(fonts, vec![0], "执行 \\foo 应触发 font_selected");
+        assert!(chars.contains('a'));
+    }
+
+    #[test]
+    fn font_at_and_scaled_variants() {
+        let src = r"\font\a=cmr10 at 12pt \font\b=cmr10 scaled 1200";
+        let (_, _, calls) = font_run(src).unwrap();
+        assert_eq!(
+            calls,
+            vec![
+                ("cmr10".to_owned(), Some(12 * SP_PER_PT), None),
+                ("cmr10".to_owned(), None, Some(1200)),
+            ]
+        );
+    }
+
+    #[test]
+    fn font_equals_is_optional() {
+        let (_, _, calls) = font_run("\\font\\foo cmr10").unwrap();
+        assert_eq!(calls, vec![("cmr10".to_owned(), None, None)]);
+    }
+
+    #[test]
+    fn font_without_loader_errors() {
+        let mut e = Expander::new(); // 默认 NoFontLoader
+        assert!(e.run_source("\\font\\foo=cmr10").is_err());
+    }
+
+    #[test]
+    fn ifx_compares_font_meanings() {
+        // 同一 cs 与自身相等（Font(0) == Font(0)）
+        let out = font_run(r"\font\a=cmr10\ifx\a\a yes\else no\fi").unwrap().0;
+        assert_eq!(out, "yes");
+        // 两次加载得到不同 FontId → 不等
+        let out = font_run(r"\font\a=cmr10\font\b=cmr10\ifx\a\b yes\else no\fi").unwrap().0;
+        assert_eq!(out, "no");
+    }
+
+    // ---------- M4-6 断字：\patterns ----------
+
+    /// 运行 `\patterns{...}`，返回 sink 收到的模式文本。
+    fn pattern_run(src: &str) -> Result<Vec<u8>> {
+        let mut e = Expander::new();
+        let sink = EventSink::default();
+        e.set_sink(Box::new(sink));
+        e.run_source(src)?;
+        let mut sink = e.take_sink();
+        let sink = sink.as_any_mut().downcast_mut::<EventSink>().unwrap();
+        Ok(sink.patterns.last().cloned().unwrap_or_default())
+    }
+
+    #[test]
+    fn patterns_reads_group_and_forwards_text() {
+        let text = pattern_run(r"\patterns{.ach4 .ad4 % 注释换行
+ab5c}").unwrap();
+        // 字母/数字/`.` 保留；空格/% 注释/换行折叠为分隔空格
+        assert_eq!(text, b".ach4 .ad4 ab5c");
+    }
+
+    #[test]
+    fn patterns_multi_and_unclosed_group_errors() {
+        let mut e = Expander::new();
+        let sink = EventSink::default();
+        e.set_sink(Box::new(sink));
+        e.run_source(r"\patterns{ab5c xy7z}").unwrap();
+        let mut sink = e.take_sink();
+        let sink = sink.as_any_mut().downcast_mut::<EventSink>().unwrap();
+        assert_eq!(sink.patterns, vec![b"ab5c xy7z".to_vec()]);
+        // 未闭合组报错
+        let mut e = Expander::new();
+        assert!(e.run_source(r"\patterns{ab5c").is_err());
+    }
+
+    // ---------- M3 收尾（RFC-3）：VFS 副作用原语 ----------
+
+    /// 运行源码（MemVfs 后端），返回 (输出字符串, VFS)。副作用用例不跑双轨。
+    fn expand_vfs(src: &str, vfs: MemVfs) -> Result<(String, MemVfs)> {
+        let mut e = Expander::new();
+        e.set_vfs(Box::new(vfs));
+        e.run_source(src)?;
+        let out = e
+            .output()
+            .iter()
+            .map(|t| t.charcode().and_then(char::from_u32).unwrap_or('\u{FFFD}'))
+            .collect();
+        let mut vfs = e.take_vfs();
+        let vfs = vfs
+            .as_any_mut()
+            .downcast_mut::<MemVfs>()
+            .ok_or_else(|| Error::internal("测试 VFS 应为 MemVfs"))?;
+        Ok((out, vfs.clone()))
+    }
+
+    #[test]
+    fn input_reads_file_from_vfs() {
+        let mut vfs = MemVfs::new();
+        vfs.insert("ch1.tex", "Chapter One");
+        let (out, _) = expand_vfs("\\input{ch1}", vfs).unwrap();
+        assert_eq!(out, "Chapter One");
+    }
+
+    #[test]
+    fn input_falls_back_to_tex_extension() {
+        let mut vfs = MemVfs::new();
+        vfs.insert("ch2.tex", "Ch2");
+        let (out, _) = expand_vfs("\\input ch2", vfs).unwrap();
+        assert_eq!(out, "Ch2");
+    }
+
+    #[test]
+    fn input_nests_and_returns() {
+        let mut vfs = MemVfs::new();
+        vfs.insert("a.tex", "A\\input{b}B");
+        vfs.insert("b.tex", "X");
+        let (out, _) = expand_vfs("\\input{a}", vfs).unwrap();
+        assert_eq!(out, "AXB");
+    }
+
+    #[test]
+    fn input_missing_file_errors() {
+        let vfs = MemVfs::new();
+        assert!(expand_vfs("\\input{nope}", vfs).is_err());
+    }
+
+    #[test]
+    fn immediate_write_appends() {
+        let vfs = MemVfs::new();
+        let (_, vfs) = expand_vfs(
+            "\\newwrite\\f\\immediate\\openout\\f=out.txt\\immediate\\write\\f{abc}\\closeout\\f",
+            vfs,
+        )
+        .unwrap();
+        assert_eq!(vfs.get("out.txt"), Some(b"abc\n".as_slice()));
+    }
+
+    #[test]
+    fn write_defers_until_end() {
+        let vfs = MemVfs::new();
+        // 无 \immediate：\write 入队，\end 收尾统一 flush
+        let (_, vfs) = expand_vfs(
+            "\\newwrite\\f\\openout\\f=out.txt\\write\\f{abc}\\write\\f{def}\\end",
+            vfs,
+        )
+        .unwrap();
+        assert_eq!(vfs.get("out.txt"), Some(b"abc\ndef\n".as_slice()));
+    }
+
+    #[test]
+    fn write_expands_the_at_write_time() {
+        let vfs = MemVfs::new();
+        // \write 时展开 \the\count0 与宏（TeX 语义：写文件时展开）
+        let (_, vfs) = expand_vfs(
+            "\\count0=42\\def\\mark{X}\\newwrite\\f\\openout\\f=o.txt\\write\\f{\\the\\count0\\mark}\\end",
+            vfs,
+        )
+        .unwrap();
+        assert_eq!(vfs.get("o.txt"), Some(b"42X\n".as_slice()));
+    }
+
+    #[test]
+    fn write_to_unopened_stream_errors() {
+        let vfs = MemVfs::new();
+        assert!(expand_vfs("\\write0{abc}\\end", vfs).is_err());
+    }
+
+    #[test]
+    fn read_line_defines_cs() {
+        let mut vfs = MemVfs::new();
+        vfs.insert("data.txt", "Hello\nWorld\n");
+        let (out, _) = expand_vfs(
+            "\\newread\\r\\openin\\r=data.txt\\read\\r to \\line\\line",
+            vfs,
+        )
+        .unwrap();
+        assert_eq!(out, "Hello");
+    }
+
+    #[test]
+    fn read_eof_errors() {
+        let mut vfs = MemVfs::new();
+        vfs.insert("empty.txt", "");
+        assert!(
+            expand_vfs("\\newread\\r\\openin\\r=empty.txt\\read\\r to \\line", vfs)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn write18_shell_escape_rejected() {
+        let vfs = MemVfs::new();
+        assert!(expand_vfs("\\write18{echo hi}\\end", vfs).is_err());
+    }
+
+    // ---------- M4-5 e-TeX 展开扩展 ----------
+
+    #[test]
+    fn protected_macro_not_expanded_in_edef() {
+        // \protected\def\foo{Hi} → \edef\x{\foo} 时 \foo 不展开，\x = \foo
+        let out = expand(r"\protected\def\foo{Hi}\edef\x{\foo}\expandafter\detokenize\expandafter{\x}")
+            .unwrap();
+        assert_eq!(out, r"\foo ", "宏 x 应保留 \\foo（detokenize 控制词后补空格）而非展开为 Hi");
+    }
+
+    #[test]
+    fn unprotected_macro_expands_in_edef() {
+        let out = expand(r"\def\foo{Hi}\edef\x{\foo}\expandafter\detokenize\expandafter{\x}").unwrap();
+        assert_eq!(out, "Hi");
+    }
+
+    #[test]
+    fn protected_macro_not_expanded_in_write() {
+        // \write 参数展开抑制 protected 宏：\foo 不展开，输出为空（TeX 语义丢弃）
+        let mut vfs = MemVfs::new();
+        let (_, vfs) = expand_vfs(
+            r"\protected\def\foo{Hi}\newwrite\w\openout\w=out.txt\write\w{\foo}\closeout\w",
+            vfs,
+        )
+        .unwrap();
+        assert_eq!(
+            vfs.get("out.txt").map(|b| String::from_utf8_lossy(b).into_owned()),
+            Some("\n".to_owned()),
+            "protected 宏不展开 → 写空行（TeX 语义）"
+        );
+    }
+
+    #[test]
+    fn protected_macro_still_expands_normally() {
+        // 正常展开（非抑制上下文）不受影响
+        assert_eq!(expand(r"\protected\def\foo{Hi}\foo").unwrap(), "Hi");
+    }
+
+    #[test]
+    fn ifdefined_true_and_false() {
+        assert_eq!(
+            expand(r"\ifdefined\relax yes\else no\fi").unwrap(),
+            "yes"
+        );
+        assert_eq!(
+            expand(r"\ifdefined\neverdefinedcs123 yes\else no\fi").unwrap(),
+            "no"
+        );
+    }
+
+    #[test]
+    fn ifcsname_true_and_false() {
+        assert_eq!(
+            expand(r"\ifcsname relax\endcsname yes\else no\fi").unwrap(),
+            "yes"
+        );
+        assert_eq!(
+            expand(r"\ifcsname neverdefinedxyz\endcsname yes\else no\fi").unwrap(),
+            "no"
+        );
+    }
+
+    #[test]
+    fn unless_reverses_condition() {
+        assert_eq!(expand(r"\unless\iftrue yes\else no\fi").unwrap(), "no");
+        assert_eq!(expand(r"\unless\iffalse yes\else no\fi").unwrap(), "yes");
+    }
+
+    #[test]
+    fn numexpr_basic_arithmetic() {
+        assert_eq!(expand(r"\the\numexpr 2+3*4 \relax").unwrap(), "14");
+        assert_eq!(expand(r"\the\numexpr 10/3 \relax").unwrap(), "3");
+        assert_eq!(expand(r"\the\numexpr 20-7 \relax").unwrap(), "13");
+    }
+
+    #[test]
+    fn numexpr_with_register() {
+        assert_eq!(
+            expand(r"\count0=7\the\numexpr \count0*2 \relax").unwrap(),
+            "14"
+        );
+    }
+
+    #[test]
+    fn numexpr_in_ifnum() {
+        assert_eq!(
+            expand(r"\ifnum\numexpr 2*3 \relax > 5 yes\else no\fi").unwrap(),
+            "yes"
+        );
+    }
+
+    #[test]
+    fn detokenize_converts_to_character_tokens() {
+        assert_eq!(expand(r"\detokenize{abc}").unwrap(), "abc");
+        // 控制序列 → \名字 文本
+        assert_eq!(
+            expand(r"\detokenize{a\relax b}").unwrap(),
+            r"a\relax b"
+        );
+    }
+
+    #[test]
+    fn unexpanded_in_edef_keeps_tokens() {
+        // \unexpanded{\foo} 在 \edef 里不展开 → \x = \foo
+        let out = expand(
+            r"\def\foo{Hi}\edef\x{\unexpanded{\foo}}\expandafter\detokenize\expandafter{\x}",
+        )
+        .unwrap();
+        assert_eq!(out, r"\foo ");
+    }
+
+    #[test]
+    fn eTeXversion_and_revision() {
+        assert_eq!(expand(r"\the\eTeXversion").unwrap(), "2");
+        // e-TeX 2.6：revision 带前导点（版本号"2.6"的后半段）
+        assert_eq!(expand(r"\the\eTeXrevision").unwrap(), ".6");
+    }
+
+    // ---------- M4-5 e-TeX 扩展：\dimexpr/\glueexpr/\ifprimitive/\scantokens ----------
+
+    #[test]
+    fn dimexpr_basic_arithmetic() {
+        assert_eq!(expand(r"\the\dimexpr 1pt+2pt \relax").unwrap(), "3.0pt");
+        assert_eq!(expand(r"\the\dimexpr 10pt-2.5pt \relax").unwrap(), "7.5pt");
+        assert_eq!(expand(r"\the\dimexpr -1pt+2pt \relax").unwrap(), "1.0pt");
+    }
+
+    #[test]
+    fn dimexpr_in_dimen_assignment() {
+        // \dimen0=\dimexpr...：scan_dimen 识别 \dimexpr 原语
+        assert_eq!(
+            expand(r"\dimen0=\dimexpr 1pt+2pt \relax\the\dimen0").unwrap(),
+            "3.0pt"
+        );
+    }
+
+    #[test]
+    fn glueexpr_basic_and_last_stretch_wins() {
+        // width 求和；stretch/shrink 取最后一个非零项
+        assert_eq!(
+            expand(r"\the\glueexpr 1pt plus 2pt + 3pt minus 1pt \relax").unwrap(),
+            "4.0pt plus 2.0pt minus 1.0pt"
+        );
+        assert_eq!(
+            expand(r"\the\glueexpr 1pt plus 2pt + 3pt plus 4pt \relax").unwrap(),
+            "4.0pt plus 4.0pt"
+        );
+    }
+
+    #[test]
+    fn glueexpr_in_skip_assignment() {
+        // 减法项：stretch 符号随项翻转
+        assert_eq!(
+            expand(r"\skip0=\glueexpr 1pt plus 2pt - 0.5pt \relax\the\skip0").unwrap(),
+            "0.5pt plus 2.0pt"
+        );
+    }
+
+    #[test]
+    fn ifprimitive_tests_primitive_definition() {
+        assert_eq!(
+            expand(r"\ifprimitive\relax yes\else no\fi").unwrap(),
+            "yes"
+        );
+        assert_eq!(
+            expand(r"\ifprimitive\zzzundef123 yes\else no\fi").unwrap(),
+            "no"
+        );
+        assert_eq!(expand(r"\ifprimitive a yes\else no\fi").unwrap(), "no");
+        // \let 到原语：含义是原语但槽是 Alias → 非原语（TeX 语义）
+        assert_eq!(
+            expand(r"\let\pr=\relax\ifprimitive\pr yes\else no\fi").unwrap(),
+            "no"
+        );
+    }
+
+    #[test]
+    fn scantokens_rescans_text_with_current_catcodes() {
+        // 组内容 detokenize 后按当前 catcode 重新扫描（等价于从字符串 \input）
+        assert_eq!(expand(r"\def\x{abc}\scantokens{\x}").unwrap(), "abc");
+        // 扫描过程中定义并展开宏
+        assert_eq!(expand(r"\scantokens{a\def\y{b}\y}").unwrap(), "ab");
+    }
+}

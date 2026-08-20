@@ -21,7 +21,7 @@ use ntex_core::version::Version;
 const MAGIC: &[u8; 8] = b"NTEXFMT1";
 /// 格式版本（v2：M4-4 显示数学间距参数；v3：ETRIP 内部整数参数；
 /// v4：M1-8 参数文本全量序列化——定界符标志改为参数文本 token 数组）。
-const VERSION: u8 = 4;
+const VERSION: u8 = 5;
 
 /// 编码一个 `.fmt` 快照。
 pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
@@ -154,6 +154,18 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
     let tolerance = read_i64(r)?;
     let vsize = read_i64(r)?;
     let maxdepth = read_i64(r)?;
+    // M4-4 显示数学间距（v2）
+    let abovedisplayskip = read_glue(r)?;
+    let belowdisplayskip = read_glue(r)?;
+    let abovedisplayshortskip = read_glue(r)?;
+    let belowdisplayshortskip = read_glue(r)?;
+    let predisplaypenalty = read_i64(r)?;
+    let postdisplaypenalty = read_i64(r)?;
+    // ETRIP 冲刺（v3）：TeX 内部整数参数
+    let endlinechar = read_i64(r)?;
+    let newlinechar = read_i64(r)?;
+    let defaulthyphenchar = read_i64(r)?;
+    let defaultskewchar = read_i64(r)?;
     // ETRIP 冲刺（v4）：TeX/e-TeX 内部整数参数（misc 数组）
     let mut misc = [0i64; ntex_core::param::MISC_INTS];
     for v in &mut misc {
@@ -170,19 +182,16 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
         topskip,
         maxdepth,
         parskip,
-        // M4-4 显示数学间距（v2）
-        abovedisplayskip: read_glue(r)?,
-        belowdisplayskip: read_glue(r)?,
-        abovedisplayshortskip: read_glue(r)?,
-        belowdisplayshortskip: read_glue(r)?,
-        predisplaypenalty: read_i64(r)?,
-        postdisplaypenalty: read_i64(r)?,
-        // ETRIP 冲刺（v3）
-        endlinechar: read_i64(r)?,
-        newlinechar: read_i64(r)?,
-        defaulthyphenchar: read_i64(r)?,
-        defaultskewchar: read_i64(r)?,
-        // ETRIP 冲刺（v4）：TeX/e-TeX 内部整数参数（misc 数组）
+        abovedisplayskip,
+        belowdisplayskip,
+        abovedisplayshortskip,
+        belowdisplayshortskip,
+        predisplaypenalty,
+        postdisplaypenalty,
+        endlinechar,
+        newlinechar,
+        defaulthyphenchar,
+        defaultskewchar,
         misc,
     };
 
@@ -344,6 +353,16 @@ fn write_registers(w: &mut impl Write, r: &RegisterState) -> io::Result<()> {
     for g in &r.skips {
         write_glue(w, *g)?;
     }
+    // muskip 寄存器（v5：RegKind 编号变更 + muskip 序列化；稀疏存 256 槽全量）
+    for i in 0..256usize {
+        let g = r
+            .muskip
+            .iter()
+            .find(|(idx, _)| *idx == i)
+            .map(|(_, g)| *g)
+            .unwrap_or(Glue::ZERO);
+        write_glue(w, g)?;
+    }
     w.write_all(&(r.toks.len() as u32).to_le_bytes())?;
     for (idx, toks) in &r.toks {
         w.write_all(&(*idx as u32).to_le_bytes())?;
@@ -365,6 +384,13 @@ fn read_registers(r: &mut impl Read) -> io::Result<RegisterState> {
     for g in &mut skips {
         *g = read_glue(r)?;
     }
+    let mut muskip = Vec::new();
+    for i in 0..256 {
+        let g = read_glue(r)?;
+        if g != Glue::ZERO {
+            muskip.push((i, g));
+        }
+    }
     let n_toks = read_u32(r)? as usize;
     let mut toks = Vec::with_capacity(n_toks);
     for _ in 0..n_toks {
@@ -376,6 +402,7 @@ fn read_registers(r: &mut impl Read) -> io::Result<RegisterState> {
         counts,
         dimens,
         skips,
+        muskip,
         toks,
     })
 }
@@ -399,7 +426,8 @@ fn reg_kind_u8(k: RegKind) -> u8 {
         RegKind::Count => 0,
         RegKind::Dimen => 1,
         RegKind::Skip => 2,
-        RegKind::Toks => 3,
+        RegKind::Muskip => 3,
+        RegKind::Toks => 4,
     }
 }
 
@@ -408,7 +436,8 @@ fn reg_kind_from_u8(v: u8) -> io::Result<RegKind> {
         0 => Ok(RegKind::Count),
         1 => Ok(RegKind::Dimen),
         2 => Ok(RegKind::Skip),
-        3 => Ok(RegKind::Toks),
+        3 => Ok(RegKind::Muskip),
+        4 => Ok(RegKind::Toks),
         _ => Err(invalid("未知寄存器类型")),
     }
 }
@@ -474,6 +503,7 @@ mod tests {
                 counts: [0; 256],
                 dimens: [0; 256],
                 skips: [Glue::ZERO; 256],
+                muskip: Vec::new(),
                 toks: Vec::new(),
             },
             params: ntex_core::param::Params::default(),
@@ -579,6 +609,13 @@ mod tests {
             load(&mut f).unwrap()
         };
         std::fs::remove_file(&path).ok();
+        assert_eq!(state.intern_names, loaded.intern_names, "intern_names");
+        assert_eq!(state.catcodes, loaded.catcodes, "catcodes");
+        assert_eq!(state.sfcodes, loaded.sfcodes, "sfcodes");
+        assert_eq!(state.eqtb, loaded.eqtb, "eqtb");
+        assert_eq!(state.registers, loaded.registers, "registers");
+        assert_eq!(state.params, loaded.params, "params");
+        assert_eq!(state.output_toks, loaded.output_toks, "output_toks");
         assert_eq!(state, loaded, "文件 roundtrip 后状态应一致");
     }
 }
