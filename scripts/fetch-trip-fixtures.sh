@@ -54,6 +54,14 @@ fetch_first_of "$TARGET/etrip/etrip.tex" \
   "$TL/texk/web2c/etexdir/etrip/etrip.tex" || true
 fetch_first_of "$TARGET/etrip/etrip.log" \
   "$TL/texk/web2c/etexdir/etrip/etrip.log" || true
+# etrip.tfm 由 etrip.pl 经 pltotf 生成（当前 fixtures 内置最小占位 TFM，
+# 度量非 Knuth 原始——完整 ETRIP 需 pltotf 转换后替换）。源码保留以便将来转换。
+fetch_first_of "$TARGET/etrip/etrip.pl" \
+  "$TL/texk/web2c/etexdir/etrip/etrip.pl" || true
+
+# ---------- TRIP 字体源（trip.tfm 由 trip.pl 经 pltotf 生成） ----------
+fetch_first_of "$TARGET/trip/trip.pl" \
+  "$TL/texk/web2c/triptrap/trip.pl" || true
 
 echo "---- fixtures ----"
 for dir in trip etrip; do

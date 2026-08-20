@@ -157,6 +157,10 @@ enum SavedValue {
     Output { prev: Option<TokenArray> },
     /// `\fontdimen`：字体参数覆盖（prev None = 此前无覆盖）。
     FontDimen { font: u32, num: u32, prev: Option<i64> },
+    /// `\hyphenchar`：字体断字符覆盖（prev None = 此前无覆盖）。
+    HyphenChar { font: u32, prev: Option<i64> },
+    /// `\delcode`：定界符码表项（ETRIP；组内局部保存）。
+    DelCode { byte: u8, prev: Option<u32> },
 }
 
 /// `\ifx` 语义键：解析别名后比较含义（TeX：同含义即相等）。
@@ -274,10 +278,17 @@ pub struct Expander {
     /// `\fontdimen` 覆盖表：(font_id, 参数号) → 值（sp）。TFM 度量在排版层，
     /// 此处仅存覆盖项；无覆盖读回 0（后续接入 TFM 时回退真实参数）。
     fontdimens: HashMap<(u32, u32), i64>,
+    /// `\hyphenchar` 覆盖表：font_id → 断字符码（无覆盖 = 字体默认 45）。
+    hyphenchars: HashMap<u32, i64>,
+    /// `\delcode` 表：字符码 → 定界符码（TeX delcode；无覆盖 = 0x500000 默认）。
+    delcodes: HashMap<u32, u32>,
     /// `\unless` 前缀：取反下一个条件的结果。
     unless_pending: bool,
     /// protected 宏抑制展开的上下文深度（>0：`\edef`/`\write`/`\detokenize` 等）。
     suppress_expansion: usize,
+    /// `\edef`/`\xdef`/`\write` 展开上下文（TeX `expand()`）：只展开可展开项，
+    /// 不可展开原语/未定义 cs/字符/组定界原样保留在输出（不执行、不建组）。
+    expand_only: bool,
 }
 
 impl Expander {
@@ -321,8 +332,11 @@ impl Expander {
             protected_pending: false,
             outer_pending: false,
             fontdimens: HashMap::new(),
+            hyphenchars: HashMap::new(),
+            delcodes: HashMap::new(),
             unless_pending: false,
             suppress_expansion: 0,
+            expand_only: false,
         };
         e.register_builtins();
         e
@@ -418,6 +432,8 @@ impl Expander {
         self.immediate_pending = false;
         self.read_streams.clear();
         self.write_streams.clear();
+        self.suppress_expansion = 0;
+        self.expand_only = false;
     }
 
     /// 追加一个源码输入（后续 `\input`/VFS 在 M3 接入）。
@@ -538,6 +554,10 @@ impl Expander {
 
     /// 处理单个 token（展开宏/原语，其余输出）。
     fn process_token(&mut self, tok: Token) -> Result<()> {
+        // \edef/\xdef/\write 展开上下文：只展开可展开项，其余保留
+        if self.expand_only {
+            return self.process_expand_only(tok);
+        }
         match tok.kind() {
             TokenKind::ControlSeq => {
                 let csid = tok.csid().expect("ControlSeq 必有 csid");
@@ -548,8 +568,14 @@ impl Expander {
                         self.intern.name(csid)
                     ))),
                     EqSlot::Alias(target) => self.process_token(Token::control_sequence(target)),
+                    // \let\cs=<字符>：等价于该字符（\bgroup/\egroup 等组定界也生效）
                     EqSlot::Char { catcode, charcode } => {
-                        self.sink.token(Token::char(catcode, charcode))
+                        let c = Token::char(catcode, charcode);
+                        match catcode {
+                            Catcode::BeginGroup => self.begin_group(),
+                            Catcode::EndGroup => self.end_group(),
+                            _ => self.sink.token(c),
+                        }
                     }
                     EqSlot::Register(..) | EqSlot::Stream(..) => Err(Error::invalid_input(
                         "寄存器/流引用不能直接使用（需在数字/尺寸扫描上下文中）",
@@ -561,29 +587,7 @@ impl Expander {
                             self.sink.token(Token::control_sequence(csid))?;
                             return Ok(());
                         }
-                        let def = m.value.clone();
-                        let args = if def.params.num_params > 0 {
-                            self.collect_args(&def)?
-                        } else {
-                            Vec::new()
-                        };
-                        // M2 双轨：字节码优先（未编译则回退解释器轨道）
-                        if self.use_bytecode {
-                            if let Some(code) = &def.code {
-                                self.stack.push(InputFrame::Bytecode {
-                                    code: code.clone(),
-                                    pc: 0,
-                                    args,
-                                });
-                                return Ok(());
-                            }
-                        }
-                        self.stack.push(InputFrame::Macro {
-                            body: def.body.clone(),
-                            pos: 0,
-                            args,
-                        });
-                        Ok(())
+                        self.call_macro(csid, m.value.clone())
                     }
                     EqSlot::Font(font) => self.sink.font_selected(font),
                     EqSlot::Primitive(p) => self.exec_primitive(p),
@@ -605,6 +609,55 @@ impl Expander {
             }
             _ => self.sink.token(tok),
         }
+    }
+
+    /// 展开上下文（TeX `expand()`，`\edef`/`\xdef`/`\write`）：只展开可展开项——
+    /// 宏、可展开原语（`\the`/`\expandafter`/`\noexpand`/`\number`/`\unexpanded`/
+    /// `\detokenize`/`\eTeXversion`/`\eTeXrevision`）；条件由 process_one 拦截。
+    /// 不可展开原语、未定义 cs、字符、组定界、宏参数一律原样保留（不执行、不建组）。
+    fn process_expand_only(&mut self, tok: Token) -> Result<()> {
+        match tok.kind() {
+            TokenKind::ControlSeq => {
+                let csid = tok.csid().expect("ControlSeq 必有 csid");
+                match self.eqtb.slot(csid).clone() {
+                    EqSlot::Macro(m) => {
+                        if m.value.protected && self.suppress_expansion > 0 {
+                            return self.sink.token(tok);
+                        }
+                        self.call_macro(csid, m.value.clone())
+                    }
+                    EqSlot::Primitive(p) if p.is_expandable() => self.exec_primitive(p),
+                    _ => self.sink.token(tok),
+                }
+            }
+            _ => self.sink.token(tok),
+        }
+    }
+
+    /// 展开宏调用：收集实参，压入字节码（M2）或宏体输入帧。
+    fn call_macro(&mut self, csid: u32, def: Arc<MacroDef>) -> Result<()> {
+        let args = if def.params.num_params > 0 {
+            self.collect_args(&def)?
+        } else {
+            Vec::new()
+        };
+        // M2 双轨：字节码优先（未编译则回退解释器轨道）
+        if self.use_bytecode {
+            if let Some(code) = &def.code {
+                self.stack.push(InputFrame::Bytecode {
+                    code: code.clone(),
+                    pc: 0,
+                    args,
+                });
+                return Ok(());
+            }
+        }
+        self.stack.push(InputFrame::Macro {
+            body: def.body.clone(),
+            pos: 0,
+            args,
+        });
+        Ok(())
     }
 
     // ---------- 输入获取 ----------
@@ -741,13 +794,105 @@ impl Expander {
 
     // ---------- 宏调用与实参 ----------
 
-    /// 收集宏的全部实参（无分隔参数）。
+    /// 收集宏的全部实参（M1-8 分隔参数）。
+    ///
+    /// 按 TeX scan_args 语义处理参数文本 `P_1 #1 P_2 #2 ... P_n P_{n+1}`：
+    /// - 先匹配前导定界符 P_1（须与输入开头逐 token 相同）；
+    /// - 对每个 `#k`：若其后定界符 P_{k+1} 为空 → 无分隔参数（单个 token 或组）；
+    ///   否则为分隔参数，收集到 P_{k+1} 在输入中完整出现为止（定界符被消费）。
     fn collect_args(&mut self, def: &MacroDef) -> Result<Vec<TokenArray>> {
-        let mut args = Vec::with_capacity(def.params.num_params as usize);
-        for _ in 0..def.params.num_params {
-            args.push(self.collect_undelimited_arg(def.params.long)?);
+        let n = def.params.num_params as usize;
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+        // 按 #n 参数 token 分段：segments[0]=P_1（#1 前），segments[k]=P_{k+1}（#k 后）
+        let mut segments: Vec<Vec<Token>> = vec![Vec::new()];
+        for t in def.params.text.iter() {
+            if t.param_number().is_some() {
+                segments.push(Vec::new());
+            } else {
+                segments
+                    .last_mut()
+                    .expect("segments 非空")
+                    .push(*t);
+            }
+        }
+        debug_assert_eq!(segments.len(), n + 1, "参数文本分段应与参数个数一致");
+
+        let mut args = Vec::with_capacity(n);
+        // 前导定界符 P_1
+        self.match_input_delim(&segments[0])?;
+        for k in 0..n {
+            let delim = &segments[k + 1]; // P_{k+2}：紧跟在 #(k+1) 后的定界符
+            let arg = if delim.is_empty() {
+                self.collect_undelimited_arg(def.params.long)?
+            } else {
+                self.collect_delimited_arg(delim, def.params.long)?
+            };
+            args.push(arg);
         }
         Ok(args)
+    }
+
+    /// 逐 token 匹配输入与定界符序列（用于前导定界符 P_1）。
+    /// 失配 → 报 "宏调用与定义不匹配"。
+    fn match_input_delim(&mut self, delim: &[Token]) -> Result<()> {
+        for want in delim {
+            let tok = self
+                .fetch()?
+                .ok_or_else(|| Error::invalid_input("宏参数定界符匹配到输入末尾"))?
+                .0;
+            if !self.delim_token_eq(tok, *want) {
+                return Err(Error::invalid_input(
+                    "宏调用与定义不匹配（参数定界符不一致）",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// 定界符 token 等价比较：字符按 (catcode, char)；控制序列按含义（\ifx 语义）。
+    fn delim_token_eq(&self, a: Token, b: Token) -> bool {
+        match (a.kind(), b.kind()) {
+            (TokenKind::Char, TokenKind::Char) => a == b,
+            (TokenKind::ControlSeq, TokenKind::ControlSeq) => {
+                self.meaning_key(a.csid().expect("ControlSeq 必有 csid"))
+                    == self.meaning_key(b.csid().expect("ControlSeq 必有 csid"))
+            }
+            _ => false,
+        }
+    }
+
+    /// 收集一个分隔实参：读入 token 直到定界符序列在输入中完整匹配（后缀匹配）。
+    fn collect_delimited_arg(&mut self, delim: &[Token], long: bool) -> Result<TokenArray> {
+        let mut buf: Vec<Token> = Vec::new();
+        loop {
+            let tok = self
+                .fetch()?
+                .ok_or_else(|| Error::invalid_input("分隔实参扫描到输入末尾（定界符未出现）"))?
+                .0;
+            if !long && self.is_par_token(tok) {
+                return Err(Error::invalid_input("参数包含 \\par（宏未声明 \\long）"));
+            }
+            buf.push(tok);
+            if self.suffix_matches_delim(&buf, delim) {
+                buf.truncate(buf.len() - delim.len());
+                break;
+            }
+        }
+        Ok(Arc::from(buf))
+    }
+
+    /// 检查 `buf` 尾部是否与定界符逐 token 相同。
+    fn suffix_matches_delim(&self, buf: &[Token], delim: &[Token]) -> bool {
+        if buf.len() < delim.len() {
+            return false;
+        }
+        let start = buf.len() - delim.len();
+        buf[start..]
+            .iter()
+            .zip(delim)
+            .all(|(&a, &b)| self.delim_token_eq(a, b))
     }
 
     /// 收集一个无分隔实参：
@@ -1007,10 +1152,52 @@ impl Expander {
                 };
                 self.assign_param(kind, ParamValue::Number(v))
             }
+            // ETRIP 冲刺：TeX/e-TeX 内部整数参数（misc 数组，按下标索引）
+            p if int_param_index(p).is_some() => {
+                let idx = int_param_index(p).expect("已检查 is_some");
+                let v = self.scan_number()?;
+                self.assign_param(ParamKind::MiscInt(idx), ParamValue::Number(v))
+            }
+            // ETRIP 冲刺：交互模式命令（\batchmode/\nonstopmode/\scrollmode/\errorstopmode）
+            p if interaction_mode_value(p).is_some() => {
+                let v = interaction_mode_value(p).expect("已检查 is_some");
+                self.assign_param(ParamKind::MiscInt(19), ParamValue::Number(v))
+            }
+            // ETRIP 冲刺：\chardef\cs=<num>（cs 绑定字符，cat 12）
+            Primitive::Chardef => {
+                let csid = self.scan_cs_ident()?;
+                let v = self.scan_number()?;
+                let v = u32::try_from(v)
+                    .map_err(|_| Error::invalid_input("\\chardef 字符码越界"))?;
+                self.set_slot_scoped(csid, EqSlot::Char {
+                    catcode: Catcode::Other,
+                    charcode: v,
+                });
+                Ok(())
+            }
+            // ETRIP 冲刺：\countdef/\dimendef/\skipdef/\toksdef\cs=<num>（cs 绑定寄存器）
+            Primitive::Countdef | Primitive::Dimendef | Primitive::Skipdef | Primitive::Toksdef => {
+                let csid = self.scan_cs_ident()?;
+                let idx = self.scan_number()?;
+                let idx = usize::try_from(idx)
+                    .map_err(|_| Error::invalid_input("寄存器下标越界"))?;
+                let kind = match prim {
+                    Primitive::Countdef => RegKind::Count,
+                    Primitive::Dimendef => RegKind::Dimen,
+                    Primitive::Skipdef => RegKind::Skip,
+                    _ => RegKind::Toks,
+                };
+                self.set_slot_scoped(csid, EqSlot::Register(kind, idx));
+                Ok(())
+            }
             // M3-4 字体
             Primitive::Font => self.exec_font(),
             // ETRIP 冲刺：字体参数 \fontdimen<num><font>=<dimen>
             Primitive::FontDimen => self.exec_fontdimen(),
+            // ETRIP 冲刺：\hyphenchar<font>=<int>（字体断字符）
+            Primitive::HyphenChar => self.exec_hyphenchar(),
+            // ETRIP 冲刺：\delcode<num>=<num>（字符定界符码）
+            Primitive::DelCode => self.exec_delcode(),
             // ETRIP 冲刺：终端转录
             Primitive::Message => self.exec_message(),
             Primitive::Show => self.exec_show(),
@@ -1097,9 +1284,22 @@ impl Expander {
             Primitive::Scantokens => self.exec_scantokens(),
             Primitive::Detokenize => self.exec_detokenize(),
             Primitive::Unexpanded => self.exec_unexpanded(),
-            // 内部量：仅 \the 上下文读取（the_tokens 处理）
-            Primitive::ETeXVersion | Primitive::ETeXRevision => {
-                Err(Error::invalid_input("\\eTeXversion/\\eTeXrevision 需经 \\the 读取"))
+            // \number<number>：整数十进制展开（TeX 可展开原语）
+            Primitive::Number => {
+                let v = self.scan_number()?;
+                self.emit_tokens(emit_count(v))
+            }
+            // 内部量：\eTeXversion/\eTeXrevision 可展开（\the 上下文由 the_tokens 读取）
+            Primitive::ETeXVersion => self.emit_tokens(emit_count(2)),
+            Primitive::ETeXRevision => {
+                // e-TeX 2.6：revision 展开为 ".6"（版本号"2.6"的后半段，前导点用于 etrip.tex
+                // 的 `\def\1.#1#2\relax` 分隔参数解析）
+                self.emit_tokens(
+                    ".6"
+                        .bytes()
+                        .map(|b| Token::char(Catcode::Other, u32::from(b)))
+                        .collect(),
+                )
             }
             // M4-3 数学字体族：\textfont<fam>=<fontcs>（直通 sink 分配）
             Primitive::TextFont | Primitive::ScriptFont | Primitive::ScriptScriptFont => {
@@ -1112,6 +1312,12 @@ impl Expander {
             }
             // M4-6 断字：\patterns{...}（扫描组 + 直通 sink 文本）
             Primitive::Patterns => self.exec_patterns(),
+            // 内部整数参数（\tracingstats 等 25 个）与交互模式命令（\batchmode 等 4 个）
+            // 已由上方 int_param_index / interaction_mode_value 守卫分支处理；编译器
+            // 不计守卫为覆盖，此处兜底仅满足穷尽性检查（未来新增原语会在此显式报错）。
+            _ => Err(Error::internal(
+                "未接入 exec_primitive 的原语（内部整数/交互模式应走守卫分支）",
+            )),
         }
     }
 
@@ -1322,6 +1528,47 @@ impl Expander {
                 "预期字体标识符（\\font 定义的 cs 或 \\nullfont）",
             )),
         }
+    }
+
+    /// `\hyphenchar<font>=<int>`：设置字体的断字符（TeX assign_font_int；
+    /// 组内局部、可 `\global`；覆盖表存 expander 侧，排版器断字时读取）。
+    fn exec_hyphenchar(&mut self) -> Result<()> {
+        let font = self.scan_font_ident()?;
+        self.expect_equals()?;
+        let value = self.scan_number()?;
+        let prev = self.hyphenchars.get(&font).copied();
+        let global = self.is_global();
+        if !global && self.group_level > 0 {
+            self.save_stack.push((
+                self.group_level,
+                SavedValue::HyphenChar { font, prev },
+            ));
+        }
+        self.hyphenchars.insert(font, value);
+        self.finish_assignment();
+        Ok(())
+    }
+
+    /// `\delcode<num>=<num>`：设置字符的定界符码（TeX assign_del_code；组内局部）。
+    fn exec_delcode(&mut self) -> Result<()> {
+        let byte = self.scan_char_code()?;
+        let byte = u8::try_from(byte).map_err(|_| Error::invalid_input("\\delcode 字符码越界"))?;
+        self.expect_equals()?;
+        let value = self.scan_number()?;
+        let value = u32::try_from(value)
+            .map_err(|_| Error::invalid_input("\\delcode 定界符码越界（24 位）"))?
+            & 0x00FF_FFFF;
+        let prev = self.delcodes.get(&u32::from(byte)).copied();
+        let global = self.is_global();
+        if !global && self.group_level > 0 {
+            self.save_stack.push((
+                self.group_level,
+                SavedValue::DelCode { byte, prev },
+            ));
+        }
+        self.delcodes.insert(u32::from(byte), value);
+        self.finish_assignment();
+        Ok(())
     }
 
     /// 读 fontdimen：覆盖表优先；无覆盖返回 0（TFM 真实参数在排版层，后续接入）。
@@ -1601,7 +1848,7 @@ impl Expander {
             params: ParamSpec {
                 num_params: 0,
                 long: false,
-                delimiter: None,
+                text: Default::default(),
             },
             body: Arc::from(toks),
             code: None,
@@ -1859,7 +2106,7 @@ impl Expander {
             .csid()
             .ok_or_else(|| Error::invalid_input("\\def 后必须是控制序列"))?;
 
-        let num_params = self.scan_parameter_text()?;
+        let (num_params, param_text) = self.scan_parameter_text()?;
         let body_raw = self.scan_balanced_text()?;
         let body: TokenArray = if expand_body {
             Arc::from(self.expand_region(body_raw)?)
@@ -1875,7 +2122,7 @@ impl Expander {
             params: ParamSpec {
                 num_params,
                 long: false,
-                delimiter: None,
+                text: param_text,
             },
             body,
             code: None,
@@ -1889,9 +2136,12 @@ impl Expander {
         Ok(())
     }
 
-    /// 扫描参数文本直到 `{`；解析 `#n` → 参数计数。`##` → 字面 `#`。
-    fn scan_parameter_text(&mut self) -> Result<u8> {
+    /// 扫描参数文本直到 `{`，返回 (参数个数, 参数文本 token 数组)。
+    /// 参数文本含 `#n` 参数 token 与定界符 token（M1-8 实参收集按此分段匹配）；
+    /// `##` → 字面 `#`（跳过一个 #，文本中保留一个）。
+    fn scan_parameter_text(&mut self) -> Result<(u8, TokenArray)> {
         let mut num = 0u8;
+        let mut text = Vec::new();
         loop {
             let tok = self
                 .fetch()?
@@ -1909,16 +2159,19 @@ impl Expander {
                             return Err(Error::invalid_input("非法参数号 #0"));
                         }
                         num = num.max(d);
+                        // 参数文本中 #n → MacroParam token（与宏体中的参数槽一致）
+                        text.push(Token::macro_param(d));
                     } else if is_parameter_char(next) {
-                        // ## → 字面 #，跳过
+                        // ## → 字面 #：文本中保留一个 #
+                        text.push(tok);
                     } else {
                         return Err(Error::invalid_input("参数文本中 # 后必须跟数字或 #"));
                     }
                 }
-                _ => {}
+                _ => text.push(tok),
             }
         }
-        Ok(num)
+        Ok((num, Arc::from(text)))
     }
 
     /// 扫描平衡花括号内的替换文本；`#n` → 参数槽 token，`##` → 字面 `#`。
@@ -1972,6 +2225,9 @@ impl Expander {
         self.read_floor = depth;
         // e-TeX（M4-5）：\edef/\write 等展开上下文抑制 protected 宏展开
         self.suppress_expansion += 1;
+        // \edef/\xdef/\write：TeX expand() 语义——只展开可展开项，
+        // 不可展开原语/未定义 cs/字符/组定界原样保留（不执行、不建组）
+        self.expand_only = true;
         // 区域输出重定向到临时 VecSink（M3-2：sink 替代 output 字段）
         let saved = std::mem::replace(&mut self.sink, Box::new(VecSink::default()));
         let outcome = (|| -> Result<Vec<Token>> {
@@ -1989,6 +2245,7 @@ impl Expander {
         })();
         // 统一恢复（错误路径下 sink 保持区域 VecSink，引擎随之终止）
         self.suppress_expansion -= 1;
+        self.expand_only = false;
         self.read_floor = saved_floor;
         outcome
     }
@@ -2162,6 +2419,38 @@ impl Expander {
                     let tokens = self.the_tokens()?;
                     out.extend(tokens.into_iter().map(|t| (t, false)));
                 }
+                // M4-5 e-TeX/可展开原语（与 `is_expandable()` 对齐）：\number/\unexpanded/
+                // \detokenize/\eTeXversion/\eTeXrevision。此前落入 `_` 分支被当作不可展开
+                // 原样保留，导致 `\expandafter\1\eTeXrevision` 把未展开的 \eTeXrevision
+                // 当作实参（ETRIP 版本检查 `2..6` 错误即由此而来）。
+                EqSlot::Primitive(Primitive::Number) => {
+                    let v = self.scan_number()?;
+                    out.extend(emit_count(v).into_iter().map(|t| (t, false)));
+                }
+                EqSlot::Primitive(Primitive::ETeXVersion) => {
+                    out.extend(emit_count(2).into_iter().map(|t| (t, false)));
+                }
+                EqSlot::Primitive(Primitive::ETeXRevision) => {
+                    out.extend(
+                        ".6"
+                            .bytes()
+                            .map(|b| (Token::char(Catcode::Other, u32::from(b)), false)),
+                    );
+                }
+                EqSlot::Primitive(Primitive::Unexpanded) => {
+                    // \unexpanded{...}：组内容原样保留（noexpand 标记）
+                    let toks = self.scan_group_contents()?;
+                    out.extend(toks.into_iter().map(|t| (t, true)));
+                }
+                EqSlot::Primitive(Primitive::Detokenize) => {
+                    // \detokenize{...}：组内容转回字符 token（cat 12 其他字符）
+                    let toks = self.scan_group_contents()?;
+                    let mut detok = Vec::new();
+                    for t in toks {
+                        detokenize_token(t, &self.intern, &mut detok);
+                    }
+                    out.extend(detok.into_iter().map(|t| (t, false)));
+                }
                 _ => {
                     // 未定义/不可展开原语：原样保留
                     out.push((tok, false));
@@ -2196,6 +2485,36 @@ impl Expander {
         if let Some(code) = self.try_scan_backquote()? {
             return Ok(if neg { -code } else { code });
         }
+        // 基数前缀：十六进制 `"`（radix 16）与八进制 `'`（radix 8），TeXbook p.267
+        if let Some((tok, _)) = self.fetch()? {
+            let radix = match (tok.catcode(), tok.charcode()) {
+                (Some(Catcode::Other), Some(c)) if c == b'"' as u32 => Some(16u32),
+                (Some(Catcode::Other), Some(c)) if c == b'\'' as u32 => Some(8u32),
+                _ => None,
+            };
+            if let Some(base) = radix {
+                let mut val: i64 = 0;
+                let mut any = false;
+                while let Some((t, _)) = self.fetch()? {
+                    match radix_digit_value(t, base) {
+                        Some(d) => {
+                            val = val * i64::from(base) + i64::from(d);
+                            any = true;
+                        }
+                        None => {
+                            self.unread(t);
+                            break;
+                        }
+                    }
+                }
+                if !any {
+                    return Err(Error::invalid_input("预期数字"));
+                }
+                self.skip_trailing_spaces()?;
+                return Ok(if neg { -val } else { val });
+            }
+            self.unread(tok);
+        }
         // 寄存器引用：\count<idx> 或 \count\cs（\newcount 分配的 cs）
         if let Some(csid) = self.peek_csid()? {
             let slot = self.eqtb.slot(csid).clone();
@@ -2220,6 +2539,18 @@ impl Expander {
                 EqSlot::Primitive(Primitive::Badness) => {
                     self.fetch()?; // 消费 \badness
                     return Ok(0);
+                }
+                // 内部整数：\eTeXversion → 2（e-TeX 版本号，可作数字操作数）
+                EqSlot::Primitive(Primitive::ETeXVersion) => {
+                    self.fetch()?; // 消费 \eTeXversion
+                    return Ok(if neg { -2 } else { 2 });
+                }
+                // ETRIP 冲刺：TeX/e-TeX 内部整数参数（\interactionmode/\language/\tracing* 等）
+                EqSlot::Primitive(p) if int_param_index(p).is_some() => {
+                    self.fetch()?; // 消费原语
+                    let idx = int_param_index(p).expect("已检查 is_some");
+                    let v = self.params.misc[idx];
+                    return Ok(if neg { -v } else { v });
                 }
                 EqSlot::Register(RegKind::Count, idx) => {
                     self.fetch()?; // 消费 cs
@@ -2516,9 +2847,19 @@ impl Expander {
         Ok(())
     }
 
+    /// 扫描被定义的 csname（`\chardef\cs=...` 等），返回 csid。
+    fn scan_cs_ident(&mut self) -> Result<u32> {
+        let tok = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input("缺少控制序列"))?
+            .0;
+        tok.csid()
+            .ok_or_else(|| Error::invalid_input("此处必须是控制序列"))
+    }
+
     /// 注册 M1 内建原语。
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 121] = [
+        const BUILTINS: [(&str, Primitive); 158] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -2664,6 +3005,49 @@ impl Expander {
             ("message", Primitive::Message),
             ("show", Primitive::Show),
             ("showthe", Primitive::ShowThe),
+            // ETRIP 冲刺：\number 可展开原语
+            ("number", Primitive::Number),
+            // ETRIP 冲刺：TeX/e-TeX 内部整数参数（misc 数组）
+            ("tracingstats", Primitive::TracingStats),
+            ("tracinglostchars", Primitive::TracingLostChars),
+            ("tracingonline", Primitive::TracingOnline),
+            ("tracingcommands", Primitive::TracingCommands),
+            ("tracingrestores", Primitive::TracingRestores),
+            ("tracingassigns", Primitive::TracingAssigns),
+            ("tracinggroups", Primitive::TracingGroups),
+            ("tracingifs", Primitive::TracingIfs),
+            ("tracingscantokens", Primitive::TracingScantokens),
+            ("tracingnesting", Primitive::TracingNesting),
+            ("lefthyphenmin", Primitive::LeftHyphenMin),
+            ("righthyphenmin", Primitive::RightHyphenMin),
+            ("hbadness", Primitive::HBadness),
+            ("pretolerance", Primitive::PreTolerance),
+            ("showboxdepth", Primitive::ShowBoxDepth),
+            ("showboxbreadth", Primitive::ShowBoxBreadth),
+            ("language", Primitive::Language),
+            ("savinghyphcodes", Primitive::SavingHyphCodes),
+            ("savingvdiscards", Primitive::SavingVDiscards),
+            ("interactionmode", Primitive::InteractionMode),
+            ("TeXXeTstate", Primitive::TeXXeTState),
+            ("mathsurround", Primitive::MathSurround),
+            ("lastlinefit", Primitive::LastLineFit),
+            ("predisplaydirection", Primitive::PredisplayDirection),
+            ("everyeof", Primitive::EveryEof),
+            // ETRIP 冲刺：交互模式命令
+            ("batchmode", Primitive::BatchMode),
+            ("nonstopmode", Primitive::NonstopMode),
+            ("scrollmode", Primitive::ScrollMode),
+            ("errorstopmode", Primitive::ErrorStopMode),
+            // ETRIP 冲刺：\chardef/\countdef/\dimendef/\skipdef/\toksdef
+            ("chardef", Primitive::Chardef),
+            ("countdef", Primitive::Countdef),
+            ("dimendef", Primitive::Dimendef),
+            ("skipdef", Primitive::Skipdef),
+            ("toksdef", Primitive::Toksdef),
+            // ETRIP 冲刺：\hyphenchar<font>=<int>
+            ("hyphenchar", Primitive::HyphenChar),
+            // ETRIP 冲刺：\delcode<num>=<num>（字符定界符码）
+            ("delcode", Primitive::DelCode),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);
@@ -3000,12 +3384,20 @@ impl Expander {
                         ParamValue::Number(v) => emit_count(v),
                     })
                 }
+                // ETRIP 冲刺：TeX/e-TeX 内部整数参数（misc 数组）
+                p if int_param_index(*p).is_some() => {
+                    let idx = int_param_index(*p).expect("已检查 is_some");
+                    Ok(emit_count(self.params.misc[idx]))
+                }
                 // M4-5 e-TeX：\numexpr 表达式、\eTeXversion/\eTeXrevision
                 Primitive::NumExpr => Ok(emit_count(self.eval_int_expression()?)),
                 Primitive::Dimexpr => Ok(emit_dimen(self.eval_dimen_expression()?)),
                 Primitive::Glueexpr => Ok(emit_glue(self.eval_glue_expression()?)),
                 Primitive::ETeXVersion => Ok(emit_count(2)),
-                Primitive::ETeXRevision => Ok(vec![Token::char(Catcode::Other, b'2' as u32)]),
+                Primitive::ETeXRevision => Ok(".6"
+                    .bytes()
+                    .map(|b| Token::char(Catcode::Other, u32::from(b)))
+                    .collect()),
                 Primitive::Badness => Ok(emit_count(0)),
                 // \the\fontdimen<num><font>：字体参数值（sp）
                 Primitive::FontDimen => {
@@ -3015,10 +3407,38 @@ impl Expander {
                     let font = self.scan_font_ident()?;
                     Ok(emit_dimen(self.fontdimen(font, num)))
                 }
+                // \the\hyphenchar<font>：字体断字符（无覆盖 = 默认 45）
+                Primitive::HyphenChar => {
+                    let font = self.scan_font_ident()?;
+                    Ok(emit_count(self.hyphenchars.get(&font).copied().unwrap_or(45)))
+                }
+                // \the\delcode<num>：字符定界符码（无覆盖 = 0x500000 默认）
+                Primitive::DelCode => {
+                    let byte = self.scan_char_code()?;
+                    let byte =
+                        u8::try_from(byte).map_err(|_| Error::invalid_input("\\delcode 字符码越界"))?;
+                    Ok(emit_count(i64::from(
+                        self.delcodes.get(&u32::from(byte)).copied().unwrap_or(0x500000),
+                    )))
+                }
                 _ => Err(Error::invalid_input(
                     "\\the 只支持 \\count\\dimen\\skip\\toks 与内部参数",
                 )),
             },
+            // \chardef'd cs：\the\x → 字符码
+            EqSlot::Char { charcode, .. } => Ok(emit_count(*charcode as i64)),
+            // 寄存器引用 cs（\countdef\cs=<num> 等）：\the\cs → 寄存器值
+            EqSlot::Register(k, idx) => Ok(match k {
+                RegKind::Count => emit_count(self.registers.count(*idx)),
+                RegKind::Dimen => emit_dimen(self.registers.dimen(*idx)),
+                RegKind::Skip => emit_glue(self.registers.skip(*idx)),
+                RegKind::Toks => self.registers.toks(*idx).to_vec(),
+            }),
+            // \let 别名：沿链解析
+            EqSlot::Alias(target) => {
+                let t = Token::control_sequence(*target);
+                self.the_tokens_after(t)
+            }
             _ => Err(Error::invalid_input("\\the 需要寄存器参数")),
         }
     }
@@ -3099,6 +3519,22 @@ impl Expander {
                     self.fontdimens.remove(&(font, num));
                 }
             },
+            SavedValue::HyphenChar { font, prev } => match prev {
+                Some(v) => {
+                    self.hyphenchars.insert(font, v);
+                }
+                None => {
+                    self.hyphenchars.remove(&font);
+                }
+            },
+            SavedValue::DelCode { byte, prev } => match prev {
+                Some(v) => {
+                    self.delcodes.insert(u32::from(byte), v);
+                }
+                None => {
+                    self.delcodes.remove(&u32::from(byte));
+                }
+            },
         }
     }
 
@@ -3115,6 +3551,22 @@ impl Expander {
             ));
         }
         self.eqtb.define_macro(csid, def);
+        self.finish_assignment();
+    }
+
+    /// 带作用域的 eqtb 槽赋值（`\chardef`/`\countdef` 等；组内局部保存）。
+    fn set_slot_scoped(&mut self, csid: u32, slot: EqSlot) {
+        let global = self.is_global();
+        if !global && self.group_level > 0 {
+            self.save_stack.push((
+                self.group_level,
+                SavedValue::Eqtb {
+                    csid,
+                    prev: self.eqtb.slot(csid).clone(),
+                },
+            ));
+        }
+        *self.eqtb.slot_mut(csid) = slot;
         self.finish_assignment();
     }
 
@@ -3654,11 +4106,70 @@ fn is_parameter_char(tok: Token) -> bool {
     tok.catcode() == Some(Catcode::Parameter)
 }
 
+/// TeX/e-TeX 内部整数参数 → `Params.misc` 数组下标（与 [`param::default_misc`] 对齐）。
+fn int_param_index(p: Primitive) -> Option<usize> {
+    Some(match p {
+        Primitive::TracingStats => 0,
+        Primitive::TracingLostChars => 1,
+        Primitive::TracingOnline => 2,
+        Primitive::TracingCommands => 3,
+        Primitive::TracingRestores => 4,
+        Primitive::TracingAssigns => 5,
+        Primitive::TracingGroups => 6,
+        Primitive::TracingIfs => 7,
+        Primitive::TracingScantokens => 8,
+        Primitive::TracingNesting => 9,
+        Primitive::LeftHyphenMin => 10,
+        Primitive::RightHyphenMin => 11,
+        Primitive::HBadness => 12,
+        Primitive::PreTolerance => 13,
+        Primitive::ShowBoxDepth => 14,
+        Primitive::ShowBoxBreadth => 15,
+        Primitive::Language => 16,
+        Primitive::SavingHyphCodes => 17,
+        Primitive::SavingVDiscards => 18,
+        Primitive::InteractionMode => 19,
+        Primitive::TeXXeTState => 20,
+        Primitive::MathSurround => 21,
+        Primitive::LastLineFit => 22,
+        Primitive::PredisplayDirection => 23,
+        Primitive::EveryEof => 24,
+        _ => return None,
+    })
+}
+
+/// 交互模式命令 → interactionmode 值（TeX：0=batch,1=nonstop,2=scroll,3=errorstop）。
+fn interaction_mode_value(p: Primitive) -> Option<i64> {
+    Some(match p {
+        Primitive::BatchMode => 0,
+        Primitive::NonstopMode => 1,
+        Primitive::ScrollMode => 2,
+        Primitive::ErrorStopMode => 3,
+        _ => return None,
+    })
+}
+
 /// 字符 token 是否为十进制数字；返回数字值。
 fn digit_value(tok: Token) -> Option<u8> {
     let ch = tok.charcode()? as u8;
     if ch.is_ascii_digit() {
         Some(ch - b'0')
+    } else {
+        None
+    }
+}
+
+/// 指定基数下的数字值（`radix_digit_value`）：0-9、a-f/A-F，超基数返回 `None`。
+fn radix_digit_value(tok: Token, base: u32) -> Option<u32> {
+    let c = tok.charcode()?;
+    let d = match c {
+        0x30..=0x39 => c - 0x30,
+        0x61..=0x66 => c - 0x61 + 10,
+        0x41..=0x46 => c - 0x41 + 10,
+        _ => return None,
+    };
+    if d < base {
+        Some(d)
     } else {
         None
     }
@@ -3822,6 +4333,56 @@ mod tests {
     }
 
     #[test]
+    fn edef_keeps_primitive_tokens() {
+        // TeX expand() 语义：\edef 不执行不可展开原语，保留在宏体
+        assert_eq!(expand("\\edef\\x{\\def\\y{Z}\\y}\\x").unwrap(), "Z");
+        // 保留组定界（花括号是宏体结构的一部分）
+        assert_eq!(
+            expand("\\edef\\x{a{b}}\\expandafter\\detokenize\\expandafter{\\x}").unwrap(),
+            "a{b}"
+        );
+        // 未定义 cs 保留不报错
+        assert_eq!(
+            expand("\\edef\\x{a\\undefinedcs}\\expandafter\\detokenize\\expandafter{\\x}").unwrap(),
+            "a\\undefinedcs "
+        );
+    }
+
+    #[test]
+    fn number_primitive_expands() {
+        assert_eq!(expand("\\count0=5\\number\\count0").unwrap(), "5");
+        // \edef 中 \number 展开（ETRIP \def\2{\number\eTeXversion\eTeXrevision} 模式）
+        assert_eq!(expand("\\count0=5\\edef\\x{\\number\\count0}\\x").unwrap(), "5");
+        assert_eq!(expand("\\number-7").unwrap(), "-7");
+    }
+
+    #[test]
+    fn bgroup_egroup_char_aliases_open_groups() {
+        // \let\bgroup={ \let\egroup=}：等价于组定界字符
+        assert_eq!(expand("\\let\\bgroup={\\let\\egroup=}\\bgroup a\\egroup").unwrap(), "a");
+    }
+
+    #[test]
+    fn etrip_version_macro_idiom() {
+        // etrip.tex 29-34 行：分隔参数 + \edef/\noexpand 宏重写 + \number
+        let src = "\\def\\etripversion{2.6}\
+                   \\let\\bgroup={\\let\\egroup=}\
+                   \\def\\1.#1#2\\relax{\\bgroup\
+                     \\edef\\1{\\egroup\
+                       \\def\\noexpand\\2{\\number\\eTeXversion\\eTeXrevision}\
+                       \\def\\noexpand\\1{\\number\\eTeXversion.#1}}\\1}\
+                   \\expandafter\\1\\eTeXrevision\\relax\
+                   \\message{(You are using e-TeX version/revision \\2)}\
+                   \\ifx\\1\\etripversion\\message{(VERSION OK)}\\else\\message{(VERSION MISMATCH)}\\fi";
+        let mut e = Expander::new();
+        e.run_source(src).unwrap();
+        assert_eq!(
+            e.transcript(),
+            "(You are using e-TeX version/revision 2.6)(VERSION OK)"
+        );
+    }
+
+    #[test]
     fn let_alias() {
         assert_eq!(expand("\\def\\a{XY}\\let\\b\\a\\b").unwrap(), "XY");
     }
@@ -3945,6 +4506,17 @@ mod tests {
     fn trip_opening_line_parses() {
         // trip.tex 第 1 行原文：\immediate\catcode `{ = 1 \endlinechar=13
         assert_eq!(expand("\\immediate\\catcode`{=1\\endlinechar=13").unwrap(), "");
+    }
+
+    #[test]
+    fn delcode_assign_and_the() {
+        // etrip.tex 第 73 行：\delcode`\[="161361（hex 字符码 + hex 值）；\the 读回
+        assert_eq!(
+            expand("\\delcode`\\[=\"161361\\relax\\the\\delcode`\\[").unwrap(),
+            "1446753"
+        );
+        // 未赋值字符的默认 delcode = 0x500000
+        assert_eq!(expand("\\the\\delcode`x").unwrap(), "5242880");
     }
 
     #[test]
@@ -4760,7 +5332,8 @@ ab5c}").unwrap();
     #[test]
     fn eTeXversion_and_revision() {
         assert_eq!(expand(r"\the\eTeXversion").unwrap(), "2");
-        assert_eq!(expand(r"\the\eTeXrevision").unwrap(), "2");
+        // e-TeX 2.6：revision 带前导点（版本号"2.6"的后半段）
+        assert_eq!(expand(r"\the\eTeXrevision").unwrap(), ".6");
     }
 
     // ---------- M4-5 e-TeX 扩展：\dimexpr/\glueexpr/\ifprimitive/\scantokens ----------

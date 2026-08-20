@@ -49,6 +49,8 @@ pub enum ParamKind {
     DefaultHyphenChar,
     /// `\defaultskewchar`：缺省 skew 字符（TeX 默认 -1 = 未激活）。
     DefaultSkewChar,
+    /// TeX/e-TeX 内部整数参数（ETRIP 冲刺）：`misc[idx]`（见 [`MISC_INTS`]）。
+    MiscInt(usize),
 }
 
 /// 参数值：尺寸（dimen）、胶水（glue）或整数（number）。
@@ -57,6 +59,41 @@ pub enum ParamValue {
     Dimen(i64),
     Glue(Glue),
     Number(i64),
+}
+
+/// 内部整数参数总数（TeX/e-TeX 内部整数，ETRIP 冲刺；仅存储/回读）。
+/// 下标与 [`crate::expand::int_param_index`] 的映射一致。
+pub const MISC_INTS: usize = 25;
+
+/// 内部整数参数默认值（TeX initex/plain 默认）。
+pub fn default_misc() -> [i64; MISC_INTS] {
+    [
+        0,   // 0 TracingStats
+        1,   // 1 TracingLostChars（initex 默认 1）
+        0,   // 2 TracingOnline
+        0,   // 3 TracingCommands
+        0,   // 4 TracingRestores
+        0,   // 5 TracingAssigns
+        0,   // 6 TracingGroups
+        0,   // 7 TracingIfs
+        0,   // 8 TracingScantokens
+        0,   // 9 TracingNesting
+        2,   // 10 LeftHyphenMin（plain 默认 2）
+        3,   // 11 RightHyphenMin（plain 默认 3）
+        1000, // 12 HBadness（plain 默认 1000）
+        100, // 13 PreTolerance（plain 默认 100）
+        0,   // 14 ShowBoxDepth
+        5,   // 15 ShowBoxBreadth
+        0,   // 16 Language
+        0,   // 17 SavingHyphCodes
+        0,   // 18 SavingVDiscards
+        0,   // 19 InteractionMode（驱动以 batchmode 启动）
+        0,   // 20 TeXXeTState
+        0,   // 21 MathSurround
+        0,   // 22 LastLineFit
+        0,   // 23 PredisplayDirection
+        -1,  // 24 EveryEof（-1 = 无）
+    ]
 }
 
 /// 内部参数集合（单位 sp）。
@@ -103,6 +140,8 @@ pub struct Params {
     pub defaulthyphenchar: i64,
     /// `\defaultskewchar`（TeX 默认 -1 = 未激活）。
     pub defaultskewchar: i64,
+    /// TeX/e-TeX 内部整数参数（ETRIP 冲刺；下标见 [`MISC_INTS`]）。
+    pub misc: [i64; MISC_INTS],
 }
 
 impl Default for Params {
@@ -167,6 +206,7 @@ impl Default for Params {
             newlinechar: -1,
             defaulthyphenchar: 45,
             defaultskewchar: -1,
+            misc: default_misc(),
         }
     }
 }
@@ -194,6 +234,7 @@ impl Params {
             ParamKind::NewlineChar => ParamValue::Number(self.newlinechar),
             ParamKind::DefaultHyphenChar => ParamValue::Number(self.defaulthyphenchar),
             ParamKind::DefaultSkewChar => ParamValue::Number(self.defaultskewchar),
+            ParamKind::MiscInt(idx) => ParamValue::Number(self.misc[idx]),
         }
     }
 
@@ -219,6 +260,7 @@ impl Params {
             (ParamKind::NewlineChar, ParamValue::Number(v)) => self.newlinechar = v,
             (ParamKind::DefaultHyphenChar, ParamValue::Number(v)) => self.defaulthyphenchar = v,
             (ParamKind::DefaultSkewChar, ParamValue::Number(v)) => self.defaultskewchar = v,
+            (ParamKind::MiscInt(idx), ParamValue::Number(v)) => self.misc[idx] = v,
             // 类型不匹配忽略（VM 侧保证参数种类与值类型匹配）
             _ => {}
         }

@@ -17,8 +17,10 @@ pub struct ParamSpec {
     pub num_params: u8,
     /// `\long`：允许实参含 `\par`。
     pub long: bool,
-    /// 分隔参数（M1-8 填充；当前仅支持无分隔参数）。
-    pub delimiter: Option<TokenArray>,
+    /// 参数文本（M1-8）：csname 之后、`{` 之前的所有 token，含 `#n` 参数 token
+    /// 与分隔定界符。实参收集时按 `P_1 #1 P_2 #2 ... P_n P_{n+1}` 分段匹配：
+    /// P_1 须在调用开头匹配；`#k` 的定界符为 P_{k+1}（空 = 无分隔参数）。
+    pub text: TokenArray,
 }
 
 /// 宏定义。
@@ -56,7 +58,7 @@ mod tests {
             params: ParamSpec {
                 num_params: 1,
                 long: true,
-                delimiter: None,
+                text: TokenArray::default(),
             },
             body: body.clone(),
             code: None,
@@ -77,7 +79,7 @@ mod tests {
             params: ParamSpec {
                 num_params: 0,
                 long: false,
-                delimiter: None,
+                text: TokenArray::default(),
             },
             body: body.clone(),
             code: Some(Arc::new(Bytecode::default())),
@@ -87,7 +89,7 @@ mod tests {
             params: ParamSpec {
                 num_params: 0,
                 long: false,
-                delimiter: None,
+                text: TokenArray::default(),
             },
             body,
             code: None,

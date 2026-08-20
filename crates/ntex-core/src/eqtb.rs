@@ -161,12 +161,69 @@ pub enum Primitive {
     Message,
     Show,
     ShowThe,
+    // ETRIP 冲刺：\number 可展开原语
+    Number,
+    // ETRIP 冲刺：TeX/e-TeX 内部整数参数（值存 Params.misc，按下标索引）
+    TracingStats,
+    TracingLostChars,
+    TracingOnline,
+    TracingCommands,
+    TracingRestores,
+    TracingAssigns,
+    TracingGroups,
+    TracingIfs,
+    TracingScantokens,
+    TracingNesting,
+    LeftHyphenMin,
+    RightHyphenMin,
+    HBadness,
+    PreTolerance,
+    ShowBoxDepth,
+    ShowBoxBreadth,
+    Language,
+    SavingHyphCodes,
+    SavingVDiscards,
+    InteractionMode,
+    TeXXeTState,
+    MathSurround,
+    LastLineFit,
+    PredisplayDirection,
+    EveryEof,
+    // ETRIP 冲刺：交互模式命令（\batchmode/\nonstopmode/\scrollmode/\errorstopmode）
+    BatchMode,
+    NonstopMode,
+    ScrollMode,
+    ErrorStopMode,
+    // ETRIP 冲刺：\chardef/\countdef/\dimendef/\skipdef/\toksdef（cs 绑定字符/寄存器）
+    Chardef,
+    Countdef,
+    Dimendef,
+    Skipdef,
+    Toksdef,
+    // ETRIP 冲刺：\hyphenchar<font>=<int>（字体断字符）
+    HyphenChar,
+    // ETRIP 冲刺：\delcode<num>=<num>（字符定界符码）
+    DelCode,
 }
 
 impl Primitive {
     /// 参与展开的原语（其余为不可展开，直接执行）。
+    ///
+    /// TeX 可展开集：`\expandafter`/`\noexpand`/`\the`/`\number`、
+    /// e-TeX `\unexpanded`/`\detokenize`/`\eTeXversion`/`\eTeXrevision`；
+    /// 条件原语由 process_one 单独拦截（\edef 中同样展开）。
     pub fn is_expandable(self) -> bool {
-        matches!(self, Self::Expandafter | Self::Noexpand | Self::The)
+        matches!(
+            self,
+            Self::Expandafter
+                | Self::Noexpand
+                | Self::The
+                | Self::Number
+                | Self::Unexpanded
+                | Self::Detokenize
+                | Self::ETeXVersion
+                | Self::ETeXRevision
+        )
     }
 
     /// 原始值（`.fmt` 快照序列化；变体自 1 起连续）。
@@ -298,6 +355,43 @@ impl Primitive {
             119 => Self::Message,
             120 => Self::Show,
             121 => Self::ShowThe,
+            122 => Self::Number,
+            123 => Self::TracingStats,
+            124 => Self::TracingLostChars,
+            125 => Self::TracingOnline,
+            126 => Self::TracingCommands,
+            127 => Self::TracingRestores,
+            128 => Self::TracingAssigns,
+            129 => Self::TracingGroups,
+            130 => Self::TracingIfs,
+            131 => Self::TracingScantokens,
+            132 => Self::TracingNesting,
+            133 => Self::LeftHyphenMin,
+            134 => Self::RightHyphenMin,
+            135 => Self::HBadness,
+            136 => Self::PreTolerance,
+            137 => Self::ShowBoxDepth,
+            138 => Self::ShowBoxBreadth,
+            139 => Self::Language,
+            140 => Self::SavingHyphCodes,
+            141 => Self::SavingVDiscards,
+            142 => Self::InteractionMode,
+            143 => Self::TeXXeTState,
+            144 => Self::MathSurround,
+            145 => Self::LastLineFit,
+            146 => Self::PredisplayDirection,
+            147 => Self::EveryEof,
+            148 => Self::BatchMode,
+            149 => Self::NonstopMode,
+            150 => Self::ScrollMode,
+            151 => Self::ErrorStopMode,
+            152 => Self::Chardef,
+            153 => Self::Countdef,
+            154 => Self::Dimendef,
+            155 => Self::Skipdef,
+            156 => Self::Toksdef,
+            157 => Self::HyphenChar,
+            158 => Self::DelCode,
             _ => return None,
         })
     }
@@ -419,7 +513,7 @@ mod tests {
             params: crate::macrodef::ParamSpec {
                 num_params: 0,
                 long: false,
-                delimiter: None,
+                text: Default::default(),
             },
             body: Arc::from([Token::char(Catcode::Letter, b'A' as u32)]),
             code: None,

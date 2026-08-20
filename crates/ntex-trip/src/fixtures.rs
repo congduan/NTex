@@ -74,6 +74,11 @@ impl TestFixtures {
         self.kind
     }
 
+    /// fixtures 目录（测试字体 trip.tfm/etrip.tfm 所在）。
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
     /// fixtures 是否齐全（源码 + 全部参考文件都在）。
     pub fn ready(&self) -> bool {
         self.tex().is_file()

@@ -243,7 +243,8 @@ impl EngineDriver for NtexDriver {
         log.push_str("This is NTex, Version 0.1.0 (TRIP/ETRIP pipeline v1)\n");
         log.push_str(&format!("(input: {})\n", request.source.display()));
 
-        let mut ts = ntex_layout::Typesetter::new();
+        // TRIP/ETRIP 需要真实 TFM 度量：用 with_tfm()（\font 加载 cmr10/trip/etrip）。
+        let mut ts = ntex_layout::Typesetter::with_tfm();
         let run = ts.typeset_bytes(source);
         // 终端转录（\message/\show/\showthe/\write16）→ .log 与 .typ 共用
         let transcript = ts.take_transcript();

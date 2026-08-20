@@ -44,6 +44,9 @@ pub fn run_test(driver: &dyn EngineDriver, fixtures: &TestFixtures) -> Result<Tr
     fs::copy(fixtures.tex(), work.path().join(tex_name))
         .with_context(|| format!("复制 {} 失败：{}", tex_name, fixtures.tex().display()))?;
 
+    // 测试字体（trip.tfm/etrip.tfm）与源码同目录：让 ntex-font::find_tfm 能找到。
+    // 环境变量进程级、只读一次即可（两个 kind 的 fixtures 目录不同，各设置一次）。
+    std::env::set_var("NTEX_TFM_DIR", fixtures.dir());
     let output = run_driver(driver, work.path(), tex_name)?;
     match output.status {
         ntex_test_support::DriverStatus::NotImplemented => Ok(TripOutcome::Skipped {

@@ -19,8 +19,9 @@ use ntex_core::version::Version;
 
 /// 文件魔数（8 字节）。
 const MAGIC: &[u8; 8] = b"NTEXFMT1";
-/// 格式版本（v2：M4-4 显示数学间距参数；v3：ETRIP 内部整数参数）。
-const VERSION: u8 = 3;
+/// 格式版本（v2：M4-4 显示数学间距参数；v3：ETRIP 内部整数参数；
+/// v4：M1-8 参数文本全量序列化——定界符标志改为参数文本 token 数组）。
+const VERSION: u8 = 4;
 
 /// 编码一个 `.fmt` 快照。
 pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
@@ -88,6 +89,10 @@ pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
     ] {
         w.write_all(&v.to_le_bytes())?;
     }
+    // ETRIP 冲刺（v4 追加）：TeX/e-TeX 内部整数参数（misc 数组）
+    for v in p.misc {
+        w.write_all(&v.to_le_bytes())?;
+    }
 
     // output_toks
     write_opt_tokens(w, state.output_toks.as_deref())?;
@@ -149,6 +154,11 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
     let tolerance = read_i64(r)?;
     let vsize = read_i64(r)?;
     let maxdepth = read_i64(r)?;
+    // ETRIP 冲刺（v4）：TeX/e-TeX 内部整数参数（misc 数组）
+    let mut misc = [0i64; ntex_core::param::MISC_INTS];
+    for v in &mut misc {
+        *v = read_i64(r)?;
+    }
     let params = ntex_core::param::Params {
         parindent,
         baselineskip,
@@ -172,6 +182,8 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
         newlinechar: read_i64(r)?,
         defaulthyphenchar: read_i64(r)?,
         defaultskewchar: read_i64(r)?,
+        // ETRIP 冲刺（v4）：TeX/e-TeX 内部整数参数（misc 数组）
+        misc,
     };
 
     // output_toks
@@ -237,16 +249,7 @@ fn write_slot(w: &mut impl Write, slot: &EqSlot) -> io::Result<()> {
             w.write_all(&[def.params.num_params])?;
             w.write_all(&[def.params.long as u8])?;
             w.write_all(&[def.protected as u8])?; // e-TeX \protected（M4-5）
-            match &def.params.delimiter {
-                Some(d) => {
-                    w.write_all(&[1])?;
-                    write_tokens(w, d)
-                }
-                None => {
-                    w.write_all(&[0])?;
-                    Ok(())
-                }
-            }?;
+            write_tokens(w, &def.params.text)?; // M1-8 参数文本（含定界符）
             write_tokens(w, &def.body)
         }
         EqSlot::Primitive(p) => {
@@ -289,18 +292,14 @@ fn read_slot(r: &mut impl Read) -> io::Result<EqSlot> {
             let num_params = read_u8(r)?;
             let long = read_u8(r)? != 0;
             let protected = read_u8(r)? != 0; // e-TeX \protected（M4-5）
-            let delimiter = match read_u8(r)? {
-                0 => None,
-                1 => Some(ntex_core::macrodef::TokenArray::from(read_tokens(r)?)),
-                _ => return Err(invalid("delimiter 标志非法")),
-            };
+            let text = ntex_core::macrodef::TokenArray::from(read_tokens(r)?); // M1-8 参数文本
             let body = ntex_core::macrodef::TokenArray::from(read_tokens(r)?);
             Ok(EqSlot::Macro(ntex_core::version::Versioned {
                 value: std::sync::Arc::new(MacroDef {
                     params: ParamSpec {
                         num_params,
                         long,
-                        delimiter,
+                        text,
                     },
                     body,
                     code: None,
