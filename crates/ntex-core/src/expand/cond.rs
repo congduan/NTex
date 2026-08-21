@@ -44,7 +44,11 @@ impl Expander {
         }
         match op {
             CondOp::Fi => {
-                if self.cond_stack.pop().is_none() {
+                if let Some(frame) = self.cond_stack.pop() {
+                    // 恢复外层条件的类型/分支（TeX：\fi 弹出后 cur_if 回到外层）
+                    self.cur_if_type = frame.saved_if_type;
+                    self.cur_if_branch = frame.saved_if_branch;
+                } else {
                     // TeX 错误恢复：`! Extra \fi.` —— 记录消息并继续（ETRIP 的
                     // \scantokens 恶魔测试会故意制造多余 \fi/\else）。
                     let _ = self.sink.write16("! Extra \\fi.\n".to_string());
@@ -61,6 +65,8 @@ impl Expander {
                     return Ok(());
                 }
                 top.else_seen = true;
+                // TeX：\else 后进入 false 分支（\currentifbranch=-1）
+                self.cur_if_branch = -1;
                 match top.state {
                     CondState::Skipping => {
                         if top.owns_skip {
@@ -87,8 +93,10 @@ impl Expander {
                     CondState::Skipping => {
                         if let Some(k) = top.ors_left {
                             if k == 1 {
+                                // 跳够 \or：该分支被选中（\currentifbranch=+1）
                                 top.state = CondState::Processing;
                                 top.ors_left = None;
+                                self.cur_if_branch = 1;
                             } else {
                                 top.ors_left = Some(k - 1);
                             }
@@ -97,6 +105,7 @@ impl Expander {
                     CondState::Processing => {
                         top.state = CondState::Skipping;
                         top.owns_skip = false;
+                        self.cur_if_branch = -1;
                     }
                 }
                 Ok(())
@@ -112,7 +121,22 @@ impl Expander {
             | CondOp::IfDefined
             | CondOp::IfCsname
             | CondOp::IfPrimitive
-            | CondOp::IfInner => {
+            | CondOp::IfInner
+            | CondOp::IfVMode
+            | CondOp::IfHMode
+            | CondOp::IfMMode
+            | CondOp::IfEof
+            | CondOp::IfVoid
+            | CondOp::IfHBox
+            | CondOp::IfVBox => {
+                // e-TeX（M4-5）：`\unless` 取反下一个条件（类型码同时取负）
+                let neg = std::mem::take(&mut self.unless_pending);
+                let code = Self::if_type_code(op) * if neg { -1 } else { 1 };
+                // TeX：`\if*` 遇到即置新类型（参数扫描期间 branch=0）
+                let saved_type = self.cur_if_type;
+                let saved_branch = self.cur_if_branch;
+                self.cur_if_type = code;
+                self.cur_if_branch = 0;
                 if self.is_skipping() {
                     // 惰性：不评估测试，仅计数（未走的分支中的宏不被展开）
                     self.cond_stack.push(CondFrame {
@@ -121,15 +145,16 @@ impl Expander {
                         owns_skip: false,
                         ors_left: None,
                         else_seen: false,
+                        saved_if_type: saved_type,
+                        saved_if_branch: saved_branch,
                     });
                     return Ok(());
                 }
                 let mut truth = self.evaluate_if(op)?;
-                // e-TeX（M4-5）：`\unless` 取反下一个条件
-                if self.unless_pending {
-                    self.unless_pending = false;
+                if neg {
                     truth = !truth;
                 }
+                self.cur_if_branch = if truth { 1 } else { -1 };
                 self.cond_stack.push(CondFrame {
                     is_case: false,
                     state: if truth {
@@ -140,10 +165,18 @@ impl Expander {
                     owns_skip: !truth,
                     ors_left: None,
                     else_seen: false,
+                    saved_if_type: saved_type,
+                    saved_if_branch: saved_branch,
                 });
                 Ok(())
             }
             CondOp::IfCase => {
+                let neg = std::mem::take(&mut self.unless_pending);
+                let code = Self::if_type_code(op) * if neg { -1 } else { 1 };
+                let saved_type = self.cur_if_type;
+                let saved_branch = self.cur_if_branch;
+                self.cur_if_type = code;
+                self.cur_if_branch = 0;
                 if self.is_skipping() {
                     self.cond_stack.push(CondFrame {
                         is_case: true,
@@ -151,11 +184,14 @@ impl Expander {
                         owns_skip: false,
                         ors_left: None,
                         else_seen: false,
+                        saved_if_type: saved_type,
+                        saved_if_branch: saved_branch,
                     });
                     return Ok(());
                 }
                 let n = self.scan_number()?;
                 // TeX：n<0 时跳过所有 \or 直到 \else（\ifcase-1 → else 分支）
+                self.cur_if_branch = if n == 0 { 1 } else { -1 };
                 self.cond_stack.push(CondFrame {
                     is_case: true,
                     state: if n == 0 {
@@ -166,9 +202,42 @@ impl Expander {
                     owns_skip: n > 0,
                     ors_left: (n > 0).then_some(n as usize),
                     else_seen: false,
+                    saved_if_type: saved_type,
+                    saved_if_branch: saved_branch,
                 });
                 Ok(())
             }
+        }
+    }
+
+    /// TeX 条件类型码（`\currentiftype` 用）：0=无、1=\if、2=\ifcat、3=\ifnum、
+    /// 4=\ifdim、5=\ifodd、6=\ifvmode、7=\ifhmode、8=\ifmmode、9=\ifinner、
+    /// 10=\ifvoid、11=\ifhbox、12=\ifvbox、13=\ifx、14=\ifeof、15=\iftrue、
+    /// 16=\iffalse、17=\ifcase、18=\ifdefined、19=\ifcsname、20=\iffontchar、
+    /// 21=\ifprimitive。
+    fn if_type_code(op: CondOp) -> i32 {
+        match op {
+            CondOp::If => 1,
+            CondOp::IfCat => 2,
+            CondOp::IfNum => 3,
+            CondOp::IfDim => 4,
+            CondOp::IfOdd => 5,
+            CondOp::IfVMode => 6,
+            CondOp::IfHMode => 7,
+            CondOp::IfMMode => 8,
+            CondOp::IfInner => 9,
+            CondOp::IfVoid => 10,
+            CondOp::IfHBox => 11,
+            CondOp::IfVBox => 12,
+            CondOp::IfX => 13,
+            CondOp::IfEof => 14,
+            CondOp::IfTrue => 15,
+            CondOp::IfFalse => 16,
+            CondOp::IfCase => 17,
+            CondOp::IfDefined => 18,
+            CondOp::IfCsname => 19,
+            CondOp::IfPrimitive => 21,
+            _ => 0,
         }
     }
 
@@ -241,6 +310,33 @@ impl Expander {
             }
             // e-TeX（M4-5）：\ifinner —— 当前模式为内部（数学/受限水平/内层垂直）
             CondOp::IfInner => Ok(self.sink.if_inner()),
+            // ETRIP 冲刺：\ifvmode/\ifhmode/\ifmmode —— 当前模式族
+            // （TeX 模式码：1=垂直、2=水平、3=数学、4=内层垂直、5=受限水平、6=显示数学）
+            CondOp::IfVMode => Ok(matches!(self.sink.mode_code(), 1 | 4)),
+            CondOp::IfHMode => Ok(matches!(self.sink.mode_code(), 2 | 5)),
+            CondOp::IfMMode => Ok(matches!(self.sink.mode_code(), 3 | 6)),
+            // ETRIP 冲刺：\ifeof<流> —— 读流未打开或已到末尾为真
+            CondOp::IfEof => {
+                let idx = self.scan_stream_index("\\ifeof", 15)?;
+                Ok(self.read_streams.get(idx).map_or(true, |s| match s {
+                    None => true,
+                    Some(rs) => rs.pos >= rs.data.len(),
+                }))
+            }
+            // ETRIP 冲刺：\ifvoid/\ifhbox/\ifvbox<寄存器> —— 盒子寄存器种类
+            // （sink 查询：0=void、1=hbox、2=vbox）
+            CondOp::IfVoid => {
+                let idx = self.scan_register_index()?;
+                Ok(self.sink.box_register_kind(idx) == 0)
+            }
+            CondOp::IfHBox => {
+                let idx = self.scan_register_index()?;
+                Ok(self.sink.box_register_kind(idx) == 1)
+            }
+            CondOp::IfVBox => {
+                let idx = self.scan_register_index()?;
+                Ok(self.sink.box_register_kind(idx) == 2)
+            }
             CondOp::IfCsname => {
                 let name = self.scan_csname()?;
                 Ok(matches!(
@@ -300,6 +396,7 @@ impl Expander {
             EqSlot::Font(font) => MeaningKey::Font(font),
             EqSlot::Register(k, n) => MeaningKey::Register(k, n),
             EqSlot::Stream(k, n) => MeaningKey::Stream(k, n),
+            EqSlot::MathChar(code) => MeaningKey::MathChar(code),
         }
     }
 

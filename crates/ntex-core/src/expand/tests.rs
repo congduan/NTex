@@ -330,6 +330,109 @@ mod tests {
     }
 
     #[test]
+    fn multiply_divide_register_arithmetic() {
+        // ETRIP 惯用法：\multiply/\divide 带可选 by 关键字
+        assert_eq!(
+            expand("\\count20=5\\multiply\\count20 by3\\the\\count20").unwrap(),
+            "15"
+        );
+        assert_eq!(
+            expand("\\count20=15\\divide\\count20 2\\the\\count20").unwrap(),
+            "7"
+        );
+        // \countdef 绑定 + 负数 + 除以 0（TeX：保持不变）
+        assert_eq!(
+            expand("\\countdef\\C=5\\count\\C=-4\\multiply\\C 2\\the\\count5").unwrap(),
+            "-8"
+        );
+        assert_eq!(
+            expand("\\count20=7\\divide\\count20 0\\the\\count20").unwrap(),
+            "7"
+        );
+        // \dimen 与 \skip 标量乘
+        assert_eq!(
+            expand("\\dimen0=1.5pt\\multiply\\dimen0 2\\the\\dimen0").unwrap(),
+            "3.0pt"
+        );
+        assert_eq!(
+            expand("\\skip0=2pt plus 3pt\\multiply\\skip0 2\\the\\skip0").unwrap(),
+            "4.0pt plus 6.0pt"
+        );
+        // 内部整数参数
+        assert_eq!(
+            expand("\\tracingstats=3\\multiply\\tracingstats 2\\the\\tracingstats").unwrap(),
+            "6"
+        );
+    }
+
+    #[test]
+    fn meaning_expands_to_meaning_text() {
+        // 宏：macro:->body（无尾随句点）
+        assert_eq!(expand("\\def\\x{a}\\meaning\\x").unwrap(), "macro:->a");
+        // 原语：\relax
+        assert_eq!(expand("\\meaning\\relax").unwrap(), "\\relax");
+        // \countdef 绑定：\count0
+        assert_eq!(expand("\\countdef\\x=0\\meaning\\x").unwrap(), "\\count0");
+        // 未定义 cs：undefined
+        assert_eq!(expand("\\meaning\\undefinedcs").unwrap(), "undefined");
+    }
+
+    #[test]
+    fn mathchardef_binds_cs() {
+        // \the\cs 返回十进制数学字符码
+        assert_eq!(expand("\\mathchardef\\x=100\\the\\x").unwrap(), "100");
+        // \number\cs（数字上下文）
+        assert_eq!(expand("\\mathchardef\\x=32767\\number\\x").unwrap(), "32767");
+        // \meaning\cs → \mathchar"XXXX（十六进制）
+        assert_eq!(expand("\\mathchardef\\x=100\\meaning\\x").unwrap(), "\\mathchar\"64");
+        // 越界：报 "! Bad mathchar code." 且不改变绑定（cs 保持未定义）
+        let mut e = Expander::new();
+        e.run_source("\\mathchardef\\x=-1\\mathchardef\\y=32768\\mathchardef\\z=5\\the\\z")
+            .unwrap();
+        assert_eq!(e.transcript(), "! Bad mathchar code (-1).\n! Bad mathchar code (32768).\n");
+        // 越界不改绑定，合法值仍可用
+        assert_eq!(expand("\\mathchardef\\z=5\\the\\z").unwrap(), "5");
+    }
+
+    #[test]
+    fn current_if_readonly_ints() {
+        // 无条件：level 0 / type 0 / branch 0
+        assert_eq!(
+            expand("\\number\\currentiflevel\\number\\currentiftype\\number\\currentifbranch").unwrap(),
+            "000"
+        );
+        // \iftrue 内：level 1、type 15、branch +1
+        assert_eq!(
+            expand("\\iftrue\\number\\currentiflevel\\number\\currentiftype\\number\\currentifbranch\\fi").unwrap(),
+            "1151"
+        );
+        // \iffalse\else 内：branch -1
+        assert_eq!(
+            expand("\\iffalse\\else\\number\\currentifbranch\\fi").unwrap(),
+            "-1"
+        );
+        // \unless 取反类型码（\unless\iftrue → type -15）
+        assert_eq!(
+            expand("\\unless\\iftrue\\else\\number\\currentiftype\\fi").unwrap(),
+            "-15"
+        );
+    }
+
+    #[test]
+    fn if_mode_conditions() {
+        // 纯展开轨道 sink 恒为垂直模式：\ifvmode 真、\ifhmode/\ifmmode 假
+        assert_eq!(expand("\\ifvmode yes\\else no\\fi").unwrap(), "yes");
+        assert_eq!(expand("\\ifhmode yes\\else no\\fi").unwrap(), "no");
+        assert_eq!(expand("\\ifmmode yes\\else no\\fi").unwrap(), "no");
+        // \unless 交互
+        assert_eq!(expand("\\unless\\ifvmode yes\\else no\\fi").unwrap(), "no");
+        // 盒子寄存器种类：\ifvoid/\ifhbox/\ifvbox（展开轨道无盒子 → 全 void）
+        assert_eq!(expand("\\ifvoid0 yes\\else no\\fi").unwrap(), "yes");
+        assert_eq!(expand("\\ifhbox0 yes\\else no\\fi").unwrap(), "no");
+        assert_eq!(expand("\\ifvbox0 yes\\else no\\fi").unwrap(), "no");
+    }
+
+    #[test]
     fn dimen_fraction_rounds_to_nearest_sp() {
         // pdfTeX 实测：3.6pt→235930、0.0001pt→7（四舍五入，非截断）
         assert_eq!(
@@ -438,9 +541,18 @@ mod tests {
     }
 
     #[test]
-    fn undefined_control_sequence_errors() {
-        let err = expand("\\def\\foo{Hi}\\bar").unwrap_err();
-        assert!(err.to_string().contains("未定义的控制序列"));
+    fn undefined_control_sequence_reports_and_recovers() {
+        // TeX 错误恢复：未定义 cs 报 "! Undefined control sequence." 并当 \relax 继续
+        let mut e = Expander::new();
+        e.run_source("\\def\\foo{Hi}\\bar x").unwrap();
+        assert!(e.transcript().contains("! Undefined control sequence."));
+        assert_eq!(
+            e.output()
+                .iter()
+                .map(|t| t.charcode().and_then(char::from_u32).unwrap_or('?'))
+                .collect::<String>(),
+            "x"
+        );
     }
 
     #[test]
@@ -1221,10 +1333,10 @@ ab5c}").unwrap();
             "no"
         );
         assert_eq!(expand(r"\ifprimitive a yes\else no\fi").unwrap(), "no");
-        // \let 到原语：含义是原语但槽是 Alias → 非原语（TeX 语义）
+        // \let 到原语：复制含义后即原语 → \ifprimitive 为真（e-TeX 语义）
         assert_eq!(
             expand(r"\let\pr=\relax\ifprimitive\pr yes\else no\fi").unwrap(),
-            "no"
+            "yes"
         );
     }
 

@@ -77,6 +77,10 @@ fn write_slot(w: &mut impl Write, slot: &EqSlot) -> io::Result<()> {
             w.write_all(&[stream_kind_u8(*kind)])?;
             w.write_all(&(*idx as u32).to_le_bytes())
         }
+        EqSlot::MathChar(code) => {
+            w.write_all(&[8])?;
+            w.write_all(&code.to_le_bytes())
+        }
     }
 }
 
@@ -128,6 +132,7 @@ fn read_slot(r: &mut impl Read) -> io::Result<EqSlot> {
             let kind = stream_kind_from_u8(read_u8(r)?)?;
             Ok(EqSlot::Stream(kind, read_u32(r)? as usize))
         }
+        8 => Ok(EqSlot::MathChar(read_u32(r)?)),
         _ => Err(invalid("未知 eqtb 槽类型")),
     }
 }

@@ -30,6 +30,8 @@ pub enum EqSlot {
     Register(crate::register::RegKind, usize),
     /// 流引用（RFC-3）：`\newwrite`/`\newread` 分配的流号（独立于 count 槽）。
     Stream(StreamKind, usize),
+    /// 数学字符（ETRIP）：`\mathchardef\cs=<num>` 绑定（类<<15 | 族<<8 | 字符）。
+    MathChar(u32),
 }
 
 /// 流类别（RFC-3）：读流（`\openin`/`\read`）与写流（`\openout`/`\write`）。

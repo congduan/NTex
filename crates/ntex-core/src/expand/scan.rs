@@ -148,6 +148,27 @@ impl Expander {
                     self.fetch()?;
                     return Ok(self.sink.last_node_type());
                 }
+                // e-TeX 只读整数：条件深度/种类/分支（数字上下文读取）
+                EqSlot::Primitive(Primitive::CurrentIfLevel) => {
+                    self.fetch()?;
+                    return Ok(self.cond_stack.len() as i64);
+                }
+                EqSlot::Primitive(Primitive::CurrentIfType) => {
+                    self.fetch()?;
+                    // TeX 语义：`\if*` 遇到即置新类型（参数扫描期间即可读）；
+                    // 负号 = `\unless` 前缀
+                    return Ok(self.cur_if_type as i64);
+                }
+                EqSlot::Primitive(Primitive::CurrentIfBranch) => {
+                    self.fetch()?;
+                    // TeX 语义：0=未决/无、+1=true 分支、-1=false 分支（\else/\or 后）
+                    return Ok(self.cur_if_branch as i64);
+                }
+                // \mathchardef 绑定：数字上下文返回数学字符码（TeX scan_int）
+                EqSlot::MathChar(code) => {
+                    self.fetch()?; // 消费 cs
+                    return Ok(code as i64);
+                }
                 _ => {}
             }
         }

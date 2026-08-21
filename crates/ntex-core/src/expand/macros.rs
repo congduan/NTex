@@ -216,7 +216,12 @@ impl Expander {
             .ok_or_else(|| Error::invalid_input("\\def 后必须是控制序列"))?;
 
         let (num_params, param_text) = self.scan_parameter_text()?;
-        let body_raw = self.scan_balanced_text()?;
+        let body_raw = self.scan_balanced_text().map_err(|e| {
+            Error::invalid_input(format!(
+                "{e}（定义 \\{} 的替换文本时）",
+                self.intern.name(csid)
+            ))
+        })?;
         let body: TokenArray = if expand_body {
             self.debug_expand_caller = "edef";
             Arc::from(self.expand_region(body_raw)?)
@@ -419,7 +424,12 @@ impl Expander {
         match rhs.kind() {
             TokenKind::ControlSeq => {
                 let target = rhs.csid().expect("ControlSeq 必有 csid");
-                self.eqtb.alias(csid, target);
+                // TeX 语义：\let 复制右侧**当前**含义（不随重定义漂移）——原语/字符/
+                // 字体/寄存器/宏直接复制值（宏 Arc 共享，bump 后不漂移）；Alias 链压缩。
+                match self.eqtb.slot(target).clone() {
+                    EqSlot::Alias(t2) => self.eqtb.alias(csid, t2),
+                    other => *self.eqtb.slot_mut(csid) = other,
+                }
             }
             TokenKind::Char => {
                 let catcode = rhs.catcode().expect("Char 必有 catcode");

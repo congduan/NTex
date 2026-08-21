@@ -87,6 +87,9 @@ struct CondFrame {
     /// `\ifcase` 跳过计数：还需跳过的 `\or` 数。
     ors_left: Option<usize>,
     else_seen: bool,
+    /// 进入该条件前的外层 `cur_if_type`/`cur_if_branch`（`\fi` 时恢复）。
+    saved_if_type: i32,
+    saved_if_branch: i32,
 }
 
 /// 条件操作（process_one 拦截的 token）。
@@ -106,6 +109,14 @@ enum CondOp {
     IfCsname,
     IfPrimitive,
     IfInner,
+    // ETRIP 冲刺：模式/盒子/EOF 条件
+    IfVMode,
+    IfHMode,
+    IfMMode,
+    IfEof,
+    IfVoid,
+    IfHBox,
+    IfVBox,
     Else,
     Fi,
     Or,
@@ -127,6 +138,13 @@ impl CondOp {
             Primitive::IfCsname => Self::IfCsname,
             Primitive::IfPrimitive => Self::IfPrimitive,
             Primitive::IfInner => Self::IfInner,
+            Primitive::IfVMode => Self::IfVMode,
+            Primitive::IfHMode => Self::IfHMode,
+            Primitive::IfMMode => Self::IfMMode,
+            Primitive::IfEof => Self::IfEof,
+            Primitive::IfVoid => Self::IfVoid,
+            Primitive::IfHBox => Self::IfHBox,
+            Primitive::IfVBox => Self::IfVBox,
             Primitive::Else => Self::Else,
             Primitive::Fi => Self::Fi,
             Primitive::Or => Self::Or,
@@ -217,11 +235,16 @@ enum MeaningKey {
     Undefined,
     Macro(Arc<MacroDef>),
     Primitive(Primitive),
-    Char { catcode: Catcode, charcode: u32 },
+    Char {
+        catcode: Catcode,
+        charcode: u32,
+    },
     Alias(u32),
     Font(u32),
     Register(RegKind, usize),
     Stream(StreamKind, usize),
+    /// `\mathchardef` 数学字符（ETRIP）。
+    MathChar(u32),
 }
 
 /// 读流（RFC-3）：`\openin` 时读入内存，`\read` 逐行消费。
@@ -336,6 +359,11 @@ pub struct Expander {
     dumped: bool,
     /// `\unless` 前缀：取反下一个条件的结果。
     unless_pending: bool,
+    /// e-TeX 只读整数（`\currentiftype`/`\currentifbranch`）：当前最内层条件的
+    /// 类型码（0=无；负号 = `\unless` 前缀）与分支（0=未决、+1=true、-1=false）。
+    /// TeX 语义：`\if*` 遇到时立即置新值（参数扫描期间 branch=0），\fi 恢复外层。
+    cur_if_type: i32,
+    cur_if_branch: i32,
     /// protected 宏抑制展开的上下文深度（>0：`\edef`/`\write`/`\detokenize` 等）。
     suppress_expansion: usize,
     /// `\edef`/`\xdef`/`\write` 展开上下文（TeX `expand()`）：只展开可展开项，
@@ -391,6 +419,8 @@ impl Expander {
             lccodes: [0; 256],
             dumped: false,
             unless_pending: false,
+            cur_if_type: 0,
+            cur_if_branch: 0,
             suppress_expansion: 0,
             expand_only: false,
             debug_expand_caller: "",
@@ -517,7 +547,30 @@ impl Expander {
             // 看门狗：防死循环（ETRIP 诊断用；正常作业远低于此）
             steps += 1;
             if steps > 10_000_000 {
-                return Err(Error::invalid_input("处理步骤超限（疑似死循环）"));
+                let frames: Vec<String> = self
+                    .stack
+                    .iter()
+                    .map(|f| match f {
+                        InputFrame::Source { bytes, pos } => {
+                            format!("Source({}B,pos={})", bytes.len(), pos)
+                        }
+                        InputFrame::Macro { body, pos, .. } => {
+                            format!("Macro({}tok,pos={})", body.len(), pos)
+                        }
+                        InputFrame::Bytecode { pc, .. } => format!("Bytecode(pc={})", pc),
+                        InputFrame::TokenList { items, pos } => {
+                            format!("TokenList({}tok,pos={})", items.len(), pos)
+                        }
+                        InputFrame::OutputRoutine { items, pos } => {
+                            format!("OutputRoutine({}tok,pos={})", items.len(), pos)
+                        }
+                    })
+                    .collect();
+                return Err(Error::invalid_input(format!(
+                    "处理步骤超限（疑似死循环）；输入栈深 {}：{}",
+                    self.stack.len(),
+                    frames.join(" | ")
+                )));
             }
             // 输出例程激活期间（例程帧在栈上）不重复注入
             if !self.output_active && self.maybe_inject_output()? {
@@ -646,10 +699,16 @@ impl Expander {
                 let csid = tok.csid().expect("ControlSeq 必有 csid");
                 let slot = self.eqtb.slot(csid).clone();
                 match slot {
-                    EqSlot::Undefined => Err(Error::invalid_input(format!(
-                        "未定义的控制序列：\\{}",
-                        self.intern.name(csid)
-                    ))),
+                    // M1-13 错误恢复（ETRIP）：未定义 cs 报 "! Undefined control
+                    // sequence." 到转录并**当 \relax 继续**（TeX 错误恢复；上下文行
+                    // "l.N …" 留 M1-13 后续细化）。
+                    EqSlot::Undefined => {
+                        let _ = self.sink.write16(format!(
+                            "! Undefined control sequence.\n\\{}\n",
+                            self.intern.name(csid)
+                        ));
+                        Ok(())
+                    }
                     EqSlot::Alias(target) => self.process_token(Token::control_sequence(target)),
                     // \let\cs=<字符>：等价于该字符（\bgroup/\egroup 等组定界也生效）
                     EqSlot::Char { catcode, charcode } => {
@@ -693,6 +752,11 @@ impl Expander {
                     EqSlot::Stream(..) => Err(Error::invalid_input(
                         "流引用不能直接使用（需在 \\read/\\write 等扫描上下文中）",
                     )),
+                    // ETRIP 冲刺：\mathchardef\cs=<num> 绑定的 cs 执行时输出字符
+                    // （数学原子语义在排版器侧细化；此处按 \char 处理）
+                    EqSlot::MathChar(code) => {
+                        self.sink.token(Token::char(Catcode::Other, code & 0xFF))
+                    }
                     EqSlot::Macro(m) => {
                         // e-TeX（M4-5）：protected 宏在展开抑制上下文（\edef/\write 等）
                         // 不展开，原样输出。

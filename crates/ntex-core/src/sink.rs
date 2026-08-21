@@ -234,6 +234,15 @@ pub trait TokenSink: std::fmt::Debug {
     fn if_inner(&self) -> bool {
         false
     }
+    /// 当前模式码（TeX 模式码：1=垂直、2=水平、3=数学、4=内层垂直、
+    /// 5=受限水平、6=显示数学）；`\ifvmode`/`\ifhmode`/`\ifmmode` 用。
+    fn mode_code(&self) -> i64 {
+        1
+    }
+    /// 盒子寄存器种类（0=void、1=hbox、2=vbox）；`\ifvoid`/`\ifhbox`/`\ifvbox` 用。
+    fn box_register_kind(&self, _idx: usize) -> i64 {
+        0
+    }
     /// `\begingroup`：下一个组为半简单组（currentgrouptype=14）。
     fn semisimple_begin(&mut self) -> Result<()> {
         Ok(())

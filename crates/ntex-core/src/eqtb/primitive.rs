@@ -272,6 +272,24 @@ pub enum Primitive {
     // ETRIP 冲刺：\csname...\endcsname（构造控制序列名，可展开）
     Csname,
     EndCsname,
+    // ETRIP 冲刺：模式/盒子/EOF 条件原语（\ifvmode/\ifhmode/\ifmmode/\ifeof/\ifvoid/\ifhbox/\ifvbox）
+    IfVMode,
+    IfHMode,
+    IfMMode,
+    IfEof,
+    IfVoid,
+    IfHBox,
+    IfVBox,
+    // ETRIP 冲刺：寄存器算术（\multiply/\divide）
+    Multiply,
+    Divide,
+    // ETRIP 冲刺：e-TeX 只读整数（\currentiflevel/\currentiftype/\currentifbranch）
+    CurrentIfLevel,
+    CurrentIfType,
+    CurrentIfBranch,
+    // ETRIP 冲刺：\meaning<token>（可展开：token 含义文本）与 \mathchardef\cs=<num>
+    Meaning,
+    MathCharDef,
 }
 
 impl Primitive {
@@ -294,6 +312,8 @@ impl Primitive {
                 | Self::String_
                 | Self::JobName
                 | Self::Csname
+                // ETRIP 冲刺：\meaning<token>（TeX 可展开原语）
+                | Self::Meaning
         )
     }
 
@@ -517,6 +537,20 @@ impl Primitive {
             210 => Self::IfInner,
             211 => Self::Csname,
             212 => Self::EndCsname,
+            213 => Self::IfVMode,
+            214 => Self::IfHMode,
+            215 => Self::IfMMode,
+            216 => Self::IfEof,
+            217 => Self::IfVoid,
+            218 => Self::IfHBox,
+            219 => Self::IfVBox,
+            220 => Self::Multiply,
+            221 => Self::Divide,
+            222 => Self::CurrentIfLevel,
+            223 => Self::CurrentIfType,
+            224 => Self::CurrentIfBranch,
+            225 => Self::Meaning,
+            226 => Self::MathCharDef,
             _ => return None,
         })
     }

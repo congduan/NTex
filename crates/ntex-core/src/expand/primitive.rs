@@ -78,6 +78,14 @@ impl Expander {
             | Primitive::IfCase
             | Primitive::IfTrue
             | Primitive::IfFalse
+            | Primitive::IfInner
+            | Primitive::IfVMode
+            | Primitive::IfHMode
+            | Primitive::IfMMode
+            | Primitive::IfEof
+            | Primitive::IfVoid
+            | Primitive::IfHBox
+            | Primitive::IfVBox
             | Primitive::Else
             | Primitive::Fi
             | Primitive::Or => Err(Error::internal("条件原语不应到达 exec_primitive")),
@@ -476,9 +484,20 @@ impl Expander {
             // \inputlineno 单独出现：no-op（恒 0；数字上下文由 scan_number 处理）
             Primitive::InputLineNo => Ok(()),
             // e-TeX 只读整数单独出现：no-op（数字上下文由 scan_number 读取）
-            Primitive::CurrentGroupLevel | Primitive::CurrentGroupType | Primitive::LastNodeType => {
+            Primitive::CurrentGroupLevel
+            | Primitive::CurrentGroupType
+            | Primitive::LastNodeType
+            | Primitive::CurrentIfLevel
+            | Primitive::CurrentIfType
+            | Primitive::CurrentIfBranch => {
                 Ok(())
             }
+            // ETRIP 冲刺：寄存器算术 \multiply/\divide<寄存器> by<n>
+            Primitive::Multiply | Primitive::Divide => self.exec_multiply_divide(prim),
+            // ETRIP 冲刺：\meaning<token>（可展开：token 含义文本）
+            Primitive::Meaning => self.exec_meaning(),
+            // ETRIP 冲刺：\mathchardef\cs=<num>（cs 绑定数学字符码）
+            Primitive::MathCharDef => self.exec_mathchardef(),
             // M4-3 数学字体族：\textfont<fam>=<fontcs>（直通 sink 分配）
             Primitive::TextFont | Primitive::ScriptFont | Primitive::ScriptScriptFont => {
                 let kind = match prim {
@@ -956,6 +975,8 @@ impl Expander {
                     EqSlot::Font(f) => format!("\\{name}=select font {f}."),
                     EqSlot::Register(k, n) => format!("\\{name}=\\{}{}.", reg_kind_name(k), n),
                     EqSlot::Stream(_, n) => format!("\\{name}=write{n}."),
+                    // \mathchardef 绑定：TeX 显示为 \mathchar"XXXX（十六进制）
+                    EqSlot::MathChar(code) => format!("\\{name}=\\mathchar\"{code:X}."),
                     EqSlot::Alias(_) => {
                         // \let 别名：沿链解析（防环）后显示目标槽含义
                         let mut id = csid;
@@ -1138,6 +1159,185 @@ impl Expander {
             }
             RegKind::Toks => return Err(Error::invalid_input("\\advance 不支持 \\toks")),
         }
+        Ok(())
+    }
+
+    /// `\multiply/\divide<寄存器> by<n>`：寄存器标量乘/除（TeX arithmetic）。
+    /// 目标支持 `\count/\dimen/\skip/\muskip` 寄存器与内部整数参数；
+    /// 除数为 0 时按 TeX 语义保持不变。
+    fn exec_multiply_divide(&mut self, prim: Primitive) -> Result<()> {
+        self.skip_spaces()?;
+        let tok = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input("\\multiply/\\divide 后缺少寄存器"))?
+            .0;
+        let csid = tok
+            .csid()
+            .ok_or_else(|| Error::invalid_input("\\multiply/\\divide 后必须是寄存器"))?;
+        match self.eqtb.slot(csid).clone() {
+            EqSlot::Primitive(p)
+                if matches!(
+                    p,
+                    Primitive::Count | Primitive::Dimen | Primitive::Skip | Primitive::Muskip
+                ) =>
+            {
+                let kind = match p {
+                    Primitive::Count => RegKind::Count,
+                    Primitive::Dimen => RegKind::Dimen,
+                    Primitive::Skip => RegKind::Skip,
+                    _ => RegKind::Muskip,
+                };
+                let idx = self.scan_register_index()?;
+                self.scale_register(kind, idx, prim)
+            }
+            EqSlot::Register(kind, idx) => self.scale_register(kind, idx, prim),
+            // 内部整数参数（\tracingstats/\language 等）也可 \multiply/\divide
+            EqSlot::Primitive(p) if int_param_index(p).is_some() => {
+                let idx = int_param_index(p).expect("已检查 is_some");
+                self.scan_keyword(|w| w == "by")?;
+                let f = self.scan_number()?;
+                let val = self.params.misc[idx];
+                let new = if prim == Primitive::Multiply {
+                    val * f
+                } else if f != 0 {
+                    val / f
+                } else {
+                    val
+                };
+                let global = self.is_global();
+                if !global && self.group_level > 0 {
+                    self.save_stack.push((
+                        self.group_level,
+                        SavedValue::Param {
+                            kind: ParamKind::MiscInt(idx),
+                            prev: self.params.get(ParamKind::MiscInt(idx)),
+                        },
+                    ));
+                }
+                self.params.misc[idx] = new;
+                self.finish_assignment();
+                Ok(())
+            }
+            _ => Err(Error::invalid_input(
+                "\\multiply/\\divide 目标必须是寄存器或内部参数",
+            )),
+        }
+    }
+
+    /// `\multiply/\divide` 的寄存器标量应用（胶水逐分量乘/除）。
+    fn scale_register(&mut self, kind: RegKind, idx: usize, prim: Primitive) -> Result<()> {
+        // 可选 `by` 关键字（TeX：`\multiply\count0 by5` 与 `\multiply\count0 5` 等价）
+        self.scan_keyword(|w| w == "by")?;
+        let f = self.scan_number()?;
+        // TeX：除以 0 保持不变（不报错）
+        let scale = |v: i64| {
+            if prim == Primitive::Multiply {
+                v * f
+            } else if f != 0 {
+                v / f
+            } else {
+                v
+            }
+        };
+        match kind {
+            RegKind::Count => self.assign_count(idx, scale(self.registers.count(idx))),
+            RegKind::Dimen => self.assign_dimen(idx, scale(self.registers.dimen(idx))),
+            RegKind::Skip => {
+                let old = self.registers.skip(idx);
+                self.assign_skip(
+                    idx,
+                    Glue {
+                        width: scale(old.width),
+                        stretch: scale(old.stretch),
+                        shrink: scale(old.shrink),
+                    },
+                );
+            }
+            RegKind::Muskip => {
+                let old = self.registers.muskip(idx);
+                self.assign_muskip(
+                    idx,
+                    Glue {
+                        width: scale(old.width),
+                        stretch: scale(old.stretch),
+                        shrink: scale(old.shrink),
+                    },
+                );
+            }
+            RegKind::Toks => return Err(Error::invalid_input("\\multiply/\\divide 不支持 \\toks")),
+        }
+        Ok(())
+    }
+
+    /// `\meaning<token>`（可展开）：token 的含义文本（TeX 格式，无尾随句点）。
+    fn exec_meaning(&mut self) -> Result<()> {
+        let tok = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input("\\meaning 后缺少 token"))?
+            .0;
+        let text = self.meaning_text(tok);
+        self.emit_tokens(
+            text.bytes()
+                .map(|b| Token::char(Catcode::Other, u32::from(b)))
+                .collect(),
+        )
+    }
+
+    /// `\meaning` 的含义描述（字符 / 控制序列的 eqtb 槽含义；TeX `\meaning` 格式）。
+    fn meaning_text(&self, tok: Token) -> String {
+        match tok.kind() {
+            TokenKind::Char => meaning(tok, &self.intern),
+            TokenKind::ControlSeq => {
+                let csid = tok.csid().expect("ControlSeq 必有 csid");
+                let name = self.intern.name(csid).to_owned();
+                match self.eqtb.slot(csid).clone() {
+                    EqSlot::Undefined => "undefined".to_owned(),
+                    EqSlot::Primitive(_) => format!("\\{name}"),
+                    EqSlot::Macro(m) => {
+                        let params: String = (1..=m.value.params.num_params)
+                            .map(|n| format!("#{n}"))
+                            .collect();
+                        let body = detok_tokens(&m.value.body, &self.intern);
+                        format!("macro:{params}->{body}")
+                    }
+                    EqSlot::Char { catcode, charcode } => {
+                        meaning(Token::char(catcode, charcode), &self.intern)
+                    }
+                    EqSlot::Font(_) => format!("select font {name}"),
+                    EqSlot::Register(k, n) => format!("\\{}{}", reg_kind_name(k), n),
+                    EqSlot::Stream(_, n) => format!("write{n}"),
+                    EqSlot::MathChar(code) => format!("\\mathchar\"{code:X}"),
+                    EqSlot::Alias(_) => {
+                        // \let 别名：沿链解析（防环）后显示目标槽含义
+                        let mut id = csid;
+                        let mut hops = 0;
+                        while let EqSlot::Alias(t) = self.eqtb.slot(id) {
+                            id = *t;
+                            hops += 1;
+                            if hops > 64 {
+                                break;
+                            }
+                        }
+                        self.meaning_text(Token::control_sequence(id))
+                    }
+                }
+            }
+            _ => String::new(),
+        }
+    }
+
+    /// `\mathchardef\cs=<num>`：绑定 cs 为数学字符（类<<15 | 族<<8 | 字符）。
+    /// 越界值（<0 或 >32767）报 "! Bad mathchar code." 且不改变绑定（TeX 语义）。
+    fn exec_mathchardef(&mut self) -> Result<()> {
+        let csid = self.scan_cs_ident()?;
+        self.expect_equals()?;
+        let v = self.scan_number()?;
+        if !(0..=0x7FFF).contains(&v) {
+            let _ = self.sink.write16(format!("! Bad mathchar code ({v})."));
+            return Ok(());
+        }
+        self.set_slot_scoped(csid, EqSlot::MathChar(v as u32));
+        self.finish_assignment();
         Ok(())
     }
 

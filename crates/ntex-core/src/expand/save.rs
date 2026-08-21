@@ -343,6 +343,8 @@ impl Expander {
             },
             // \chardef'd cs：\the\x → 字符码
             EqSlot::Char { charcode, .. } => Ok(emit_count(*charcode as i64)),
+            // \mathchardef'd cs：\the\x → 数学字符码（十进制）
+            EqSlot::MathChar(code) => Ok(emit_count(*code as i64)),
             // 寄存器引用 cs（\countdef\cs=<num> 等）：\the\cs → 寄存器值
             EqSlot::Register(k, idx) => Ok(match k {
                 RegKind::Count => emit_count(self.registers.count(*idx)),
