@@ -1159,6 +1159,75 @@ ab5c}").unwrap();
     }
 
     #[test]
+    fn glue_order_parsing_and_queries() {
+        // 阶后缀解析 + \the\skip 显示（fil/fill/filll）
+        assert_eq!(
+            expand("\\skip5=1ptminus0fil\\the\\skip5").unwrap(),
+            "1.0pt minus 0.0fil"
+        );
+        assert_eq!(
+            expand("\\skip6=1ptplus3fillminus0filll\\the\\skip6").unwrap(),
+            "1.0pt plus 3.0fill minus 0.0filll"
+        );
+        // \gluestretchorder/\glueshrinkorder（整数上下文）
+        assert_eq!(
+            expand("\\skip5=1ptminus0fil\\number\\gluestretchorder\\skip5\\number\\glueshrinkorder\\skip5").unwrap(),
+            "01"
+        );
+        assert_eq!(
+            expand("\\skip6=1ptplus3fill\\number\\gluestretchorder\\skip6").unwrap(),
+            "2"
+        );
+        // \gluestretch/\glueshrink（尺寸上下文）
+        assert_eq!(
+            expand("\\skip6=1ptplus3fill\\ifdim\\gluestretch\\skip6=3pt yes\\else no\\fi").unwrap(),
+            "yes"
+        );
+        assert_eq!(
+            expand("\\skip6=1ptplus3fill\\ifdim\\glueshrink\\skip6=0pt yes\\else no\\fi").unwrap(),
+            "yes"
+        );
+        // skipdef 绑定 cs 也可作为胶水参数
+        assert_eq!(
+            expand("\\skipdef\\S=7\\skip7=2ptplus1fil\\number\\gluestretchorder\\S").unwrap(),
+            "1"
+        );
+    }
+
+    #[test]
+    fn showtokens_displays_expanded_list() {
+        let mut e = Expander::new();
+        e.run_source("\\showtokens{Hi world}").unwrap();
+        assert_eq!(e.transcript(), "> Hi world.\n");
+        // 展开宏参数（\showtokens 的 general text 按 \edef 语义展开）
+        let mut e = Expander::new();
+        e.run_source("\\def\\x{Hi}\\showtokens{\\x{} world}").unwrap();
+        assert_eq!(e.transcript(), "> Hi world.\n");
+    }
+
+    #[test]
+    fn readline_reads_raw_line() {
+        // \endlinechar=13（默认）：行尾附加 ^^M
+        let mut vfs = MemVfs::new();
+        vfs.insert("data.txt", "Hello World\nnext\n");
+        let (out, _) = expand_vfs(
+            "\\newread\\r\\openin\\r=data.txt\\readline\\r to \\line\\line",
+            vfs,
+        )
+        .unwrap();
+        assert_eq!(out, "Hello World\r");
+        // \endlinechar=-1：不附加
+        let mut vfs = MemVfs::new();
+        vfs.insert("data.txt", "Hello\n");
+        let (out, _) = expand_vfs(
+            "\\newread\\r\\openin\\r=data.txt\\endlinechar=-1\\readline\\r to \\line\\line",
+            vfs,
+        )
+        .unwrap();
+        assert_eq!(out, "Hello");
+    }
+
+    #[test]
     fn write18_shell_escape_rejected() {
         let vfs = MemVfs::new();
         assert!(expand_vfs("\\write18{echo hi}\\end", vfs).is_err());

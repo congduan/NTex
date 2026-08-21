@@ -1,6 +1,6 @@
 impl Expander {
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 226] = [
+        const BUILTINS: [(&str, Primitive); 232] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -286,6 +286,14 @@ impl Expander {
             // ETRIP 冲刺：\meaning 与 \mathchardef
             ("meaning", Primitive::Meaning),
             ("mathchardef", Primitive::MathCharDef),
+            // ETRIP 冲刺：胶水分量查询
+            ("gluestretchorder", Primitive::GlueStretchOrder),
+            ("glueshrinkorder", Primitive::GlueShrinkOrder),
+            ("gluestretch", Primitive::GlueStretch),
+            ("glueshrink", Primitive::GlueShrink),
+            // ETRIP 冲刺：\showtokens 与 \readline
+            ("showtokens", Primitive::ShowTokens),
+            ("readline", Primitive::ReadLine),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);

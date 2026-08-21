@@ -57,11 +57,7 @@ pub fn helvetica_metrics(_font: FontId, charcode: u32) -> (i64, i64, i64) {
 /// 词间空白：space = 278/1000em，stretch = 1/2 space，shrink = 1/3 space。
 pub fn helvetica_space(_font: FontId) -> Glue {
     let space = 278 * FONT_SIZE_PT * SP_PER_PT / 1000;
-    Glue {
-        width: space,
-        stretch: space / 2,
-        shrink: space / 3,
-    }
+    Glue::new(space, space / 2, space / 3)
 }
 
 /// 切片用度量/空白组合（M3-4 TFM 前）。

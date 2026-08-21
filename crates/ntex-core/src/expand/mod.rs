@@ -30,7 +30,7 @@ use crate::intern::InternTable;
 use crate::macrodef::{MacroDef, ParamSpec, TokenArray};
 use crate::param::{ParamKind, ParamValue, Params};
 use crate::register::{
-    format_count, format_dimen, format_glue, format_mu_glue, unit_to_sp, Glue, RegKind,
+    add_glue, format_count, format_dimen, format_glue, format_mu_glue, unit_to_sp, Glue, RegKind,
     RegisterState, Registers, REGISTER_COUNT, SP_PER_PT,
 };
 use crate::sink::{TokenSink, VecSink};

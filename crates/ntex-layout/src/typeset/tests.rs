@@ -290,11 +290,7 @@ mod tests {
     // ---------- M3-2-3 词间空白 ----------
 
     fn space(_font: FontId) -> Glue {
-        Glue {
-            width: 10 * SP_PER_PT,
-            stretch: 5 * SP_PER_PT,
-            shrink: 3 * SP_PER_PT,
-        }
+        Glue::new(10 * SP_PER_PT, 5 * SP_PER_PT, 3 * SP_PER_PT)
     }
     fn typeset_spaced(text: &str) -> Result<Vec<Node>> {
         Typesetter::with_metrics(metrics).with_space(space).typeset(text)
@@ -369,11 +365,7 @@ mod tests {
         // 单行（末行强制断点 d=0）更优 → 只折一行（与 pdfTeX 语义一致）
         let src = r"\hsize 4000sp ab cd";
         let main = Typesetter::with_metrics(metrics)
-            .with_space(|_| Glue {
-                width: 1000,
-                stretch: 500,
-                shrink: 300,
-            })
+            .with_space(|_| Glue::new(1000, 500, 300))
             .typeset(src)
             .unwrap();
         let lines: Vec<&Node> = main.iter().filter(|n| matches!(n, Node::Box(_))).collect();
@@ -567,11 +559,7 @@ mod tests {
 
     /// 分页排版（fn 指针度量 + 词间距）；返回 \shipout 页面。
     fn paginated(src: &str) -> Result<Vec<BoxNode>> {
-        let mut ts = Typesetter::with_metrics(metrics).with_space(|_| Glue {
-            width: 1000,
-            stretch: 500,
-            shrink: 300,
-        });
+        let mut ts = Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
         ts.typeset_dvi(src).map(|(pages, _)| pages)
     }
 
@@ -1286,11 +1274,7 @@ mod tests {
 
     /// 带窄词间胶水（3000/100000/500）的排版器：断字用例需要可拉伸词间空白。
     fn typeset_hyphen(src: &str) -> Result<Vec<Node>> {
-        let mut ts = Typesetter::with_metrics(metrics).with_space(|_| Glue {
-            width: 3000,
-            stretch: 100000,
-            shrink: 500,
-        });
+        let mut ts = Typesetter::with_metrics(metrics).with_space(|_| Glue::new(3000, 100000, 500));
         ts.typeset(src)
     }
 

@@ -290,6 +290,15 @@ pub enum Primitive {
     // ETRIP 冲刺：\meaning<token>（可展开：token 含义文本）与 \mathchardef\cs=<num>
     Meaning,
     MathCharDef,
+    // ETRIP 冲刺：胶水分量查询（\gluestretchorder/\glueshrinkorder 整数上下文、
+    // \gluestretch/\glueshrink 尺寸上下文）
+    GlueStretchOrder,
+    GlueShrinkOrder,
+    GlueStretch,
+    GlueShrink,
+    // ETRIP 冲刺：\showtokens{<text>}（显示展开后的 token 列表）与 \readline<n>to\cs
+    ShowTokens,
+    ReadLine,
 }
 
 impl Primitive {
@@ -551,6 +560,12 @@ impl Primitive {
             224 => Self::CurrentIfBranch,
             225 => Self::Meaning,
             226 => Self::MathCharDef,
+            227 => Self::GlueStretchOrder,
+            228 => Self::GlueShrinkOrder,
+            229 => Self::GlueStretch,
+            230 => Self::GlueShrink,
+            231 => Self::ShowTokens,
+            232 => Self::ReadLine,
             _ => return None,
         })
     }

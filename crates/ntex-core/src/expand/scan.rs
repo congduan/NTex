@@ -169,6 +169,25 @@ impl Expander {
                     self.fetch()?; // 消费 cs
                     return Ok(code as i64);
                 }
+                // ETRIP：\gluestretchorder/\glueshrinkorder<胶水> → 无穷阶（整数上下文）
+                EqSlot::Primitive(Primitive::GlueStretchOrder) => {
+                    self.fetch()?;
+                    let g = self.scan_glue()?;
+                    return Ok(if neg {
+                        -(g.stretch_order as i64)
+                    } else {
+                        g.stretch_order as i64
+                    });
+                }
+                EqSlot::Primitive(Primitive::GlueShrinkOrder) => {
+                    self.fetch()?;
+                    let g = self.scan_glue()?;
+                    return Ok(if neg {
+                        -(g.shrink_order as i64)
+                    } else {
+                        g.shrink_order as i64
+                    });
+                }
                 _ => {}
             }
         }
@@ -499,6 +518,12 @@ impl Expander {
     ///
     /// 换算对照 pdfTeX：`scaled = (int + frac/10^k) * unit_sp`（逐项截断）。
     fn scan_dimen(&mut self) -> Result<i64> {
+        Ok(self.scan_dimen_inner()?.0)
+    }
+
+    /// 尺寸扫描（含胶水无穷阶）：返回 `(值, 阶)`。`scan_dimen` 丢弃阶；
+    /// `scan_glue` 的 plus/minus 值用它取阶（TeX：`1pt plus 3fill`）。
+    fn scan_dimen_inner(&mut self) -> Result<(i64, u8)> {
         self.skip_spaces()?;
         // TeX scan_dimen：跳过可选 `=` 赋值符（`\hsize=5in` 与 `\hsize 5in` 等价）
         if let Some((tok, _)) = self.fetch()? {
@@ -520,13 +545,13 @@ impl Expander {
                 self.fetch()?; // 消费 \dimen
                 let idx = self.scan_register_index()?;
                 let v = self.registers.dimen(idx);
-                return Ok(if neg { -v } else { v });
+                return Ok((if neg { -v } else { v }, 0));
             }
             // M4-5 e-TeX：\dimexpr 可在任意尺寸上下文求值
             if let EqSlot::Primitive(Primitive::Dimexpr) = self.eqtb.slot(csid) {
                 self.fetch()?; // 消费 \dimexpr
                 let v = self.eval_dimen_expression()?;
-                return Ok(if neg { -v } else { v });
+                return Ok((if neg { -v } else { v }, 0));
             }
             // ETRIP 冲刺：\fontdimen<num><font> 可在任意尺寸上下文读取
             if let EqSlot::Primitive(Primitive::FontDimen) = self.eqtb.slot(csid) {
@@ -536,7 +561,18 @@ impl Expander {
                     u32::try_from(num).map_err(|_| Error::invalid_input("\\fontdimen 参数号越界"))?;
                 let font = self.scan_font_ident()?;
                 let v = self.fontdimen(font, num);
-                return Ok(if neg { -v } else { v });
+                return Ok((if neg { -v } else { v }, 0));
+            }
+            // ETRIP 冲刺：\gluestretch/\glueshrink<胶水> → 胶水分量（尺寸上下文）
+            if let EqSlot::Primitive(Primitive::GlueStretch) = self.eqtb.slot(csid) {
+                self.fetch()?; // 消费 \gluestretch
+                let g = self.scan_glue()?;
+                return Ok((if neg { -g.stretch } else { g.stretch }, 0));
+            }
+            if let EqSlot::Primitive(Primitive::GlueShrink) = self.eqtb.slot(csid) {
+                self.fetch()?; // 消费 \glueshrink
+                let g = self.scan_glue()?;
+                return Ok((if neg { -g.shrink } else { g.shrink }, 0));
             }
         }
         // 数字：整数部分 + 可选小数
@@ -564,23 +600,60 @@ impl Expander {
         if !any {
             return Err(Error::invalid_input("预期尺寸数字"));
         }
-        // 单位：连续字母（缺省 pt）
-        let mut unit_tokens = Vec::new();
+        // 单位/阶后缀：连续字母，取**最长**已知单位或 fil/fill/filll 阶前缀
+        // （TeX scan_keyword 逐个字母匹配的等价：`1ptminus0fil` → "pt" + 放回 "minus"；
+        // `0fillminus0filll` → 阶词 "fill" 被消费并回传，放回 "minus"）。
+        const UNITS: &[&str] = &["sp", "pt", "bp", "in", "cm", "mm", "mu"];
+        const ORDER_WORDS: &[&str] = &["fil", "fill", "filll"];
+        let mut unit_tokens: Vec<(Token, char)> = Vec::new();
         while let Some((tok, _)) = self.fetch()? {
-            if let Some(ch) = tok.charcode().and_then(char::from_u32) {
-                if ch.is_ascii_alphabetic() {
-                    unit_tokens.push(ch);
-                    continue;
-                }
+            let Some(ch) = tok.charcode().and_then(char::from_u32) else {
+                self.unread(tok);
+                break;
+            };
+            if !ch.is_ascii_alphabetic() {
+                self.unread(tok);
+                break;
             }
-            self.unread(tok);
-            break;
+            unit_tokens.push((tok, ch));
         }
-        let unit = if unit_tokens.is_empty() {
-            "pt".to_owned()
-        } else {
-            unit_tokens.into_iter().collect()
+        let word: String = unit_tokens.iter().map(|(_, c)| c).collect();
+        // 最长完整候选前缀（单位优先于阶词；同长按出现顺序取首个）
+        let mut best: Option<(&str, usize)> = None; // (词, 长度)
+        for u in UNITS.iter().chain(ORDER_WORDS.iter()) {
+            if word.starts_with(u) && best.map_or(true, |(_, l)| u.len() > l) {
+                best = Some((u, u.len()));
+            }
+        }
+        let (unit, consumed, order) = match best {
+            Some((u, len)) if ORDER_WORDS.contains(&u) => {
+                // 阶词：消费，尺寸按 pt
+                let order = match u {
+                    "fil" => crate::register::order::FIL,
+                    "fill" => crate::register::order::FILL,
+                    "filll" => crate::register::order::FILLL,
+                    _ => 0,
+                };
+                ("pt".to_owned(), len, order)
+            }
+            Some((u, len)) => (u.to_owned(), len, 0),
+            None if unit_tokens.is_empty() => ("pt".to_owned(), 0, 0),
+            None => (String::new(), 0, 0), // 未知单位：整体放回并报错
         };
+        // 放回未消费的字母（[consumed..]）
+        if consumed < unit_tokens.len() {
+            let back: Vec<(Token, bool)> = unit_tokens[consumed..]
+                .iter()
+                .map(|(t, _)| (*t, false))
+                .collect();
+            self.stack.push(InputFrame::TokenList {
+                items: Arc::from(back),
+                pos: 0,
+            });
+        }
+        if unit.is_empty() {
+            return Err(Error::invalid_input(format!("未知单位：{word}")));
+        }
         // 整数部分 + 四舍五入的小数部分（pdfTeX 实测：3.6pt→235930、0.0001pt→7，
         // 即 round(frac × 65536 / 10^k)）；i128 防溢出。
         let num_pt: i128 = if frac_len == 0 {
@@ -602,37 +675,73 @@ impl Expander {
         let scaled = i64::try_from(scaled).map_err(|_| Error::invalid_input("尺寸溢出"))?;
         // TeX 规则：尺寸后跟随的空格被吞掉
         self.skip_trailing_spaces()?;
-        Ok(scaled)
+        Ok((scaled, order))
     }
 
-    /// 扫描胶水：width + 可选 `plus <dimen>` / `minus <dimen>`。
+    /// 扫描胶水：可选前导胶水量（`\glueexpr`/`\skip<idx>`/`\muskip<idx>`/skipdef cs）
+    /// 或 width + 可选 `plus <dimen>[fil]` / `minus <dimen>[fil]`。
     /// 非 plus/minus 字母（如正文）原样放回（TeX `scan_keyword` 语义）。
     fn scan_glue(&mut self) -> Result<Glue> {
         // M4-5 e-TeX：\glueexpr 可在任意胶水上下文求值
         self.skip_spaces()?;
         if let Some(csid) = self.peek_csid()? {
-            if let EqSlot::Primitive(Primitive::Glueexpr) = self.eqtb.slot(csid) {
-                self.fetch()?; // 消费 \glueexpr
-                return self.eval_glue_expression();
+            match self.eqtb.slot(csid).clone() {
+                EqSlot::Primitive(Primitive::Glueexpr) => {
+                    self.fetch()?; // 消费 \glueexpr
+                    return self.eval_glue_expression();
+                }
+                // ETRIP：`\hskip\skip5` 等 —— 前导胶水寄存器整体引用
+                EqSlot::Primitive(Primitive::Skip) => {
+                    self.fetch()?;
+                    let idx = self.scan_register_index()?;
+                    return Ok(self.registers.skip(idx));
+                }
+                EqSlot::Primitive(Primitive::Muskip) => {
+                    self.fetch()?;
+                    let idx = self.scan_register_index()?;
+                    return Ok(self.registers.muskip(idx));
+                }
+                EqSlot::Register(kind, idx) => {
+                    // skipdef/muskipdef 绑定的寄存器 cs
+                    self.fetch()?;
+                    return Ok(match kind {
+                        RegKind::Skip => self.registers.skip(idx),
+                        RegKind::Muskip => self.registers.muskip(idx),
+                        _ => {
+                            return Err(Error::invalid_input(
+                                "胶水上下文需要 \\skip/\\muskip 寄存器",
+                            ))
+                        }
+                    });
+                }
+                _ => {}
             }
         }
         let width = self.scan_dimen()?;
         let mut stretch = 0i64;
         let mut shrink = 0i64;
+        let mut stretch_order = 0u8;
+        let mut shrink_order = 0u8;
         for _ in 0..2 {
             let Some(word) = self.scan_keyword(|w| w == "plus" || w == "minus")? else {
                 break;
             };
+            // 值 + 无穷阶（scan_dimen_inner 消费 fil/fill/filll 阶后缀）
+            let (d, order) = self.scan_dimen_inner()?;
             if word == "plus" {
-                stretch = self.scan_dimen()?;
+                stretch = d;
+                stretch_order = order;
             } else {
-                shrink = self.scan_dimen()?;
+                shrink = d;
+                shrink_order = order;
             }
         }
         Ok(Glue {
             width,
             stretch,
             shrink,
+            stretch_order,
+            shrink_order,
         })
     }
 

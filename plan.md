@@ -333,17 +333,17 @@
 原语与 TeX 基础原语补齐。`etrip.log` 逐字节比对待 pass2 走通后开始。
 
 **剩余原语待办**（对照 etrip.tex 全量控制序列 vs builtins 注册表生成，2026-08-18；
-2026-08-22 更新：B 组条件/算术/定义、A 组只读整数、C 组全部接线完成）：
+2026-08-22 更新：B 组条件/算术/定义、A 组只读整数/胶水阶/showtokens/readline、C 组全部接线完成）：
 
 - [ ] **A 组：e-TeX 特定原语**（pass2 前半段 Checking 段会卡）
-  - [ ] 显示类：`\showgroups` `\showtokens` `\showifs` `\showlists`
+  - [ ] 显示类：`\showgroups` `\showifs` `\showlists`（`\showtokens` ✅ 已实现）
   - [ ] marks 族读取：`\topmarks` `\firstmarks` `\botmarks` `\splitfirstmarks` `\splittopmarks` `\splitbotmarks`（`\marks` 已注册）
-  - [ ] `\readline`
+  - [x] `\readline`（原始行 + `\endlinechar` 附加）
   - [x] e-TeX 只读整数：`\currentiflevel` `\currentiftype` `\currentifbranch`（+ `cur_if_type/cur_if_branch` 状态机，`\unless` 取反类型）
   - [ ] 字体字符度量：`\fontcharwd` `\fontcharht` `\fontchardp` `\fontcharic` `\iffontchar`
   - [ ] 段落形状：`\parshape` `\parshapelength` `\parshapeindent` `\parshapedimen`
   - [ ] mu 表达式/互转：`\muexpr` `\mutoglue` `\gluetomu`
-  - [ ] 胶水阶：`\gluestretchorder` `\glueshrinkorder` `\gluestretch` `\glueshrink`
+  - [x] 胶水阶：`\gluestretchorder` `\glueshrinkorder` `\gluestretch` `\glueshrink`（Glue 增 order 字段 + scan_dimen 阶后缀 + `.fmt` v7）
   - [ ] 惩罚数组：`\interlinepenalties` `\clubpenalties` `\widowpenalties` `\displaywidowpenalties`
   - [ ] 丢弃物：`\pagediscards` `\splitdiscards` `\lostchars`（`\savingvdiscards` 相关）
 - [ ] **B 组：TeX 基础原语**（pass2 中后段会用）

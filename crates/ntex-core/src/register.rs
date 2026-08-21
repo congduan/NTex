@@ -18,12 +18,28 @@ pub const REGISTER_COUNT: usize = 256;
 /// 1 pt = 65536 sp。
 pub const SP_PER_PT: i64 = 65_536;
 
-/// 胶水：宽度 + 拉伸 + 收缩（单位 sp）。
+/// 胶水：宽度 + 拉伸 + 收缩（单位 sp）+ 无穷阶（TeX glue_ord：0=普通、1=fil、2=fill、3=filll）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Glue {
     pub width: i64,
     pub stretch: i64,
     pub shrink: i64,
+    /// 拉伸无穷阶（`\gluestretchorder` 读；`plus 3fil` 解析）。
+    pub stretch_order: u8,
+    /// 收缩无穷阶（`\glueshrinkorder` 读；`minus 0fill` 解析）。
+    pub shrink_order: u8,
+}
+
+/// 无穷阶常量（TeX glue_ord）。
+pub mod order {
+    /// 普通（无阶）。
+    pub const NORMAL: u8 = 0;
+    /// `fil`。
+    pub const FIL: u8 = 1;
+    /// `fill`。
+    pub const FILL: u8 = 2;
+    /// `filll`。
+    pub const FILLL: u8 = 3;
 }
 
 impl Glue {
@@ -31,7 +47,42 @@ impl Glue {
         width: 0,
         stretch: 0,
         shrink: 0,
+        stretch_order: 0,
+        shrink_order: 0,
     };
+
+    /// 无阶胶水（width/stretch/shrink；`..Glue::ZERO` 结构更新可覆盖 order）。
+    pub const fn new(width: i64, stretch: i64, shrink: i64) -> Glue {
+        Glue {
+            width,
+            stretch,
+            shrink,
+            stretch_order: 0,
+            shrink_order: 0,
+        }
+    }
+}
+
+/// 胶水加法（TeX `\advance` 语义）：宽度直接相加；拉伸/收缩取阶更高者的值，
+/// 阶相同则分量相加（tex.web 的 glue 组合规则）。
+pub fn add_glue(a: Glue, b: Glue) -> Glue {
+    let (stretch, stretch_order) = match (a.stretch_order, b.stretch_order) {
+        (ao, bo) if ao == bo => (a.stretch + b.stretch, ao),
+        (ao, bo) if ao > bo => (a.stretch, ao),
+        (_, bo) => (b.stretch, bo),
+    };
+    let (shrink, shrink_order) = match (a.shrink_order, b.shrink_order) {
+        (ao, bo) if ao == bo => (a.shrink + b.shrink, ao),
+        (ao, bo) if ao > bo => (a.shrink, ao),
+        (_, bo) => (b.shrink, bo),
+    };
+    Glue {
+        width: a.width + b.width,
+        stretch,
+        shrink,
+        stretch_order,
+        shrink_order,
+    }
 }
 
 /// 单位 → sp 换算。
@@ -207,14 +258,40 @@ pub fn format_dimen(scaled: i64) -> String {
     out
 }
 
-/// 胶水 → `\the` 输出（"1.0pt plus 2.0pt minus 0.5pt"，零部分省略）。
+/// 无穷阶后缀（TeX `\the\skip` 显示：plus 3fil 等）。
+fn order_suffix(order: u8) -> &'static str {
+    match order {
+        1 => "fil",
+        2 => "fill",
+        3 => "filll",
+        _ => "",
+    }
+}
+
+/// 胶水分量显示：阶为 0 → "<值><单位>"（如 "2.0pt"）；阶非 0 → "<值><阶>"（如 "3.0fil"）。
+fn glue_part(value: i64, order: u8, unit: &str) -> String {
+    if order == 0 {
+        format!("{}{}", format_dimen(value), unit)
+    } else {
+        format!("{}{}", format_dimen(value), order_suffix(order))
+    }
+}
+
+/// 胶水 → `\the` 输出（"1.0pt plus 2.0pt minus 0.5pt"，零部分省略；
+/// 非零阶在分量后附 fil/fill/filll）。
 pub fn format_glue(g: Glue) -> String {
     let mut out = format!("{}pt", format_dimen(g.width));
-    if g.stretch != 0 {
-        out.push_str(&format!(" plus {}pt", format_dimen(g.stretch)));
+    if g.stretch != 0 || g.stretch_order != 0 {
+        out.push_str(&format!(
+            " plus {}",
+            glue_part(g.stretch, g.stretch_order, "pt")
+        ));
     }
-    if g.shrink != 0 {
-        out.push_str(&format!(" minus {}pt", format_dimen(g.shrink)));
+    if g.shrink != 0 || g.shrink_order != 0 {
+        out.push_str(&format!(
+            " minus {}",
+            glue_part(g.shrink, g.shrink_order, "pt")
+        ));
     }
     out
 }
@@ -223,11 +300,17 @@ pub fn format_glue(g: Glue) -> String {
 /// pdfTeX 实测：mu 值定点存储（1mu = 65536 单位），数值直通。
 pub fn format_mu_glue(g: Glue) -> String {
     let mut out = format!("{}mu", format_dimen(g.width));
-    if g.stretch != 0 {
-        out.push_str(&format!(" plus {}mu", format_dimen(g.stretch)));
+    if g.stretch != 0 || g.stretch_order != 0 {
+        out.push_str(&format!(
+            " plus {}",
+            glue_part(g.stretch, g.stretch_order, "mu")
+        ));
     }
-    if g.shrink != 0 {
-        out.push_str(&format!(" minus {}mu", format_dimen(g.shrink)));
+    if g.shrink != 0 || g.shrink_order != 0 {
+        out.push_str(&format!(
+            " minus {}",
+            glue_part(g.shrink, g.shrink_order, "mu")
+        ));
     }
     out
 }
@@ -259,13 +342,20 @@ mod tests {
 
     #[test]
     fn glue_formatting_matches_tex() {
-        let g = Glue {
-            width: 65_536,
-            stretch: 131_072,
-            shrink: 32_768,
-        };
+        let g = Glue::new(65_536, 131_072, 32_768);
         assert_eq!(format_glue(g), "1.0pt plus 2.0pt minus 0.5pt");
         assert_eq!(format_glue(Glue::ZERO), "0.0pt");
+        // 无穷阶显示：plus/minus 后跟 fil/fill/filll
+        let g = Glue {
+            stretch_order: 1,
+            ..Glue::new(65_536, 131_072, 0)
+        };
+        assert_eq!(format_glue(g), "1.0pt plus 2.0fil");
+        let g = Glue {
+            shrink_order: 3,
+            ..Glue::new(0, 0, 32_768)
+        };
+        assert_eq!(format_glue(g), "0.0pt minus 0.5filll");
     }
 
     #[test]
@@ -282,23 +372,9 @@ mod tests {
         let mut r = Registers::new();
         r.set_count(1, 42);
         r.set_dimen(2, 65_536);
-        r.set_skip(
-            3,
-            Glue {
-                width: 1,
-                stretch: 2,
-                shrink: 3,
-            },
-        );
+        r.set_skip(3, Glue::new(1, 2, 3));
         assert_eq!(r.count(1), 42);
         assert_eq!(r.dimen(2), 65_536);
-        assert_eq!(
-            r.skip(3),
-            Glue {
-                width: 1,
-                stretch: 2,
-                shrink: 3
-            }
-        );
+        assert_eq!(r.skip(3), Glue::new(1, 2, 3));
     }
 }

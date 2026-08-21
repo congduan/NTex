@@ -138,11 +138,7 @@ impl FontMetrics {
 
     /// 词间空白胶水（space / space_stretch / space_shrink）。
     pub fn space_glue(&self) -> Glue {
-        Glue {
-            width: self.space,
-            stretch: self.space_stretch,
-            shrink: self.space_shrink,
-        }
+        Glue::new(self.space, self.space_stretch, self.space_shrink)
     }
 
     /// 执行左字符的 lig/kern 程序查右字符（tex.web main_loop 的

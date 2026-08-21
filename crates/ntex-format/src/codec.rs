@@ -204,7 +204,9 @@ fn read_registers(r: &mut impl Read) -> io::Result<RegisterState> {
 fn write_glue(w: &mut impl Write, g: Glue) -> io::Result<()> {
     w.write_all(&g.width.to_le_bytes())?;
     w.write_all(&g.stretch.to_le_bytes())?;
-    w.write_all(&g.shrink.to_le_bytes())
+    w.write_all(&g.shrink.to_le_bytes())?;
+    // v7：无穷阶（stretch_order/shrink_order）
+    w.write_all(&[g.stretch_order, g.shrink_order])
 }
 
 fn read_glue(r: &mut impl Read) -> io::Result<Glue> {
@@ -212,6 +214,8 @@ fn read_glue(r: &mut impl Read) -> io::Result<Glue> {
         width: read_i64(r)?,
         stretch: read_i64(r)?,
         shrink: read_i64(r)?,
+        stretch_order: read_u8(r)?,
+        shrink_order: read_u8(r)?,
     })
 }
 

@@ -21,8 +21,8 @@ use ntex_core::version::Version;
 const MAGIC: &[u8; 8] = b"NTEXFMT1";
 /// 格式版本（v2：M4-4 显示数学间距参数；v3：ETRIP 内部整数参数；
 /// v4：M1-8 参数文本全量序列化——定界符标志改为参数文本 token 数组；
-/// v6：ETRIP `\parfillskip` 胶水参数）。
-const VERSION: u8 = 6;
+/// v6：ETRIP `\parfillskip` 胶水参数；v7：胶水无穷阶）。
+const VERSION: u8 = 7;
 
 /// 编码一个 `.fmt` 快照。
 pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {

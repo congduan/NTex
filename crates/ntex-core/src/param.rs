@@ -159,59 +159,23 @@ impl Default for Params {
     fn default() -> Self {
         Self {
             parindent: 0,
-            baselineskip: Glue {
-                width: 12 * SP_PER_PT,
-                stretch: 0,
-                shrink: 0,
-            },
-            lineskip: Glue {
-                width: 0,
-                stretch: 0,
-                shrink: 0,
-            },
+            baselineskip: Glue::new(12 * SP_PER_PT, 0, 0),
+            lineskip: Glue::new(0, 0, 0),
             lineskiplimit: 0,
             // 6.5in = 13/2 × 4_736_286 sp
             hsize: 13 * 4_736_286 / 2,
             tolerance: 10_000,
             // plain \vsize：643.20255pt × 2^16（TeX 内部存为 scaled 四舍五入）
             vsize: 42_152_922,
-            topskip: Glue {
-                width: 10 * SP_PER_PT,
-                stretch: 0,
-                shrink: 0,
-            },
+            topskip: Glue::new(10 * SP_PER_PT, 0, 0),
             maxdepth: 4 * SP_PER_PT,
-            parskip: Glue {
-                width: 0,
-                stretch: SP_PER_PT,
-                shrink: 0,
-            },
-            parfillskip: Glue {
-                width: 0,
-                stretch: 1, // 1fil（布局侧隐含 fil 阶）
-                shrink: 0,
-            },
+            parskip: Glue::new(0, SP_PER_PT, 0),
+            parfillskip: Glue::new(0, 1, 0), // 1fil（布局侧隐含 fil 阶）
             // M4-4 显示数学间距（plain：TeXbook p.189）
-            abovedisplayskip: Glue {
-                width: 12 * SP_PER_PT,
-                stretch: 3 * SP_PER_PT,
-                shrink: 9 * SP_PER_PT,
-            },
-            belowdisplayskip: Glue {
-                width: 12 * SP_PER_PT,
-                stretch: 3 * SP_PER_PT,
-                shrink: 9 * SP_PER_PT,
-            },
-            abovedisplayshortskip: Glue {
-                width: 0,
-                stretch: 3 * SP_PER_PT,
-                shrink: 0,
-            },
-            belowdisplayshortskip: Glue {
-                width: 7 * SP_PER_PT,
-                stretch: 3 * SP_PER_PT,
-                shrink: 4 * SP_PER_PT,
-            },
+            abovedisplayskip: Glue::new(12 * SP_PER_PT, 3 * SP_PER_PT, 9 * SP_PER_PT),
+            belowdisplayskip: Glue::new(12 * SP_PER_PT, 3 * SP_PER_PT, 9 * SP_PER_PT),
+            abovedisplayshortskip: Glue::new(0, 3 * SP_PER_PT, 0),
+            belowdisplayshortskip: Glue::new(7 * SP_PER_PT, 3 * SP_PER_PT, 4 * SP_PER_PT),
             predisplaypenalty: 10_000,
             postdisplaypenalty: 0,
             // TeX 内部整数参数（initex 默认）

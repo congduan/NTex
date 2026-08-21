@@ -498,6 +498,15 @@ impl Expander {
             Primitive::Meaning => self.exec_meaning(),
             // ETRIP 冲刺：\mathchardef\cs=<num>（cs 绑定数学字符码）
             Primitive::MathCharDef => self.exec_mathchardef(),
+            // 胶水分量查询单独出现：no-op（\ifnum/\ifdim/\the 上下文由扫描函数读取）
+            Primitive::GlueStretchOrder
+            | Primitive::GlueShrinkOrder
+            | Primitive::GlueStretch
+            | Primitive::GlueShrink => Ok(()),
+            // ETRIP 冲刺：\showtokens{<text>}（展开后显示 token 列表）
+            Primitive::ShowTokens => self.exec_showtokens(),
+            // ETRIP 冲刺：\readline<n>to\cs（原始行读取）
+            Primitive::ReadLine => self.exec_readline(),
             // M4-3 数学字体族：\textfont<fam>=<fontcs>（直通 sink 分配）
             Primitive::TextFont | Primitive::ScriptFont | Primitive::ScriptScriptFont => {
                 let kind = match prim {
@@ -1136,26 +1145,12 @@ impl Expander {
             RegKind::Skip => {
                 let delta = self.scan_glue()?;
                 let old = self.registers.skip(idx);
-                self.assign_skip(
-                    idx,
-                    Glue {
-                        width: old.width + delta.width,
-                        stretch: old.stretch + delta.stretch,
-                        shrink: old.shrink + delta.shrink,
-                    },
-                );
+                self.assign_skip(idx, add_glue(old, delta));
             }
             RegKind::Muskip => {
                 let delta = self.scan_glue()?;
                 let old = self.registers.muskip(idx);
-                self.assign_muskip(
-                    idx,
-                    Glue {
-                        width: old.width + delta.width,
-                        stretch: old.stretch + delta.stretch,
-                        shrink: old.shrink + delta.shrink,
-                    },
-                );
+                self.assign_muskip(idx, add_glue(old, delta));
             }
             RegKind::Toks => return Err(Error::invalid_input("\\advance 不支持 \\toks")),
         }
@@ -1244,12 +1239,14 @@ impl Expander {
             RegKind::Dimen => self.assign_dimen(idx, scale(self.registers.dimen(idx))),
             RegKind::Skip => {
                 let old = self.registers.skip(idx);
+                // 乘除不改无穷阶（TeX：分量标量缩放，阶保留）
                 self.assign_skip(
                     idx,
                     Glue {
                         width: scale(old.width),
                         stretch: scale(old.stretch),
                         shrink: scale(old.shrink),
+                        ..old
                     },
                 );
             }
@@ -1261,6 +1258,7 @@ impl Expander {
                         width: scale(old.width),
                         stretch: scale(old.stretch),
                         shrink: scale(old.shrink),
+                        ..old
                     },
                 );
             }
@@ -1338,6 +1336,71 @@ impl Expander {
         }
         self.set_slot_scoped(csid, EqSlot::MathChar(v as u32));
         self.finish_assignment();
+        Ok(())
+    }
+
+    /// `\showtokens{<general text>}`：展开后显示 token 列表（TeX："> <tokens>." + 换行）。
+    fn exec_showtokens(&mut self) -> Result<()> {
+        let toks = self.scan_group_contents()?;
+        let text = self.expand_to_string(&toks)?;
+        self.sink.show(format!("> {text}."))
+    }
+
+    /// `\readline<n>to\cs`：读流下一行（原始字符，不 token 化）——去尾随空格后
+    /// 附加 `\endlinechar`（>=0 时）为字符 token 存入宏体（e-TeX readline 语义）。
+    fn exec_readline(&mut self) -> Result<()> {
+        let idx = self.scan_stream_index("\\readline", 15)?;
+        self.scan_keyword(|w| w == "to")?;
+        self.skip_spaces()?;
+        let t = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input("\\readline 后缺少控制序列"))?
+            .0;
+        let csid = t
+            .csid()
+            .ok_or_else(|| Error::invalid_input("\\readline to 后必须是控制序列"))?;
+        let line = {
+            let Some(stream) = self.read_streams.get_mut(idx).and_then(|s| s.as_mut()) else {
+                return Err(Error::invalid_input("\\readline 流未打开"));
+            };
+            if stream.pos >= stream.data.len() {
+                return Err(Error::invalid_input("\\readline 到文件末尾（EOF）"));
+            }
+            let start = stream.pos;
+            let end = stream.data[start..]
+                .iter()
+                .position(|&b| b == b'\n')
+                .map(|i| start + i)
+                .unwrap_or(stream.data.len());
+            let mut line = stream.data[start..end].to_vec();
+            stream.pos = if end < stream.data.len() { end + 1 } else { end };
+            // 去尾随空格（TeX readline：空白行尾去除；\r 一并处理）
+            while matches!(line.last(), Some(b' ' | b'\t' | b'\r')) {
+                line.pop();
+            }
+            // 附加 \endlinechar（TeX 语义：>0 时在行尾附加该字符）
+            if let ParamValue::Number(eol) = self.params.get(ParamKind::EndlineChar) {
+                if eol > 0 {
+                    line.push(eol as u8);
+                }
+            }
+            line
+        };
+        let toks: Vec<Token> = line
+            .into_iter()
+            .map(|b| Token::char(Catcode::Other, u32::from(b)))
+            .collect();
+        let def = MacroDef {
+            params: ParamSpec {
+                num_params: 0,
+                long: false,
+                text: Default::default(),
+            },
+            body: Arc::from(toks),
+            code: None,
+            protected: false,
+        };
+        self.define_macro_scoped(csid, def);
         Ok(())
     }
 
