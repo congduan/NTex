@@ -111,7 +111,8 @@ impl Expander {
             | CondOp::IfFalse
             | CondOp::IfDefined
             | CondOp::IfCsname
-            | CondOp::IfPrimitive => {
+            | CondOp::IfPrimitive
+            | CondOp::IfInner => {
                 if self.is_skipping() {
                     // 惰性：不评估测试，仅计数（未走的分支中的宏不被展开）
                     self.cond_stack.push(CondFrame {
@@ -238,6 +239,8 @@ impl Expander {
                     _ => Ok(false),
                 }
             }
+            // e-TeX（M4-5）：\ifinner —— 当前模式为内部（数学/受限水平/内层垂直）
+            CondOp::IfInner => Ok(self.sink.if_inner()),
             CondOp::IfCsname => {
                 let name = self.scan_csname()?;
                 Ok(matches!(

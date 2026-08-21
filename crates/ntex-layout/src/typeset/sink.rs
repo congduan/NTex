@@ -759,6 +759,17 @@ impl TokenSink for NodeBuilder {
         }
     }
 
+    /// e-TeX `\ifinner`：内部模式为真 —— 行内数学、受限水平、内部垂直；
+    /// 外层水平（段落）、主垂直列表、显示数学为假（TeXbook p.209）。
+    fn if_inner(&self) -> bool {
+        match self.mode() {
+            Mode::Math | Mode::RestrictedHorizontal => true,
+            Mode::DisplayMath | Mode::Horizontal => false,
+            // 垂直模式：主列表（lists[0]）为外层，盒内（vbox/vtop/vcenter）为内部
+            Mode::Vertical => self.lists.len() > 1,
+        }
+    }
+
     /// `\begingroup`：下一个组为半简单组（14）。
     fn semisimple_begin(&mut self) -> Result<()> {
         self.pending_kind = Some(GroupKind::SemiSimple);

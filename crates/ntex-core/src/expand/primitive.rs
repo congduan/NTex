@@ -442,6 +442,12 @@ impl Expander {
             Primitive::Scantokens => self.exec_scantokens(),
             Primitive::Detokenize => self.exec_detokenize(),
             Primitive::Unexpanded => self.exec_unexpanded(),
+            // \csname...\endcsname：构造控制序列（TeX 可展开原语）
+            Primitive::Csname => self.exec_csname(),
+            Primitive::EndCsname => {
+                let _ = self.sink.write16("! Extra \\endcsname.\n".to_string());
+                Ok(())
+            }
             // \number<number>：整数十进制展开（TeX 可展开原语）
             Primitive::Number => {
                 let v = self.scan_number()?;

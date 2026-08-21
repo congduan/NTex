@@ -1,6 +1,6 @@
 impl Expander {
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 210] = [
+        const BUILTINS: [(&str, Primitive); 212] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -265,6 +265,9 @@ impl Expander {
             ("vcenter", Primitive::VCenter),
             // ETRIP 冲刺：\ifinner（内部模式条件）
             ("ifinner", Primitive::IfInner),
+            // ETRIP 冲刺：\csname...\endcsname（构造控制序列名）
+            ("csname", Primitive::Csname),
+            ("endcsname", Primitive::EndCsname),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);

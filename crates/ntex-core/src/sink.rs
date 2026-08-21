@@ -230,6 +230,10 @@ pub trait TokenSink: std::fmt::Debug {
     fn current_group_type(&self) -> i64 {
         0
     }
+    /// e-TeX `\ifinner`：当前是否内部模式（数学/受限水平/内层垂直）。
+    fn if_inner(&self) -> bool {
+        false
+    }
     /// `\begingroup`：下一个组为半简单组（currentgrouptype=14）。
     fn semisimple_begin(&mut self) -> Result<()> {
         Ok(())

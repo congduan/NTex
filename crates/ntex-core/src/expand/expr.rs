@@ -125,6 +125,12 @@ impl Expander {
                     detokenize_token(t, &self.intern, &mut buf);
                     out.extend(buf.into_iter().map(|t| (t, false)));
                 }
+                EqSlot::Primitive(Primitive::Csname) => {
+                    // \csname...\endcsname：名字扫描 → 控制序列 token（TeX expand() 语义）
+                    let name = self.scan_csname()?;
+                    let csid = self.intern.intern(&name);
+                    out.push((Token::control_sequence(csid), false));
+                }
                 _ => {
                     // 未定义/不可展开原语：原样保留
                     out.push((tok, false));
@@ -292,7 +298,22 @@ impl Expander {
         Ok(())
     }
 
-    /// `\csname` 名字扫描（`\ifcsname` 用）：收集直到 `\endcsname` 的名字字符。
+    /// `\csname<name>\endcsname`：扫描名字，构造控制序列 token 并放回输入流
+    /// （TeX expand() 语义：结果是可执行 token，主循环继续处理）。
+    fn exec_csname(&mut self) -> Result<()> {
+        let name = self.scan_csname()?;
+        let csid = self.intern.intern(&name);
+        let tok = Token::control_sequence(csid);
+        self.stack.push(InputFrame::TokenList {
+            items: Arc::from([(tok, false)]),
+            pos: 0,
+        });
+        Ok(())
+    }
+
+    /// `\csname` 名字扫描（`\csname`/`\ifcsname` 用）：收集直到 `\endcsname` 的名字字符。
+    /// get_x_token 语义：宏/可展开原语在名字中先展开一次；`\endcsname` 终止；
+    /// 其余不可展开控制序列报错（TeX "Missing endcsname inserted"）。
     fn scan_csname(&mut self) -> Result<String> {
         let mut name = String::new();
         loop {
@@ -304,7 +325,34 @@ impl Expander {
                 if self.intern.name(csid) == "endcsname" {
                     break;
                 }
-                return Err(Error::invalid_input("\\csname 名字中含控制序列"));
+                match self.eqtb.slot(csid).clone() {
+                    EqSlot::Macro(m) => {
+                        let args = if m.value.params.num_params > 0 {
+                            self.collect_args(&m.value)?
+                        } else {
+                            Vec::new()
+                        };
+                        let body = materialize(&m.value.body, &args);
+                        let seq: Vec<(Token, bool)> =
+                            body.into_iter().map(|t| (t, false)).collect();
+                        self.stack.push(InputFrame::TokenList {
+                            items: Arc::from(seq),
+                            pos: 0,
+                        });
+                        continue;
+                    }
+                    EqSlot::Primitive(p) if p.is_expandable() => {
+                        let mut out = Vec::new();
+                        self.expand_once((tok, false), &mut out)?;
+                        let seq: Vec<(Token, bool)> = out;
+                        self.stack.push(InputFrame::TokenList {
+                            items: Arc::from(seq),
+                            pos: 0,
+                        });
+                        continue;
+                    }
+                    _ => return Err(Error::invalid_input("\\csname 名字中含控制序列")),
+                }
             }
             if let Some(ch) = tok.charcode().and_then(char::from_u32) {
                 name.push(ch);

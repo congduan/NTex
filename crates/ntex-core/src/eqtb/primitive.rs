@@ -269,6 +269,9 @@ pub enum Primitive {
     VCenter,
     // ETRIP 冲刺：\ifinner（内部垂直/受限水平/数学模式为真；TeX 条件原语）
     IfInner,
+    // ETRIP 冲刺：\csname...\endcsname（构造控制序列名，可展开）
+    Csname,
+    EndCsname,
 }
 
 impl Primitive {
@@ -290,6 +293,7 @@ impl Primitive {
                 | Self::ETeXRevision
                 | Self::String_
                 | Self::JobName
+                | Self::Csname
         )
     }
 
@@ -511,6 +515,8 @@ impl Primitive {
             208 => Self::JobName,
             209 => Self::VCenter,
             210 => Self::IfInner,
+            211 => Self::Csname,
+            212 => Self::EndCsname,
             _ => return None,
         })
     }
