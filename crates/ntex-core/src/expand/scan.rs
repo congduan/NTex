@@ -138,18 +138,24 @@ impl Expander {
                     self.fetch()?;
                     return Ok(self.group_level as i64);
                 }
-                // 组类型：当前未跟踪 → 恒 0（bottom level）
+                // 组类型：sink 跟踪组种类（bottom=0 ... math_left=16）
                 EqSlot::Primitive(Primitive::CurrentGroupType) => {
                     self.fetch()?;
-                    return Ok(0);
+                    return Ok(self.sink.current_group_type());
                 }
-                // 最近节点类型：未跟踪 → 恒 -1（void）
+                // 最近节点类型：当前列表尾节点类型码（sink 查询；空列表 -1）
                 EqSlot::Primitive(Primitive::LastNodeType) => {
                     self.fetch()?;
-                    return Ok(-1);
+                    return Ok(self.sink.last_node_type());
                 }
                 _ => {}
             }
+        }
+        // 单字符控制符号（`\^^J`、`\@` 等）在数字上下文取其字符码（TeX scan_int：
+        // 控制符号名字为单个非字母字符时等价于该字符）。
+        if let Some(code) = self.try_control_symbol()? {
+            self.skip_trailing_spaces()?;
+            return Ok(if neg { -code } else { code });
         }
         let mut val: i64 = 0;
         let mut any = false;
@@ -171,6 +177,24 @@ impl Expander {
         // TeX 规则：数字后跟随的空格被吞掉（实测 pdfTeX `\ifnum3>2 yes` → "yes"）
         self.skip_trailing_spaces()?;
         Ok(if neg { -val } else { val })
+    }
+
+    /// 单字符控制符号（非字母名字，如 `\^^J`）→ 字符码；否则不消费并返回 `None`。
+    fn try_control_symbol(&mut self) -> Result<Option<i64>> {
+        let Some((tok, _)) = self.fetch()? else {
+            return Ok(None);
+        };
+        let Some(csid) = tok.csid() else {
+            self.unread(tok);
+            return Ok(None);
+        };
+        let name = self.intern.name(csid);
+        if name.len() == 1 && !name.as_bytes()[0].is_ascii_alphabetic() {
+            Ok(Some(name.as_bytes()[0] as i64))
+        } else {
+            self.unread(tok);
+            Ok(None)
+        }
     }
 
     /// 若下一 token 是反引号（cat 12、charcode 96），消费并按 TeX 规则返回其后的
@@ -296,20 +320,22 @@ impl Expander {
 
     /// 扫描平衡花括号内的 token 列表（`\toks0={...}` 用）。
     fn scan_group_contents(&mut self) -> Result<Vec<Token>> {
-        let open = self
+        let fetched = self
             .fetch()?
             .ok_or_else(|| Error::invalid_input("扫描到输入末尾"))?
             .0;
+        let open = self.resolve_group_char(fetched);
         if open.catcode() != Some(Catcode::BeginGroup) {
             return Err(Error::invalid_input("预期 {（组开始）"));
         }
         let mut tokens = Vec::new();
         let mut depth = 0usize;
         loop {
-            let t = self
+            let fetched = self
                 .fetch()?
                 .ok_or_else(|| Error::invalid_input("组未闭合"))?
                 .0;
+            let t = self.resolve_group_char(fetched);
             match t.catcode() {
                 Some(Catcode::BeginGroup) => {
                     depth += 1;
@@ -328,23 +354,52 @@ impl Expander {
         Ok(tokens)
     }
 
+    /// `\let\bgroup={`/`\let\egroup=}` 别名解析：绑定为组定界符字符的 cs → 底层字符 token。
+    fn resolve_group_char(&self, tok: Token) -> Token {
+        let Some(csid) = tok.csid() else {
+            return tok;
+        };
+        if let EqSlot::Char { catcode, charcode } = self.eqtb.slot(csid) {
+            if matches!(catcode, Catcode::BeginGroup | Catcode::EndGroup) {
+                return Token::char(*catcode, *charcode);
+            }
+        }
+        tok
+    }
+
     /// TeX `<general text>` 扫描（`\unexpanded`/`\detokenize` 参数）：
-    /// 先展开可展开项（`\expandafter`/宏/可展开原语）直到组开始 `{`，
-    /// 再按 [`Self::scan_group_contents`] 收集组内容（组内不展开）。
+    /// 先展开可展开项（`\expandafter`/宏/可展开原语）；组开始 `{` 后按平衡组
+    /// 收集（组内不展开）。general text 语义：不可展开 token 原样收集，
+    /// `\relax` 或外层 `}` 终止；平衡组在输入耗尽时补 `}` 收尾（TeX 语义，
+    /// 如 `\unexpanded\expandafter{\1}` 中 `\1` 展开含不平衡花括号）。
     fn scan_group_contents_expanding(&mut self) -> Result<Vec<Token>> {
+        let mut tokens = Vec::new();
         loop {
             let open = self
                 .fetch()?
                 .ok_or_else(|| Error::invalid_input("扫描到输入末尾"))?
                 .0;
+            let open = self.resolve_group_char(open);
+            // 组开始：转平衡组收集
             if open.catcode() == Some(Catcode::BeginGroup) {
                 self.unread(open);
                 break;
             }
             let Some(csid) = open.csid() else {
-                return Err(Error::invalid_input("预期 {（组开始）"));
+                tokens.push(open);
+                continue;
             };
             match self.eqtb.slot(csid).clone() {
+                // \let\bgroup={`：cs 绑定为组定界符 → 展开成该字符
+                EqSlot::Char {
+                    catcode: Catcode::BeginGroup,
+                    charcode,
+                } => {
+                    self.unread(Token::char(Catcode::BeginGroup, charcode));
+                    break;
+                }
+                // \relax：general text 终止（TeX scan_general_text）
+                EqSlot::Primitive(Primitive::Relax) => return Ok(tokens),
                 EqSlot::Alias(_) => {
                     // 沿别名链解引用（\let\bgroup={ 是 Char 不会到这；\let\1=\5 会）。
                     // 若 unread 原 alias token 再 continue 会无限循环。
@@ -383,10 +438,40 @@ impl Expander {
                     });
                     continue;
                 }
-                _ => return Err(Error::invalid_input("预期 {（组开始）")),
+                // 不可展开 cs：原样收集（general text 语义）
+                _ => {
+                    tokens.push(open);
+                    continue;
+                }
             }
         }
-        self.scan_group_contents()
+        // 平衡组收集：先消费组开始 `{`（定界符，不计入内容），收集到匹配的 `}`。
+        // EOF 容忍（TeX 输入耗尽时补 } 收尾）。
+        if self.fetch()?.is_none() {
+            return Ok(tokens);
+        }
+        let mut depth = 0usize;
+        loop {
+            let Some((fetched, _)) = self.fetch()? else {
+                break;
+            };
+            let t = self.resolve_group_char(fetched);
+            match t.catcode() {
+                Some(Catcode::BeginGroup) => {
+                    depth += 1;
+                    tokens.push(t);
+                }
+                Some(Catcode::EndGroup) => {
+                    if depth == 0 {
+                        break;
+                    }
+                    depth -= 1;
+                    tokens.push(t);
+                }
+                _ => tokens.push(t),
+            }
+        }
+        Ok(tokens)
     }
 
     /// 扫描一个尺寸：数字（含小数）+ 可选单位；支持 `\dimen<idx>` 引用。

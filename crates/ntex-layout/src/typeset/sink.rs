@@ -342,19 +342,49 @@ impl TokenSink for NodeBuilder {
     }
 
     fn group_begin(&mut self) -> Result<()> {
-        let kind = self.pending_box.take();
+        // 显式组种类（\begingroup/\valign/\noalign）优先；否则盒子种类；再否则普通组
+        let explicit = self.pending_kind.take();
+        let kind = explicit.or_else(|| {
+            self.pending_box.take().map(|pb| match pb {
+                // 垂直/内部垂直模式中的 \hbox 是 adjusted hbox group（TeX begin_box 语义）
+                PendingBox::HBox => {
+                    if self.mode() == Mode::Vertical {
+                        GroupKind::AdjustedHBox
+                    } else {
+                        GroupKind::HBox
+                    }
+                }
+                PendingBox::VBox => GroupKind::VBox,
+                PendingBox::VTop => GroupKind::VTop,
+            })
+        });
+        // 盒子/对齐组：复用盒子路径（对齐组按 vbox 打包，noalign 组结束时丢弃）
+        let box_kind = match kind {
+            Some(GroupKind::HBox | GroupKind::AdjustedHBox) => Some(PendingBox::HBox),
+            Some(GroupKind::VBox | GroupKind::Align | GroupKind::NoAlign) => Some(PendingBox::VBox),
+            Some(GroupKind::VTop) => Some(PendingBox::VTop),
+            _ => None,
+        };
         // `\shipout` 目标 = 紧邻的盒子组（内层盒子不消费该标记）
-        let ship = if kind.is_some() {
+        let ship = if box_kind.is_some() {
             std::mem::take(&mut self.shipout_next)
         } else {
             false
         };
+        let gkind = kind.unwrap_or_else(|| {
+            if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+                GroupKind::Math
+            } else {
+                GroupKind::Simple
+            }
+        });
         self.groups.push(GroupCtx {
-            box_kind: kind,
+            kind: gkind,
+            box_kind,
             shipout: ship,
         });
         self.param_stack.push(self.params);
-        if let Some(k) = kind {
+        if let Some(k) = box_kind {
             let new_mode = match k {
                 PendingBox::HBox => Mode::RestrictedHorizontal,
                 PendingBox::VBox | PendingBox::VTop => Mode::Vertical,
@@ -447,8 +477,23 @@ impl TokenSink for NodeBuilder {
         if ctx.box_kind.is_some_and(PendingBox::is_vertical) && self.mode() == Mode::Horizontal {
             self.close_paragraph();
         }
-        if let Some(kind) = ctx.box_kind {
-            self.package_box(kind, ctx.shipout);
+        match ctx.kind {
+            // noalign 组：对齐行间材料在 TeX 中并入外层垂直列表；ETRIP 简化丢弃
+            GroupKind::NoAlign => {
+                self.lists.pop();
+                self.list_modes.pop();
+            }
+            // 对齐组：按 vbox 打包（行内容简化合并；ETRIP 仅需组种类正确）
+            GroupKind::Align
+            | GroupKind::HBox
+            | GroupKind::AdjustedHBox
+            | GroupKind::VBox
+            | GroupKind::VTop => {
+                if let Some(kind) = ctx.box_kind {
+                    self.package_box(kind, ctx.shipout);
+                }
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -668,6 +713,81 @@ impl TokenSink for NodeBuilder {
         Ok(())
     }
 
+    /// `\insert<num>{...}`：insert 节点追加到当前列表（无维度；内容只收集不排版）。
+    fn insert_node(&mut self, class: usize, toks: Vec<Token>) -> Result<()> {
+        self.append(Node::Ins {
+            class,
+            text: toks_to_text(&toks),
+        });
+        Ok(())
+    }
+
+    /// `\vadjust{...}`：adjust 节点追加到当前列表（无维度）。
+    fn vadjust(&mut self, toks: Vec<Token>) -> Result<()> {
+        self.append(Node::Adjust {
+            text: toks_to_text(&toks),
+        });
+        Ok(())
+    }
+
+    /// `\write<n>{...}`（非 \immediate）：whatsit 节点追加到当前列表（无维度）。
+    fn whatsit(&mut self, text: String) -> Result<()> {
+        self.append(Node::Whatsit { text });
+        Ok(())
+    }
+
+    /// e-TeX `\lastnodetype`：当前列表尾节点类型码（空列表 -1）。
+    fn last_node_type(&self) -> i64 {
+        match self.lists.last().and_then(|l| l.last()) {
+            None => -1,
+            Some(n) => n.node_type_code(),
+        }
+    }
+
+    /// e-TeX `\currentgrouptype`：当前组类型码。
+    /// 数学模式：顶组为数学组 → 9，否则为 `$` 进入的数学移位组 → 15。
+    fn current_group_type(&self) -> i64 {
+        if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            return match self.groups.last() {
+                Some(g) if g.kind == GroupKind::Math => 9,
+                _ => 15,
+            };
+        }
+        match self.groups.last() {
+            Some(g) => g.kind.code(),
+            None => 0,
+        }
+    }
+
+    /// `\begingroup`：下一个组为半简单组（14）。
+    fn semisimple_begin(&mut self) -> Result<()> {
+        self.pending_kind = Some(GroupKind::SemiSimple);
+        Ok(())
+    }
+
+    /// `\valign{`/`\halign{`：下一个组为对齐组（6）。
+    fn align_begin(&mut self) -> Result<()> {
+        self.pending_kind = Some(GroupKind::Align);
+        Ok(())
+    }
+
+    /// `\noalign{`：下一个组为无对齐组（7）。
+    fn noalign_begin(&mut self) -> Result<()> {
+        self.pending_kind = Some(GroupKind::NoAlign);
+        Ok(())
+    }
+
+    /// `\cr`：对齐行结束（简化无操作）。
+    fn align_row_end(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    /// `\raise`/`\lower<dimen>`：记录盒子参考点位移（下一个封装盒子生效）。
+    fn raise(&mut self, amount: i64) -> Result<()> {
+        self.pending_shift = Some(amount);
+        Ok(())
+    }
+
     /// `\discretionary{pre}{post}{replace}`：断字节点。组内容 token 中字符
     /// 转字符节点（当前字体，维度查字体表），其余忽略（简化）。
     fn discretionary(
@@ -718,6 +838,14 @@ impl TokenSink for NodeBuilder {
 }
 
 // ---------- \showbox 格式化（TeX show_box 风格） ----------
+
+/// 组内字符 token → 文本（insert/adjust 节点内容；cs 等忽略）。
+fn toks_to_text(toks: &[Token]) -> String {
+    toks.iter()
+        .filter_map(|t| t.charcode())
+        .filter_map(char::from_u32)
+        .collect()
+}
 
 /// sp → pt 字符串（固定 1 位小数）。
 fn showbox_pt(sp: i64) -> String {
@@ -794,5 +922,8 @@ fn showbox_format_node(n: &Node, depth: usize, out: &mut String) {
             Some(c) => out.push_str(&format!("{p}\\marks{c} {text}\n")),
             None => out.push_str(&format!("{p}\\mark {text}\n")),
         },
+        Node::Ins { class, text } => out.push_str(&format!("{p}\\insert{class} {text}\n")),
+        Node::Adjust { text } => out.push_str(&format!("{p}\\vadjust {text}\n")),
+        Node::Whatsit { text } => out.push_str(&format!("{p}\\write {text}\n")),
     }
 }

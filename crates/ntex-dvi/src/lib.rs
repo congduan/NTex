@@ -239,7 +239,9 @@ impl<'a> Writer<'a> {
                     }
                     self.cur_h += width;
                 }
-                Node::Penalty { .. } | Node::Leaders { .. } | Node::Discretionary { .. } => {}
+                Node::Penalty { .. } | Node::Leaders { .. } | Node::Discretionary { .. }
+                | Node::Ins { .. } | Node::Adjust { .. } | Node::Whatsit { .. }
+                | Node::Direction { .. } | Node::Mark { .. } => {}
             }
         }
         self.prune_movements(save_loc);
@@ -287,7 +289,8 @@ impl<'a> Writer<'a> {
                     }
                 }
                 Node::Penalty { .. } | Node::Leaders { .. } | Node::Char { .. }
-                | Node::Discretionary { .. } => {}
+                | Node::Discretionary { .. } | Node::Ins { .. } | Node::Adjust { .. }
+                | Node::Whatsit { .. } | Node::Direction { .. } | Node::Mark { .. } => {}
             }
         }
         self.prune_movements(save_loc);

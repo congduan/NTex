@@ -185,6 +185,20 @@ pub enum Node {
         class: Option<i64>,
         text: String,
     },
+    /// insert 节点（`\insert<num>{<general text>}`；无维度）：class 为插入寄存器号，
+    /// 内容（一般文本）只收集不排版（ETRIP 简化）。
+    Ins {
+        class: usize,
+        text: String,
+    },
+    /// adjust 节点（`\vadjust{<vertical material>}`；无维度）。
+    Adjust {
+        text: String,
+    },
+    /// whatsit 节点（`\write<n>{...}` 等；无维度）。
+    Whatsit {
+        text: String,
+    },
 }
 
 impl Node {
@@ -230,6 +244,33 @@ impl Node {
             Node::Direction { .. } => BoxDimensions::ZERO,
             // mark 节点：无维度。
             Node::Mark { .. } => BoxDimensions::ZERO,
+            // insert/adjust/whatsit 节点：无维度。
+            Node::Ins { .. } | Node::Adjust { .. } | Node::Whatsit { .. } => BoxDimensions::ZERO,
+        }
+    }
+
+    /// e-TeX `\lastnodetype` 节点类型码（char=0 ... penalty=13）。
+    ///
+    /// 对齐 e-TeX 的 node type 编号：char 0、hlist 1、vlist 2、rule 3、ins 4、
+    /// mark 5、adjust 6、disc 8、whatsit 9、math 10、glue 11、kern 12、
+    /// penalty 13。方向节点在 e-TeX 中是 math_node 子类型（10）。
+    pub fn node_type_code(&self) -> i64 {
+        match self {
+            Node::Char { .. } => 0,
+            Node::Box(b) => match b.kind {
+                BoxKind::HBox => 1,
+                BoxKind::VBox => 2,
+            },
+            Node::Rule { .. } => 3,
+            Node::Ins { .. } => 4,
+            Node::Mark { .. } => 5,
+            Node::Adjust { .. } => 6,
+            Node::Discretionary { .. } => 8,
+            Node::Whatsit { .. } => 9,
+            Node::Direction { .. } => 10,
+            Node::Glue { .. } | Node::Leaders { .. } => 11,
+            Node::Kern { .. } => 12,
+            Node::Penalty { .. } => 13,
         }
     }
 

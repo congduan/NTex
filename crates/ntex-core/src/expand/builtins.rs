@@ -1,6 +1,6 @@
 impl Expander {
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 192] = [
+        const BUILTINS: [(&str, Primitive); 210] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -242,6 +242,29 @@ impl Expander {
             ("lastnodetype", Primitive::LastNodeType),
             // ETRIP 冲刺：\discretionary{pre}{post}{replace}
             ("discretionary", Primitive::Discretionary),
+            // ETRIP 冲刺：\insert<num>{<general text>}（insert 节点）与 \vadjust{...}（adjust 节点）
+            ("insert", Primitive::Insert),
+            ("vadjust", Primitive::VAdjust),
+            // ETRIP 冲刺：对齐原语（组种类 6/7）与 \mathchoice{}{}{}{}
+            ("valign", Primitive::Valign),
+            ("halign", Primitive::Halign),
+            ("cr", Primitive::Cr),
+            ("noalign", Primitive::NoAlign),
+            ("mathchoice", Primitive::MathChoice),
+            // ETRIP 冲刺：输出例程/追踪/错误上下文
+            ("deadcycles", Primitive::DeadCycles),
+            ("tracingmacros", Primitive::TracingMacros),
+            ("tracingoutput", Primitive::TracingOutput),
+            ("errorcontextlines", Primitive::ErrorContextLines),
+            // ETRIP 冲刺：\raise/\lower/\span/\special/\jobname/\vcenter
+            ("raise", Primitive::Raise),
+            ("lower", Primitive::Lower),
+            ("span", Primitive::Span),
+            ("special", Primitive::Special),
+            ("jobname", Primitive::JobName),
+            ("vcenter", Primitive::VCenter),
+            // ETRIP 冲刺：\ifinner（内部模式条件）
+            ("ifinner", Primitive::IfInner),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);

@@ -18,19 +18,47 @@ impl Expander {
 
     /// 条件状态机单步推进。
     fn step_conditional(&mut self, op: CondOp) -> Result<()> {
+        if std::env::var("NTEX_COND_TRACE").is_ok() {
+            let frames: Vec<String> = self
+                .cond_stack
+                .iter()
+                .map(|f| {
+                    format!(
+                        "{}{}{}",
+                        if f.is_case { "C" } else { "I" },
+                        match f.state {
+                            CondState::Processing => "P",
+                            CondState::Skipping => "S",
+                        },
+                        if f.else_seen { "e" } else { "-" }
+                    )
+                })
+                .collect();
+            eprintln!(
+                "[trace-cond] op={:?} 前栈深={} 组级={} [{}]",
+                op,
+                self.cond_stack.len(),
+                self.group_level,
+                frames.join(" ")
+            );
+        }
         match op {
             CondOp::Fi => {
                 if self.cond_stack.pop().is_none() {
-                    return Err(Error::invalid_input("多余的 \\fi"));
+                    // TeX 错误恢复：`! Extra \fi.` —— 记录消息并继续（ETRIP 的
+                    // \scantokens 恶魔测试会故意制造多余 \fi/\else）。
+                    let _ = self.sink.write16("! Extra \\fi.\n".to_string());
                 }
                 Ok(())
             }
             CondOp::Else => {
                 let Some(top) = self.cond_stack.last_mut() else {
-                    return Err(Error::invalid_input("多余的 \\else"));
+                    let _ = self.sink.write16("! Extra \\else.\n".to_string());
+                    return Ok(());
                 };
                 if top.else_seen {
-                    return Err(Error::invalid_input("多余的 \\else"));
+                    let _ = self.sink.write16("! Extra \\else.\n".to_string());
+                    return Ok(());
                 }
                 top.else_seen = true;
                 match top.state {
@@ -48,10 +76,12 @@ impl Expander {
             }
             CondOp::Or => {
                 let Some(top) = self.cond_stack.last_mut() else {
-                    return Err(Error::invalid_input("多余的 \\or"));
+                    let _ = self.sink.write16("! Extra \\or.\n".to_string());
+                    return Ok(());
                 };
                 if !top.is_case {
-                    return Err(Error::invalid_input("多余的 \\or"));
+                    let _ = self.sink.write16("! Extra \\or.\n".to_string());
+                    return Ok(());
                 }
                 match top.state {
                     CondState::Skipping => {

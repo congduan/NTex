@@ -326,6 +326,39 @@
 **验收**：**ETRIP 全绿**；含数学的文档差分一致。
 **进度**：**M4 全部完成**——M4-1/2/3/4/5（13 + 16 + 20 + 14 + 6 用例）、M4-6 Liang 断字、M4-7 错误模型、e-TeX 扩展（`\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens`，+6 用例）。下一步：**ETRIP 冲刺**（先搭管线：fixtures + harness 泛化 + 引擎驱动）。
 
+### ETRIP 冲刺（2026-08 进行中）
+
+**当前状态**：管线已跑通（fixtures + harness 泛化 + ntex 驱动）；**pass1 全流程已走通**
+（e-IniTeX → `\dump`）；pass2（重载 `.fmt` 再运行）逐段推进中，卡点在 e-TeX 增强
+原语与 TeX 基础原语补齐。`etrip.log` 逐字节比对待 pass2 走通后开始。
+
+**剩余原语待办**（对照 etrip.tex 全量控制序列 vs builtins 注册表生成，2026-08-18）：
+
+- [ ] **A 组：e-TeX 特定原语**（pass2 前半段 Checking 段会卡）
+  - [ ] 显示类：`\showgroups` `\showtokens` `\showifs` `\showlists`
+  - [ ] marks 族：`\topmarks` `\firstmarks` `\botmarks` `\splitfirstmarks` `\splittopmarks` `\splitbotmarks`（`\marks` 已注册）
+  - [ ] `\readline`
+  - [ ] e-TeX 只读整数：`\currentiflevel` `\currentiftype` `\currentifbranch`
+  - [ ] 字体字符度量：`\fontcharwd` `\fontcharht` `\fontchardp` `\fontcharic` `\iffontchar`
+  - [ ] 段落形状：`\parshape` `\parshapelength` `\parshapeindent` `\parshapedimen`
+  - [ ] mu 表达式/互转：`\muexpr` `\mutoglue` `\gluetomu`
+  - [ ] 胶水阶：`\gluestretchorder` `\glueshrinkorder` `\gluestretch` `\glueshrink`
+  - [ ] 惩罚数组：`\interlinepenalties` `\clubpenalties` `\widowpenalties` `\displaywidowpenalties`
+  - [ ] 丢弃物：`\pagediscards` `\splitdiscards` `\lostchars`（`\savingvdiscards` 相关）
+- [ ] **B 组：TeX 基础原语**（pass2 中后段会用）
+  - [ ] 条件：`\ifinner` `\ifeof` `\ifvmode` `\ifhmode` `\ifmmode` `\ifvoid` `\ifhbox` `\ifvbox`
+  - [ ] 盒子：`\copy` `\unvbox` `\unhbox` `\unhcopy` `\unvcopy` `\lastbox`
+  - [ ] 盒子尺寸：`\wd` `\ht` `\dp`
+  - [ ] 算术：`\multiply` `\divide`（`\advance` 已注册）
+  - [ ] 其他：`\csname`/`\endcsname`（M1-2 遗留）、`\mathchardef`（M1-3 遗留）、`\meaning`、`\tracingparagraphs`、`\rightskip` `\leftskip`、`\omit`、`\prevdepth`、`\interlinepenalty` `\clubpenalty` `\widowpenalty` `\displaywidowpenalty`、`\unskip` `\lastpenalty` `\unpenalty`
+- [ ] **C 组：已注册未接线**（builtins 已有，exec/scan 未实现 → 兜底报"未接入"）
+  - [ ] `\deadcycles` `\raise` `\lower` `\span` `\special` `\jobname` `\vcenter`
+  - [ ] `\marks` `\vsplit` `\discretionary` `\insert` `\vadjust` `\halign` `\valign` `\cr` `\noalign` `\mathchoice` `\dump` `\everyjob` 等
+- [ ] **收尾**：`etrip.log` 逐字节比对（消息格式/上下文行/dvitype 暂不纳入）
+
+**冲刺纪律**：每次迭代前先 `cargo build -p ntex-trip` 确认全绿再跑（避免脏构建旧产物
+误报，如误报过的 `\ifcase 序号不能为负`）；对照 etrip.log 参考逐段验证，不做整体 diff。
+
 ***
 
 ## 7. M5 增量计算（相对 cTeX 的胜负手）

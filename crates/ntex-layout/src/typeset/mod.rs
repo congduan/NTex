@@ -198,10 +198,46 @@ impl PendingBox {
     }
 }
 
+/// 组种类（TeX group code，tex.web §291 / e-TeX 扩展）。
+///
+/// ETRIP 用 `\currentgrouptype` 检查的组类型码：simple=1、hbox=2、
+/// adjusted hbox=3、vbox=4、vtop=5、align=6、no align=7、math=9、
+/// semi simple=14；bottom=0，math shift=15（数学模式由 `$` 进入时）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GroupKind {
+    Simple,
+    SemiSimple,
+    HBox,
+    AdjustedHBox,
+    VBox,
+    VTop,
+    Align,
+    NoAlign,
+    Math,
+}
+
+impl GroupKind {
+    fn code(self) -> i64 {
+        match self {
+            GroupKind::Simple => 1,
+            GroupKind::SemiSimple => 14,
+            GroupKind::HBox => 2,
+            GroupKind::AdjustedHBox => 3,
+            GroupKind::VBox => 4,
+            GroupKind::VTop => 5,
+            GroupKind::Align => 6,
+            GroupKind::NoAlign => 7,
+            GroupKind::Math => 9,
+        }
+    }
+}
+
 /// 组上下文（group_begin 压栈，group_end 弹出）。
 #[derive(Debug)]
 struct GroupCtx {
-    /// 本组是否为盒子内容（`\hbox`/`\vbox`/`\vtop` 紧邻的组）。
+    /// 组种类（`\currentgrouptype` 查询用）。
+    kind: GroupKind,
+    /// 本组是否为盒子内容（`\hbox`/`\vbox`/`\vtop` 紧邻的组；对齐组复用 vbox）。
     box_kind: Option<PendingBox>,
     /// 本组是否为 `\shipout` 的目标（封装的盒子作为页面而非追加）。
     /// 随组传递：`\shipout\vbox{...\box255...}` 内层盒子不被 shipout。
@@ -323,6 +359,10 @@ struct NodeBuilder {
     groups: Vec<GroupCtx>,
     /// 等待下一个组的盒子种类。
     pending_box: Option<PendingBox>,
+    /// 等待下一个组的显式种类（`\begingroup`/`\valign`/`\noalign`；优先于 pending_box）。
+    pending_kind: Option<GroupKind>,
+    /// `\raise`/`\lower`：下一个封装盒子的参考点位移（sp）。
+    pending_shift: Option<i64>,
     /// 内部参数镜像（随 `param_changed` 事件更新，组作用域快照/恢复）。
     params: Params,
     /// 组开始时的参数快照（group_end 恢复）。
@@ -423,6 +463,8 @@ impl NodeBuilder {
             list_modes: vec![Mode::Vertical],
             groups: Vec::new(),
             pending_box: None,
+            pending_kind: None,
+            pending_shift: None,
             params: Params::default(),
             param_stack: Vec::new(),
             sfcodes,
@@ -512,6 +554,13 @@ impl NodeBuilder {
                 Node::Box(b)
             }
         };
+        // `\raise`/`\lower`：封装结果应用参考点位移（\raise 向上为正）
+        let mut node = node;
+        if let Some(shift) = self.pending_shift.take() {
+            if let Node::Box(b) = &mut node {
+                b.shift = shift;
+            }
+        }
         // ETRIP 冲刺：`\setbox<n>=<box>` —— 封装结果存入寄存器（不入当前列表）
         if let Some(idx) = self.setbox_target.take() {
             if let Node::Box(b) = node {

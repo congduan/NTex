@@ -10,6 +10,19 @@ impl Expander {
         let t2 = self
             .fetch()?
             .ok_or_else(|| Error::invalid_input("\\expandafter 后无第二个 token"))?;
+        // 条件终结符（\else/\fi/\or）：TeX expand() 把 fi_or_else 展开为空格
+        // （tex.web expand 的 fi_or_else 分支）——消耗该 token 并推进条件机，
+        // 不重新输出（否则会被宏实参扫描吞掉，如 `\expandafter\2\fi`）。
+        if let Some(op) = self.cond_op(t2.0) {
+            self.step_conditional(op)?;
+            // 前面的 token 照常输出（t1）
+            let seq = vec![t1];
+            self.stack.push(InputFrame::TokenList {
+                items: Arc::from(seq),
+                pos: 0,
+            });
+            return Ok(());
+        }
         let mut expansion = Vec::new();
         self.expand_once(t2, &mut expansion)?;
         let mut seq = Vec::with_capacity(1 + expansion.len());
@@ -53,7 +66,12 @@ impl Expander {
                         .fetch()?
                         .ok_or_else(|| Error::invalid_input("\\expandafter 链中断"))?;
                     out.push(a);
-                    self.expand_once(b, out)?;
+                    // \else/\fi/\or：TeX expand() 的 fi_or_else 分支（展开为空格并推进条件机）
+                    if let Some(op) = self.cond_op(b.0) {
+                        self.step_conditional(op)?;
+                    } else {
+                        self.expand_once(b, out)?;
+                    }
                 }
                 EqSlot::Primitive(Primitive::Noexpand) => {
                     let t = self
@@ -240,10 +258,13 @@ impl Expander {
         self.emit_tokens(out)
     }
 
-    /// `\unexpanded{...}`：组内容作为 noexpand token 流输出（不展开、保留 catcode）。
+    /// `\unexpanded{...}`：组内容作为 token 流输出。
+    /// - 展开上下文（`\edef`/`\write`）：标记 noexpand，内容不再展开（e-TeX 语义）；
+    /// - 主循环执行：正常执行（`\unexpanded{\def\1{...}}` 中 `\def` 生效）。
     fn exec_unexpanded(&mut self) -> Result<()> {
         let toks = self.scan_group_contents_expanding()?;
-        let items: Vec<(Token, bool)> = toks.into_iter().map(|t| (t, true)).collect();
+        let flag = self.expand_only;
+        let items: Vec<(Token, bool)> = toks.into_iter().map(|t| (t, flag)).collect();
         self.stack.push(InputFrame::TokenList {
             items: Arc::from(items),
             pos: 0,
@@ -253,8 +274,9 @@ impl Expander {
 
     /// `\scantokens{...}`（M4-5 e-TeX）：组内容 detokenize 为文本后按**当前**
     /// catcode 重新扫描（eTeX 语义：等价于从字符串 `\input`）。
+    /// 参数为 `<general text>`：先展开可展开项（`\scantokens\expandafter{\1}`）。
     fn exec_scantokens(&mut self) -> Result<()> {
-        let toks = self.scan_group_contents()?;
+        let toks = self.scan_group_contents_expanding()?;
         let mut text: Vec<Token> = Vec::new();
         for t in toks {
             detokenize_token(t, &self.intern, &mut text);

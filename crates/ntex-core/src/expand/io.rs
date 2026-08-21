@@ -61,6 +61,13 @@ impl Expander {
             self.unread(first);
             loop {
                 let Some((t, _)) = self.fetch()? else { break };
+                // `\jobname`：展开为作业名（TeX 文件名扫描展开 \jobname）
+                if let Some(csid) = t.csid() {
+                    if self.eqtb.slot(csid) == &EqSlot::Primitive(Primitive::JobName) {
+                        name.push_str("texput");
+                        continue;
+                    }
+                }
                 match t.catcode() {
                     Some(Catcode::Letter) | Some(Catcode::Other) => {
                         let ch = t
@@ -241,6 +248,8 @@ impl Expander {
             return Err(Error::invalid_input("\\write18（shell 转义）暂不支持"));
         }
         let toks = Arc::from(self.scan_general_text()?);
+        // 消费 \immediate 前缀（流 15/16 终端写也须消费，避免污染后续 \write）
+        let immediate = self.take_immediate();
         // 流 16 = 终端（TeX：\write16 写终端与日志，无需 \openout）；
         // ETRIP 的 \typeout/\error 用 \write15（同终端；TeX 预留流 15 作 log 输出）
         if idx == 16 || idx == 15 {
@@ -248,7 +257,7 @@ impl Expander {
             return self.sink.write16(s);
         }
         self.ensure_write_stream(idx);
-        if self.take_immediate() {
+        if immediate {
             let s = self.expand_to_string(&toks)?;
             let path = self
                 .write_streams
@@ -262,6 +271,13 @@ impl Expander {
                 .append(&path, out.as_bytes())
                 .map_err(|e| Error::io("VFS 写入", &path, e))?;
         } else {
+            // 非 \immediate：TeX 在列表中留 whatsit 节点（文本延迟到 shipout 写出）。
+            let text: String = toks
+                .iter()
+                .filter_map(|t| t.charcode())
+                .filter_map(char::from_u32)
+                .collect();
+            self.sink.whatsit(text)?;
             self.write_streams[idx]
                 .as_mut()
                 .expect("exec_write 已 ensure 流槽")
@@ -284,7 +300,10 @@ impl Expander {
             match t.catcode() {
                 Some(Catcode::BeginGroup) => {
                     depth += 1;
-                    toks.push(t);
+                    // 最外层 { 是组定界符（被吸收），不计入文本；内层嵌套组保留
+                    if depth > 1 {
+                        toks.push(t);
+                    }
                 }
                 Some(Catcode::EndGroup) => {
                     if depth == 0 {
@@ -345,7 +364,8 @@ impl Expander {
             (stream.path.clone(), std::mem::take(&mut stream.pending))
         };
         let Some(path) = path else {
-            return Err(Error::invalid_input("\\write 到未打开的流"));
+            // TeX 语义：延迟 \write 到未打开的流在 shipout 时被忽略（内容丢弃）。
+            return Ok(());
         };
         let mut out = String::new();
         for toks in pending {

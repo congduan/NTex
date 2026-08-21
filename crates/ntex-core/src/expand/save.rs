@@ -374,13 +374,9 @@ impl Expander {
         if self.group_level == 0 {
             return Err(Error::invalid_input("多余的 }"));
         }
-        let cond_depth = self
-            .group_cond_depth
-            .pop()
-            .expect("begin_group 与 end_group 必须配对");
-        if self.cond_stack.len() != cond_depth {
-            return Err(Error::invalid_input("组内条件未闭合（缺少 \\fi）"));
-        }
+        // 条件栈与组栈相互独立（TeX：条件可跨组，如 `\begingroup\iftrue a\egroup\fi`，
+        // ETRIP line 433 的 `\begingroup \iftrue \scantokens... \egroup \fi` 即依赖此语义）。
+        let _ = self.group_cond_depth.pop();
         // 恢复本层保存的赋值
         while let Some((level, _)) = self.save_stack.last() {
             if *level != self.group_level {

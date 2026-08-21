@@ -244,6 +244,31 @@ pub enum Primitive {
     LastNodeType,
     // ETRIP 冲刺：\discretionary{pre}{post}{replace}（断字节点）
     Discretionary,
+    // ETRIP 冲刺：\insert<num>{<general text>}（insert 节点）与 \vadjust{...}（adjust 节点）
+    Insert,
+    VAdjust,
+    // ETRIP 冲刺：对齐 \valign/\halign/\cr/\noalign 与 \mathchoice{}{}{}{}
+    Valign,
+    Halign,
+    Cr,
+    NoAlign,
+    MathChoice,
+    // ETRIP 冲刺：输出例程 \deadcycles；\tracingmacros/\tracingoutput/\errorcontextlines
+    DeadCycles,
+    TracingMacros,
+    TracingOutput,
+    ErrorContextLines,
+    // ETRIP 冲刺：\raise/\lower<dimen><box>（盒子参考点位移）与 \span（对齐模板）
+    Raise,
+    Lower,
+    Span,
+    // ETRIP 冲刺：\special{<general text>}（whatsit 节点）与 \jobname（作业名）
+    Special,
+    JobName,
+    // ETRIP 冲刺：\vcenter<box>（数学垂直居中盒，简化按 vbox）
+    VCenter,
+    // ETRIP 冲刺：\ifinner（内部垂直/受限水平/数学模式为真；TeX 条件原语）
+    IfInner,
 }
 
 impl Primitive {
@@ -264,6 +289,7 @@ impl Primitive {
                 | Self::ETeXVersion
                 | Self::ETeXRevision
                 | Self::String_
+                | Self::JobName
         )
     }
 
@@ -467,6 +493,24 @@ impl Primitive {
             190 => Self::CurrentGroupType,
             191 => Self::LastNodeType,
             192 => Self::Discretionary,
+            193 => Self::Insert,
+            194 => Self::VAdjust,
+            195 => Self::Valign,
+            196 => Self::Halign,
+            197 => Self::Cr,
+            198 => Self::NoAlign,
+            199 => Self::MathChoice,
+            200 => Self::DeadCycles,
+            201 => Self::TracingMacros,
+            202 => Self::TracingOutput,
+            203 => Self::ErrorContextLines,
+            204 => Self::Raise,
+            205 => Self::Lower,
+            206 => Self::Span,
+            207 => Self::Special,
+            208 => Self::JobName,
+            209 => Self::VCenter,
+            210 => Self::IfInner,
             _ => return None,
         })
     }

@@ -48,6 +48,10 @@ fn int_param_index(p: Primitive) -> Option<usize> {
         Primitive::LastLineFit => 22,
         Primitive::PredisplayDirection => 23,
         Primitive::EveryEof => 24,
+        Primitive::DeadCycles => 25,
+        Primitive::TracingMacros => 26,
+        Primitive::TracingOutput => 27,
+        Primitive::ErrorContextLines => 28,
         _ => return None,
     })
 }

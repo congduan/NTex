@@ -37,28 +37,26 @@ fn fmt_reload_then_run_etrip_preamble() {
     ntex_format::save(&mut buf, &ts.export_state()).unwrap();
     eprintln!("fmt bytes: {}", buf.len());
 
+    let lines: Vec<&[u8]> = src.split(|&b| b == b'\n').collect();
+
+    // 完整 fmt + 截断源（60 行）：若仍失败 → fmt 状态坏
     let mut ts2 = ntex_layout::Typesetter::with_tfm();
     let state = ntex_format::load(&mut &buf[..]).unwrap();
     ts2.import_state(state);
-    // 完整 fmt + 截断源（60 行）：若仍失败 → fmt 状态坏
-    let lines: Vec<&[u8]> = src.split(|&b| b == b'\n').collect();
     let head60: Vec<u8> = lines[..60].join(&b'\n');
     let r2a = ts2.typeset_bytes(head60);
     eprintln!("pass2(fullfmt @60): {:?} transcript={:?}", r2a.as_ref().err(), ts2.take_transcript());
+
     // 完整 fmt + 完整源
-    let mut ts3 = ntex_layout::Typesetter::with_tfm();
-    let state3 = ntex_format::load(&mut &buf[..]).unwrap();
-    ts3.import_state(state3);
-    // 先诊断：fmt 载入后 \einitex 是否定义、条件是否可闭合
-    let diag = ts3.typeset_bytes(r"\message{D:}\ifx\einitex\undefined \message{UNDEF}\else\message{DEF}\fi\relax");
-    eprintln!("diag(einitex): {:?} transcript={:?}", diag.as_ref().err(), ts3.take_transcript());
-    // 重新加载干净 fmt 跑完整源
     let mut ts4 = ntex_layout::Typesetter::with_tfm();
     let state4 = ntex_format::load(&mut &buf[..]).unwrap();
     ts4.import_state(state4);
     let r3 = ts4.typeset_bytes(src.clone());
-    eprintln!("pass2(fullfmt fullsrc): {:?} transcript_tail={:?}", r3.as_ref().err(),
-        &ts4.take_transcript().chars().rev().take(100).collect::<String>().chars().rev().collect::<String>());
+    let tr4 = ts4.take_transcript();
+    eprintln!("pass2(fullfmt fullsrc): {:?} tr_len={} tr_head={:?} tr_tail={:?}", r3.as_ref().err(), tr4.len(),
+        &tr4.chars().take(120).collect::<String>(),
+        &tr4.chars().rev().take(300).collect::<String>().chars().rev().collect::<String>());
+
     // 只跑测试体（line 119+）
     let mut ts5 = ntex_layout::Typesetter::with_tfm();
     let state5 = ntex_format::load(&mut &buf[..]).unwrap();
@@ -67,16 +65,18 @@ fn fmt_reload_then_run_etrip_preamble() {
     let r5 = ts5.typeset_bytes(body);
     eprintln!("pass2(body-only): {:?} transcript_head={:?}", r5.as_ref().err(),
         &ts5.take_transcript().chars().take(80).collect::<String>());
-    // 二分 body：单段 to178（含 \2 循环）
-    for (tag, end) in [("to270", 270usize), ("to278", 278usize), ("to290", 290usize)] {
+
+    // 二分 body 定位下一个失败点
+    for (tag, end) in [("to399", 399usize), ("to414", 414usize), ("to470", 470usize)] {
         let mut t = ntex_layout::Typesetter::with_tfm();
         t.import_state(ntex_format::load(&mut &buf[..]).unwrap());
         let seg: Vec<u8> = lines[118..end].join(&b'\n');
         let rr = t.typeset_bytes(seg);
         let tr = t.take_transcript();
         eprintln!("seg {tag}: {:?} tr_tail={:?}", rr.as_ref().err(),
-            &tr.chars().rev().take(50).collect::<String>().chars().rev().collect::<String>());
+            &tr.chars().rev().take(60).collect::<String>().chars().rev().collect::<String>());
     }
+
     // 诊断：fmt 载入后 e-TeX 原语是否保持原语身份
     let mut ts6 = ntex_layout::Typesetter::with_tfm();
     let state6 = ntex_format::load(&mut &buf[..]).unwrap();

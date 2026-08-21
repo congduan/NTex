@@ -99,7 +99,11 @@ impl Expander {
                 Ok(())
             }
             // M1-11 组
-            Primitive::BeginGroup => self.begin_group(),
+            Primitive::BeginGroup => {
+                // \begingroup：半简单组（currentgrouptype=14）
+                self.sink.semisimple_begin()?;
+                self.begin_group()
+            }
             Primitive::EndGroup => self.end_group(),
             // M3-2 排版原语
             // 盒子：扫描可选 to/spread 规格，直通 sink（排版器解释）。
@@ -339,6 +343,65 @@ impl Expander {
                 let post = self.scan_group_contents()?;
                 let replace = self.scan_group_contents()?;
                 self.sink.discretionary(pre, post, replace)
+            }
+            // ETRIP 冲刺：\insert<regnum>{<general text>}（insert 节点；内容只收集不排版）
+            Primitive::Insert => {
+                let class = self.scan_register_index()?;
+                let toks = self.scan_group_contents()?;
+                self.sink.insert_node(class, toks)
+            }
+            // ETRIP 冲刺：\vadjust{<vertical material>}（adjust 节点；内容只收集不排版）
+            Primitive::VAdjust => {
+                let toks = self.scan_group_contents()?;
+                self.sink.vadjust(toks)
+            }
+            // ETRIP 冲刺：\valign/\halign：下一个组为对齐组（组种类 6）
+            Primitive::Valign | Primitive::Halign => self.sink.align_begin(),
+            // ETRIP 冲刺：\noalign{...}：下一个组为无对齐组（组种类 7）
+            Primitive::NoAlign => self.sink.noalign_begin(),
+            // ETRIP 冲刺：\cr（对齐行结束）：无操作（简化；对齐组按盒子处理）
+            Primitive::Cr => self.sink.align_row_end(),
+            // ETRIP 冲刺：\mathchoice{D}{T}{S}{SS}：收集四个分支（内容不执行）
+            Primitive::MathChoice => {
+                for _ in 0..4 {
+                    self.scan_group_contents()?;
+                }
+                Ok(())
+            }
+            // ETRIP 冲刺：\raise/\lower<dimen><box>：记录盒子参考点位移（下一个封装盒子生效）
+            Primitive::Raise | Primitive::Lower => {
+                let amount = self.scan_dimen()?;
+                let amount = if prim == Primitive::Lower {
+                    -amount
+                } else {
+                    amount
+                };
+                self.sink.raise(amount)
+            }
+            // ETRIP 冲刺：\span（对齐模板列合并）：无操作（简化）
+            Primitive::Span => Ok(()),
+            // ETRIP 冲刺：\special{<general text>}：whatsit 节点（内容只收集不排版）
+            Primitive::Special => {
+                let toks = self.scan_group_contents()?;
+                let text: String = toks
+                    .iter()
+                    .filter_map(|t| t.charcode())
+                    .filter_map(char::from_u32)
+                    .collect();
+                self.sink.whatsit(text)
+            }
+            // ETRIP 冲刺：\jobname：作业名（当前无名字来源，恒 "texput"）
+            Primitive::JobName => self.emit_tokens(
+                "texput"
+                    .bytes()
+                    .map(|b| Token::char(Catcode::Other, u32::from(b)))
+                    .collect(),
+            ),
+            // ETRIP 冲刺：\vcenter<box>：数学垂直居中盒（简化按 vbox 处理）
+            Primitive::VCenter => {
+                let (to, spread) = self.scan_box_spec()?;
+                self.sink.box_spec(to, spread)?;
+                self.sink.primitive(Primitive::VBox)
             }
             Primitive::Sqrt => self.sink.math_sqrt(),
             Primitive::MathOrd => self.sink.math_class(0),
@@ -1009,6 +1072,7 @@ impl Expander {
             // 内部整数参数（\tracingstats/\language 等）也可 \advance
             EqSlot::Primitive(p) if int_param_index(p).is_some() => {
                 let idx = int_param_index(p).expect("已检查 is_some");
+                self.scan_keyword(|w| w == "by")?;
                 let delta = self.scan_number()?;
                 let val = self.params.misc[idx] + delta;
                 let global = self.is_global();
@@ -1033,6 +1097,8 @@ impl Expander {
 
     /// `\advance` 的寄存器增量应用（TeX：`new = old + delta`，胶水逐分量加）。
     fn advance_register(&mut self, kind: RegKind, idx: usize) -> Result<()> {
+        // 可选 `by` 关键字（TeX：`\advance\count0 by5` 与 `\advance\count0 5` 等价）
+        self.scan_keyword(|w| w == "by")?;
         match kind {
             RegKind::Count => {
                 let delta = self.scan_number()?;

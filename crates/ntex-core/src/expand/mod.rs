@@ -468,7 +468,13 @@ impl Expander {
     /// 输出例程（M3-5-3）在 token 边界注入：fire_up（发生在 sink 调用内）把页面
     /// 放入 box255 并置 pending；本循环在每次取 token 前检查并注入例程 token 帧。
     pub fn run(&mut self) -> Result<()> {
+        let mut steps = 0u64;
         loop {
+            // 看门狗：防死循环（ETRIP 诊断用；正常作业远低于此）
+            steps += 1;
+            if steps > 10_000_000 {
+                return Err(Error::invalid_input("处理步骤超限（疑似死循环）"));
+            }
             // 输出例程激活期间（例程帧在栈上）不重复注入
             if !self.output_active && self.maybe_inject_output()? {
                 continue;

@@ -210,6 +210,46 @@ pub trait TokenSink: std::fmt::Debug {
     fn discretionary(&mut self, _pre: Vec<Token>, _post: Vec<Token>, _replace: Vec<Token>) -> Result<()> {
         Ok(())
     }
+    /// `\insert<num>{<general text>}`：insert 节点（无维度；内容只收集不排版）。
+    fn insert_node(&mut self, _class: usize, _toks: Vec<Token>) -> Result<()> {
+        Ok(())
+    }
+    /// `\vadjust{<vertical material>}`：adjust 节点（无维度）。
+    fn vadjust(&mut self, _toks: Vec<Token>) -> Result<()> {
+        Ok(())
+    }
+    /// `\write<n>{...}`（非 \immediate）：whatsit 节点（无维度）。
+    fn whatsit(&mut self, _text: String) -> Result<()> {
+        Ok(())
+    }
+    /// e-TeX `\lastnodetype`：当前列表尾节点类型码（空列表 -1）。
+    fn last_node_type(&self) -> i64 {
+        -1
+    }
+    /// e-TeX `\currentgrouptype`：当前组类型码（bottom=0 ... math_left=16）。
+    fn current_group_type(&self) -> i64 {
+        0
+    }
+    /// `\begingroup`：下一个组为半简单组（currentgrouptype=14）。
+    fn semisimple_begin(&mut self) -> Result<()> {
+        Ok(())
+    }
+    /// `\valign{`/`\halign{`：下一个组为对齐组（currentgrouptype=6）。
+    fn align_begin(&mut self) -> Result<()> {
+        Ok(())
+    }
+    /// `\noalign{`：下一个组为无对齐组（currentgrouptype=7）。
+    fn noalign_begin(&mut self) -> Result<()> {
+        Ok(())
+    }
+    /// `\cr`（对齐行结束）：无操作（ETRIP 简化）。
+    fn align_row_end(&mut self) -> Result<()> {
+        Ok(())
+    }
+    /// `\raise`/`\lower<dimen>`：记录盒子参考点位移（下一个封装盒子生效）。
+    fn raise(&mut self, _amount: i64) -> Result<()> {
+        Ok(())
+    }
     /// 累积的终端转录文本（默认空；收集型 sink 实现）。
     fn transcript(&self) -> &str {
         ""
