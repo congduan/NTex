@@ -73,6 +73,9 @@ pub type GlueOrder = u8;
 /// `fil` 阶常量。
 pub const GLUE_ORDER_FIL: GlueOrder = 1;
 
+/// `fill` 阶常量（`\hfill`/`\vfill` 等）。
+pub const GLUE_ORDER_FILL: GlueOrder = 2;
+
 /// 盒子节点：维度在构建时固化并存储（与 TeX 的 box 节点一致），
 /// `\raise`/`\lower`/`\vtop` 等通过 `shift` 表达参考点位移。
 #[derive(Debug, Clone, PartialEq)]
@@ -269,6 +272,50 @@ pub fn vbox_dimensions(children: &[Node]) -> BoxDimensions {
         height: first_height,
         depth: total - first_height,
     }
+}
+
+/// `vpack`（tex.web §661 "vpackage"）：把垂直列表打包为总高（height+depth）**恰好**
+/// `height` 的 vbox。
+///
+/// 占位度量阶段简化：差额直接调整维度（高度优先，超 `maxdepth` 语义未建模；
+/// 不逐节点烘焙 glue_set）。无差额时与 [`BoxNode::new_vbox`] 等价。
+pub fn vpack(children: Vec<Node>, height: i64) -> BoxNode {
+    let natural = vbox_dimensions(&children);
+    let mut b = BoxNode::new_vbox(children);
+    let diff = height - (natural.height + natural.depth);
+    if diff >= 0 {
+        b.height += diff; // 拉伸：全部加在高度上
+    } else {
+        // 收缩：先缩高度（≥0），剩余缩深度
+        let dh = b.height.min(-diff);
+        b.height -= dh;
+        let dd = (-diff - dh).min(b.depth);
+        b.depth -= dd;
+    }
+    b
+}
+
+/// `vsplit`（tex.web §1168）：把 vbox 从顶部切出高为 `height` 的部分。
+/// 返回 (顶部结果, 底部余量)。纵向距离累计：盒子/规则按 h+d、胶水/字距按 width。
+pub fn split_vbox(b: BoxNode, height: i64) -> (BoxNode, BoxNode) {
+    let mut acc = 0i64;
+    let mut split = b.children.len();
+    for (i, c) in b.children.iter().enumerate() {
+        let d = match c {
+            Node::Glue { width, .. } | Node::Kern { width } => *width,
+            Node::Box(bx) => bx.height + bx.depth,
+            Node::Rule { height: h, depth, .. } => h + depth,
+            _ => c.dimensions().total(),
+        };
+        acc += d;
+        if acc >= height {
+            split = i + 1;
+            break;
+        }
+    }
+    let top = b.children[..split].to_vec();
+    let rest = b.children[split..].to_vec();
+    (vpack(top, height), BoxNode::new_vbox(rest))
 }
 
 /// `hpack`（tex.web §656 "hpackage"）：把水平列表打包成**恰好** `width` 宽的 hbox。

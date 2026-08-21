@@ -20,8 +20,9 @@ use ntex_core::version::Version;
 /// 文件魔数（8 字节）。
 const MAGIC: &[u8; 8] = b"NTEXFMT1";
 /// 格式版本（v2：M4-4 显示数学间距参数；v3：ETRIP 内部整数参数；
-/// v4：M1-8 参数文本全量序列化——定界符标志改为参数文本 token 数组）。
-const VERSION: u8 = 5;
+/// v4：M1-8 参数文本全量序列化——定界符标志改为参数文本 token 数组；
+/// v6：ETRIP `\parfillskip` 胶水参数）。
+const VERSION: u8 = 6;
 
 /// 编码一个 `.fmt` 快照。
 pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
@@ -93,6 +94,8 @@ pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
     for v in p.misc {
         w.write_all(&v.to_le_bytes())?;
     }
+    // ETRIP 冲刺（v6 追加）：\parfillskip 胶水
+    write_glue(w, p.parfillskip)?;
 
     // output_toks
     write_opt_tokens(w, state.output_toks.as_deref())?;
@@ -171,6 +174,8 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
     for v in &mut misc {
         *v = read_i64(r)?;
     }
+    // ETRIP 冲刺（v6）：\parfillskip 胶水
+    let parfillskip = read_glue(r)?;
     let params = ntex_core::param::Params {
         parindent,
         baselineskip,
@@ -182,6 +187,7 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
         topskip,
         maxdepth,
         parskip,
+        parfillskip,
         abovedisplayskip,
         belowdisplayskip,
         abovedisplayshortskip,

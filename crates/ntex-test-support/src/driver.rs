@@ -245,35 +245,85 @@ impl EngineDriver for NtexDriver {
 
         // TRIP/ETRIP 需要真实 TFM 度量：用 with_tfm()（\font 加载 cmr10/trip/etrip）。
         let mut ts = ntex_layout::Typesetter::with_tfm();
-        let run = ts.typeset_bytes(source);
+        let run = ts.typeset_bytes(source.clone());
         // 终端转录（\message/\show/\showthe/\write16）→ .log 与 .typ 共用
         let transcript = ts.take_transcript();
         log.push_str(&transcript);
         if !transcript.is_empty() && !transcript.ends_with('\n') {
             log.push('\n');
         }
-        let (status, produced) = match run {
-            Ok(_) => {
-                log.push_str("Engine: run completed.\n");
-                (
-                    DriverStatus::Success,
-                    vec![format!("{base}.log"), format!("{base}.typ")],
-                )
+        // e-IniTeX 语义：`\dump` 后保存 fmt，再以该格式重跑同一源（\einitex 已定义
+        // → 跳过前导，进入 ETRIP 测试体）；两段转录同入 .log。
+        let dumped = ts.dumped();
+        let mut transcript2 = String::new();
+        let (status, produced) = if dumped {
+            let mut buf = Vec::new();
+            ntex_format::save(&mut buf, &ts.export_state())
+                .with_context(|| "序列化 .fmt 快照失败")?;
+            let fmt_path = request.working_dir.join(format!("{base}.fmt"));
+            fs::write(&fmt_path, &buf).with_context(|| "写入 .fmt 产物失败")?;
+
+            let mut ts2 = ntex_layout::Typesetter::with_tfm();
+            let mut reader = &buf[..];
+            let state = ntex_format::load(&mut reader).with_context(|| "加载 .fmt 快照失败")?;
+            ts2.import_state(state);
+            let run2 = ts2.typeset_bytes(source);
+            transcript2 = ts2.take_transcript();
+            if let Err(e) = &run2 {
+                eprintln!(
+                    "[driver] pass2 error: {e} | transcript2 len={} first={:?}",
+                    transcript2.len(),
+                    transcript2.chars().take(80).collect::<String>()
+                );
             }
-            Err(e) => {
-                log.push_str(&format!("Engine error: {e}\n"));
-                // 首个错误即停：产物保留以便 diff 展示差距；状态标记失败
-                (
-                    DriverStatus::Failure { code: None },
-                    vec![format!("{base}.log"), format!("{base}.typ")],
-                )
+            if !transcript2.is_empty() {
+                if !log.ends_with('\n') {
+                    log.push('\n');
+                }
+                log.push_str(&transcript2);
+                if !transcript2.ends_with('\n') {
+                    log.push('\n');
+                }
+            }
+            let produced = vec![format!("{base}.log"), format!("{base}.typ")];
+            match run2 {
+                Ok(_) => {
+                    log.push_str("Engine: run completed.\n");
+                    (DriverStatus::Success, produced)
+                }
+                Err(e) => {
+                    log.push_str(&format!("Engine error: {e}\n"));
+                    (DriverStatus::Failure { code: None }, produced)
+                }
+            }
+        } else {
+            let produced = vec![format!("{base}.log"), format!("{base}.typ")];
+            match run {
+                Ok(_) => {
+                    log.push_str("Engine: run completed.\n");
+                    (DriverStatus::Success, produced)
+                }
+                Err(e) => {
+                    log.push_str(&format!("Engine error: {e}\n"));
+                    (DriverStatus::Failure { code: None }, produced)
+                }
             }
         };
 
         fs::write(request.working_dir.join(format!("{base}.log")), &log)
             .with_context(|| "写入 .log 产物失败")?;
-        // .typ（终端转录）：\message/\show 等累积文本
-        fs::write(request.working_dir.join(format!("{base}.typ")), &transcript)
+        // .typ（终端转录）：\message/\show 等累积文本（两段同录）
+        let typ = if dumped {
+            let mut t = transcript;
+            if !t.is_empty() && !t.ends_with('\n') {
+                t.push('\n');
+            }
+            t.push_str(&transcript2);
+            t
+        } else {
+            transcript
+        };
+        fs::write(request.working_dir.join(format!("{base}.typ")), &typ)
             .with_context(|| "写入 .typ 产物失败")?;
 
         Ok(RunOutput {

@@ -85,12 +85,12 @@ impl Expander {
                 }
                 EqSlot::Primitive(Primitive::Unexpanded) => {
                     // \unexpanded{...}：组内容原样保留（noexpand 标记）
-                    let toks = self.scan_group_contents()?;
+                    let toks = self.scan_group_contents_expanding()?;
                     out.extend(toks.into_iter().map(|t| (t, true)));
                 }
                 EqSlot::Primitive(Primitive::Detokenize) => {
                     // \detokenize{...}：组内容转回字符 token（cat 12 其他字符）
-                    let toks = self.scan_group_contents()?;
+                    let toks = self.scan_group_contents_expanding()?;
                     let mut detok = Vec::new();
                     for t in toks {
                         detokenize_token(t, &self.intern, &mut detok);
@@ -222,7 +222,7 @@ impl Expander {
     /// `\detokenize{...}`：组内容转字符 token 流（字符 catcode 12、空格 10、
     /// 控制序列 → `\名字` 文本），作为输入继续处理。
     fn exec_detokenize(&mut self) -> Result<()> {
-        let toks = self.scan_group_contents()?;
+        let toks = self.scan_group_contents_expanding()?;
         let mut out = Vec::new();
         for t in toks {
             detokenize_token(t, &self.intern, &mut out);
@@ -232,7 +232,7 @@ impl Expander {
 
     /// `\unexpanded{...}`：组内容作为 noexpand token 流输出（不展开、保留 catcode）。
     fn exec_unexpanded(&mut self) -> Result<()> {
-        let toks = self.scan_group_contents()?;
+        let toks = self.scan_group_contents_expanding()?;
         let items: Vec<(Token, bool)> = toks.into_iter().map(|t| (t, true)).collect();
         self.stack.push(InputFrame::TokenList {
             items: Arc::from(items),

@@ -122,6 +122,12 @@ impl Expander {
                     let v = self.registers.dimen(idx);
                     return Ok(if neg { -v } else { v });
                 }
+                // \chardef\cs=<num>：数字上下文返回字符码（TeX scan_int）
+                EqSlot::Char { charcode, .. } => {
+                    self.fetch()?; // 消费 cs
+                    let v = charcode as i64;
+                    return Ok(if neg { -v } else { v });
+                }
                 _ => {}
             }
         }
@@ -300,6 +306,67 @@ impl Expander {
             }
         }
         Ok(tokens)
+    }
+
+    /// TeX `<general text>` 扫描（`\unexpanded`/`\detokenize` 参数）：
+    /// 先展开可展开项（`\expandafter`/宏/可展开原语）直到组开始 `{`，
+    /// 再按 [`Self::scan_group_contents`] 收集组内容（组内不展开）。
+    fn scan_group_contents_expanding(&mut self) -> Result<Vec<Token>> {
+        loop {
+            let open = self
+                .fetch()?
+                .ok_or_else(|| Error::invalid_input("扫描到输入末尾"))?
+                .0;
+            if open.catcode() == Some(Catcode::BeginGroup) {
+                self.unread(open);
+                break;
+            }
+            let Some(csid) = open.csid() else {
+                return Err(Error::invalid_input("预期 {（组开始）"));
+            };
+            match self.eqtb.slot(csid).clone() {
+                EqSlot::Alias(_) => {
+                    // 沿别名链解引用（\let\bgroup={ 是 Char 不会到这；\let\1=\5 会）。
+                    // 若 unread 原 alias token 再 continue 会无限循环。
+                    let mut id = csid;
+                    let mut depth = 0;
+                    while let EqSlot::Alias(t) = self.eqtb.slot(id) {
+                        id = *t;
+                        depth += 1;
+                        if depth > 100 {
+                            return Err(Error::invalid_input("\\let 别名环"));
+                        }
+                    }
+                    self.unread(Token::control_sequence(id));
+                    continue;
+                }
+                // protected 宏在展开抑制上下文（\edef/\write）不展开 → 视为不可展开
+                EqSlot::Macro(m)
+                    if !(m.value.protected && self.suppress_expansion > 0) =>
+                {
+                    let mut expansion = Vec::new();
+                    self.expand_once((open, false), &mut expansion)?;
+                    let items: Vec<(Token, bool)> = expansion.into_iter().collect();
+                    self.stack.push(InputFrame::TokenList {
+                        items: Arc::from(items),
+                        pos: 0,
+                    });
+                    continue;
+                }
+                EqSlot::Primitive(p) if p.is_expandable() => {
+                    let mut expansion = Vec::new();
+                    self.expand_once((open, false), &mut expansion)?;
+                    let items: Vec<(Token, bool)> = expansion.into_iter().collect();
+                    self.stack.push(InputFrame::TokenList {
+                        items: Arc::from(items),
+                        pos: 0,
+                    });
+                    continue;
+                }
+                _ => return Err(Error::invalid_input("预期 {（组开始）")),
+            }
+        }
+        self.scan_group_contents()
     }
 
     /// 扫描一个尺寸：数字（含小数）+ 可选单位；支持 `\dimen<idx>` 引用。

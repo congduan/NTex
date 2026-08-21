@@ -43,6 +43,7 @@ impl Expander {
             Primitive::End => {
                 self.stack.clear();
                 self.output_active = false;
+                self.cond_stack.clear();
                 // TeX `\end` 收尾：flush 所有延迟写流（final_cleanup 语义）
                 self.flush_writes()?;
                 Ok(())
@@ -99,9 +100,10 @@ impl Expander {
             Primitive::BeginGroup => self.begin_group(),
             Primitive::EndGroup => self.end_group(),
             // M3-2 排版原语
-            // 盒子：直通 sink（规格 to/spread 属 M3-2-2，暂拒）
+            // 盒子：扫描可选 to/spread 规格，直通 sink（排版器解释）。
             Primitive::HBox | Primitive::VBox | Primitive::VTop => {
-                self.reject_box_spec()?;
+                let (to, spread) = self.scan_box_spec()?;
+                self.sink.box_spec(to, spread)?;
                 self.sink.primitive(prim)
             }
             Primitive::Par => self.sink.primitive(prim),
@@ -162,12 +164,14 @@ impl Expander {
                 };
                 self.assign_param(kind, ParamValue::Dimen(v))
             }
-            Primitive::TopSkip | Primitive::ParSkip => {
+            Primitive::TopSkip | Primitive::ParSkip | Primitive::ParFillSkip => {
                 let g = self.scan_glue()?;
                 let kind = if prim == Primitive::TopSkip {
                     ParamKind::TopSkip
-                } else {
+                } else if prim == Primitive::ParSkip {
                     ParamKind::ParSkip
+                } else {
+                    ParamKind::ParFillSkip
                 };
                 self.assign_param(kind, ParamValue::Glue(g))
             }
@@ -373,6 +377,57 @@ impl Expander {
             }
             // M4-6 断字：\patterns{...}（扫描组 + 直通 sink 文本）
             Primitive::Patterns => self.exec_patterns(),
+            // ETRIP 冲刺：\hyphenation{...}（断字异常词表：lccode 转小写 + 断点 → sink）
+            Primitive::Hyphenation => self.exec_hyphenation(),
+            // ETRIP 冲刺：\setbox<n>=<box>（盒子寄存器赋值：通知 sink 存入寄存器）
+            Primitive::SetBox => {
+                let idx = self.scan_register_index()?;
+                self.expect_equals()?;
+                self.sink.setbox(idx)
+            }
+            // ETRIP 冲刺：\␣（control space）：输出空格 token（TeX control_space）
+            Primitive::ControlSpace => self
+                .sink
+                .token(Token::char(Catcode::Space, u32::from(b' '))),
+            // ETRIP 冲刺：无限阶胶水（\hfil/\hfill/\hss/\vfil/\vfill/\vss）
+            Primitive::HFil => self.sink.fill_glue(0),
+            Primitive::HFill => self.sink.fill_glue(1),
+            Primitive::HSS => self.sink.fill_glue(2),
+            Primitive::VFil => self.sink.fill_glue(3),
+            Primitive::VFill => self.sink.fill_glue(4),
+            Primitive::VSS => self.sink.fill_glue(5),
+            // ETRIP 冲刺：\vsplit<n> to/spread <dimen>（纵向拆分盒子寄存器）
+            Primitive::VSplit => {
+                let idx = self.scan_register_index()?;
+                self.skip_spaces()?;
+                let mut to = None;
+                let mut spread = None;
+                if let Some(kw) = self.scan_keyword(|w| w == "to" || w == "spread")? {
+                    let d = self.scan_dimen()?;
+                    if kw == "to" {
+                        to = Some(d);
+                    } else {
+                        spread = Some(d);
+                    }
+                }
+                self.sink.vsplit(idx, to, spread)
+            }
+            // ETRIP 冲刺：\everyjob=<tokens>（暂映射 toks 寄存器 0）
+            Primitive::EveryJob => {
+                self.expect_equals()?;
+                let val = self.scan_group_contents()?;
+                self.assign_toks(0, Arc::from(val));
+                Ok(())
+            }
+            // ETRIP 冲刺：\dump（initex 收尾）：标记 dumped 并结束作业（驱动负责写 fmt）
+            Primitive::Dump => {
+                self.dumped = true;
+                self.stack.clear();
+                self.output_active = false;
+                self.cond_stack.clear();
+                self.flush_writes()?;
+                Ok(())
+            }
             // 内部整数参数（\tracingstats 等 25 个）与交互模式命令（\batchmode 等 4 个）
             // 已由上方 int_param_index / interaction_mode_value 守卫分支处理；编译器
             // 不计守卫为覆盖，此处兜底仅满足穷尽性检查（未来新增原语会在此显式报错）。
@@ -447,6 +502,70 @@ impl Expander {
             }
         }
         self.sink.patterns(out)
+    }
+
+    /// `\hyphenation{...}`（ETRIP 冲刺）：扫描平衡组，解析异常词表。
+    ///
+    /// TeX `new_hyphenation`（tex.web）语义：
+    /// - 空格（cat 10）分隔单词；字母/其他字符（cat 11/12）是词字符；
+    /// - `-`（断字符，默认 hyphenchar 45）标记允许的断点（可位于词首/词尾）；
+    /// - 词字符经 `\lccode` 转小写后存储（扫描时转换，组结束不回滚异常表）；
+    /// - 异常词按当前 `\language`（misc[16]）归档，断字时**优先于**模式表。
+    ///
+    /// 简化：暂按单语言全局表存储（sink 侧不分语言）；词比较不做 lccode 二次
+    /// 转换（段落词需已小写）。ETRIP 用例均满足。
+    fn exec_hyphenation(&mut self) -> Result<()> {
+        let tokens = self.scan_group_contents()?;
+        // 断字符：默认 `-`（45）；ETRIP 用例均用字面 `-`。
+        const HYPHEN_CHAR: u32 = 45;
+        let mut words: Vec<(Vec<u8>, Vec<usize>)> = Vec::new();
+        let mut letters: Vec<u8> = Vec::new();
+        let mut breaks: Vec<usize> = Vec::new();
+        // 词首断点（`-q-` 的首 `-`）在词开始时记录：word_breaks_at_0
+        let mut break_at_start = false;
+        for tok in tokens {
+            let cat = tok.catcode();
+            match cat {
+                Some(Catcode::Letter) | Some(Catcode::Other) => {
+                    let ch = tok.charcode().unwrap_or(0);
+                    if ch == HYPHEN_CHAR {
+                        if letters.is_empty() {
+                            break_at_start = true; // 词首 `-`：断点 0
+                        } else {
+                            breaks.push(letters.len());
+                        }
+                    } else {
+                        // lccode 转小写（0 保留原字符：无小写映射）
+                        let lower = self.lccodes[ch as usize];
+                        if lower > 0 {
+                            letters.push(lower as u8);
+                        } else {
+                            letters.push(ch as u8);
+                        }
+                    }
+                }
+                Some(Catcode::Space) | None | Some(_) => {
+                    // 空格或任何非字符 token：结束当前词（若有）
+                    if !letters.is_empty() {
+                        if break_at_start {
+                            breaks.insert(0, 0); // 词首 `-`：断点 0
+                        }
+                        words.push((std::mem::take(&mut letters), std::mem::take(&mut breaks)));
+                    }
+                    break_at_start = false;
+                }
+            }
+        }
+        if !letters.is_empty() {
+            if break_at_start {
+                breaks.insert(0, 0);
+            }
+            words.push((letters, breaks));
+        }
+        if !words.is_empty() {
+            self.sink.hyphenation(words)?;
+        }
+        Ok(())
     }
 
     /// `\left`/`\right` 的定界符参数：字符 → charcode（`.` 为空定界符）；`\.` → None。

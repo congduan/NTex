@@ -8,15 +8,18 @@ impl NodeBuilder {
         if children.is_empty() {
             return None; // 空段落不产生盒子
         }
-        // M4-6 断字：\patterns 非空时对字母 run 插入 discretionary 节点（折行断点）
-        if !self.patterns.is_empty() {
+        // M4-6 断字：patterns 或异常词表非空时对字母 run 插入 discretionary 节点
+        if !self.patterns.is_empty() || !self.hyph_exceptions.is_empty() {
             children = self.hyphenate_paragraph(children);
         }
+        // 段落末尾：裁剪尾部可丢弃节点 + 追加 `\parfillskip`（默认 0pt plus 1fil，
+        // 末行无限拉伸；`\parfillskip=0pt` 时末行保持自然宽度）。
+        let pf = self.params.parfillskip;
         children.push(Node::Glue {
-            width: 0,
-            stretch: 1,
-            shrink: 0,
-            stretch_order: GLUE_ORDER_FIL,
+            width: pf.width,
+            stretch: pf.stretch,
+            shrink: pf.shrink,
+            stretch_order: if pf.stretch != 0 { GLUE_ORDER_FIL } else { 0 },
             shrink_order: 0,
         });
         let lines = knuth_plass(&children, self.params.hsize, self.params.tolerance);
@@ -77,8 +80,17 @@ impl NodeBuilder {
                             _ => unreachable!("run 内必为 Char"),
                         })
                         .collect();
-                    let breaks = self.patterns.hyphenate(&letters);
+                    // 异常词优先（精确匹配小写字母）；否则走模式表
+                    let breaks = match self.exception_breaks(&letters) {
+                        Some(b) => b,
+                        None => self.patterns.hyphenate(&letters),
+                    };
                     let mut bi = 0;
+                    // 异常词允许词首断点（`-q-` 的首 `-`）：首字母前插 discretionary
+                    if breaks.first() == Some(&0) {
+                        out.push(self.make_discretionary(run_font));
+                        bi = 1;
+                    }
                     for (k, node) in children[run_start..j].iter().enumerate() {
                         out.push(node.clone());
                         // 断点 = 第 k 个字母之后（位置 k+1）：插入 discretionary
@@ -95,6 +107,14 @@ impl NodeBuilder {
             i += 1;
         }
         out
+    }
+
+    /// 异常词表查词：小写字母精确匹配 → 返回其允许断点（可含 0 = 词首、len = 词尾）。
+    fn exception_breaks(&self, letters: &[u8]) -> Option<Vec<usize>> {
+        self.hyph_exceptions
+            .iter()
+            .find(|(w, _)| w.as_slice() == letters)
+            .map(|(_, b)| b.clone())
     }
 
     /// 断字 discretionary 节点：`pre` = 连字符（charcode 45，当前 run 字体度量），

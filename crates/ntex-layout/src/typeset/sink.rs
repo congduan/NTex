@@ -184,6 +184,78 @@ impl TokenSink for NodeBuilder {
         Ok(())
     }
 
+    /// `\hyphenation{...}`（ETRIP）：追加异常词表（小写字母 + 允许断点）。
+    fn hyphenation(&mut self, words: Vec<(Vec<u8>, Vec<usize>)>) -> Result<()> {
+        self.hyph_exceptions.extend(words);
+        Ok(())
+    }
+
+    /// `\setbox<n>=<box>`（ETRIP）：记录目标寄存器；后续封装的盒子存入该槽。
+    fn setbox(&mut self, idx: usize) -> Result<()> {
+        self.setbox_target = Some(idx);
+        Ok(())
+    }
+
+    /// `\hbox to/spread <dimen>`（ETRIP）：记录盒子规格，随下一个盒子组生效。
+    fn box_spec(&mut self, to: Option<i64>, spread: Option<i64>) -> Result<()> {
+        self.pending_box_spec = Some((to, spread));
+        Ok(())
+    }
+
+    /// `\vsplit<n> to/spread <dimen>`（ETRIP）：拆分盒子寄存器 n 顶部。
+    /// 寄存器 n 保留余量；结果按 `\setbox` 目标路由，否则追加。
+    fn vsplit(&mut self, idx: usize, to: Option<i64>, spread: Option<i64>) -> Result<()> {
+        let b = self
+            .boxes
+            .get_mut(idx)
+            .and_then(|s| s.take())
+            .ok_or_else(|| Error::invalid_input("\\vsplit 盒子为空（void）"))?;
+        let natural = b.height + b.depth;
+        let target = match (to, spread) {
+            (Some(t), _) => t,
+            (_, Some(s)) => natural + s,
+            _ => natural,
+        };
+        let (result, remainder) = split_vbox(b, target);
+        self.boxes[idx] = Some(remainder);
+        if let Some(t) = self.setbox_target.take() {
+            self.boxes[t] = Some(result);
+        } else {
+            self.append(Node::Box(result));
+        }
+        Ok(())
+    }
+
+    /// 无限阶胶水（ETRIP）：`\hfil`=0/`\hfill`=1/`\hss`=2/`\vfil`=3/`\vfill`=4/`\vss`=5。
+    /// 方向不符当前模式的原语忽略（TeX 语义：如水平模式中的 `\vfil` 无效）。
+    fn fill_glue(&mut self, kind: u8) -> Result<()> {
+        let (horizontal, stretch, shrink, order) = match kind {
+            0 => (true, 1, 0, GLUE_ORDER_FIL),   // \hfil  0pt plus 1fil
+            1 => (true, 1, 0, GLUE_ORDER_FILL),  // \hfill 0pt plus 1fill
+            2 => (true, 1, 1, GLUE_ORDER_FIL),   // \hss   0pt plus 1fil minus 1fil
+            3 => (false, 1, 0, GLUE_ORDER_FIL),  // \vfil
+            4 => (false, 1, 0, GLUE_ORDER_FILL), // \vfill
+            5 => (false, 1, 1, GLUE_ORDER_FIL),  // \vss
+            _ => return Err(Error::internal("非法 fill 胶水种类")),
+        };
+        let in_horizontal =
+            matches!(self.mode(), Mode::Horizontal | Mode::RestrictedHorizontal);
+        if horizontal != in_horizontal {
+            return Ok(()); // 方向不符：忽略
+        }
+        if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            return Ok(()); // 数学模式中 fill 胶水无效果
+        }
+        self.append(Node::Glue {
+            width: 0,
+            stretch,
+            shrink,
+            stretch_order: order,
+            shrink_order: order,
+        });
+        Ok(())
+    }
+
     fn token(&mut self, tok: Token) -> Result<()> {
         // 空格（cat 10）：垂直/数学模式忽略；水平模式转词间空白胶水
         // （行首或胶水/惩罚之后忽略，TeX spacer 语义）。
@@ -458,6 +530,12 @@ impl TokenSink for NodeBuilder {
     /// 否则作为节点追加到当前列表。void 盒子报错（TeX "Box n is void"）。
     /// box255 = 待输出例程处理页面的队首。
     fn box_register(&mut self, idx: usize) -> Result<()> {
+        // `\setbox5=\box3`：把寄存器 3 移入目标 5（\box3 变 void；tex.web set_box 赋值语义）
+        if let Some(target) = self.setbox_target.take() {
+            let b = self.boxes.get_mut(idx).and_then(|s| s.take());
+            self.boxes[target] = b;
+            return Ok(());
+        }
         let b = if idx == 255 {
             self.pending_pages.pop_front()
         } else {

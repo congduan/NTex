@@ -17,14 +17,19 @@ impl Expander {
         Ok(())
     }
 
-    /// 暂拒 `\hbox to <glue>` / `\hbox spread <glue>` 规格（待实现）。
-    fn reject_box_spec(&mut self) -> Result<()> {
-        if self.scan_keyword(|w| w == "to" || w == "spread")?.is_some() {
-            return Err(Error::invalid_input(
-                "\\hbox/\\vbox 的 to/spread 规格暂不支持（M3-2-2）",
-            ));
+    /// 扫描 `\hbox`/`\vbox`/`\vtop` 的可选规格：`to <dimen>` 或 `spread <dimen>`。
+    /// 返回 `(to, spread)`（单位 sp；无规格 = None/None）。
+    fn scan_box_spec(&mut self) -> Result<(Option<i64>, Option<i64>)> {
+        if let Some(kw) = self.scan_keyword(|w| w == "to" || w == "spread")? {
+            let d = self.scan_dimen()?;
+            if kw == "to" {
+                Ok((Some(d), None))
+            } else {
+                Ok((None, Some(d)))
+            }
+        } else {
+            Ok((None, None))
         }
-        Ok(())
     }
 
     /// 扫描 `\hrule`/`\vrule` 的可选规格：

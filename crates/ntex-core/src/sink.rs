@@ -70,6 +70,36 @@ pub trait TokenSink: std::fmt::Debug {
     fn patterns(&mut self, _patterns: Vec<u8>) -> Result<()> {
         Ok(())
     }
+    /// 断字异常词表（ETRIP）：`\hyphenation{...}` 解析结果。
+    /// `words[i] = (小写字母序列, 允许断点位置)`；断点 0 = 词首、len = 词尾。
+    /// 断字时异常词优先于模式表。
+    fn hyphenation(&mut self, _words: Vec<(Vec<u8>, Vec<usize>)>) -> Result<()> {
+        Ok(())
+    }
+    /// `\setbox<n>=<box>`（ETRIP）：下一个封装的盒子存入寄存器 n（sink 侧实现）。
+    fn setbox(&mut self, _idx: usize) -> Result<()> {
+        Ok(())
+    }
+    /// `\hbox to/spread <dimen>`（ETRIP）：记录当前盒子规格（to = 精确目标宽/高，
+    /// spread = 在自然尺寸上增减；单位 sp）。随下一个盒子组生效。
+    fn box_spec(&mut self, _to: Option<i64>, _spread: Option<i64>) -> Result<()> {
+        Ok(())
+    }
+    /// 无限阶胶水（ETRIP）：`\hfil`=0/`\hfill`=1/`\hss`=2/`\vfil`=3/`\vfill`=4/`\vss`=5
+    /// （方向不符的模式忽略；排版器侧换算 order）。
+    fn fill_glue(&mut self, _kind: u8) -> Result<()> {
+        Ok(())
+    }
+    /// `\vsplit<n> to/spread <dimen>`（ETRIP）：纵向拆分盒子寄存器 n 的顶部，
+    /// 寄存器 n 保留余量，结果盒子按 `\setbox` 目标路由或追加。
+    fn vsplit(
+        &mut self,
+        _idx: usize,
+        _to: Option<i64>,
+        _spread: Option<i64>,
+    ) -> Result<()> {
+        Ok(())
+    }
     /// 组开始（`{`）：VM 已完成组作用域簿记。
     fn group_begin(&mut self) -> Result<()> {
         Ok(())

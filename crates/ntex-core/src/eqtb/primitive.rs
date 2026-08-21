@@ -202,6 +202,27 @@ pub enum Primitive {
     LcCode,
     // ETRIP 冲刺：\advance<寄存器> <增量>（寄存器运算）
     Advance,
+    // ETRIP 冲刺：\hyphenation{...}（断字异常词表；按语言存，断字时优先于 patterns）
+    Hyphenation,
+    // ETRIP 冲刺：\setbox<n>=<box>（盒子寄存器赋值）
+    SetBox,
+    // ETRIP 冲刺：\parfillskip（段落末行填充胶水）
+    ParFillSkip,
+    // ETRIP 冲刺：\␣（control space，输出一个空格 token）
+    ControlSpace,
+    // ETRIP 冲刺：无限阶胶水 \hfil/\hfill/\hss/\vfil/\vfill/\vss
+    HFil,
+    HFill,
+    HSS,
+    VFil,
+    VFill,
+    VSS,
+    // ETRIP 冲刺：\vsplit<n> to/spread <dimen>（纵向拆分盒子寄存器）
+    VSplit,
+    // ETRIP 冲刺：\everyjob=<tokens>（作业开始 token 表；暂映射 toks 0）
+    EveryJob,
+    // ETRIP 冲刺：\dump（initex 收尾：写 fmt + 结束作业）
+    Dump,
 }
 
 impl Primitive {
@@ -397,6 +418,19 @@ impl Primitive {
             163 => Self::ThickMuskip,
             164 => Self::LcCode,
             165 => Self::Advance,
+            166 => Self::Hyphenation,
+            167 => Self::SetBox,
+            168 => Self::ParFillSkip,
+            169 => Self::ControlSpace,
+            170 => Self::HFil,
+            171 => Self::HFill,
+            172 => Self::HSS,
+            173 => Self::VFil,
+            174 => Self::VFill,
+            175 => Self::VSS,
+            176 => Self::VSplit,
+            177 => Self::EveryJob,
+            178 => Self::Dump,
             _ => return None,
         })
     }

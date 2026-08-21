@@ -27,6 +27,8 @@ pub enum ParamKind {
     MaxDepth,
     /// `\parskip`：段落之间的胶水（M3-5）。
     ParSkip,
+    /// ETRIP 冲刺：`\parfillskip`：段落末行填充胶水（plain 默认 0pt plus 1fil）。
+    ParFillSkip,
     // M4-4 显示数学间距
     /// `\abovedisplayskip`：显示公式上方间距（末行不短时）。
     AboveDisplaySkip,
@@ -119,6 +121,8 @@ pub struct Params {
     pub maxdepth: i64,
     /// `\parskip`：段落间胶水（plain 默认 0pt plus 1pt）。
     pub parskip: Glue,
+    /// `\parfillskip`：段落末行填充胶水（plain 默认 0pt plus 1fil；fil 阶隐含）。
+    pub parfillskip: Glue,
     // M4-4 显示数学间距（plain 默认）
     /// `\abovedisplayskip`（plain 默认 12pt plus 3pt minus 9pt）。
     pub abovedisplayskip: Glue,
@@ -178,6 +182,11 @@ impl Default for Params {
                 stretch: SP_PER_PT,
                 shrink: 0,
             },
+            parfillskip: Glue {
+                width: 0,
+                stretch: 1, // 1fil（布局侧隐含 fil 阶）
+                shrink: 0,
+            },
             // M4-4 显示数学间距（plain：TeXbook p.189）
             abovedisplayskip: Glue {
                 width: 12 * SP_PER_PT,
@@ -224,6 +233,7 @@ impl Params {
             ParamKind::TopSkip => ParamValue::Glue(self.topskip),
             ParamKind::MaxDepth => ParamValue::Dimen(self.maxdepth),
             ParamKind::ParSkip => ParamValue::Glue(self.parskip),
+            ParamKind::ParFillSkip => ParamValue::Glue(self.parfillskip),
             ParamKind::AboveDisplaySkip => ParamValue::Glue(self.abovedisplayskip),
             ParamKind::BelowDisplaySkip => ParamValue::Glue(self.belowdisplayskip),
             ParamKind::AboveDisplayShortSkip => ParamValue::Glue(self.abovedisplayshortskip),
@@ -250,6 +260,7 @@ impl Params {
             (ParamKind::TopSkip, ParamValue::Glue(g)) => self.topskip = g,
             (ParamKind::MaxDepth, ParamValue::Dimen(v)) => self.maxdepth = v,
             (ParamKind::ParSkip, ParamValue::Glue(g)) => self.parskip = g,
+            (ParamKind::ParFillSkip, ParamValue::Glue(g)) => self.parfillskip = g,
             (ParamKind::AboveDisplaySkip, ParamValue::Glue(g)) => self.abovedisplayskip = g,
             (ParamKind::BelowDisplaySkip, ParamValue::Glue(g)) => self.belowdisplayskip = g,
             (ParamKind::AboveDisplayShortSkip, ParamValue::Glue(g)) => self.abovedisplayshortskip = g,

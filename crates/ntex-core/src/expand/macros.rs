@@ -73,6 +73,8 @@ impl Expander {
     /// 收集一个分隔实参：读入 token 直到定界符序列在输入中完整匹配（后缀匹配）。
     fn collect_delimited_arg(&mut self, delim: &[Token], long: bool) -> Result<TokenArray> {
         let mut buf: Vec<Token> = Vec::new();
+        // 参数内未闭合 `\if*` 数：TeX scan_toks 跟踪实参内条件配对
+        let mut arg_cond = 0usize;
         loop {
             let tok = self
                 .fetch()?
@@ -80,6 +82,35 @@ impl Expander {
                 .0;
             if !long && self.is_par_token(tok) {
                 return Err(Error::invalid_input("参数包含 \\par（宏未声明 \\long）"));
+            }
+            // 实参内条件：开 `\if*` 作数据并计数；闭合 token 先匹配参数内条件，
+            // 无匹配（arg_cond==0）时是**外层**条件的 `\else/\fi/\or` → 交条件机，
+            // 不作为实参（同无分隔实参的修复）。
+            if let Some(op) = self.cond_op(tok) {
+                if matches!(
+                    op,
+                    CondOp::If
+                        | CondOp::IfCat
+                        | CondOp::IfNum
+                        | CondOp::IfDim
+                        | CondOp::IfX
+                        | CondOp::IfOdd
+                        | CondOp::IfCase
+                        | CondOp::IfTrue
+                        | CondOp::IfFalse
+                        | CondOp::IfDefined
+                        | CondOp::IfCsname
+                        | CondOp::IfPrimitive
+                ) {
+                    arg_cond += 1;
+                } else if arg_cond > 0 {
+                    if op == CondOp::Fi {
+                        arg_cond -= 1;
+                    }
+                } else {
+                    self.step_conditional(op)?;
+                    continue;
+                }
             }
             buf.push(tok);
             if self.suffix_matches_delim(&buf, delim) {
@@ -120,6 +151,20 @@ impl Expander {
             .fetch()?
             .ok_or_else(|| Error::invalid_input("实参扫描到输入末尾"))?
             .0;
+        // TeX scan_args：实参扫描遇**外层**条件 token（\else/\fi/\or，非实参内
+        // 嵌套条件）时先由条件机处理，不作为实参（`\expandafter\2\fi` 惯用法：
+        // \fi 闭合外层 \ifx 后，\2 的实参是 \fi 之后的 token）。若将 \fi 当作
+        // 实参，条件帧永不弹出 → 递归宏无限循环。
+        if let Some(op) = self.cond_op(tok) {
+            match op {
+                CondOp::Else | CondOp::Fi | CondOp::Or => {
+                    self.step_conditional(op)?;
+                    // 继续扫描实参（\fi 已消费）
+                    return self.collect_undelimited_arg(long);
+                }
+                _ => {} // \if*：实参数据（TeX 参数内开条件作数据）
+            }
+        }
         match tok.catcode() {
             Some(Catcode::BeginGroup) => {
                 let mut tokens = Vec::new();
@@ -173,6 +218,7 @@ impl Expander {
         let (num_params, param_text) = self.scan_parameter_text()?;
         let body_raw = self.scan_balanced_text()?;
         let body: TokenArray = if expand_body {
+            self.debug_expand_caller = "edef";
             Arc::from(self.expand_region(body_raw)?)
         } else {
             Arc::from(body_raw)
@@ -295,6 +341,11 @@ impl Expander {
         // 区域输出重定向到临时 VecSink（M3-2：sink 替代 output 字段）
         let saved = std::mem::replace(&mut self.sink, Box::new(VecSink::default()));
         let outcome = (|| -> Result<Vec<Token>> {
+            #[cfg(debug_assertions)]
+            let shown: Vec<String> = tokens.iter().take(24).map(|t| match t.csid() {
+                Some(c) => format!("\\{}", self.intern.name(c)),
+                None => format!("{:?}({:?})", t.charcode(), t.catcode()),
+            }).collect();
             let items: Vec<(Token, bool)> = tokens.into_iter().map(|t| (t, false)).collect();
             self.stack.push(InputFrame::TokenList {
                 items: Arc::from(items),
@@ -302,6 +353,18 @@ impl Expander {
             });
             while self.process_one()? {}
             if self.cond_stack.len() != cond_depth {
+                #[cfg(debug_assertions)]
+                {
+                    let frames: Vec<String> = self
+                        .cond_stack
+                        .iter()
+                        .map(|f| format!("{{is_case={} state={:?} owns_skip={} else={}}}",
+                            f.is_case, f.state, f.owns_skip, f.else_seen))
+                        .collect();
+                    eprintln!("[debug] expand_region 条件未闭合: caller={} cond_depth={} len={} frames={:?}",
+                        self.debug_expand_caller, cond_depth, self.cond_stack.len(), frames);
+                    eprintln!("[debug]   edef tokens head: {:?}", shown);
+                }
                 return Err(Error::invalid_input("条件未闭合（缺少 \\fi）"));
             }
             let temp = std::mem::replace(&mut self.sink, saved);

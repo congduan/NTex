@@ -41,6 +41,9 @@ impl FontLoader for TfmLoader {
 pub struct Typesetter {
     expander: Expander,
     fonts: Fonts,
+    /// 上一次 `finish` 收走的终端转录（`\message`/`\show`/`\write16` 累积；
+    /// finish 的 take_sink 会把 NodeBuilder 摘走，先在此留档）。
+    last_transcript: String,
 }
 
 impl Typesetter {
@@ -57,6 +60,7 @@ impl Typesetter {
                 metrics,
                 space: |_| Glue::ZERO,
             },
+            last_transcript: String::new(),
         }
     }
 
@@ -88,12 +92,18 @@ impl Typesetter {
         self.expander.import_state(state);
     }
 
+    /// ETRIP 冲刺：`\dump` 是否已执行（驱动据此保存 fmt 并二次运行测试体）。
+    pub fn dumped(&self) -> bool {
+        self.expander.dumped()
+    }
+
     /// TFM 字体模式（M3-4）：`\font\cs=cmr10` 加载真实度量，
     /// 字符维度/词间空白来自 TFM；`\font` 定义的 cs 作为字体选择器。
     pub fn with_tfm() -> Self {
         Self {
             expander: Expander::new(),
             fonts: Fonts::Tfm(Rc::new(RefCell::new(Vec::new()))),
+            last_transcript: String::new(),
         }
     }
 
@@ -118,6 +128,10 @@ impl Typesetter {
 
     /// 取走终端转录（`\message`/`\show`/`\write16` 累积文本）。
     pub fn take_transcript(&mut self) -> String {
+        // finish 已走：转录在 last_transcript；未走（运行中途报错）：从 sink 取
+        if !self.last_transcript.is_empty() {
+            return std::mem::take(&mut self.last_transcript);
+        }
         self.expander
             .sink_mut()
             .as_any_mut()
@@ -208,6 +222,8 @@ impl Typesetter {
             .as_any_mut()
             .downcast_mut::<NodeBuilder>()
             .ok_or_else(|| Error::internal("typesetter 安装了 NodeBuilder"))?;
+        // 转录留档（finish 后 sink 被 VecSink 替换，take_transcript 读不到 NodeBuilder）
+        self.last_transcript = std::mem::take(&mut builder.transcript);
         let mut lists = std::mem::take(&mut builder.lists);
         debug_assert_eq!(lists.len(), 1, "收尾后应只剩主列表");
         let shipped = std::mem::take(&mut builder.shipped);

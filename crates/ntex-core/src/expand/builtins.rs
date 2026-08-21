@@ -1,6 +1,6 @@
 impl Expander {
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 165] = [
+        const BUILTINS: [(&str, Primitive); 178] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -200,6 +200,27 @@ impl Expander {
             ("lccode", Primitive::LcCode),
             // ETRIP 冲刺：\advance<寄存器> <增量>（寄存器运算）
             ("advance", Primitive::Advance),
+            // ETRIP 冲刺：\hyphenation{...}（断字异常词表）
+            ("hyphenation", Primitive::Hyphenation),
+            // ETRIP 冲刺：\setbox<n>=<box>（盒子寄存器赋值）
+            ("setbox", Primitive::SetBox),
+            // ETRIP 冲刺：\parfillskip（段落末行填充胶水）
+            ("parfillskip", Primitive::ParFillSkip),
+            // ETRIP 冲刺：\␣（control space：输出空格）
+            (" ", Primitive::ControlSpace),
+            // ETRIP 冲刺：无限阶胶水
+            ("hfil", Primitive::HFil),
+            ("hfill", Primitive::HFill),
+            ("hss", Primitive::HSS),
+            ("vfil", Primitive::VFil),
+            ("vfill", Primitive::VFill),
+            ("vss", Primitive::VSS),
+            // ETRIP 冲刺：\vsplit<n> to/spread <dimen>（纵向拆分盒子寄存器）
+            ("vsplit", Primitive::VSplit),
+            // ETRIP 冲刺：\everyjob=<tokens>（作业开始 token 表；暂映射到 toks 0）
+            ("everyjob", Primitive::EveryJob),
+            // ETRIP 冲刺：\dump（initex 收尾：写 fmt + 结束作业）
+            ("dump", Primitive::Dump),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);

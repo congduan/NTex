@@ -30,7 +30,10 @@ use ntex_font::{FontMetrics, LigKern};
 
 use crate::hyphen::PatternTrie;
 use crate::linebreak::knuth_plass;
-use crate::node::{hbox_dimensions, hpack, BoxKind, BoxNode, FontId, Node, GLUE_ORDER_FIL};
+use crate::node::{
+    hbox_dimensions, hpack, split_vbox, vbox_dimensions, vpack, BoxKind, BoxNode, FontId, Node,
+    GLUE_ORDER_FIL, GLUE_ORDER_FILL,
+};
 use crate::page::PageBuilder;
 
 /// 模式（TeX 模式状态机的 M3-2 子集 + M4 数学）。
@@ -374,6 +377,13 @@ struct NodeBuilder {
     math_fonts: Vec<[Option<FontId>; 3]>,
     /// 断字模式表（M4-6）：`\patterns{...}` 解析后的 Liang trie。
     patterns: PatternTrie,
+    /// ETRIP 冲刺：断字异常词表（`\hyphenation{...}`）：小写字母 + 允许断点
+    /// （0 = 词首、len = 词尾）。断字时优先于模式表。
+    hyph_exceptions: Vec<(Vec<u8>, Vec<usize>)>,
+    /// ETRIP 冲刺：`\setbox<n>=<box>` 目标寄存器（下一个封装盒子存入该槽）。
+    setbox_target: Option<usize>,
+    /// ETRIP 冲刺：盒子规格（`\hbox to/spread <dimen>`）：(to, spread)，随下一个盒子组生效。
+    pending_box_spec: Option<(Option<i64>, Option<i64>)>,
     /// M4-4 显示数学：本次公式用短间距（前一段末行短于 `\displaywidth`）。
     display_short: bool,
     /// M4-4 显示数学：公式刚闭合，后续文字续排（不开新段：无 parskip/缩进）。
@@ -435,6 +445,9 @@ impl NodeBuilder {
             nonscript_pending: false,
             math_fonts: vec![[None; 3]; 16],
             patterns: PatternTrie::default(),
+            hyph_exceptions: Vec::new(),
+            setbox_target: None,
+            pending_box_spec: None,
             display_short: false,
             after_display: false,
             transcript: String::new(),
@@ -463,16 +476,47 @@ impl NodeBuilder {
     fn package_box(&mut self, kind: PendingBox, ship: bool) {
         let children = self.lists.pop().expect("盒子列表");
         self.list_modes.pop();
+        // ETRIP 冲刺：\hbox/\vbox to/spread 规格（目标宽/高）
+        let spec = self.pending_box_spec.take();
         let node = match kind {
-            PendingBox::HBox => Node::Box(BoxNode::new_hbox(children)),
-            PendingBox::VBox => Node::Box(BoxNode::new_vbox(children)),
+            PendingBox::HBox => {
+                let natural = hbox_dimensions(&children).width;
+                let target = match spec {
+                    Some((Some(to), _)) => to,
+                    Some((_, Some(spread))) => natural + spread,
+                    _ => natural,
+                };
+                Node::Box(hpack(&children, target))
+            }
+            PendingBox::VBox => {
+                let natural = vbox_dimensions(&children);
+                let target = match spec {
+                    Some((Some(to), _)) => to,
+                    Some((_, Some(spread))) => natural.height + natural.depth + spread,
+                    _ => natural.height + natural.depth,
+                };
+                Node::Box(vpack(children, target))
+            }
             PendingBox::VTop => {
                 // \vtop：维度同 vbox，参考点移到首行基线（shift 待 M3-5 对 DVI 校准）。
-                let mut b = BoxNode::new_vbox(children);
+                let natural = vbox_dimensions(&children);
+                let target = match spec {
+                    Some((Some(to), _)) => to,
+                    Some((_, Some(spread))) => natural.height + natural.depth + spread,
+                    _ => natural.height + natural.depth,
+                };
+                let mut b = vpack(children, target);
                 b.shift = b.height;
                 Node::Box(b)
             }
         };
+        // ETRIP 冲刺：`\setbox<n>=<box>` —— 封装结果存入寄存器（不入当前列表）
+        if let Some(idx) = self.setbox_target.take() {
+            if let Node::Box(b) = node {
+                self.boxes[idx] = Some(b);
+            }
+            return;
+        }
         if ship {
             if let Node::Box(b) = node {
                 self.shipped.push(b);

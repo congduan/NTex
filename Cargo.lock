@@ -256,6 +256,8 @@ name = "ntex-test-support"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ntex-core",
+ "ntex-format",
  "ntex-layout",
  "regex",
  "similar",

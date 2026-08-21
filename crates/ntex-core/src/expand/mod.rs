@@ -288,6 +288,8 @@ pub struct Expander {
     delcodes: HashMap<u32, u32>,
     /// `\lccode` 表：字符码 → 小写码（TeX 默认全 0；etrip 断字测试用）。
     lccodes: [i64; 256],
+    /// ETRIP 冲刺：`\dump` 已执行（initex 收尾；驱动据此保存 fmt 并二次运行）。
+    dumped: bool,
     /// `\unless` 前缀：取反下一个条件的结果。
     unless_pending: bool,
     /// protected 宏抑制展开的上下文深度（>0：`\edef`/`\write`/`\detokenize` 等）。
@@ -295,6 +297,8 @@ pub struct Expander {
     /// `\edef`/`\xdef`/`\write` 展开上下文（TeX `expand()`）：只展开可展开项，
     /// 不可展开原语/未定义 cs/字符/组定界原样保留在输出（不执行、不建组）。
     expand_only: bool,
+    /// 临时调试：expand_region 的调用来源（"edef"/"write"）。
+    debug_expand_caller: &'static str,
 }
 
 impl Expander {
@@ -341,9 +345,11 @@ impl Expander {
             hyphenchars: HashMap::new(),
             delcodes: HashMap::new(),
             lccodes: [0; 256],
+            dumped: false,
             unless_pending: false,
             suppress_expansion: 0,
             expand_only: false,
+            debug_expand_caller: "",
         };
         e.register_builtins();
         e
@@ -476,6 +482,16 @@ impl Expander {
             }
         }
         if !self.cond_stack.is_empty() {
+            #[cfg(debug_assertions)]
+            {
+                let frames: Vec<String> = self
+                    .cond_stack
+                    .iter()
+                    .map(|f| format!("{{is_case={} state={:?} owns_skip={} else={}}}",
+                        f.is_case, f.state, f.owns_skip, f.else_seen))
+                    .collect();
+                eprintln!("[debug] 条件未闭合: depth={} frames={:?}", self.cond_stack.len(), frames);
+            }
             return Err(Error::invalid_input("条件未闭合（缺少 \\fi）"));
         }
         Ok(())
@@ -539,6 +555,13 @@ impl Expander {
         match self.fetch()? {
             None => Ok(false),
             Some((tok, noexpand)) => {
+                // noexpand（`\noexpand`/`\unexpanded` 输出）：临时不可展开，原样输出。
+                // 优先于条件机拦截——`\unexpanded{\ifx...}` 里的条件 token 是数据，
+                // 不得 push 条件帧，也不得匹配外层 `\else`/`\fi`。
+                if noexpand {
+                    self.sink.token(tok)?;
+                    return Ok(true);
+                }
                 // 条件 token（\if*/\\else/\\fi/\\or）优先由条件机处理（无论是否跳过）
                 if let Some(op) = self.cond_op(tok) {
                     self.step_conditional(op)?;
@@ -548,12 +571,7 @@ impl Expander {
                     // 跳过模式：其余 token 直接丢弃（不展开）
                     return Ok(true);
                 }
-                if noexpand {
-                    // \noexpand：临时不可展开，原样输出
-                    self.sink.token(tok)?;
-                } else {
-                    self.process_token(tok)?;
-                }
+                self.process_token(tok)?;
                 Ok(true)
             }
         }
@@ -584,8 +602,38 @@ impl Expander {
                             _ => self.sink.token(c),
                         }
                     }
-                    EqSlot::Register(..) | EqSlot::Stream(..) => Err(Error::invalid_input(
-                        "寄存器/流引用不能直接使用（需在数字/尺寸扫描上下文中）",
+                    // \countdef\cs 等绑定的寄存器 cs：执行位置为赋值（`\cs=<值>`，
+                    // TeX 中 `=` 可选）；非赋值上下文（\the/\advance/\ifnum 等）由
+                    // 各扫描函数处理，不会到达此处。
+                    EqSlot::Register(kind, idx) => {
+                        self.skip_spaces()?;
+                        self.expect_equals()?;
+                        match kind {
+                            RegKind::Count => {
+                                let val = self.scan_number()?;
+                                self.assign_count(idx, val);
+                            }
+                            RegKind::Dimen => {
+                                let val = self.scan_dimen()?;
+                                self.assign_dimen(idx, val);
+                            }
+                            RegKind::Skip => {
+                                let val = self.scan_glue()?;
+                                self.assign_skip(idx, val);
+                            }
+                            RegKind::Muskip => {
+                                let val = self.scan_glue()?;
+                                self.assign_muskip(idx, val);
+                            }
+                            RegKind::Toks => {
+                                let val = self.scan_group_contents()?;
+                                self.assign_toks(idx, Arc::from(val));
+                            }
+                        }
+                        Ok(())
+                    }
+                    EqSlot::Stream(..) => Err(Error::invalid_input(
+                        "流引用不能直接使用（需在 \\read/\\write 等扫描上下文中）",
                     )),
                     EqSlot::Macro(m) => {
                         // e-TeX（M4-5）：protected 宏在展开抑制上下文（\edef/\write 等）
@@ -820,6 +868,11 @@ impl Expander {
     /// 终端转录文本（`\message`/`\show`/`\write16` 累积；收集型 sink 实现）。
     pub fn transcript(&self) -> &str {
         self.sink.transcript()
+    }
+
+    /// ETRIP 冲刺：`\dump` 是否已执行（驱动据此保存 fmt 并二次运行测试体）。
+    pub fn dumped(&self) -> bool {
+        self.dumped
     }
 
     /// 替换输出 sink（排版器接入点，M3-2）。

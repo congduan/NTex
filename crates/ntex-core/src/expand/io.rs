@@ -241,8 +241,9 @@ impl Expander {
             return Err(Error::invalid_input("\\write18（shell 转义）暂不支持"));
         }
         let toks = Arc::from(self.scan_general_text()?);
-        // 流 16 = 终端（TeX：\write16 写终端与日志，无需 \openout）
-        if idx == 16 {
+        // 流 16 = 终端（TeX：\write16 写终端与日志，无需 \openout）；
+        // ETRIP 的 \typeout/\error 用 \write15（同终端；TeX 预留流 15 作 log 输出）
+        if idx == 16 || idx == 15 {
             let s = self.expand_to_string(&toks)?;
             return self.sink.write16(s);
         }
@@ -312,6 +313,7 @@ impl Expander {
     /// 把 token 列表展开成字符串（flush 边界写文件用）：完全展开后
     /// 字符 token → 字节、空格 → ` `；不可展开的 cs → 报错。
     fn expand_to_string(&mut self, toks: &[Token]) -> Result<String> {
+        self.debug_expand_caller = "write";
         let expanded = self.expand_region(toks.to_vec())?;
         let mut s = String::new();
         for t in expanded {
