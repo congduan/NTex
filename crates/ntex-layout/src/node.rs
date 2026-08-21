@@ -175,6 +175,16 @@ pub enum Node {
         post: Vec<Node>,
         replace: Vec<Node>,
     },
+    /// TeXXeT 方向节点（e-TeX `\beginL`/`\endL`/`\beginR`/`\endR`；宽度 0）。
+    Direction {
+        kind: ntex_core::sink::DirectionKind,
+    },
+    /// mark 节点（`\mark`/`\marks<n>`；无维度）：class 为 `\marks` 的寄存器号，
+    /// `\mark` 为 None。
+    Mark {
+        class: Option<i64>,
+        text: String,
+    },
 }
 
 impl Node {
@@ -216,6 +226,10 @@ impl Node {
                     hbox_dimensions(replace)
                 }
             }
+            // 方向节点：宽度 0（TeX：begin_L/end_L 无维度）。
+            Node::Direction { .. } => BoxDimensions::ZERO,
+            // mark 节点：无维度。
+            Node::Mark { .. } => BoxDimensions::ZERO,
         }
     }
 

@@ -124,9 +124,7 @@ impl Expander {
                     return Ok(());
                 }
                 let n = self.scan_number()?;
-                if n < 0 {
-                    return Err(Error::invalid_input("\\ifcase 序号不能为负"));
-                }
+                // TeX：n<0 时跳过所有 \or 直到 \else（\ifcase-1 → else 分支）
                 self.cond_stack.push(CondFrame {
                     is_case: true,
                     state: if n == 0 {

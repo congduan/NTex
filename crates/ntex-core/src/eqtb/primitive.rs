@@ -223,6 +223,27 @@ pub enum Primitive {
     EveryJob,
     // ETRIP 冲刺：\dump（initex 收尾：写 fmt + 结束作业）
     Dump,
+    // ETRIP 冲刺：TeXXeT 方向原语 \beginL/\endL/\beginR/\endR（方向节点）
+    BeginL,
+    EndL,
+    BeginR,
+    EndR,
+    // e-TeX（M4-5）：\middle<delimiter>（\left...\right 内分隔符）
+    Middle,
+    // ETRIP 冲刺：\mark<general text>（mark 节点）与 e-TeX \marks<n><general text>
+    Mark,
+    Marks,
+    // ETRIP 冲刺：\showbox<n>（显示盒子寄存器内容）
+    ShowBox,
+    // ETRIP 冲刺：\inputlineno（当前输入行号；只读整数）与 \string<token>（token 转文本）
+    InputLineNo,
+    String_,
+    // ETRIP 冲刺：e-TeX 内部只读整数 \currentgrouplevel/\currentgrouptype/\lastnodetype
+    CurrentGroupLevel,
+    CurrentGroupType,
+    LastNodeType,
+    // ETRIP 冲刺：\discretionary{pre}{post}{replace}（断字节点）
+    Discretionary,
 }
 
 impl Primitive {
@@ -242,6 +263,7 @@ impl Primitive {
                 | Self::Detokenize
                 | Self::ETeXVersion
                 | Self::ETeXRevision
+                | Self::String_
         )
     }
 
@@ -431,6 +453,20 @@ impl Primitive {
             176 => Self::VSplit,
             177 => Self::EveryJob,
             178 => Self::Dump,
+            179 => Self::BeginL,
+            180 => Self::EndL,
+            181 => Self::BeginR,
+            182 => Self::EndR,
+            183 => Self::Middle,
+            184 => Self::Mark,
+            185 => Self::Marks,
+            186 => Self::ShowBox,
+            187 => Self::InputLineNo,
+            188 => Self::String_,
+            189 => Self::CurrentGroupLevel,
+            190 => Self::CurrentGroupType,
+            191 => Self::LastNodeType,
+            192 => Self::Discretionary,
             _ => return None,
         })
     }

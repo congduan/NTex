@@ -271,6 +271,7 @@ impl NodeBuilder {
             MathAtom::Classed { class, .. } => Some(*class),
             MathAtom::Fraction { .. } => Some(MathClass::Inner),
             MathAtom::Delimited { .. } => Some(MathClass::Inner),
+            MathAtom::Middle(_) => Some(MathClass::Inner),
             MathAtom::Radical { .. } => Some(MathClass::Ord),
             MathAtom::Box(_) => Some(MathClass::Ord),
             MathAtom::MSkip { .. } | MathAtom::Style(_) => None,
@@ -361,6 +362,14 @@ impl NodeBuilder {
                     out.extend(self.delim_nodes(*d, style));
                 }
                 out
+            }
+            // e-TeX \middle：定界符原子（类 Inner，同 \left/\right 的分隔符排版）
+            MathAtom::Middle(d) => {
+                if let Some(d) = d {
+                    self.delim_nodes(*d, style)
+                } else {
+                    Vec::new()
+                }
             }
             MathAtom::Classed { content, .. } => self.math_to_hlist(content, style),
             MathAtom::MSkip {

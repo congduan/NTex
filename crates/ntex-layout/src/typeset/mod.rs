@@ -128,6 +128,8 @@ enum MathAtom {
         body: Vec<MathAtom>,
         right: Option<u32>,
     },
+    /// e-TeX `\middle<delim>`（\left...\right 内分隔符；类 Inner）。
+    Middle(Option<u32>),
     /// 显式定类字段（`\mathbin{...}` 等）：内容作为一个指定类的原子。
     Classed {
         class: MathClass,

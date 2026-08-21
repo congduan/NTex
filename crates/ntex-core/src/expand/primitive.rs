@@ -1,3 +1,5 @@
+use crate::sink::DirectionKind;
+
 impl Expander {
     // ---------- 原语执行 ----------
 
@@ -310,6 +312,34 @@ impl Expander {
                 let d = self.scan_delimiter()?;
                 self.sink.math_right(d)
             }
+            // e-TeX（M4-5）：\middle<delimiter>（\left...\right 内分隔符）
+            Primitive::Middle => {
+                let d = self.scan_delimiter()?;
+                self.sink.math_middle(d)
+            }
+            // ETRIP 冲刺：\mark{<text>}（mark 节点）；e-TeX \marks<n>{<text>}
+            Primitive::Mark | Primitive::Marks => {
+                let class = if prim == Primitive::Marks {
+                    Some(self.scan_number()?)
+                } else {
+                    None
+                };
+                let toks = self.scan_group_contents()?;
+                let text = self.expand_to_string(&toks)?;
+                self.sink.mark(class, text)
+            }
+            // ETRIP 冲刺：\showbox<n>：显示盒子寄存器内容（sink 格式化到转录）
+            Primitive::ShowBox => {
+                let idx = self.scan_register_index()?;
+                self.sink.showbox(idx)
+            }
+            // ETRIP 冲刺：\discretionary{pre}{post}{replace}（断字节点）
+            Primitive::Discretionary => {
+                let pre = self.scan_group_contents()?;
+                let post = self.scan_group_contents()?;
+                let replace = self.scan_group_contents()?;
+                self.sink.discretionary(pre, post, replace)
+            }
             Primitive::Sqrt => self.sink.math_sqrt(),
             Primitive::MathOrd => self.sink.math_class(0),
             Primitive::MathBin => self.sink.math_class(1),
@@ -365,6 +395,22 @@ impl Expander {
                         .map(|b| Token::char(Catcode::Other, u32::from(b)))
                         .collect(),
                 )
+            }
+            // \string<token>：token 转文本（字符序列；TeX 可展开原语）
+            Primitive::String_ => {
+                let t = self
+                    .fetch()?
+                    .ok_or_else(|| Error::invalid_input("\\string 后无 token"))?
+                    .0;
+                let mut buf = Vec::new();
+                detokenize_token(t, &self.intern, &mut buf);
+                self.emit_tokens(buf)
+            }
+            // \inputlineno 单独出现：no-op（恒 0；数字上下文由 scan_number 处理）
+            Primitive::InputLineNo => Ok(()),
+            // e-TeX 只读整数单独出现：no-op（数字上下文由 scan_number 读取）
+            Primitive::CurrentGroupLevel | Primitive::CurrentGroupType | Primitive::LastNodeType => {
+                Ok(())
             }
             // M4-3 数学字体族：\textfont<fam>=<fontcs>（直通 sink 分配）
             Primitive::TextFont | Primitive::ScriptFont | Primitive::ScriptScriptFont => {
@@ -427,6 +473,31 @@ impl Expander {
                 self.cond_stack.clear();
                 self.flush_writes()?;
                 Ok(())
+            }
+            // ETRIP 冲刺：TeXXeT 方向原语 \beginL/\endL/\beginR/\endR。
+            // \TeXXeTstate=1：创建方向节点；=0：TeX 报 "Improper \beginL." 后继续。
+            Primitive::BeginL
+            | Primitive::EndL
+            | Primitive::BeginR
+            | Primitive::EndR => {
+                let state = self.params.misc[20]; // TeXXeTState（free.rs int_param_index 20）
+                let name = match prim {
+                    Primitive::BeginL => "beginL",
+                    Primitive::EndL => "endL",
+                    Primitive::BeginR => "beginR",
+                    _ => "endR",
+                };
+                if state == 1 {
+                    let kind = match prim {
+                        Primitive::BeginL => DirectionKind::BeginL,
+                        Primitive::EndL => DirectionKind::EndL,
+                        Primitive::BeginR => DirectionKind::BeginR,
+                        _ => DirectionKind::EndR,
+                    };
+                    self.sink.direction_node(kind)
+                } else {
+                    self.sink.write16(format!("! Improper \\{name}.\n"))
+                }
             }
             // 内部整数参数（\tracingstats 等 25 个）与交互模式命令（\batchmode 等 4 个）
             // 已由上方 int_param_index / interaction_mode_value 守卫分支处理；编译器

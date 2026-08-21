@@ -68,7 +68,7 @@ fn fmt_reload_then_run_etrip_preamble() {
     eprintln!("pass2(body-only): {:?} transcript_head={:?}", r5.as_ref().err(),
         &ts5.take_transcript().chars().take(80).collect::<String>());
     // 二分 body：单段 to178（含 \2 循环）
-    for (tag, end) in [("to178", 178usize)] {
+    for (tag, end) in [("to270", 270usize), ("to278", 278usize), ("to290", 290usize)] {
         let mut t = ntex_layout::Typesetter::with_tfm();
         t.import_state(ntex_format::load(&mut &buf[..]).unwrap());
         let seg: Vec<u8> = lines[118..end].join(&b'\n');

@@ -119,6 +119,20 @@ impl TokenSink for NodeBuilder {
         Ok(())
     }
 
+    /// e-TeX `\middle<delim>`：在 \left...\right 体内插入定界符原子（类 Inner）。
+    fn math_middle(&mut self, delim: Option<u32>) -> Result<()> {
+        if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            return Err(Error::invalid_input("\\middle 只能在数学模式使用"));
+        }
+        let level = self
+            .math
+            .last_mut()
+            .ok_or_else(|| Error::internal("\\middle 无数学层"))?;
+        Self::math_finish_fraction(&mut self.fraction_pending, level);
+        level.atoms.push(MathAtom::Middle(delim));
+        Ok(())
+    }
+
     /// `\right<delim>`：当前 math 层内容收为 \left...\right 的 body。
     fn math_right(&mut self, delim: Option<u32>) -> Result<()> {
         if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
@@ -642,7 +656,143 @@ impl TokenSink for NodeBuilder {
         Ok(())
     }
 
+    /// TeXXeT 方向节点：追加到当前列表（宽度 0 占位）。
+    fn direction_node(&mut self, kind: ntex_core::sink::DirectionKind) -> Result<()> {
+        self.append(Node::Direction { kind });
+        Ok(())
+    }
+
+    /// `\mark`/`\marks<n>`：mark 节点追加到当前列表（无维度）。
+    fn mark(&mut self, class: Option<i64>, text: String) -> Result<()> {
+        self.append(Node::Mark { class, text });
+        Ok(())
+    }
+
+    /// `\discretionary{pre}{post}{replace}`：断字节点。组内容 token 中字符
+    /// 转字符节点（当前字体，维度查字体表），其余忽略（简化）。
+    fn discretionary(
+        &mut self,
+        pre: Vec<Token>,
+        post: Vec<Token>,
+        replace: Vec<Token>,
+    ) -> Result<()> {
+        let conv = |toks: &[Token]| -> Vec<Node> {
+            toks.iter()
+                .filter_map(|t| {
+                    t.charcode().map(|c| {
+                        let (w, h, d) = self.fonts.metrics(self.current_font, c);
+                        Node::Char {
+                            font: self.current_font,
+                            charcode: c,
+                            width: w,
+                            height: h,
+                            depth: d,
+                        }
+                    })
+                })
+                .collect()
+        };
+        self.append(Node::Discretionary {
+            pre: conv(&pre),
+            post: conv(&post),
+            replace: conv(&replace),
+        });
+        Ok(())
+    }
+
+    /// `\showbox<n>`：把盒子寄存器内容格式化到转录（TeX show_box 风格）。
+    fn showbox(&mut self, idx: usize) -> Result<()> {
+        let Some(b) = self.boxes.get(idx).and_then(|s| s.as_ref()) else {
+            return Err(Error::invalid_input(format!("\\showbox{idx}: 盒子为空（void）")));
+        };
+        let mut out = format!("> \\box{idx}=\n");
+        showbox_format_box(b, 0, &mut out);
+        out.push_str("! OK.\n");
+        self.transcript.push_str(&out);
+        Ok(())
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
+    }
+}
+
+// ---------- \showbox 格式化（TeX show_box 风格） ----------
+
+/// sp → pt 字符串（固定 1 位小数）。
+fn showbox_pt(sp: i64) -> String {
+    format!("{:.1}", sp as f64 / SP_PER_PT as f64)
+}
+
+fn showbox_format_box(b: &BoxNode, depth: usize, out: &mut String) {
+    let p = ".".repeat(depth);
+    let kind = match b.kind {
+        BoxKind::HBox => "hbox",
+        BoxKind::VBox => "vbox",
+    };
+    out.push_str(&format!(
+        "{p}\\{kind}({}+{})x{}\n",
+        showbox_pt(b.height),
+        showbox_pt(b.depth),
+        showbox_pt(b.width)
+    ));
+    for c in &b.children {
+        showbox_format_node(c, depth + 1, out);
+    }
+}
+
+fn showbox_format_node(n: &Node, depth: usize, out: &mut String) {
+    let p = ".".repeat(depth + 1);
+    match n {
+        Node::Box(b) => showbox_format_box(b, depth, out),
+        Node::Char { charcode, .. } => {
+            let c = char::from_u32(*charcode)
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| format!("{charcode}"));
+            out.push_str(&format!("{p}\\font {c}\n"));
+        }
+        Node::Glue {
+            width,
+            stretch,
+            shrink,
+            ..
+        } => {
+            let mut s = format!("{p}\\glue {}", showbox_pt(*width));
+            if *stretch != 0 {
+                s.push_str(&format!(" plus {}", showbox_pt(*stretch)));
+            }
+            if *shrink != 0 {
+                s.push_str(&format!(" minus {}", showbox_pt(*shrink)));
+            }
+            s.push('\n');
+            out.push_str(&s);
+        }
+        Node::Kern { width } => out.push_str(&format!("{p}\\kern {}\n", showbox_pt(*width))),
+        Node::Penalty { penalty } => out.push_str(&format!("{p}\\penalty {}\n", penalty)),
+        Node::Rule {
+            width,
+            height,
+            depth,
+        } => out.push_str(&format!(
+            "{p}\\rule({}+{})x{}\n",
+            showbox_pt(*height),
+            showbox_pt(*depth),
+            showbox_pt(*width)
+        )),
+        Node::Leaders { .. } => out.push_str(&format!("{p}\\leaders\n")),
+        Node::Discretionary { .. } => out.push_str(&format!("{p}\\discretionary\n")),
+        Node::Direction { kind } => {
+            let name = match kind {
+                ntex_core::sink::DirectionKind::BeginL => "beginL",
+                ntex_core::sink::DirectionKind::EndL => "endL",
+                ntex_core::sink::DirectionKind::BeginR => "beginR",
+                ntex_core::sink::DirectionKind::EndR => "endR",
+            };
+            out.push_str(&format!("{p}\\{name}\n"));
+        }
+        Node::Mark { class, text } => match class {
+            Some(c) => out.push_str(&format!("{p}\\marks{c} {text}\n")),
+            None => out.push_str(&format!("{p}\\mark {text}\n")),
+        },
     }
 }

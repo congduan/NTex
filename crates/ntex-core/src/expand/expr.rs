@@ -97,6 +97,16 @@ impl Expander {
                     }
                     out.extend(detok.into_iter().map(|t| (t, false)));
                 }
+                EqSlot::Primitive(Primitive::String_) => {
+                    // \string<token>：token 转文本（字符序列）
+                    let t = self
+                        .fetch()?
+                        .ok_or_else(|| Error::invalid_input("\\string 后无 token"))?
+                        .0;
+                    let mut buf = Vec::new();
+                    detokenize_token(t, &self.intern, &mut buf);
+                    out.extend(buf.into_iter().map(|t| (t, false)));
+                }
                 _ => {
                     // 未定义/不可展开原语：原样保留
                     out.push((tok, false));

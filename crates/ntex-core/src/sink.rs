@@ -20,6 +20,15 @@ use crate::param::{ParamKind, ParamValue};
 use crate::register::Glue;
 use crate::token::Token;
 
+/// TeXXeT 方向节点种类（e-TeX `\beginL`/`\endL`/`\beginR`/`\endR`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirectionKind {
+    BeginL,
+    EndL,
+    BeginR,
+    EndR,
+}
+
 /// VM 排版事件消费者。
 ///
 /// 要求 `Debug`（`Expander` 派生 Debug）。`\edef` 区域需要取回临时收集的
@@ -49,6 +58,10 @@ pub trait TokenSink: std::fmt::Debug {
     }
     /// `\right<delimiter>`：`None` = `\right.`（M4-2）。
     fn math_right(&mut self, _delim: Option<u32>) -> Result<()> {
+        Ok(())
+    }
+    /// e-TeX `\middle<delimiter>`（\left...\right 内分隔符；M4-5）。
+    fn math_middle(&mut self, _delim: Option<u32>) -> Result<()> {
         Ok(())
     }
     /// `\sqrt`：根式（M4-2）。
@@ -179,6 +192,22 @@ pub trait TokenSink: std::fmt::Debug {
     }
     /// `\write16{...}`：写终端（流 16 = 终端，带换行）。
     fn write16(&mut self, _text: String) -> Result<()> {
+        Ok(())
+    }
+    /// TeXXeT 方向节点（`\beginL`/`\endL`/`\beginR`/`\endR`；\TeXXeTstate=1 时）。
+    fn direction_node(&mut self, _kind: DirectionKind) -> Result<()> {
+        Ok(())
+    }
+    /// `\mark`/`\marks<n>`：mark 节点（class：`\marks` 的寄存器号，`\mark` 为 None）。
+    fn mark(&mut self, _class: Option<i64>, _text: String) -> Result<()> {
+        Ok(())
+    }
+    /// `\showbox<n>`：把盒子寄存器内容格式化到转录（TeX show_box 风格）。
+    fn showbox(&mut self, _idx: usize) -> Result<()> {
+        Ok(())
+    }
+    /// `\discretionary{pre}{post}{replace}`：断字节点（组内容 token 由排版器转节点）。
+    fn discretionary(&mut self, _pre: Vec<Token>, _post: Vec<Token>, _replace: Vec<Token>) -> Result<()> {
         Ok(())
     }
     /// 累积的终端转录文本（默认空；收集型 sink 实现）。

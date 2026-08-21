@@ -128,6 +128,26 @@ impl Expander {
                     let v = charcode as i64;
                     return Ok(if neg { -v } else { v });
                 }
+                // \inputlineno：当前输入行号（行号跟踪后续迭代补，恒 0）
+                EqSlot::Primitive(Primitive::InputLineNo) => {
+                    self.fetch()?; // 消费 \inputlineno
+                    return Ok(0);
+                }
+                // e-TeX 内部只读整数（数字上下文读取）
+                EqSlot::Primitive(Primitive::CurrentGroupLevel) => {
+                    self.fetch()?;
+                    return Ok(self.group_level as i64);
+                }
+                // 组类型：当前未跟踪 → 恒 0（bottom level）
+                EqSlot::Primitive(Primitive::CurrentGroupType) => {
+                    self.fetch()?;
+                    return Ok(0);
+                }
+                // 最近节点类型：未跟踪 → 恒 -1（void）
+                EqSlot::Primitive(Primitive::LastNodeType) => {
+                    self.fetch()?;
+                    return Ok(-1);
+                }
                 _ => {}
             }
         }

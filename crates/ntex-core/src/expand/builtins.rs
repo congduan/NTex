@@ -1,6 +1,6 @@
 impl Expander {
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 178] = [
+        const BUILTINS: [(&str, Primitive); 192] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -221,6 +221,27 @@ impl Expander {
             ("everyjob", Primitive::EveryJob),
             // ETRIP 冲刺：\dump（initex 收尾：写 fmt + 结束作业）
             ("dump", Primitive::Dump),
+            // ETRIP 冲刺：TeXXeT 方向原语（\TeXXeTstate=1 时创建方向节点）
+            ("beginL", Primitive::BeginL),
+            ("endL", Primitive::EndL),
+            ("beginR", Primitive::BeginR),
+            ("endR", Primitive::EndR),
+            // e-TeX（M4-5）：\middle<delimiter>（\left...\right 内分隔符）
+            ("middle", Primitive::Middle),
+            // ETRIP 冲刺：\mark<general text>（mark 节点）；e-TeX \marks<n><general text>
+            ("mark", Primitive::Mark),
+            ("marks", Primitive::Marks),
+            // ETRIP 冲刺：\showbox<n>（显示盒子寄存器内容）
+            ("showbox", Primitive::ShowBox),
+            // ETRIP 冲刺：\inputlineno（当前输入行号；只读整数）与 \string<token>
+            ("inputlineno", Primitive::InputLineNo),
+            ("string", Primitive::String_),
+            // ETRIP 冲刺：e-TeX 内部只读整数
+            ("currentgrouplevel", Primitive::CurrentGroupLevel),
+            ("currentgrouptype", Primitive::CurrentGroupType),
+            ("lastnodetype", Primitive::LastNodeType),
+            // ETRIP 冲刺：\discretionary{pre}{post}{replace}
+            ("discretionary", Primitive::Discretionary),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);

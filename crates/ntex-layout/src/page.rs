@@ -409,7 +409,7 @@ impl PageBuilder {
                     d = inner.depth;
                     width = width.max(*w);
                 }
-                Node::Char { .. } | Node::Penalty { .. } | Node::Discretionary { .. } => {}
+                Node::Char { .. } | Node::Penalty { .. } | Node::Discretionary { .. } | Node::Direction { .. } | Node::Mark { .. } => {}
             }
         }
         if d > self.max_depth {
