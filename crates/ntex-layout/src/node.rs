@@ -48,7 +48,11 @@ pub struct BoxDimensions {
 
 impl BoxDimensions {
     /// 全零维度。
-    pub const ZERO: Self = Self { width: 0, height: 0, depth: 0 };
+    pub const ZERO: Self = Self {
+        width: 0,
+        height: 0,
+        depth: 0,
+    };
 
     /// height + depth：垂直方向总占据。
     pub fn total(self) -> i64 {
@@ -181,37 +185,36 @@ pub enum Node {
     },
     /// mark 节点（`\mark`/`\marks<n>`；无维度）：class 为 `\marks` 的寄存器号，
     /// `\mark` 为 None。
-    Mark {
-        class: Option<i64>,
-        text: String,
-    },
+    Mark { class: Option<i64>, text: String },
     /// insert 节点（`\insert<num>{<general text>}`；无维度）：class 为插入寄存器号，
     /// 内容（一般文本）只收集不排版（ETRIP 简化）。
-    Ins {
-        class: usize,
-        text: String,
-    },
+    Ins { class: usize, text: String },
     /// adjust 节点（`\vadjust{<vertical material>}`；无维度）。
-    Adjust {
-        text: String,
-    },
+    Adjust { text: String },
     /// whatsit 节点（`\write<n>{...}` 等；无维度）。
-    Whatsit {
-        text: String,
-    },
+    Whatsit { text: String },
 }
 
 impl Node {
     /// 该节点的 width/height/depth。
     pub fn dimensions(&self) -> BoxDimensions {
         match self {
-            Node::Char { width, height, depth, .. } => BoxDimensions {
+            Node::Char {
+                width,
+                height,
+                depth,
+                ..
+            } => BoxDimensions {
                 width: *width,
                 height: *height,
                 depth: *depth,
             },
             Node::Box(b) => b.dimensions(),
-            Node::Rule { width, height, depth } => BoxDimensions {
+            Node::Rule {
+                width,
+                height,
+                depth,
+            } => BoxDimensions {
                 width: *width,
                 height: *height,
                 depth: *depth,
@@ -284,7 +287,10 @@ impl Node {
 
     /// 是否可丢弃节点（折行时 glue/kern/penalty 在断行点可被丢弃）。
     pub fn is_discardable(&self) -> bool {
-        matches!(self, Node::Glue { .. } | Node::Kern { .. } | Node::Penalty { .. })
+        matches!(
+            self,
+            Node::Glue { .. } | Node::Kern { .. } | Node::Penalty { .. }
+        )
     }
 }
 
@@ -359,7 +365,9 @@ pub fn split_vbox(b: BoxNode, height: i64) -> (BoxNode, BoxNode) {
         let d = match c {
             Node::Glue { width, .. } | Node::Kern { width } => *width,
             Node::Box(bx) => bx.height + bx.depth,
-            Node::Rule { height: h, depth, .. } => h + depth,
+            Node::Rule {
+                height: h, depth, ..
+            } => h + depth,
             _ => c.dimensions().total(),
         };
         acc += d;
@@ -526,7 +534,11 @@ mod tests {
         let d = hbox_dimensions(&[
             char_of(10, 12, 3),
             char_of(10, 7, 9),
-            Node::Rule { width: 4, height: 20, depth: 1 },
+            Node::Rule {
+                width: 4,
+                height: 20,
+                depth: 1,
+            },
             glue(5),
         ]);
         assert_eq!(d.height, 20);
@@ -606,16 +618,14 @@ mod tests {
 
     #[test]
     fn discardable_classification() {
-        assert!(
-            Node::Glue {
-                width: 0,
-                stretch: 0,
-                shrink: 0,
-                stretch_order: 0,
-                shrink_order: 0,
-            }
-            .is_discardable()
-        );
+        assert!(Node::Glue {
+            width: 0,
+            stretch: 0,
+            shrink: 0,
+            stretch_order: 0,
+            shrink_order: 0,
+        }
+        .is_discardable());
         assert!(Node::Kern { width: 0 }.is_discardable());
         assert!(Node::Penalty { penalty: 0 }.is_discardable());
         assert!(!char_of(1, 1, 1).is_discardable());

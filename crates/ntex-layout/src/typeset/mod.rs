@@ -254,10 +254,7 @@ pub type SpaceFn = fn(FontId) -> Glue;
 #[derive(Debug, Clone)]
 enum Fonts {
     /// fn 指针占位：字符维度/词间距由调用方提供（`with_metrics`/`with_space`）。
-    Fn {
-        metrics: MetricsFn,
-        space: SpaceFn,
-    },
+    Fn { metrics: MetricsFn, space: SpaceFn },
     /// TFM 字体表（`with_tfm`）：FontId → 度量；`\font` 加载时追加。
     /// `Rc<RefCell>` 让加载器（[`TfmLoader`]）与节点构建器共享同一张表。
     Tfm(Rc<RefCell<Vec<FontMetrics>>>),
@@ -595,8 +592,7 @@ impl NodeBuilder {
             // 分页模式下顶层前驱盒子的深度/类型：页面构建器里的盒子，或
             // 断页后仍在贡献列表中的残余盒子（未入页，interline glue 的依据）。
             let (prev_is_box, prev_depth) = if self.pagination && self.lists.len() == 1 {
-                match self
-                    .lists[0]
+                match self.lists[0]
                     .iter()
                     .rev()
                     .find(|n| matches!(n, Node::Box(_) | Node::Rule { .. }))
@@ -638,8 +634,6 @@ impl NodeBuilder {
         }
         self.append(node);
     }
-
-    /// 冲页后清理：新空页上的 glue/kern/penalty 本就会被页面构建器丢弃，
 
     /// 插入段落缩进（TeX `new_graf`）：\parindent>0 空盒，<0 kern，=0 无；
     /// `\noindent` 抑制。
@@ -731,9 +725,7 @@ impl NodeBuilder {
             };
             let mut drop_cur = false;
             if let Some((pf, pc)) = prev {
-                if let Some(action) =
-                    self.fonts.lig_kern(pf, pc as u8, charcode as u8)
-                {
+                if let Some(action) = self.fonts.lig_kern(pf, pc as u8, charcode as u8) {
                     match action {
                         LigKern::Kern(kern) => self.append(Node::Kern { width: kern }),
                         LigKern::Lig(result) => {
@@ -774,11 +766,7 @@ impl NodeBuilder {
     /// tex.web `adjust_space_factor`：sfcode=0 不变；=1000 → 1000；<1000 且 >0
     /// → 取该值；>1000 且当前 <1000 → 1000；否则取该值。
     fn adjust_space_factor(&mut self, charcode: u32) {
-        let s = self
-            .sfcodes
-            .get(charcode as usize)
-            .copied()
-            .unwrap_or(1000) as i64;
+        let s = self.sfcodes.get(charcode as usize).copied().unwrap_or(1000) as i64;
         if s == 1000 {
             self.space_factor = 1000;
         } else if s < 1000 {
@@ -795,7 +783,6 @@ impl NodeBuilder {
 
 // ---------- Typesetter 段（TfmLoader + Typesetter + FinishOutput） ----------
 include!("typesetter.rs");
-
 
 // 方法分片（include! 嵌入，原 impl 按域拆分）
 include!("paragraph.rs");

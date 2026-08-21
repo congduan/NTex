@@ -105,12 +105,7 @@ pub trait TokenSink: std::fmt::Debug {
     }
     /// `\vsplit<n> to/spread <dimen>`（ETRIP）：纵向拆分盒子寄存器 n 的顶部，
     /// 寄存器 n 保留余量，结果盒子按 `\setbox` 目标路由或追加。
-    fn vsplit(
-        &mut self,
-        _idx: usize,
-        _to: Option<i64>,
-        _spread: Option<i64>,
-    ) -> Result<()> {
+    fn vsplit(&mut self, _idx: usize, _to: Option<i64>, _spread: Option<i64>) -> Result<()> {
         Ok(())
     }
     /// 组开始（`{`）：VM 已完成组作用域簿记。
@@ -207,7 +202,12 @@ pub trait TokenSink: std::fmt::Debug {
         Ok(())
     }
     /// `\discretionary{pre}{post}{replace}`：断字节点（组内容 token 由排版器转节点）。
-    fn discretionary(&mut self, _pre: Vec<Token>, _post: Vec<Token>, _replace: Vec<Token>) -> Result<()> {
+    fn discretionary(
+        &mut self,
+        _pre: Vec<Token>,
+        _post: Vec<Token>,
+        _replace: Vec<Token>,
+    ) -> Result<()> {
         Ok(())
     }
     /// `\insert<num>{<general text>}`：insert 节点（无维度；内容只收集不排版）。

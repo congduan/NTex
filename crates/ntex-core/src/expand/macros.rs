@@ -432,7 +432,6 @@ impl Expander {
         Ok(())
     }
 
-    /// `\catcode<byte>=<num>`：修改 catcode 表（组内局部、可 `\global`）。
     // ---------- M1-7 扫描顺序原语 ----------
 
     /// `\futurelet\cs T1 T2`：\cs ← \let T2（不展开），T1、T2 继续正常处理。

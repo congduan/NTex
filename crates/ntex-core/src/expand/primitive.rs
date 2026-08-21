@@ -91,8 +91,6 @@ impl Expander {
             Primitive::ThinMuskip => self.exec_muskip_param(0),
             Primitive::MedMuskip => self.exec_muskip_param(1),
             Primitive::ThickMuskip => self.exec_muskip_param(2),
-            // ETRIP 冲刺：\advance<寄存器> <增量>
-            Primitive::Advance => self.exec_advance(),
             Primitive::The => self.exec_the(),
             Primitive::Global => {
                 self.global_pending = true;

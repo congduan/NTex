@@ -337,7 +337,7 @@ pub fn knuth_plass(hlist: &[Node], hsize: i64, tolerance: i64) -> Vec<(usize, us
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::node::{FontId, GLUE_ORDER_FIL, Node};
+    use crate::node::{FontId, Node, GLUE_ORDER_FIL};
 
     fn char_of(w: i64) -> Node {
         Node::Char {
@@ -514,7 +514,10 @@ mod tests {
 
     #[test]
     fn knuth_plass_no_breaks_single_word() {
-        assert_eq!(knuth_plass(&[char_of(10), char_of(10)], 5, 200), vec![(0, 2)]);
+        assert_eq!(
+            knuth_plass(&[char_of(10), char_of(10)], 5, 200),
+            vec![(0, 2)]
+        );
     }
 
     #[test]
@@ -553,17 +556,17 @@ mod tests {
         // 不断字时整行/长行 badness > tolerance 被拒（或强制末行 demerits 巨大），
         // 唯一可行路径断在词内 → 行1 = "m ab-"（行尾补连字符）、行2 = "cdefgh n"。
         let mut hlist: Vec<Node> = vec![
-            char_of(10),              // m
-            glue(3, 1000, 14),        // 词间
-            char_of(10),              // a
-            char_of(10),              // b
-            disc(5),                  // 断点 2：pre = 连字符
+            char_of(10),       // m
+            glue(3, 1000, 14), // 词间
+            char_of(10),       // a
+            char_of(10),       // b
+            disc(5),           // 断点 2：pre = 连字符
         ];
         for _ in 0..6 {
             hlist.push(char_of(10)); // c d e f g h
         }
         hlist.push(glue(3, 1000, 14)); // 词间
-        hlist.push(char_of(10));      // n
+        hlist.push(char_of(10)); // n
         hlist.push(fil_glue());
         let lines = knuth_plass(&hlist, 60, 200);
         // 行1 = [0..4]（m 空格 a b）+ discretionary pre；行2 = [5..14]（c..h 空格 n fil）
@@ -573,7 +576,8 @@ mod tests {
     #[test]
     fn discretionary_ignored_when_word_fits() {
         // 词宽 40 + 断点 discretionary：hsize 100 单行即可（fil 拉伸），不选断字
-        let mut hlist: Vec<Node> = vec![char_of(10), char_of(10), disc(5), char_of(10), char_of(10)];
+        let mut hlist: Vec<Node> =
+            vec![char_of(10), char_of(10), disc(5), char_of(10), char_of(10)];
         hlist.push(fil_glue());
         assert_eq!(knuth_plass(&hlist, 100, 200), vec![(0, 6)]);
     }

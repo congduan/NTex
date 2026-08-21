@@ -137,10 +137,7 @@ pub fn scan_token(
                 // ^^ 转义：catcode 7 的 ^ 后随 ^ → 解码为单个字符 token
                 let mut ch = b;
                 let mut cat = cat;
-                if cat == Catcode::Superscript
-                    && b == b'^'
-                    && bytes.get(*pos + 1) == Some(&b'^')
-                {
+                if cat == Catcode::Superscript && b == b'^' && bytes.get(*pos + 1) == Some(&b'^') {
                     if let Some(d) = decode_circumflex(bytes, pos, catcodes) {
                         ch = d;
                         cat = catcodes.get(d);

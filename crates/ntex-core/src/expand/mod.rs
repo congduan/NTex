@@ -146,27 +146,69 @@ enum Relation {
 /// 组作用域保存项（M1-11 朴素快照回滚）。
 #[derive(Debug)]
 enum SavedValue {
-    Eqtb { csid: u32, prev: EqSlot },
-    Count { idx: usize, prev: i64 },
-    Dimen { idx: usize, prev: i64 },
-    Skip { idx: usize, prev: Glue },
+    Eqtb {
+        csid: u32,
+        prev: EqSlot,
+    },
+    Count {
+        idx: usize,
+        prev: i64,
+    },
+    Dimen {
+        idx: usize,
+        prev: i64,
+    },
+    Skip {
+        idx: usize,
+        prev: Glue,
+    },
     /// `\muskip`：mu 胶量寄存器（ETRIP；1mu = 65536 单位）。
-    Muskip { idx: usize, prev: Glue },
-    Toks { idx: usize, prev: TokenArray },
-    Catcode { byte: u8, prev: Catcode },
-    Param { kind: ParamKind, prev: ParamValue },
+    Muskip {
+        idx: usize,
+        prev: Glue,
+    },
+    Toks {
+        idx: usize,
+        prev: TokenArray,
+    },
+    Catcode {
+        byte: u8,
+        prev: Catcode,
+    },
+    Param {
+        kind: ParamKind,
+        prev: ParamValue,
+    },
     /// `\sfcode`：spacefactor 表项（M3-4 词间距）。
-    Sfcode { byte: u8, prev: u32 },
+    Sfcode {
+        byte: u8,
+        prev: u32,
+    },
     /// `\output`：输出例程 token 列表（M3-5-3）。
-    Output { prev: Option<TokenArray> },
+    Output {
+        prev: Option<TokenArray>,
+    },
     /// `\fontdimen`：字体参数覆盖（prev None = 此前无覆盖）。
-    FontDimen { font: u32, num: u32, prev: Option<i64> },
+    FontDimen {
+        font: u32,
+        num: u32,
+        prev: Option<i64>,
+    },
     /// `\hyphenchar`：字体断字符覆盖（prev None = 此前无覆盖）。
-    HyphenChar { font: u32, prev: Option<i64> },
+    HyphenChar {
+        font: u32,
+        prev: Option<i64>,
+    },
     /// `\delcode`：定界符码表项（ETRIP；组内局部保存）。
-    DelCode { byte: u8, prev: Option<u32> },
+    DelCode {
+        byte: u8,
+        prev: Option<u32>,
+    },
     /// `\lccode`：小写码表项（ETRIP 断字；组内局部保存）。
-    LcCode { byte: u8, prev: i64 },
+    LcCode {
+        byte: u8,
+        prev: i64,
+    },
 }
 
 /// `\ifx` 语义键：解析别名后比较含义（TeX：同含义即相等）。
@@ -495,10 +537,18 @@ impl Expander {
                 let frames: Vec<String> = self
                     .cond_stack
                     .iter()
-                    .map(|f| format!("{{is_case={} state={:?} owns_skip={} else={}}}",
-                        f.is_case, f.state, f.owns_skip, f.else_seen))
+                    .map(|f| {
+                        format!(
+                            "{{is_case={} state={:?} owns_skip={} else={}}}",
+                            f.is_case, f.state, f.owns_skip, f.else_seen
+                        )
+                    })
                     .collect();
-                eprintln!("[debug] 条件未闭合: depth={} frames={:?}", self.cond_stack.len(), frames);
+                eprintln!(
+                    "[debug] 条件未闭合: depth={} frames={:?}",
+                    self.cond_stack.len(),
+                    frames
+                );
             }
             return Err(Error::invalid_input("条件未闭合（缺少 \\fi）"));
         }
@@ -698,7 +748,7 @@ impl Expander {
     }
 
     /// 展开宏调用：收集实参，压入字节码（M2）或宏体输入帧。
-    fn call_macro(&mut self, csid: u32, def: Arc<MacroDef>) -> Result<()> {
+    fn call_macro(&mut self, _csid: u32, def: Arc<MacroDef>) -> Result<()> {
         let args = if def.params.num_params > 0 {
             self.collect_args(&def)?
         } else {
@@ -854,11 +904,9 @@ impl Expander {
             pos: 0,
         });
     }
-
 }
 
 impl Expander {
-
     // ---------- 只读访问（测试/上层用） ----------
 
     pub fn intern(&self) -> &InternTable {
@@ -904,7 +952,6 @@ impl Default for Expander {
         Self::new()
     }
 }
-
 
 // ---------- 方法分片（include! 嵌入；原 impl Expander 方法按域拆分） ----------
 // ---------- 方法分片：macros.rs ----------

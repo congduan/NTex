@@ -59,8 +59,7 @@ impl Expander {
             }
         } else {
             self.unread(first);
-            loop {
-                let Some((t, _)) = self.fetch()? else { break };
+            while let Some((t, _)) = self.fetch()? {
                 // `\jobname`：展开为作业名（TeX 文件名扫描展开 \jobname）
                 if let Some(csid) = t.csid() {
                     if self.eqtb.slot(csid) == &EqSlot::Primitive(Primitive::JobName) {
@@ -134,10 +133,11 @@ impl Expander {
             .csid()
             .ok_or_else(|| Error::invalid_input("流分配后必须是控制序列"))?;
         let free = match s {
+            // map_or 保持 MSRV 1.80（is_none_or 需 1.82）
             StreamKind::Read => (0..=15)
-                .find(|&i| self.read_streams.get(i).is_none_or(|s| s.is_none())),
+                .find(|&i| self.read_streams.get(i).map_or(true, |s| s.is_none())),
             StreamKind::Write => (0..=17)
-                .find(|&i| self.write_streams.get(i).is_none_or(|s| s.is_none())),
+                .find(|&i| self.write_streams.get(i).map_or(true, |s| s.is_none())),
         };
         let n = free.ok_or_else(|| Error::invalid_input("无空闲流号"))?;
         // cs 绑定为流引用（组作用域回滚，独立于 count 槽）
@@ -230,12 +230,8 @@ impl Expander {
     /// `\closeout<n>`：flush 待写内容并关闭。
     fn exec_closeout(&mut self) -> Result<()> {
         let idx = self.scan_stream_index("\\closeout", 17)?;
-        let immediate = self.take_immediate();
-        if !immediate {
-            self.flush_write_stream(idx)?;
-        } else {
-            self.flush_write_stream(idx)?;
-        }
+        // \closeout 恒 flush（immediate 前缀对 closeout 无额外效果，两分支等价）
+        self.flush_write_stream(idx)?;
         self.ensure_write_stream(idx);
         self.write_streams[idx] = None;
         Ok(())

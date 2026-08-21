@@ -218,33 +218,16 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
 // ---------- 编码原语（include! 嵌入） ----------
 include!("codec.rs");
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ntex_core::catcode::Catcode;
     use ntex_core::expand::Expander;
 
     fn roundtrip(state: &FmtState) -> FmtState {
         let mut buf = Vec::new();
         save(&mut buf, state).unwrap();
-        let mut loaded = FmtState {
-            intern_names: Vec::new(),
-            catcodes: ntex_core::catcode::CatcodeTable::new(),
-            sfcodes: [0; 256],
-            eqtb: Vec::new(),
-            registers: RegisterState {
-                counts: [0; 256],
-                dimens: [0; 256],
-                skips: [Glue::ZERO; 256],
-                muskip: Vec::new(),
-                toks: Vec::new(),
-            },
-            params: ntex_core::param::Params::default(),
-            output_toks: None,
-        };
         let mut cur = buf.as_slice();
-        loaded = load(&mut cur).unwrap();
+        let loaded = load(&mut cur).unwrap();
         assert!(cur.is_empty(), "解码后应消费全部输入");
         assert_eq!(*state, loaded, "roundtrip 后状态应一致");
         loaded
@@ -264,7 +247,8 @@ mod tests {
         .iter()
         .enumerate()
         {
-            e.run_source(*c).unwrap_or_else(|err| panic!("段 {i} [{c}] 失败：{err}"));
+            e.run_source(c)
+                .unwrap_or_else(|err| panic!("段 {i} [{c}] 失败：{err}"));
         }
         e.export_state()
     }

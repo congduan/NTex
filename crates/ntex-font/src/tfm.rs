@@ -150,11 +150,7 @@ impl FontMetrics {
     /// 从程序起点逐条目：stop（skip≥128）→ 无命令；next_char 匹配 → kern/连字；
     /// 不匹配 → 跳 skip+1。连字仅支持 `x y =: z`（a=b=c=0，左右都删）。
     pub fn apply_lig_kern(&self, left: u8, right: u8) -> Option<LigKern> {
-        let start = self
-            .lig_kern_index
-            .get(left as usize)
-            .copied()
-            .flatten()? as usize;
+        let start = self.lig_kern_index.get(left as usize).copied().flatten()? as usize;
         let mut k = start;
         loop {
             let s = *self.lig_kern_steps.get(k)?;
@@ -243,12 +239,19 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
         .checked_sub(bc)
         .map(|d| d as usize + 1)
         .ok_or_else(|| TfmError("bc > ec".into()))?;
-    let words = 6 + lh as usize + count + nw as usize + nh as usize + nd as usize
-        + ni as usize + nl as usize + nk as usize + ne as usize + np as usize;
+    let words = 6
+        + lh as usize
+        + count
+        + nw as usize
+        + nh as usize
+        + nd as usize
+        + ni as usize
+        + nl as usize
+        + nk as usize
+        + ne as usize
+        + np as usize;
     if words != lf as usize {
-        return Err(TfmError(format!(
-            "长度恒等式不符：{words} ≠ lf={lf}"
-        )));
+        return Err(TfmError(format!("长度恒等式不符：{words} ≠ lf={lf}")));
     }
 
     // 头部字：header[0] = checksum，header[1] = 设计字号（fix_word，pt）
@@ -383,7 +386,10 @@ pub fn find_tfm(name: &str) -> Option<std::path::PathBuf> {
         "/usr/share/texlive",
     ];
     for root in ROOTS {
-        for sub in ["/texmf-dist/fonts/tfm/public/cm/", "/texmf/fonts/tfm/public/cm/"] {
+        for sub in [
+            "/texmf-dist/fonts/tfm/public/cm/",
+            "/texmf/fonts/tfm/public/cm/",
+        ] {
             let p = PathBuf::from(root).join(sub).join(&file);
             if p.exists() {
                 return Some(p);
@@ -439,7 +445,7 @@ mod tests {
         push_u32(&mut out, 0); // A：全零索引
         push_u32(&mut out, (1 << 24) | (1 << 20)); // B(w1,h1,d0)
         push_u32(&mut out, (2 << 24) | (1 << 16)); // C(w2,h0,d1)
-        // 宽度/高度/深度表（fix_word）
+                                                   // 宽度/高度/深度表（fix_word）
         for w in [600_000u32, 700_000, 800_000] {
             push_u32(&mut out, w);
         }

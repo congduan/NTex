@@ -15,12 +15,7 @@ use ntex_font::{parse_tfm, FontMetrics};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DrawOp {
     /// 字符：`font` 选择器（[`Page::fonts`] 下标）、字符码、参考点 (h, v)。
-    Char {
-        font: u32,
-        code: u8,
-        h: i64,
-        v: i64,
-    },
+    Char { font: u32, code: u8, h: i64, v: i64 },
     /// 规则：覆盖 x ∈ [h, h+width]、y ∈ [v-height, v]（DVI 坐标）。
     Rule {
         h: i64,
@@ -52,12 +47,7 @@ fn read_i32(b: &[u8], i: &mut usize) -> io::Result<i64> {
     if *i + 4 > b.len() {
         return Err(io::Error::new(ErrorKind::UnexpectedEof, "DVI 截断"));
     }
-    let v = i32::from_be_bytes([
-        b[*i],
-        b[*i + 1],
-        b[*i + 2],
-        b[*i + 3],
-    ]) as i64;
+    let v = i32::from_be_bytes([b[*i], b[*i + 1], b[*i + 2], b[*i + 3]]) as i64;
     *i += 4;
     Ok(v)
 }
@@ -182,17 +172,12 @@ impl<'a> Parser<'a> {
             self.i += 1;
             match op {
                 140 => break, // eop
-                138 => {}      // nop
-                141 => stack.push(StackEntry {
-                    h,
-                    v,
-                    moves,
-                    font,
-                }),
+                138 => {}     // nop
+                141 => stack.push(StackEntry { h, v, moves, font }),
                 142 => {
-                    let e = stack.pop().ok_or_else(|| {
-                        io::Error::new(ErrorKind::InvalidData, "pop 栈下溢")
-                    })?;
+                    let e = stack
+                        .pop()
+                        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "pop 栈下溢"))?;
                     h = e.h;
                     v = e.v;
                     moves = e.moves;
@@ -212,24 +197,14 @@ impl<'a> Parser<'a> {
                 128..=131 => {
                     let n = (op - 127) as usize;
                     let code = read_uint(self.b, &mut self.i, n)? as u8;
-                    ops.push(DrawOp::Char {
-                        font,
-                        code,
-                        h,
-                        v,
-                    });
+                    ops.push(DrawOp::Char { font, code, h, v });
                     h += self.char_width(font, code)?;
                 }
                 // put1..put4（画字符但不推进）
                 133..=136 => {
                     let n = (op - 132) as usize;
                     let code = read_uint(self.b, &mut self.i, n)? as u8;
-                    ops.push(DrawOp::Char {
-                        font,
-                        code,
-                        h,
-                        v,
-                    });
+                    ops.push(DrawOp::Char { font, code, h, v });
                 }
                 132 => {
                     // set_rule：宽 a、高 b（规则底部在 v，向上 b）
@@ -375,9 +350,8 @@ fn load_tfm(name: &str, scale: i64, design: i64) -> io::Result<FontMetrics> {
     let path = ntex_font::find_tfm(name)
         .ok_or_else(|| io::Error::new(ErrorKind::NotFound, format!("找不到 TFM：{name}")))?;
     let bytes = std::fs::read(&path)?;
-    let mut fm = parse_tfm(&bytes).map_err(|e| {
-        io::Error::new(ErrorKind::InvalidData, format!("解析 {name}.tfm：{e}"))
-    })?;
+    let mut fm = parse_tfm(&bytes)
+        .map_err(|e| io::Error::new(ErrorKind::InvalidData, format!("解析 {name}.tfm：{e}")))?;
     fm.name = name.to_owned();
     // scale = 实际字号 sp，design = 设计字号 sp：维度 × scale/design
     Ok(if design > 0 && scale != design {
@@ -447,7 +421,12 @@ mod tests {
             other => panic!("预期 Char，得到 {other:?}"),
         }
         match &ops[1] {
-            DrawOp::Rule { h, v, width, height } => {
+            DrawOp::Rule {
+                h,
+                v,
+                width,
+                height,
+            } => {
                 // 规则在 'a' 之后：h = 字符宽
                 assert_eq!(*h, 327_681);
                 assert_eq!(*v, 0);
@@ -459,6 +438,9 @@ mod tests {
         // 'a' 宽来自 cmr10 TFM（按 fnt_def 缩放后；约 500 设计单位 × 0.01pt × 65536）
         let fm = &dvi.fonts[0];
         let (w, _, _) = fm.char_metrics(b'a' as u32);
-        assert!((327_680..=327_700).contains(&w), "cmr10 'a' 宽约 327680，实际 {w}");
+        assert!(
+            (327_680..=327_700).contains(&w),
+            "cmr10 'a' 宽约 327680，实际 {w}"
+        );
     }
 }

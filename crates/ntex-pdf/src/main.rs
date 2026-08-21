@@ -52,10 +52,7 @@ fn main() -> ExitCode {
     match ntex_pdf::convert(&dvi_bytes, &opts) {
         Ok(pdf) => match fs::write(&output, &pdf) {
             Ok(()) => {
-                let n_pages = pdf
-                    .windows(12)
-                    .filter(|w| w == b"/Type /Page ")
-                    .count();
+                let n_pages = pdf.windows(12).filter(|w| w == b"/Type /Page ").count();
                 println!("已写出 {output}（{} 字节，{} 页）", pdf.len(), n_pages);
                 ExitCode::SUCCESS
             }

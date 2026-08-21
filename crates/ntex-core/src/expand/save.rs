@@ -52,7 +52,6 @@ impl Expander {
         Ok(specs)
     }
 
-    /// `\def`/`\edef`：扫描控制序列名 + 参数文本 + 替换文本并定义。
     // ---------- M1-10 寄存器 ----------
 
     /// `\count/\dimen/\skip/\muskip/\toks` 赋值。

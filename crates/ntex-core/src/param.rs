@@ -70,35 +70,35 @@ pub const MISC_INTS: usize = 29;
 /// 内部整数参数默认值（TeX initex/plain 默认）。
 pub fn default_misc() -> [i64; MISC_INTS] {
     [
-        0,   // 0 TracingStats
-        1,   // 1 TracingLostChars（initex 默认 1）
-        0,   // 2 TracingOnline
-        0,   // 3 TracingCommands
-        0,   // 4 TracingRestores
-        0,   // 5 TracingAssigns
-        0,   // 6 TracingGroups
-        0,   // 7 TracingIfs
-        0,   // 8 TracingScantokens
-        0,   // 9 TracingNesting
-        2,   // 10 LeftHyphenMin（plain 默认 2）
-        3,   // 11 RightHyphenMin（plain 默认 3）
+        0,    // 0 TracingStats
+        1,    // 1 TracingLostChars（initex 默认 1）
+        0,    // 2 TracingOnline
+        0,    // 3 TracingCommands
+        0,    // 4 TracingRestores
+        0,    // 5 TracingAssigns
+        0,    // 6 TracingGroups
+        0,    // 7 TracingIfs
+        0,    // 8 TracingScantokens
+        0,    // 9 TracingNesting
+        2,    // 10 LeftHyphenMin（plain 默认 2）
+        3,    // 11 RightHyphenMin（plain 默认 3）
         1000, // 12 HBadness（plain 默认 1000）
-        100, // 13 PreTolerance（plain 默认 100）
-        0,   // 14 ShowBoxDepth
-        5,   // 15 ShowBoxBreadth
-        0,   // 16 Language
-        0,   // 17 SavingHyphCodes
-        0,   // 18 SavingVDiscards
-        0,   // 19 InteractionMode（驱动以 batchmode 启动）
-        0,   // 20 TeXXeTState
-        0,   // 21 MathSurround
-        0,   // 22 LastLineFit
-        0,   // 23 PredisplayDirection
-        -1,  // 24 EveryEof（-1 = 无）
-        0,   // 25 DeadCycles（输出例程循环计数）
-        0,   // 26 TracingMacros
-        0,   // 27 TracingOutput
-        100, // 28 ErrorContextLines（plain 默认 100）
+        100,  // 13 PreTolerance（plain 默认 100）
+        0,    // 14 ShowBoxDepth
+        5,    // 15 ShowBoxBreadth
+        0,    // 16 Language
+        0,    // 17 SavingHyphCodes
+        0,    // 18 SavingVDiscards
+        0,    // 19 InteractionMode（驱动以 batchmode 启动）
+        0,    // 20 TeXXeTState
+        0,    // 21 MathSurround
+        0,    // 22 LastLineFit
+        0,    // 23 PredisplayDirection
+        -1,   // 24 EveryEof（-1 = 无）
+        0,    // 25 DeadCycles（输出例程循环计数）
+        0,    // 26 TracingMacros
+        0,    // 27 TracingOutput
+        100,  // 28 ErrorContextLines（plain 默认 100）
     ]
 }
 
@@ -267,8 +267,12 @@ impl Params {
             (ParamKind::ParFillSkip, ParamValue::Glue(g)) => self.parfillskip = g,
             (ParamKind::AboveDisplaySkip, ParamValue::Glue(g)) => self.abovedisplayskip = g,
             (ParamKind::BelowDisplaySkip, ParamValue::Glue(g)) => self.belowdisplayskip = g,
-            (ParamKind::AboveDisplayShortSkip, ParamValue::Glue(g)) => self.abovedisplayshortskip = g,
-            (ParamKind::BelowDisplayShortSkip, ParamValue::Glue(g)) => self.belowdisplayshortskip = g,
+            (ParamKind::AboveDisplayShortSkip, ParamValue::Glue(g)) => {
+                self.abovedisplayshortskip = g
+            }
+            (ParamKind::BelowDisplayShortSkip, ParamValue::Glue(g)) => {
+                self.belowdisplayshortskip = g
+            }
             (ParamKind::PreDisplayPenalty, ParamValue::Number(v)) => self.predisplaypenalty = v,
             (ParamKind::PostDisplayPenalty, ParamValue::Number(v)) => self.postdisplaypenalty = v,
             (ParamKind::EndlineChar, ParamValue::Number(v)) => self.endlinechar = v,

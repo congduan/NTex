@@ -135,7 +135,7 @@ impl<'a> Writer<'a> {
             }
         }
         self.out.push(140); // eop
-        // 跨页清空移动栈（TeX 每页的 down/right 栈独立）
+                            // 跨页清空移动栈（TeX 每页的 down/right 栈独立）
         self.h_moves.clear();
         self.v_moves.clear();
     }
@@ -157,7 +157,7 @@ impl<'a> Writer<'a> {
         self.out.extend((max_w as u32).to_be_bytes()); // u
         self.out.extend((self.max_stack as u16).to_be_bytes()); // s
         self.out.extend((total_pages as u16).to_be_bytes()); // t
-        // 仅使用过的字体、倒序（tex.web `@<Output the font definitions...@>`）
+                                                             // 仅使用过的字体、倒序（tex.web `@<Output the font definitions...@>`）
         for (k, fm) in self.fonts.iter().enumerate().rev() {
             if self.used[k] {
                 self.fnt_def(k as u8, fm);
@@ -239,9 +239,14 @@ impl<'a> Writer<'a> {
                     }
                     self.cur_h += width;
                 }
-                Node::Penalty { .. } | Node::Leaders { .. } | Node::Discretionary { .. }
-                | Node::Ins { .. } | Node::Adjust { .. } | Node::Whatsit { .. }
-                | Node::Direction { .. } | Node::Mark { .. } => {}
+                Node::Penalty { .. }
+                | Node::Leaders { .. }
+                | Node::Discretionary { .. }
+                | Node::Ins { .. }
+                | Node::Adjust { .. }
+                | Node::Whatsit { .. }
+                | Node::Direction { .. }
+                | Node::Mark { .. } => {}
             }
         }
         self.prune_movements(save_loc);
@@ -288,9 +293,15 @@ impl<'a> Writer<'a> {
                         self.put_rule(*height + *depth, *width);
                     }
                 }
-                Node::Penalty { .. } | Node::Leaders { .. } | Node::Char { .. }
-                | Node::Discretionary { .. } | Node::Ins { .. } | Node::Adjust { .. }
-                | Node::Whatsit { .. } | Node::Direction { .. } | Node::Mark { .. } => {}
+                Node::Penalty { .. }
+                | Node::Leaders { .. }
+                | Node::Char { .. }
+                | Node::Discretionary { .. }
+                | Node::Ins { .. }
+                | Node::Adjust { .. }
+                | Node::Whatsit { .. }
+                | Node::Direction { .. }
+                | Node::Mark { .. } => {}
             }
         }
         self.prune_movements(save_loc);
@@ -643,7 +654,9 @@ mod tests {
         // 字体名出现两次：页面 fnt_def + post 字体列表
         let name: Vec<u8> = b"cmr10".to_vec();
         assert_eq!(
-            dvi.windows(name.len()).filter(|w| *w == name.as_slice()).count(),
+            dvi.windows(name.len())
+                .filter(|w| *w == name.as_slice())
+                .count(),
             2,
             "cmr10 应在页面与 post 各定义一次"
         );
@@ -684,6 +697,6 @@ mod tests {
             assert_eq!(p.height, 80 * 65_536, "页高应为 \\vsize");
         }
         let dvi = write_dvi(&pages, &fonts);
-        assert!(dvi.len() > 0);
+        assert!(!dvi.is_empty());
     }
 }

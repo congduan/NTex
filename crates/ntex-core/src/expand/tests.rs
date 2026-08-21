@@ -594,10 +594,14 @@ mod tests {
     }
 
     #[test]
-    fn unbalanced_fi_errors() {
-        assert!(expand("\\iftrue A").is_err());
-        assert!(expand("\\fi").is_err());
-        assert!(expand("\\else").is_err());
+    fn unbalanced_fi_reports_and_recovers() {
+        // TeX 错误恢复（ETRIP 对齐）：多余 \fi/\else/\or 报 "! Extra ..." 消息并继续运行
+        let mut e = Expander::new();
+        e.run_source("\\fi x").unwrap();
+        assert!(e.transcript().contains("! Extra \\fi."));
+        let mut e = Expander::new();
+        e.run_source("\\else x").unwrap();
+        assert!(e.transcript().contains("! Extra \\else."));
     }
 
     // ---------- M1-10 寄存器 ----------
@@ -1014,9 +1018,10 @@ ab5c}").unwrap();
     }
 
     #[test]
-    fn write_to_unopened_stream_errors() {
+    fn write_to_unopened_stream_is_ignored() {
+        // TeX 语义：延迟 \write 到未打开流在 shipout/flush 时被忽略（内容丢弃，不报错）
         let vfs = MemVfs::new();
-        assert!(expand_vfs("\\write0{abc}\\end", vfs).is_err());
+        assert!(expand_vfs("\\write0{abc}\\end", vfs).is_ok());
     }
 
     #[test]
@@ -1066,7 +1071,7 @@ ab5c}").unwrap();
     #[test]
     fn protected_macro_not_expanded_in_write() {
         // \write 参数展开抑制 protected 宏：\foo 不展开，输出为空（TeX 语义丢弃）
-        let mut vfs = MemVfs::new();
+        let vfs = MemVfs::new();
         let (_, vfs) = expand_vfs(
             r"\protected\def\foo{Hi}\newwrite\w\openout\w=out.txt\write\w{\foo}\closeout\w",
             vfs,
@@ -1159,7 +1164,7 @@ ab5c}").unwrap();
     }
 
     #[test]
-    fn eTeXversion_and_revision() {
+    fn e_tex_version_and_revision() {
         assert_eq!(expand(r"\the\eTeXversion").unwrap(), "2");
         // e-TeX 2.6：revision 带前导点（版本号"2.6"的后半段）
         assert_eq!(expand(r"\the\eTeXrevision").unwrap(), ".6");

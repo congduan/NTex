@@ -31,3 +31,9 @@ tmp_pngcmp.py
 # 引擎本地构建产物（站点素材在 site/public/ 内另行跟踪）
 /demo.dvi
 /demo.pdf
+
+# ETRIP/数学调试产物
+/delim*.dvi
+/mt2.pdf
+/mu1*.pdf
+/revision-test.dvi

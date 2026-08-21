@@ -53,7 +53,12 @@ pub fn write_pdf(dvi: &Dvi, opts: &PdfOptions) -> io::Result<Vec<u8>> {
                     }
                     run.push((*font, *code, x, y));
                 }
-                DrawOp::Rule { h, v, width, height } => {
+                DrawOp::Rule {
+                    h,
+                    v,
+                    width,
+                    height,
+                } => {
                     emit_line(&mut c, dvi, &run)?;
                     run.clear();
                     let x = *h as f64 / SP_PER_PT;
@@ -134,11 +139,7 @@ fn escape_byte(b: u8) -> String {
 ///
 /// 对象布局：1 Catalog、2 Pages、每页 (Page, Contents) 两对象、
 /// 每个唯一字体 (Font dict, FontDescriptor, FontFile 流) 三对象。
-fn build_document(
-    dvi: &Dvi,
-    contents: &[Vec<u8>],
-    opts: &PdfOptions,
-) -> io::Result<Vec<u8>> {
+fn build_document(dvi: &Dvi, contents: &[Vec<u8>], opts: &PdfOptions) -> io::Result<Vec<u8>> {
     // 字体去重：name → (FontName, PFA)。找不到 PFA 时退化为不嵌入的空字典。
     let mut uniq: Vec<(&str, (String, Vec<u8>))> = Vec::new();
     for name in &dvi.font_names {
@@ -179,7 +180,11 @@ fn build_document(
     };
 
     buf.extend_from_slice(b"%PDF-1.4\n%\xE2\xE3\xCF\xD3\n");
-    obj(&mut buf, &mut offsets, b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj");
+    obj(
+        &mut buf,
+        &mut offsets,
+        b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj",
+    );
 
     let mut kids = String::new();
     for i in 0..n_pages {
@@ -212,8 +217,8 @@ fn build_document(
             )
             .as_bytes(),
         );
-        let mut body = format!("{content_obj} 0 obj << /Length {} >>\nstream\n", c.len())
-            .into_bytes();
+        let mut body =
+            format!("{content_obj} 0 obj << /Length {} >>\nstream\n", c.len()).into_bytes();
         body.extend_from_slice(c);
         body.extend_from_slice(b"\nendstream\nendobj");
         obj(&mut buf, &mut offsets, &body);
@@ -254,8 +259,8 @@ fn build_document(
             )
             .as_bytes(),
         );
-        let mut body = format!("{file_obj} 0 obj << /Length {} >>\nstream\n", pfa.len())
-            .into_bytes();
+        let mut body =
+            format!("{file_obj} 0 obj << /Length {} >>\nstream\n", pfa.len()).into_bytes();
         body.extend_from_slice(pfa);
         body.extend_from_slice(b"\nendstream\nendobj");
         obj(&mut buf, &mut offsets, &body);
@@ -365,9 +370,12 @@ mod tests {
             ],
         };
         dvi.pages = vec![page];
-        let pdf = write_pdf(&dvi, &PdfOptions {
-            page_size: (100.0, 20.0),
-        })
+        let pdf = write_pdf(
+            &dvi,
+            &PdfOptions {
+                page_size: (100.0, 20.0),
+            },
+        )
         .unwrap();
         let s = String::from_utf8_lossy(&pdf);
         // 两条 TJ 行（规则前后各一）+ 一条规则

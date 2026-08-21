@@ -62,7 +62,7 @@ pub fn run_test(driver: &dyn EngineDriver, fixtures: &TestFixtures) -> Result<Tr
         ntex_test_support::DriverStatus::Success => {
             let mut log_diff = String::new();
             let mut typ_diff = String::new();
-            for (name, actual, expected) in compare_artifacts(&fixtures, work.path())? {
+            for (name, actual, expected) in compare_artifacts(fixtures, work.path())? {
                 let d = diff::render_diff(
                     &diff::normalize_log(&expected),
                     &diff::normalize_log(&actual),
@@ -106,11 +106,7 @@ fn compare_artifacts(
 }
 
 /// 执行一次编译请求（固定工作目录与参数）。
-fn run_driver(
-    driver: &dyn EngineDriver,
-    working_dir: &Path,
-    tex_name: &str,
-) -> Result<RunOutput> {
+fn run_driver(driver: &dyn EngineDriver, working_dir: &Path, tex_name: &str) -> Result<RunOutput> {
     let request = RunRequest {
         source: working_dir.join(tex_name),
         working_dir: working_dir.to_path_buf(),

@@ -116,9 +116,7 @@ impl PatternTrie {
             }
         }
         // 奇数 gap → 断点（词首位置 0 / 词尾 word.len() 不断）
-        (1..word.len())
-            .filter(|&i| marks[i] % 2 == 1)
-            .collect()
+        (1..word.len()).filter(|&i| marks[i] % 2 == 1).collect()
     }
 }
 
@@ -191,6 +189,10 @@ mod tests {
     fn trailing_digit_is_word_end_gap() {
         // ab5：5 在 b 后且为末 → 词尾 gap=5（位置 2 = 词尾）；词尾位置不断
         let t = PatternTrie::parse(b"ab5");
-        assert_eq!(t.hyphenate(b"abx"), Vec::<usize>::new(), "词尾 gap 不产生断点");
+        assert_eq!(
+            t.hyphenate(b"abx"),
+            Vec::<usize>::new(),
+            "词尾 gap 不产生断点"
+        );
     }
 }

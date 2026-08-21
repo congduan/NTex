@@ -56,14 +56,15 @@ pub fn load_pfb(name: &str) -> io::Result<Type1Font> {
 fn extract_font_name(pfb: &[u8]) -> Option<String> {
     // 取首个 0x80 段头之后、下一个段头之前的 ASCII 文本
     let head = pfb.iter().position(|&b| b == 0x80)? + 4;
-    let ascii_end = pfb[head..].iter().position(|&b| b == 0x80).map_or(pfb.len(), |p| head + p);
+    let ascii_end = pfb[head..]
+        .iter()
+        .position(|&b| b == 0x80)
+        .map_or(pfb.len(), |p| head + p);
     let text = std::str::from_utf8(&pfb[head..ascii_end]).ok()?;
     let marker = "/FontName /";
     let start = text.find(marker)? + marker.len();
     let rest = &text[start..];
-    let name = rest
-        .split(|c: char| c.is_whitespace() || c == '/')
-        .next()?;
+    let name = rest.split(|c: char| c.is_whitespace() || c == '/').next()?;
     Some(name.trim().to_owned())
 }
 

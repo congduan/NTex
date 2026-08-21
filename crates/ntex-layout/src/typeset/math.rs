@@ -448,20 +448,21 @@ impl NodeBuilder {
         let base_height = base_b.height;
         let t = 2 * SP_PER_PT / 5; // 0.4pt
         let gap = SP_PER_PT; // 内容上缘到线的间隙
-        let mut children = Vec::new();
-        children.push(Node::Rule {
-            width: base_b.width,
-            height: t,
-            depth: 0,
-        });
-        children.push(Node::Glue {
-            width: 0,
-            stretch: 0,
-            shrink: 0,
-            stretch_order: 0,
-            shrink_order: 0,
-        });
-        children.push(Node::Box(base_b));
+        let children = vec![
+            Node::Rule {
+                width: base_b.width,
+                height: t,
+                depth: 0,
+            },
+            Node::Glue {
+                width: 0,
+                stretch: 0,
+                shrink: 0,
+                stretch_order: 0,
+                shrink_order: 0,
+            },
+            Node::Box(base_b),
+        ];
         let mut b = BoxNode::new_vbox(children);
         // 参考点 = 内容基线：线在基线上方 base 高 + gap + t 处（shift 为负 = 上移）
         b.shift = -(base_height + gap + t);

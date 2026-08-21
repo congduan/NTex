@@ -156,8 +156,11 @@ mod tests {
     }
 
     #[test]
-    fn box_spec_to_is_rejected() {
-        assert!(typeset(r"\hbox to 5pt{a}").is_err());
+    fn box_spec_to_sets_width() {
+        // M3-2-2 补齐后：\hbox to <dimen> 撑满到指定宽度（不再拒绝）
+        let main = typeset(r"\hbox to 5pt{a}").unwrap();
+        let b = as_box(&main[0]);
+        assert_eq!(b.width, 5 * SP_PER_PT);
     }
 
     #[test]
@@ -547,16 +550,14 @@ mod tests {
         let mut w = 0i64;
         let mut chars = Vec::new();
         for c in children {
-            match c {
-                Node::Char {
-                    charcode,
-                    width,
-                    ..
-                } => {
-                    chars.push(*charcode);
-                    w += width;
-                }
-                _ => {}
+            if let Node::Char {
+                charcode,
+                width,
+                ..
+            } = c
+            {
+                chars.push(*charcode);
+                w += width;
             }
         }
         (chars, w)

@@ -159,8 +159,7 @@ impl Expander {
     /// 以 `\relax` 或不可识别 token 结束（后者放回）。
     fn eval_int_expression(&mut self) -> Result<i64> {
         let mut value = self.expr_mul_term()?;
-        loop {
-            let Some(op) = self.peek_int_op()? else { break };
+        while let Some(op) = self.peek_int_op()? {
             if op != b'+' && op != b'-' {
                 self.unread(Token::char(Catcode::Other, op as u32));
                 break;
@@ -174,8 +173,7 @@ impl Expander {
     /// 乘法项：`factor (('*'|'/') factor)*`。
     fn expr_mul_term(&mut self) -> Result<i64> {
         let mut value = self.scan_number()?;
-        loop {
-            let Some(op) = self.peek_int_op()? else { break };
+        while let Some(op) = self.peek_int_op()? {
             if op != b'*' && op != b'/' {
                 self.unread(Token::char(Catcode::Other, op as u32));
                 break;
@@ -208,8 +206,7 @@ impl Expander {
     /// 每项为 [`Self::scan_dimen`] 可识别的尺寸；`\relax` 或不可识别 token 结束，后者放回）。
     fn eval_dimen_expression(&mut self) -> Result<i64> {
         let mut value = self.scan_dimen()?;
-        loop {
-            let Some(op) = self.peek_int_op()? else { break };
+        while let Some(op) = self.peek_int_op()? {
             if op != b'+' && op != b'-' {
                 // * / 不是尺寸运算符：放回结束
                 self.unread(Token::char(Catcode::Other, op as u32));
@@ -225,8 +222,7 @@ impl Expander {
     /// width 逐项求和；stretch/shrink 取**最后一个**非零项（含符号，eTeX 语义）。
     fn eval_glue_expression(&mut self) -> Result<Glue> {
         let mut result = self.scan_glue()?;
-        loop {
-            let Some(op) = self.peek_int_op()? else { break };
+        while let Some(op) = self.peek_int_op()? {
             if op != b'+' && op != b'-' {
                 self.unread(Token::char(Catcode::Other, op as u32));
                 break;

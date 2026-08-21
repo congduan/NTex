@@ -402,10 +402,8 @@ impl TokenSink for NodeBuilder {
             } else if self.sqrt_pending {
                 self.sqrt_pending = false;
                 Some(MathFieldKind::Sqrt)
-            } else if let Some(class) = self.class_pending.take() {
-                Some(MathFieldKind::Class(class))
             } else {
-                None
+                self.class_pending.take().map(MathFieldKind::Class)
             };
             self.math.push(MathLevel {
                 atoms: Vec::new(),

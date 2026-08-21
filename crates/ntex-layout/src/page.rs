@@ -250,8 +250,7 @@ impl PageBuilder {
                     return Outcome::Continue;
                 }
                 // kern 仅在后继为胶水时才是断点（tex.web §498，需前瞻贡献）
-                let followed_by_glue =
-                    matches!(contrib.get(1), Some(Node::Glue { .. }));
+                let followed_by_glue = matches!(contrib.get(1), Some(Node::Glue { .. }));
                 if followed_by_glue && self.try_break(0) == Some(Outcome::FireUp) {
                     return Outcome::FireUp;
                 }
@@ -267,9 +266,7 @@ impl PageBuilder {
                     contrib.remove(0);
                     return Outcome::Continue;
                 }
-                if penalty < INF_PENALTY
-                    && self.try_break(penalty) == Some(Outcome::FireUp)
-                {
+                if penalty < INF_PENALTY && self.try_break(penalty) == Some(Outcome::FireUp) {
                     return Outcome::FireUp;
                 }
                 contrib.remove(0);
@@ -382,7 +379,11 @@ impl PageBuilder {
                     d = b.depth;
                     width = width.max(b.width + b.shift);
                 }
-                Node::Rule { width: w, height, depth } => {
+                Node::Rule {
+                    width: w,
+                    height,
+                    depth,
+                } => {
                     x += d + height;
                     d = *depth;
                     width = width.max(*w);
@@ -404,7 +405,9 @@ impl PageBuilder {
                     x += d + w;
                     d = 0;
                 }
-                Node::Leaders { width: w, inner, .. } => {
+                Node::Leaders {
+                    width: w, inner, ..
+                } => {
                     x += d + inner.height + inner.depth;
                     d = inner.depth;
                     width = width.max(*w);
@@ -445,7 +448,11 @@ impl PageBuilder {
                 Some(o) => {
                     let gs = (-excess) as f64 / shrink[o] as f64;
                     // 普通阶收缩不足时钳到最大收缩（tex.web §283-288）
-                    let gs = if o == 0 && shrink[o] < -excess { 1.0 } else { gs };
+                    let gs = if o == 0 && shrink[o] < -excess {
+                        1.0
+                    } else {
+                        gs
+                    };
                     (Sign::Shrink, o, gs)
                 }
                 None => (Sign::Normal, 0, 0.0),
