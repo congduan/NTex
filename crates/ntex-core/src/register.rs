@@ -12,8 +12,8 @@
 use crate::macrodef::TokenArray;
 use std::sync::Arc;
 
-/// 寄存器个数（TeX 标准：0..=255）。
-pub const REGISTER_COUNT: usize = 256;
+/// 寄存器个数（eTeX 扩展：0..=32767；经典 TeX 为 0..=255）。
+pub const REGISTER_COUNT: usize = 32768;
 
 /// 1 pt = 65536 sp。
 pub const SP_PER_PT: i64 = 65_536;
@@ -116,14 +116,14 @@ pub enum RegKind {
     Toks,
 }
 
-/// 寄存器文件（固定 256 槽，索引越界由调用方保证）。
+/// 寄存器文件（eTeX 32768 槽；堆分配 Box 切片，避免栈上 ~2MB 数组）。
 #[derive(Debug, Clone)]
 pub struct Registers {
-    counts: [i64; REGISTER_COUNT],
-    dimens: [i64; REGISTER_COUNT],
-    skips: [Glue; REGISTER_COUNT],
-    muskip: [Glue; REGISTER_COUNT],
-    toks: [TokenArray; REGISTER_COUNT],
+    counts: Box<[i64]>,
+    dimens: Box<[i64]>,
+    skips: Box<[Glue]>,
+    muskip: Box<[Glue]>,
+    toks: Box<[TokenArray]>,
 }
 
 impl Default for Registers {
@@ -135,11 +135,11 @@ impl Default for Registers {
 impl Registers {
     pub fn new() -> Self {
         Self {
-            counts: [0; REGISTER_COUNT],
-            dimens: [0; REGISTER_COUNT],
-            skips: [Glue::ZERO; REGISTER_COUNT],
-            muskip: [Glue::ZERO; REGISTER_COUNT],
-            toks: std::array::from_fn(|_| Arc::from([])),
+            counts: vec![0; REGISTER_COUNT].into_boxed_slice(),
+            dimens: vec![0; REGISTER_COUNT].into_boxed_slice(),
+            skips: vec![Glue::ZERO; REGISTER_COUNT].into_boxed_slice(),
+            muskip: vec![Glue::ZERO; REGISTER_COUNT].into_boxed_slice(),
+            toks: vec![Arc::from([]); REGISTER_COUNT].into_boxed_slice(),
         }
     }
 
@@ -187,9 +187,9 @@ impl Registers {
 /// 寄存器状态快照（`.fmt` v1 序列化载体）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegisterState {
-    pub counts: [i64; REGISTER_COUNT],
-    pub dimens: [i64; REGISTER_COUNT],
-    pub skips: [Glue; REGISTER_COUNT],
+    pub counts: Box<[i64]>,
+    pub dimens: Box<[i64]>,
+    pub skips: Box<[Glue]>,
     /// 非空 `\muskip` 项（(下标, 内容)；ETRIP）。
     pub muskip: Vec<(usize, Glue)>,
     /// 非空 `\toks` 项（(下标, 内容)）。
@@ -199,9 +199,9 @@ pub struct RegisterState {
 impl Registers {
     pub fn export(&self) -> RegisterState {
         RegisterState {
-            counts: self.counts,
-            dimens: self.dimens,
-            skips: self.skips,
+            counts: self.counts.clone(),
+            dimens: self.dimens.clone(),
+            skips: self.skips.clone(),
             muskip: self
                 .muskip
                 .iter()

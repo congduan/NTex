@@ -1,5 +1,7 @@
 // ---------- 编码原语 ----------
 
+use ntex_core::REGISTER_COUNT;
+
 fn write_tokens(w: &mut impl Write, toks: &[Token]) -> io::Result<()> {
     w.write_all(&(toks.len() as u32).to_le_bytes())?;
     for t in toks {
@@ -147,8 +149,8 @@ fn write_registers(w: &mut impl Write, r: &RegisterState) -> io::Result<()> {
     for g in &r.skips {
         write_glue(w, *g)?;
     }
-    // muskip 寄存器（v5：RegKind 编号变更 + muskip 序列化；稀疏存 256 槽全量）
-    for i in 0..256usize {
+    // muskip 寄存器（v5：RegKind 编号变更 + muskip 序列化；稀疏存全槽量）
+    for i in 0..REGISTER_COUNT {
         let g = r
             .muskip
             .iter()
@@ -166,20 +168,20 @@ fn write_registers(w: &mut impl Write, r: &RegisterState) -> io::Result<()> {
 }
 
 fn read_registers(r: &mut impl Read) -> io::Result<RegisterState> {
-    let mut counts = [0i64; 256];
+    let mut counts = vec![0i64; REGISTER_COUNT];
     for v in &mut counts {
         *v = read_i64(r)?;
     }
-    let mut dimens = [0i64; 256];
+    let mut dimens = vec![0i64; REGISTER_COUNT];
     for v in &mut dimens {
         *v = read_i64(r)?;
     }
-    let mut skips = [Glue::ZERO; 256];
+    let mut skips = vec![Glue::ZERO; REGISTER_COUNT];
     for g in &mut skips {
         *g = read_glue(r)?;
     }
     let mut muskip = Vec::new();
-    for i in 0..256 {
+    for i in 0..REGISTER_COUNT {
         let g = read_glue(r)?;
         if g != Glue::ZERO {
             muskip.push((i, g));
@@ -193,9 +195,9 @@ fn read_registers(r: &mut impl Read) -> io::Result<RegisterState> {
         toks.push((idx, t));
     }
     Ok(RegisterState {
-        counts,
-        dimens,
-        skips,
+        counts: counts.into_boxed_slice(),
+        dimens: dimens.into_boxed_slice(),
+        skips: skips.into_boxed_slice(),
         muskip,
         toks,
     })

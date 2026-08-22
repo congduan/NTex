@@ -1371,14 +1371,15 @@ ab5c}").unwrap();
 
     #[test]
     fn glueexpr_basic_and_last_stretch_wins() {
-        // width 求和；stretch/shrink 取最后一个非零项
+        // width 求和；stretch/shrink 值求和，无穷阶取最后一个非零分量项的阶
         assert_eq!(
             expand(r"\the\glueexpr 1pt plus 2pt + 3pt minus 1pt \relax").unwrap(),
             "4.0pt plus 2.0pt minus 1.0pt"
         );
+        // stretch 值求和（非"最后一个覆盖"）：2pt + 4pt = 6pt
         assert_eq!(
             expand(r"\the\glueexpr 1pt plus 2pt + 3pt plus 4pt \relax").unwrap(),
-            "4.0pt plus 4.0pt"
+            "4.0pt plus 6.0pt"
         );
     }
 

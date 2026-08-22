@@ -39,7 +39,7 @@ pub use expand::Expander;
 pub use font::{FontLoader, NoFontLoader};
 pub use intern::InternTable;
 pub use macrodef::{MacroDef, ParamSpec, TokenArray};
-pub use register::{format_dimen, format_glue, Glue, Registers, SP_PER_PT};
+pub use register::{format_dimen, format_glue, Glue, Registers, SP_PER_PT, REGISTER_COUNT};
 pub use sink::{TokenSink, VecSink};
 pub use span::{BytePos, LineCol, SourceId, Span};
 pub use token::{meaning, Token, TokenKind};

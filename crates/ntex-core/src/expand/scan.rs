@@ -11,12 +11,28 @@ impl Expander {
             }
         }
         let mut neg = false;
-        if let Some(tok) = self.fetch()?.map(|t| t.0) {
+        // 负号与未定义 cs 统一循环（TeX get_x_token）：`--\skip90`、
+        // `-\mutoglue-\gluetomu9pt` 等逐 token 恢复（未定义 → 报错当 \relax）。
+        loop {
+            self.skip_spaces()?;
+            let Some((tok, _)) = self.fetch()? else { break };
             if tok.charcode() == Some(b'-' as u32) {
-                neg = true;
-            } else {
-                self.unread(tok);
+                neg = !neg;
+                continue;
             }
+            if let Some(csid) = tok.csid() {
+                if matches!(self.eqtb.slot(csid), EqSlot::Undefined) {
+                    let _ = self
+                        .sink
+                        .write16(format!(
+                            "! Undefined control sequence.\n\\{}\n",
+                            self.intern.name(csid)
+                        ));
+                    continue;
+                }
+            }
+            self.unread(tok);
+            break;
         }
         // 反引号字符码：`<char>（TeX scan_int 的 alphabetic constant，TeXbook p.267）
         if let Some(code) = self.try_scan_backquote()? {
@@ -62,6 +78,20 @@ impl Expander {
                 EqSlot::Primitive(Primitive::NumExpr) => {
                     self.fetch()?; // 消费 \numexpr
                     let v = self.eval_int_expression()?;
+                    return Ok(if neg { -v } else { v });
+                }
+                // e-TeX：\dimexpr/\glueexpr/\muexpr 也可在整数上下文求值
+                // （etrip L826-828：`\ifnum#4=-\dimexpr-#2sp/#3`、`\glueexpr\muexpr...`）。
+                // 结果为 sp 值（dimen）或胶水宽度（glue/mu；\muexpr 注册为 Glueexpr 别名）。
+                EqSlot::Primitive(Primitive::Dimexpr) => {
+                    self.fetch()?; // 消费 \dimexpr
+                    let v = self.eval_dimen_expression()?;
+                    return Ok(if neg { -v } else { v });
+                }
+                EqSlot::Primitive(Primitive::Glueexpr) => {
+                    self.fetch()?; // 消费 \glueexpr/\muexpr
+                    let g = self.eval_glue_expression()?;
+                    let v = g.width;
                     return Ok(if neg { -v } else { v });
                 }
                 // 内部整数：\catcode<char> → 该字符当前 catcode 值
@@ -372,11 +402,18 @@ impl Expander {
         }
     }
 
-    /// 扫描寄存器下标（0..=255）。
+    /// 扫描寄存器下标（eTeX 0..=32767；越界报 "! Bad register code." 并钳到 0，
+    /// etrip "Checking sparse arrays" 段：`\countdef\cs=32768` / `=-1`）。
     fn scan_register_index(&mut self) -> Result<usize> {
         let n = self.scan_number()?;
         if !(0..REGISTER_COUNT as i64).contains(&n) {
-            return Err(Error::invalid_input(format!("寄存器下标越界：{n}")));
+            let _ = self.sink.write16(format!(
+                "! Bad register code ({}).\n\
+                 A register number must be between 0 and 32767.\n\
+                 I changed this one to zero.\n",
+                n
+            ));
+            return Ok(0);
         }
         Ok(n as usize)
     }
@@ -569,25 +606,49 @@ impl Expander {
                 self.unread(tok);
             }
         }
-        // 连续负号循环（TeX 表达式 `--\skip90` 等）：奇偶决定符号
+        // 连续负号循环（TeX 表达式 `--\skip90` 等）+ 未定义 cs 跳过
+        // （`-\mutoglue-\gluetomu9pt`，报错当 \relax 继续）：奇偶决定符号。
         let mut neg = false;
         loop {
+            self.skip_spaces()?;
             let Some(tok) = self.fetch()?.map(|t| t.0) else {
                 break;
             };
             if tok.charcode() == Some(b'-' as u32) {
                 neg = !neg;
-            } else {
-                self.unread(tok);
-                break;
+                continue;
             }
+            if let Some(csid) = tok.csid() {
+                if matches!(self.eqtb.slot(csid), EqSlot::Undefined) {
+                    let _ = self
+                        .sink
+                        .write16(format!(
+                            "! Undefined control sequence.\n\\{}\n",
+                            self.intern.name(csid)
+                        ));
+                    continue;
+                }
+            }
+            self.unread(tok);
+            break;
         }
         // TeX get_x_token 语义：展开可展开 cs（`\ifdim\csname fontcharwd\endcsname...`）。
+        // 未定义 cs 报 "! Undefined control sequence." 并当 \relax 继续。
         // 展开结果压回输入流顶，循环直至不可展开项或数量原语。
         loop {
             let Some(csid) = self.peek_csid()? else {
                 break;
             };
+            if matches!(self.eqtb.slot(csid), EqSlot::Undefined) {
+                self.fetch()?; // 消费未定义 cs
+                let _ = self
+                    .sink
+                    .write16(format!(
+                        "! Undefined control sequence.\n\\{}\n",
+                        self.intern.name(csid)
+                    ));
+                continue;
+            }
             let expandable = match self.eqtb.slot(csid).clone() {
                 EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
                 EqSlot::Primitive(p) if p.is_expandable() => true,
@@ -644,6 +705,13 @@ impl Expander {
             if let EqSlot::Primitive(Primitive::Dimexpr) = self.eqtb.slot(csid) {
                 self.fetch()?; // 消费 \dimexpr
                 let v = self.eval_dimen_expression()?;
+                return Ok((if neg { -v } else { v }, 0));
+            }
+            // e-TeX：\glueexpr/\muexpr 宽度可在尺寸上下文求值（etrip L888 `\ifdim\glueexpr...`）
+            if let EqSlot::Primitive(Primitive::Glueexpr) = self.eqtb.slot(csid) {
+                self.fetch()?; // 消费 \glueexpr/\muexpr
+                let g = self.eval_glue_expression()?;
+                let v = g.width;
                 return Ok((if neg { -v } else { v }, 0));
             }
             // ETRIP 冲刺：\fontdimen<num><font> 可在任意尺寸上下文读取
@@ -751,20 +819,41 @@ impl Expander {
             int_part = rv;
             any = true;
         } else {
-            while let Some((tok, _)) = self.fetch()? {
-                if let Some(d) = digit_value(tok) {
-                    if saw_dot {
-                        frac = frac * 10 + i64::from(d);
-                        frac_len += 1;
+            // 数字部分可为寄存器/内部整数：`\count43pt`（TeX scan_dimen 的
+            // <number><unit>，etrip L869 `\dimexpr\skip43+\count43pt`）。
+            // 符号已由上方 multi-minus 处理，此处只取数值。
+            let mut number_cs = false;
+            if let Some(csid) = self.peek_csid()? {
+                let slot = self.eqtb.slot(csid).clone();
+                number_cs = matches!(
+                    &slot,
+                    EqSlot::Register(RegKind::Count, _) | EqSlot::Char { .. }
+                ) || matches!(
+                    &slot,
+                    EqSlot::Primitive(p)
+                        if matches!(p, Primitive::Count | Primitive::NumExpr)
+                            || int_param_index(*p).is_some()
+                );
+            }
+            if number_cs {
+                int_part = self.scan_number()?;
+                any = true;
+            } else {
+                while let Some((tok, _)) = self.fetch()? {
+                    if let Some(d) = digit_value(tok) {
+                        if saw_dot {
+                            frac = frac * 10 + i64::from(d);
+                            frac_len += 1;
+                        } else {
+                            int_part = int_part * 10 + i64::from(d);
+                        }
+                        any = true;
+                    } else if tok.charcode() == Some(b'.' as u32) && !saw_dot {
+                        saw_dot = true;
                     } else {
-                        int_part = int_part * 10 + i64::from(d);
+                        self.unread(tok);
+                        break;
                     }
-                    any = true;
-                } else if tok.charcode() == Some(b'.' as u32) && !saw_dot {
-                    saw_dot = true;
-                } else {
-                    self.unread(tok);
-                    break;
                 }
             }
         }
