@@ -1341,7 +1341,8 @@ impl Expander {
 
     /// `\showtokens{<general text>}`：展开后显示 token 列表（TeX："> <tokens>." + 换行）。
     fn exec_showtokens(&mut self) -> Result<()> {
-        let toks = self.scan_group_contents()?;
+        // TeX `<general text>`：`\showtokens\expandafter{#1}` 组前先展开可展开项
+        let toks = self.scan_group_contents_expanding()?;
         let text = self.expand_to_string(&toks)?;
         self.sink.show(format!("> {text}."))
     }

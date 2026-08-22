@@ -47,3 +47,11 @@ unsafe_code = "deny"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+
+# 发布构建调优（性能 backlog P0）：LTO + 单 codegen unit + panic=abort。
+# panic=abort 前提已审计：全库无 catch_unwind/无 unsafe，错误模型走 Result。
+# 注：`cargo test --release` 会因 panic=abort 报错；测试请用默认 dev profile（CI 亦如此）。
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"

@@ -18,6 +18,57 @@
 
 ***
 
+## 性能优化 backlog（2026-08-22 评审）
+
+> 来源：高级 Rust 工程师评审结论（热路径实现层欠账 + 工程化闭环），不引入新功能，
+> 属既定里程碑补课。纪律：**先量化再冲 M5/M7**——不在 1.12x 的基线上做增量层。
+
+### P0 构建配置（零成本 10~30%，最先做）
+
+- [ ] 工作区 `[profile.release]`：`lto = "thin"`、`codegen-units = 1`、
+  `panic = "abort"`（已确认全库无 `catch_unwind`/无 `unsafe`，可直接上）
+- 验证：`cargo run -p ntex-bench --release` 每千 token 吞吐提升入档
+
+### P0 M2-6 补课：字节码执行器走 u64 原始字（RFC-4 设计落地）
+
+- [ ] `Bytecode.code` 改存 `Arc<[u64]>` 原始字（不再存 16B `Instruction` 枚举，
+  现 `encode`/`to_words` 只用于序列化，热路径零解包设计被浪费）
+- [ ] `fetch()` 的 Bytecode 分支按 `word >> 60` 分发：tag 0..=3 直接
+  `Token::from_raw(word)`，消除每步解包
+- 验证：M2 双轨等价测试全绿；吞吐 ≥ 2x 目标（现 1.12x）
+
+### P1 M2-6 小步优化：热路径消分配（每 token / 每宏调用）
+
+- [ ] `process_token`：`eqtb.slot(csid).clone()` → 按引用 match
+  （省每控制序列 token 的 EqSlot 克隆，含两次 Arc refcount）
+- [ ] `fetch()` 的 EmitArg/宏参数分支：实参 `Arc<[Token]>` 直接复用，
+  帧加 `noexpand` 标记位，去掉 `Vec<(Token,bool)>` 重包装 + 二次堆分配
+- [ ] `unread`/`next_is_math_shift`：单 token 回推改栈上内联槽，
+  去掉每次 `Arc::from([...])`（`$$` 检测每命中一次）
+- [ ] `call_macro` 实参 `Vec<TokenArray>` → SmallVec（实参 ≤9 个）
+- 验证：M1 全部用例双轨重跑全绿；火焰图对比热区前移
+
+### P1 正确性加固：panic 审计 + fuzz（引擎契约：任意畸形输入不 panic）
+
+- [ ] 生产路径 unwrap/expect 审计（input.rs 10 / ntex-format 15 / ntex-io 6 等），
+  输入可达路径一律改 `Error`（与 M1-13 错误模型收尾联动）
+- [ ] `cargo-fuzz` 目标：随机字节喂 `Expander + scan_token`，断言永不 panic
+  （复用 TRIP/ETRIP in-process 驱动）
+  - 已发现实例（2026-08-22，P0 验证时）：`ntex-bench --driver ntex --bench
+    expand-throughput`（200k 宏调用）在 in-process 引擎**死循环**（HEAD 与
+    P0 改动后均复现；CI 仅 stub 驱动未覆盖此路径）——优先列入 fuzz 回归集
+- 验证：fuzz 长时间运行零 panic；错误路径输出与 pdfTeX 一致
+
+### P2 工程化闭环：CI/基准门禁
+
+- [ ] `make bench` 补 `--release`（现为 debug + stub，数字无参考价值）
+- [ ] nightly perf job：release 跑 `ntex-bench`（真实驱动），对照入库基线，
+  吞吐下降 >15% 即失败（plan 中"基准数字入库，CI 防回归"落地）
+- [ ] token 级微基准引入 divan（秒级宏基准保留手写 measure）
+- 验证：CI 绿且基线数字可追踪
+
+***
+
 ## 0. 三个策略性结论（决定排期顺序）
 
 1. **字节码编译要早做，不能放到最后**。它是冷编性能的最大蛋糕（确定性 2\~5x），

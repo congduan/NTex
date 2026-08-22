@@ -13,8 +13,14 @@
 use crate::eqtb::{EqSlot, Eqtb, Primitive};
 use crate::intern::InternTable;
 use crate::token::{meaning, Token, TokenKind};
+use std::sync::Arc;
 
-const TAG_SHIFT: u32 = 60;
+/// token/指令 tag 高位偏移（token 自身 tag 占高 4 bit，见 RFC-1 §3）。
+pub const TAG_SHIFT: u32 = 60;
+
+/// 运行期指令 tag：`Emit` 内联 token 原值（tag 即 token 自身 tag 0..=3）。
+pub const EMIT_ARG_TAG: u64 = 4;
+pub const END_TAG: u64 = 5;
 
 /// 字节码指令（定长，编码为 u64）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,56 +60,57 @@ impl Instruction {
     }
 }
 
-/// 宏体字节码。
+/// 宏体字节码：**定长 u64 原始字序列**（M2-6 补课）。
+///
+/// 运行时直接按 `word >> TAG_SHIFT` 分发（零解包）：tag 0..=3 即内联 token 原值，
+/// `EmitArg`/`End` 分别以 `EMIT_ARG_TAG`/`END_TAG` 标记。`Instruction` 枚举仅保留为
+/// 构造/反汇编/测试的便利视图（编码与字表示严格等价，见 [`Instruction::encode`]）。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Bytecode {
-    code: Vec<Instruction>,
+    words: Arc<[u64]>,
 }
 
 impl Bytecode {
-    /// 指令序列（只读）。
-    pub fn instructions(&self) -> &[Instruction] {
-        &self.code
+    /// 原始指令字序列（只读）。
+    pub fn words(&self) -> &[u64] {
+        &self.words
     }
 
     pub fn len(&self) -> usize {
-        self.code.len()
+        self.words.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.code.is_empty()
+        self.words.is_empty()
     }
 
-    /// 编码为 u64 字数组（供 `.fmt` 序列化与往返测试）。
+    /// 编码为 u64 字数组（`.fmt` 序列化 / 往返测试；即内部表示的视图拷贝）。
     pub fn to_words(&self) -> Vec<u64> {
-        self.code.iter().map(|&i| i.encode()).collect()
+        self.words.to_vec()
     }
 
     /// 从 u64 字数组解码。
     pub fn from_words(words: &[u64]) -> Self {
         Self {
-            code: words.iter().map(|&w| Instruction::decode(w)).collect(),
+            words: Arc::from(words),
         }
     }
 
     /// 反汇编为可读文本（每行 `pc: mnemonic operands`）。
     pub fn disassemble(&self, intern: &InternTable) -> String {
         let mut out = String::new();
-        for (pc, instr) in self.code.iter().enumerate() {
-            match instr {
-                Instruction::Emit { token } => {
+        for (pc, &word) in self.words.iter().enumerate() {
+            match word >> TAG_SHIFT {
+                0..=3 => {
+                    let token = Token::from_raw(word);
                     let desc = match token.kind() {
-                        TokenKind::ControlSeq => meaning(*token, intern),
+                        TokenKind::ControlSeq => meaning(token, intern),
                         _ => format!("{token:?}"),
                     };
                     out.push_str(&format!("{pc:>3}: emit {desc}\n"));
                 }
-                Instruction::EmitArg { n } => {
-                    out.push_str(&format!("{pc:>3}: arg {n}\n"));
-                }
-                Instruction::End => {
-                    out.push_str(&format!("{pc:>3}: end\n"));
-                }
+                4 => out.push_str(&format!("{pc:>3}: arg {}\n", word & 0xF)),
+                _ => out.push_str(&format!("{pc:>3}: end\n")),
             }
         }
         out
@@ -115,18 +122,14 @@ pub fn compile(body: &[Token], eqtb: &Eqtb) -> Bytecode {
     let mut out = Vec::new();
     let mut from = 0usize;
     compile_slice(body, &mut from, body.len(), &mut out, eqtb);
-    out.push(Instruction::End);
-    Bytecode { code: out }
+    out.push(Instruction::End.encode());
+    Bytecode {
+        words: Arc::from(out),
+    }
 }
 
 /// 编译 `[from, to)` 区间（递归；`\iftrue/\iffalse` 折叠）。
-fn compile_slice(
-    tokens: &[Token],
-    from: &mut usize,
-    to: usize,
-    out: &mut Vec<Instruction>,
-    eqtb: &Eqtb,
-) {
+fn compile_slice(tokens: &[Token], from: &mut usize, to: usize, out: &mut Vec<u64>, eqtb: &Eqtb) {
     while *from < to {
         let tok = tokens[*from];
         if let Some(const_val) = const_if_value(tok, eqtb) {
@@ -150,9 +153,9 @@ fn compile_slice(
         match tok.kind() {
             TokenKind::MacroParam => {
                 let n = tok.param_number().unwrap_or(1);
-                out.push(Instruction::EmitArg { n });
+                out.push(Instruction::EmitArg { n }.encode());
             }
-            _ => out.push(Instruction::Emit { token: tok }),
+            _ => out.push(Instruction::Emit { token: tok }.encode()),
         }
         *from += 1;
     }
@@ -258,21 +261,20 @@ mod tests {
         let e = Expander::new();
         let body = tokens("A#1B#2C");
         let bc = compile(&body, e.eqtb());
+        let words = [
+            Token::char(Catcode::Letter, b'A' as u32),
+            Token::char(Catcode::Letter, b'B' as u32),
+            Token::char(Catcode::Letter, b'C' as u32),
+        ];
         assert_eq!(
-            bc.instructions(),
-            &[
-                Instruction::Emit {
-                    token: Token::char(Catcode::Letter, b'A' as u32)
-                },
-                Instruction::EmitArg { n: 1 },
-                Instruction::Emit {
-                    token: Token::char(Catcode::Letter, b'B' as u32)
-                },
-                Instruction::EmitArg { n: 2 },
-                Instruction::Emit {
-                    token: Token::char(Catcode::Letter, b'C' as u32)
-                },
-                Instruction::End,
+            bc.to_words(),
+            [
+                Instruction::Emit { token: words[0] }.encode(),
+                Instruction::EmitArg { n: 1 }.encode(),
+                Instruction::Emit { token: words[1] }.encode(),
+                Instruction::EmitArg { n: 2 }.encode(),
+                Instruction::Emit { token: words[2] }.encode(),
+                Instruction::End.encode(),
             ]
         );
     }

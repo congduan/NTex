@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::bytecode::{compile, Bytecode, Instruction};
+use crate::bytecode::{compile, Bytecode};
 use crate::catcode::{Catcode, CatcodeTable};
 use crate::eqtb::{EqSlot, Eqtb, Primitive, StreamKind};
 use crate::error::{Error, Result};
@@ -902,19 +902,23 @@ impl Expander {
                     return Ok(Some((tok, false)));
                 }
                 InputFrame::Bytecode { code, pc, args } => {
-                    if *pc >= code.instructions().len() {
+                    if *pc >= code.len() {
                         self.stack.pop();
                         continue;
                     }
-                    match code.instructions()[*pc] {
-                        Instruction::Emit { token } => {
+                    // M2-6：按 u64 原始字直接分发（零解包）。tag 0..=3 = token 原值
+                    // 内联（RFC-1 布局），EMIT_ARG_TAG/END_TAG 见 bytecode.rs。
+                    let word = code.words()[*pc];
+                    match word >> crate::bytecode::TAG_SHIFT {
+                        0..=3 => {
                             *pc += 1;
-                            return Ok(Some((token, false)));
+                            return Ok(Some((Token::from_raw(word), false)));
                         }
-                        Instruction::EmitArg { n } => {
+                        crate::bytecode::EMIT_ARG_TAG => {
                             *pc += 1;
+                            let n = (word & 0xF) as u8;
                             let arg = args
-                                .get((n.saturating_sub(1)) as usize)
+                                .get(n.saturating_sub(1) as usize)
                                 .cloned()
                                 .unwrap_or_default();
                             if arg.is_empty() {
@@ -928,7 +932,8 @@ impl Expander {
                             });
                             continue;
                         }
-                        Instruction::End => {
+                        _ => {
+                            // End
                             self.stack.pop();
                             continue;
                         }

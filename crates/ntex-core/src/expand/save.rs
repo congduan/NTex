@@ -298,6 +298,14 @@ impl Expander {
                     let idx = int_param_index(*p).expect("已检查 is_some");
                     Ok(emit_count(self.params.misc[idx]))
                 }
+                // ETRIP 冲刺：e-TeX 只读整数（\the/\number 上下文，与 scan_number 对齐）
+                Primitive::InputLineNo => Ok(emit_count(0)),
+                Primitive::CurrentGroupLevel => Ok(emit_count(self.group_level as i64)),
+                Primitive::CurrentGroupType => Ok(emit_count(self.sink.current_group_type())),
+                Primitive::LastNodeType => Ok(emit_count(self.sink.last_node_type())),
+                Primitive::CurrentIfLevel => Ok(emit_count(self.cond_stack.len() as i64)),
+                Primitive::CurrentIfType => Ok(emit_count(self.cur_if_type as i64)),
+                Primitive::CurrentIfBranch => Ok(emit_count(self.cur_if_branch as i64)),
                 // M4-5 e-TeX：\numexpr 表达式、\eTeXversion/\eTeXrevision
                 Primitive::NumExpr => Ok(emit_count(self.eval_int_expression()?)),
                 Primitive::Dimexpr => Ok(emit_dimen(self.eval_dimen_expression()?)),

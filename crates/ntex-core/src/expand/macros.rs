@@ -216,17 +216,25 @@ impl Expander {
             .ok_or_else(|| Error::invalid_input("\\def 后必须是控制序列"))?;
 
         let (num_params, param_text) = self.scan_parameter_text()?;
-        let body_raw = self.scan_balanced_text().map_err(|e| {
-            Error::invalid_input(format!(
-                "{e}（定义 \\{} 的替换文本时）",
-                self.intern.name(csid)
-            ))
-        })?;
+        // 取错误消息本体再补定义上下文，避免 "非法输入：非法输入：" 双前缀
+        let cs_name = self.intern.name(csid).to_owned();
+        let ctx = |e: Error| {
+            let msg = match &e {
+                Error::InvalidInput { message } => message.clone(),
+                other => other.to_string(),
+            };
+            Error::invalid_input(format!("{msg}（定义 \\{cs_name} 的替换文本时）"))
+        };
         let body: TokenArray = if expand_body {
-            self.debug_expand_caller = "edef";
-            Arc::from(self.expand_region(body_raw)?)
+            // e-TeX（ETRIP）：\edef/\xdef 体 = TeX scan_toks(macro_def, xpand)——
+            // 扫描时即展开可展开项、组深含 \begingroup/\endgroup、条件即时求值；
+            // 输入耗尽未配平 → "Runaway definition" 转录报告并以 } 收尾（可恢复）。
+            self.suppress_expansion += 1;
+            let scanned = self.scan_edef_body().map_err(ctx);
+            self.suppress_expansion -= 1;
+            Arc::from(scanned?)
         } else {
-            Arc::from(body_raw)
+            Arc::from(self.scan_balanced_text().map_err(ctx)?)
         };
 
         // e-TeX（M4-5）：`\protected` 前缀标记宏（`\edef`/`\write` 等上下文不展开）；
@@ -325,6 +333,128 @@ impl Expander {
                 }
                 _ => out.push(tok),
             }
+        }
+        Ok(out)
+    }
+
+    /// e-TeX（ETRIP）：`\edef`/`\xdef` 体 = TeX `scan_toks(macro_def, xpand=true)`。
+    ///
+    /// 与 [`scan_balanced_text`] 的差异：
+    /// - **扫描时即展开**可展开项（宏/可展开原语/`\expandafter` 链），展开结果
+    ///   压帧重新进入本扫描（递归语义），不再"先扫后展"两步；
+    /// - **组深度计入 `\begingroup`/`\endgroup`**（TeX macro_def 模式组定界），
+    ///   `\begingroup...\endgroup` 内的 `}` 不再误关宏体；
+    /// - **条件原语即时求值**（`\iftrue` 等走 `cond_op`/`step_conditional`，
+    ///   跳过分支的 token 直接丢弃，与 `process_one` 一致）；
+    /// - **输入耗尽未配平** → 转录报告 "Runaway definition?" 并以 `}` 收尾
+    ///   （可恢复，TeX 语义，不报错）；
+    /// - `\edef` 上下文（`suppress_expansion > 0`）：protected 宏不展开，原样收入。
+    fn scan_edef_body(&mut self) -> Result<Vec<Token>> {
+        let mut out = Vec::new();
+        let mut depth = 0usize;
+        let mut runaway = false;
+        'scan: loop {
+            let Some((tok, noexpand)) = self.fetch()? else {
+                runaway = depth > 0;
+                break 'scan;
+            };
+            if noexpand {
+                out.push(tok);
+                continue;
+            }
+            // 条件原语：即时求值（优先级与 process_one 相同）
+            if let Some(op) = self.cond_op(tok) {
+                self.step_conditional(op)?;
+                continue;
+            }
+            if self.is_skipping() {
+                continue;
+            }
+            // 组定界：{ } 与 \begingroup/\endgroup（TeX macro_def 模式组定界）
+            match tok.catcode() {
+                Some(Catcode::EndGroup) => {
+                    if depth == 0 {
+                        break 'scan; // 外层 }：宏体结束（不收入体）
+                    }
+                    depth -= 1;
+                    out.push(tok);
+                    continue;
+                }
+                Some(Catcode::BeginGroup) => {
+                    depth += 1;
+                    out.push(tok);
+                    continue;
+                }
+                _ => {}
+            }
+            let Some(csid) = tok.csid() else {
+                // 字符 token：参数 # 处理（同 scan_balanced_text）
+                if is_parameter_char(tok) {
+                    let next = self
+                        .fetch()?
+                        .ok_or_else(|| Error::invalid_input("替换文本中 # 后无 token"))?
+                        .0;
+                    if let Some(d) = digit_value(next) {
+                        out.push(Token::macro_param(d));
+                    } else if is_parameter_char(next) {
+                        out.push(Token::char(Catcode::Parameter, b'#' as u32));
+                    } else {
+                        return Err(Error::invalid_input("替换文本中 # 后必须跟数字或 #"));
+                    }
+                } else {
+                    out.push(tok);
+                }
+                continue;
+            };
+            match self.eqtb.slot(csid).clone() {
+                // \begingroup/\endgroup：TeX macro_def 模式组定界。
+                // 注意：`\let\egroup=}` 是**字符别名**，tex.web scan_toks 只对
+                // 原语等价（equiv=end_group）计数，字符别名不计数（etrip.tex
+                // 29-34 行版本宏惯用 `\egroup` 于 \edef 体内即依赖此语义）→
+                // 落入 `_` 原样收集，不改深度。
+                EqSlot::Primitive(Primitive::BeginGroup) => {
+                    depth += 1;
+                    out.push(tok);
+                }
+                EqSlot::Primitive(Primitive::EndGroup) => {
+                    if depth == 0 {
+                        break 'scan;
+                    }
+                    depth -= 1;
+                    out.push(tok);
+                }
+                // protected 宏在展开抑制上下文（\edef/\write）不展开 → 原样收入
+                EqSlot::Macro(m) if m.value.protected && self.suppress_expansion > 0 => {
+                    out.push(tok);
+                }
+                // 可展开项（宏/可展开原语）：展开后压帧，重新进入本扫描
+                EqSlot::Macro(_) => {
+                    let mut expansion = Vec::new();
+                    self.expand_once((tok, noexpand), &mut expansion)?;
+                    if expansion.is_empty() {
+                        continue;
+                    }
+                    self.stack.push(InputFrame::TokenList {
+                        items: Arc::from(expansion),
+                        pos: 0,
+                    });
+                }
+                EqSlot::Primitive(p) if p.is_expandable() => {
+                    let mut expansion = Vec::new();
+                    self.expand_once((tok, noexpand), &mut expansion)?;
+                    if expansion.is_empty() {
+                        continue;
+                    }
+                    self.stack.push(InputFrame::TokenList {
+                        items: Arc::from(expansion),
+                        pos: 0,
+                    });
+                }
+                _ => out.push(tok),
+            }
+        }
+        if runaway {
+            let _ = self.sink.write16("Runaway definition?\n".to_owned());
         }
         Ok(out)
     }
