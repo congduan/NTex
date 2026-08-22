@@ -31,7 +31,7 @@ use crate::macrodef::{MacroDef, ParamSpec, TokenArray};
 use crate::param::{ParamKind, ParamValue, Params};
 use crate::register::{
     add_glue, format_count, format_dimen, format_glue, format_mu_glue, unit_to_sp, Glue, RegKind,
-    RegisterState, Registers, REGISTER_COUNT, SP_PER_PT,
+    RegisterState, Registers, REGISTER_COUNT, SP_PER_PT, MAX_DIMEN, MAX_INT,
 };
 use crate::sink::{TokenSink, VecSink};
 use crate::token::{meaning, Token, TokenKind};
@@ -117,6 +117,8 @@ enum CondOp {
     IfVoid,
     IfHBox,
     IfVBox,
+    // ETRIP 冲刺：\iffontchar（字体含字符测试）
+    IfFontChar,
     Else,
     Fi,
     Or,
@@ -145,6 +147,7 @@ impl CondOp {
             Primitive::IfVoid => Self::IfVoid,
             Primitive::IfHBox => Self::IfHBox,
             Primitive::IfVBox => Self::IfVBox,
+            Primitive::IfFontChar => Self::IfFontChar,
             Primitive::Else => Self::Else,
             Primitive::Fi => Self::Fi,
             Primitive::Or => Self::Or,
@@ -371,6 +374,13 @@ pub struct Expander {
     expand_only: bool,
     /// 临时调试：expand_region 的调用来源（"edef"/"write"）。
     debug_expand_caller: &'static str,
+    /// 数学字体族已赋值表：[字体样式 0=text/1=script/2=scriptscript][族号] → FontId
+    /// （ETRIP：`\scriptfont1=\textfont1` 等族间复制与 `\textfont<n>` 字体位置读取）。
+    math_fonts: [[u32; 16]; 3],
+    /// 最近一次 `\typeout{Checking ...}` 段标题（ETRIP 错误定位：出错时报告卡在哪个段）。
+    section_label: String,
+    /// `\parshape` 段落形状表：(缩进, 宽度)（sp；ETRIP：\parshapelength/indent/dimen 读取）。
+    parshape: Vec<(i64, i64)>,
 }
 
 impl Expander {
@@ -424,6 +434,9 @@ impl Expander {
             suppress_expansion: 0,
             expand_only: false,
             debug_expand_caller: "",
+            math_fonts: [[0; 16]; 3],
+            section_label: String::new(),
+            parshape: Vec::new(),
         };
         e.register_builtins();
         e
@@ -998,6 +1011,11 @@ impl Expander {
     /// ETRIP 冲刺：`\dump` 是否已执行（驱动据此保存 fmt 并二次运行测试体）。
     pub fn dumped(&self) -> bool {
         self.dumped
+    }
+
+    /// ETRIP 冲刺：最近一次 `\typeout{Checking ...}` 的段标题（错误定位）。
+    pub fn current_section(&self) -> &str {
+        &self.section_label
     }
 
     /// 替换输出 sink（排版器接入点，M3-2）。

@@ -250,6 +250,10 @@ impl Expander {
         // ETRIP 的 \typeout/\error 用 \write15（同终端；TeX 预留流 15 作 log 输出）
         if idx == 16 || idx == 15 {
             let s = self.expand_to_string(&toks)?;
+            // ETRIP 冲刺：记录最近 "Checking ..." 段标题（错误定位用）
+            if s.starts_with("Checking ") {
+                self.section_label = s.trim().to_owned();
+            }
             return self.sink.write16(s);
         }
         self.ensure_write_stream(idx);

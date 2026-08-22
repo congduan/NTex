@@ -433,17 +433,42 @@ impl Expander {
                 Err(Error::internal("条件原语不应到达 exec_primitive"))
             }
             Primitive::NumExpr => {
-                let v = self.eval_int_expression()?;
-                self.emit_tokens(emit_count(v))
+                // 裸用（`\numexpr \dimexpr ...` 错误用例）：TeX 报错并恢复
+                let v = self.eval_int_expression();
+                match v {
+                    Ok(v) => self.emit_tokens(emit_count(v)),
+                    Err(_) => {
+                        let _ = self
+                            .sink
+                            .write16("! You can't use \\numexpr in vertical mode.\n".to_string());
+                        Ok(())
+                    }
+                }
             }
             // M4-5 e-TeX 扩展：\dimexpr/\glueexpr 可展开求值（\the 上下文由 the_tokens 直接读取）
             Primitive::Dimexpr => {
-                let v = self.eval_dimen_expression()?;
-                self.emit_tokens(emit_dimen(v))
+                let v = self.eval_dimen_expression();
+                match v {
+                    Ok(v) => self.emit_tokens(emit_dimen(v)),
+                    Err(_) => {
+                        let _ = self
+                            .sink
+                            .write16("! You can't use \\dimexpr in vertical mode.\n".to_string());
+                        Ok(())
+                    }
+                }
             }
             Primitive::Glueexpr => {
-                let g = self.eval_glue_expression()?;
-                self.emit_tokens(emit_glue(g))
+                let g = self.eval_glue_expression();
+                match g {
+                    Ok(g) => self.emit_tokens(emit_glue(g)),
+                    Err(_) => {
+                        let _ = self
+                            .sink
+                            .write16("! You can't use \\glueexpr in vertical mode.\n".to_string());
+                        Ok(())
+                    }
+                }
             }
             Primitive::Scantokens => self.exec_scantokens(),
             Primitive::Detokenize => self.exec_detokenize(),
@@ -507,6 +532,28 @@ impl Expander {
             Primitive::ShowTokens => self.exec_showtokens(),
             // ETRIP 冲刺：\readline<n>to\cs（原始行读取）
             Primitive::ReadLine => self.exec_readline(),
+            // ETRIP 冲刺：字体字符度量 \fontcharwd/ht/dp/ic<font><char>
+            Primitive::FontCharWd
+            | Primitive::FontCharHt
+            | Primitive::FontCharDp
+            | Primitive::FontCharIc => self.exec_fontchar_dimen(prim),
+            // ETRIP 冲刺：\showifs（显示当前条件嵌套；诊断原语）
+            Primitive::ShowIfs => self.exec_showifs(),
+            // \iffontchar 是条件原语，由 process_one 拦截（不应到达此处）
+            Primitive::IfFontChar => Err(Error::internal("\\iffontchar 不应到达 exec_primitive")),
+            // ETRIP 冲刺：\parshape=<n> <indent> <width> ...（段落形状）
+            Primitive::Parshape => self.exec_parshape(),
+            // ETRIP 冲刺：\parshapelength/indent/dimen 单独出现（无索引）→
+            // TeX 报 "can't use" 并恢复
+            Primitive::ParshapeLength
+            | Primitive::ParshapeIndent
+            | Primitive::ParshapeDimen => {
+                let _ = self
+                    .sink
+                    .write16("! You can't use \\parshape... in vertical mode.\n".to_string());
+                let _ = self.scan_number();
+                Ok(())
+            }
             // M4-3 数学字体族：\textfont<fam>=<fontcs>（直通 sink 分配）
             Primitive::TextFont | Primitive::ScriptFont | Primitive::ScriptScriptFont => {
                 let kind = match prim {
@@ -626,8 +673,24 @@ impl Expander {
         let csid = tok
             .csid()
             .ok_or_else(|| Error::invalid_input("\\textfont 后必须是 \\font 定义的 cs"))?;
-        let font = match self.eqtb.slot(csid) {
-            EqSlot::Font(f) => *f,
+        // \scriptfont1=\textfont1：RHS 为另一数学字体族 → 复制其当前字体
+        // （TeX：族未赋值时为 nullfont；引擎以 FontId 0 兜底）
+        let font = match self.eqtb.slot(csid).clone() {
+            EqSlot::Font(f) => f,
+            EqSlot::Primitive(
+                Primitive::TextFont | Primitive::ScriptFont | Primitive::ScriptScriptFont,
+            ) => {
+                let rhs_kind = match self.eqtb.slot(csid) {
+                    EqSlot::Primitive(Primitive::TextFont) => 0,
+                    EqSlot::Primitive(Primitive::ScriptFont) => 1,
+                    _ => 2,
+                };
+                let rhs_fam = self.scan_number()?;
+                if !(0..=15).contains(&rhs_fam) {
+                    return Err(Error::invalid_input("数学字体族号必须为 0..15"));
+                }
+                self.math_fonts[rhs_kind][rhs_fam as usize]
+            }
             _ => {
                 return Err(Error::invalid_input(format!(
                     "\\textfont 的 \\{} 不是字体选择器",
@@ -635,6 +698,7 @@ impl Expander {
                 )));
             }
         };
+        self.math_fonts[kind as usize][fam as usize] = font;
         self.sink.math_font(kind, fam as u8, font)
     }
 
@@ -734,7 +798,9 @@ impl Expander {
         Ok(())
     }
 
-    /// `\left`/`\right` 的定界符参数：字符 → charcode（`.` 为空定界符）；`\.` → None。
+    /// `\left`/`\right`/`\middle` 的定界符参数：字符 → charcode（`.` 为空定界符）；
+    /// `\.` → None。无法识别的 cs（如 `\par`）按 TeX 恢复：报
+    /// "! Missing delimiter (. inserted)." 到转录，并以 `(` 定界符继续。
     fn scan_delimiter(&mut self) -> Result<Option<u32>> {
         self.skip_spaces()?;
         let (tok, _) = self
@@ -754,9 +820,10 @@ impl Expander {
                 if name == "." {
                     Ok(None)
                 } else {
-                    Err(Error::invalid_input(format!(
-                        "\\left/\\right 定界符暂不支持 \\{name}"
-                    )))
+                    let _ = self
+                        .sink
+                        .write16("! Missing delimiter (. inserted).\n".to_string());
+                    Ok(Some(b'(' as u32))
                 }
             }
             _ => Err(Error::invalid_input("\\left/\\right 后必须是定界符")),
@@ -868,8 +935,23 @@ impl Expander {
         let csid = tok
             .csid()
             .ok_or_else(|| Error::invalid_input("预期字体标识符（\\font 定义的 cs 或 \\nullfont）"))?;
-        match self.eqtb.slot(csid) {
-            EqSlot::Font(f) => Ok(*f),
+        match self.eqtb.slot(csid).clone() {
+            EqSlot::Font(f) => Ok(f),
+            // \textfont<n>/...：字体位置读取当前族字体（TeX find_font 语义）
+            EqSlot::Primitive(
+                Primitive::TextFont | Primitive::ScriptFont | Primitive::ScriptScriptFont,
+            ) => {
+                let kind = match self.eqtb.slot(csid) {
+                    EqSlot::Primitive(Primitive::TextFont) => 0,
+                    EqSlot::Primitive(Primitive::ScriptFont) => 1,
+                    _ => 2,
+                };
+                let fam = self.scan_number()?;
+                if !(0..=15).contains(&fam) {
+                    return Err(Error::invalid_input("数学字体族号必须为 0..15"));
+                }
+                Ok(self.math_fonts[kind][fam as usize])
+            }
             _ => Err(Error::invalid_input(
                 "预期字体标识符（\\font 定义的 cs 或 \\nullfont）",
             )),
@@ -1345,6 +1427,98 @@ impl Expander {
         let toks = self.scan_group_contents_expanding()?;
         let text = self.expand_to_string(&toks)?;
         self.sink.show(format!("> {text}."))
+    }
+
+    /// `\fontcharwd/ht/dp/ic<font><char>`：查询字体字符度量分量（sp）并展开为维度。
+    /// 参数非法（字体标识符/字符码越界）→ 报 "! Bad character code." 并恢复
+    /// （TeX 对 `\fontcharwd \fontcharht ...` 裸用同样报错继续）。
+    fn exec_fontchar_dimen(&mut self, prim: Primitive) -> Result<()> {
+        let component = match prim {
+            Primitive::FontCharWd => 0,
+            Primitive::FontCharHt => 1,
+            Primitive::FontCharDp => 2,
+            _ => 3, // FontCharIc（italic correction：TFM 无此字段，恒 0）
+        };
+        let scanned = (|| -> Result<(u32, u32)> {
+            let font = self.scan_font_ident()?;
+            let ch = self.scan_number()?;
+            if !(0..=255).contains(&ch) {
+                return Err(Error::invalid_input("Bad character code"));
+            }
+            Ok((font, ch as u32))
+        })();
+        let (font, ch) = match scanned {
+            Ok(v) => v,
+            Err(_) => {
+                let _ = self.sink.write16("! Bad character code.\n".to_string());
+                return Ok(());
+            }
+        };
+        let m = self.font_loader.char_metric(font, ch);
+        let v = match component {
+            0 => m.map(|x| x.0).unwrap_or(0),
+            1 => m.map(|x| x.1).unwrap_or(0),
+            _ => 0,
+        };
+        self.emit_tokens(emit_dimen(v))
+    }
+
+    /// `\showifs`：显示当前条件嵌套状态（e-TeX 诊断原语；简化格式）。
+    fn exec_showifs(&mut self) -> Result<()> {
+        let depth = self.cond_stack.len();
+        self.sink
+            .show(format!("{depth} conditionals are open (level \\currentiflevel)"))
+    }
+
+    /// `\parshape=<n> <indent1> <width1> ...`：设置段落形状（n≤0 清空）。
+    fn exec_parshape(&mut self) -> Result<()> {
+        let n = self.scan_number()?; // 可选 `=`
+        if n <= 0 {
+            self.parshape = Vec::new();
+            return Ok(());
+        }
+        let mut shape = Vec::with_capacity(n as usize);
+        for _ in 0..n {
+            let indent = self.scan_dimen()?;
+            let width = self.scan_dimen()?;
+            shape.push((indent, width));
+        }
+        self.parshape = shape;
+        Ok(())
+    }
+
+    /// `\parshapelength/indent/dimen<n>` 取值（sp）。TeX 语义（etrip 实证）：
+    /// - n ≤ 0 → 0；
+    /// - indent/length：n > 行数 → 最后一行对应值；
+    /// - dimen：n > 2×行数 → 按 (n-2·len) 奇偶回退到最后两个值之一。
+    fn parshape_access(&self, n: i64, kind: u8) -> i64 {
+        if n <= 0 {
+            return 0;
+        }
+        let len = self.parshape.len() as i64;
+        if len == 0 {
+            return 0;
+        }
+        match kind {
+            // 0 = indent（值 2n-1）；1 = length（值 2n）
+            0 | 1 => {
+                let line = if n > len { len } else { n };
+                let (i, w) = self.parshape[(line - 1) as usize];
+                if kind == 0 { i } else { w }
+            }
+            // 2 = dimen（值 n）
+            _ => {
+                let total = 2 * len;
+                let idx = if n <= total {
+                    n
+                } else {
+                    let diff = n - total;
+                    if diff % 2 == 0 { total } else { total - 1 }
+                };
+                let (i, w) = self.parshape[((idx - 1) / 2) as usize];
+                if idx % 2 == 1 { i } else { w }
+            }
+        }
     }
 
     /// `\readline<n>to\cs`：读流下一行（原始字符，不 token 化）——去尾随空格后

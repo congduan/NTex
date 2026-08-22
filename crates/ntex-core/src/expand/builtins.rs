@@ -1,6 +1,6 @@
 impl Expander {
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 232] = [
+        const BUILTINS: [(&str, Primitive); 243] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -128,6 +128,8 @@ impl Expander {
             // M4-5 e-TeX 扩展
             ("dimexpr", Primitive::Dimexpr),
             ("glueexpr", Primitive::Glueexpr),
+            // ETRIP 冲刺：\muexpr（mu 表达式；暂按胶水表达式求值）
+            ("muexpr", Primitive::Glueexpr),
             ("ifprimitive", Primitive::IfPrimitive),
             ("scantokens", Primitive::Scantokens),
             // ETRIP 冲刺：TeX 内部整数参数
@@ -294,6 +296,18 @@ impl Expander {
             // ETRIP 冲刺：\showtokens 与 \readline
             ("showtokens", Primitive::ShowTokens),
             ("readline", Primitive::ReadLine),
+            // ETRIP 冲刺：字体字符查询与 \showifs
+            ("iffontchar", Primitive::IfFontChar),
+            ("fontcharwd", Primitive::FontCharWd),
+            ("fontcharht", Primitive::FontCharHt),
+            ("fontchardp", Primitive::FontCharDp),
+            ("fontcharic", Primitive::FontCharIc),
+            ("showifs", Primitive::ShowIfs),
+            // ETRIP 冲刺：段落形状
+            ("parshape", Primitive::Parshape),
+            ("parshapelength", Primitive::ParshapeLength),
+            ("parshapeindent", Primitive::ParshapeIndent),
+            ("parshapedimen", Primitive::ParshapeDimen),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);

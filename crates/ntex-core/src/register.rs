@@ -18,6 +18,11 @@ pub const REGISTER_COUNT: usize = 256;
 /// 1 pt = 65536 sp。
 pub const SP_PER_PT: i64 = 65_536;
 
+/// TeX max_int：整数范围 |v| ≤ 0x7FFFFFFF（e-TeX 表达式超限 → "! Arithmetic overflow."）。
+pub const MAX_INT: i64 = 0x7FFF_FFFF;
+/// TeX max_dimen：尺寸范围 |v| ≤ 0x3FFFFFFF（scan_dimen 超限 → "! Dimension too large."）。
+pub const MAX_DIMEN: i64 = 0x3FFF_FFFF;
+
 /// 胶水：宽度 + 拉伸 + 收缩（单位 sp）+ 无穷阶（TeX glue_ord：0=普通、1=fil、2=fill、3=filll）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Glue {

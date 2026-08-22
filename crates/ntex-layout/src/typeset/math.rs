@@ -1,6 +1,20 @@
 impl NodeBuilder {
     // ---------- M4-1 数学模式 ----------
 
+    /// 数学专用原语在非数学模式：TeX 报 "You can't use \x in <mode> mode." 并恢复
+    /// （ETRIP：错误入转录继续，不再致命终止）。
+    fn math_mode_error(&mut self, prim: &str) -> Result<()> {
+        let mode = match self.mode() {
+            Mode::Vertical => "vertical",
+            Mode::Horizontal => "horizontal",
+            Mode::RestrictedHorizontal => "restricted horizontal",
+            Mode::Math => "math",
+            Mode::DisplayMath => "display math",
+        };
+        self.write16(format!("! You can't use \\{prim} in {mode} mode.\n"))?;
+        Ok(())
+    }
+
     /// 进入数学模式：压数学层 + 占位列表层（公式节点经 close_math 落回上层列表）。
     /// `mode` 为 Math（行内，textstyle）或 DisplayMath（显示，displaystyle）。
     fn enter_math(&mut self, mode: Mode) -> Result<()> {
@@ -53,10 +67,10 @@ impl NodeBuilder {
         let was_display = self.list_modes.pop() == Some(Mode::DisplayMath);
         self.lists.pop();
         // 公式末尾收尾：未闭合 \left 报错；待定分式收尾（TeX 允许空分母）
-        if self.left_pending.is_some() {
+        if level.left.is_some() {
             return Err(Error::invalid_input("\\left 后缺少 \\right（Extra } or forgotten \\right）"));
         }
-        Self::math_finish_fraction(&mut self.fraction_pending, &mut level);
+        Self::math_finish_fraction(&mut level);
         let nodes = self.math_to_hlist(&level.atoms, style);
         if was_display {
             // 公式盒 = `\hbox to \hsize`（两侧 \hfil 居中；displaywidth≈\hsize）
@@ -214,9 +228,10 @@ impl NodeBuilder {
         Ok(())
     }
 
-    /// 完成待定分式：denominator = 当前数学层 atoms → Fraction 原子（TeX fin_mlist）。
-    fn math_finish_fraction(fraction_pending: &mut Option<FractionPending>, level: &mut MathLevel) {
-        if let Some(fp) = fraction_pending.take() {
+    /// 收尾本层待定分式：numerator 已存，当前层 atoms 作为 denominator 打包
+    /// （TeX fin_mlist）。
+    fn math_finish_fraction(level: &mut MathLevel) {
+        if let Some(fp) = level.fraction.take() {
             let den = std::mem::take(&mut level.atoms);
             level.atoms.push(MathAtom::Fraction {
                 num: fp.num,

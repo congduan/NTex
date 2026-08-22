@@ -122,6 +122,29 @@ impl Expander {
                     let v = self.registers.dimen(idx);
                     return Ok(if neg { -v } else { v });
                 }
+                // ETRIP：`\dimexpr1sp*\skip44` —— 胶水宽度（sp）作整数（TeX scan_int 可读 \skip）
+                EqSlot::Primitive(Primitive::Skip) => {
+                    self.fetch()?; // 消费 \skip
+                    let idx = self.scan_register_index()?;
+                    let v = self.registers.skip(idx).width;
+                    return Ok(if neg { -v } else { v });
+                }
+                EqSlot::Primitive(Primitive::Muskip) => {
+                    self.fetch()?; // 消费 \muskip
+                    let idx = self.scan_register_index()?;
+                    let v = self.registers.muskip(idx).width;
+                    return Ok(if neg { -v } else { v });
+                }
+                EqSlot::Register(RegKind::Skip, idx) => {
+                    self.fetch()?; // 消费 skipdef'd cs
+                    let v = self.registers.skip(idx).width;
+                    return Ok(if neg { -v } else { v });
+                }
+                EqSlot::Register(RegKind::Muskip, idx) => {
+                    self.fetch()?; // 消费 muskipdef'd cs
+                    let v = self.registers.muskip(idx).width;
+                    return Ok(if neg { -v } else { v });
+                }
                 // \chardef\cs=<num>：数字上下文返回字符码（TeX scan_int）
                 EqSlot::Char { charcode, .. } => {
                     self.fetch()?; // 消费 cs
@@ -518,7 +541,22 @@ impl Expander {
     ///
     /// 换算对照 pdfTeX：`scaled = (int + frac/10^k) * unit_sp`（逐项截断）。
     fn scan_dimen(&mut self) -> Result<i64> {
-        Ok(self.scan_dimen_inner()?.0)
+        let (v, _) = self.scan_dimen_inner()?;
+        Ok(self.clamp_dimen(v))
+    }
+
+    /// TeX scan_dimen 末尾的尺寸钳制：|v| > 0x3FFFFFFF →
+    /// "! Dimension too large." 并钳到 ±MAX_DIMEN（如 `\dimen45=\skip44` 读超大胶水）。
+    fn clamp_dimen(&mut self, v: i64) -> i64 {
+        if v > MAX_DIMEN {
+            let _ = self.sink.write16("! Dimension too large.\n".to_string());
+            MAX_DIMEN
+        } else if v < -MAX_DIMEN {
+            let _ = self.sink.write16("! Dimension too large.\n".to_string());
+            -MAX_DIMEN
+        } else {
+            v
+        }
     }
 
     /// 尺寸扫描（含胶水无穷阶）：返回 `(值, 阶)`。`scan_dimen` 丢弃阶；
@@ -531,13 +569,45 @@ impl Expander {
                 self.unread(tok);
             }
         }
+        // 连续负号循环（TeX 表达式 `--\skip90` 等）：奇偶决定符号
         let mut neg = false;
-        if let Some(tok) = self.fetch()?.map(|t| t.0) {
+        loop {
+            let Some(tok) = self.fetch()?.map(|t| t.0) else {
+                break;
+            };
             if tok.charcode() == Some(b'-' as u32) {
-                neg = true;
+                neg = !neg;
             } else {
                 self.unread(tok);
+                break;
             }
+        }
+        // TeX get_x_token 语义：展开可展开 cs（`\ifdim\csname fontcharwd\endcsname...`）。
+        // 展开结果压回输入流顶，循环直至不可展开项或数量原语。
+        loop {
+            let Some(csid) = self.peek_csid()? else {
+                break;
+            };
+            let expandable = match self.eqtb.slot(csid).clone() {
+                EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
+                EqSlot::Primitive(p) if p.is_expandable() => true,
+                _ => false,
+            };
+            if !expandable {
+                break;
+            }
+            let (tok, ne) = self
+                .fetch()?
+                .ok_or_else(|| Error::invalid_input("扫描尺寸时输入耗尽"))?;
+            let mut expansion = Vec::new();
+            self.expand_once((tok, ne), &mut expansion)?;
+            if expansion.is_empty() {
+                continue;
+            }
+            self.stack.push(InputFrame::TokenList {
+                items: Arc::from(expansion),
+                pos: 0,
+            });
         }
         // 寄存器引用：\dimen<idx>
         if let Some(csid) = self.peek_csid()? {
@@ -545,6 +615,29 @@ impl Expander {
                 self.fetch()?; // 消费 \dimen
                 let idx = self.scan_register_index()?;
                 let v = self.registers.dimen(idx);
+                return Ok((if neg { -v } else { v }, 0));
+            }
+            // ETRIP：`\dimen45=\skip44` —— 胶水寄存器的宽度作尺寸（TeX scan_dimen 语义）
+            if let EqSlot::Primitive(Primitive::Skip) = self.eqtb.slot(csid) {
+                self.fetch()?; // 消费 \skip
+                let idx = self.scan_register_index()?;
+                let v = self.registers.skip(idx).width;
+                return Ok((if neg { -v } else { v }, 0));
+            }
+            if let EqSlot::Primitive(Primitive::Muskip) = self.eqtb.slot(csid) {
+                self.fetch()?; // 消费 \muskip
+                let idx = self.scan_register_index()?;
+                let v = self.registers.muskip(idx).width;
+                return Ok((if neg { -v } else { v }, 0));
+            }
+            if let EqSlot::Register(RegKind::Skip, idx) = self.eqtb.slot(csid).clone() {
+                self.fetch()?; // 消费 skipdef'd cs
+                let v = self.registers.skip(idx).width;
+                return Ok((if neg { -v } else { v }, 0));
+            }
+            if let EqSlot::Register(RegKind::Muskip, idx) = self.eqtb.slot(csid).clone() {
+                self.fetch()?; // 消费 muskipdef'd cs
+                let v = self.registers.muskip(idx).width;
                 return Ok((if neg { -v } else { v }, 0));
             }
             // M4-5 e-TeX：\dimexpr 可在任意尺寸上下文求值
@@ -574,6 +667,79 @@ impl Expander {
                 let g = self.scan_glue()?;
                 return Ok((if neg { -g.shrink } else { g.shrink }, 0));
             }
+            // ETRIP 冲刺：\fontcharwd/ht/dp/ic<font><char> → 字符度量分量（尺寸上下文）
+            if let EqSlot::Primitive(
+                Primitive::FontCharWd | Primitive::FontCharHt | Primitive::FontCharDp | Primitive::FontCharIc,
+            ) = self.eqtb.slot(csid)
+            {
+                let component = match self.eqtb.slot(csid) {
+                    EqSlot::Primitive(Primitive::FontCharWd) => 0,
+                    EqSlot::Primitive(Primitive::FontCharHt) => 1,
+                    EqSlot::Primitive(Primitive::FontCharDp) => 2,
+                    _ => 3, // FontCharIc
+                };
+                self.fetch()?; // 消费 \fontchar*
+                let font = self.scan_font_ident()?;
+                let ch = self.scan_number()?;
+                if !(0..=255).contains(&ch) {
+                    let _ = self.sink.write16("! Bad character code.\n".to_string());
+                    return Ok((0, 0));
+                }
+                let m = self.font_loader.char_metric(font, ch as u32);
+                let v = match component {
+                    0 => m.map(|x| x.0).unwrap_or(0),
+                    1 => m.map(|x| x.1).unwrap_or(0),
+                    2 => m.map(|x| x.2).unwrap_or(0),
+                    _ => 0,
+                };
+                return Ok((if neg { -v } else { v }, 0));
+            }
+            // ETRIP 冲刺：\parshapelength/indent/dimen<n> → 段落形状分量（尺寸上下文）
+            if let EqSlot::Primitive(
+                Primitive::ParshapeLength | Primitive::ParshapeIndent | Primitive::ParshapeDimen,
+            ) = self.eqtb.slot(csid)
+            {
+                let kind = match self.eqtb.slot(csid) {
+                    EqSlot::Primitive(Primitive::ParshapeIndent) => 0,
+                    EqSlot::Primitive(Primitive::ParshapeLength) => 1,
+                    _ => 2,
+                };
+                self.fetch()?; // 消费 \parshape*
+                let idx = self.scan_number()?;
+                let v = self.parshape_access(idx, kind);
+                return Ok((if neg { -v } else { v }, 0));
+            }
+        }
+        // 基数前缀：十六进制 `"` / 八进制 `'`（TeX scan_dimen 同 scan_int，TeXbook p.267）
+        let mut radix_val: Option<i64> = None;
+        if let Some((tok, _)) = self.fetch()? {
+            let base = match (tok.catcode(), tok.charcode()) {
+                (Some(Catcode::Other), Some(c)) if c == b'"' as u32 => Some(16u32),
+                (Some(Catcode::Other), Some(c)) if c == b'\'' as u32 => Some(8u32),
+                _ => None,
+            };
+            if let Some(base) = base {
+                let mut val: i64 = 0;
+                let mut any_radix = false;
+                while let Some((t, _)) = self.fetch()? {
+                    match radix_digit_value(t, base) {
+                        Some(d) => {
+                            val = val * i64::from(base) + i64::from(d);
+                            any_radix = true;
+                        }
+                        None => {
+                            self.unread(t);
+                            break;
+                        }
+                    }
+                }
+                if !any_radix {
+                    return Err(Error::invalid_input("预期尺寸数字"));
+                }
+                radix_val = Some(val);
+            } else {
+                self.unread(tok);
+            }
         }
         // 数字：整数部分 + 可选小数
         let mut int_part: i64 = 0;
@@ -581,24 +747,69 @@ impl Expander {
         let mut frac_len: u32 = 0;
         let mut any = false;
         let mut saw_dot = false;
-        while let Some((tok, _)) = self.fetch()? {
-            if let Some(d) = digit_value(tok) {
-                if saw_dot {
-                    frac = frac * 10 + i64::from(d);
-                    frac_len += 1;
+        if let Some(rv) = radix_val {
+            int_part = rv;
+            any = true;
+        } else {
+            while let Some((tok, _)) = self.fetch()? {
+                if let Some(d) = digit_value(tok) {
+                    if saw_dot {
+                        frac = frac * 10 + i64::from(d);
+                        frac_len += 1;
+                    } else {
+                        int_part = int_part * 10 + i64::from(d);
+                    }
+                    any = true;
+                } else if tok.charcode() == Some(b'.' as u32) && !saw_dot {
+                    saw_dot = true;
                 } else {
-                    int_part = int_part * 10 + i64::from(d);
+                    self.unread(tok);
+                    break;
                 }
-                any = true;
-            } else if tok.charcode() == Some(b'.' as u32) && !saw_dot {
-                saw_dot = true;
-            } else {
-                self.unread(tok);
-                break;
             }
         }
         if !any {
             return Err(Error::invalid_input("预期尺寸数字"));
+        }
+        // <整数>[<小数>]<内部尺寸量>：`11\parshapedimen4` = 11 × 4pt、
+        // `2\fontdimen6\font` 等（TeX scan_dimen 的数量乘内部量）。
+        if let Some(csid) = self.peek_csid()? {
+            let quantity = match self.eqtb.slot(csid).clone() {
+                EqSlot::Primitive(
+                    Primitive::ParshapeLength | Primitive::ParshapeIndent | Primitive::ParshapeDimen,
+                ) => {
+                    let kind = match self.eqtb.slot(csid) {
+                        EqSlot::Primitive(Primitive::ParshapeIndent) => 0,
+                        EqSlot::Primitive(Primitive::ParshapeLength) => 1,
+                        _ => 2,
+                    };
+                    self.fetch()?; // 消费 \parshape*
+                    let idx = self.scan_number()?;
+                    Some(self.parshape_access(idx, kind))
+                }
+                EqSlot::Primitive(Primitive::FontDimen) => {
+                    self.fetch()?; // 消费 \fontdimen
+                    let num = self.scan_number()?;
+                    let font = self.scan_font_ident()?;
+                    Some(self.fontdimen(font, num as u32))
+                }
+                EqSlot::Primitive(Primitive::Dimen) => {
+                    self.fetch()?; // 消费 \dimen
+                    let idx = self.scan_register_index()?;
+                    Some(self.registers.dimen(idx))
+                }
+                EqSlot::Register(RegKind::Dimen, idx) => {
+                    self.fetch()?; // 消费 \dimendef'd cs
+                    Some(self.registers.dimen(idx))
+                }
+                _ => None,
+            };
+            if let Some(q) = quantity {
+                let denom = 10i128.pow(frac_len);
+                let v = (i128::from(int_part) * denom + i128::from(frac)) * i128::from(q) / denom;
+                let v = i64::try_from(v).unwrap_or(i64::MAX);
+                return Ok((if neg { -v } else { v }, 0));
+            }
         }
         // 单位/阶后缀：连续字母，取**最长**已知单位或 fil/fill/filll 阶前缀
         // （TeX scan_keyword 逐个字母匹配的等价：`1ptminus0fil` → "pt" + 放回 "minus"；

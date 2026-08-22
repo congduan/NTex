@@ -299,6 +299,19 @@ pub enum Primitive {
     // ETRIP 冲刺：\showtokens{<text>}（显示展开后的 token 列表）与 \readline<n>to\cs
     ShowTokens,
     ReadLine,
+    // ETRIP 冲刺：字体字符查询（\iffontchar 条件 + \fontcharwd/ht/dp/ic 度量）与
+    // \showifs（显示条件嵌套）
+    IfFontChar,
+    FontCharWd,
+    FontCharHt,
+    FontCharDp,
+    FontCharIc,
+    ShowIfs,
+    // ETRIP 冲刺：段落形状（\parshape 赋值 + \parshapelength/indent/dimen 读取）
+    Parshape,
+    ParshapeLength,
+    ParshapeIndent,
+    ParshapeDimen,
 }
 
 impl Primitive {
@@ -316,7 +329,8 @@ impl Primitive {
                 | Self::Number
                 | Self::Unexpanded
                 | Self::Detokenize
-                | Self::ETeXVersion
+                // \eTeXrevision 可展开（→".6"，etrip 版本宏习语 `\number\eTeXversion\eTeXrevision`）；
+                // \eTeXversion 是内部整数（非可展开），`\the\eTeXversion` 由 the_tokens_after 直读。
                 | Self::ETeXRevision
                 | Self::String_
                 | Self::JobName
@@ -566,6 +580,16 @@ impl Primitive {
             230 => Self::GlueShrink,
             231 => Self::ShowTokens,
             232 => Self::ReadLine,
+            233 => Self::IfFontChar,
+            234 => Self::FontCharWd,
+            235 => Self::FontCharHt,
+            236 => Self::FontCharDp,
+            237 => Self::FontCharIc,
+            238 => Self::ShowIfs,
+            239 => Self::Parshape,
+            240 => Self::ParshapeLength,
+            241 => Self::ParshapeIndent,
+            242 => Self::ParshapeDimen,
             _ => return None,
         })
     }

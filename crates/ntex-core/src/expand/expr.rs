@@ -157,6 +157,7 @@ impl Expander {
     /// `\numexpr` 整数表达式求值：`expr := term (('+'|'-') term)*`、
     /// `term := factor (('*'|'/') factor)*`（TeX：* / 优先，左结合，截断除法）。
     /// 以 `\relax` 或不可识别 token 结束（后者放回）。
+    /// `\numexpr` 整数表达式：`<term> (('+'|'-'|'*'|'/') <term>)*`。
     fn eval_int_expression(&mut self) -> Result<i64> {
         let mut value = self.expr_mul_term()?;
         while let Some(op) = self.peek_int_op()? {
@@ -166,22 +167,86 @@ impl Expander {
             }
             let rhs = self.expr_mul_term()?;
             value = if op == b'+' { value + rhs } else { value - rhs };
+            value = self.expr_overflow_check(value, MAX_INT);
         }
         Ok(value)
     }
 
     /// 乘法项：`factor (('*'|'/') factor)*`。
     fn expr_mul_term(&mut self) -> Result<i64> {
-        let mut value = self.scan_number()?;
+        let mut value = self.expr_factor()?;
         while let Some(op) = self.peek_int_op()? {
             if op != b'*' && op != b'/' {
                 self.unread(Token::char(Catcode::Other, op as u32));
                 break;
             }
-            let rhs = self.scan_number()?;
-            value = if op == b'*' { value * rhs } else { value / rhs };
+            let rhs = self.expr_factor()?;
+            value = if op == b'*' {
+                value * rhs
+            } else if rhs == 0 {
+                // eTeX：除零 → "! Arithmetic overflow."，结果 0（etrip L789-791）
+                let _ = self.sink.write16("! Arithmetic overflow.\n".to_string());
+                0
+            } else {
+                self.expr_quotient(value, rhs)
+            };
+            value = self.expr_overflow_check(value, MAX_INT);
         }
         Ok(value)
+    }
+
+    /// 表达式运算溢出检查：|v| 超限则报 "! Arithmetic overflow." 并归 0（eTeX 语义，
+    /// 结果 0 由 `{reassigning \count44=0}` 等可见）。`limit` 为正限值。
+    fn expr_overflow_check(&mut self, v: i64, limit: i64) -> i64 {
+        if v > limit || v < -limit {
+            let _ = self.sink.write16("! Arithmetic overflow.\n".to_string());
+            0
+        } else {
+            v
+        }
+    }
+
+    /// e-TeX 表达式除法：**四舍五入**到最近整数（ties away from zero），
+    /// 非 TeX 传统截断（etrip "Expr quotient rounding" 段：`"40000000/"7FFFFFFF`=1）。
+    /// 调用方保证 `d != 0`。
+    fn expr_quotient(&self, n: i64, d: i64) -> i64 {
+        let an = n.unsigned_abs();
+        let ad = d.unsigned_abs();
+        let q = (an + ad / 2) / ad;
+        let q = q as i64;
+        if (n < 0) != (d < 0) {
+            -q
+        } else {
+            q
+        }
+    }
+
+    /// 整数因子：`(` <表达式> `)`（TeX 括号子表达式）或 [`Self::scan_number`]。
+    fn expr_factor(&mut self) -> Result<i64> {
+        self.skip_spaces()?;
+        let tok = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input("\\numexpr 表达式未闭合"))?;
+        let (t, _) = tok;
+        if t.charcode() == Some(b'(' as u32) {
+            let v = self.eval_int_expression()?;
+            let close = self.fetch()?;
+            match close {
+                Some((c, _)) if c.charcode() == Some(b')' as u32) => {}
+                _ => {
+                    // TeX 恢复：报 "Missing ) inserted" 并插入 `)` 继续
+                    if let Some((c, _)) = close {
+                        self.unread(c);
+                    }
+                    let _ = self
+                        .sink
+                        .write16("! Missing ) inserted for expression.\n".to_string());
+                }
+            }
+            return Ok(v);
+        }
+        self.unread(t);
+        self.scan_number()
     }
 
     /// 取下一个整数运算符（`+ - * /`）或 `\relax`（结束符，吸收）；其余 token 放回。
@@ -203,31 +268,87 @@ impl Expander {
     }
 
     /// `\dimexpr` 尺寸表达式：`<dimen> (('+'|'-') <dimen>)*`（e-TeX 文法子集：
-    /// 每项为 [`Self::scan_dimen`] 可识别的尺寸；`\relax` 或不可识别 token 结束，后者放回）。
+    /// 每项为 [`Self::scan_dimen`] 可识别的尺寸；支持 `( <expr> )` 括号；
+    /// `\relax` 或不可识别 token 结束，后者放回）。
     fn eval_dimen_expression(&mut self) -> Result<i64> {
-        let mut value = self.scan_dimen()?;
+        let mut value = self.dimen_expr_term()?;
         while let Some(op) = self.peek_int_op()? {
-            if op != b'+' && op != b'-' {
-                // * / 不是尺寸运算符：放回结束
+            if op != b'+' && op != b'-' && op != b'*' && op != b'/' {
                 self.unread(Token::char(Catcode::Other, op as u32));
                 break;
             }
-            let rhs = self.scan_dimen()?;
-            value = if op == b'+' { value + rhs } else { value - rhs };
+            if op == b'*' || op == b'/' {
+                // e-TeX：`<dimen> * <number>` 与 `<dimen> / <number>`（etrip L780/785）
+                let rhs = self.scan_number()?;
+                value = if op == b'*' {
+                    value * rhs
+                } else if rhs == 0 {
+                    let _ = self.sink.write16("! Arithmetic overflow.\n".to_string());
+                    0
+                } else {
+                    self.expr_quotient(value, rhs)
+                };
+            } else {
+                let rhs = self.dimen_expr_term()?;
+                value = if op == b'+' { value + rhs } else { value - rhs };
+            }
+            value = self.expr_overflow_check(value, MAX_DIMEN);
         }
         Ok(value)
     }
 
-    /// `\glueexpr` 胶水表达式：`<glue> (('+'|'-') <glue>)*`。
+    /// 尺寸表达式项：`( <expr> )` 括号或 [`Self::scan_dimen`]。
+    fn dimen_expr_term(&mut self) -> Result<i64> {
+        self.skip_spaces()?;
+        let tok = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input("\\dimexpr 表达式未闭合"))?;
+        let (t, _) = tok;
+        if t.charcode() == Some(b'(' as u32) {
+            let v = self.eval_dimen_expression()?;
+            let close = self.fetch()?;
+            match close {
+                Some((c, _)) if c.charcode() == Some(b')' as u32) => {}
+                _ => {
+                    if let Some((c, _)) = close {
+                        self.unread(c);
+                    }
+                    let _ = self
+                        .sink
+                        .write16("! Missing ) inserted for expression.\n".to_string());
+                }
+            }
+            return Ok(v);
+        }
+        self.unread(t);
+        self.scan_dimen()
+    }
+
+    /// `\glueexpr` 胶水表达式：`<glue> (('+'|'-'|'*'|'/') <glue>)`。
     /// width 逐项求和；stretch/shrink 取**最后一个**非零项（含符号，eTeX 语义）。
+    /// `*`/`/` 为 `<glue width> * <number>` 标量运算（etrip L872-873）。
+    /// 支持 `( <expr> )` 括号（`\muexpr(5muminus1mu)`）。
     fn eval_glue_expression(&mut self) -> Result<Glue> {
-        let mut result = self.scan_glue()?;
+        let mut result = self.glue_expr_term()?;
         while let Some(op) = self.peek_int_op()? {
-            if op != b'+' && op != b'-' {
+            if op != b'+' && op != b'-' && op != b'*' && op != b'/' {
                 self.unread(Token::char(Catcode::Other, op as u32));
                 break;
             }
-            let term = self.scan_glue()?;
+            if op == b'*' || op == b'/' {
+                let rhs = self.scan_number()?;
+                if op == b'*' {
+                    result.width = self.expr_overflow_check(result.width * rhs, MAX_DIMEN);
+                } else if rhs == 0 {
+                    let _ = self.sink.write16("! Arithmetic overflow.\n".to_string());
+                    result.width = 0;
+                } else {
+                    result.width =
+                        self.expr_overflow_check(self.expr_quotient(result.width, rhs), MAX_DIMEN);
+                }
+                continue;
+            }
+            let term = self.glue_expr_term()?;
             if op == b'+' {
                 result.width += term.width;
                 if term.stretch != 0 {
@@ -247,6 +368,30 @@ impl Expander {
             }
         }
         Ok(result)
+    }
+
+    /// 胶水表达式项：`( <expr> )` 括号或 [`Self::scan_glue`]。
+    fn glue_expr_term(&mut self) -> Result<Glue> {
+        let tok = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input("\\glueexpr 表达式未闭合"))?;
+        let (t, _) = tok;
+        if t.charcode() == Some(b'(' as u32) {
+            let v = self.eval_glue_expression()?;
+            let close = self
+                .fetch()?
+                .ok_or_else(|| Error::invalid_input("\\glueexpr 括号未闭合"))?
+                .0;
+            if close.charcode() != Some(b')' as u32) {
+                self.unread(close);
+                let _ = self
+                    .sink
+                    .write16("! Missing ) inserted for expression.\n".to_string());
+            }
+            return Ok(v);
+        }
+        self.unread(t);
+        self.scan_glue()
     }
 
     /// `\detokenize{...}`：组内容转字符 token 流（字符 catcode 12、空格 10、

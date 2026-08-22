@@ -128,7 +128,8 @@ impl Expander {
             | CondOp::IfEof
             | CondOp::IfVoid
             | CondOp::IfHBox
-            | CondOp::IfVBox => {
+            | CondOp::IfVBox
+            | CondOp::IfFontChar => {
                 // e-TeX（M4-5）：`\unless` 取反下一个条件（类型码同时取负）
                 let neg = std::mem::take(&mut self.unless_pending);
                 let code = Self::if_type_code(op) * if neg { -1 } else { 1 };
@@ -236,6 +237,7 @@ impl Expander {
             CondOp::IfCase => 17,
             CondOp::IfDefined => 18,
             CondOp::IfCsname => 19,
+            CondOp::IfFontChar => 20,
             CondOp::IfPrimitive => 21,
             _ => 0,
         }
@@ -336,6 +338,30 @@ impl Expander {
             CondOp::IfVBox => {
                 let idx = self.scan_register_index()?;
                 Ok(self.sink.box_register_kind(idx) == 2)
+            }
+            // ETRIP 冲刺：\iffontchar<font><char> —— 字体含该字符为真。
+            // 参数缺失/非法（如 `\iffontchar \else \fi`）报错恢复取假；
+            // 字符码越界（<0 或 >255）报 "! Bad character code." 并取假。
+            CondOp::IfFontChar => {
+                let scanned = (|| -> Result<(u32, u32)> {
+                    let font = self.scan_font_ident()?;
+                    let ch = self.scan_number()?;
+                    if !(0..=255).contains(&ch) {
+                        return Err(Error::invalid_input("Bad character code"));
+                    }
+                    Ok((font, ch as u32))
+                })();
+                let (font, ch) = match scanned {
+                    Ok(v) => v,
+                    Err(_) => {
+                        let _ = self.sink.write16("! Bad character code.\n".to_string());
+                        return Ok(false);
+                    }
+                };
+                Ok(self
+                    .font_loader
+                    .char_metric(font, ch)
+                    .is_some())
             }
             CondOp::IfCsname => {
                 let name = self.scan_csname()?;

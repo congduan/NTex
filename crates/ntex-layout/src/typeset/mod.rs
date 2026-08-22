@@ -165,6 +165,10 @@ struct MathLevel {
     atoms: Vec<MathAtom>,
     /// 本组字段类别（`^`/`_`、`\sqrt`、`\mathbin` 后的 `{...}`）；None = 普通组。
     field: Option<MathFieldKind>,
+    /// `\left` 打开本层的定界符（None = 普通层）；`\right` 时收为 Delimited 原子。
+    left: Option<Option<u32>>,
+    /// 本层待定分式（`\over`/`\atop`；numerator 已收集，atoms 继续收 denominator）。
+    fraction: Option<FractionPending>,
 }
 
 /// `\over`/`\atop` 中间态：numerator 已收集，当前数学层 atoms 继续收集 denominator。
@@ -401,10 +405,6 @@ struct NodeBuilder {
     math_style: MathStyle,
     /// 待挂载的脚本方向（`^`=Some(true)、`_`=Some(false)）：等待下一个原子/组。
     pending_script: Option<bool>,
-    /// `\over`/`\atop`：numerator 已收集，等待 denominator（当前 math 层 atoms）。
-    fraction_pending: Option<FractionPending>,
-    /// `\left<delim>`：等待 `\right`（嵌套 `\left` 暂不支持）。
-    left_pending: Option<Option<u32>>,
     /// `\sqrt`：等待 radicand 字段（下一个原子或组）。
     sqrt_pending: bool,
     /// `\mathbin` 等：等待字段（下一个原子或组），应用指定类。
@@ -479,8 +479,6 @@ impl NodeBuilder {
             math: Vec::new(),
             math_style: MathStyle::Text,
             pending_script: None,
-            fraction_pending: None,
-            left_pending: None,
             sqrt_pending: false,
             class_pending: None,
             nonscript_pending: false,

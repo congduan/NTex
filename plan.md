@@ -9,12 +9,12 @@
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | M0 地基         | ✅ 完成（workspace/CI/TRIP·diff·bench 工具链；RFC-1/RFC-4 定稿）                                                                                                                                                                                                                                                      |
 | M1 展开内核       | 🟡 核心完成：M1-1\~7、M1-9\~11 已实现（95 用例）；M1-8 分隔参数、M1-13 错误模型、**M1-14 TRIP 冲刺** 待补                                                                                                                                                                                                                              |
-| M2 字节码        | 🟡 双轨完成：定长 u64 IR + 编译器 + 解释器等价验证（100 用例）；**吞吐 1.12x 未达 2x 目标**，M2-5 arena 未做                                                                                                                                                                                                                              |
+| M2 字节码        | 🟡 双轨完成（100 用例等价）；**性能 P0 补课落地**（字节码 u64 原始字执行器 + release 调优，80022b4）；吞吐 ≥2x 待重测（ntex 驱动基准死循环，见 backlog P1）；M2-5 arena 未做 |                                                                                                                                                                                                                             |
 | M3 排版核心       | ✅ M3-1\~M3-4 完成（58+ 用例）；**M3-5 DVI 写出 +** **`\shipout`** **+ 断页 DP + lig/kern +** **`\sfcode`** **+** **`\output`** **例程/box255** 完成（dvipdfmx 验收 + 与 TeX 差分对照）；**RFC-3 VFS + 副作用模型落地**（10 原语走 `ntex-io` VFS，延迟写入 shipout 边界提交）；**`.fmt`** **v1 内存快照**（`ntex-format` 确定性编码 + roundtrip）                     |
 | M4 数学 + e-TeX | ✅ **全部完成**：数学模式状态机（`$`/`$$`、8 类原子、spacing 表、上下标、字阶）、分式/根式/定界符、样式原语、fontdimen 数学参数 + 数学字体族、显示数学细化、Liang 断字、错误模型、e-TeX 核心 + 扩展（`\protected`/`\ifdefined`/`\ifcsname`/`\unless`/`\numexpr`/`\detokenize`/`\unexpanded`/`\eTeXversion`/`\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens`）；验收 **ETRIP 全绿** 待冲 |
 | 输出端           | 🟢 正式 PDF 后端可用（`ntex-pdf`：DVI → PDF 直出 + Type1 嵌入，替换临时 Helvetica 切片；demo 两页与 dvipdfmx 渲染一致）                                                                                                                                                                                                                |
 
-**下一步**：**ETRIP 冲刺**——先搭管线（fixtures 获取 + harness 泛化支持 etrip + ntex 引擎驱动），再按 diff 迭代。
+**下一步**：**ETRIP 冲刺**（管线已通，pass2 逐段推进）+ 性能 backlog **P1**（热路径消分配 / 修通 ntex 驱动基准补测吞吐）。
 
 ***
 
@@ -23,19 +23,20 @@
 > 来源：高级 Rust 工程师评审结论（热路径实现层欠账 + 工程化闭环），不引入新功能，
 > 属既定里程碑补课。纪律：**先量化再冲 M5/M7**——不在 1.12x 的基线上做增量层。
 
-### P0 构建配置（零成本 10~30%，最先做）
+### P0 构建配置（零成本 10~30%，最先做）—— ✅ 已提交 80022b4
 
-- [ ] 工作区 `[profile.release]`：`lto = "thin"`、`codegen-units = 1`、
+- [x] 工作区 `[profile.release]`：`lto = "thin"`、`codegen-units = 1`、
   `panic = "abort"`（已确认全库无 `catch_unwind`/无 `unsafe`，可直接上）
-- 验证：`cargo run -p ntex-bench --release` 每千 token 吞吐提升入档
+- 验证：~~每千 token 吞吐提升入档~~ 吞吐量化受阻（ntex 驱动基准死循环，见 P1），
+  待修通后补测
 
-### P0 M2-6 补课：字节码执行器走 u64 原始字（RFC-4 设计落地）
+### P0 M2-6 补课：字节码执行器走 u64 原始字（RFC-4 设计落地）—— ✅ 已提交 80022b4
 
-- [ ] `Bytecode.code` 改存 `Arc<[u64]>` 原始字（不再存 16B `Instruction` 枚举，
+- [x] `Bytecode.code` 改存 `Arc<[u64]>` 原始字（不再存 16B `Instruction` 枚举，
   现 `encode`/`to_words` 只用于序列化，热路径零解包设计被浪费）
-- [ ] `fetch()` 的 Bytecode 分支按 `word >> 60` 分发：tag 0..=3 直接
+- [x] `fetch()` 的 Bytecode 分支按 `word >> 60` 分发：tag 0..=3 直接
   `Token::from_raw(word)`，消除每步解包
-- 验证：M2 双轨等价测试全绿；吞吐 ≥ 2x 目标（现 1.12x）
+- 验证：M2 双轨等价测试全绿 ✅；吞吐 ≥ 2x 待重测（现基准死循环，见 P1）
 
 ### P1 M2-6 小步优化：热路径消分配（每 token / 每宏调用）
 
@@ -288,9 +289,10 @@
 **M2-6 性能达标与定位**
 
 - [x] **基准**：每千 token 展开吞吐——实测 **1.12x**，**未达 2x 目标**（记录入库）
-- [ ] 火焰图定位热点（预期：eqtb 查询 / 实参拷贝 / arena 边界）——未做
-- [ ] 小步优化：eqtb 槽缓存行布局、实参零拷贝（切片借用）等——未做
-- 验证：基准数字入库（M0 基准集），CI 防回归
+- [x] **字节码 u64 原始字执行器 + release 调优已落地**（2026-08-22，backlog P0 提交 80022b4）
+- [ ] 火焰图定位热点（预期：eqtb 查询 / 实参拷贝 / arena 边界）、eqtb 槽缓存行布局、
+  实参零拷贝（切片借用）等——转 backlog P1 热路径消分配
+- 验证：基准数字入库（M0 基准集），CI 防回归——吞吐重测待 ntex 驱动基准修通（见 backlog P1/P2）
 
 **M2-7 双轨框架移交**
 
@@ -380,32 +382,26 @@
 ### ETRIP 冲刺（2026-08 进行中）
 
 **当前状态**：管线已跑通（fixtures + harness 泛化 + ntex 驱动）；**pass1 全流程已走通**
-（e-IniTeX → `\dump`）；pass2（重载 `.fmt` 再运行）逐段推进中，卡点在 e-TeX 增强
-原语与 TeX 基础原语补齐。`etrip.log` 逐字节比对待 pass2 走通后开始。
+（e-IniTeX → `\dump`）；pass2（重载 `.fmt` 再运行）逐段推进中，**已通过
+`\numexpr/\dimexpr/\glueexpr/\muexpr` 段**（含十六进制尺寸、溢出块、"Expr quotient
+rounding 1-4"）。当前卡点：mu_error 块（etrip.tex L824-834）——`scan_number` 缺
+`\dimexpr/\glueexpr` 作整数操作数分支 → "预期数字"。`etrip.log` 逐字节比对待 pass2
+走通后开始（已知差距：`\tracingassigns` 的 `{changing/into}` 行、`\the\muexpr` 的
+"5.0mu" 显示、错误消息上下文行）。
 
-**剩余原语待办**（对照 etrip.tex 全量控制序列 vs builtins 注册表生成，2026-08-18；
-2026-08-22 更新：B 组条件/算术/定义、A 组只读整数/胶水阶/showtokens/readline、C 组全部接线完成）：
+**本轮（2026-08-23）已完成**：
+- 原语族：`\iffontchar`/`\fontcharwd/ht/dp/ic`（char_metric + 条件码 20）、
+  `\showifs`、`\parshape` 全族（访问器语义按 TeX 实证）
+- 表达式：括号子表达式 + "! Missing ) inserted for expression." 恢复；
+  `*`/`/` 运算符（dimen×/÷number、glue width 标量）；**四舍五入除法**
+  （`expr_quotient`，`"40000000/"7FFFFFFF`=1）；十六进制/八进制尺寸
+  （`"3FFFFFFEsp`）；溢出恢复（整数/dimen 表达式超限 → "! Arithmetic overflow."
+  结果 0；scan_dimen 钳制 → "! Dimension too large."）
+- 尺寸/数字上下文：`\skip`/`\muskip`（含 skipdef'd cs）作 dimen 与 number 可读
+- 段级错误定位（`\typeout{Checking ...}` 段标题 → 错误报告带 section）
 
-- [ ] **A 组：e-TeX 特定原语**（pass2 前半段 Checking 段会卡）
-  - [ ] 显示类：`\showgroups` `\showifs` `\showlists`（`\showtokens` ✅ 已实现）
-  - [ ] marks 族读取：`\topmarks` `\firstmarks` `\botmarks` `\splitfirstmarks` `\splittopmarks` `\splitbotmarks`（`\marks` 已注册）
-  - [x] `\readline`（原始行 + `\endlinechar` 附加）
-  - [x] e-TeX 只读整数：`\currentiflevel` `\currentiftype` `\currentifbranch`（+ `cur_if_type/cur_if_branch` 状态机，`\unless` 取反类型）
-  - [ ] 字体字符度量：`\fontcharwd` `\fontcharht` `\fontchardp` `\fontcharic` `\iffontchar`
-  - [ ] 段落形状：`\parshape` `\parshapelength` `\parshapeindent` `\parshapedimen`
-  - [ ] mu 表达式/互转：`\muexpr` `\mutoglue` `\gluetomu`
-  - [x] 胶水阶：`\gluestretchorder` `\glueshrinkorder` `\gluestretch` `\glueshrink`（Glue 增 order 字段 + scan_dimen 阶后缀 + `.fmt` v7）
-  - [ ] 惩罚数组：`\interlinepenalties` `\clubpenalties` `\widowpenalties` `\displaywidowpenalties`
-  - [ ] 丢弃物：`\pagediscards` `\splitdiscards` `\lostchars`（`\savingvdiscards` 相关）
-- [ ] **B 组：TeX 基础原语**（pass2 中后段会用）
-  - [x] 条件：`\ifinner` `\ifeof` `\ifvmode` `\ifhmode` `\ifmmode` `\ifvoid` `\ifhbox` `\ifvbox`（sink 增 mode_code/box_register_kind）
-  - [ ] 盒子：`\copy` `\unvbox` `\unhbox` `\unhcopy` `\unvcopy` `\lastbox`
-  - [ ] 盒子尺寸：`\wd` `\ht` `\dp`
-  - [x] 算术：`\multiply` `\divide`（除 0 保持不变；胶水逐分量）
-  - [ ] 其他：`\tracingparagraphs`、`\rightskip` `\leftskip`、`\omit`、`\prevdepth`、`\interlinepenalty` `\clubpenalty` `\widowpenalty` `\displaywidowpenalty`、`\unskip` `\lastpenalty` `\unpenalty`
-  - [x] `\csname`/`\endcsname`、`\mathchardef`（`EqSlot::MathChar` + 越界报错）、`\meaning`（可展开）
-- [x] **C 组：已注册未接线**——全部已接线（`\deadcycles` `\raise` `\lower` `\span` `\special` `\jobname` `\vcenter` `\marks` `\vsplit` `\discretionary` `\insert` `\vadjust` `\halign` `\valign` `\cr` `\noalign` `\mathchoice` `\dump` `\everyjob`）
-- [ ] **收尾**：`etrip.log` 逐字节比对（消息格式/上下文行/dvitype 暂不纳入）
+**剩余原语待办**：完整分组清单 + 每原语进展标记见 **[ETRIP-primitives.md](ETRIP-primitives.md)**（唯一状态源，2026-08-23 更新）。
+当前总览：**A 组** 🟡 24/42 · **B 组** 🟡 15/36 · **C 组** ✅ 全部已接线 · **收尾**（`etrip.log` 逐字节比对）⏳。
 
 **冲刺纪律**：每次迭代前先 `cargo build -p ntex-trip` 确认全绿再跑（避免脏构建旧产物
 误报，如误报过的 `\ifcase 序号不能为负`）；对照 etrip.log 参考逐段验证，不做整体 diff。

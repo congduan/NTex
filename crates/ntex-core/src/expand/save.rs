@@ -218,6 +218,26 @@ impl Expander {
         let csid = tok
             .csid()
             .ok_or_else(|| Error::invalid_input("\\the 需要寄存器参数"))?;
+        // TeX：`\the` 位置可展开项先展开（`\the\csname fontcharwd\endcsname`、
+        // `\the\expandafter\...` 等），展开结果逐个继续求值。
+        if let EqSlot::Primitive(p) = self.eqtb.slot(csid).clone() {
+            if p.is_expandable() {
+                let mut expansion = Vec::new();
+                self.expand_once((tok, false), &mut expansion)?;
+                let mut out = Vec::new();
+                for (t, _) in expansion {
+                    // 展开结果若是 cs（如 `\the\csname fontcharwd\endcsname` 的
+                    // \fontcharwd）继续求值；若是字符（如 `\the\eTeXrevision` → ".6"）
+                    // 直接保留（TeX `\the` 不要求展开结果再求值）。
+                    if t.csid().is_some() {
+                        out.extend(self.the_tokens_after(t)?);
+                    } else {
+                        out.push(t);
+                    }
+                }
+                return Ok(out);
+            }
+        }
         match self.eqtb.slot(csid) {
             EqSlot::Primitive(p) => match p {
                 Primitive::Count => {
@@ -324,10 +344,46 @@ impl Expander {
                     let font = self.scan_font_ident()?;
                     Ok(emit_dimen(self.fontdimen(font, num)))
                 }
+                // \the\fontcharwd/ht/dp/ic<font><char>：字体字符度量分量（sp）
+                Primitive::FontCharWd
+                | Primitive::FontCharHt
+                | Primitive::FontCharDp
+                | Primitive::FontCharIc => {
+                    let component = match p {
+                        Primitive::FontCharWd => 0,
+                        Primitive::FontCharHt => 1,
+                        Primitive::FontCharDp => 2,
+                        _ => 3, // FontCharIc
+                    };
+                    let font = self.scan_font_ident()?;
+                    let ch = self.scan_number()?;
+                    if !(0..=255).contains(&ch) {
+                        let _ = self.sink.write16("! Bad character code.\n".to_string());
+                        return Ok(emit_dimen(0));
+                    }
+                    let m = self.font_loader.char_metric(font, ch as u32);
+                    let v = match component {
+                        0 => m.map(|x| x.0).unwrap_or(0),
+                        1 => m.map(|x| x.1).unwrap_or(0),
+                        2 => m.map(|x| x.2).unwrap_or(0),
+                        _ => 0,
+                    };
+                    Ok(emit_dimen(v))
+                }
                 // \the\hyphenchar<font>：字体断字符（无覆盖 = 默认 45）
                 Primitive::HyphenChar => {
                     let font = self.scan_font_ident()?;
                     Ok(emit_count(self.hyphenchars.get(&font).copied().unwrap_or(45)))
+                }
+                // \the\parshapelength/indent/dimen<n>：段落形状分量（尺寸）
+                Primitive::ParshapeLength | Primitive::ParshapeIndent | Primitive::ParshapeDimen => {
+                    let kind = match p {
+                        Primitive::ParshapeIndent => 0,
+                        Primitive::ParshapeLength => 1,
+                        _ => 2,
+                    };
+                    let idx = self.scan_number()?;
+                    Ok(emit_dimen(self.parshape_access(idx, kind)))
                 }
                 // \the\delcode<num>：字符定界符码（无覆盖 = 0x500000 默认）
                 Primitive::DelCode => {

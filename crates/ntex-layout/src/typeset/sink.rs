@@ -88,9 +88,13 @@ impl TokenSink for NodeBuilder {
     /// `\over`/`\atop`/`\above`：numerator 已收集（当前 math 层），等待 denominator。
     fn math_fraction(&mut self, thickness: Option<i64>) -> Result<()> {
         if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-            return Err(Error::invalid_input("\\over 只能在数学模式使用"));
+            return self.math_mode_error("over");
         }
-        if self.fraction_pending.is_some() {
+        let level = self
+            .math
+            .last_mut()
+            .ok_or_else(|| Error::internal("\\over 无数学层"))?;
+        if level.fraction.is_some() {
             return Err(Error::invalid_input(
                 "\\over 歧义（Ambiguous; you need another { and }）",
             ));
@@ -98,60 +102,59 @@ impl TokenSink for NodeBuilder {
         if self.pending_script.is_some() {
             return Err(Error::invalid_input("\\over 前不能有未挂脚本（Missing { inserted）"));
         }
-        let level = self
-            .math
-            .last_mut()
-            .ok_or_else(|| Error::internal("\\over 无数学层"))?;
         let num = std::mem::take(&mut level.atoms);
-        self.fraction_pending = Some(FractionPending { thickness, num });
+        level.fraction = Some(FractionPending { thickness, num });
         Ok(())
     }
 
-    /// `\left<delim>`：记录定界符，等待 `\right`（嵌套暂不支持）。
+    /// `\left<delim>`：压一层数学层（定界符记在层上），`\right` 时收为 Delimited。
+    /// 嵌套 `\left...\right` 由层栈天然支持（ETRIP \middle 测试含深层嵌套）。
     fn math_left(&mut self, delim: Option<u32>) -> Result<()> {
         if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-            return Err(Error::invalid_input("\\left 只能在数学模式使用"));
+            return self.math_mode_error("left");
         }
-        if self.left_pending.is_some() {
-            return Err(Error::invalid_input("\\left 不能嵌套（Extra \\left）"));
-        }
-        self.left_pending = Some(delim);
+        self.math.push(MathLevel {
+            left: Some(delim),
+            ..Default::default()
+        });
         Ok(())
     }
 
     /// e-TeX `\middle<delim>`：在 \left...\right 体内插入定界符原子（类 Inner）。
     fn math_middle(&mut self, delim: Option<u32>) -> Result<()> {
         if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-            return Err(Error::invalid_input("\\middle 只能在数学模式使用"));
+            return self.math_mode_error("middle");
         }
         let level = self
             .math
             .last_mut()
             .ok_or_else(|| Error::internal("\\middle 无数学层"))?;
-        Self::math_finish_fraction(&mut self.fraction_pending, level);
+        Self::math_finish_fraction(level);
         level.atoms.push(MathAtom::Middle(delim));
         Ok(())
     }
 
-    /// `\right<delim>`：当前 math 层内容收为 \left...\right 的 body。
+    /// `\right<delim>`：弹最内层 `\left` 层，内容收为 Delimited 原子并入外层。
     fn math_right(&mut self, delim: Option<u32>) -> Result<()> {
         if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-            return Err(Error::invalid_input("\\right 只能在数学模式使用"));
+            return self.math_mode_error("right");
         }
-        let left = self
-            .left_pending
-            .take()
-            .ok_or_else(|| Error::invalid_input("\\right 前缺少 \\left（Missing \\left inserted）"))?;
-        let level = self
+        let mut level = self
+            .math
+            .pop()
+            .ok_or_else(|| Error::internal("\\right 无数学层"))?;
+        let left = level.left.take().ok_or_else(|| {
+            Error::invalid_input("\\right 前缺少 \\left（Missing \\left inserted）")
+        })?;
+        // 先收 \left(...\over...\right) 的分式，再包定界符
+        Self::math_finish_fraction(&mut level);
+        let parent = self
             .math
             .last_mut()
-            .ok_or_else(|| Error::internal("\\right 无数学层"))?;
-        // 先收 \left(...\over...\right) 的分式
-        Self::math_finish_fraction(&mut self.fraction_pending, level);
-        let body = std::mem::take(&mut level.atoms);
-        level.atoms.push(MathAtom::Delimited {
+            .ok_or_else(|| Error::internal("\\right 无外层数学层"))?;
+        parent.atoms.push(MathAtom::Delimited {
             left,
-            body,
+            body: level.atoms,
             right: delim,
         });
         Ok(())
@@ -160,7 +163,7 @@ impl TokenSink for NodeBuilder {
     /// `\sqrt`：等待 radicand 字段（下一个原子或组）。
     fn math_sqrt(&mut self) -> Result<()> {
         if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-            return Err(Error::invalid_input("\\sqrt 只能在数学模式使用"));
+            return self.math_mode_error("sqrt");
         }
         self.sqrt_pending = true;
         Ok(())
@@ -169,7 +172,7 @@ impl TokenSink for NodeBuilder {
     /// `\mathord` 等：给下一个字段定类。
     fn math_class(&mut self, class: u8) -> Result<()> {
         if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-            return Err(Error::invalid_input("\\mathord 等只能在数学模式使用"));
+            return self.math_mode_error("mathord");
         }
         self.class_pending = Some(match class {
             0 => MathClass::Ord,
@@ -408,6 +411,8 @@ impl TokenSink for NodeBuilder {
             self.math.push(MathLevel {
                 atoms: Vec::new(),
                 field,
+                left: None,
+                fraction: None,
             });
         }
         Ok(())
@@ -436,7 +441,7 @@ impl TokenSink for NodeBuilder {
                 Some(MathFieldKind::Script(is_sup)) => {
                     // `x^{...}`：先收组内分式（`x^{a\over b}`），再作为脚本字段挂载
                     let mut lv = level;
-                    Self::math_finish_fraction(&mut self.fraction_pending, &mut lv);
+                    Self::math_finish_fraction(&mut lv);
                     let field = lv.atoms;
                     if !field.is_empty() {
                         // `x^{}`：空字段合法（TeX 空组字段）
@@ -447,14 +452,14 @@ impl TokenSink for NodeBuilder {
                 Some(MathFieldKind::Sqrt) => {
                     // `\sqrt{...}`：先收组内分式（`\sqrt{a\over b}`），再作 radicand
                     let mut lv = level;
-                    Self::math_finish_fraction(&mut self.fraction_pending, &mut lv);
+                    Self::math_finish_fraction(&mut lv);
                     parent.atoms.push(MathAtom::Radical { base: lv.atoms });
                     return Ok(());
                 }
                 Some(MathFieldKind::Class(class)) => {
                     // `\mathbin{...}`：内容作为一个指定类原子
                     let mut lv = level;
-                    Self::math_finish_fraction(&mut self.fraction_pending, &mut lv);
+                    Self::math_finish_fraction(&mut lv);
                     parent.atoms.push(MathAtom::Classed {
                         class,
                         content: lv.atoms,
@@ -464,7 +469,7 @@ impl TokenSink for NodeBuilder {
                 None => {
                     // 普通数学组：先收组内分式（`{a\over b}`），再并入外层
                     let mut lv = level;
-                    Self::math_finish_fraction(&mut self.fraction_pending, &mut lv);
+                    Self::math_finish_fraction(&mut lv);
                     lv.atoms
                 }
             };

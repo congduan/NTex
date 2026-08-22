@@ -1026,9 +1026,12 @@ mod tests {
 
     #[test]
     fn math_primitive_outside_math_message() {
-        // 数学专用原语在文本模式使用 → 明确报错
-        assert_math_error(r"\over b", "\\over 只能在数学模式使用");
-        assert_math_error(r"\sqrt{x}", "\\sqrt 只能在数学模式使用");
+        // 数学专用原语在文本模式使用 → TeX 报错并恢复（消息入转录，继续执行）
+        let mut ts = Typesetter::with_metrics(metrics);
+        ts.typeset(r"\over b \sqrt{x}").unwrap();
+        let t = ts.take_transcript();
+        assert!(t.contains("! You can't use \\over in vertical mode."), "转录应含 over 错误：{t}");
+        assert!(t.contains("! You can't use \\sqrt in horizontal mode."), "转录应含 sqrt 错误：{t}");
     }
 
     #[test]
@@ -1192,7 +1195,11 @@ mod tests {
 
     #[test]
     fn math_over_outside_math_rejected() {
-        assert!(typeset(r"a\over b").is_err(), "\\over 只能在数学模式");
+        // TeX 报错并恢复：消息入转录，执行继续
+        let mut ts = Typesetter::with_metrics(metrics);
+        ts.typeset(r"a\over b").unwrap();
+        let t = ts.take_transcript();
+        assert!(t.contains("! You can't use \\over in"), "转录应含 over 模式错误：{t}");
     }
 
     #[test]

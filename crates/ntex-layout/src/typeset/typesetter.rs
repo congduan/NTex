@@ -35,6 +35,13 @@ impl FontLoader for TfmLoader {
         table.push(fm);
         Ok(id)
     }
+
+    /// 字体字符度量查询（`\iffontchar`/`\fontchar*`）：字体表与排版器共享。
+    fn char_metric(&mut self, font: u32, ch: u32) -> Option<(i64, i64, i64)> {
+        let table = self.table.borrow();
+        let fm = table.get(font as usize)?;
+        fm.chars.get(ch as usize).copied().flatten()
+    }
 }
 
 /// 排版器：VM token 流 → 节点树（主垂直列表）。
@@ -95,6 +102,11 @@ impl Typesetter {
     /// ETRIP 冲刺：`\dump` 是否已执行（驱动据此保存 fmt 并二次运行测试体）。
     pub fn dumped(&self) -> bool {
         self.expander.dumped()
+    }
+
+    /// ETRIP 冲刺：最近一次 `\typeout{Checking ...}` 的段标题（错误定位）。
+    pub fn current_section(&self) -> &str {
+        self.expander.current_section()
     }
 
     /// TFM 字体模式（M3-4）：`\font\cs=cmr10` 加载真实度量，

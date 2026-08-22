@@ -22,6 +22,14 @@ pub trait FontLoader: std::fmt::Debug {
     /// - `scaled`：`\font..scaled <int>` 的千分比缩放（`scaled 1000` = 原尺寸）。
     ///   两者互斥（扫描层保证不同时给出）；全 None = 设计字号。
     fn load(&mut self, name: &str, at: Option<i64>, scaled: Option<i64>) -> Result<u32>;
+
+    /// 查询字体字符度量（sp）：`(width, height, depth)`。
+    ///
+    /// ETRIP：`\iffontchar`（含该字符为真）与 `\fontcharwd`/`\fontcharht`/
+    /// `\fontchardp`/`\fontcharic`（维度查询）用。字体未加载/无该字符 → None。
+    fn char_metric(&mut self, _font: u32, _ch: u32) -> Option<(i64, i64, i64)> {
+        None
+    }
 }
 
 /// 默认加载器：未安装时 `\font` 报错（提示安装排版层加载器）。
