@@ -14,9 +14,9 @@ impl Expander {
                 let t = self
                     .fetch()?
                     .ok_or_else(|| Error::invalid_input("\\noexpand 后无 token"))?;
-                self.stack.push(InputFrame::TokenList {
-                    items: Arc::from([(t.0, true)]),
-                    pos: 0,
+                self.stack.push(InputFrame::One {
+                    tok: t.0,
+                    noexpand: true,
                 });
                 Ok(())
             }

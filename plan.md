@@ -8,7 +8,7 @@
 | 里程碑           | 状态                                                                                                                                                                                                                                                                                                         |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | M0 地基         | ✅ 完成（workspace/CI/TRIP·diff·bench 工具链；RFC-1/RFC-4 定稿）                                                                                                                                                                                                                                                      |
-| M1 展开内核       | 🟡 核心完成：M1-1\~7、M1-9\~11 已实现（95 用例）；M1-8 分隔参数、M1-13 错误模型、**M1-14 TRIP 冲刺** 待补                                                                                                                                                                                                                              |
+| M1 展开内核       | 🟡 核心完成：M1-1\~7、M1-9\~11 已实现（95 用例）+ **A2 空行→`\par` 行状态机 + A4 `\outer` 语义**（2026-08-23 评审修复）；M1-13 错误模型、**M1-14 TRIP 冲刺** 待补                                                                                                                                                                                                                              |
 | M2 字节码        | 🟡 双轨完成（100 用例等价）；**性能 P0 补课落地**（字节码 u64 原始字执行器 + release 调优，80022b4）；吞吐 ≥2x 待重测（ntex 驱动基准死循环，见 backlog P1）；M2-5 arena 未做 |                                                                                                                                                                                                                             |
 | M3 排版核心       | ✅ M3-1\~M3-4 完成（58+ 用例）；**M3-5 DVI 写出 +** **`\shipout`** **+ 断页 DP + lig/kern +** **`\sfcode`** **+** **`\output`** **例程/box255** 完成（dvipdfmx 验收 + 与 TeX 差分对照）；**RFC-3 VFS + 副作用模型落地**（10 原语走 `ntex-io` VFS，延迟写入 shipout 边界提交）；**`.fmt`** **v1 内存快照**（`ntex-format` 确定性编码 + roundtrip）                     |
 | M4 数学 + e-TeX | ✅ **全部完成**：数学模式状态机（`$`/`$$`、8 类原子、spacing 表、上下标、字阶）、分式/根式/定界符、样式原语、fontdimen 数学参数 + 数学字体族、显示数学细化、Liang 断字、错误模型、e-TeX 核心 + 扩展（`\protected`/`\ifdefined`/`\ifcsname`/`\unless`/`\numexpr`/`\detokenize`/`\unexpanded`/`\eTeXversion`/`\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens`）；验收 **ETRIP 全绿** 待冲 |
@@ -40,12 +40,14 @@
 
 ### P1 M2-6 小步优化：热路径消分配（每 token / 每宏调用）
 
-- [ ] `process_token`：`eqtb.slot(csid).clone()` → 按引用 match
-  （省每控制序列 token 的 EqSlot 克隆，含两次 Arc refcount）
+- [x] `process_token`：`eqtb.slot(csid).clone()` → 按引用 match
+  （省每控制序列 token 的 EqSlot 克隆，含两次 Arc refcount）——✅ 2026-08-23
+  （SlotAction 两阶段模式：`&self` 读槽提取小值/单 Arc，`&mut self` 执行）
 - [ ] `fetch()` 的 EmitArg/宏参数分支：实参 `Arc<[Token]>` 直接复用，
   帧加 `noexpand` 标记位，去掉 `Vec<(Token,bool)>` 重包装 + 二次堆分配
-- [ ] `unread`/`next_is_math_shift`：单 token 回推改栈上内联槽，
-  去掉每次 `Arc::from([...])`（`$$` 检测每命中一次）
+- [x] `unread`/`next_is_math_shift`：单 token 回推改栈上内联槽，
+  去掉每次 `Arc::from([...])`（`$$` 检测每命中一次）——✅ 2026-08-23
+  （`InputFrame::One` 变体，含 `\noexpand`/`\csname` 回推）
 - [ ] `call_macro` 实参 `Vec<TokenArray>` → SmallVec（实参 ≤9 个）
 - 验证：M1 全部用例双轨重跑全绿；火焰图对比热区前移
 

@@ -29,28 +29,6 @@ const DEPLORABLE: i64 = 100_000;
 /// `ignore_depth`（tex.web §321）：无前驱盒子时 interline glue 被抑制。
 pub const IGNORE_DEPTH: i64 = -65_536_000;
 
-/// TeX `badness(t, s)`（tex.web §7）：`t≥0` 超出量，`s` 拉伸/收缩量。
-fn badness(t: i64, s: i64) -> i64 {
-    if t == 0 {
-        return 0;
-    }
-    if s <= 0 {
-        return INF_BAD;
-    }
-    let r = if t <= 7_230_584 {
-        (t * 297) / s
-    } else if s >= 1_663_497 {
-        t / (s / 297)
-    } else {
-        t
-    };
-    if r > 1290 {
-        return INF_BAD;
-    }
-    let cube = r as i128 * r as i128 * r as i128;
-    ((cube + 131_072) / 262_144).min(10_000) as i64
-}
-
 /// 页面构建器状态（tex.web `page_so_far` 的 Rust 表达）。
 #[derive(Debug)]
 pub struct PageBuilder {
@@ -308,18 +286,18 @@ impl PageBuilder {
         }
     }
 
-    /// 计算当前页 badness（tex.web §593-599，不含触发节点自身）。
+    /// 计算当前页 badness（tex.web §593-599，不含触发节点自身；C3：与折行共享实现）。
     fn badness_now(&self) -> i64 {
         if self.total < self.goal {
             if self.stretch[1] != 0 || self.stretch[2] != 0 || self.stretch[3] != 0 {
                 0
             } else {
-                badness(self.goal - self.total, self.stretch[0])
+                crate::linebreak::badness(self.goal - self.total, self.stretch[0]) as i64
             }
         } else if self.total - self.goal > self.shrink {
             AWFUL_BAD
         } else {
-            badness(self.total - self.goal, self.shrink)
+            crate::linebreak::badness(self.total - self.goal, self.shrink) as i64
         }
     }
 

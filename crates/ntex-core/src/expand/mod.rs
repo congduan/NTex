@@ -62,6 +62,8 @@ enum InputFrame {
         items: Arc<[(Token, bool)]>,
         pos: usize,
     },
+    /// 单 token 回推槽（B1：`unread`/`$$` 探测/`\noexpand` 回推用，免 Arc 包装）。
+    One { tok: Token, noexpand: bool },
     /// 输出例程帧（M3-5-3）：同 TokenList，但耗尽时复位输出例程激活标志。
     OutputRoutine {
         items: Arc<[(Token, bool)]>,
@@ -262,6 +264,22 @@ enum MeaningKey {
     Stream(StreamKind, usize),
     /// `\mathchardef` 数学字符（ETRIP）。
     MathChar(u32),
+}
+
+/// eqtb 槽执行动作（B1）：先在 `&self` 阶段按引用读槽、提取所需数据
+/// （仅拷贝小值/单个 Arc），再在 `&mut self` 阶段执行——避免克隆整个
+/// [`EqSlot`] 枚举（含 Macro 槽的 Arc refcount bump）与借用冲突。
+#[derive(Debug)]
+enum SlotAction {
+    Undefined(String),
+    Alias(u32),
+    Char { catcode: Catcode, charcode: u32 },
+    Register(RegKind, usize),
+    Stream,
+    MathChar(u32),
+    Macro(Arc<MacroDef>),
+    Font(u32),
+    Primitive(Primitive),
 }
 
 /// 读流（RFC-3）：`\openin` 时读入内存，`\read` 逐行消费。
@@ -596,6 +614,7 @@ impl Expander {
                         InputFrame::TokenList { items, pos } => {
                             format!("TokenList({}tok,pos={})", items.len(), pos)
                         }
+                        InputFrame::One { tok, .. } => format!("One({tok:?})"),
                         InputFrame::OutputRoutine { items, pos } => {
                             format!("OutputRoutine({}tok,pos={})", items.len(), pos)
                         }
@@ -732,21 +751,38 @@ impl Expander {
         match tok.kind() {
             TokenKind::ControlSeq => {
                 let csid = tok.csid().expect("ControlSeq 必有 csid");
-                let slot = self.eqtb.slot(csid).clone();
-                match slot {
+                let action = match self.eqtb.slot(csid) {
                     // M1-13 错误恢复（ETRIP）：未定义 cs 报 "! Undefined control
                     // sequence." 到转录并**当 \relax 继续**（TeX 错误恢复；上下文行
                     // "l.N …" 留 M1-13 后续细化）。
-                    EqSlot::Undefined => {
-                        let _ = self.sink.write16(format!(
-                            "! Undefined control sequence.\n\\{}\n",
-                            self.intern.name(csid)
-                        ));
+                    EqSlot::Undefined => SlotAction::Undefined(self.intern.name(csid).to_owned()),
+                    EqSlot::Alias(target) => SlotAction::Alias(*target),
+                    EqSlot::Char { catcode, charcode } => SlotAction::Char {
+                        catcode: *catcode,
+                        charcode: *charcode,
+                    },
+                    // \countdef\cs 等绑定的寄存器 cs：执行位置为赋值（`\cs=<值>`，
+                    // TeX 中 `=` 可选）；非赋值上下文（\the/\advance/\ifnum 等）由
+                    // 各扫描函数处理，不会到达此处。
+                    EqSlot::Register(kind, idx) => SlotAction::Register(*kind, *idx),
+                    EqSlot::Stream(..) => SlotAction::Stream,
+                    EqSlot::MathChar(code) => SlotAction::MathChar(*code),
+                    EqSlot::Macro(m) => SlotAction::Macro(m.value.clone()),
+                    EqSlot::Font(font) => SlotAction::Font(*font),
+                    EqSlot::Primitive(p) => SlotAction::Primitive(*p),
+                };
+                match action {
+                    SlotAction::Undefined(name) => {
+                        let _ = self
+                            .sink
+                            .write16(format!("! Undefined control sequence.\n\\{name}\n"));
                         Ok(())
                     }
-                    EqSlot::Alias(target) => self.process_token(Token::control_sequence(target)),
+                    SlotAction::Alias(target) => {
+                        self.process_token(Token::control_sequence(target))
+                    }
                     // \let\cs=<字符>：等价于该字符（\bgroup/\egroup 等组定界也生效）
-                    EqSlot::Char { catcode, charcode } => {
+                    SlotAction::Char { catcode, charcode } => {
                         let c = Token::char(catcode, charcode);
                         match catcode {
                             Catcode::BeginGroup => self.begin_group(),
@@ -754,10 +790,7 @@ impl Expander {
                             _ => self.sink.token(c),
                         }
                     }
-                    // \countdef\cs 等绑定的寄存器 cs：执行位置为赋值（`\cs=<值>`，
-                    // TeX 中 `=` 可选）；非赋值上下文（\the/\advance/\ifnum 等）由
-                    // 各扫描函数处理，不会到达此处。
-                    EqSlot::Register(kind, idx) => {
+                    SlotAction::Register(kind, idx) => {
                         self.skip_spaces()?;
                         self.expect_equals()?;
                         match kind {
@@ -784,25 +817,25 @@ impl Expander {
                         }
                         Ok(())
                     }
-                    EqSlot::Stream(..) => Err(Error::invalid_input(
+                    SlotAction::Stream => Err(Error::invalid_input(
                         "流引用不能直接使用（需在 \\read/\\write 等扫描上下文中）",
                     )),
                     // ETRIP 冲刺：\mathchardef\cs=<num> 绑定的 cs 执行时输出字符
                     // （数学原子语义在排版器侧细化；此处按 \char 处理）
-                    EqSlot::MathChar(code) => {
+                    SlotAction::MathChar(code) => {
                         self.sink.token(Token::char(Catcode::Other, code & 0xFF))
                     }
-                    EqSlot::Macro(m) => {
+                    SlotAction::Macro(def) => {
                         // e-TeX（M4-5）：protected 宏在展开抑制上下文（\edef/\write 等）
                         // 不展开，原样输出。
-                        if m.value.protected && self.suppress_expansion > 0 {
+                        if def.protected && self.suppress_expansion > 0 {
                             self.sink.token(Token::control_sequence(csid))?;
                             return Ok(());
                         }
-                        self.call_macro(csid, m.value.clone())
+                        self.call_macro(csid, def)
                     }
-                    EqSlot::Font(font) => self.sink.font_selected(font),
-                    EqSlot::Primitive(p) => self.exec_primitive(p),
+                    SlotAction::Font(font) => self.sink.font_selected(font),
+                    SlotAction::Primitive(p) => self.exec_primitive(p),
                 }
             }
             TokenKind::Char => {
@@ -890,10 +923,7 @@ impl Expander {
         };
         let is = tok.catcode() == Some(Catcode::MathShift);
         if !is {
-            self.stack.push(InputFrame::TokenList {
-                items: Arc::from([(tok, ne)]),
-                pos: 0,
-            });
+            self.stack.push(InputFrame::One { tok, noexpand: ne });
         }
         Ok(is)
     }
@@ -989,6 +1019,12 @@ impl Expander {
                     let item = items[*pos];
                     *pos += 1;
                     return Ok(Some(item));
+                }
+                InputFrame::One { tok, noexpand } => {
+                    // 先拷贝（结束字段借用）再弹帧（&mut stack）
+                    let (t, ne) = (*tok, *noexpand);
+                    self.stack.pop();
+                    return Ok(Some((t, ne)));
                 }
                 InputFrame::OutputRoutine { items, pos } => {
                     if *pos >= items.len() {

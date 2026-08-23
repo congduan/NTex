@@ -87,7 +87,7 @@ cargo run -p ntex-bench --release -- --driver external=pdflatex
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
 | M0 地基 | workspace / CI / 基准 / TRIP / 差分工具链 | ✅ 完成 |
-| M1 内核 | Token/InternTable/eqtb/catcode/扫描器/展开引擎 | � 核心完成；TRIP 未全绿（分隔参数 / 错误模型待补） |
+| M1 内核 | Token/InternTable/eqtb/catcode/扫描器/展开引擎 | 🟡 核心完成；TRIP 未全绿（分隔参数 / 错误模型待补） |
 | M2 字节码 | 定长 u64 IR + 编译器 + 双轨等价 | 🟡 等价 100 用例全绿；吞吐 1.12x 未达 2x，arena 未做 |
 | M3 排版 | 折行/TFM/断页/lig+kern/\output/shipout→DVI | 🟡 核心完成（DVI 逐字节对照一致）；VFS / .fmt v1 待做 |
 | 输出端 | DVI→PDF 正式后端（Type1 嵌入） | 🔄 M8 提前推进中 |

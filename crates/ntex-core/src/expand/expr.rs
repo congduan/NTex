@@ -561,9 +561,9 @@ impl Expander {
         let name = self.scan_csname()?;
         let csid = self.intern.intern(&name);
         let tok = Token::control_sequence(csid);
-        self.stack.push(InputFrame::TokenList {
-            items: Arc::from([(tok, false)]),
-            pos: 0,
+        self.stack.push(InputFrame::One {
+            tok,
+            noexpand: false,
         });
         Ok(())
     }
