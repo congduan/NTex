@@ -711,7 +711,14 @@ impl TokenSink for NodeBuilder {
     }
 
     /// `\mark`/`\marks<n>`：mark 节点追加到当前列表（无维度）。
+    /// 同步更新当前页 marks_first/marks_bot（class=None 映射到 0，即 \mark=\marks0）。
     fn mark(&mut self, class: Option<i64>, text: String) -> Result<()> {
+        // TeX 语义：\mark 等价于 \marks0（class 0）。
+        let c = class.unwrap_or(0);
+        // marks_first：该 class 在当前页第一次出现时设置。
+        self.marks_first.entry(c).or_insert_with(|| text.clone());
+        // marks_bot：每次出现都更新（最后一次出现）。
+        self.marks_bot.insert(c, text.clone());
         self.append(Node::Mark { class, text });
         Ok(())
     }
@@ -737,6 +744,36 @@ impl TokenSink for NodeBuilder {
     fn whatsit(&mut self, text: String) -> Result<()> {
         self.append(Node::Whatsit { text });
         Ok(())
+    }
+
+    // ---- ETRIP 冲刺：e-TeX marks 族查询 ----
+    // （注意：轮转在 feed_one 产出页时立即执行，不在查询时修改状态。）
+    fn topmarks(&self, class: i64) -> String {
+        self.marks_top.get(&class).cloned().unwrap_or_default()
+    }
+    fn firstmarks(&self, class: i64) -> String {
+        self.marks_first.get(&class).cloned().unwrap_or_default()
+    }
+    fn botmarks(&self, class: i64) -> String {
+        self.marks_bot.get(&class).cloned().unwrap_or_default()
+    }
+    fn splitfirstmarks(&self, class: i64) -> String {
+        self.marks_split_first
+            .get(&class)
+            .cloned()
+            .unwrap_or_default()
+    }
+    fn splittopmarks(&self, class: i64) -> String {
+        self.marks_split_top
+            .get(&class)
+            .cloned()
+            .unwrap_or_default()
+    }
+    fn splitbotmarks(&self, class: i64) -> String {
+        self.marks_split_bot
+            .get(&class)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// e-TeX `\lastnodetype`：当前列表尾节点类型码（空列表 -1）。

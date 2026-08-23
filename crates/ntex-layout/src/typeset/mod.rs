@@ -429,6 +429,17 @@ struct NodeBuilder {
     after_display: bool,
     /// ETRIP 冲刺：终端转录累积（`\message`/`\show`/`\write16`）。
     transcript: String,
+    /// ETRIP 冲刺：e-TeX marks 族状态（断页轮转）。
+    /// `\topmarks<c>`：继承自上一页 botmarks<c>（初始空）。
+    marks_top: std::collections::HashMap<i64, String>,
+    /// 当前页第一个出现的 marks<c>（断页新页开始时清空）。
+    marks_first: std::collections::HashMap<i64, String>,
+    /// 当前页最后一个出现的 marks<c>（断页新页开始时保留继承值，后续新 marks 覆盖）。
+    marks_bot: std::collections::HashMap<i64, String>,
+    /// \vsplit 产生的拆分 marks（暂未实现 vsplit 全语义；留空）。
+    marks_split_top: std::collections::HashMap<i64, String>,
+    marks_split_first: std::collections::HashMap<i64, String>,
+    marks_split_bot: std::collections::HashMap<i64, String>,
 }
 
 /// 断字候选字符：ASCII 字母（catcode 11 的近似；ligature/非字母不参与断字 run）。
@@ -491,11 +502,31 @@ impl NodeBuilder {
             after_display: false,
             transcript: String::new(),
             fonts,
+            marks_top: std::collections::HashMap::new(),
+            marks_first: std::collections::HashMap::new(),
+            marks_bot: std::collections::HashMap::new(),
+            marks_split_top: std::collections::HashMap::new(),
+            marks_split_first: std::collections::HashMap::new(),
+            marks_split_bot: std::collections::HashMap::new(),
         }
     }
 
     fn mode(&self) -> Mode {
         *self.list_modes.last().expect("列表栈非空")
+    }
+
+    /// ETRIP 冲刺：断页后 marks 轮转（fire_up 产出页后立即调用）。
+    /// 语义（TeX）：
+    ///   marks_top = 旧 marks_bot（上一页 bot 变成新页 top 继承值）；
+    ///   marks_first 清空（新页第一个 marks 尚未出现）；
+    ///   marks_bot = marks_top（新页无新 marks 时 bot==继承的 top）。
+    fn rotate_marks(&mut self) {
+        // marks_top：承接上一页 botmarks（继承）
+        self.marks_top = self.marks_bot.clone();
+        // marks_first：新页第一个 marks 清空
+        self.marks_first.clear();
+        // marks_bot：初始等于继承的 marks_top（若无新 marks 则 bot==top）
+        self.marks_bot = self.marks_top.clone();
     }
 
     fn append(&mut self, node: Node) {
@@ -506,6 +537,8 @@ impl NodeBuilder {
         if self.pagination && self.mode() == Mode::Vertical && self.lists.len() == 1 {
             if let Some(p) = self.page.feed_one(&mut self.lists[0], &self.params) {
                 self.accept_page(p);
+                // ETRIP 冲刺：断页 marks 轮转（top = 旧 bot，first 清空，bot 保留继承）
+                self.rotate_marks();
             }
         }
     }

@@ -55,6 +55,8 @@ impl NodeBuilder {
             // 产出一页则返回；材料全部入页但未触发断页 → 补充 eject 节点再试
             if let Some(p) = self.page.feed_one(&mut self.lists[0], &self.params) {
                 self.accept_page(p);
+                // ETRIP 冲刺：断页 marks 轮转（top = 旧 bot，first 清空，bot 保留继承）
+                self.rotate_marks();
                 self.drop_empty_page_discardables();
                 return Ok(true);
             }

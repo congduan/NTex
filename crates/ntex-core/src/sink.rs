@@ -222,6 +222,30 @@ pub trait TokenSink: std::fmt::Debug {
     fn whatsit(&mut self, _text: String) -> Result<()> {
         Ok(())
     }
+    /// e-TeX marks 族查询：`\topmarks<n>`（继承自上一页的 botmarks；初始为空）。
+    fn topmarks(&self, _class: i64) -> String {
+        String::new()
+    }
+    /// e-TeX marks 族查询：`\firstmarks<n>`（当前页第一个出现的 marks<n>）。
+    fn firstmarks(&self, _class: i64) -> String {
+        String::new()
+    }
+    /// e-TeX marks 族查询：`\botmarks<n>`（当前页最后一个出现的 marks<n>）。
+    fn botmarks(&self, _class: i64) -> String {
+        String::new()
+    }
+    /// e-TeX marks 族查询：`\splitfirstmarks<n>`（\vsplit 拆出盒的第一个 marks）。
+    fn splitfirstmarks(&self, _class: i64) -> String {
+        String::new()
+    }
+    /// e-TeX marks 族查询：`\splittopmarks<n>`（\vsplit 前继承的 topmarks）。
+    fn splittopmarks(&self, _class: i64) -> String {
+        String::new()
+    }
+    /// e-TeX marks 族查询：`\splitbotmarks<n>`（\vsplit 拆出盒的最后 marks）。
+    fn splitbotmarks(&self, _class: i64) -> String {
+        String::new()
+    }
     /// e-TeX `\lastnodetype`：当前列表尾节点类型码（空列表 -1）。
     fn last_node_type(&self) -> i64 {
         -1

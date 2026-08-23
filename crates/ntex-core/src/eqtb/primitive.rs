@@ -312,6 +312,13 @@ pub enum Primitive {
     ParshapeLength,
     ParshapeIndent,
     ParshapeDimen,
+    // ETRIP 冲刺：e-TeX marks 族查询（可展开，返回字符 token 文本）
+    TopMarks,
+    FirstMarks,
+    BotMarks,
+    SplitFirstMarks,
+    SplitTopMarks,
+    SplitBotMarks,
 }
 
 impl Primitive {
@@ -337,6 +344,13 @@ impl Primitive {
                 | Self::Csname
                 // ETRIP 冲刺：\meaning<token>（TeX 可展开原语）
                 | Self::Meaning
+                // ETRIP 冲刺：e-TeX marks 族查询（可展开：返回字符 token 文本）
+                | Self::TopMarks
+                | Self::FirstMarks
+                | Self::BotMarks
+                | Self::SplitFirstMarks
+                | Self::SplitTopMarks
+                | Self::SplitBotMarks
         )
     }
 
@@ -590,6 +604,12 @@ impl Primitive {
             240 => Self::ParshapeLength,
             241 => Self::ParshapeIndent,
             242 => Self::ParshapeDimen,
+            243 => Self::TopMarks,
+            244 => Self::FirstMarks,
+            245 => Self::BotMarks,
+            246 => Self::SplitFirstMarks,
+            247 => Self::SplitTopMarks,
+            248 => Self::SplitBotMarks,
             _ => return None,
         })
     }

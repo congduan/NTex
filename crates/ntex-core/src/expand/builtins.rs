@@ -1,6 +1,6 @@
 impl Expander {
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 243] = [
+        const BUILTINS: [(&str, Primitive); 249] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -308,6 +308,13 @@ impl Expander {
             ("parshapelength", Primitive::ParshapeLength),
             ("parshapeindent", Primitive::ParshapeIndent),
             ("parshapedimen", Primitive::ParshapeDimen),
+            // ETRIP 冲刺：e-TeX marks 族查询（可展开，返回字符 token 文本）
+            ("topmarks", Primitive::TopMarks),
+            ("firstmarks", Primitive::FirstMarks),
+            ("botmarks", Primitive::BotMarks),
+            ("splitfirstmarks", Primitive::SplitFirstMarks),
+            ("splittopmarks", Primitive::SplitTopMarks),
+            ("splitbotmarks", Primitive::SplitBotMarks),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);

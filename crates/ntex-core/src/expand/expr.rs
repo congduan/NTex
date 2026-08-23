@@ -143,6 +143,35 @@ impl Expander {
                     let csid = self.intern.intern(&name);
                     out.push((Token::control_sequence(csid), false));
                 }
+                // ETRIP 冲刺：e-TeX marks 族查询（可展开，返回字符 token 文本）
+                // \topmarks<n> / \firstmarks<n> / \botmarks<n> / \splitfirstmarks<n> /
+                // \splittopmarks<n> / \splitbotmarks<n>：扫描 class 号，向 sink 查询，
+                // 返回内容转为字符 token（空内容输出空）。
+                EqSlot::Primitive(p @ (Primitive::TopMarks
+                    | Primitive::FirstMarks
+                    | Primitive::BotMarks
+                    | Primitive::SplitFirstMarks
+                    | Primitive::SplitTopMarks
+                    | Primitive::SplitBotMarks)) => {
+                    let class = self.scan_number()?;
+                    let text = match p {
+                        Primitive::TopMarks => self.sink.topmarks(class),
+                        Primitive::FirstMarks => self.sink.firstmarks(class),
+                        Primitive::BotMarks => self.sink.botmarks(class),
+                        Primitive::SplitFirstMarks => self.sink.splitfirstmarks(class),
+                        Primitive::SplitTopMarks => self.sink.splittopmarks(class),
+                        Primitive::SplitBotMarks => self.sink.splitbotmarks(class),
+                        _ => unreachable!("marks 族已在上层 match 穷举"),
+                    };
+                    out.extend(text.bytes().map(|b| {
+                        let cat = if b == b' ' {
+                            Catcode::Space
+                        } else {
+                            Catcode::Other
+                        };
+                        (Token::char(cat, u32::from(b)), false)
+                    }));
+                }
                 _ => {
                     // 未定义/不可展开原语：原样保留
                     out.push((tok, false));

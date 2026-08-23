@@ -2,7 +2,9 @@
 
 > 数据来源：etrip.tex 全量控制序列 vs builtins 注册表对照（2026-08-18 生成），
 > 进展随冲刺迭代更新。本文件是 ETRIP 原语状态的**唯一状态源**（plan.md §6 引用）。
-> 最近更新：2026-08-23（本轮：\iffontchar/fontchar*/showifs/parshape 族 + 表达式 * / 与溢出恢复）
+> 最近更新：2026-08-23（第二波：表达式 i128/胶水阶语义/未定义恢复/eTeX 32768 寄存器；
+> marks 族原语 6 项全实现（\topmarks/\firstmarks/\botmarks/\splitfirstmarks/\splittopmarks/\splitbotmarks）；
+> pass2 已过 numexpr 全段 + mutoglue 段，卡 gluestretchorder 段宏绑定）
 
 图例：✅ 完成 · ❌ 未完成
 
@@ -11,7 +13,7 @@
 | 分组 | 范围 | 进度 |
 |---|---|---|
 | M4 基线 | e-TeX 核心/扩展原语（M4 验收时已全部落地） | ✅ 全部完成 |
-| A 组 | e-TeX 特定原语（pass2 前半段 Checking 段） | ❌ 24/42 |
+| A 组 | e-TeX 特定原语（pass2 前半段 Checking 段） | ❌ 30/42 |
 | B 组 | TeX 基础原语（pass2 中后段） | ❌ 15/36 |
 | C 组 | 已注册未接线 | ✅ 全部已接线 |
 | 收尾 | `etrip.log` 逐字节比对 | ❌ 未开始 |
@@ -40,12 +42,12 @@ M4 数学 + e-TeX 验收时已实现的 e-TeX 原语：
 
 ### marks 族
 - ✅ `\marks`（已注册 → 已接线）
-- ❌ `\topmarks`
-- ❌ `\firstmarks`
-- ❌ `\botmarks`
-- ❌ `\splitfirstmarks`
-- ❌ `\splittopmarks`
-- ❌ `\splitbotmarks`
+- ✅ `\topmarks`（2026-08-23：可展开查询；sink 接口 + HashMap<class,String> 状态；断页轮转）
+- ✅ `\firstmarks`（同上）
+- ✅ `\botmarks`（同上）
+- ✅ `\splitfirstmarks`（同上；vsplit 拆分 marks 暂空，接口预留）
+- ✅ `\splittopmarks`（同上）
+- ✅ `\splitbotmarks`（同上）
 
 ### 输入
 - ✅ `\readline`（原始行 + `\endlinechar` 附加）
@@ -72,9 +74,12 @@ M4 数学 + e-TeX 验收时已实现的 e-TeX 原语：
   length<n>=值[2n]、dimen<n>=值[n]；n≤0→0；越界钳制/奇偶回退）
 
 ### mu 表达式/互转
-- ❌ `\muexpr`（已注册，暂映射 Glueexpr；mu 单位与 `\the` 显示 "5.0mu" 待校准）
-- ❌ `\mutoglue`
-- ❌ `\gluetomu`
+- ❌ `\muexpr`（已注册，暂映射 Glueexpr——表达式算术已全通（i128 中间量、
+  四舍五入除法、`\ifnum#4=\muexpr...` 整数上下文），但 1mu=1pt 与 `\the` 显示
+  "5.0mu" 待校准；mu_error "! Incompatible glue units." 恢复消息未实现）
+- ❌ `\mutoglue`（未注册——当前走未定义 cs 恢复（"! Undefined control sequence."
+  当 \relax）使 pass2 继续；下一批实现）
+- ❌ `\gluetomu`（同上）
 
 ### 胶水阶
 - ✅ `\gluestretchorder`
@@ -152,7 +157,18 @@ M4 数学 + e-TeX 验收时已实现的 e-TeX 原语：
 
 ## 收尾（❌ 未开始）
 
-- ❌ `etrip.log` 逐字节比对（消息格式/上下文行/dvitype 暂不纳入）
+- ❌ `etrip.log` 逐字节比对（消息格式/上下文行/dvitype 暂不纳入）。
+  已知差距（2026-08-23）：`\tracingassigns` 的 `{changing/into}` 行、
+  `\the\muexpr` 的 "5.0mu" 显示、错误消息上下文行（"l.N …"）、mu_error 恢复消息。
+
+## 引擎基础设施（2026-08-23）
+
+- eTeX 寄存器扩展：`REGISTER_COUNT` 256 → **32768**（`\count32767` 可用；
+  `.fmt` codec 同步；越界报 "! Bad register code (N)." 钳 0）
+- 表达式核心：i128 中间量（仅最终结果溢出报错）、四舍五入除法、
+  `\let\9=\relax` 别名终止、dimen/glue `*`/`/` 括号因子、胶水阶"最后非零项"语义
+- 扫描恢复：未定义 cs 当 \relax 继续（未实现原语不致命）、`\dimexpr/\glueexpr`
+  作整数操作数、`\count43pt` 寄存器+单位
 
 ## 冲刺纪律
 
