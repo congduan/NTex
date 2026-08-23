@@ -672,17 +672,21 @@ mod tests {
         let fm = ntex_font::parse_tfm(&bytes).expect("解析 cmr10.tfm");
 
         let mut ts = Typesetter::with_tfm();
-        // 小 \vsize + 窄 \hsize：长文本自动分多页
-        let src = r"\font\cmr=cmr10\hsize 200pt\vsize 80pt\cmr ".to_owned()
+        // 小 \vsize + 窄 \hsize：长文本自动分多页（tolerance=200 折行紧凑，vsize 取 40pt 保证多行必然分页）
+        let src = r"\font\cmr=cmr10\hsize 200pt\vsize 40pt\cmr ".to_owned()
             + "This is the first paragraph of a test document that has to be "
             + "long enough to wrap around into several lines of text, so that "
             + "the page builder will eventually overflow the rather small "
             + "vertical size and fire up a page break at the best place. "
-            + "More words are needed to make the paragraph really long. "
+            + "More words are needed to make the paragraph really long, and "
+            + "even more words are needed to push it past the small vertical "
+            + "size so that the page builder must fire up at least twice. "
             + "\\par\\cmr "
             + "And here is the second paragraph to be paginated separately. "
             + "It also has some words to fill up a few more lines, since the "
-            + "pagination logic must handle the remainder of the first page.";
+            + "pagination logic must handle the remainder of the first page, "
+            + "and then some additional trailing words to make sure that the "
+            + "second page actually gets material as well.";
         let (pages, fonts) = ts.typeset_dvi(&src).expect("排版失败");
         assert!(
             pages.len() >= 2,
@@ -691,10 +695,10 @@ mod tests {
         );
         assert_eq!(fonts.len(), 1);
         assert_eq!(fonts[0].checksum, fm.checksum);
-        // 每页为 vbox（自动分页），高度 = vsize
+        // 每页为 vbox（自动分页），高度 = vsize（40pt）
         for p in &pages {
             assert_eq!(p.kind, BoxKind::VBox, "自动分页页面应为 vbox");
-            assert_eq!(p.height, 80 * 65_536, "页高应为 \\vsize");
+            assert_eq!(p.height, 40 * 65_536, "页高应为 \\vsize");
         }
         let dvi = write_dvi(&pages, &fonts);
         assert!(!dvi.is_empty());

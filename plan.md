@@ -60,6 +60,10 @@
   - 已发现实例（2026-08-22，P0 验证时）：`ntex-bench --driver ntex --bench
     expand-throughput`（200k 宏调用）在 in-process 引擎**死循环**（HEAD 与
     P0 改动后均复现；CI 仅 stub 驱动未覆盖此路径）——优先列入 fuzz 回归集
+  - **✅ 已修复（2026-08-23）**：根因 = `knuth_plass` 折行 O(n²)（active 集不淘汰）
+    + 默认 `\tolerance=10000`（应为 TeX 默认 200）→ active 永不淘汰。修复 = active
+    集淘汰（tex.web §880）+ `\tolerance` 默认 200。基准 expand-throughput 现 730ms
+    / 27.4 万调用/s（原约 39 分钟"死循环"）；折行与暴力最优对照全绿。
 - 验证：fuzz 长时间运行零 panic；错误路径输出与 pdfTeX 一致
 
 ### P2 工程化闭环：CI/基准门禁

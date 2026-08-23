@@ -259,6 +259,27 @@ fn best_path(breaks: &[BreakSpec], hsize: i64, tolerance: i64) -> (Vec<usize>, i
 
     for i in 1..n {
         let bi = breaks[i];
+        // A1：active 集淘汰（tex.web §880 `deactivate`）——非强制断点处，起点 a 的
+        // 行 [a, i] badness 超容差 → 移除 a：行 [a, j]（j≥i）只会更宽、badness 单调
+        // 不减，a 不可能成为任何后续非强制行的起点。配合 TeX 默认 `\tolerance=200`，
+        // active 集有界（约一行宽度的断点窗口）→ 复杂度 O(n²) → 接近 O(n)。
+        if !bi.is_forced {
+            let mut last_removed = None;
+            active.retain(|&a| {
+                let (bad, _) = line_badness_kind(&bi, &breaks[a], hsize);
+                let ok = bad as i64 <= tolerance;
+                if !ok {
+                    last_removed = Some(a);
+                }
+                ok
+            });
+            // 兜底：极端容差/词宽下所有起点超容差 → active 空会使末尾强制断点无路径。
+            // 恢复**最后一个被淘汰的起点**（最近的可行断点）——非强制断点仍因超容差
+            // 不产生候选（champion 处 `bad > tolerance` 跳过），仅保证 forced 末点可取。
+            if active.is_empty() {
+                active.push(last_removed.unwrap_or(0));
+            }
+        }
         // 按本行拟合类分槽的候选（tex.web `minimal_demerits`/`best_place`）。
         let mut champion: [Option<(i64, usize, FitClass)>; 4] = [None; 4];
         for &a in &active {
@@ -316,7 +337,8 @@ fn best_path(breaks: &[BreakSpec], hsize: i64, tolerance: i64) -> (Vec<usize>, i
 /// Knuth-Plass 断行：返回行区间 `(start, end)`（`end` 不含；行内容 = `[start, end)`）。
 ///
 /// `hsize`：行目标宽度（sp）；`tolerance`：可接受最大 badness（tex.web `tolerance`）。
-/// 目前为 O(n²)（未做 active 淘汰）；`\parfillskip`/右端对齐等留待后续。
+/// active 集按 badness 超容差淘汰（tex.web §880，A1）——复杂度接近 O(n)；
+/// `\parfillskip`/右端对齐等留待后续。
 pub fn knuth_plass(hlist: &[Node], hsize: i64, tolerance: i64) -> Vec<(usize, usize)> {
     if hlist.is_empty() {
         return Vec::new();

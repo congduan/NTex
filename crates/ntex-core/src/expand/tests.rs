@@ -1057,8 +1057,8 @@ mod tests {
     fn hsize_and_tolerance_assignment() {
         assert_eq!(expand("\\hsize 100pt\\the\\hsize").unwrap(), "100.0pt");
         assert_eq!(expand("\\tolerance 300\\the\\tolerance").unwrap(), "300");
-        // 默认值（TeX initex）：\hsize=6.5in、\tolerance=10000
-        assert!(expand("\\the\\tolerance").unwrap().ends_with("10000"));
+        // 默认值（TeX initex，A1 修复）：\hsize=6.5in、\tolerance=200
+        assert!(expand("\\the\\tolerance").unwrap().ends_with("200"));
     }
 
     // ---------- M3-4 字体 ----------

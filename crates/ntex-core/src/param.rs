@@ -188,7 +188,8 @@ pub struct Params {
 
 impl Default for Params {
     /// TeX initex/plain 默认值：`\parindent=0`、`\baselineskip=12pt`、
-    /// `\lineskip=0`、`\lineskiplimit=0`、`\hsize=6.5in`、`\tolerance=10000`、
+    /// `\lineskip=0`、`\lineskiplimit=0`、`\hsize=6.5in`、`\tolerance=200`（TeXbook：
+    /// initex 默认 200——A1 修复，此前 10000 使折行 active 集永不淘汰 → O(n²)）、
     /// `\vsize=643.20255pt`、`\topskip=10pt`、`\maxdepth=4pt`、`\parskip=0pt plus 1pt`。
     fn default() -> Self {
         Self {
@@ -198,7 +199,7 @@ impl Default for Params {
             lineskiplimit: 0,
             // 6.5in = 13/2 × 4_736_286 sp
             hsize: 13 * 4_736_286 / 2,
-            tolerance: 10_000,
+            tolerance: 200,
             // plain \vsize：643.20255pt × 2^16（TeX 内部存为 scaled 四舍五入）
             vsize: 42_152_922,
             topskip: Glue::new(10 * SP_PER_PT, 0, 0),
