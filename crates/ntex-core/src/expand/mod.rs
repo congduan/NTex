@@ -626,16 +626,26 @@ impl Expander {
                     frames.join(" | ")
                 )));
             }
-            // 输出例程激活期间（例程帧在栈上）不重复注入
-            if !self.output_active && self.maybe_inject_output()? {
-                continue;
-            }
-            // RFC-3：页面真正输出（shipout 边界）时 flush 延迟写流
-            if self.sink.take_write_flush_pending() {
-                self.flush_writes()?;
-            }
-            if !self.process_one()? {
-                break;
+            // A3：单步执行（注入输出例程 / flush 写流 / 处理一个 token）——
+            // 出错时先写 `l.N` 上下文行到转录，再上抛（TeX error() 的上下文行）。
+            let step = (|| -> Result<bool> {
+                // 输出例程激活期间（例程帧在栈上）不重复注入
+                if !self.output_active && self.maybe_inject_output()? {
+                    return Ok(true);
+                }
+                // RFC-3：页面真正输出（shipout 边界）时 flush 延迟写流
+                if self.sink.take_write_flush_pending() {
+                    self.flush_writes()?;
+                }
+                self.process_one()
+            })();
+            match step {
+                Ok(false) => break,
+                Ok(true) => {}
+                Err(e) => {
+                    self.report_error_context();
+                    return Err(e);
+                }
             }
         }
         if !self.cond_stack.is_empty() {
@@ -660,6 +670,39 @@ impl Expander {
             return Err(Error::invalid_input("条件未闭合（缺少 \\fi）"));
         }
         Ok(())
+    }
+
+    /// A3：当前源码上下文——从输入栈找最近的 [`InputFrame::Source`] 帧，
+    /// 由扫描位置反推 (行号, 行内容)。宏展开中的错误回退到最近的源文件行
+    /// （TeX `l.N` 上下文行语义）。
+    fn error_context(&self) -> Option<(usize, String)> {
+        for frame in self.stack.iter().rev() {
+            if let InputFrame::Source { bytes, pos, .. } = frame {
+                let bytes: &[u8] = bytes;
+                let end = (*pos).min(bytes.len());
+                let line_no = bytes[..end].iter().filter(|&&b| b == b'\n').count() + 1;
+                let line_start = bytes[..end]
+                    .iter()
+                    .rposition(|&b| b == b'\n')
+                    .map(|i| i + 1)
+                    .unwrap_or(0);
+                let line_end = bytes[line_start..]
+                    .iter()
+                    .position(|&b| b == b'\n')
+                    .map(|i| line_start + i)
+                    .unwrap_or(bytes.len());
+                let line = String::from_utf8_lossy(&bytes[line_start..line_end]).into_owned();
+                return Some((line_no, line));
+            }
+        }
+        None
+    }
+
+    /// A3：把错误上下文行（`l.N <行内容>`）写入转录（TeX error() 的上下文行）。
+    fn report_error_context(&mut self) {
+        if let Some((n, line)) = self.error_context() {
+            let _ = self.sink.write16(format!("l.{n} {line}\n"));
+        }
     }
 
     /// 输入耗尽后的收尾：执行所有待执行的输出例程（`finish` 冲页产生）。
@@ -773,9 +816,13 @@ impl Expander {
                 };
                 match action {
                     SlotAction::Undefined(name) => {
-                        let _ = self
-                            .sink
-                            .write16(format!("! Undefined control sequence.\n\\{name}\n"));
+                        // A3：TeX 错误格式 `! 消息` + 上下文行 `l.N <行内容>`；
+                        // 未定义 cs 当 \relax 继续（TeX 错误恢复）。
+                        let mut msg = format!("! Undefined control sequence.\n\\{name}\n");
+                        if let Some((n, line)) = self.error_context() {
+                            msg.push_str(&format!("l.{n} {line}\n"));
+                        }
+                        let _ = self.sink.write16(msg);
                         Ok(())
                     }
                     SlotAction::Alias(target) => {

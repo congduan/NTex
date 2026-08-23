@@ -961,6 +961,48 @@ mod tests {
         assert!(expand("\\def\\a{X}\\a}").is_err());
     }
 
+    // ---------- A3：错误上下文行（l.N） ----------
+
+    /// 运行源码并返回转录（错误时返回 Err + 已累积转录）。
+    fn run_transcript(src: &str) -> (Result<()>, String) {
+        let mut e = Expander::new();
+        let sink = VecSink::default();
+        e.set_sink(Box::new(sink));
+        let r = e.run_source(src);
+        let sink = e.take_sink();
+        let mut sink = sink;
+        let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+        (r, std::mem::take(&mut sink.transcript))
+    }
+
+    #[test]
+    fn undefined_cs_reports_line_context() {
+        // A3：未定义 cs 报 `! 消息` + `l.N <行内容>`，当 \relax 继续
+        let (r, t) = run_transcript("\\def\\x{A}\n\\undefinedzz");
+        assert!(r.is_ok(), "未定义 cs 应恢复继续");
+        assert!(t.contains("! Undefined control sequence."), "转录：{t}");
+        assert!(t.contains("\\undefinedzz"), "转录：{t}");
+        assert!(t.contains("l.2 \\undefinedzz"), "应带第 2 行上下文：{t}");
+    }
+
+    #[test]
+    fn error_reports_line_context() {
+        // A3：不可恢复错误（非 long 宏参数含 \par）→ Err 但转录带 l.N 上下文行
+        let (r, t) = run_transcript("\\def\\a#1{#1}\n\\a\\par");
+        assert!(r.is_err(), "非 long 参数含 \\par 应报错");
+        assert!(t.contains("l.2"), "应带第 2 行上下文：{t}");
+        assert!(t.contains("\\a\\par"), "上下文行应为出错行内容：{t}");
+    }
+
+    #[test]
+    fn undefined_cs_in_macro_reports_caller_line() {
+        // A3：宏体内未定义 cs → 回退到最近的源文件行（宏调用处）
+        let (r, t) = run_transcript("\\def\\foo{\\noSuchMacro}\n\\foo");
+        assert!(r.is_ok(), "未定义 cs 应恢复继续");
+        assert!(t.contains("! Undefined control sequence."), "转录：{t}");
+        assert!(t.contains("l.2 \\foo"), "应回退到宏调用行：{t}");
+    }
+
     #[test]
     fn conditional_inside_group_must_close() {
         // 组内开 \if 未闭合就 \endgroup → 错误
