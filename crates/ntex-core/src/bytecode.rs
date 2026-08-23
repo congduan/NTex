@@ -3,14 +3,12 @@
 //! RFC-4 的落地子集：
 //! - 每条指令编码为单个 u64（tag 高 4 bit；`Emit` 的 tag 为 0，**内联 8B token 原值**，
 //!   RFC-1 布局零解包，`.fmt` 序列化友好）；
-//! - **常量条件折叠**：平衡的 `\iftrue`/`\iffalse..\else..\fi` 在编译期直接求值，
-//!   死分支不发射；其余 `\if*`（操作数来自运行期输入流）保持发射为控制序列 token，
-//!   由运行期条件机（M1-9）处理——保证惰性跳过语义不变；
-//! - 未平衡的条件不折叠（保持跨宏 `\if` 的运行期扫描语义）；
+//! - **不做编译期常量条件折叠**（A6）：TeX 的 `\if*` 是展开期求值，定义后
+//!   `\let\iftrue\iffalse` 会使折叠产物与运行期语义不符（双轨不等价）——全部
+//!   原样发射，由运行期条件机（M1-9）处理，惰性跳过语义不变；
 //! - 双轨等价框架（M2-7）：解释器（TokenArray）与字节码（[`Bytecode`]）逐 token 输出一致，
 //!   由 ntex-core 测试套件全量覆盖。
 
-use crate::eqtb::{EqSlot, Eqtb, Primitive};
 use crate::intern::InternTable;
 use crate::token::{meaning, Token, TokenKind};
 use std::sync::Arc;
@@ -117,113 +115,31 @@ impl Bytecode {
     }
 }
 
-/// 编译宏体为字节码（发射 token + 常量条件折叠）。
-pub fn compile(body: &[Token], eqtb: &Eqtb) -> Bytecode {
+/// 编译宏体为字节码（发射 token；**不做常量条件折叠**——TeX 的 `\if*` 是展开期
+/// 求值，定义后 `\let\iftrue\iffalse` 会使编译期折叠产物与运行期语义不符，
+/// 双轨不等价（A6）。全部发射为 token，由运行期条件机处理，惰性跳过语义不变）。
+pub fn compile(body: &[Token]) -> Bytecode {
     let mut out = Vec::new();
-    let mut from = 0usize;
-    compile_slice(body, &mut from, body.len(), &mut out, eqtb);
+    for tok in body {
+        match tok.kind() {
+            TokenKind::MacroParam => {
+                let n = tok.param_number().unwrap_or(1);
+                out.push(Instruction::EmitArg { n }.encode());
+            }
+            _ => out.push(Instruction::Emit { token: *tok }.encode()),
+        }
+    }
     out.push(Instruction::End.encode());
     Bytecode {
         words: Arc::from(out),
     }
 }
 
-/// 编译 `[from, to)` 区间（递归；`\iftrue/\iffalse` 折叠）。
-fn compile_slice(tokens: &[Token], from: &mut usize, to: usize, out: &mut Vec<u64>, eqtb: &Eqtb) {
-    while *from < to {
-        let tok = tokens[*from];
-        if let Some(const_val) = const_if_value(tok, eqtb) {
-            if let Some((else_i, fi_i)) = find_matching_else_fi(tokens, *from, to, eqtb) {
-                if const_val {
-                    // \iftrue：发射 then 分支，跳过 else 分支（死代码）
-                    *from += 1;
-                    compile_slice(tokens, from, else_i.unwrap_or(fi_i), out, eqtb);
-                    *from = fi_i + 1;
-                } else {
-                    // \iffalse：跳过 then 分支，发射 else 分支
-                    *from = else_i.map_or(fi_i, |e| e + 1);
-                    if else_i.is_some() {
-                        compile_slice(tokens, from, fi_i, out, eqtb);
-                    }
-                    *from = fi_i + 1;
-                }
-                continue;
-            }
-        }
-        match tok.kind() {
-            TokenKind::MacroParam => {
-                let n = tok.param_number().unwrap_or(1);
-                out.push(Instruction::EmitArg { n }.encode());
-            }
-            _ => out.push(Instruction::Emit { token: tok }.encode()),
-        }
-        *from += 1;
-    }
-}
-
-/// `\iftrue`/`\iffalse` 的常量值（其余返回 None）。
-fn const_if_value(tok: Token, eqtb: &Eqtb) -> Option<bool> {
-    let csid = tok.csid()?;
-    match eqtb.slot(csid) {
-        EqSlot::Primitive(Primitive::IfTrue) => Some(true),
-        EqSlot::Primitive(Primitive::IfFalse) => Some(false),
-        _ => None,
-    }
-}
-
-/// 查找与 `if_idx` 平衡匹配的 `\else`/`\fi`。
-///
-/// 返回 `(else 下标或 None, fi 下标)`；区间内未闭合返回 `None`（不折叠）。
-fn find_matching_else_fi(
-    tokens: &[Token],
-    if_idx: usize,
-    to: usize,
-    eqtb: &Eqtb,
-) -> Option<(Option<usize>, usize)> {
-    let mut depth = 1usize;
-    let mut else_i = None;
-    let mut i = if_idx + 1;
-    while i < to {
-        let tok = tokens[i];
-        if let Some(csid) = tok.csid() {
-            match eqtb.slot(csid) {
-                EqSlot::Primitive(
-                    Primitive::If
-                    | Primitive::IfCat
-                    | Primitive::IfNum
-                    | Primitive::IfDim
-                    | Primitive::IfX
-                    | Primitive::IfOdd
-                    | Primitive::IfCase
-                    | Primitive::IfTrue
-                    | Primitive::IfFalse,
-                ) => depth += 1,
-                EqSlot::Primitive(Primitive::Fi) => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return Some((else_i, i));
-                    }
-                }
-                EqSlot::Primitive(Primitive::Else) => {
-                    if depth == 1 {
-                        if else_i.is_some() {
-                            return None; // 双 \else：不折叠，留给运行期报错
-                        }
-                        else_i = Some(i);
-                    }
-                }
-                _ => {}
-            }
-        }
-        i += 1;
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::catcode::Catcode;
+    use crate::eqtb::EqSlot;
     use crate::expand::Expander;
 
     fn tokens(src: &str) -> Vec<Token> {
@@ -239,9 +155,8 @@ mod tests {
 
     #[test]
     fn encode_decode_round_trip() {
-        let e = Expander::new();
         let body = tokens("A\\foo#1 B");
-        let bc = compile(&body, e.eqtb());
+        let bc = compile(&body);
         let words = bc.to_words();
         let decoded = Bytecode::from_words(&words);
         assert_eq!(decoded, bc);
@@ -258,9 +173,8 @@ mod tests {
 
     #[test]
     fn compile_emits_arg_slots() {
-        let e = Expander::new();
         let body = tokens("A#1B#2C");
-        let bc = compile(&body, e.eqtb());
+        let bc = compile(&body);
         let words = [
             Token::char(Catcode::Letter, b'A' as u32),
             Token::char(Catcode::Letter, b'B' as u32),
@@ -280,65 +194,50 @@ mod tests {
     }
 
     #[test]
-    fn const_iftrue_folds_else_branch() {
+    fn iftrue_not_folded_at_compile_time() {
+        // A6：\iftrue 不折叠——TeX 的 \if* 是展开期求值，定义后 \let\iftrue\iffalse
+        // 会使折叠产物与运行期语义不符（双轨不等价）。全部原样发射。
         let e = Expander::new();
         let body = tokens("\\iftrue A\\else B\\fi C");
-        let bc = compile(&body, e.eqtb());
+        let bc = compile(&body);
         let text = bc.disassemble(e.intern());
-        assert!(
-            text.contains("emit Char(cat=Letter,ch=65)"),
-            "应含 A：\n{text}"
-        );
-        assert!(!text.contains("ch=66)"), "else 分支 B 应被折叠：\n{text}");
-        assert!(text.contains("ch=67)"), "应含 C：\n{text}");
-    }
-
-    #[test]
-    fn const_iffalse_folds_then_branch() {
-        let e = Expander::new();
-        let body = tokens("\\iffalse A\\else B\\fi C");
-        let bc = compile(&body, e.eqtb());
-        let text = bc.disassemble(e.intern());
-        assert!(!text.contains("ch=65)"), "then 分支 A 应被折叠：\n{text}");
+        assert!(text.contains("\\iftrue"), "\\iftrue 应原样发射：\n{text}");
+        assert!(text.contains("\\else"), "\\else 应原样发射：\n{text}");
+        assert!(text.contains("\\fi"), "\\fi 应原样发射：\n{text}");
+        assert!(text.contains("ch=65)"), "应含 A：\n{text}");
         assert!(text.contains("ch=66)"), "应含 B：\n{text}");
         assert!(text.contains("ch=67)"), "应含 C：\n{text}");
     }
 
     #[test]
-    fn unbalanced_if_not_folded() {
+    fn nested_if_not_folded() {
         let e = Expander::new();
-        // \iftrue 无 \fi → 不折叠，原样发射
-        let body = tokens("\\iftrue A");
-        let bc = compile(&body, e.eqtb());
-        let text = bc.disassemble(e.intern());
-        assert!(text.contains("\\iftrue"), "未平衡条件不应折叠：\n{text}");
-    }
-
-    #[test]
-    fn nested_const_folds() {
-        let e = Expander::new();
-        // 外层 \iftrue → then = "A" + 内层 \iffalse→"Y" + "B"；外层 else "C" 为死代码
+        // 嵌套 \iftrue/\iffalse 同样不折叠：所有分支 token 原样发射
         let body = tokens("\\iftrue A\\iffalse X\\else Y\\fi B\\else C\\fi");
-        let bc = compile(&body, e.eqtb());
+        let bc = compile(&body);
         let text = bc.disassemble(e.intern());
         assert!(text.contains("ch=65)"), "A 应保留：\n{text}");
         assert!(text.contains("ch=66)"), "B 应保留：\n{text}");
-        assert!(
-            text.contains("ch=89)"),
-            "Y 应保留（内层 \\iffalse 的 else）：\n{text}"
-        );
-        assert!(!text.contains("ch=88)"), "X 应折叠：\n{text}");
-        assert!(
-            !text.contains("ch=67)"),
-            "C 应折叠（外层 else 死代码）：\n{text}"
-        );
+        assert!(text.contains("ch=89)"), "Y 应保留：\n{text}");
+        assert!(text.contains("ch=88)"), "X 应保留（不折叠）：\n{text}");
+        assert!(text.contains("ch=67)"), "C 应保留（不折叠）：\n{text}");
+    }
+
+    #[test]
+    fn unbalanced_if_kept() {
+        let e = Expander::new();
+        // \iftrue 无 \fi：原样发射（运行期条件机报未闭合）
+        let body = tokens("\\iftrue A");
+        let bc = compile(&body);
+        let text = bc.disassemble(e.intern());
+        assert!(text.contains("\\iftrue"), "未平衡条件应原样发射：\n{text}");
     }
 
     #[test]
     fn nonconst_if_kept_as_token() {
         let e = Expander::new();
         let body = tokens("\\ifnum1>0 A\\else B\\fi");
-        let bc = compile(&body, e.eqtb());
+        let bc = compile(&body);
         let text = bc.disassemble(e.intern());
         // \ifnum 操作数来自运行期，保持为 token（不解体）
         assert!(text.contains("\\ifnum"), "\\ifnum 应原样发射：\n{text}");

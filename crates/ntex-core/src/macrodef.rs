@@ -35,6 +35,9 @@ pub struct MacroDef {
     pub code: Option<Arc<Bytecode>>,
     /// e-TeX `\protected`：在 `\edef`/`\write`/`\detokenize` 等展开上下文不展开。
     pub protected: bool,
+    /// `\outer`：禁止出现在宏实参 / `\edef` / general text / `\read` 的 token 列表
+    /// 中（tex.web：outer 宏只能在正常展开上下文使用）。
+    pub outer: bool,
 }
 
 impl PartialEq for MacroDef {
@@ -63,6 +66,7 @@ mod tests {
             body: body.clone(),
             code: None,
             protected: false,
+            outer: false,
         };
         assert_eq!(def.params.num_params, 1);
         assert!(def.params.long);
@@ -84,6 +88,7 @@ mod tests {
             body: body.clone(),
             code: Some(Arc::new(Bytecode::default())),
             protected: false,
+            outer: false,
         };
         let b = MacroDef {
             params: ParamSpec {
@@ -94,6 +99,7 @@ mod tests {
             body,
             code: None,
             protected: false,
+            outer: false,
         };
         assert_eq!(a, b, "\\ifx 语义不应受编译产物影响");
     }

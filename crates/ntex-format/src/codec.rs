@@ -49,6 +49,7 @@ fn write_slot(w: &mut impl Write, slot: &EqSlot) -> io::Result<()> {
             w.write_all(&[def.params.num_params])?;
             w.write_all(&[def.params.long as u8])?;
             w.write_all(&[def.protected as u8])?; // e-TeX \protected（M4-5）
+            w.write_all(&[def.outer as u8])?; // \outer（v9）
             write_tokens(w, &def.params.text)?; // M1-8 参数文本（含定界符）
             write_tokens(w, &def.body)
         }
@@ -96,6 +97,7 @@ fn read_slot(r: &mut impl Read) -> io::Result<EqSlot> {
             let num_params = read_u8(r)?;
             let long = read_u8(r)? != 0;
             let protected = read_u8(r)? != 0; // e-TeX \protected（M4-5）
+            let outer = read_u8(r)? != 0; // \outer（v9）
             let text = ntex_core::macrodef::TokenArray::from(read_tokens(r)?); // M1-8 参数文本
             let body = ntex_core::macrodef::TokenArray::from(read_tokens(r)?);
             Ok(EqSlot::Macro(ntex_core::version::Versioned {
@@ -108,6 +110,7 @@ fn read_slot(r: &mut impl Read) -> io::Result<EqSlot> {
                     body,
                     code: None,
                     protected,
+                    outer,
                 }),
                 version,
             }))

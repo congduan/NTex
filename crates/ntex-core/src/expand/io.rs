@@ -193,6 +193,8 @@ impl Expander {
         let mut toks = Vec::new();
         while let Some(tok) = scan_token(&line, &mut pos, &self.catcodes, &mut self.intern, &mut state)?
         {
+            // TeX：\read 的 token 列表禁止 outer 宏（tex.web read_toks）
+            self.check_not_outer(tok)?;
             toks.push(tok);
         }
         // \def 语义赋值
@@ -205,6 +207,7 @@ impl Expander {
             body: Arc::from(toks),
             code: None,
             protected: false,
+            outer: false,
         };
         self.define_macro_scoped(csid, def);
         Ok(())

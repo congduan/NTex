@@ -112,6 +112,8 @@ impl Expander {
                     continue;
                 }
             }
+            // TeX：分隔实参内的 outer 宏 → forbidden
+            self.check_not_outer(tok)?;
             buf.push(tok);
             if self.suffix_matches_delim(&buf, delim) {
                 buf.truncate(buf.len() - delim.len());
@@ -174,6 +176,8 @@ impl Expander {
                         .fetch()?
                         .ok_or_else(|| Error::invalid_input("实参组未闭合"))?
                         .0;
+                    // TeX：组实参内的 outer 宏同样 forbidden
+                    self.check_not_outer(t)?;
                     match t.catcode() {
                         Some(Catcode::BeginGroup) => {
                             depth += 1;
@@ -195,6 +199,8 @@ impl Expander {
                 if !long && self.is_par_token(tok) {
                     return Err(Error::invalid_input("参数包含 \\par（宏未声明 \\long）"));
                 }
+                // TeX：单 token 实参为 outer 宏 → forbidden
+                self.check_not_outer(tok)?;
                 Ok(Arc::from([tok]))
             }
         }
@@ -204,6 +210,24 @@ impl Expander {
     fn is_par_token(&self, tok: Token) -> bool {
         tok.catcode() == Some(Catcode::EndOfLine)
             || tok.csid().is_some_and(|id| self.intern.name(id) == "par")
+    }
+
+    /// TeX：outer 宏禁止出现在宏实参 / `\edef` / general text / `\read` 的 token
+    /// 列表中（tex.web `forbidden`：`\outer` 宏只能在正常展开上下文使用）。
+    /// 非 outer 宏或非宏 token 直接通过。
+    fn check_not_outer(&self, tok: Token) -> Result<()> {
+        let Some(csid) = tok.csid() else {
+            return Ok(());
+        };
+        if let EqSlot::Macro(m) = self.eqtb.slot(csid) {
+            if m.value.outer {
+                return Err(Error::invalid_input(format!(
+                    "forbidden control sequence \\{}（outer 宏禁止出现在参数/展开上下文）",
+                    self.intern.name(csid)
+                )));
+            }
+        }
+        Ok(())
     }
 
     fn exec_def(&mut self, expand_body: bool) -> Result<()> {
@@ -238,9 +262,9 @@ impl Expander {
         };
 
         // e-TeX（M4-5）：`\protected` 前缀标记宏（`\edef`/`\write` 等上下文不展开）；
-        // `\outer` 前缀仅消费（outer 语义限制后续迭代补）。
+        // `\outer` 前缀标记宏（禁止出现在实参/展开上下文/general text/`\read` 中）。
         let protected = std::mem::take(&mut self.protected_pending);
-        let _ = std::mem::take(&mut self.outer_pending);
+        let outer = std::mem::take(&mut self.outer_pending);
         let mut def = MacroDef {
             params: ParamSpec {
                 num_params,
@@ -250,10 +274,11 @@ impl Expander {
             body,
             code: None,
             protected,
+            outer,
         };
-        // M2：编译期预编译字节码（常量条件折叠等），解释器轨道不编译
+        // M2：编译期预编译字节码，解释器轨道不编译
         if self.use_bytecode {
-            def.code = Some(Arc::new(compile(&def.body, &self.eqtb)));
+            def.code = Some(Arc::new(compile(&def.body)));
         }
         self.define_macro_scoped(csid, def);
         Ok(())
@@ -428,7 +453,14 @@ impl Expander {
                     out.push(tok);
                 }
                 // 可展开项（宏/可展开原语）：展开后压帧，重新进入本扫描
-                EqSlot::Macro(_) => {
+                EqSlot::Macro(m) => {
+                    // TeX：\edef 中 outer 宏 → forbidden
+                    if m.value.outer {
+                        return Err(Error::invalid_input(format!(
+                            "forbidden control sequence \\{}（outer 宏禁止出现在 \\edef 展开上下文）",
+                            self.intern.name(csid)
+                        )));
+                    }
                     let mut expansion = Vec::new();
                     self.expand_once((tok, noexpand), &mut expansion)?;
                     if expansion.is_empty() {

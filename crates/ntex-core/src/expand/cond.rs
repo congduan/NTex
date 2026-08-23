@@ -402,20 +402,26 @@ impl Expander {
         }
     }
 
-    /// 控制序列的含义键（沿 Alias 链解析）。
+    /// 控制序列的含义键（沿 Alias 链解析；环检测替代固定跳数上限）。
     fn meaning_key(&self, csid: u32) -> MeaningKey {
         let mut id = csid;
-        let mut hops = 0usize;
+        // A7：别名链可成环（`\let\a\b\let\b\a` 在间接别名模型下 → a↔b 互指）。
+        // 无环链长至多 = csid 总数（每个 csid 至多出现一次，有界）；遇环视为
+        // 未定义（环无确定含义）。替代此前的 64 跳硬上限（超长链误判）。
+        let mut seen: Vec<u32> = Vec::with_capacity(8);
         while let EqSlot::Alias(target) = self.eqtb.slot(id) {
-            id = *target;
-            hops += 1;
-            if hops > 64 {
-                return MeaningKey::Alias(id);
+            if seen.contains(&id) {
+                return MeaningKey::Undefined;
             }
+            seen.push(id);
+            id = *target;
         }
         match self.eqtb.slot(id).clone() {
             EqSlot::Undefined => MeaningKey::Undefined,
-            EqSlot::Macro(m) => MeaningKey::Macro(m.value),
+            EqSlot::Macro(m) => MeaningKey::Macro {
+                def: m.value.clone(),
+                outer: m.value.outer,
+            },
             EqSlot::Primitive(p) => MeaningKey::Primitive(p),
             EqSlot::Char { catcode, charcode } => MeaningKey::Char { catcode, charcode },
             EqSlot::Alias(t) => MeaningKey::Alias(t),

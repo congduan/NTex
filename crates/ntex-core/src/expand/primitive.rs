@@ -1680,6 +1680,7 @@ impl Expander {
             body: Arc::from(toks),
             code: None,
             protected: false,
+            outer: false,
         };
         self.define_macro_scoped(csid, def);
         Ok(())

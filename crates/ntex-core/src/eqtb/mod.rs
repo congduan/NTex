@@ -134,6 +134,7 @@ mod tests {
             body: Arc::from([Token::char(Catcode::Letter, b'A' as u32)]),
             code: None,
             protected: false,
+            outer: false,
         }
     }
 

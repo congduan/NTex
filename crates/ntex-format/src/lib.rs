@@ -23,8 +23,9 @@ const MAGIC: &[u8; 8] = b"NTEXFMT1";
 /// v4：M1-8 参数文本全量序列化——定界符标志改为参数文本 token 数组；
 /// v6：ETRIP `\parfillskip` 胶水参数；v7：胶水无穷阶；
 /// v8：ETRIP 第二波——`\leftskip`/`\rightskip`/`\prevdepth`/`\interlinepenalty`
-/// /`\clubpenalty`/`\widowpenalty`/`\displaywidowpenalty` 与 misc 扩 33）。
-const VERSION: u8 = 8;
+/// /`\clubpenalty`/`\widowpenalty`/`\displaywidowpenalty` 与 misc 扩 33；
+/// v9：`\outer` 宏标志序列化（MacroDef.outer）。
+const VERSION: u8 = 9;
 
 /// 编码一个 `.fmt` 快照。
 pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {

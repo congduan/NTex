@@ -759,6 +759,75 @@ mod tests {
         );
     }
 
+    // ---------- A4：\outer 语义 ----------
+
+    #[test]
+    fn outer_macro_normal_use_ok() {
+        // outer 宏在正常展开上下文可用
+        assert_eq!(expand("\\outer\\def\\x{A}\\x").unwrap(), "A");
+    }
+
+    #[test]
+    fn outer_forbidden_in_macro_argument() {
+        // outer 宏作为实参 → forbidden（TeX "Forbidden control sequence"）
+        let e = expand("\\def\\a#1{#1}\\outer\\def\\x{A}\\a\\x");
+        assert!(e.is_err(), "outer 宏作实参应报错");
+        let err = e.unwrap_err().to_string();
+        assert!(err.contains("forbidden control sequence"), "错误信息：{err}");
+        assert!(err.contains("\\x"), "应指明宏名：{err}");
+        // 组实参内同样 forbidden
+        let e = expand("\\def\\a#1{#1}\\outer\\def\\x{A}\\a{\\x}");
+        assert!(e.is_err(), "组实参内 outer 宏应报错");
+    }
+
+    #[test]
+    fn outer_forbidden_in_edef() {
+        // \edef 展开上下文中 outer 宏 → forbidden
+        let e = expand("\\outer\\def\\x{A}\\edef\\y{\\x}");
+        assert!(e.is_err(), "\\edef 中 outer 宏应报错");
+        assert!(e.unwrap_err().to_string().contains("forbidden"));
+    }
+
+    #[test]
+    fn non_outer_macro_in_argument_ok() {
+        // 非 outer 宏作实参正常
+        assert_eq!(
+            expand("\\def\\a#1{#1}\\def\\x{A}\\a\\x").unwrap(),
+            "A"
+        );
+    }
+
+    #[test]
+    fn ifx_distinguishes_outer() {
+        // tex.web：\ifx 比较 eqtb 条目，outer 是 eq_type 的一部分——需区分
+        assert_eq!(
+            expand("\\outer\\def\\x{A}\\def\\y{A}\\ifx\\x\\y yes\\else no\\fi").unwrap(),
+            "no"
+        );
+        assert_eq!(
+            expand("\\outer\\def\\x{A}\\outer\\def\\z{A}\\ifx\\x\\z yes\\else no\\fi").unwrap(),
+            "yes"
+        );
+    }
+
+    // ---------- A7：\ifx 别名环检测（替代 64 跳上限） ----------
+
+    #[test]
+    fn ifx_alias_cycle_no_hang() {
+        // \let\a\b \let\b\a：值复制语义下两者都未定义 → \ifx 相等（不挂起）。
+        // 若未来出现间接 Alias 环（如 .fmt 手工构造），meaning_key 的环检测
+        // 视为未定义，同样不挂起（替代旧 64 跳硬上限）。
+        assert_eq!(
+            expand("\\let\\a\\b\\let\\b\\a\\ifx\\a\\b yes\\else no\\fi").unwrap(),
+            "yes"
+        );
+        // 环 vs 正常宏 → 不等
+        assert_eq!(
+            expand("\\let\\a\\b\\let\\b\\a\\def\\c{A}\\ifx\\a\\c yes\\else no\\fi").unwrap(),
+            "no"
+        );
+    }
+
     #[test]
     fn ifodd() {
         assert_eq!(expand("\\ifodd3 yes\\else no\\fi").unwrap(), "yes");

@@ -245,7 +245,12 @@ enum SavedValue {
 #[derive(Debug, Clone, PartialEq)]
 enum MeaningKey {
     Undefined,
-    Macro(Arc<MacroDef>),
+    /// 宏：含义 = 参数规格 + 宏体（含 `\long`）+ **outer 标志**（tex.web：
+    /// `\ifx` 比较 eqtb 条目，`outer` 是 eq_type 的一部分，需区分）。
+    Macro {
+        def: Arc<MacroDef>,
+        outer: bool,
+    },
     Primitive(Primitive),
     Char {
         catcode: Catcode,
@@ -508,17 +513,19 @@ impl Expander {
                         v.value.params.clone(),
                         v.value.body.clone(),
                         v.value.protected,
+                        v.value.outer,
                     )),
                     _ => None,
                 };
-                if let Some((params, body, protected)) = pending {
-                    let code = Arc::new(compile(&body, &eqtb));
+                if let Some((params, body, protected, outer)) = pending {
+                    let code = Arc::new(compile(&body));
                     if let EqSlot::Macro(v) = eqtb.slot_mut(csid) {
                         v.value = Arc::new(MacroDef {
                             params,
                             body,
                             code: Some(code),
                             protected,
+                            outer,
                         });
                     }
                 }
@@ -828,6 +835,13 @@ impl Expander {
                     EqSlot::Macro(m) => {
                         if m.value.protected && self.suppress_expansion > 0 {
                             return self.sink.token(tok);
+                        }
+                        // TeX：\edef 展开上下文中 outer 宏 → forbidden
+                        if m.value.outer {
+                            return Err(Error::invalid_input(format!(
+                                "forbidden control sequence \\{}（outer 宏禁止出现在 \\edef 展开上下文）",
+                                self.intern.name(csid)
+                            )));
                         }
                         self.call_macro(csid, m.value.clone())
                     }

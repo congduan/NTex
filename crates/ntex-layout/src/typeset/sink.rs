@@ -863,13 +863,10 @@ impl TokenSink for NodeBuilder {
         let Some(list) = self.lists.last_mut() else {
             return Ok(());
         };
-        match list.last() {
-            Some(Node::Box(_)) => {
-                if let Some(Node::Box(b)) = list.pop() {
-                    self.lastbox_hold = Some(b);
-                }
+        if let Some(Node::Box(_)) = list.last() {
+            if let Some(Node::Box(b)) = list.pop() {
+                self.lastbox_hold = Some(b);
             }
-            _ => {}
         }
         Ok(())
     }
