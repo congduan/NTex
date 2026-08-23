@@ -436,7 +436,15 @@ impl Expander {
             Some(c) if c == b'<' as u32 => Ok(Relation::Lt),
             Some(c) if c == b'=' as u32 => Ok(Relation::Eq),
             Some(c) if c == b'>' as u32 => Ok(Relation::Gt),
-            _ => Err(Error::invalid_input("预期 < = > 关系符")),
+            _ => {
+                let name = tok
+                    .csid()
+                    .map(|id| self.intern.name(id).to_string())
+                    .unwrap_or_else(|| format!("{:?}", tok));
+                Err(Error::invalid_input(format!(
+                    "预期 < = > 关系符（实际读到 {name}）"
+                )))
+            }
         }
     }
 

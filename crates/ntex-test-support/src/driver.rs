@@ -270,7 +270,14 @@ impl EngineDriver for NtexDriver {
             let run2 = ts2.typeset_bytes(source);
             transcript2 = ts2.take_transcript();
             if let Err(e) = &run2 {
-                let tail: String = transcript2.chars().rev().take(200).collect::<String>().chars().rev().collect();
+                let tail: String = transcript2
+                    .chars()
+                    .rev()
+                    .take(200)
+                    .collect::<String>()
+                    .chars()
+                    .rev()
+                    .collect();
                 eprintln!(
                     "[driver] pass2 error: {e} | section={} | transcript2 len={} first={:?} tail={:?}",
                     ts2.current_section(),
@@ -307,7 +314,10 @@ impl EngineDriver for NtexDriver {
                     (DriverStatus::Success, produced)
                 }
                 Err(e) => {
-                    eprintln!("[driver] pass1 error: {e} | section={}", ts.current_section());
+                    eprintln!(
+                        "[driver] pass1 error: {e} | section={}",
+                        ts.current_section()
+                    );
                     log.push_str(&format!("Engine error: {e}\n"));
                     (DriverStatus::Failure { code: None }, produced)
                 }

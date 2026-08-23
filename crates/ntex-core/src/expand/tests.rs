@@ -14,6 +14,11 @@ mod tests {
         Ok(bytecode)
     }
 
+    /// 取字符串末尾 n 字符（调试用）。
+    fn tail(s: &str, n: usize) -> String {
+        s.chars().rev().take(n).collect::<String>().chars().rev().collect()
+    }
+
     fn expand_track(src: &str, use_bytecode: bool) -> Result<String> {
         let mut e = if use_bytecode {
             Expander::new()
@@ -633,6 +638,92 @@ mod tests {
         assert_eq!(expand("\\ifnum2>3 yes\\else no\\fi").unwrap(), "no");
         assert_eq!(expand("\\ifnum5=5 yes\\else no\\fi").unwrap(), "yes");
         assert_eq!(expand("\\ifnum4<4 yes\\else no\\fi").unwrap(), "no");
+    }
+
+    #[test]
+    fn ifnum_gluestretchorder_repro() {
+        // ETRIP etrip.tex L938：\ifnum\gluestretchorder#5=#1
+        assert_eq!(
+            expand("\\ifnum\\gluestretchorder1ptminus0fil=0 yes\\else no\\fi").unwrap(),
+            "yes"
+        );
+    }
+
+    #[test]
+    fn gluestretchorder_cant_use_repro() {
+        // etrip.tex L932-933：\gluestretchorder \gluestretch（can't use 错误场景）
+        assert_eq!(
+            expand("\\gluestretchorder \\gluestretch\\skip5=1ptminus0fil\\ifnum\\gluestretchorder\\skip5=0 yes\\else no\\fi")
+                .unwrap(),
+            "yes"
+        );
+    }
+
+    #[test]
+    fn gluestretchorder_delim_macro_repro() {
+        // etrip.tex L937-943 的完整宏调用：分隔参数 #2pt/#4pt + \gluestretchorder#5
+        // （调用末尾空格是 #5 的定界符，对应 etrip 中行尾换行→空格）
+        let src = "\\def\\1#1#2pt#3#4pt#5 {\\ifnum\\gluestretchorder#5=#1 T\\else F\\fi}\\100pt10pt1ptminus0fil ";
+        assert_eq!(expand(src).unwrap(), "T");
+        // 换行（行尾）作为 #5 定界：真实 etrip 场景
+        let src2 = "\\def\\1#1#2pt#3#4pt#5 {\\ifnum\\gluestretchorder#5=#1 T\\else F\\fi}\\100pt10pt1ptminus0fil\n";
+        assert_eq!(expand(src2).unwrap(), "T");
+    }
+
+    #[test]
+    fn etrip_full_gluestretchorder_section() {
+        // 复现 etrip.tex mutoglue 段（L902-963）+ gluestretchorder 段：
+        // 前段复杂表达式（\2=--\gluetomu--\glueexpr(...)）可能污染后续 \ifnum 扫描
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/etrip/etrip.tex");
+        let src = std::fs::read_to_string(path).unwrap();
+        let lines: Vec<&str> = src.lines().collect();
+        // 二分：gluestretchorder 段逐行扩展，定位产生 wrong glue 的 \1 调用
+        let end = std::env::var("GSO_END").ok().and_then(|s| s.parse::<usize>().ok()).unwrap_or(963);
+        // 末尾补换行：模拟行尾（\1 宏 #5 参数的空格定界符）
+        let body = format!("{}\n", lines[928..end].join("\n"));
+        let pre = r"\def\empty{} \def\space{ }
+\def\typeout#1{\immediate\write15{#1}}
+\def\error#1{\immediate\write15{Bug in your e-TeX implementation!}\immediate\write15 }
+\chardef\zero=0\chardef\one=1\chardef\two=2
+\countdef\ctmp=255 \countdef\cndx=254
+";
+        let src = format!("{pre}\n{body}\n");
+        // 用 VecSink 捕获 write15 转录，确认 wrong glue 是否在 expand 环境复现
+        let mut e = Expander::new();
+        let sink = VecSink::default();
+        e.set_sink(Box::new(sink));
+        if let Err(err) = e.run_source(&src) {
+            let sink = e.take_sink();
+            let mut sink = sink;
+            let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+            eprintln!("transcript tail:\n{}", tail(&sink.transcript, 500));
+            panic!("运行失败: {err}");
+        }
+        let sink = e.take_sink();
+        let mut sink = sink;
+        let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+        eprintln!("transcript:\n{}", sink.transcript);
+        assert!(
+            !sink.transcript.contains("wrong glue"),
+            "不应有 wrong glue 输出"
+        );
+    }
+
+    #[test]
+    fn glueexpr_muexpr_relax_repro() {
+        // etrip.tex L949：\glueexpr\mutoglue\muexpr\gluetomu\skip5\9\9 嵌套表达式
+        let src = "\\def\\9{\\relax}\\skip5=1ptminus0fil\\ifnum\\gluestretchorder\\glueexpr\\mutoglue\\muexpr\\gluetomu\\skip5\\9\\9=0 T\\else F\\fi";
+        assert_eq!(expand(src).unwrap(), "T");
+    }
+
+    #[test]
+    fn muskip_order_repro() {
+        // etrip.tex L947-948：\muskip5=\gluetomu\skip5 后 \mutoglue\muskip5 应保留胶水阶
+        let src = "\\skip5=1ptminus0fil\\muskip5=\\gluetomu\\skip5\\ifnum\\glueshrinkorder\\mutoglue\\muskip5=1 T\\else F\\fi";
+        assert_eq!(expand(src).unwrap(), "T");
+        // etrip.tex L948 完整宏场景：\100pt10pt\mutoglue\muskip5
+        let src3 = "\\def\\1#1#2pt#3#4pt#5 {\\ifnum\\glueshrinkorder#5=#3 T\\else F\\fi}\\skip5=1ptminus0fil\\muskip5=\\gluetomu\\skip5\\100pt10pt\\mutoglue\\muskip5 ";
+        assert_eq!(expand(src3).unwrap(), "T");
     }
 
     #[test]

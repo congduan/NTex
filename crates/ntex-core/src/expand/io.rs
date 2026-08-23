@@ -23,6 +23,7 @@ impl Expander {
                 self.stack.push(InputFrame::Source {
                     bytes: Arc::from(bytes),
                     pos: 0,
+                    state: ScanState::LineStart,
                 });
                 Ok(())
             }
@@ -186,10 +187,12 @@ impl Expander {
             stream.pos = if end < stream.data.len() { end + 1 } else { end };
             line
         };
-        // token 化（catcode 表）
+        // token 化（catcode 表；行状态从行首开始——\read 每次读一行）
         let mut pos = 0usize;
+        let mut state = ScanState::LineStart;
         let mut toks = Vec::new();
-        while let Some(tok) = scan_token(&line, &mut pos, &self.catcodes, &mut self.intern)? {
+        while let Some(tok) = scan_token(&line, &mut pos, &self.catcodes, &mut self.intern, &mut state)?
+        {
             toks.push(tok);
         }
         // \def 语义赋值

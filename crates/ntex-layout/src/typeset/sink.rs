@@ -905,6 +905,11 @@ impl TokenSink for NodeBuilder {
             };
             b.clone()
         };
+        // `\setbox<n>=\copy<m>`：复制结果存入目标寄存器（\copy 不消耗原盒）
+        if let Some(target) = self.setbox_target.take() {
+            self.boxes[target] = Some(b);
+            return Ok(());
+        }
         self.append(Node::Box(b));
         Ok(())
     }

@@ -270,19 +270,35 @@ impl Expander {
     /// 取下一个整数运算符（`+ - * /`）或 `\relax`（结束符，吸收）；其余 token 放回。
     fn peek_int_op(&mut self) -> Result<Option<u8>> {
         let Some((tok, _)) = self.fetch()? else { return Ok(None) };
-        // \relax 终止表达式：`\relax` 或 `\let\9=\relax` 别名（etrip 大量用 `\9` 收尾）。
+        // \relax 终止表达式：`\relax` 原语、`\let\9=\relax` 别名，或
+        // `\def\9{\relax}` 宏（etrip 大量用 `\9` 收尾——942 行是宏定义而非 \let）。
         if let Some(id) = tok.csid() {
             let mut cur = id;
             let mut depth = 0;
-            while let EqSlot::Alias(t) = self.eqtb.slot(cur) {
-                cur = *t;
-                depth += 1;
-                if depth > 100 {
-                    self.unread(tok);
-                    return Ok(None);
+            let mut is_relax = false;
+            loop {
+                match self.eqtb.slot(cur) {
+                    EqSlot::Alias(t) => {
+                        cur = *t;
+                        depth += 1;
+                        if depth > 100 {
+                            break;
+                        }
+                    }
+                    EqSlot::Macro(m) => {
+                        // 宏体为单个 `\relax`（如 `\def\9{\relax}`）→ 等价终止符
+                        is_relax = m.value.body.len() == 1
+                            && self.is_relax_token(&m.value.body[0]);
+                        break;
+                    }
+                    EqSlot::Primitive(Primitive::Relax) => {
+                        is_relax = true;
+                        break;
+                    }
+                    _ => break,
                 }
             }
-            if matches!(self.eqtb.slot(cur), EqSlot::Primitive(Primitive::Relax)) {
+            if is_relax {
                 return Ok(None); // \relax 吸收
             }
         }
@@ -296,6 +312,28 @@ impl Expander {
         }
         self.unread(tok);
         Ok(None)
+    }
+
+    /// token 是否等价于 `\relax`（原语或经 `\let` 别名链指向 `\relax`）。
+    fn is_relax_token(&self, tok: &Token) -> bool {
+        let Some(id) = tok.csid() else {
+            return false;
+        };
+        let mut cur = id;
+        let mut depth = 0;
+        loop {
+            match self.eqtb.slot(cur) {
+                EqSlot::Alias(t) => {
+                    cur = *t;
+                    depth += 1;
+                    if depth > 100 {
+                        return false;
+                    }
+                }
+                EqSlot::Primitive(Primitive::Relax) => return true,
+                _ => return false,
+            }
+        }
     }
 
     /// dimen/glue 表达式 `*`/`/` 的 number 因子：`( <int expr> )` 或 [`Self::scan_number`]
@@ -512,6 +550,7 @@ impl Expander {
         self.stack.push(InputFrame::Source {
             bytes: Arc::from(bytes),
             pos: 0,
+            state: ScanState::LineStart,
         });
         Ok(())
     }

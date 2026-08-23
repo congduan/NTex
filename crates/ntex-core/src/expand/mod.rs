@@ -11,11 +11,10 @@
 //!
 //! M1 范围说明（后续里程碑补齐）：
 //! - M1-7 扫描顺序原语：`\futurelet`/`\aftergroup`/`\afterassignment` 已实现；
-//! - M1-8 分隔参数（delimited）未实现；
-//! - M1-9 条件原语全实现（含 `\ifcase` 与惰性跳过）；
+//! - M1-8 分隔参数（delimited）未实现（`collect_args` 已支持，宏定义期 `\def#1..#2` 待核）；
 //! - M1-10 寄存器 `\count/\dimen/\skip/\toks` 与 `\the` 已实现（`\box`/`\muskip` 未实现）；
 //! - M1-11 组作用域（朴素快照回滚 + `\global`）已实现；
-//! - 空行 → `\par` 语义未实现（M1-14 修）。
+//! - 空行 → `\par` 已实现（`scan_token` 行状态机，A2）。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,13 +24,13 @@ use crate::catcode::{Catcode, CatcodeTable};
 use crate::eqtb::{EqSlot, Eqtb, Primitive, StreamKind};
 use crate::error::{Error, Result};
 use crate::font::{FontLoader, NoFontLoader};
-use crate::input::scan_token;
+use crate::input::{scan_token, ScanState};
 use crate::intern::InternTable;
 use crate::macrodef::{MacroDef, ParamSpec, TokenArray};
 use crate::param::{ParamKind, ParamValue, Params};
 use crate::register::{
     add_glue, format_count, format_dimen, format_glue, format_mu_glue, unit_to_sp, Glue, RegKind,
-    RegisterState, Registers, REGISTER_COUNT, SP_PER_PT, MAX_DIMEN, MAX_INT,
+    RegisterState, Registers, MAX_DIMEN, MAX_INT, REGISTER_COUNT, SP_PER_PT,
 };
 use crate::sink::{TokenSink, VecSink};
 use crate::token::{meaning, Token, TokenKind};
@@ -40,8 +39,12 @@ use ntex_io::{LocalVfs, Vfs};
 /// 输入帧：token 来源栈（LIFO，栈顶为当前帧）。
 #[derive(Debug)]
 enum InputFrame {
-    /// 源码帧：字节流 + 扫描位置（catcode 表由引擎全局持有）。
-    Source { bytes: Arc<[u8]>, pos: usize },
+    /// 源码帧：字节流 + 扫描位置 + 行状态（空行 → `\par` 判定）。
+    Source {
+        bytes: Arc<[u8]>,
+        pos: usize,
+        state: ScanState,
+    },
     /// 宏展开帧：宏体 + 实参。
     Macro {
         body: TokenArray,
@@ -552,6 +555,7 @@ impl Expander {
         self.stack.push(InputFrame::Source {
             bytes: Arc::from(text.into()),
             pos: 0,
+            state: ScanState::LineStart,
         });
     }
 
@@ -575,8 +579,8 @@ impl Expander {
                     .stack
                     .iter()
                     .map(|f| match f {
-                        InputFrame::Source { bytes, pos } => {
-                            format!("Source({}B,pos={})", bytes.len(), pos)
+                        InputFrame::Source { bytes, pos, state } => {
+                            format!("Source({}B,pos={},state={:?})", bytes.len(), pos, state)
                         }
                         InputFrame::Macro { body, pos, .. } => {
                             format!("Macro({}tok,pos={})", body.len(), pos)
@@ -891,8 +895,8 @@ impl Expander {
                 return Ok(None);
             };
             match frame {
-                InputFrame::Source { bytes, pos } => {
-                    match scan_token(bytes, pos, &self.catcodes, &mut self.intern)? {
+                InputFrame::Source { bytes, pos, state } => {
+                    match scan_token(bytes, pos, &self.catcodes, &mut self.intern, state)? {
                         Some(tok) => return Ok(Some((tok, false))),
                         None => {
                             self.stack.pop();
