@@ -641,6 +641,112 @@ impl Expander {
                     self.sink.write16(format!("! Improper \\{name}.\n"))
                 }
             }
+            // ETRIP 第二波：段落/断页参数原语（\leftskip/\rightskip/\prevdepth/
+            // \interlinepenalty/\clubpenalty/\widowpenalty/\displaywidowpenalty）
+            Primitive::LeftSkip | Primitive::RightSkip => {
+                let g = self.scan_glue()?;
+                let kind = if prim == Primitive::LeftSkip {
+                    ParamKind::LeftSkip
+                } else {
+                    ParamKind::RightSkip
+                };
+                self.assign_param(kind, ParamValue::Glue(g))
+            }
+            Primitive::PrevDepth => {
+                let v = self.scan_dimen()?;
+                self.assign_param(ParamKind::PrevDepth, ParamValue::Dimen(v))
+            }
+            Primitive::InterLinePenalty
+            | Primitive::ClubPenalty
+            | Primitive::WidowPenalty
+            | Primitive::DisplayWidowPenalty => {
+                let v = self.scan_number()?;
+                let kind = match prim {
+                    Primitive::InterLinePenalty => ParamKind::InterLinePenalty,
+                    Primitive::ClubPenalty => ParamKind::ClubPenalty,
+                    Primitive::WidowPenalty => ParamKind::WidowPenalty,
+                    _ => ParamKind::DisplayWidowPenalty,
+                };
+                self.assign_param(kind, ParamValue::Number(v))
+            }
+            // ETRIP 第二波：e-TeX 惩罚数组（\interlinepenalties n p1 ... pn 等）
+            // 扫描 n 个 penalty 值并存储到 penalty_arrays[kind]（断页器后续读取）。
+            Primitive::InterLinePenalties
+            | Primitive::ClubPenalties
+            | Primitive::WidowPenalties
+            | Primitive::DisplayWidowPenalties => {
+                let kind: u8 = match prim {
+                    Primitive::InterLinePenalties => 0,
+                    Primitive::ClubPenalties => 1,
+                    Primitive::WidowPenalties => 2,
+                    _ => 3,
+                };
+                let n = self.scan_number()?;
+                let n = usize::try_from(n).unwrap_or(0);
+                let mut arr = Vec::with_capacity(n);
+                for _ in 0..n {
+                    arr.push(self.scan_number()?);
+                }
+                let global = self.is_global();
+                if !global && self.group_level > 0 {
+                    self.save_stack.push((
+                        self.group_level,
+                        SavedValue::PenaltyArray {
+                            kind,
+                            prev: std::mem::take(&mut self.penalty_arrays[kind as usize]),
+                        },
+                    ));
+                }
+                self.penalty_arrays[kind as usize] = arr;
+                self.finish_assignment();
+                Ok(())
+            }
+            // ETRIP 第二波：盒子复制/拆包原语（\copy/\unhbox/\unvbox/\unhcopy/\unvcopy/\lastbox）
+            Primitive::Copy => {
+                let idx = self.scan_register_index()?;
+                self.sink.copy_box(idx)
+            }
+            Primitive::UnHBox | Primitive::UnHCopy => {
+                let idx = self.scan_register_index()?;
+                self.sink.unhbox(idx, prim == Primitive::UnHCopy)
+            }
+            Primitive::UnVBox | Primitive::UnVCopy => {
+                let idx = self.scan_register_index()?;
+                self.sink.unvbox(idx, prim == Primitive::UnVCopy)
+            }
+            Primitive::LastBox => self.sink.lastbox(),
+            // ETRIP 第二波：列表尾操作（\unskip/\unpenalty）
+            Primitive::UnSkip => self.sink.unskip(),
+            Primitive::UnPenalty => self.sink.unpenalty(),
+            // ETRIP 第二波：盒子尺寸赋值（\wd/\ht/\dp<n>=<dimen>；无 '=' 时按 TeX 报错）
+            Primitive::Wd | Primitive::Ht | Primitive::Dp => {
+                let dim: u8 = match prim {
+                    Primitive::Wd => 0,
+                    Primitive::Ht => 1,
+                    _ => 2,
+                };
+                let idx = self.scan_register_index()?;
+                self.expect_equals()?;
+                let v = self.scan_dimen()?;
+                self.sink.set_box_dim(idx, dim, v)
+            }
+            // ETRIP 第二波：诊断原语（\showgroups/\showlists）
+            Primitive::ShowGroups => self.sink.showgroups(),
+            Primitive::ShowLists => self.sink.showlists(),
+            // ETRIP 第二波：\omit（对齐模板跳过；简化为 no-op，由对齐组后续实现语义）
+            Primitive::Omit => Ok(()),
+            // ETRIP 第二波：\mutoglue/\gluetomu 单独出现（数字/尺寸上下文由扫描函数处理）。
+            // 裸用按 TeX 报 "You can't use \mutoglue in vertical mode." 并恢复（简化：发胶水 token）。
+            Primitive::MuToGlue => {
+                let g = self.scan_glue()?;
+                self.emit_tokens(emit_glue(g))
+            }
+            Primitive::GlueToMu => {
+                let g = self.scan_glue()?;
+                self.emit_tokens(emit_mu_glue(g))
+            }
+            // ETRIP 第二波：\lastpenalty 单独出现：no-op（数字上下文由 scan_number 读取）
+            Primitive::LastPenalty => Ok(()),
             // 内部整数参数（\tracingstats 等 25 个）与交互模式命令（\batchmode 等 4 个）
             // 已由上方 int_param_index / interaction_mode_value 守卫分支处理；编译器
             // 不计守卫为覆盖，此处兜底仅满足穷尽性检查（未来新增原语会在此显式报错）。

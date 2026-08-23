@@ -440,6 +440,8 @@ struct NodeBuilder {
     marks_split_top: std::collections::HashMap<i64, String>,
     marks_split_first: std::collections::HashMap<i64, String>,
     marks_split_bot: std::collections::HashMap<i64, String>,
+    /// ETRIP 第二波：`\lastbox` 摘下的盒子（TeX 语义：供下一个 `\box`/`\copy` 使用）。
+    lastbox_hold: Option<BoxNode>,
 }
 
 /// 断字候选字符：ASCII 字母（catcode 11 的近似；ligature/非字母不参与断字 run）。
@@ -508,6 +510,7 @@ impl NodeBuilder {
             marks_split_top: std::collections::HashMap::new(),
             marks_split_first: std::collections::HashMap::new(),
             marks_split_bot: std::collections::HashMap::new(),
+            lastbox_hold: None,
         }
     }
 
@@ -527,6 +530,23 @@ impl NodeBuilder {
         self.marks_first.clear();
         // marks_bot：初始等于继承的 marks_top（若无新 marks 则 bot==top）
         self.marks_bot = self.marks_top.clone();
+    }
+
+    /// ETRIP 第二波：取盒子寄存器内容（`copy=false` 取出置 void；`copy=true` 复制保留）。
+    /// `\unhbox`/`\unvbox`/`\unhcopy`/`\unvcopy` 共用；void 盒子报错。
+    fn take_or_clone_box(&mut self, idx: usize, copy: bool) -> Result<BoxNode> {
+        if copy {
+            self.boxes
+                .get(idx)
+                .and_then(|s| s.as_ref())
+                .cloned()
+                .ok_or_else(|| Error::invalid_input(format!("盒子 {idx} 为空（void）")))
+        } else {
+            self.boxes
+                .get_mut(idx)
+                .and_then(|s| s.take())
+                .ok_or_else(|| Error::invalid_input(format!("盒子 {idx} 为空（void）")))
+        }
     }
 
     fn append(&mut self, node: Node) {

@@ -42,6 +42,21 @@ pub enum ParamKind {
     PreDisplayPenalty,
     /// `\postdisplaypenalty`：显示公式后断页惩罚（plain 默认 0）。
     PostDisplayPenalty,
+    // ETRIP 第二波：段落/断页参数（plain 默认）
+    /// `\leftskip`：段落左侧悬挂胶水（plain 默认 0pt）。
+    LeftSkip,
+    /// `\rightskip`：段落右侧悬挂胶水（plain 默认 0pt）。
+    RightSkip,
+    /// `\prevdepth`：上一行 depth（段落开头 interline glue 用；无前一行 = -1000pt < -1000 表示未定义）。
+    PrevDepth,
+    /// `\interlinepenalty`：行间断页惩罚（plain 默认 0）。
+    InterLinePenalty,
+    /// `\clubpenalty`：段首行后断页惩罚（plain 默认 150）。
+    ClubPenalty,
+    /// `\widowpenalty`：段尾行（寡行）断页惩罚（plain 默认 150）。
+    WidowPenalty,
+    /// `\displaywidowpenalty`：显示公式前段尾行断页惩罚（plain 默认 50）。
+    DisplayWidowPenalty,
     // ETRIP 冲刺：TeX 内部整数参数（非排版参数，仅存储/回读）
     /// `\endlinechar`：行尾字符（TeX initex 默认 13 = CR；-1 表示不追加）。
     EndlineChar,
@@ -65,7 +80,7 @@ pub enum ParamValue {
 
 /// 内部整数参数总数（TeX/e-TeX 内部整数，ETRIP 冲刺；仅存储/回读）。
 /// 下标与 [`crate::expand::int_param_index`] 的映射一致。
-pub const MISC_INTS: usize = 29;
+pub const MISC_INTS: usize = 33;
 
 /// 内部整数参数默认值（TeX initex/plain 默认）。
 pub fn default_misc() -> [i64; MISC_INTS] {
@@ -99,6 +114,10 @@ pub fn default_misc() -> [i64; MISC_INTS] {
         0,    // 26 TracingMacros
         0,    // 27 TracingOutput
         100,  // 28 ErrorContextLines（plain 默认 100）
+        0,    // 29 TracingParagraphs（折行追踪；plain 默认 0）
+        0,    // 30 PageDiscards（e-TeX：保存页面丢弃物；0=不保存）
+        0,    // 31 SplitDiscards（e-TeX：保存 vsplit 丢弃物；0=不保存）
+        2,    // 32 LostChars（e-TeX：丢失字符提示级；plain 默认 2 = 计数）
     ]
 }
 
@@ -140,6 +159,21 @@ pub struct Params {
     pub predisplaypenalty: i64,
     /// `\postdisplaypenalty`（plain 默认 0）。
     pub postdisplaypenalty: i64,
+    // ETRIP 第二波：段落/断页参数
+    /// `\leftskip`（plain 默认 0pt）。
+    pub leftskip: Glue,
+    /// `\rightskip`（plain 默认 0pt）。
+    pub rightskip: Glue,
+    /// `\prevdepth`（initex 默认 -1000pt < -1000 = 未定义；单位 sp）。
+    pub prevdepth: i64,
+    /// `\interlinepenalty`（plain 默认 0）。
+    pub interlinepenalty: i64,
+    /// `\clubpenalty`（plain 默认 150）。
+    pub clubpenalty: i64,
+    /// `\widowpenalty`（plain 默认 150）。
+    pub widowpenalty: i64,
+    /// `\displaywidowpenalty`（plain 默认 50）。
+    pub displaywidowpenalty: i64,
     /// `\endlinechar`（TeX initex 默认 13）。
     pub endlinechar: i64,
     /// `\newlinechar`（TeX 默认 -1 = 未激活）。
@@ -178,6 +212,14 @@ impl Default for Params {
             belowdisplayshortskip: Glue::new(7 * SP_PER_PT, 3 * SP_PER_PT, 4 * SP_PER_PT),
             predisplaypenalty: 10_000,
             postdisplaypenalty: 0,
+            // ETRIP 第二波：段落/断页参数（plain 默认）
+            leftskip: Glue::ZERO,
+            rightskip: Glue::ZERO,
+            prevdepth: -1_000 * SP_PER_PT - 1, // < -1000pt = 未定义
+            interlinepenalty: 0,
+            clubpenalty: 150,
+            widowpenalty: 150,
+            displaywidowpenalty: 50,
             // TeX 内部整数参数（initex 默认）
             endlinechar: 13,
             newlinechar: -1,
@@ -208,6 +250,13 @@ impl Params {
             ParamKind::BelowDisplayShortSkip => ParamValue::Glue(self.belowdisplayshortskip),
             ParamKind::PreDisplayPenalty => ParamValue::Number(self.predisplaypenalty),
             ParamKind::PostDisplayPenalty => ParamValue::Number(self.postdisplaypenalty),
+            ParamKind::LeftSkip => ParamValue::Glue(self.leftskip),
+            ParamKind::RightSkip => ParamValue::Glue(self.rightskip),
+            ParamKind::PrevDepth => ParamValue::Dimen(self.prevdepth),
+            ParamKind::InterLinePenalty => ParamValue::Number(self.interlinepenalty),
+            ParamKind::ClubPenalty => ParamValue::Number(self.clubpenalty),
+            ParamKind::WidowPenalty => ParamValue::Number(self.widowpenalty),
+            ParamKind::DisplayWidowPenalty => ParamValue::Number(self.displaywidowpenalty),
             ParamKind::EndlineChar => ParamValue::Number(self.endlinechar),
             ParamKind::NewlineChar => ParamValue::Number(self.newlinechar),
             ParamKind::DefaultHyphenChar => ParamValue::Number(self.defaulthyphenchar),
@@ -239,6 +288,13 @@ impl Params {
             }
             (ParamKind::PreDisplayPenalty, ParamValue::Number(v)) => self.predisplaypenalty = v,
             (ParamKind::PostDisplayPenalty, ParamValue::Number(v)) => self.postdisplaypenalty = v,
+            (ParamKind::LeftSkip, ParamValue::Glue(g)) => self.leftskip = g,
+            (ParamKind::RightSkip, ParamValue::Glue(g)) => self.rightskip = g,
+            (ParamKind::PrevDepth, ParamValue::Dimen(v)) => self.prevdepth = v,
+            (ParamKind::InterLinePenalty, ParamValue::Number(v)) => self.interlinepenalty = v,
+            (ParamKind::ClubPenalty, ParamValue::Number(v)) => self.clubpenalty = v,
+            (ParamKind::WidowPenalty, ParamValue::Number(v)) => self.widowpenalty = v,
+            (ParamKind::DisplayWidowPenalty, ParamValue::Number(v)) => self.displaywidowpenalty = v,
             (ParamKind::EndlineChar, ParamValue::Number(v)) => self.endlinechar = v,
             (ParamKind::NewlineChar, ParamValue::Number(v)) => self.newlinechar = v,
             (ParamKind::DefaultHyphenChar, ParamValue::Number(v)) => self.defaulthyphenchar = v,

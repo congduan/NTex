@@ -383,25 +383,34 @@
 
 **当前状态**：管线已跑通（fixtures + harness 泛化 + ntex 驱动）；**pass1 全流程已走通**
 （e-IniTeX → `\dump`）；pass2（重载 `.fmt` 再运行）逐段推进中，**已通过
-`\numexpr/\dimexpr/\glueexpr/\muexpr` 段**（含十六进制尺寸、溢出块、"Expr quotient
-rounding 1-4"）。当前卡点：mu_error 块（etrip.tex L824-834）——`scan_number` 缺
-`\dimexpr/\glueexpr` 作整数操作数分支 → "预期数字"。`etrip.log` 逐字节比对待 pass2
-走通后开始（已知差距：`\tracingassigns` 的 `{changing/into}` 行、`\the\muexpr` 的
-"5.0mu" 显示、错误消息上下文行）。
+`\numexpr/\dimexpr/\glueexpr/\muexpr` 全段**（括号、溢出块、"Expr quotient rounding
+1-8"、"Expr fraction rounding 1-3"、运算符优先级、胶水引用计数）+ `\mutoglue/\gluetomu`
+段（两原语未实现，走未定义 cs 恢复继续）+ (mu)glue identity 段。当前卡点：
+**gluestretchorder 段**（etrip.tex L937-957）——`\1` 宏 `\ifnum\glueshrinkorder#5=#1`
+值不匹配（"wrong glue shrink order"）后 "预期 < = > 关系符"（参数绑定/值语义待核对）。
+`etrip.log` 逐字节比对待 pass2 走通后开始（已知差距：`\tracingassigns` 的
+`{changing/into}` 行、`\the\muexpr` 的 "5.0mu" 显示、错误消息上下文行、`\mutoglue/
+\gluetomu` 未实现）。
 
 **本轮（2026-08-23）已完成**：
 - 原语族：`\iffontchar`/`\fontcharwd/ht/dp/ic`（char_metric + 条件码 20）、
   `\showifs`、`\parshape` 全族（访问器语义按 TeX 实证）
-- 表达式：括号子表达式 + "! Missing ) inserted for expression." 恢复；
-  `*`/`/` 运算符（dimen×/÷number、glue width 标量）；**四舍五入除法**
-  （`expr_quotient`，`"40000000/"7FFFFFFF`=1）；十六进制/八进制尺寸
-  （`"3FFFFFFEsp`）；溢出恢复（整数/dimen 表达式超限 → "! Arithmetic overflow."
-  结果 0；scan_dimen 钳制 → "! Dimension too large."）
-- 尺寸/数字上下文：`\skip`/`\muskip`（含 skipdef'd cs）作 dimen 与 number 可读
+- 表达式核心：`\let\9=\relax` 别名正确终止表达式；**中间量 i128、仅最终结果
+  超限报 "! Arithmetic overflow."**（fraction rounding 全过，`"7FFFFFFE*"7FFFFFFE/
+  "7FFFFFFD` 中间乘积 2^62 不误判）；dimen/glue 的 `*`/`/` 右操作数支持括号子
+  表达式；表达式除法四舍五入（ties away）
+- 胶水表达式语义实证（对照参考 log）：width 求和、**stretch/shrink 值求和**、
+  **无穷阶取最后一个非零分量项的阶**（`\skip90+0pt` 保留 1fil、`\skip5+0pt` 清 0）
+- 扫描器恢复：`\dimexpr/\glueexpr/\muexpr` 作整数操作数（`\ifnum#4=\dimexpr...`）；
+  `\count43pt`（寄存器 + 单位）；**负号与未定义 cs 统一循环恢复**（`-\mutoglue-
+  \gluetomu9pt` 逐 token 当 \relax 继续）；`scan_dimen` 支持 glueexpr 宽度
+- **eTeX 寄存器扩展**：REGISTER_COUNT 256 → **32768**（Box 堆分配防栈溢出）；
+  `scan_register_index` 越界报 "! Bad register code (N)." 并钳 0；`.fmt` codec 同步
 - 段级错误定位（`\typeout{Checking ...}` 段标题 → 错误报告带 section）
 
 **剩余原语待办**：完整分组清单 + 每原语进展标记见 **[ETRIP-primitives.md](ETRIP-primitives.md)**（唯一状态源，2026-08-23 更新）。
 当前总览：**A 组** 🟡 24/42 · **B 组** 🟡 15/36 · **C 组** ✅ 全部已接线 · **收尾**（`etrip.log` 逐字节比对）⏳。
+下一批：`\mutoglue`/`\gluetomu` 实现（当前走未定义恢复）+ gluestretchorder 段宏绑定核对。
 
 **冲刺纪律**：每次迭代前先 `cargo build -p ntex-trip` 确认全绿再跑（避免脏构建旧产物
 误报，如误报过的 `\ifcase 序号不能为负`）；对照 etrip.log 参考逐段验证，不做整体 diff。

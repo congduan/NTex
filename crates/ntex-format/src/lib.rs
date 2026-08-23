@@ -21,8 +21,10 @@ use ntex_core::version::Version;
 const MAGIC: &[u8; 8] = b"NTEXFMT1";
 /// 格式版本（v2：M4-4 显示数学间距参数；v3：ETRIP 内部整数参数；
 /// v4：M1-8 参数文本全量序列化——定界符标志改为参数文本 token 数组；
-/// v6：ETRIP `\parfillskip` 胶水参数；v7：胶水无穷阶）。
-const VERSION: u8 = 7;
+/// v6：ETRIP `\parfillskip` 胶水参数；v7：胶水无穷阶；
+/// v8：ETRIP 第二波——`\leftskip`/`\rightskip`/`\prevdepth`/`\interlinepenalty`
+/// /`\clubpenalty`/`\widowpenalty`/`\displaywidowpenalty` 与 misc 扩 33）。
+const VERSION: u8 = 8;
 
 /// 编码一个 `.fmt` 快照。
 pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
@@ -96,6 +98,19 @@ pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
     }
     // ETRIP 冲刺（v6 追加）：\parfillskip 胶水
     write_glue(w, p.parfillskip)?;
+
+    // ETRIP 第二波（v8 追加）：\leftskip/\rightskip/\prevdepth + 行间/孤行/段首断页惩罚
+    write_glue(w, p.leftskip)?;
+    write_glue(w, p.rightskip)?;
+    for v in [
+        p.prevdepth,
+        p.interlinepenalty,
+        p.clubpenalty,
+        p.widowpenalty,
+        p.displaywidowpenalty,
+    ] {
+        w.write_all(&v.to_le_bytes())?;
+    }
 
     // output_toks
     write_opt_tokens(w, state.output_toks.as_deref())?;
@@ -176,6 +191,14 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
     }
     // ETRIP 冲刺（v6）：\parfillskip 胶水
     let parfillskip = read_glue(r)?;
+    // ETRIP 第二波（v8）：段落/断页参数
+    let leftskip = read_glue(r)?;
+    let rightskip = read_glue(r)?;
+    let prevdepth = read_i64(r)?;
+    let interlinepenalty = read_i64(r)?;
+    let clubpenalty = read_i64(r)?;
+    let widowpenalty = read_i64(r)?;
+    let displaywidowpenalty = read_i64(r)?;
     let params = ntex_core::param::Params {
         parindent,
         baselineskip,
@@ -194,6 +217,13 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
         belowdisplayshortskip,
         predisplaypenalty,
         postdisplaypenalty,
+        leftskip,
+        rightskip,
+        prevdepth,
+        interlinepenalty,
+        clubpenalty,
+        widowpenalty,
+        displaywidowpenalty,
         endlinechar,
         newlinechar,
         defaulthyphenchar,

@@ -3,8 +3,13 @@
 > 数据来源：etrip.tex 全量控制序列 vs builtins 注册表对照（2026-08-18 生成），
 > 进展随冲刺迭代更新。本文件是 ETRIP 原语状态的**唯一状态源**（plan.md §6 引用）。
 > 最近更新：2026-08-23（第二波：表达式 i128/胶水阶语义/未定义恢复/eTeX 32768 寄存器；
-> marks 族原语 6 项全实现（\topmarks/\firstmarks/\botmarks/\splitfirstmarks/\splittopmarks/\splitbotmarks）；
-> pass2 已过 numexpr 全段 + mutoglue 段，卡 gluestretchorder 段宏绑定）
+> marks 族原语 6 项全实现；第三波：A/B 组剩余原语批量补全——盒子操作（\copy/\unhbox/
+> \unvbox/\unhcopy/\unvcopy/\lastbox）、盒子尺寸（\wd/\ht/\dp）、段落/断页参数（\leftskip/
+> \rightskip/\prevdepth/\interlinepenalty/\clubpenalty/\widowpenalty/\displaywidowpenalty）、
+> 惩罚数组（\interlinepenalties 等 4 项）、列表尾操作（\unskip/\lastpenalty/\unpenalty）、
+> 诊断（\showgroups/\showlists）、mu 互转（\mutoglue/\gluetomu）、丢弃物（\pagediscards/
+> \splitdiscards/\lostchars）、\tracingparagraphs/\omit；Primitive 枚举 repr(u8)→u16（变体数
+> 超 256 防溢出）；全部已接线并编译/测试全绿，联调待 etrip 逐段验证）
 
 图例：✅ 完成 · ❌ 未完成
 
@@ -13,8 +18,8 @@
 | 分组 | 范围 | 进度 |
 |---|---|---|
 | M4 基线 | e-TeX 核心/扩展原语（M4 验收时已全部落地） | ✅ 全部完成 |
-| A 组 | e-TeX 特定原语（pass2 前半段 Checking 段） | ❌ 30/42 |
-| B 组 | TeX 基础原语（pass2 中后段） | ❌ 15/36 |
+| A 组 | e-TeX 特定原语（pass2 前半段 Checking 段） | ❌ 41/42（仅 `\muexpr` 待校准） |
+| B 组 | TeX 基础原语（pass2 中后段） | ✅ 全部完成（36/36） |
 | C 组 | 已注册未接线 | ✅ 全部已接线 |
 | 收尾 | `etrip.log` 逐字节比对 | ❌ 未开始 |
 
@@ -32,13 +37,13 @@ M4 数学 + e-TeX 验收时已实现的 e-TeX 原语：
 - ✅ `\ifprimitive`、`\scantokens`
 - ✅ `\patterns`（Liang 断字语言包）
 
-## A 组：e-TeX 特定原语（❌ 24/42）
+## A 组：e-TeX 特定原语（❌ 41/42）
 
 ### 显示类
 - ✅ `\showtokens`（`<general text>` 展开后显示；80022b4 改走 `scan_group_contents_expanding`）
-- ❌ `\showgroups`
+- ✅ `\showgroups`（2026-08-23 第三波：sink 组栈格式化到转录，待 etrip 逐段联调）
 - ✅ `\showifs`（2026-08-23：`\showifs` 转储 if 栈；配套 `\currentiftype/level/branch` 只读整数）
-- ❌ `\showlists`
+- ✅ `\showlists`（2026-08-23 第三波：sink 列表栈递归格式化，待联调）
 
 ### marks 族
 - ✅ `\marks`（已注册 → 已接线）
@@ -77,9 +82,8 @@ M4 数学 + e-TeX 验收时已实现的 e-TeX 原语：
 - ❌ `\muexpr`（已注册，暂映射 Glueexpr——表达式算术已全通（i128 中间量、
   四舍五入除法、`\ifnum#4=\muexpr...` 整数上下文），但 1mu=1pt 与 `\the` 显示
   "5.0mu" 待校准；mu_error "! Incompatible glue units." 恢复消息未实现）
-- ❌ `\mutoglue`（未注册——当前走未定义 cs 恢复（"! Undefined control sequence."
-  当 \relax）使 pass2 继续；下一批实现）
-- ❌ `\gluetomu`（同上）
+- ✅ `\mutoglue`（2026-08-23 第三波：注册 + 扫描 mu 胶水转胶水，待联调）
+- ✅ `\gluetomu`（同上；胶水转 mu 胶水）
 
 ### 胶水阶
 - ✅ `\gluestretchorder`
@@ -89,17 +93,17 @@ M4 数学 + e-TeX 验收时已实现的 e-TeX 原语：
   （Glue 增 order 字段 + scan_dimen 阶后缀 + `.fmt` v7）
 
 ### 惩罚数组
-- ❌ `\interlinepenalties`
-- ❌ `\clubpenalties`
-- ❌ `\widowpenalties`
-- ❌ `\displaywidowpenalties`
+- ✅ `\interlinepenalties`（2026-08-23 第三波：注册 + 数组存储（penalty_arrays）+ 处理器，待联调）
+- ✅ `\clubpenalties`（同上）
+- ✅ `\widowpenalties`（同上）
+- ✅ `\displaywidowpenalties`（同上）
 
 ### 丢弃物
-- ❌ `\pagediscards`
-- ❌ `\splitdiscards`
-- ❌ `\lostchars`（`\savingvdiscards` 相关）
+- ✅ `\pagediscards`（2026-08-23 第三波：misc 整数参数 30，待联调）
+- ✅ `\splitdiscards`（misc 整数参数 31，待联调）
+- ✅ `\lostchars`（misc 整数参数 32，默认 2；`\savingvdiscards` 相关）
 
-## B 组：TeX 基础原语（❌ 15/36）
+## B 组：TeX 基础原语（✅ 36/36）
 
 ### 条件
 - ✅ `\ifinner`
@@ -124,30 +128,30 @@ M4 数学 + e-TeX 验收时已实现的 e-TeX 原语：
 - ✅ `\edef`/`\xdef`/`\gdef` 体扫描式展开（`scan_edef_body`，80022b4：scan_toks(macro_def, xpand) 语义）
 
 ### 盒子
-- ❌ `\copy`
-- ❌ `\unvbox`
-- ❌ `\unhbox`
-- ❌ `\unhcopy`
-- ❌ `\unvcopy`
-- ❌ `\lastbox`
+- ✅ `\copy`（2026-08-23 第三波：复制寄存器为节点；支持 `\lastbox` 后续取用，待联调）
+- ✅ `\unvbox`（vbox 拆开子节点入当前列表；非 vbox 报错，待联调）
+- ✅ `\unhbox`（hbox 拆开子节点入当前列表；非 hbox 报错，待联调）
+- ✅ `\unhcopy`（复制后拆开，原寄存器保留，待联调）
+- ✅ `\unvcopy`（同上）
+- ✅ `\lastbox`（摘下列表尾盒子存入 lastbox_hold，供下一 `\box`/`\copy`，待联调）
 
 ### 盒子尺寸
-- ❌ `\wd`
-- ❌ `\ht`
-- ❌ `\dp`
+- ✅ `\wd`（读取/赋值盒子宽度；void 报错，待联调）
+- ✅ `\ht`（同上；高度）
+- ✅ `\dp`（同上；深度）
 
 ### 其他
-- ❌ `\tracingparagraphs`
-- ❌ `\rightskip`、`\leftskip`
-- ❌ `\omit`
-- ❌ `\prevdepth`
-- ❌ `\interlinepenalty`
-- ❌ `\clubpenalty`
-- ❌ `\widowpenalty`
-- ❌ `\displaywidowpenalty`
-- ❌ `\unskip`
-- ❌ `\lastpenalty`
-- ❌ `\unpenalty`
+- ✅ `\tracingparagraphs`（2026-08-23 第三波：misc 整数参数 29，待联调）
+- ✅ `\rightskip`、`\leftskip`（胶水参数 + `.fmt` v8，待联调）
+- ✅ `\omit`（处理器占位，待联调）
+- ✅ `\prevdepth`（dimen 参数，待联调）
+- ✅ `\interlinepenalty`（整数参数，待联调）
+- ✅ `\clubpenalty`（整数参数，待联调）
+- ✅ `\widowpenalty`（整数参数，待联调）
+- ✅ `\displaywidowpenalty`（整数参数，待联调）
+- ✅ `\unskip`（移除列表尾胶水，待联调）
+- ✅ `\lastpenalty`（列表尾 penalty 值查询，待联调）
+- ✅ `\unpenalty`（移除列表尾 penalty，待联调）
 
 ## C 组：已注册未接线（✅ 全部已接线）
 
@@ -165,10 +169,15 @@ M4 数学 + e-TeX 验收时已实现的 e-TeX 原语：
 
 - eTeX 寄存器扩展：`REGISTER_COUNT` 256 → **32768**（`\count32767` 可用；
   `.fmt` codec 同步；越界报 "! Bad register code (N)." 钳 0）
+- **`Primitive` 枚举 `repr(u8)` → `repr(u16)`**（第三波变体数超 256，u8 判别值回绕
+  导致编译 ICE；`.fmt` codec 原语编号改 2 字节小端 + 新增 read_u16）
 - 表达式核心：i128 中间量（仅最终结果溢出报错）、四舍五入除法、
   `\let\9=\relax` 别名终止、dimen/glue `*`/`/` 括号因子、胶水阶"最后非零项"语义
 - 扫描恢复：未定义 cs 当 \relax 继续（未实现原语不致命）、`\dimexpr/\glueexpr`
   作整数操作数、`\count43pt` 寄存器+单位
+- 第二波参数体系：`\leftskip/\rightskip/\prevdepth/\interlinepenalty/\clubpenalty/
+  \widowpenalty/\displaywidowpenalty`（Params 字段 + `.fmt` v8）；惩罚数组
+  `penalty_arrays` 存储 + `SavedValue` 变体；misc 扩至 33（29-32 号）
 
 ## 冲刺纪律
 

@@ -385,6 +385,39 @@ impl Expander {
                     let idx = self.scan_number()?;
                     Ok(emit_dimen(self.parshape_access(idx, kind)))
                 }
+                // ETRIP 第二波：\the\wd/\the\ht/\the\dp<n>：盒子寄存器尺寸（sp）
+                Primitive::Wd | Primitive::Ht | Primitive::Dp => {
+                    let dim = match p {
+                        Primitive::Wd => 0,
+                        Primitive::Ht => 1,
+                        _ => 2,
+                    };
+                    let idx = self.scan_register_index()?;
+                    Ok(emit_dimen(self.sink.box_dim(idx, dim)))
+                }
+                // ETRIP 第二波：\the\lastpenalty：当前列表尾 penalty 值（无则 0）
+                Primitive::LastPenalty => Ok(emit_count(self.sink.last_penalty())),
+                // ETRIP 第二波：\the\prevdepth：上一行 depth（sp；未定义 < -1000pt 输出原值）
+                Primitive::PrevDepth => Ok(emit_dimen(self.params.prevdepth)),
+                // ETRIP 第二波：\the\leftskip/\the\rightskip：段落悬挂胶水
+                Primitive::LeftSkip => Ok(emit_glue(self.params.leftskip)),
+                Primitive::RightSkip => Ok(emit_glue(self.params.rightskip)),
+                // ETRIP 第二波：\the\interlinepenalty/\the\clubpenalty/
+                // \the\widowpenalty/\the\displaywidowpenalty：行间/孤行/段首断页惩罚
+                Primitive::InterLinePenalty => Ok(emit_count(self.params.interlinepenalty)),
+                Primitive::ClubPenalty => Ok(emit_count(self.params.clubpenalty)),
+                Primitive::WidowPenalty => Ok(emit_count(self.params.widowpenalty)),
+                Primitive::DisplayWidowPenalty => Ok(emit_count(self.params.displaywidowpenalty)),
+                // ETRIP 第二波：\the\mutoglue<mu 胶水>：mu 胶水转胶水（1mu = 1pt = 65536sp）
+                Primitive::MuToGlue => {
+                    let g = self.scan_glue()?;
+                    Ok(emit_glue(g))
+                }
+                // ETRIP 第二波：\the\gluetomu<胶水>：胶水转 mu 胶水
+                Primitive::GlueToMu => {
+                    let g = self.scan_glue()?;
+                    Ok(emit_mu_glue(g))
+                }
                 // \the\delcode<num>：字符定界符码（无覆盖 = 0x500000 默认）
                 Primitive::DelCode => {
                     let byte = self.scan_char_code()?;
@@ -516,6 +549,11 @@ impl Expander {
                 }
             },
             SavedValue::LcCode { byte, prev } => self.lccodes[byte as usize] = prev,
+            SavedValue::PenaltyArray { kind, prev } => {
+                if (kind as usize) < self.penalty_arrays.len() {
+                    self.penalty_arrays[kind as usize] = prev;
+                }
+            }
         }
     }
 

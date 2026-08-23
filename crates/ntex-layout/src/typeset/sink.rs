@@ -594,15 +594,25 @@ impl TokenSink for NodeBuilder {
     fn box_register(&mut self, idx: usize) -> Result<()> {
         // `\setbox5=\box3`：把寄存器 3 移入目标 5（\box3 变 void；tex.web set_box 赋值语义）
         if let Some(target) = self.setbox_target.take() {
-            let b = self.boxes.get_mut(idx).and_then(|s| s.take());
+            // `\setbox0=\lastbox`：优先取 \lastbox 摘下的盒子
+            let b = self
+                .lastbox_hold
+                .take()
+                .or_else(|| self.boxes.get_mut(idx).and_then(|s| s.take()));
             self.boxes[target] = b;
             return Ok(());
         }
-        let b = if idx == 255 {
-            self.pending_pages.pop_front()
-        } else {
-            self.boxes.get_mut(idx).and_then(|s| s.take())
-        };
+        // `\box0` 紧跟在 `\lastbox` 后：取摘下的盒子（TeX 语义）
+        let b = self
+            .lastbox_hold
+            .take()
+            .or_else(|| {
+                if idx == 255 {
+                    self.pending_pages.pop_front()
+                } else {
+                    self.boxes.get_mut(idx).and_then(|s| s.take())
+                }
+            });
         let Some(b) = b else {
             return Err(Error::invalid_input(format!("盒子 {idx} 为空（void）")));
         };
@@ -837,6 +847,152 @@ impl TokenSink for NodeBuilder {
                 crate::node::BoxKind::VBox => 2,
             },
         }
+    }
+
+    /// `\lastpenalty`：当前列表尾若是 penalty 节点返回其值，否则 0（TeX 语义）。
+    fn last_penalty(&self) -> i64 {
+        match self.lists.last().and_then(|l| l.last()) {
+            Some(Node::Penalty { penalty }) => *penalty,
+            _ => 0,
+        }
+    }
+
+    /// `\lastbox`：摘下当前列表尾的盒子节点（无则无操作）；
+    /// 摘下的盒子由下一个 `\box`/`\copy` 取用（见 [`Self::box_register`]）。
+    fn lastbox(&mut self) -> Result<()> {
+        let Some(list) = self.lists.last_mut() else {
+            return Ok(());
+        };
+        match list.last() {
+            Some(Node::Box(_)) => {
+                if let Some(Node::Box(b)) = list.pop() {
+                    self.lastbox_hold = Some(b);
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// `\unskip`：移除当前列表尾部的 glue 节点（无则无操作）。
+    fn unskip(&mut self) -> Result<()> {
+        if let Some(list) = self.lists.last_mut() {
+            while let Some(Node::Glue { .. } | Node::Leaders { .. }) = list.last() {
+                list.pop();
+            }
+        }
+        Ok(())
+    }
+
+    /// `\unpenalty`：移除当前列表尾部的 penalty 节点（无则无操作）。
+    fn unpenalty(&mut self) -> Result<()> {
+        if let Some(list) = self.lists.last_mut() {
+            while let Some(Node::Penalty { .. }) = list.last() {
+                list.pop();
+            }
+        }
+        Ok(())
+    }
+
+    /// `\copy<n>`：复制盒子寄存器为节点追加到当前列表（原寄存器保留）。
+    fn copy_box(&mut self, idx: usize) -> Result<()> {
+        let b = if let Some(h) = self.lastbox_hold.take() {
+            // `\copy0` 紧跟在 `\lastbox` 后：复制摘下的盒子
+            h.clone()
+        } else {
+            let Some(b) = self.boxes.get(idx).and_then(|s| s.as_ref()) else {
+                return Err(Error::invalid_input(format!("盒子 {idx} 为空（void）")));
+            };
+            b.clone()
+        };
+        self.append(Node::Box(b));
+        Ok(())
+    }
+
+    /// `\unhbox<n>`/`\unhcopy<n>`：hbox 拆开，子节点追加到当前列表。
+    fn unhbox(&mut self, idx: usize, copy: bool) -> Result<()> {
+        let b = self.take_or_clone_box(idx, copy)?;
+        match b.kind {
+            BoxKind::HBox => {
+                for c in b.children {
+                    self.append(c);
+                }
+                Ok(())
+            }
+            BoxKind::VBox => Err(Error::invalid_input(format!(
+                "\\unhbox{idx}: 盒子不是 hbox（TeX \"Not in horizontal mode\"）"
+            ))),
+        }
+    }
+
+    /// `\unvbox<n>`/`\unvcopy<n>`：vbox 拆开，子节点追加到当前列表。
+    fn unvbox(&mut self, idx: usize, copy: bool) -> Result<()> {
+        let b = self.take_or_clone_box(idx, copy)?;
+        match b.kind {
+            BoxKind::VBox => {
+                for c in b.children {
+                    self.append(c);
+                }
+                Ok(())
+            }
+            BoxKind::HBox => Err(Error::invalid_input(format!(
+                "\\unvbox{idx}: 盒子不是 vbox（TeX \"Not in vertical mode\"）"
+            ))),
+        }
+    }
+
+    /// `\wd/\ht/\dp<n>`：盒子寄存器维度（void 为 0）。
+    fn box_dim(&self, idx: usize, dim: u8) -> i64 {
+        let Some(b) = self.boxes.get(idx).and_then(|s| s.as_ref()) else {
+            return 0;
+        };
+        match dim {
+            0 => b.width,
+            1 => b.height,
+            _ => b.depth,
+        }
+    }
+
+    /// `\wd/\ht/\dp<n>=<dimen>`：设置盒子寄存器维度。
+    fn set_box_dim(&mut self, idx: usize, dim: u8, value: i64) -> Result<()> {
+        let Some(b) = self.boxes.get_mut(idx).and_then(|s| s.as_mut()) else {
+            return Err(Error::invalid_input(format!("盒子 {idx} 为空（void）")));
+        };
+        match dim {
+            0 => b.width = value,
+            1 => b.height = value,
+            _ => b.depth = value,
+        }
+        Ok(())
+    }
+
+    /// `\showgroups`：把组上下文栈格式化为转录（诊断用）。
+    fn showgroups(&mut self) -> Result<()> {
+        let mut out = String::from("### begin group\n");
+        for (i, g) in self.groups.iter().enumerate() {
+            out.push_str(&format!("level {i}: {:?} (code {})\n", g.kind, g.kind.code()));
+        }
+        out.push_str("### end group\n");
+        self.transcript.push_str(&out);
+        Ok(())
+    }
+
+    /// `\showlists`：把当前列表简化为转录（诊断用；盒子内容递归展示）。
+    fn showlists(&mut self) -> Result<()> {
+        let mut out = String::from("### begin list\n");
+        for (li, list) in self.lists.iter().enumerate() {
+            out.push_str(&format!(
+                "### list {li} (mode {:?}, {} nodes)\n",
+                self.list_modes.get(li),
+                list.len()
+            ));
+            for n in list {
+                showbox_format_node(n, 1, &mut out);
+            }
+        }
+        out.push_str("### end list\n");
+        self.transcript.push_str(&out);
+        Ok(())
     }
 
     /// `\begingroup`：下一个组为半简单组（14）。

@@ -1,6 +1,6 @@
 /// M1 原语集（随里程碑扩充）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
+#[repr(u16)]
 pub enum Primitive {
     Def = 1,
     Edef,
@@ -319,6 +319,48 @@ pub enum Primitive {
     SplitFirstMarks,
     SplitTopMarks,
     SplitBotMarks,
+    // ETRIP 第二波：e-TeX mu 转换原语（可展开，参数为 mu/skip 胶水，输出胶水/mu 胶水 token）
+    MuToGlue,
+    GlueToMu,
+    // ETRIP 第二波：e-TeX 惩罚数组（\interlinepenalties n p1 p2 ... pn 等）
+    InterLinePenalties,
+    ClubPenalties,
+    WidowPenalties,
+    DisplayWidowPenalties,
+    // ETRIP 第二波：e-TeX 丢弃物控制整数（misc 数组）
+    PageDiscards,
+    SplitDiscards,
+    LostChars,
+    // ETRIP 第二波：盒子复制/拆包原语（\copy/\unhbox/\unvbox/\unhcopy/\unvcopy/\lastbox）
+    Copy,
+    UnHBox,
+    UnVBox,
+    UnHCopy,
+    UnVCopy,
+    LastBox,
+    // ETRIP 第二波：盒子尺寸查询/赋值（\wd/\ht/\dp，可展开读尺寸）
+    Wd,
+    Ht,
+    Dp,
+    // ETRIP 第二波：段落/断页参数原语（胶水/尺寸/整数参数）
+    LeftSkip,
+    RightSkip,
+    PrevDepth,
+    InterLinePenalty,
+    ClubPenalty,
+    WidowPenalty,
+    DisplayWidowPenalty,
+    // ETRIP 第二波：列表尾操作（\unskip/\lastpenalty/\unpenalty；\lastpenalty 可展开读整数）
+    UnSkip,
+    LastPenalty,
+    UnPenalty,
+    // ETRIP 第二波：诊断原语（\showgroups/\showlists）
+    ShowGroups,
+    ShowLists,
+    // ETRIP 第二波：折行追踪整数参数（misc 数组）
+    TracingParagraphs,
+    // ETRIP 第二波：对齐模板跳过（\omit；简化为 no-op，由对齐组后续实现语义）
+    Omit,
 }
 
 impl Primitive {
@@ -355,12 +397,12 @@ impl Primitive {
     }
 
     /// 原始值（`.fmt` 快照序列化；变体自 1 起连续）。
-    pub const fn as_u8(self) -> u8 {
-        self as u8
+    pub const fn as_u16(self) -> u16 {
+        self as u16
     }
 
     /// 从原始值恢复（`.fmt` 快照反序列化）。
-    pub const fn from_u8(v: u8) -> Option<Self> {
+    pub const fn from_u16(v: u16) -> Option<Self> {
         Some(match v {
             1 => Self::Def,
             2 => Self::Edef,
@@ -610,6 +652,39 @@ impl Primitive {
             246 => Self::SplitFirstMarks,
             247 => Self::SplitTopMarks,
             248 => Self::SplitBotMarks,
+            // ETRIP 第二波：新原语变体（249-280）
+            249 => Self::MuToGlue,
+            250 => Self::GlueToMu,
+            251 => Self::InterLinePenalties,
+            252 => Self::ClubPenalties,
+            253 => Self::WidowPenalties,
+            254 => Self::DisplayWidowPenalties,
+            255 => Self::PageDiscards,
+            256 => Self::SplitDiscards,
+            257 => Self::LostChars,
+            258 => Self::Copy,
+            259 => Self::UnHBox,
+            260 => Self::UnVBox,
+            261 => Self::UnHCopy,
+            262 => Self::UnVCopy,
+            263 => Self::LastBox,
+            264 => Self::Wd,
+            265 => Self::Ht,
+            266 => Self::Dp,
+            267 => Self::LeftSkip,
+            268 => Self::RightSkip,
+            269 => Self::PrevDepth,
+            270 => Self::InterLinePenalty,
+            271 => Self::ClubPenalty,
+            272 => Self::WidowPenalty,
+            273 => Self::DisplayWidowPenalty,
+            274 => Self::UnSkip,
+            275 => Self::LastPenalty,
+            276 => Self::UnPenalty,
+            277 => Self::ShowGroups,
+            278 => Self::ShowLists,
+            279 => Self::TracingParagraphs,
+            280 => Self::Omit,
             _ => return None,
         })
     }

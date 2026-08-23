@@ -241,6 +241,18 @@ impl Expander {
                         g.shrink_order as i64
                     });
                 }
+                // ETRIP 第二波：\lastpenalty → 当前列表尾 penalty 值（整数上下文）
+                EqSlot::Primitive(Primitive::LastPenalty) => {
+                    self.fetch()?;
+                    let v = self.sink.last_penalty();
+                    return Ok(if neg { -v } else { v });
+                }
+                // ETRIP 第二波：\prevdepth → 上一行 depth（sp；作为整数取其 sp 值）
+                EqSlot::Primitive(Primitive::PrevDepth) => {
+                    self.fetch()?;
+                    let v = self.params.prevdepth;
+                    return Ok(if neg { -v } else { v });
+                }
                 _ => {}
             }
         }
@@ -777,6 +789,35 @@ impl Expander {
                 let v = self.parshape_access(idx, kind);
                 return Ok((if neg { -v } else { v }, 0));
             }
+            // ETRIP 第二波：\wd/\ht/\dp<n> → 盒子寄存器尺寸（尺寸上下文）
+            if let EqSlot::Primitive(Primitive::Wd | Primitive::Ht | Primitive::Dp) =
+                self.eqtb.slot(csid)
+            {
+                let dim = match self.eqtb.slot(csid) {
+                    EqSlot::Primitive(Primitive::Wd) => 0,
+                    EqSlot::Primitive(Primitive::Ht) => 1,
+                    _ => 2,
+                };
+                self.fetch()?; // 消费 \wd/\ht/\dp
+                let idx = self.scan_register_index()?;
+                let v = self.sink.box_dim(idx, dim);
+                return Ok((if neg { -v } else { v }, 0));
+            }
+            // ETRIP 第二波：\prevdepth → 上一行 depth（尺寸上下文）
+            if let EqSlot::Primitive(Primitive::PrevDepth) = self.eqtb.slot(csid) {
+                self.fetch()?;
+                let v = self.params.prevdepth;
+                return Ok((if neg { -v } else { v }, 0));
+            }
+            // ETRIP 第二波：\mutoglue<mu 胶水> / \gluetomu<胶水> → 胶水宽度（尺寸上下文）
+            // 转换为胶水后取 width 分量（1mu = 1pt = 65536sp，数值不变）。
+            if let EqSlot::Primitive(Primitive::MuToGlue | Primitive::GlueToMu) =
+                self.eqtb.slot(csid)
+            {
+                self.fetch()?; // 消费 \mutoglue/\gluetomu
+                let g = self.scan_glue()?;
+                return Ok((if neg { -g.width } else { g.width }, 0));
+            }
         }
         // 基数前缀：十六进制 `"` / 八进制 `'`（TeX scan_dimen 同 scan_int，TeXbook p.267）
         let mut radix_val: Option<i64> = None;
@@ -1000,6 +1041,12 @@ impl Expander {
                     self.fetch()?;
                     let idx = self.scan_register_index()?;
                     return Ok(self.registers.muskip(idx));
+                }
+                // ETRIP 第二波：\mutoglue<mu 胶水> / \gluetomu<胶水> → 胶水整体引用
+                // （1mu = 1pt = 65536sp，数值不变；仅单位语义转换）
+                EqSlot::Primitive(Primitive::MuToGlue | Primitive::GlueToMu) => {
+                    self.fetch()?; // 消费 \mutoglue/\gluetomu
+                    return self.scan_glue();
                 }
                 EqSlot::Register(kind, idx) => {
                     // skipdef/muskipdef 绑定的寄存器 cs

@@ -52,6 +52,10 @@ fn int_param_index(p: Primitive) -> Option<usize> {
         Primitive::TracingMacros => 26,
         Primitive::TracingOutput => 27,
         Primitive::ErrorContextLines => 28,
+        Primitive::TracingParagraphs => 29,
+        Primitive::PageDiscards => 30,
+        Primitive::SplitDiscards => 31,
+        Primitive::LostChars => 32,
         _ => return None,
     })
 }

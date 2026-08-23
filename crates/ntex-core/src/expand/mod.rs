@@ -230,6 +230,12 @@ enum SavedValue {
         byte: u8,
         prev: i64,
     },
+    /// ETRIP 第二波：e-TeX 惩罚数组（\interlinepenalties 等；组内局部保存）。
+    /// `kind`：0=interline/1=club/2=widow/3=displaywidow。
+    PenaltyArray {
+        kind: u8,
+        prev: Vec<i64>,
+    },
 }
 
 /// `\ifx` 语义键：解析别名后比较含义（TeX：同含义即相等）。
@@ -381,6 +387,10 @@ pub struct Expander {
     section_label: String,
     /// `\parshape` 段落形状表：(缩进, 宽度)（sp；ETRIP：\parshapelength/indent/dimen 读取）。
     parshape: Vec<(i64, i64)>,
+    /// ETRIP 第二波：e-TeX 惩罚数组（key: 0=interline/1=club/2=widow/3=displaywidow）。
+    /// `\interlinepenalties n p1 ... pn` 等：扫描 n 个 penalty 值存储（断页器后续读取）。
+    /// 当前仅在 expander 侧存储，未镜像给排版器（pass2 仅需扫描语义正确即可推进）。
+    penalty_arrays: [Vec<i64>; 4],
 }
 
 impl Expander {
@@ -437,6 +447,7 @@ impl Expander {
             math_fonts: [[0; 16]; 3],
             section_label: String::new(),
             parshape: Vec::new(),
+            penalty_arrays: Default::default(),
         };
         e.register_builtins();
         e

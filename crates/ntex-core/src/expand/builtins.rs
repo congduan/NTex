@@ -1,6 +1,6 @@
 impl Expander {
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 249] = [
+        const BUILTINS: [(&str, Primitive); 281] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -315,6 +315,48 @@ impl Expander {
             ("splitfirstmarks", Primitive::SplitFirstMarks),
             ("splittopmarks", Primitive::SplitTopMarks),
             ("splitbotmarks", Primitive::SplitBotMarks),
+            // ETRIP 第二波：e-TeX mu 转换原语（可展开）
+            ("mutoglue", Primitive::MuToGlue),
+            ("gluetomu", Primitive::GlueToMu),
+            // ETRIP 第二波：e-TeX 惩罚数组（\interlinepenalties 等）
+            ("interlinepenalties", Primitive::InterLinePenalties),
+            ("clubpenalties", Primitive::ClubPenalties),
+            ("widowpenalties", Primitive::WidowPenalties),
+            ("displaywidowpenalties", Primitive::DisplayWidowPenalties),
+            // ETRIP 第二波：e-TeX 丢弃物控制整数（misc 数组）
+            ("pagediscards", Primitive::PageDiscards),
+            ("splitdiscards", Primitive::SplitDiscards),
+            ("lostchars", Primitive::LostChars),
+            // ETRIP 第二波：盒子复制/拆包原语
+            ("copy", Primitive::Copy),
+            ("unhbox", Primitive::UnHBox),
+            ("unvbox", Primitive::UnVBox),
+            ("unhcopy", Primitive::UnHCopy),
+            ("unvcopy", Primitive::UnVCopy),
+            ("lastbox", Primitive::LastBox),
+            // ETRIP 第二波：盒子尺寸查询/赋值
+            ("wd", Primitive::Wd),
+            ("ht", Primitive::Ht),
+            ("dp", Primitive::Dp),
+            // ETRIP 第二波：段落/断页参数原语
+            ("leftskip", Primitive::LeftSkip),
+            ("rightskip", Primitive::RightSkip),
+            ("prevdepth", Primitive::PrevDepth),
+            ("interlinepenalty", Primitive::InterLinePenalty),
+            ("clubpenalty", Primitive::ClubPenalty),
+            ("widowpenalty", Primitive::WidowPenalty),
+            ("displaywidowpenalty", Primitive::DisplayWidowPenalty),
+            // ETRIP 第二波：列表尾操作
+            ("unskip", Primitive::UnSkip),
+            ("lastpenalty", Primitive::LastPenalty),
+            ("unpenalty", Primitive::UnPenalty),
+            // ETRIP 第二波：诊断原语
+            ("showgroups", Primitive::ShowGroups),
+            ("showlists", Primitive::ShowLists),
+            // ETRIP 第二波：折行追踪整数参数
+            ("tracingparagraphs", Primitive::TracingParagraphs),
+            // ETRIP 第二波：对齐模板跳过
+            ("omit", Primitive::Omit),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);

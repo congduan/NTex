@@ -54,7 +54,7 @@ fn write_slot(w: &mut impl Write, slot: &EqSlot) -> io::Result<()> {
         }
         EqSlot::Primitive(p) => {
             w.write_all(&[2])?;
-            w.write_all(&[p.as_u8()])
+            w.write_all(&p.as_u16().to_le_bytes())
         }
         EqSlot::Alias(target) => {
             w.write_all(&[3])?;
@@ -113,7 +113,7 @@ fn read_slot(r: &mut impl Read) -> io::Result<EqSlot> {
             }))
         }
         2 => {
-            let p = Primitive::from_u8(read_u8(r)?)
+            let p = Primitive::from_u16(read_u16(r)?)
                 .ok_or_else(|| invalid("未知原语编号"))?;
             Ok(EqSlot::Primitive(p))
         }
@@ -261,6 +261,12 @@ fn read_u8(r: &mut impl Read) -> io::Result<u8> {
     let mut b = [0u8; 1];
     r.read_exact(&mut b)?;
     Ok(b[0])
+}
+
+fn read_u16(r: &mut impl Read) -> io::Result<u16> {
+    let mut b = [0u8; 2];
+    r.read_exact(&mut b)?;
+    Ok(u16::from_le_bytes(b))
 }
 
 fn read_u32(r: &mut impl Read) -> io::Result<u32> {

@@ -250,6 +250,57 @@ pub trait TokenSink: std::fmt::Debug {
     fn last_node_type(&self) -> i64 {
         -1
     }
+    /// ETRIP 第二波：`\lastpenalty`：当前列表尾若是 penalty 节点返回其值，否则 0。
+    fn last_penalty(&self) -> i64 {
+        0
+    }
+    /// ETRIP 第二波：`\lastbox`：从当前列表尾移除盒子节点。
+    /// 若 `\setbox<n>=` 待赋值目标存在，移除的盒子存入该寄存器；否则作为节点
+    /// 拆开并入当前列表（TeX lastbox 语义）。无尾盒子节点时空操作（垂直模式无意义）。
+    fn lastbox(&mut self) -> Result<()> {
+        Ok(())
+    }
+    /// ETRIP 第二波：`\unskip`：移除当前列表尾的 glue 节点（无则无操作）。
+    fn unskip(&mut self) -> Result<()> {
+        Ok(())
+    }
+    /// ETRIP 第二波：`\unpenalty`：移除当前列表尾的 penalty 节点（无则无操作）。
+    fn unpenalty(&mut self) -> Result<()> {
+        Ok(())
+    }
+    /// ETRIP 第二波：`\copy<n>`：取出盒子寄存器 n 的内容（保留寄存器），
+    /// 作为节点追加或封装为页面（`\shipout` 前缀时）。
+    fn copy_box(&mut self, _idx: usize) -> Result<()> {
+        Ok(())
+    }
+    /// ETRIP 第二波：`\unhbox<n>` / `\unhcopy<n>`：拆开 hbox 寄存器 n 的内容，
+    /// 子节点追加到当前水平列表。`copy=true` 保留寄存器（`\unhcopy`）。
+    fn unhbox(&mut self, _idx: usize, _copy: bool) -> Result<()> {
+        Ok(())
+    }
+    /// ETRIP 第二波：`\unvbox<n>` / `\unvcopy<n>`：拆开 vbox 寄存器 n 的内容，
+    /// 子节点追加到当前垂直列表。`copy=true` 保留寄存器（`\unvcopy`）。
+    fn unvbox(&mut self, _idx: usize, _copy: bool) -> Result<()> {
+        Ok(())
+    }
+    /// ETRIP 第二波：`\wd/\ht/\dp<n>`：盒子寄存器 n 的尺寸（sp）。
+    /// `dim`：0=width、1=height、2=depth；void 盒子返回 0。
+    fn box_dim(&self, _idx: usize, _dim: u8) -> i64 {
+        0
+    }
+    /// ETRIP 第二波：`\wd/\ht/\dp<n>=<dimen>`：设置盒子寄存器 n 的尺寸。
+    /// void 盒子报错（TeX "Cannot \wd a void box"）；越界钳制。
+    fn set_box_dim(&mut self, _idx: usize, _dim: u8, _value: i64) -> Result<()> {
+        Ok(())
+    }
+    /// ETRIP 第二波：`\showgroups`：转储组栈状态到终端/日志（诊断原语）。
+    fn showgroups(&mut self) -> Result<()> {
+        Ok(())
+    }
+    /// ETRIP 第二波：`\showlists`：转储节点列表栈状态到终端/日志（诊断原语）。
+    fn showlists(&mut self) -> Result<()> {
+        Ok(())
+    }
     /// e-TeX `\currentgrouptype`：当前组类型码（bottom=0 ... math_left=16）。
     fn current_group_type(&self) -> i64 {
         0
