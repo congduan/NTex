@@ -161,7 +161,7 @@
 **M1-2 InternTable（csid 驻留）**（RFC-1 §4）
 
 - [x] 名字去重表：`name → csid`，csid=u32 数组下标
-- [ ] `\csname..\endcsname` 动态建 cs：命中复用、未命中追加（不可变版本切换）——待补
+- [x] `\csname..\endcsname` 动态建 cs：命中复用、未命中追加（不可变版本切换）——✅（`exec_csname`/`\endcsname`，ETRIP 冲刺已实现）
 - [x] `\meaning` 名字查询走 InternTable
 - 验证：用例 1（动态建名含空 csname、非法字符）；并发预留（M6 再做原子追加）
 
@@ -169,7 +169,8 @@
 
 - [x] eqtb 槽枚举：`Undefined/Macro{version, def}/Primitive(prim_id)/Register/RegisterIndex/Alias(csid)`
 - [x] `\let\a\b` → `Alias(csid)` 间接（不复制宏体）；链式别名
-- [ ] `\chardef`/`\mathchardef` → `RegisterIndex` 语义——待补
+- [x] `\mathchardef\cs=<num>` → `MathChar` 槽（ETRIP 已实现）
+- [ ] `\chardef\cs=<num>` → 字符等价——待补
 - 验证：用例 2（链式别名、`\let` 到 `\outer`）、6（`\ifx` 对 Alias 不展开）
 
 **M1-4 输入与 catcode 固化**
@@ -201,9 +202,9 @@
 
 **M1-8 参数匹配**
 
-- [ ] 无分隔参数：`#1..#9` 实参收集（平衡组规则）——已实现（无分隔部分）
-- [ ] 分隔参数：分隔串按 **token 序列**匹配（RFC-1 §8 用例 7）——待补
-- [ ] `\long` 与"参数中禁 `\par`"错误语义——待补
+- [x] 无分隔参数：`#1..#9` 实参收集（平衡组规则）——✅（collect_undelimited_arg）
+- [x] 分隔参数：分隔串按 **token 序列**匹配（RFC-1 §8 用例 7）——✅（collect_delimited_arg，7956ca7）
+- [ ] `\long` 前缀（允许实参含 `\par`）——待补（`\par` 禁检查 is_par_token 已做，`\long` 前缀未接线）
 - 验证：嵌套宏实参传递用例集
 
 **M1-9 条件原语**
@@ -229,7 +230,7 @@
 **M1-12 模式状态机（空壳）**
 
 - [x] 垂直/水平/数学/内部 四种模式 —— 被 M3-2 取代：模式状态机实现在 `ntex-layout::typeset`（Vertical/Horizontal/RestrictedHorizontal）
-- [ ] 数学模式——M4 填实
+- [x] 数学模式——✅ M4 填实（`Mode::Math/DisplayMath`，见 §6）
 - 验证：模式切换错误信息与 pdfTeX 一致
 
 **M1-13 错误模型**
