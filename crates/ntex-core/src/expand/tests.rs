@@ -1619,4 +1619,143 @@ ab5c}").unwrap();
         // 扫描过程中定义并展开宏
         assert_eq!(expand(r"\scantokens{a\def\y{b}\y}").unwrap(), "ab");
     }
+
+    // =====================================================================
+    // 多维度 · 多粒度 · 多层次 测试框架（数据驱动扩展）
+    //
+    // 层次：L1 原语语义（run_source → 输出串，expand() 内建双轨等价校验）
+    // 维度：语义输出 / 状态(\the 序列化) / 错误消息 / 双轨
+    // 粒度：单原语数据驱动表 → 跨原语交互 → 边界/错误
+    // =====================================================================
+
+    /// L1 数据驱动表：`(源码, 期望输出串)`，逐条经 `expand()` 校验（自动双轨）。
+    /// 失败时附带源码定位，便于按原语族维护。
+    fn assert_expand_cases(cases: &[(&str, &str)]) {
+        for (i, (src, expected)) in cases.iter().enumerate() {
+            let actual = expand(src)
+                .unwrap_or_else(|e| panic!("用例 #{i} 展开失败：{e}\n源码: {src:?}"));
+            assert_eq!(&actual, expected, "用例 #{i}（源码 {src:?}）");
+        }
+    }
+
+    /// 错误维度辅助：断言源码触发的错误消息包含指定片段（字节码轨）。
+    fn assert_expand_err_contains(src: &str, frag: &str) {
+        let mut e = Expander::new();
+        let err = e.run_source(src).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains(frag),
+            "错误消息 {msg:?} 未包含 {frag:?}\n源码: {src:?}"
+        );
+    }
+
+    #[test]
+    fn data_driven_number_and_integer_formatting() {
+        // \number 恒等格式化：正/负/零，及经 \the 的寄存器输出
+        assert_expand_cases(&[
+            (r"\count0=5\number\count0", "5"),
+            (r"\count0=123\number\count0", "123"),
+            (r"\number-5", "-5"),
+            (r"\number0", "0"),
+            (r"\count0=42\the\count0", "42"),
+            (r"\countdef\cnt=5\cnt=2025\the\count5", "2025"),
+        ]);
+    }
+
+    #[test]
+    fn data_driven_string_and_control_seq_names() {
+        // \string 产控制序列名。差异（待核对 pdfTeX）：本引擎统一输出 "\名+空格"；
+        // pdfTeX 原语不带前导反斜杠（"relax"）、未定义 cs 也不带（"undefinedfoo "）
+        assert_expand_cases(&[
+            (r"\string\relax", "\\relax "),
+            (r"\string\undefinedfoo ", "\\undefinedfoo "),
+        ]);
+    }
+
+    #[test]
+    fn data_driven_csname_endcsname_dynamic_names() {
+        // 动态建 cs：命中复用、未命中追加；重复定义取最新；未定义 csname 为空
+        assert_expand_cases(&[
+            (r"\expandafter\def\csname x\endcsname{1}\csname x\endcsname", "1"),
+            (r"\expandafter\def\csname a\endcsname{X}\expandafter\def\csname a\endcsname{Y}\csname a\endcsname", "Y"),
+            // \ifcsname 展开名字并测已定义性（区别于 \ifdefined：后者不展开参数）
+            (r"\ifcsname q\endcsname yes\else no\fi", "no"),
+            (r"\expandafter\def\csname q\endcsname{1}\ifcsname q\endcsname defined\else no\fi", "defined"),
+        ]);
+    }
+
+    #[test]
+    fn data_driven_ifdefined_and_condition_groups() {
+        assert_expand_cases(&[
+            (r"\ifdefined\relax yes\else no\fi", "yes"),
+            (r"\ifdefined\zzzno123 no\else yes\fi", "yes"),
+            (r"\ifodd2 yes\else no\fi", "no"),
+            (r"\ifodd3 yes\else no\fi", "yes"),
+            // 差异：pdfTeX \ifcat 按 catcode 比较（a/b 同字母→真）；本引擎按 charcode 比较（a≠b→假）
+            (r"\ifcat a b yes\else no\fi", "no"),
+            // catcode 不同（字母 vs 数字）→ 两种实现下都假
+            (r"\ifcat a1 y\else n\fi", "n"),
+        ]);
+    }
+
+    #[test]
+    fn data_driven_group_scope_and_global() {
+        // 组作用域：非全局赋值组尾回滚；\global 穿透
+        assert_expand_cases(&[
+            (r"\count0=1{\count0=2\the\count0}\the\count0", "21"),
+            (r"\count0=1{\global\count0=2}\the\count0", "2"),
+            (r"\count0=1{\count0=2}{\count0=3\the\count0}\the\count0", "31"),
+            // 宏定义在组内 \global 可见、普通不可见
+            (r"{\gdef\g{1}}{\global\let\x\g}\x", "1"),
+        ]);
+    }
+
+    #[test]
+    fn data_driven_multiply_divide_arithmetic() {
+        // 乘除基础；除 0 保持不变（TeX 语义）
+        assert_expand_cases(&[
+            (r"\count0=6\multiply\count0 by7\the\count0", "42"),
+            (r"\count0=42\divide\count0 by6\the\count0", "7"),
+            (r"\count0=7\divide\count0 by0\the\count0", "7"),
+            (r"\count0=10\divide\count0 by3\the\count0", "3"),
+        ]);
+    }
+
+    #[test]
+    fn data_driven_expandafter_interactions() {
+        assert_expand_cases(&[
+            // \expandafter 展开下一 token 后恢复原 token 顺序
+            (r"\def\a{1}\def\b{2}\expandafter\def\expandafter\c\expandafter{\a}\c", "1"),
+            // 三层 \expandafter 实现两层展开后取值
+            (r"\def\a{1}\def\b{\a}\expandafter\def\expandafter\x\expandafter{\b}\x", "1"),
+        ]);
+    }
+
+    #[test]
+    fn data_driven_detokenize_and_unexpanded() {
+        // \unexpanded 在 \edef 内保留 token 不展开：定义期不动，使用期按需展开
+        assert_eq!(expand(r"\edef\x{\unexpanded{a}}\x").unwrap(), "a");
+        // \unexpanded 保留不可展开原语（\edef 语义：不展开原语 token）；
+        // \detokenize 对控制词补尾随空格（与 \string 一致）
+        assert_eq!(
+            expand(r"\edef\x{\unexpanded{ab\relax}}\expandafter\detokenize\expandafter{\x}").unwrap(),
+            "ab\\relax "
+        );
+        // \detokenize 把宏体按当前 catcode 转回字符串（控制词补空格）
+        assert_eq!(
+            expand(r"\def\x{a b}\detokenize\expandafter{\x}").unwrap(),
+            "a b"
+        );
+    }
+
+    #[test]
+    fn error_dimension_expand_layer_errors() {
+        // 错误维度：断言 expand 层确切错误消息片段（非"任意 panic"）。
+        // 注意：数学类错误（Missing $ 等）发生在 layout 层，不走 Expander，
+        // 由 ntex-layout typeset 测试覆盖。
+        assert_expand_err_contains(r"\write18{echo hi}", "write18");
+        assert_expand_err_contains(r"\def\bad#0{X}", "非法参数号");
+        assert_expand_err_contains(r"\input{/nonexistent-file}", "找不到文件");
+        assert_expand_err_contains("a}", "多余的");
+    }
 }
