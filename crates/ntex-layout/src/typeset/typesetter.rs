@@ -154,6 +154,27 @@ impl Typesetter {
         }
     }
 
+    /// M5 阶段二：失效传播入口。
+    ///
+    /// 给定"本轮编辑可能已改变的依赖状态"（`mutated`，`tag → 新版本`），批量驱逐
+    /// 依赖快照被其覆盖的段落缓存条目，并返回被驱逐条数。未开启缓存或 `mutated`
+    /// 为空时返回 0。
+    ///
+    /// 语义：缓存条目携带其产出时的依赖快照（`DependencySet`）。本轮编辑若把某
+    /// tag 改到≥ 快照版本，则该段折行结果可能已过期 → 驱逐，下一轮 `typeset*`
+    /// 只会为这些段重算，未改动段继续命中复用。这是"编辑 → 只重算失效子图"在
+    /// 段落层落地的一侧；另一侧（展开层把"段依赖了哪些宏/寄存器版本"登记进快照）
+    /// 由后继求值图接入。
+    pub fn invalidate_by_deps(&mut self, mutated: &ntex_incremental::DependencySet) -> usize {
+        if mutated.is_empty() {
+            return 0;
+        }
+        match &self.paragraph_cache {
+            Some(cache) => cache.borrow_mut().invalidate(mutated),
+            None => 0,
+        }
+    }
+
     /// 排版源码，返回主垂直列表节点。
     pub fn typeset(&mut self, text: &str) -> Result<Vec<Node>> {
         self.install_font_loader();

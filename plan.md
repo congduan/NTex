@@ -13,9 +13,9 @@
 | M3 排版核心       | ✅ M3-1\~M3-4 完成（58+ 用例）；**M3-5 DVI 写出 +** **`\shipout`** **+ 断页 DP + lig/kern +** **`\sfcode`** **+** **`\output`** **例程/box255** 完成（dvipdfmx 验收 + 与 TeX 差分对照）；**RFC-3 VFS + 副作用模型落地**（10 原语走 `ntex-io` VFS，延迟写入 shipout 边界提交）；**`.fmt`** **v1 内存快照**（`ntex-format` 确定性编码 + roundtrip）                     |
 | M4 数学 + e-TeX | ✅ **全部完成**：数学模式状态机（`$`/`$$`、8 类原子、spacing 表、上下标、字阶）、分式/根式/定界符、样式原语、fontdimen 数学参数 + 数学字体族、显示数学细化、Liang 断字、错误模型、e-TeX 核心 + 扩展（`\protected`/`\ifdefined`/`\ifcsname`/`\unless`/`\numexpr`/`\detokenize`/`\unexpanded`/`\eTeXversion`/`\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens`）；验收 **ETRIP 全绿** 待冲 |
 | 输出端           | 🟢 正式 PDF 后端可用（`ntex-pdf`：DVI → PDF 直出 + Type1 嵌入，替换临时 Helvetica 切片；demo 两页与 dvipdfmx 渲染一致）                                                                                                                                                                                                                |
-| M5 增量计算      | 🟡 阶段一完成（段落级缓存 + 指纹哈希 1454x）；阶段二（求值图/依赖追踪/失效传播）待做（§7）                                                                                                                                                                                                          |
+| M5 增量计算      | 🟡 阶段一（段落级缓存 + 指纹 1454x）+ **阶段二依赖登记/失效传播原语完成**（`DependencySet` + `get_incremental`/`invalidate`，9+1 用例）；求值图（展开层依赖登记/失效子图）待做（§7）                                                                                                                           |
 
-**下一步**：**ETRIP 冲刺**（管线已通，pass2 逐段推进）+ 性能 backlog **P1**（热路径消分配 / 修通 ntex 驱动基准补测吞吐）→ 随后按 §7 阶段二推进 M5 求值图。
+**下一步**：**ETRIP 冲刺**（管线已通，pass2 逐段推进）+ 性能 backlog **P1**（热路径消分配 / 修通 ntex 驱动基准补测吞吐）→ 随后按 §7 阶段二剩余推进 M5 求值图（段↔宏依赖登记 + 失效子图）。
 
 ***
 
@@ -454,10 +454,19 @@
 
 ### 阶段二：求值图 + 依赖追踪 + 失效传播（M5 后续）
 
+**已完成（2026-08-24）：依赖登记 / 失效传播原语**——可在 O(tags) 版本号比较下
+判定"缓存是否仍有效"，不必重新展开求值重算内容指纹（求值图"跳开展开"的机制）：
+
+- [x] `DependencySet`（`ntex-incremental`）：`tag → 版本` 单调缩减登记 + `covers`/`needs_invalidation` 失效判定（9 用例）
+- [x] `ParagraphCache::get_incremental` / `put_dep` / `invalidate`：条目携带依赖快照，查询附 `trigger` 做失效传播（命中失效计 `invalids`/驱逐；批量 `invalidate` 按依赖批量驱逐）（3 用例）
+- [x] `Typesetter::invalidate_by_deps`：失效传播对外入口（段落层侧；未接入依赖条目保守不驱逐，安全基线 1 用例）
+
+**待做**：展开层"段↔宏/寄存器/计数器依赖登记"（侧 feed 进缓存条目）→ 端到端失效子图：
+
 - [ ] 求值图：`Expand(source, snapshot) → (tokens, snapshot')` 纯函数化
-- [ ] 依赖追踪：记录每个结果依赖的 catcode/宏定义/计数器/上游段
-- [ ] 失效传播：编辑定位 → 只重算失效子图 → Box 级缓存复用
-- [ ] 副作用边界：`\write` 延迟到 `\shipout`；aux/toc 增量更新与去重合并
+- [ ] 依赖追踪（展开侧）：记录段依赖的 catcode/宏定义/计数器/上游段版本 → 写入 `put_dep` 快照
+- [ ] 失效传播闭环：编辑定位 → `invalidate_by_deps` 驱逐 → 只重算失效段（Box 级缓存复用）
+- [ ] 副作用边界：`\write` 延迟到 `\shipout`（已在 M3 落地 RFC-3）；aux/toc 增量更新与去重合并
 - [ ] `\the\count` 等全局读 → 数据依赖登记（防缓存失效错误）
 - [ ] `.aux`/`.toc` 增量；两次编译收敛语义不变
 - [ ] 端到端增量基准：改 1 字（整文档路径）→ 重算耗时 vs 全量重编
@@ -536,7 +545,7 @@
 | `ntex-pdf`               | **正式 DVI → PDF 后端**：DVI 解析 + PDF 1.4 写出 + Type1(PFB) 嵌入；替换临时切片                                                            | ✅ 已建（M8）                                              |
 | `ntex-font`              | TFM/OFM、ttf-parser、HarfBuzz 整形、整形缓存                                                                                       | ✅ 已建（M3-4：TFM 解析 + `\font` 加载 + 缩放；ttf/HarfBuzz 待 M9） |
 | `ntex-format`            | .fmt 序列化/反序列化（v1 快照已完成；v2 mmap 零拷贝 + 字节码固化 + 部分求值）                                                                        | ✅ 已建（M3 收尾：v1 内存快照；v2 待 M7）                           |
-| `ntex-incremental`       | 段落级指纹哈希 + 记忆表（阶段一已建）；求值图、依赖追踪、失效传播（阶段二待做） | ✅ 已建（M5 阶段一）                                       |
+| `ntex-incremental`       | 段落级指纹哈希 + 记忆表（阶段一）+ 依赖登记/失效传播原语（阶段二：`DependencySet`/`get_incremental`/`invalidate`）；求值图待做 | ✅ 已建（M5 阶段一 + 阶段二原语）                     |
 | `ntex-io`                | VFS、aux 增量                                                                                                                | ✅ 已建（RFC-3：Vfs trait + LocalVfs/MemVfs + 读写原语）        |
 | `ntex-backend`           | PDF/Skia/WebGPU 后端 trait + 实现                                                                                             | 未建（M8）                                                |
 | `ntex-cli` / `ntex-wasm` | 命令行 / WASM 前端                                                                                                             | 未建（M9）                                                |

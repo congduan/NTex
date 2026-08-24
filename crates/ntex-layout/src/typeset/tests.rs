@@ -1378,4 +1378,31 @@ mod tests {
         ts.typeset("abc\\par def").unwrap();
         assert_eq!(ts.take_incremental_stats(), ntex_incremental::CacheStats::default());
     }
+
+    #[test]
+    fn invalidate_by_deps_empty_and_disabled_are_noop() {
+        // 失效传播入口的保守边界：未开启缓存 → 0；空 mutated → 0。
+        let mut ts = Typesetter::with_metrics(metrics);
+        ts.typeset("abc\\par def").unwrap();
+        assert_eq!(ts.invalidate_by_deps(&ntex_incremental::DependencySet::new()), 0);
+
+        ts.enable_incremental(16);
+        ts.typeset("aaa\\par bbb\\par ccc").unwrap(); // 入库（当前空依赖）
+        ts.take_incremental_stats(); // 丢弃冷启动统计
+
+        // 条目当前以"空依赖"入库：任何 mutated 都不该误驱逐（求值图未登记依赖前，
+        // 失效传播保守地不碰任何条目，避免未接入依赖的段落被误判过期）。
+        let billed = ts.invalidate_by_deps(&{
+            let mut d = ntex_incremental::DependencySet::new();
+            d.record(1, 100); // 假设某宏版本涨到 100
+            d
+        });
+        assert_eq!(
+            billed, 0,
+            "空依赖条目不因 mutated 被驱逐（依赖登记待求值图接入）"
+        );
+        let s = ts.take_incremental_stats();
+        assert_eq!(s.invalids, 0);
+        assert_eq!(s.len, 3, "缓存内容保留");
+    }
 }
