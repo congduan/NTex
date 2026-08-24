@@ -29,12 +29,15 @@ use ntex_core::{FontLoader, Primitive, TokenSink};
 use ntex_font::{FontMetrics, LigKern};
 
 use crate::hyphen::PatternTrie;
+use crate::incremental::paragraph_fingerprint;
+use crate::incremental::CachedParagraph;
 use crate::linebreak::knuth_plass;
 use crate::node::{
     hbox_dimensions, hpack, split_vbox, vbox_dimensions, vpack, BoxKind, BoxNode, FontId, Node,
     GLUE_ORDER_FIL, GLUE_ORDER_FILL,
 };
 use crate::page::PageBuilder;
+use ntex_incremental::ParagraphCache;
 
 /// 模式（TeX 模式状态机的 M3-2 子集 + M4 数学）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -442,6 +445,11 @@ struct NodeBuilder {
     marks_split_bot: std::collections::HashMap<i64, String>,
     /// ETRIP 第二波：`\lastbox` 摘下的盒子（TeX 语义：供下一个 `\box`/`\copy` 使用）。
     lastbox_hold: Option<BoxNode>,
+    /// M5 增量：段落折行记忆表（`Typesetter::enable_incremental` 打开后 Some；
+    /// None = 关闭，保持既有行为）。经 `Rc<RefCell>` 与
+    /// [`crate::typeset::Typesetter`] 共享，跨多次改装调用（编辑 → 重排）存活，
+    /// 从而复用来改动段落的折行结果。
+    paragraph_cache: Option<Rc<RefCell<ParagraphCache<CachedParagraph>>>>,
 }
 
 /// 断字候选字符：ASCII 字母（catcode 11 的近似；ligature/非字母不参与断字 run）。
@@ -450,12 +458,18 @@ fn is_alpha(charcode: u32) -> bool {
 }
 
 impl NodeBuilder {
+    #[cfg(test)]
     fn new(fonts: Fonts) -> Self {
-        Self::with_pagination(fonts, false)
+        Self::with_pagination(fonts, false, None)
     }
 
     /// 创建构建器；`pagination` 打开 M3-5-2 断页（自动分页 + parskip + 收尾冲页）。
-    fn with_pagination(fonts: Fonts, pagination: bool) -> Self {
+    /// `paragraph_cache`：M5 增量记忆表（None = 关闭）。
+    fn with_pagination(
+        fonts: Fonts,
+        pagination: bool,
+        paragraph_cache: Option<Rc<RefCell<ParagraphCache<CachedParagraph>>>>,
+    ) -> Self {
         // plain 格式 \sfcode 默认（TeXbook p.75）：.,?! = 3000、: = 2000、; = 1500、, = 1250
         let mut sfcodes = [1000u32; 256];
         for (c, v) in [
@@ -511,6 +525,7 @@ impl NodeBuilder {
             marks_split_first: std::collections::HashMap::new(),
             marks_split_bot: std::collections::HashMap::new(),
             lastbox_hold: None,
+            paragraph_cache,
         }
     }
 

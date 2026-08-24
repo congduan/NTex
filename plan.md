@@ -13,8 +13,9 @@
 | M3 排版核心       | ✅ M3-1\~M3-4 完成（58+ 用例）；**M3-5 DVI 写出 +** **`\shipout`** **+ 断页 DP + lig/kern +** **`\sfcode`** **+** **`\output`** **例程/box255** 完成（dvipdfmx 验收 + 与 TeX 差分对照）；**RFC-3 VFS + 副作用模型落地**（10 原语走 `ntex-io` VFS，延迟写入 shipout 边界提交）；**`.fmt`** **v1 内存快照**（`ntex-format` 确定性编码 + roundtrip）                     |
 | M4 数学 + e-TeX | ✅ **全部完成**：数学模式状态机（`$`/`$$`、8 类原子、spacing 表、上下标、字阶）、分式/根式/定界符、样式原语、fontdimen 数学参数 + 数学字体族、显示数学细化、Liang 断字、错误模型、e-TeX 核心 + 扩展（`\protected`/`\ifdefined`/`\ifcsname`/`\unless`/`\numexpr`/`\detokenize`/`\unexpanded`/`\eTeXversion`/`\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens`）；验收 **ETRIP 全绿** 待冲 |
 | 输出端           | 🟢 正式 PDF 后端可用（`ntex-pdf`：DVI → PDF 直出 + Type1 嵌入，替换临时 Helvetica 切片；demo 两页与 dvipdfmx 渲染一致）                                                                                                                                                                                                                |
+| M5 增量计算      | 🟡 阶段一完成（段落级缓存 + 指纹哈希 1454x）；阶段二（求值图/依赖追踪/失效传播）待做（§7）                                                                                                                                                                                                          |
 
-**下一步**：**ETRIP 冲刺**（管线已通，pass2 逐段推进）+ 性能 backlog **P1**（热路径消分配 / 修通 ntex 驱动基准补测吞吐）。
+**下一步**：**ETRIP 冲刺**（管线已通，pass2 逐段推进）+ 性能 backlog **P1**（热路径消分配 / 修通 ntex 驱动基准补测吞吐）→ 随后按 §7 阶段二推进 M5 求值图。
 
 ***
 
@@ -430,13 +431,36 @@
 
 **目标**：编辑体验级的增量重算。
 
+### 阶段一：段落级记忆化（最小可行增量管线）—— ✅ 2026-08-24 完成
+
+以**段落**为缓存边界，把折行计算的记忆化独立成一个可量化的最小环路：改 1 字只需
+对受影响段重算，其余段指纹命中即复用已物化行盒。
+
+- [x] **`ntex-incremental` crate**（新）：128 位内容指纹（`Fingerprint`/`Fnv1a` 双车道）+
+  有界段落记忆表（`ParagraphCache<T>`，满时驱逐最旧 + 命中/未命中统计）
+- [x] **段落级指纹**（`ntex-layout/src/incremental.rs`）：`paragraph_fingerprint` 覆盖
+  折行输入（最终水平列表 + `\hsize` + `\tolerance`），节点按固定变体次序逐字段喂入；
+  断字模式表/异常词表/字体度量已物化进 discretionary 节点 → 随指纹自然失效
+- [x] **缓存接入 `close_paragraph`**（`typeset/paragraph.rs`）：指纹命中直接复用行盒，
+  未命中走 Knuth-Plass 后入库；命中/未命中行为逐位一致（`CachedParagraph` 持有
+  行盒 + 末行自然宽度）
+- [x] **Typesetter 开关 API**：`enable_incremental(cap)` + `take_incremental_stats()`
+  （默认关闭，`stats` 为 0，零回归风险）
+- [x] **基准**（`ntex-bench incremental-paragraph`）：P=40 段文档，全量逐段跑
+  Knuth-Plass 3.319ms vs 增量 P 段指纹+命中 0.002ms → **≈ 1454x**（远超 100x 目标，
+  已达 plan.md §0 的 M5 量化验收口径）
+- [x] 增量契约测试：`incremental_cache_reuses_unchanged_paragraphs` /
+  `incremental_cache_changed_paragraph_misses_only` / 默认关闭 stats 为 0 —— 全绿
+
+### 阶段二：求值图 + 依赖追踪 + 失效传播（M5 后续）
+
 - [ ] 求值图：`Expand(source, snapshot) → (tokens, snapshot')` 纯函数化
 - [ ] 依赖追踪：记录每个结果依赖的 catcode/宏定义/计数器/上游段
 - [ ] 失效传播：编辑定位 → 只重算失效子图 → Box 级缓存复用
 - [ ] 副作用边界：`\write` 延迟到 `\shipout`；aux/toc 增量更新与去重合并
 - [ ] `\the\count` 等全局读 → 数据依赖登记（防缓存失效错误）
 - [ ] `.aux`/`.toc` 增量；两次编译收敛语义不变
-- [ ] **基准**：改 1 字 → 重算耗时 vs 全量重编（目标：差 ≥ 100x）
+- [ ] 端到端增量基准：改 1 字（整文档路径）→ 重算耗时 vs 全量重编
 
 **验收**：增量结果与全量重编逐位一致（随机编辑模糊测试）。
 **风险**：副作用漏追踪 → 缓存错 → 必须用"增量 vs 全量 diff"作 CI 常驻检查。
@@ -512,7 +536,7 @@
 | `ntex-pdf`               | **正式 DVI → PDF 后端**：DVI 解析 + PDF 1.4 写出 + Type1(PFB) 嵌入；替换临时切片                                                            | ✅ 已建（M8）                                              |
 | `ntex-font`              | TFM/OFM、ttf-parser、HarfBuzz 整形、整形缓存                                                                                       | ✅ 已建（M3-4：TFM 解析 + `\font` 加载 + 缩放；ttf/HarfBuzz 待 M9） |
 | `ntex-format`            | .fmt 序列化/反序列化（v1 快照已完成；v2 mmap 零拷贝 + 字节码固化 + 部分求值）                                                                        | ✅ 已建（M3 收尾：v1 内存快照；v2 待 M7）                           |
-| `ntex-incremental`       | 求值图、依赖追踪、失效传播                                                                                                             | 未建（M5）                                                |
+| `ntex-incremental`       | 段落级指纹哈希 + 记忆表（阶段一已建）；求值图、依赖追踪、失效传播（阶段二待做） | ✅ 已建（M5 阶段一）                                       |
 | `ntex-io`                | VFS、aux 增量                                                                                                                | ✅ 已建（RFC-3：Vfs trait + LocalVfs/MemVfs + 读写原语）        |
 | `ntex-backend`           | PDF/Skia/WebGPU 后端 trait + 实现                                                                                             | 未建（M8）                                                |
 | `ntex-cli` / `ntex-wasm` | 命令行 / WASM 前端                                                                                                             | 未建（M9）                                                |

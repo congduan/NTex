@@ -22,8 +22,33 @@ impl NodeBuilder {
             stretch_order: if pf.stretch != 0 { GLUE_ORDER_FIL } else { 0 },
             shrink_order: 0,
         });
-        let lines = knuth_plass(&children, self.params.hsize, self.params.tolerance);
+
+        // M5 增量：折行（Knuth-Plass + 行盒物化）按（最终列表, hsize, tolerance）
+        // 记忆化。同一输入指纹 ⇒ 同一折行结果，命中直接复用行盒，仅重算受影响段落。
+        // 指纹覆盖断字结果（模式表/异常词表/字体度量已物化进 discretionary 节点），
+        // 故断字/字体变化会因指纹不同而自然失效。默认关闭（paragraph_cache=None）。
+        let key = paragraph_fingerprint(&children, self.params.hsize, self.params.tolerance);
+        let cached: Option<CachedParagraph> = self
+            .paragraph_cache
+            .as_ref()
+            .and_then(|c| c.borrow_mut().get(key).cloned());
+        if let Some(out) = cached {
+            return self.push_paragraph(&out);
+        }
+        let out = self.break_paragraph(&children);
+        if let Some(cache) = &self.paragraph_cache {
+            cache.borrow_mut().put(key, out.clone());
+        }
+        self.push_paragraph(&out)
+    }
+
+    /// M5 增量：折行的纯计算部分（Knuth-Plass + 行盒物化），不落地到列表。
+    /// 未命中时结果同时用于入库与推送；命中时复用。
+    fn break_paragraph(&self, children: &[Node]) -> CachedParagraph {
+        let lines = knuth_plass(children, self.params.hsize, self.params.tolerance);
+        let mut line_boxes: Vec<BoxNode> = Vec::with_capacity(lines.len());
         let mut last_natural: Option<i64> = None;
+        let hsize = self.params.hsize;
         for (s, e) in lines {
             // 断点胶水已在折行时排除；末行保留 \parfillskip（fil 拉伸填满行宽）。
             // discretionary 物化：行首补前一断点的 post、行内用 replace、行尾断点补 pre
@@ -44,9 +69,20 @@ impl NodeBuilder {
             }
             last_natural = Some(hbox_dimensions(&line).width);
             // 行盒 = `\hbox to \hsize`（tex.web line_break：恰好 hsize 宽，胶水拉伸/收缩）
-            self.push_box(Node::Box(hpack(&line, self.params.hsize)));
+            line_boxes.push(hpack(&line, hsize));
         }
-        last_natural
+        CachedParagraph {
+            line_boxes,
+            last_natural,
+        }
+    }
+
+    /// M5 增量：把行盒推入当前垂直列表（含行间胶水；与缓存命中/未命中行为一致）。
+    fn push_paragraph(&mut self, out: &CachedParagraph) -> Option<i64> {
+        for b in &out.line_boxes {
+            self.push_box(Node::Box(b.clone()));
+        }
+        out.last_natural
     }
 
     /// M4-6 断字：对连续字母 run（同字体、ASCII 字母）调用模式表计算断点，

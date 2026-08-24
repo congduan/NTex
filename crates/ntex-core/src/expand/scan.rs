@@ -563,10 +563,7 @@ impl Expander {
             return Ok(tokens);
         }
         let mut depth = 0usize;
-        loop {
-            let Some((fetched, _)) = self.fetch()? else {
-                break;
-            };
+        while let Some((fetched, _)) = self.fetch()? {
             let t = self.resolve_group_char(fetched);
             match t.catcode() {
                 Some(Catcode::BeginGroup) => {
@@ -647,10 +644,7 @@ impl Expander {
         // TeX get_x_token 语义：展开可展开 cs（`\ifdim\csname fontcharwd\endcsname...`）。
         // 未定义 cs 报 "! Undefined control sequence." 并当 \relax 继续。
         // 展开结果压回输入流顶，循环直至不可展开项或数量原语。
-        loop {
-            let Some(csid) = self.peek_csid()? else {
-                break;
-            };
+        while let Some(csid) = self.peek_csid()? {
             if matches!(self.eqtb.slot(csid), EqSlot::Undefined) {
                 self.fetch()?; // 消费未定义 cs
                 let _ = self

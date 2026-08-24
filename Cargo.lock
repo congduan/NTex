@@ -188,6 +188,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "ntex-incremental",
+ "ntex-layout",
  "ntex-test-support",
  "tempfile",
 ]
@@ -232,6 +234,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ntex-incremental"
+version = "0.1.0"
+
+[[package]]
 name = "ntex-io"
 version = "0.1.0"
 
@@ -241,6 +247,7 @@ version = "0.1.0"
 dependencies = [
  "ntex-core",
  "ntex-font",
+ "ntex-incremental",
  "ntex-io",
 ]
 

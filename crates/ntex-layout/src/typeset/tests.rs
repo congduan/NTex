@@ -1327,4 +1327,55 @@ mod tests {
         }
         assert_eq!(as_char(&l1.children[11]), b'n' as u32);
     }
+
+    // ---------- M5 增量：段落折行记忆化 ----------
+
+    #[test]
+    fn incremental_cache_reuses_unchanged_paragraphs() {
+        // 用可复现的三个独立段落构造（避免宏展开差异干扰指纹）：直接写三段。
+        let doc = "abcdef\\par xyz\\par qw";
+        let mut ts = Typesetter::with_metrics(metrics);
+
+        // 关闭缓存：输出作为基线
+        let baseline = ts.typeset(doc).unwrap();
+
+        // 打开缓存，第一次排版（冷：全未命中，填表）
+        ts.enable_incremental(16);
+        let first = ts.typeset(doc).unwrap();
+        assert_eq!(first, baseline, "带缓存首次排版输出必须与无缓存一致");
+        let cold = ts.take_incremental_stats();
+        // 3 段，全部未命中
+        assert_eq!(cold.misses, 3, "冷启动 3 段均未命中：{cold:?}");
+        assert_eq!(cold.hits, 0);
+
+        // 第二次排版（温）：同指纹段落全部命中折行缓存（跳过 Knuth-Plass）
+        let second = ts.typeset(doc).unwrap();
+        assert_eq!(second, baseline, "带缓存二次排版输出必须与基线一致");
+        let warm = ts.take_incremental_stats();
+        assert_eq!(warm.hits, 3, "温启动 3 段应全部命中：{warm:?}");
+        assert_eq!(warm.misses, 0);
+    }
+
+    #[test]
+    fn incremental_cache_changed_paragraph_misses_only() {
+        // 编辑场景：第二段改 1 字 → 仅改动段未命中，未改动段命中。
+        let mut ts = Typesetter::with_metrics(metrics);
+        ts.enable_incremental(16);
+        ts.typeset("aaa\\par bbb\\par ccc").unwrap();
+        ts.take_incremental_stats(); // 丢弃冷启动统计
+
+        // 改动第二段（bbb→bxb）：第 1、3 段指纹不变 → 命中
+        ts.typeset("aaa\\par bxb\\par ccc").unwrap();
+        let s = ts.take_incremental_stats();
+        assert_eq!(s.hits, 2, "未改动段（1、3）应命中：{s:?}");
+        assert_eq!(s.misses, 1, "仅改动段（2）重算：{s:?}");
+    }
+
+    #[test]
+    fn incremental_disabled_by_default_stats_zero() {
+        // 默认关闭：统计空、输出与开启前一致。
+        let mut ts = Typesetter::with_metrics(metrics);
+        ts.typeset("abc\\par def").unwrap();
+        assert_eq!(ts.take_incremental_stats(), ntex_incremental::CacheStats::default());
+    }
 }

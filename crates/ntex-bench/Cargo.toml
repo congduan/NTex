@@ -13,6 +13,8 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+ntex-incremental.workspace = true
+ntex-layout.workspace = true
 ntex-test-support.workspace = true
 tempfile.workspace = true
 

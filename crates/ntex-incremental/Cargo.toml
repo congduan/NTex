@@ -1,0 +1,10 @@
+[package]
+name = "ntex-incremental"
+description = "NTex 增量计算（M5）：段落级记忆表 + 128 位指纹哈希"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true

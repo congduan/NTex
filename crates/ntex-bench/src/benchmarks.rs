@@ -189,8 +189,119 @@ impl Benchmark for IncrementalEdit {
     }
 }
 
+// ---------- 5. 段落折行计算：全量 vs 增量命中 ----------
+
+/// 段落折行层的增量收益量化（M5）：对同一段水平列表，比较
+/// 全量 `knuth_plass` 折行耗时 vs 增量路径（内容指纹 + 记忆表命中）耗时。
+///
+/// 语义说明：M5 的真实收益在**文档级**——编辑改动原子（如改 1 字）只影响个别
+/// 段落，全量对 P 段全部跑 Knuth-Plass，增量只做 P 次 O(n) 指纹 + 查表（命中
+/// 复用已物化行盒），仅改动段重算。本基准构造 P 段等长文档：
+///
+/// - 全量：对 P 段逐段跑 Knuth-Plass（冷排版）；
+/// - 增量：P 段均已入缓存，仅对每段做指纹 + 查表（命中即跳过折行动态规划）。
+///
+/// 比值 ≈ P×折行 / P×指纹+查表：折行 O(段长×断点候选) 远贵于指纹 O(段长)，
+/// 段数越多、段越长收益越大。此度量专注"折行计算"层，文档级宏展开/求值跳过
+/// 属 M5 后续（求值图），届时端到端体现。
+pub struct IncrementalParagraph;
+
+impl Benchmark for IncrementalParagraph {
+    fn name(&self) -> &'static str {
+        "incremental-paragraph"
+    }
+    fn description(&self) -> &'static str {
+        "段落折行层：P 段全量 Knuth-Plass vs P 段指纹+命中复用"
+    }
+    fn run(&self, _driver: &dyn EngineDriver, opts: &BenchOptions) -> Result<BenchResult> {
+        use ntex_incremental::{Fingerprint, ParagraphCache};
+        use ntex_layout::incremental::paragraph_fingerprint;
+        use ntex_layout::knuth_plass;
+        use ntex_layout::node::{FontId, Node, GLUE_ORDER_FIL};
+
+        const PARAS: usize = 40; // 40 段
+        const WORDS: usize = 200; // 段长 200 词 × 8 字母 ≈ 1600 字符，约 10 行
+        const HSIZE: i64 = 50 * 1000; // 词间距 2500（sp），行约 20 词
+        const TOLERANCE: i64 = 200;
+
+        // 构造 P 段"内容各异的水平列表"（与真实文档同构），并算好各自指纹。
+        fn make_para(seed: u32) -> Vec<Node> {
+            let mut list: Vec<Node> = Vec::new();
+            for w in 0..WORDS {
+                for k in 0..8u32 {
+                    let ch = ((w as u32 * 7 + seed * 3 + k) % 26) + b'a' as u32;
+                    list.push(Node::Char {
+                        font: FontId(0),
+                        charcode: ch,
+                        width: 500 + i64::from(ch),
+                        height: 6000,
+                        depth: 1500,
+                    });
+                }
+                if w + 1 < WORDS {
+                    list.push(Node::Glue {
+                        width: 2500,
+                        stretch: 0,
+                        shrink: 0,
+                        stretch_order: GLUE_ORDER_FIL,
+                        shrink_order: 0,
+                    });
+                }
+            }
+            list
+        }
+        let paras: Vec<Vec<Node>> = (0..PARAS).map(|i| make_para(i as u32)).collect();
+        let keys: Vec<Fingerprint> = paras
+            .iter()
+            .map(|p| paragraph_fingerprint(p, HSIZE, TOLERANCE))
+            .collect();
+
+        // 全量：每次对 P 段逐段跑 Knuth-Plass（冷排版全部段落）。
+        let full = measure(opts.warmup, opts.iterations, || {
+            let mut total = 0usize;
+            for p in &paras {
+                total = total.wrapping_add(knuth_plass(p, HSIZE, TOLERANCE).len());
+            }
+            let _ = std::hint::black_box(total);
+            Ok(())
+        })?;
+
+        // 增量命中路径：P 段全部入缓存，仅做指纹 + 查表，命中即跳过折行。
+        let mut cache: ParagraphCache<usize> = ParagraphCache::new(4096);
+        for (i, k) in keys.iter().enumerate() {
+            cache.put(*k, i);
+        }
+        let inc = measure(opts.warmup, opts.iterations, || {
+            let mut total = 0usize;
+            for k in &keys {
+                if let Some(v) = std::hint::black_box(cache.get(*k)) {
+                    total += *v;
+                }
+            }
+            let _ = std::hint::black_box(total);
+            Ok(())
+        })?;
+
+        let ratio = full.median_ns() as f64 / inc.median_ns().max(1) as f64;
+        let note = format!(
+            "全量 {} 段折行 {:.3}ms / 增量{} 段指纹+命中 {:.3}ms（单次文档排印比值 ≈ {ratio:.0}x）",
+            PARAS,
+            full.median_ns() as f64 / 1e6,
+            PARAS,
+            inc.median_ns() as f64 / 1e6,
+        );
+        Ok(BenchResult::Measured { stats: inc, note })
+    }
+}
+
 /// 全量基准列表。
-pub const ALL: &[&dyn Benchmark] = &[&LatexFmtLoad, &Doc300, &ExpandThroughput, &IncrementalEdit];
+pub const ALL: &[&dyn Benchmark] = &[
+    &LatexFmtLoad,
+    &Doc300,
+    &ExpandThroughput,
+    &IncrementalEdit,
+    &IncrementalParagraph,
+];
 
 /// 按名称查找基准。
 pub fn find(name: &str) -> Option<&'static dyn Benchmark> {

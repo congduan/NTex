@@ -51,6 +51,10 @@ pub struct Typesetter {
     /// 上一次 `finish` 收走的终端转录（`\message`/`\show`/`\write16` 累积；
     /// finish 的 take_sink 会把 NodeBuilder 摘走，先在此留档）。
     last_transcript: String,
+    /// M5 增量：段落折行记忆表。`enable_incremental` 打开后由每次排版创建的
+    /// NodeBuilder 共享（同一 `Rc<RefCell>`），跨多次 `typeset*` 调用存活，
+    /// 复用来改动段落的折行结果；`None` = 关闭（默认）。
+    paragraph_cache: Option<Rc<RefCell<ParagraphCache<CachedParagraph>>>>,
 }
 
 impl Typesetter {
@@ -68,6 +72,7 @@ impl Typesetter {
                 space: |_| Glue::ZERO,
             },
             last_transcript: String::new(),
+            paragraph_cache: None,
         }
     }
 
@@ -116,6 +121,36 @@ impl Typesetter {
             expander: Expander::new(),
             fonts: Fonts::Tfm(Rc::new(RefCell::new(Vec::new()))),
             last_transcript: String::new(),
+            paragraph_cache: None,
+        }
+    }
+
+    /// M5 增量：打开段落折行记忆表（容量 `capacity` 段）。
+    /// 之后每次排版（`typeset*`）共享同一缓存，改动一处重排时，未改动段落
+    /// 的折行结果会被复用（Knuth-Plass 跳过），仅重算受影响段落。
+    pub fn enable_incremental(&mut self, capacity: usize) {
+        self.paragraph_cache =
+            Some(Rc::new(RefCell::new(ParagraphCache::new(capacity))));
+    }
+
+    /// M5 增量：关闭段落折行记忆表（恢复纯全量重排）。
+    pub fn disable_incremental(&mut self) {
+        self.paragraph_cache = None;
+    }
+
+    /// M5 增量：取最近一轮（编辑轮次）折行缓存命中统计。返回后仅清零计数器，
+    /// **保留已缓存内容**（供下一轮复用）。缓存未开启时返回全零。
+    pub fn take_incremental_stats(&mut self) -> ntex_incremental::CacheStats {
+        let Some(cache) = &self.paragraph_cache else {
+            return ntex_incremental::CacheStats::default();
+        };
+        cache.borrow_mut().take_stats()
+    }
+
+    /// M5 增量：清空记忆表内容与统计（容量保留）。
+    pub fn reset_incremental(&mut self) {
+        if let Some(cache) = &self.paragraph_cache {
+            cache.borrow_mut().clear();
         }
     }
 
@@ -123,7 +158,11 @@ impl Typesetter {
     pub fn typeset(&mut self, text: &str) -> Result<Vec<Node>> {
         self.install_font_loader();
         self.expander
-            .set_sink(Box::new(NodeBuilder::new(self.fonts.clone())));
+            .set_sink(Box::new(NodeBuilder::with_pagination(
+                self.fonts.clone(),
+                false,
+                self.paragraph_cache.clone(),
+            )));
         self.expander.run_source(text)?;
         self.finish().map(|o| o.main)
     }
@@ -132,7 +171,11 @@ impl Typesetter {
     pub fn typeset_bytes(&mut self, bytes: impl Into<Vec<u8>>) -> Result<Vec<Node>> {
         self.install_font_loader();
         self.expander
-            .set_sink(Box::new(NodeBuilder::new(self.fonts.clone())));
+            .set_sink(Box::new(NodeBuilder::with_pagination(
+                self.fonts.clone(),
+                false,
+                self.paragraph_cache.clone(),
+            )));
         self.expander.feed_source(bytes);
         self.expander.run()?;
         self.finish().map(|o| o.main)
@@ -161,6 +204,7 @@ impl Typesetter {
         self.expander.set_sink(Box::new(NodeBuilder::with_pagination(
             self.fonts.clone(),
             true,
+            self.paragraph_cache.clone(),
         )));
         self.expander.run_source(text)?;
         let out = self.finish()?;
