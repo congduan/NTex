@@ -1644,6 +1644,50 @@ ab5c}").unwrap();
         assert_eq!(expand(r"\scantokens{a\def\y{b}\y}").unwrap(), "ab");
     }
 
+    // ---------- ETRIP 冲刺：e-TeX marks 族查询（可展开原语） ----------
+
+    #[test]
+    fn marks_queries_expand_empty_with_default_sink() {
+        // 默认 TokenSink 无 marks 状态：六个查询原语展开为空串（不报错、双轨一致）
+        for prim in [
+            "topmarks",
+            "firstmarks",
+            "botmarks",
+            "splitfirstmarks",
+            "splittopmarks",
+            "splitbotmarks",
+        ] {
+            let src = format!("\\{prim}3");
+            assert_eq!(expand(&src).unwrap(), "", "\\{prim} 应展开为空");
+        }
+    }
+
+    #[test]
+    fn marks_query_scans_class_number() {
+        // class 号按 TeX scan_int 解析（正负号/可选 `=`）
+        assert_eq!(expand("\\topmarks -5").unwrap(), "");
+        assert_eq!(expand("\\firstmarks=7").unwrap(), "");
+        // 缺数字：report_missing_number 恢复为 0，后续 token 照常处理
+        let mut e = Expander::new();
+        e.run_source("\\botmarks x").unwrap();
+        assert!(e.transcript().contains("Missing number"), "转录：{}", e.transcript());
+        let out: String = e
+            .output()
+            .iter()
+            .map(|t| t.charcode().and_then(char::from_u32).unwrap_or('\u{FFFD}'))
+            .collect();
+        assert_eq!(out, "x", "缺数字恢复后 x 继续输出");
+    }
+
+    #[test]
+    fn mark_event_produces_no_output() {
+        // \mark/\marks<n> 是 sink 事件（布局侧记录状态），不产生字符输出
+        assert_eq!(expand("\\mark{Hello}").unwrap(), "");
+        assert_eq!(expand("\\marks2{Hi world}").unwrap(), "");
+        // core 不保存 marks 状态：\mark 后查询仍为空（状态委托给布局 sink）
+        assert_eq!(expand("\\mark{Hello}\\topmarks0").unwrap(), "");
+    }
+
     // ==== 临时复现：\muexpr 现状（待删） ====
     #[test]
     fn tmp_muexpr_repro() {

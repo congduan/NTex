@@ -3,6 +3,7 @@ mod tests {
     use super::*;
     use crate::node::BoxKind;
     use ntex_core::SP_PER_PT;
+    use ntex_core::TokenSink;
 
     /// TRIP 冲刺调试（临时）：trip.tex 前段逐行二分。
     #[test]
@@ -1372,5 +1373,83 @@ mod tests {
             assert_eq!(as_char(&l1.children[k + 2]), ch as u32, "字母不断字");
         }
         assert_eq!(as_char(&l1.children[11]), b'n' as u32);
+    }
+
+    // ---------- ETRIP 冲刺：e-TeX marks 族状态语义 ----------
+
+    /// 无字体依赖的 NodeBuilder（marks 状态在 NodeBuilder 上）。
+    fn marks_builder() -> NodeBuilder {
+        NodeBuilder::new(Fonts::Fn {
+            metrics: |_, _| (0, 0, 0),
+            space: |_| Glue::ZERO,
+        })
+    }
+
+    #[test]
+    fn marks_record_first_and_bot() {
+        let mut b = marks_builder();
+        b.mark(Some(1), "first".into()).unwrap();
+        b.mark(Some(1), "second".into()).unwrap();
+        b.mark(Some(1), "third".into()).unwrap();
+        // first = 首次出现；bot = 末次出现；top 初始为空
+        assert_eq!(b.firstmarks(1), "first");
+        assert_eq!(b.botmarks(1), "third");
+        assert_eq!(b.topmarks(1), "");
+        // 未出现的 class 查询为空
+        assert_eq!(b.firstmarks(2), "");
+        assert_eq!(b.botmarks(2), "");
+        assert_eq!(b.topmarks(2), "");
+        // split* 接口预留（\vsplit 未实现）→ 恒空
+        assert_eq!(b.splitfirstmarks(1), "");
+        assert_eq!(b.splittopmarks(1), "");
+        assert_eq!(b.splitbotmarks(1), "");
+    }
+
+    #[test]
+    fn mark_aliases_class_zero() {
+        // \mark ≡ \marks0（class=None 映射 0）
+        let mut b = marks_builder();
+        b.mark(None, "aliased".into()).unwrap();
+        assert_eq!(b.firstmarks(0), "aliased");
+        assert_eq!(b.botmarks(0), "aliased");
+        // 显式 \marks0 与 \mark 共享 class 0 状态
+        b.mark(Some(0), "explicit".into()).unwrap();
+        assert_eq!(b.firstmarks(0), "aliased", "first 保持首次出现");
+        assert_eq!(b.botmarks(0), "explicit", "bot 更新为末次出现");
+    }
+
+    #[test]
+    fn rotate_marks_inherits_bot_as_top() {
+        let mut b = marks_builder();
+        b.mark(Some(1), "p1-first".into()).unwrap();
+        b.mark(Some(1), "p1-bot".into()).unwrap();
+        b.rotate_marks();
+        // 断页轮转：top = 旧 bot；first 清空；bot = top（继承）
+        assert_eq!(b.topmarks(1), "p1-bot");
+        assert_eq!(b.firstmarks(1), "");
+        assert_eq!(b.botmarks(1), "p1-bot");
+        // 新页新 marks 重新记录
+        b.mark(Some(1), "p2-a".into()).unwrap();
+        b.mark(Some(1), "p2-b".into()).unwrap();
+        assert_eq!(b.firstmarks(1), "p2-a");
+        assert_eq!(b.botmarks(1), "p2-b");
+        assert_eq!(b.topmarks(1), "p1-bot", "top 保持上一页继承值");
+        // 再次轮转
+        b.rotate_marks();
+        assert_eq!(b.topmarks(1), "p2-b");
+        assert_eq!(b.firstmarks(1), "");
+        assert_eq!(b.botmarks(1), "p2-b");
+    }
+
+    #[test]
+    fn marks_query_empty_without_state() {
+        // 从未 mark 过的 class：全部查询为空串（不 panic）
+        let b = marks_builder();
+        assert_eq!(b.topmarks(0), "");
+        assert_eq!(b.firstmarks(0), "");
+        assert_eq!(b.botmarks(0), "");
+        assert_eq!(b.splitfirstmarks(0), "");
+        assert_eq!(b.splittopmarks(0), "");
+        assert_eq!(b.splitbotmarks(0), "");
     }
 }

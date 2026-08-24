@@ -340,6 +340,39 @@ impl Expander {
                 let text = self.expand_to_string(&toks)?;
                 self.sink.mark(class, text)
             }
+            // ETRIP 冲刺：e-TeX marks 族查询原语（可展开）。主循环/\edef 等执行上下文
+            // 走此处（emit_tokens 压回输入流）；扫描上下文（宏参数收集/\edef 等）由
+            // expand_once 的同构分支处理——两处语义一致：scan_number 取 class →
+            // sink 查询 → 文本转字符 token（空格 → Space，其余 → Other）。
+            Primitive::TopMarks
+            | Primitive::FirstMarks
+            | Primitive::BotMarks
+            | Primitive::SplitFirstMarks
+            | Primitive::SplitTopMarks
+            | Primitive::SplitBotMarks => {
+                let class = self.scan_number()?;
+                let text = match prim {
+                    Primitive::TopMarks => self.sink.topmarks(class),
+                    Primitive::FirstMarks => self.sink.firstmarks(class),
+                    Primitive::BotMarks => self.sink.botmarks(class),
+                    Primitive::SplitFirstMarks => self.sink.splitfirstmarks(class),
+                    Primitive::SplitTopMarks => self.sink.splittopmarks(class),
+                    Primitive::SplitBotMarks => self.sink.splitbotmarks(class),
+                    _ => unreachable!("marks 族已在上层 match 穷举"),
+                };
+                self.emit_tokens(
+                    text.bytes()
+                        .map(|b| {
+                            let cat = if b == b' ' {
+                                Catcode::Space
+                            } else {
+                                Catcode::Other
+                            };
+                            Token::char(cat, u32::from(b))
+                        })
+                        .collect(),
+                )
+            }
             // ETRIP 冲刺：\showbox<n>：显示盒子寄存器内容（sink 格式化到转录）
             Primitive::ShowBox => {
                 let idx = self.scan_register_index()?;
