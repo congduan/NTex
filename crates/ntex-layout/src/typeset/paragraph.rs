@@ -1,6 +1,8 @@
 impl NodeBuilder {
     fn close_paragraph(&mut self) -> Option<i64> {
-        let mut children = self.lists.pop().expect("段落列表");
+        let Some(mut children) = self.lists.pop() else {
+            return None; // 防御：列表栈异常为空（错误恢复弹栈失衡）
+        };
         self.list_modes.pop();
         while children.last().is_some_and(Node::is_discardable) {
             children.pop();

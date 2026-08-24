@@ -84,7 +84,7 @@ impl Expander {
                 self.assign_muskip(idx, val);
             }
             Primitive::Toks => {
-                let val = self.scan_group_contents()?;
+                let val = self.scan_group_contents(Some("toks"))?;
                 self.assign_toks(idx, Arc::from(val));
             }
             _ => unreachable!("exec_register 只处理寄存器原语"),
@@ -293,6 +293,11 @@ impl Expander {
                 | Primitive::HSize
                 | Primitive::Tolerance
                 | Primitive::VSize
+                | Primitive::NullDelimiterSpace
+                | Primitive::ScriptSpace
+                | Primitive::OverfullRule
+                | Primitive::VOffset
+                | Primitive::HOffset
                 | Primitive::TopSkip
                 | Primitive::MaxDepth
                 | Primitive::ParSkip
@@ -328,6 +333,11 @@ impl Expander {
                         Primitive::NewlineChar => ParamKind::NewlineChar,
                         Primitive::DefaultHyphenChar => ParamKind::DefaultHyphenChar,
                         Primitive::DefaultSkewChar => ParamKind::DefaultSkewChar,
+                        Primitive::NullDelimiterSpace => ParamKind::NullDelimiterSpace,
+                        Primitive::ScriptSpace => ParamKind::ScriptSpace,
+                        Primitive::OverfullRule => ParamKind::OverfullRule,
+                        Primitive::VOffset => ParamKind::VOffset,
+                        Primitive::HOffset => ParamKind::HOffset,
                         _ => ParamKind::Mag,
                     };
                     Ok(match self.params.get(kind) {
@@ -341,6 +351,8 @@ impl Expander {
                     let idx = int_param_index(*p).expect("已检查 is_some");
                     Ok(emit_count(self.params.misc[idx]))
                 }
+                // TRIP 冲刺：\the\spacefactor → 活参数实时查询（sink 侧维护；L277/L290/L293）
+                Primitive::SpaceFactor => Ok(emit_count(self.sink.space_factor())),
                 // TRIP：\the\catcode`X → 当前 catcode 值（L295 `\the\catcode`J`）
                 Primitive::Catcode => {
                     let code = self.scan_char_code()?;
@@ -372,6 +384,13 @@ impl Expander {
                     let num =
                         u32::try_from(num).map_err(|_| Error::invalid_input("\\fontdimen 参数号越界"))?;
                     let font = self.scan_font_ident()?;
+                    // TRIP L404：参数号越界 → 报错并返回 0（TeX "Font \X has only N ..."）
+                    if num >= 13 {
+                        let _ = self
+                            .sink
+                            .write16("! Font \\FONT? has only 13 fontdimen parameters.\n".to_string());
+                        return Ok(emit_dimen(0));
+                    }
                     Ok(emit_dimen(self.fontdimen(font, num)))
                 }
                 // \the\fontcharwd/ht/dp/ic<font><char>：字体字符度量分量（sp）
@@ -455,6 +474,15 @@ impl Expander {
                         u8::try_from(byte).map_err(|_| Error::invalid_input("\\delcode 字符码越界"))?;
                     Ok(emit_count(i64::from(
                         self.delcodes.get(&u32::from(byte)).copied().unwrap_or(0x500000),
+                    )))
+                }
+                // TRIP 冲刺：\the\mathcode<num>：字符数学码（无覆盖 = initex 默认）
+                Primitive::MathCode => {
+                    let byte = self.scan_char_code()?;
+                    let byte =
+                        u8::try_from(byte).map_err(|_| Error::invalid_input("\\mathcode 字符码越界"))?;
+                    Ok(emit_count(i64::from(
+                        self.mathcodes.get(&u32::from(byte)).copied().unwrap_or(0x8000),
                     )))
                 }
                 // \the\lccode<char>：字符的小写码
@@ -592,6 +620,14 @@ impl Expander {
                 }
                 None => {
                     self.delcodes.remove(&u32::from(byte));
+                }
+            },
+            SavedValue::MathCode { byte, prev } => match prev {
+                Some(v) => {
+                    self.mathcodes.insert(u32::from(byte), v);
+                }
+                None => {
+                    self.mathcodes.remove(&u32::from(byte));
                 }
             },
             SavedValue::LcCode { byte, prev } => self.lccodes[byte as usize] = prev,

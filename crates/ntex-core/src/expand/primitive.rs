@@ -146,6 +146,22 @@ impl Expander {
                 };
                 self.assign_param(kind, ParamValue::Dimen(v))
             }
+            // TRIP 冲刺：TeX initex 预定义 dimen 内部参数
+            Primitive::NullDelimiterSpace
+            | Primitive::ScriptSpace
+            | Primitive::OverfullRule
+            | Primitive::VOffset
+            | Primitive::HOffset => {
+                let v = self.scan_dimen()?;
+                let kind = match prim {
+                    Primitive::NullDelimiterSpace => ParamKind::NullDelimiterSpace,
+                    Primitive::ScriptSpace => ParamKind::ScriptSpace,
+                    Primitive::OverfullRule => ParamKind::OverfullRule,
+                    Primitive::VOffset => ParamKind::VOffset,
+                    _ => ParamKind::HOffset,
+                };
+                self.assign_param(kind, ParamValue::Dimen(v))
+            }
             Primitive::BaselineSkip | Primitive::LineSkip => {
                 let g = self.scan_glue()?;
                 let kind = if prim == Primitive::BaselineSkip {
@@ -176,14 +192,19 @@ impl Expander {
                 };
                 self.assign_param(kind, ParamValue::Dimen(v))
             }
-            Primitive::TopSkip | Primitive::ParSkip | Primitive::ParFillSkip => {
+            Primitive::TopSkip
+            | Primitive::ParSkip
+            | Primitive::ParFillSkip
+            | Primitive::XSpaceSkip => {
                 let g = self.scan_glue()?;
                 let kind = if prim == Primitive::TopSkip {
                     ParamKind::TopSkip
                 } else if prim == Primitive::ParSkip {
                     ParamKind::ParSkip
-                } else {
+                } else if prim == Primitive::ParFillSkip {
                     ParamKind::ParFillSkip
+                } else {
+                    ParamKind::XSpaceSkip
                 };
                 self.assign_param(kind, ParamValue::Glue(g))
             }
@@ -277,6 +298,8 @@ impl Expander {
             Primitive::HyphenChar => self.exec_hyphenchar(),
             // ETRIP 冲刺：\delcode<num>=<num>（字符定界符码）
             Primitive::DelCode => self.exec_delcode(),
+            // TRIP 冲刺：\mathcode<num>=<num>（字符数学码）
+            Primitive::MathCode => self.exec_mathcode(),
             // ETRIP 冲刺：终端转录
             Primitive::Message => self.exec_message(),
             Primitive::Show => self.exec_show(),
@@ -286,7 +309,7 @@ impl Expander {
             // M3-5-3 输出例程：\output=<general text> 存储 token 列表
             Primitive::Output => {
                 self.expect_equals()?;
-                let val = self.scan_group_contents()?;
+                let val = self.scan_group_contents(Some("output"))?;
                 self.assign_output(Arc::from(val));
                 Ok(())
             }
@@ -336,7 +359,7 @@ impl Expander {
                 } else {
                     None
                 };
-                let toks = self.scan_group_contents()?;
+                let toks = self.scan_group_contents(None)?;
                 let text = self.expand_to_string(&toks)?;
                 self.sink.mark(class, text)
             }
@@ -380,20 +403,20 @@ impl Expander {
             }
             // ETRIP 冲刺：\discretionary{pre}{post}{replace}（断字节点）
             Primitive::Discretionary => {
-                let pre = self.scan_group_contents()?;
-                let post = self.scan_group_contents()?;
-                let replace = self.scan_group_contents()?;
+                let pre = self.scan_group_contents(None)?;
+                let post = self.scan_group_contents(None)?;
+                let replace = self.scan_group_contents(None)?;
                 self.sink.discretionary(pre, post, replace)
             }
             // ETRIP 冲刺：\insert<regnum>{<general text>}（insert 节点；内容只收集不排版）
             Primitive::Insert => {
                 let class = self.scan_register_index()?;
-                let toks = self.scan_group_contents()?;
+                let toks = self.scan_group_contents(None)?;
                 self.sink.insert_node(class, toks)
             }
             // ETRIP 冲刺：\vadjust{<vertical material>}（adjust 节点；内容只收集不排版）
             Primitive::VAdjust => {
-                let toks = self.scan_group_contents()?;
+                let toks = self.scan_group_contents(None)?;
                 self.sink.vadjust(toks)
             }
             // ETRIP 冲刺：\valign/\halign：下一个组为对齐组（组种类 6）
@@ -405,7 +428,7 @@ impl Expander {
             // ETRIP 冲刺：\mathchoice{D}{T}{S}{SS}：收集四个分支（内容不执行）
             Primitive::MathChoice => {
                 for _ in 0..4 {
-                    self.scan_group_contents()?;
+                    self.scan_group_contents(None)?;
                 }
                 Ok(())
             }
@@ -423,7 +446,7 @@ impl Expander {
             Primitive::Span => Ok(()),
             // ETRIP 冲刺：\special{<general text>}：whatsit 节点（内容只收集不排版）
             Primitive::Special => {
-                let toks = self.scan_group_contents()?;
+                let toks = self.scan_group_contents(None)?;
                 let text: String = toks
                     .iter()
                     .filter_map(|t| t.charcode())
@@ -454,6 +477,47 @@ impl Expander {
             Primitive::MathPunct => self.sink.math_class(6),
             Primitive::MathInner => self.sink.math_class(7),
             Primitive::Nonscript => self.sink.primitive(prim),
+            // TRIP 冲刺：\noboundary（数学字符边界抑制；水平/垂直模式 no-op）
+            Primitive::NoBoundary => self.sink.primitive(prim),
+            // TRIP 冲刺：\moveleft/\moveright<dimen><box>（盒子水平位移）
+            Primitive::MoveLeft => {
+                let d = self.scan_dimen()?;
+                self.sink.move_left(d)
+            }
+            Primitive::MoveRight => {
+                let d = self.scan_dimen()?;
+                self.sink.move_right(d)
+            }
+            // TRIP 冲刺：\accent（读音符）。TeX 在数学模式先报错且不扫描数字
+            //（TRIP L396 `\accent\x`），模式判断在布局层，故不预扫描。
+            Primitive::Accent => self.sink.primitive(prim),
+            // TRIP 冲刺：\vfilneg（plain.tex：负 1fil vskip；走 fill_glue kind=6）
+            Primitive::VFilNeg => self.sink.fill_glue(6),
+            // TRIP 冲刺：\hfilneg（plain.tex：负 1fil hskip；走 fill_glue kind=7）
+            Primitive::HFilNeg => self.sink.fill_glue(7),
+            // TRIP 冲刺：\error（plain.tex 宏：errmessage；TRIP 分支中不执行）
+            Primitive::Error => self.sink.primitive(prim),
+            // TRIP 冲刺：\varunit 用作字体单位（plain.tex 字体）；no-op 原语
+            Primitive::VarUnit => Ok(()),
+            // TRIP 冲刺：\spacefactor=<number>（活参数，实时经 sink 赋值；组恢复在排版器侧）
+            Primitive::SpaceFactor => {
+                let v = self.scan_number()?;
+                self.sink.set_space_factor(v)
+            }
+            // TRIP 冲刺：\everymath={<tokens>}（进入数学模式时注入）
+            Primitive::EveryMath => {
+                self.expect_equals()?;
+                let toks = self.scan_group_contents(Some("everymath"))?;
+                self.everymath = toks;
+                Ok(())
+            }
+            // TRIP 冲刺：\/（斜体校正，直通 sink）
+            Primitive::ItalicCorrection => self.sink.italic_correction(),
+            // TRIP 冲刺：\radical<delimiter><math field>（根式原子，\sqrt 底层）
+            Primitive::Radical => {
+                let delim = self.scan_delimiter()?;
+                self.sink.math_radical(delim)
+            }
             // M4-5 e-TeX 展开扩展
             Primitive::Protected => {
                 self.protected_pending = true;
@@ -638,7 +702,7 @@ impl Expander {
             // ETRIP 冲刺：\everyjob=<tokens>（暂映射 toks 寄存器 0）
             Primitive::EveryJob => {
                 self.expect_equals()?;
-                let val = self.scan_group_contents()?;
+                let val = self.scan_group_contents(Some("everyjob"))?;
                 self.assign_toks(0, Arc::from(val));
                 Ok(())
             }
@@ -870,7 +934,7 @@ impl Expander {
     /// 其余 token（空格、控制序列等）是模式分隔符。文本交由 ntex-layout 的
     /// Liang trie 解析（ntex-layout::hyphen::PatternTrie::parse）。
     fn exec_patterns(&mut self) -> Result<()> {
-        let tokens = self.scan_group_contents()?;
+        let tokens = self.scan_group_contents(None)?;
         let mut out: Vec<u8> = Vec::new();
         for tok in tokens {
             match tok.catcode() {
@@ -915,7 +979,7 @@ impl Expander {
                 self.fetch()?;
             }
         }
-        let tokens = self.scan_group_contents()?;
+        let tokens = self.scan_group_contents(None)?;
         // 断字符：默认 `-`（45）；ETRIP 用例均用字面 `-`。
         const HYPHEN_CHAR: u32 = 45;
         let mut words: Vec<(Vec<u8>, Vec<usize>)> = Vec::new();
@@ -981,6 +1045,15 @@ impl Expander {
                 let ch = tok.charcode().expect("Char 必有 charcode");
                 if ch == b'.' as u32 {
                     Ok(None) // \left.：空定界符
+                } else if (b'0' as u32..=b'9' as u32).contains(&ch)
+                    || ch == b'"' as u32
+                    || ch == b'\'' as u32
+                {
+                    // TRIP：\radical"3 的 "3 是十六进制 delimiter number（TeX scan_delimiter
+                    // 优先扫描数字）；放回后按数字扫描
+                    self.unread(tok);
+                    let n = self.scan_number()?;
+                    Ok(Some(u32::try_from(n).unwrap_or(0)))
                 } else {
                     Ok(Some(ch))
                 }
@@ -1091,6 +1164,13 @@ impl Expander {
         let num = self.scan_number()?;
         let num = u32::try_from(num).map_err(|_| Error::invalid_input("\\fontdimen 参数号越界"))?;
         let font = self.scan_font_ident()?;
+        // TRIP L404：fontdimen 参数号越界（`\fontdimen 1000=...`）→ 报错并跳过赋值
+        if num >= 13 {
+            let _ = self
+                .sink
+                .write16("! Font \\FONT? has only 13 fontdimen parameters.\n".to_string());
+            return Ok(());
+        }
         self.expect_equals()?;
         let value = self.scan_dimen()?;
         let prev = self.fontdimens.get(&(font, num)).copied();
@@ -1106,16 +1186,22 @@ impl Expander {
         Ok(())
     }
 
+    /// TeX `scan_font_ident` 的 "Missing font identifier" 报错恢复：
+    /// 报错后用当前字体继续（TRIP L404 `\fontdimen 1000=20\varunit`——`=` 非字体）。
+    fn missing_font_ident(&mut self) -> Result<u32> {
+        let _ = self.sink.write16("! Missing font identifier.\n".to_string());
+        Ok(self.sink.current_font())
+    }
+
     /// 扫描字体标识符（TeX `scan_font_ident`）：`\font` 定义的 cs 或 `\nullfont`。
     fn scan_font_ident(&mut self) -> Result<u32> {
         self.skip_spaces()?;
-        let tok = self
-            .fetch()?
-            .ok_or_else(|| Error::invalid_input("预期字体标识符"))?
-            .0;
-        let csid = tok
-            .csid()
-            .ok_or_else(|| Error::invalid_input("预期字体标识符（\\font 定义的 cs 或 \\nullfont）"))?;
+        let Some((tok, _ne)) = self.fetch()? else {
+            return self.missing_font_ident();
+        };
+        let Some(csid) = tok.csid() else {
+            return self.missing_font_ident();
+        };
         match self.eqtb.slot(csid).clone() {
             EqSlot::Font(f) => Ok(f),
             // TRIP：`\font`（无参数）作当前字体选择器（\textfont1=\font）
@@ -1171,14 +1257,10 @@ impl Expander {
                         };
                         Ok(self.math_fonts[kind][fam as usize])
                     }
-                    _ => Err(Error::invalid_input(
-                        "预期字体标识符（\\font 定义的 cs 或 \\nullfont）",
-                    )),
+                    _ => self.missing_font_ident(),
                 }
             }
-            _ => Err(Error::invalid_input(
-                "预期字体标识符（\\font 定义的 cs 或 \\nullfont）",
-            )),
+            _ => self.missing_font_ident(),
         }
     }
 
@@ -1223,6 +1305,29 @@ impl Expander {
         Ok(())
     }
 
+    /// TRIP 冲刺：`\mathcode<8位字符>=<15位值>`：字符数学码赋值
+    /// （TeX：mathcode 15 位 = class(3)<<12 + family(4)<<8 + char(8)）。
+    fn exec_mathcode(&mut self) -> Result<()> {
+        let byte = self.scan_char_code()?;
+        let byte = u8::try_from(byte).map_err(|_| Error::invalid_input("\\mathcode 字符码越界"))?;
+        self.expect_equals()?;
+        let value = self.scan_number()?;
+        let value = u32::try_from(value)
+            .map_err(|_| Error::invalid_input("\\mathcode 数学码越界（15 位）"))?
+            & 0x0000_7FFF;
+        let prev = self.mathcodes.get(&u32::from(byte)).copied();
+        let global = self.is_global();
+        if !global && self.group_level > 0 {
+            self.save_stack.push((
+                self.group_level,
+                SavedValue::MathCode { byte, prev },
+            ));
+        }
+        self.mathcodes.insert(u32::from(byte), value);
+        self.finish_assignment();
+        Ok(())
+    }
+
     /// 读 fontdimen：覆盖表优先；无覆盖返回 0（TFM 真实参数在排版层，后续接入）。
     fn fontdimen(&self, font: u32, num: u32) -> i64 {
         self.fontdimens.get(&(font, num)).copied().unwrap_or(0)
@@ -1232,7 +1337,7 @@ impl Expander {
 
     /// `\message{<general text>}`：展开参数后输出到终端与日志（TeX：不换行）。
     fn exec_message(&mut self) -> Result<()> {
-        let toks = self.scan_group_contents()?;
+        let toks = self.scan_group_contents(None)?;
         let s = self.expand_to_string(&toks)?;
         self.sink.message(s)
     }
@@ -1428,6 +1533,29 @@ impl Expander {
                 self.advance_register(kind, idx)
             }
             EqSlot::Register(kind, idx) => self.advance_register(kind, idx),
+            // TRIP L410：\xspaceskip 胶水参数也可 \advance
+            EqSlot::Primitive(Primitive::XSpaceSkip) => {
+                self.scan_keyword(|w| w == "by")?;
+                let delta = self.scan_glue()?;
+                let old = self.params.xspaceskip;
+                let global = self.is_global();
+                if !global && self.group_level > 0 {
+                    self.save_stack.push((
+                        self.group_level,
+                        SavedValue::Param {
+                            kind: ParamKind::XSpaceSkip,
+                            prev: self.params.get(ParamKind::XSpaceSkip),
+                        },
+                    ));
+                }
+                self.params.xspaceskip = add_glue(old, delta);
+                self.sink.param_changed(
+                    ParamKind::XSpaceSkip,
+                    ParamValue::Glue(self.params.xspaceskip),
+                )?;
+                self.finish_assignment();
+                Ok(())
+            }
             // 内部整数参数（\tracingstats/\language 等）也可 \advance
             EqSlot::Primitive(p) if int_param_index(p).is_some() => {
                 let idx = int_param_index(p).expect("已检查 is_some");

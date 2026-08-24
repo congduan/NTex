@@ -196,7 +196,19 @@ impl Typesetter {
                 return Err(Error::invalid_input("\\shipout 后缺少盒子"));
             }
             if !builder.groups.is_empty() {
-                return Err(Error::invalid_input("组未闭合（缺少 }）"));
+                let dbg = builder
+                    .groups
+                    .iter()
+                    .map(|g| format!("{:?}", g.kind))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let m = format!(
+                    "组未闭合（缺少 }}）：groups=[{dbg}] pending_box={:?} pending_kind={:?} math={}",
+                    builder.pending_box,
+                    builder.pending_kind,
+                    builder.math.len()
+                );
+                return Err(Error::invalid_input(&m));
             }
             if !builder.math.is_empty() {
                 return Err(Error::invalid_input("数学模式未闭合（缺少 $）"));

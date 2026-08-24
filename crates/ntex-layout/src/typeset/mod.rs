@@ -155,6 +155,8 @@ enum MathFieldKind {
     Script(bool),
     /// `\sqrt` 后的组（radicand）。
     Sqrt,
+    /// `\radical<delim>` 后的组（radicand；带定界符号，TRIP）。
+    Radical(u32),
     /// `\mathbin` 等后的组：内容作为指定类原子。
     Class(MathClass),
 }
@@ -364,6 +366,8 @@ struct NodeBuilder {
     pending_kind: Option<GroupKind>,
     /// `\raise`/`\lower`：下一个封装盒子的参考点位移（sp）。
     pending_shift: Option<i64>,
+    /// `\moveleft`/`\moveright`：下一个封装盒子的水平位移（sp）。
+    pending_hshift: Option<i64>,
     /// 内部参数镜像（随 `param_changed` 事件更新，组作用域快照/恢复）。
     params: Params,
     /// 组开始时的参数快照（group_end 恢复）。
@@ -407,6 +411,8 @@ struct NodeBuilder {
     pending_script: Option<bool>,
     /// `\sqrt`：等待 radicand 字段（下一个原子或组）。
     sqrt_pending: bool,
+    /// `\radical<delim>`：等待 radicand 字段（带定界符号；TRIP）。
+    radical_pending: Option<u32>,
     /// `\mathbin` 等：等待字段（下一个原子或组），应用指定类。
     class_pending: Option<MathClass>,
     /// `\nonscript`：下一个数学空格在脚本模式丢弃。
@@ -475,6 +481,7 @@ impl NodeBuilder {
             pending_box: None,
             pending_kind: None,
             pending_shift: None,
+            pending_hshift: None,
             params: Params::default(),
             param_stack: Vec::new(),
             sfcodes,
@@ -493,6 +500,7 @@ impl NodeBuilder {
             math_style: MathStyle::Text,
             pending_script: None,
             sqrt_pending: false,
+            radical_pending: None,
             class_pending: None,
             nonscript_pending: false,
             math_fonts: vec![[None; 3]; 16],
@@ -515,7 +523,16 @@ impl NodeBuilder {
     }
 
     fn mode(&self) -> Mode {
-        *self.list_modes.last().expect("列表栈非空")
+        match self.list_modes.last() {
+            Some(m) => *m,
+            // 输入可达路径不得 panic：模式栈异常为空时退回垂直模式
+            // （TRIP 错误恢复曾触发：`\par` 于数学模式恢复时 close_math/close_paragraph
+            // 叠加弹出；防御回退 + 后续校准弹栈配对）
+            None => {
+                eprintln!("[ntex] mode() 栈空，回退 Vertical（错误恢复弹栈失衡）");
+                Mode::Vertical
+            }
+        }
     }
 
     /// ETRIP 冲刺：断页后 marks 轮转（fire_up 产出页后立即调用）。
@@ -530,6 +547,16 @@ impl NodeBuilder {
         self.marks_first.clear();
         // marks_bot：初始等于继承的 marks_top（若无新 marks 则 bot==top）
         self.marks_bot = self.marks_top.clone();
+    }
+
+    /// TeX `\unhbox`/`\unvbox` 不可拆盒的错误恢复：写转录并继续
+    /// （TRIP L396 `\unhbox234`——void 盒）。
+    fn unbox_error_continue(&mut self) {
+        let mut msg = "! Incompatible list can't be unboxed.\n".to_string();
+        if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            msg.push_str("And I can't open any boxes in math mode.\n");
+        }
+        let _ = self.write16(msg);
     }
 
     /// ETRIP 第二波：取盒子寄存器内容（`copy=false` 取出置 void；`copy=true` 复制保留）。
@@ -609,6 +636,8 @@ impl NodeBuilder {
                 b.shift = shift;
             }
         }
+        // `\moveleft`/`\moveright`：水平位移（TRIP 冲刺暂不落节点，取走即清）
+        let _hshift = self.pending_hshift.take();
         // ETRIP 冲刺：`\setbox<n>=<box>` —— 封装结果存入寄存器（不入当前列表）
         if let Some(idx) = self.setbox_target.take() {
             if let Node::Box(b) = node {

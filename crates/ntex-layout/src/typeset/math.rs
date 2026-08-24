@@ -156,6 +156,15 @@ impl NodeBuilder {
             level.atoms.push(MathAtom::Radical { base: vec![atom] });
             return Ok(());
         }
+        // `\radical<delim>` 单原子字段：`\radical"3 x`（TRIP L412 everymath 注入路径）
+        if let Some(_delim) = self.radical_pending.take() {
+            let level = self
+                .math
+                .last_mut()
+                .ok_or_else(|| Error::internal("数学原子无数学层"))?;
+            level.atoms.push(MathAtom::Radical { base: vec![atom] });
+            return Ok(());
+        }
         // `\mathbin` 等单原子字段：`\mathbin+`（Char 改类，其余包 Classed）
         if let Some(class) = self.class_pending.take() {
             let atom = match atom {

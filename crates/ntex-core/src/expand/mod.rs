@@ -230,6 +230,11 @@ enum SavedValue {
         byte: u8,
         prev: Option<u32>,
     },
+    /// TRIP 冲刺：`\mathcode`：数学码表项（组内局部保存）。
+    MathCode {
+        byte: u8,
+        prev: Option<u32>,
+    },
     /// `\lccode`：小写码表项（ETRIP 断字；组内局部保存）。
     LcCode {
         byte: u8,
@@ -390,6 +395,9 @@ pub struct Expander {
     hyphenchars: HashMap<u32, i64>,
     /// `\delcode` 表：字符码 → 定界符码（TeX delcode；无覆盖 = 0x500000 默认）。
     delcodes: HashMap<u32, u32>,
+    /// TRIP 冲刺：`\mathcode` 表：字符码 → 数学码（TeX initex 默认：
+    /// catcode 11/12 字符 = 0x7000+码，其余 = 0x8000 无效）。
+    mathcodes: HashMap<u32, u32>,
     /// `\lccode` 表：字符码 → 小写码（TeX 默认全 0；etrip 断字测试用）。
     lccodes: [i64; 256],
     /// ETRIP 冲刺：`\dump` 已执行（initex 收尾；驱动据此保存 fmt 并二次运行）。
@@ -419,6 +427,10 @@ pub struct Expander {
     /// `\interlinepenalties n p1 ... pn` 等：扫描 n 个 penalty 值存储（断页器后续读取）。
     /// 当前仅在 expander 侧存储，未镜像给排版器（pass2 仅需扫描语义正确即可推进）。
     penalty_arrays: [Vec<i64>; 4],
+    /// TRIP 冲刺：`\everymath` token 列表（进入数学模式时注入输入栈）。
+    everymath: Vec<Token>,
+    /// TRIP 冲刺：当前是否处于数学模式（`$`/`$$` 切换；决定 everymath 注入时机）。
+    in_math: bool,
 }
 
 impl Expander {
@@ -465,6 +477,10 @@ impl Expander {
             fontdimens: HashMap::new(),
             hyphenchars: HashMap::new(),
             delcodes: HashMap::new(),
+            // TRIP 冲刺：initex 默认 mathcode（tex.web `init_math_codes`）：
+            // letter/other_char（catcode 11/12）→ 0x7000+码（class 7 variable, family 0），
+            // 其余 → 0x8000（无效，触发 "Missing character" 语义一致）。
+            mathcodes: default_mathcodes(),
             lccodes: [0; 256],
             dumped: false,
             unless_pending: false,
@@ -477,6 +493,8 @@ impl Expander {
             section_label: String::new(),
             parshape: Vec::new(),
             penalty_arrays: Default::default(),
+            everymath: Vec::new(),
+            in_math: false,
         };
         e.register_builtins();
         e
@@ -871,7 +889,8 @@ impl Expander {
                                 self.assign_muskip(idx, val);
                             }
                             RegKind::Toks => {
-                                let val = self.scan_group_contents()?;
+                                let name = self.intern.name(csid).to_owned();
+                                let val = self.scan_group_contents(Some(&name))?;
                                 self.assign_toks(idx, Arc::from(val));
                             }
                         }
@@ -903,6 +922,20 @@ impl Expander {
                 // 交给 sink 按自身模式决定进出（M4-1）。
                 if tok.catcode() == Some(Catcode::MathShift) {
                     let display = self.next_is_math_shift()?;
+                    let entering = !self.in_math;
+                    self.in_math = !self.in_math;
+                    // TRIP 冲刺：进入数学模式时注入 `\everymath`（TeX `$` 处理语义）
+                    if entering && !self.everymath.is_empty() {
+                        let items = self
+                            .everymath
+                            .iter()
+                            .map(|t| (*t, false))
+                            .collect::<Vec<_>>();
+                        self.stack.push(InputFrame::TokenList {
+                            items: Arc::from(items),
+                            pos: 0,
+                        });
+                    }
                     return self.sink.math_shift(display);
                 }
                 // 组定界符（cat 1/2）在主流层建立/结束组（M1-11）
@@ -947,9 +980,9 @@ impl Expander {
     }
 
     /// 展开宏调用：收集实参，压入字节码（M2）或宏体输入帧。
-    fn call_macro(&mut self, _csid: u32, def: Arc<MacroDef>) -> Result<()> {
+    fn call_macro(&mut self, csid: u32, def: Arc<MacroDef>) -> Result<()> {
         let args = if def.params.num_params > 0 {
-            self.collect_args(&def)?
+            self.collect_args(csid, &def)?
         } else {
             Vec::new()
         };

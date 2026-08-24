@@ -29,6 +29,8 @@ pub enum ParamKind {
     ParSkip,
     /// ETRIP 冲刺：`\parfillskip`：段落末行填充胶水（plain 默认 0pt plus 1fil）。
     ParFillSkip,
+    /// TRIP 冲刺：`\xspaceskip`：句后空格胶水（plain 默认 0pt；L410 `\advance\xspaceskip by-\xspaceskip`）。
+    XSpaceSkip,
     // M4-4 显示数学间距
     /// `\abovedisplayskip`：显示公式上方间距（末行不短时）。
     AboveDisplaySkip,
@@ -68,6 +70,17 @@ pub enum ParamKind {
     DefaultSkewChar,
     /// TRIP：`\mag`：放大倍数（TeX initex 默认 1000；TRIP L67 设 2000）。
     Mag,
+    // TRIP 冲刺：TeX initex 预定义 dimen 内部参数（数学/排版）
+    /// `\nulldelimiterspace`：空定界符占位宽度（TeX initex 默认 1.2pt）。
+    NullDelimiterSpace,
+    /// `\scriptspace`：上下标与主符号间距（TeX initex 默认 0.5pt）。
+    ScriptSpace,
+    /// `\overfullrule`：超满提示条宽度（TeX initex 默认 5pt；0 关闭提示）。
+    OverfullRule,
+    /// `\voffset`：整页纵向偏移（TeX initex 默认 0pt）。
+    VOffset,
+    /// `\hoffset`：整页横向偏移（TeX initex 默认 0pt）。
+    HOffset,
     /// TeX/e-TeX 内部整数参数（ETRIP 冲刺）：`misc[idx]`（见 [`MISC_INTS`]）。
     MiscInt(usize),
 }
@@ -82,7 +95,7 @@ pub enum ParamValue {
 
 /// 内部整数参数总数（TeX/e-TeX 内部整数，ETRIP 冲刺；仅存储/回读）。
 /// 下标与 [`crate::expand::int_param_index`] 的映射一致。
-pub const MISC_INTS: usize = 33;
+pub const MISC_INTS: usize = 34;
 
 /// 内部整数参数默认值（TeX initex/plain 默认）。
 pub fn default_misc() -> [i64; MISC_INTS] {
@@ -120,6 +133,7 @@ pub fn default_misc() -> [i64; MISC_INTS] {
         0,    // 30 PageDiscards（e-TeX：保存页面丢弃物；0=不保存）
         0,    // 31 SplitDiscards（e-TeX：保存 vsplit 丢弃物；0=不保存）
         2,    // 32 LostChars（e-TeX：丢失字符提示级；plain 默认 2 = 计数）
+        901,  // 33 DelimiterFactor（plain 默认 901；delimiter 缩放因子）
     ]
 }
 
@@ -148,6 +162,8 @@ pub struct Params {
     pub parskip: Glue,
     /// `\parfillskip`：段落末行填充胶水（plain 默认 0pt plus 1fil；fil 阶隐含）。
     pub parfillskip: Glue,
+    /// `\xspaceskip`：句后空格胶水（plain 默认 0pt）。
+    pub xspaceskip: Glue,
     // M4-4 显示数学间距（plain 默认）
     /// `\abovedisplayskip`（plain 默认 12pt plus 3pt minus 9pt）。
     pub abovedisplayskip: Glue,
@@ -186,6 +202,16 @@ pub struct Params {
     pub defaultskewchar: i64,
     /// TRIP：`\mag`：放大倍数（TeX initex 默认 1000）。
     pub mag: i64,
+    /// `\nulldelimiterspace`（TeX initex 默认 1.2pt = 78643sp）。
+    pub nulldelimiterspace: i64,
+    /// `\scriptspace`（TeX initex 默认 0.5pt）。
+    pub scriptspace: i64,
+    /// `\overfullrule`（TeX initex 默认 5pt）。
+    pub overfullrule: i64,
+    /// `\voffset`（TeX initex 默认 0pt）。
+    pub voffset: i64,
+    /// `\hoffset`（TeX initex 默认 0pt）。
+    pub hoffset: i64,
     /// TeX/e-TeX 内部整数参数（ETRIP 冲刺；下标见 [`MISC_INTS`]）。
     pub misc: [i64; MISC_INTS],
 }
@@ -210,6 +236,7 @@ impl Default for Params {
             maxdepth: 4 * SP_PER_PT,
             parskip: Glue::new(0, SP_PER_PT, 0),
             parfillskip: Glue::new(0, 1, 0), // 1fil（布局侧隐含 fil 阶）
+            xspaceskip: Glue::new(0, 0, 0),
             // M4-4 显示数学间距（plain：TeXbook p.189）
             abovedisplayskip: Glue::new(12 * SP_PER_PT, 3 * SP_PER_PT, 9 * SP_PER_PT),
             belowdisplayskip: Glue::new(12 * SP_PER_PT, 3 * SP_PER_PT, 9 * SP_PER_PT),
@@ -231,6 +258,12 @@ impl Default for Params {
             defaulthyphenchar: 45,
             defaultskewchar: -1,
             mag: 1000,
+            // TRIP 冲刺：TeX initex 默认（TeXbook 附录 D）
+            nulldelimiterspace: 78_643, // 1.2pt
+            scriptspace: 32_768,        // 0.5pt
+            overfullrule: 327_680,      // 5pt
+            voffset: 0,
+            hoffset: 0,
             misc: default_misc(),
         }
     }
@@ -250,6 +283,7 @@ impl Params {
             ParamKind::MaxDepth => ParamValue::Dimen(self.maxdepth),
             ParamKind::ParSkip => ParamValue::Glue(self.parskip),
             ParamKind::ParFillSkip => ParamValue::Glue(self.parfillskip),
+            ParamKind::XSpaceSkip => ParamValue::Glue(self.xspaceskip),
             ParamKind::AboveDisplaySkip => ParamValue::Glue(self.abovedisplayskip),
             ParamKind::BelowDisplaySkip => ParamValue::Glue(self.belowdisplayskip),
             ParamKind::AboveDisplayShortSkip => ParamValue::Glue(self.abovedisplayshortskip),
@@ -268,6 +302,11 @@ impl Params {
             ParamKind::DefaultHyphenChar => ParamValue::Number(self.defaulthyphenchar),
             ParamKind::DefaultSkewChar => ParamValue::Number(self.defaultskewchar),
             ParamKind::Mag => ParamValue::Number(self.mag),
+            ParamKind::NullDelimiterSpace => ParamValue::Dimen(self.nulldelimiterspace),
+            ParamKind::ScriptSpace => ParamValue::Dimen(self.scriptspace),
+            ParamKind::OverfullRule => ParamValue::Dimen(self.overfullrule),
+            ParamKind::VOffset => ParamValue::Dimen(self.voffset),
+            ParamKind::HOffset => ParamValue::Dimen(self.hoffset),
             ParamKind::MiscInt(idx) => ParamValue::Number(self.misc[idx]),
         }
     }
@@ -285,6 +324,7 @@ impl Params {
             (ParamKind::MaxDepth, ParamValue::Dimen(v)) => self.maxdepth = v,
             (ParamKind::ParSkip, ParamValue::Glue(g)) => self.parskip = g,
             (ParamKind::ParFillSkip, ParamValue::Glue(g)) => self.parfillskip = g,
+            (ParamKind::XSpaceSkip, ParamValue::Glue(g)) => self.xspaceskip = g,
             (ParamKind::AboveDisplaySkip, ParamValue::Glue(g)) => self.abovedisplayskip = g,
             (ParamKind::BelowDisplaySkip, ParamValue::Glue(g)) => self.belowdisplayskip = g,
             (ParamKind::AboveDisplayShortSkip, ParamValue::Glue(g)) => {
@@ -307,6 +347,11 @@ impl Params {
             (ParamKind::DefaultHyphenChar, ParamValue::Number(v)) => self.defaulthyphenchar = v,
             (ParamKind::DefaultSkewChar, ParamValue::Number(v)) => self.defaultskewchar = v,
             (ParamKind::Mag, ParamValue::Number(v)) => self.mag = v,
+            (ParamKind::NullDelimiterSpace, ParamValue::Dimen(v)) => self.nulldelimiterspace = v,
+            (ParamKind::ScriptSpace, ParamValue::Dimen(v)) => self.scriptspace = v,
+            (ParamKind::OverfullRule, ParamValue::Dimen(v)) => self.overfullrule = v,
+            (ParamKind::VOffset, ParamValue::Dimen(v)) => self.voffset = v,
+            (ParamKind::HOffset, ParamValue::Dimen(v)) => self.hoffset = v,
             (ParamKind::MiscInt(idx), ParamValue::Number(v)) => self.misc[idx] = v,
             // 类型不匹配忽略（VM 侧保证参数种类与值类型匹配）
             _ => {}

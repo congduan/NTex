@@ -8,13 +8,13 @@
 | 里程碑           | 状态                                                                                                                                                                                                                                                                                                         |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | M0 地基         | ✅ 完成（workspace/CI/TRIP·diff·bench 工具链；RFC-1/RFC-4 定稿）                                                                                                                                                                                                                                                      |
-| M1 展开内核       | 🟡 核心完成：M1-1\~7、M1-9\~11 已实现（95 用例）+ **A2 空行→`\par` 行状态机 + A4 `\outer` 语义 + M1-13 错误上下文行 `l.N`**（2026-08-23 评审修复）；M1-13 错误恢复、**M1-14 TRIP 冲刺** 待补                                                                                                                                                                                                                              |
+| M1 展开内核       | 🟡 核心完成：M1-1\~7、M1-9\~11 已实现（95 用例）+ **A2 空行→`\par` 行状态机 + A4 `\outer` 语义 + M1-13 错误上下文行 `l.N`**（2026-08-23 评审修复）；M1-13 错误恢复待补；**M1-14 TRIP 冲刺推进中**（2026-08-25 a00a4d9：`\mag`+pc/cc 单位、扫描恢复语义、^^ 十六进制输入、`\write` 流 -1、缺 cs/字体/数学/排版错误恢复；trip.tex 仍停于"组未闭合"等恢复点，未全绿）                                                                                                                                                                                                                              |
 | M2 字节码        | 🟡 双轨完成（100 用例等价）；**性能 P0 补课落地**（字节码 u64 原始字执行器 + release 调优，80022b4）；吞吐 ≥2x 待重测（ntex 驱动基准死循环，见 backlog P1）；M2-5 arena 未做 |                                                                                                                                                                                                                             |
 | M3 排版核心       | ✅ M3-1\~M3-4 完成（58+ 用例）；**M3-5 DVI 写出 +** **`\shipout`** **+ 断页 DP + lig/kern +** **`\sfcode`** **+** **`\output`** **例程/box255** 完成（dvipdfmx 验收 + 与 TeX 差分对照）；**RFC-3 VFS + 副作用模型落地**（10 原语走 `ntex-io` VFS，延迟写入 shipout 边界提交）；**`.fmt`** **v1 内存快照**（`ntex-format` 确定性编码 + roundtrip）                     |
-| M4 数学 + e-TeX | ✅ **全部完成**：数学模式状态机（`$`/`$$`、8 类原子、spacing 表、上下标、字阶）、分式/根式/定界符、样式原语、fontdimen 数学参数 + 数学字体族、显示数学细化、Liang 断字、错误模型、e-TeX 核心 + 扩展（`\protected`/`\ifdefined`/`\ifcsname`/`\unless`/`\numexpr`/`\detokenize`/`\unexpanded`/`\eTeXversion`/`\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens`）；验收 **ETRIP 全绿** 待冲 |
+| M4 数学 + e-TeX | ✅ **全部完成**：数学模式状态机（`$`/`$$`、8 类原子、spacing 表、上下标、字阶）、分式/根式/定界符、样式原语、fontdimen 数学参数 + 数学字体族、显示数学细化、Liang 断字、错误模型、e-TeX 核心 + 扩展（`\protected`/`\ifdefined`/`\ifcsname`/`\unless`/`\numexpr`/`\detokenize`/`\unexpanded`/`\eTeXversion`/`\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens`）；**ETRIP 冲刺**：A 组 41/42（仅 `\muexpr` 待校准）、B 组 36/36、C 组全部已接线（2026-08-23），`etrip.log` 逐字节比对未开始 |
 | 输出端           | 🟢 正式 PDF 后端可用（`ntex-pdf`：DVI → PDF 直出 + Type1 嵌入，替换临时 Helvetica 切片；demo 两页与 dvipdfmx 渲染一致）                                                                                                                                                                                                                |
 
-**下一步**：**ETRIP 冲刺**（管线已通，pass2 逐段推进）+ 性能 backlog **P1**（热路径消分配 / 修通 ntex 驱动基准补测吞吐）。
+**下一步**：**TRIP 冲刺**（M1-14 收尾，a00a4d9 已落地扫描/字体/数学/排版错误恢复，恢复点逐一攻克至 trip 全绿）+ **ETRIP 收尾**（`\muexpr` 校准 + sparse arrays 段越界恢复 + `etrip.log` 逐字节比对）+ 性能 backlog **P1**（热路径消分配 / 修通 ntex 驱动基准补测吞吐）。
 
 ***
 
@@ -123,7 +123,7 @@
   —— **ETRIP 冲刺管线已跑通**：fixtures 获取（CTAN knuth dist + TeX Live 镜像，
   `scripts/fetch-trip-fixtures.sh`）+ harness 泛化（`ntex-trip --test trip|etrip|both`）+
   **ntex 引擎驱动**（in-process Typesetter，产出 .log/.typ，首个错误即停）；
-  首次实跑：TRIP/ETRIP 均在首个未支持构造处停下（错误上下文/转录能力待补）
+  已用 ntex 驱动实跑 TRIP/ETRIP（TRIP 冲刺 a00a4d9 已推进至扫描/字体/数学错误恢复段）
 - [x] 差分测试工具：同一 .tex 分别跑 pdfTeX/XeTeX 与本引擎，diff DVI/log
 - [x] **设计文档（RFC）先行**，评审通过再编码：
   - RFC-1 Token 表示与内存布局 —— **已定稿**（8B token / TokenArray / InternTable / eqtb 版本化）
@@ -242,8 +242,23 @@
 
 **M1-14 TRIP 冲刺**
 
-- [ ] 涉及排版/字体的部分用 `\hbox` 兜底占位（硬口径：语义 bug 绝不带进 M2）——**未完成，M1 大门未关**
-- [ ] **TRIP 全绿**（输出 diff 可读化脚本已在 M0 就绪）
+- [x] 扫描恢复语义（2026-08-25 a00a4d9）：+ 号忽略、逗号小数点、反引号字符常量、
+  嵌套条件求值、Missing number/Improper alphabetic/Bad number 钳制、溢出截断、
+  大小写不敏感关键字、内部 dimen/glue 参数作尺寸
+- [x] 输入层：^^ 十六进制对仅小写、控制词名内 ^^ 解码字母并入（a00a4d9）
+- [x] `\write` 流 -1（log-only）与非法流号 whatsit 化（a00a4d9）
+- [x] 缺控制序列恢复（`\def`/`\mathchardef` token 放回）、`#{` 参数文本终止、
+  宏调用不匹配恢复（a00a4d9）
+- [x] 字体恢复：`\font` 作当前字体选择器、`\textfont` 族号钳制、字体加载失败恢复、
+  `\the\textfont`/`\the\scriptfont`、`\fontdimen6\the\scriptfont`（a00a4d9）
+- [x] 数学/排版错误恢复：Missing $ inserted、Display math should end with $$、
+  `\left` 缺 `\right`、Missing {、`\par` 受限模式、void 盒、`\showbox` void、
+  多余 } 恢复、cat 15 非法字符跳过（a00a4d9）
+- [x] `\mag` 整数参数（默认 1000）+ pc/cc 单位 + `\the\catcode`/`\the\output`（a00a4d9）
+- [x] 测试基建：WorkDirVfs（`\input` 相对路径）+ tripos.tex 复制（a00a4d9）
+- [ ] 涉及排版/字体的部分用 `\hbox` 兜底占位（硬口径：语义 bug 绝不带进 M2）——未完成
+- [ ] **TRIP 全绿**（输出 diff 可读化脚本已在 M0 就绪）——trip.tex 当前停于
+  "非法输入：组未闭合" 等恢复点，恢复路径继续补齐
 - 验证：`\input trip` 输出与参考文件一致
 
 **M1-15 性能基线**
@@ -252,7 +267,7 @@
 
 **验收**：TRIP 通过（硬口径）；错误行为与 pdfTeX 一致。
 **风险**：TRIP 是"实现后才知道哪错"的黑盒 → 提前做好 TRIP 输出 diff 的可读化。
-**现状**：M1 核心（1\~7、9\~11）已实现；M1-13 错误上下文行 `l.N` + 交互模式已做（2026-08-23 A3）、错误恢复待补；M1-14 TRIP 冲刺待补——TRIP 未全绿前 M1 验收项保持未勾选。
+**现状**：M1 核心（1\~7、9\~11）已实现；M1-13 错误上下文行 `l.N` + 交互模式已做（2026-08-23 A3）、错误恢复待补；**M1-14 TRIP 冲刺推进中**（2026-08-25 a00a4d9：扫描/字体/数学/排版错误恢复 + `\mag` 等，见 §M1-14）——TRIP 未全绿前 M1 验收项保持未勾选。
 
 ***
 
@@ -386,20 +401,20 @@
   8 个用例锁消息；完整上下文行（"l.N …"）留 M1-13
 
 **验收**：**ETRIP 全绿**；含数学的文档差分一致。
-**进度**：**M4 全部完成**——M4-1/2/3/4/5（13 + 16 + 20 + 14 + 6 用例）、M4-6 Liang 断字、M4-7 错误模型、e-TeX 扩展（`\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens`，+6 用例）。下一步：**ETRIP 冲刺**（先搭管线：fixtures + harness 泛化 + 引擎驱动）。
+**进度**：**M4 全部完成**——M4-1/2/3/4/5（13 + 16 + 20 + 14 + 6 用例）、M4-6 Liang 断字、M4-7 错误模型、e-TeX 扩展（`\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens`，+6 用例）。下一步：**ETRIP 冲刺**（管线已通：fixtures + harness 泛化 + 引擎驱动；原语接线完成后主线转 **TRIP 冲刺**，见 §3 M1-14）。
 
-### ETRIP 冲刺（2026-08 进行中）
+### ETRIP 冲刺（2026-08 进行中，原语接线基本完成）
 
 **当前状态**：管线已跑通（fixtures + harness 泛化 + ntex 驱动）；**pass1 全流程已走通**
 （e-IniTeX → `\dump`）；pass2（重载 `.fmt` 再运行）逐段推进中，**已通过
 `\numexpr/\dimexpr/\glueexpr/\muexpr` 全段**（括号、溢出块、"Expr quotient rounding
 1-8"、"Expr fraction rounding 1-3"、运算符优先级、胶水引用计数）+ `\mutoglue/\gluetomu`
-段（两原语未实现，走未定义 cs 恢复继续）+ (mu)glue identity 段。当前卡点：
-**gluestretchorder 段**（etrip.tex L937-957）——`\1` 宏 `\ifnum\glueshrinkorder#5=#1`
-值不匹配（"wrong glue shrink order"）后 "预期 < = > 关系符"（参数绑定/值语义待核对）。
+段 + (mu)glue identity 段。当前卡点（2026-08-25 实测）：gluestretchorder 段仍有
+"wrong glue stretch/shrink order" 报错（已恢复继续）；**sparse arrays 段**
+（etrip.tex L970 `\2\countdef` 越界寄存器测试）报 "! Bad register code" 后未恢复，
+中止于 "非法输入：寄存器下标越界"——越界钳制/恢复路径待补。
 `etrip.log` 逐字节比对待 pass2 走通后开始（已知差距：`\tracingassigns` 的
-`{changing/into}` 行、`\the\muexpr` 的 "5.0mu" 显示、错误消息上下文行、`\mutoglue/
-\gluetomu` 未实现）。
+`{changing/into}` 行、`\the\muexpr` 的 "5.0mu" 显示、错误消息上下文行）。
 
 **本轮（2026-08-23）已完成**：
 - 原语族：`\iffontchar`/`\fontcharwd/ht/dp/ic`（char_metric + 条件码 20）、
@@ -416,10 +431,19 @@
 - **eTeX 寄存器扩展**：REGISTER_COUNT 256 → **32768**（Box 堆分配防栈溢出）；
   `scan_register_index` 越界报 "! Bad register code (N)." 并钳 0；`.fmt` codec 同步
 - 段级错误定位（`\typeout{Checking ...}` 段标题 → 错误报告带 section）
+- **第三波批量补全（A/B 组剩余原语，2026-08-23）**：盒子操作 `\copy/\unhbox/\unvbox/
+  \unhcopy/\unvcopy/\lastbox`、盒子尺寸 `\wd/\ht/\dp`、段落/断页参数
+  （`\leftskip/\rightskip/\prevdepth/\interlinepenalty/\clubpenalty/\widowpenalty/
+  \displaywidowpenalty`）、惩罚数组（`\interlinepenalties` 等 4 项）、列表尾操作
+  （`\unskip/\lastpenalty/\unpenalty`）、诊断（`\showgroups/\showlists`）、mu 互转
+  （`\mutoglue/\gluetomu`）、丢弃物（`\pagediscards/\splitdiscards/\lostchars`）、
+  `\tracingparagraphs/\omit`；**Primitive 枚举 repr(u8)→repr(u16)**（变体超 256 防回绕）
+  + `.fmt` codec 同步
 
 **剩余原语待办**：完整分组清单 + 每原语进展标记见 **[ETRIP-primitives.md](ETRIP-primitives.md)**（唯一状态源，2026-08-23 更新）。
-当前总览：**A 组** 🟡 24/42 · **B 组** 🟡 15/36 · **C 组** ✅ 全部已接线 · **收尾**（`etrip.log` 逐字节比对）⏳。
-下一批：`\mutoglue`/`\gluetomu` 实现（当前走未定义恢复）+ gluestretchorder 段宏绑定核对。
+当前总览：**A 组** ✅ 41/42（仅 `\muexpr` 待校准）· **B 组** ✅ 36/36 · **C 组** ✅ 全部已接线 · **收尾**（`etrip.log` 逐字节比对）⏳。
+下一批：`\muexpr` 的 1mu 校准与 "5.0mu" 显示 + sparse arrays 段寄存器越界恢复 +
+gluestretchorder 段值语义核对 + `etrip.log` 逐字节比对。
 
 **冲刺纪律**：每次迭代前先 `cargo build -p ntex-trip` 确认全绿再跑（避免脏构建旧产物
 误报，如误报过的 `\ifcase 序号不能为负`）；对照 etrip.log 参考逐段验证，不做整体 diff。

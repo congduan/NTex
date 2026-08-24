@@ -24,8 +24,10 @@ const MAGIC: &[u8; 8] = b"NTEXFMT1";
 /// v6：ETRIP `\parfillskip` 胶水参数；v7：胶水无穷阶；
 /// v8：ETRIP 第二波——`\leftskip`/`\rightskip`/`\prevdepth`/`\interlinepenalty`
 /// /`\clubpenalty`/`\widowpenalty`/`\displaywidowpenalty` 与 misc 扩 33；
-/// v9：`\outer` 宏标志序列化（MacroDef.outer）。
-const VERSION: u8 = 9;
+/// v9：`\outer` 宏标志序列化（MacroDef.outer）；
+/// v10：TRIP 冲刺——`\nulldelimiterspace`/`\scriptspace`/`\overfullrule`/`\voffset`/`\hoffset`；
+/// v11：TRIP 冲刺——`\xspaceskip` 胶水参数。
+const VERSION: u8 = 11;
 
 /// 编码一个 `.fmt` 快照。
 pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
@@ -94,12 +96,24 @@ pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
     ] {
         w.write_all(&v.to_le_bytes())?;
     }
+    // TRIP 冲刺（v10 追加）：数学/整页 dimen 内部参数
+    for v in [
+        p.nulldelimiterspace,
+        p.scriptspace,
+        p.overfullrule,
+        p.voffset,
+        p.hoffset,
+    ] {
+        w.write_all(&v.to_le_bytes())?;
+    }
     // ETRIP 冲刺（v4 追加）：TeX/e-TeX 内部整数参数（misc 数组）
     for v in p.misc {
         w.write_all(&v.to_le_bytes())?;
     }
     // ETRIP 冲刺（v6 追加）：\parfillskip 胶水
     write_glue(w, p.parfillskip)?;
+    // TRIP 冲刺（v11 追加）：\xspaceskip 胶水
+    write_glue(w, p.xspaceskip)?;
 
     // ETRIP 第二波（v8 追加）：\leftskip/\rightskip/\prevdepth + 行间/孤行/段首断页惩罚
     write_glue(w, p.leftskip)?;
@@ -187,6 +201,12 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
     let defaulthyphenchar = read_i64(r)?;
     let defaultskewchar = read_i64(r)?;
     let mag = read_i64(r)?;
+    // TRIP 冲刺（v10）：数学/整页 dimen 内部参数
+    let nulldelimiterspace = read_i64(r)?;
+    let scriptspace = read_i64(r)?;
+    let overfullrule = read_i64(r)?;
+    let voffset = read_i64(r)?;
+    let hoffset = read_i64(r)?;
     // ETRIP 冲刺（v4）：TeX/e-TeX 内部整数参数（misc 数组）
     let mut misc = [0i64; ntex_core::param::MISC_INTS];
     for v in &mut misc {
@@ -194,6 +214,8 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
     }
     // ETRIP 冲刺（v6）：\parfillskip 胶水
     let parfillskip = read_glue(r)?;
+    // TRIP 冲刺（v11）：\xspaceskip 胶水
+    let xspaceskip = read_glue(r)?;
     // ETRIP 第二波（v8）：段落/断页参数
     let leftskip = read_glue(r)?;
     let rightskip = read_glue(r)?;
@@ -214,6 +236,7 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
         maxdepth,
         parskip,
         parfillskip,
+        xspaceskip,
         abovedisplayskip,
         belowdisplayskip,
         abovedisplayshortskip,
@@ -232,6 +255,11 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
         defaulthyphenchar,
         defaultskewchar,
         mag,
+        nulldelimiterspace,
+        scriptspace,
+        overfullrule,
+        voffset,
+        hoffset,
         misc,
     };
 

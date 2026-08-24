@@ -1,8 +1,15 @@
 impl Expander {
     // ---------- 数字与赋值辅助 ----------
 
-    /// TRIP：数字/尺寸扫描中遇到条件原语 → 求值并返回 true（TeX get_x_token
-    /// 嵌套条件：`'\ifnum10=10 12="`——外层 \ifnum 操作数含内层条件，先求值）。
+    /// TRIP：数字/尺寸扫描中遇到**条件开始**原语 → 求值并返回 true（TeX
+    /// get_x_token 语义：`'\ifnum10=10 12="`——外层 \ifnum 操作数含内层条件，
+    /// 内层先求值并输出分支 token）。
+    ///
+    /// 注意：`\fi`/`\else`/`\or` 是**不可展开**的终结符——TeX scan_int 遇到它们
+    /// 直接 back_input 停止扫描（tex.web get_x_token 对 fi_or_else 不展开），
+    /// 由外层条件状态机在扫描结束后消费。若在此求值会错位弹栈，如 TRIP L82
+    /// `\ifnum'\ifnum10=10 12="\fi`：内层 \fi 必须在 number2 扫描中放回，
+    /// 外层 \ifnum 求值为 false 后跳过分支时再闭合。
     fn maybe_eval_cond(&mut self, tok: Token) -> Result<bool> {
         if let Some(op) = self.cond_op(tok) {
             if std::env::var("NTEX_COND_TRACE").is_ok() {
@@ -495,7 +502,15 @@ impl Expander {
     }
 
     /// 扫描平衡花括号内的 token 列表（`\toks0={...}` 用）。
-    fn scan_group_contents(&mut self) -> Result<Vec<Token>> {
+    ///
+    /// TeX `scan_toks(macro, xpand)` 恢复语义：
+    /// - **输入耗尽未配平** → 转录报告 "Runaway text?" 并以隐含 `}` 收尾返回已收集
+    ///   tokens（可恢复，不报错；TeX runaway）；
+    /// - `forbidden` 为 `Some(cs 名)` 时（`\toks`/`\output`/`\every...` 赋值上下文），
+    ///   实参中出现的 **outer 宏** → forbidden：报 "Runaway text?" + "! Forbidden
+    ///   control sequence found while scanning text of \X."，插入 `}` 结束扫描、
+    ///   offending cs 放回输入流（TRIP L354 `\tokens{\a^^@^^@a\par!`）。
+    fn scan_group_contents(&mut self, forbidden: Option<&str>) -> Result<Vec<Token>> {
         let fetched = self
             .fetch()?
             .ok_or_else(|| Error::invalid_input("扫描到输入末尾"))?
@@ -507,11 +522,30 @@ impl Expander {
         let mut tokens = Vec::new();
         let mut depth = 0usize;
         loop {
-            let fetched = self
-                .fetch()?
-                .ok_or_else(|| Error::invalid_input("组未闭合"))?
-                .0;
+            let Some((fetched, _)) = self.fetch()? else {
+                // 输入耗尽未配平：TeX "Runaway text?" 恢复（补隐含 }）
+                let _ = self.sink.write16("Runaway text?\n".to_owned());
+                return Ok(tokens);
+            };
             let t = self.resolve_group_char(fetched);
+            // outer 宏 forbidden（仅 \toks 类赋值上下文）
+            if let Some(name) = forbidden {
+                if let Some(csid) = t.csid() {
+                    if let EqSlot::Macro(m) = self.eqtb.slot(csid) {
+                        if m.value.outer {
+                            let csname = self.intern.name(csid);
+                            let _ = self.sink.write16(format!(
+                                "Runaway text?\n\
+                                 ! Forbidden control sequence found while scanning text of \\{name}.\n\
+                                 <inserted text>\n                }}\n\
+                                 <to be read again>\n                   \\{csname}\n"
+                            ));
+                            self.unread(t);
+                            return Ok(tokens);
+                        }
+                    }
+                }
+            }
             match t.catcode() {
                 Some(Catcode::BeginGroup) => {
                     depth += 1;
@@ -893,6 +927,7 @@ impl Expander {
                         | Primitive::ParSkip
                         | Primitive::ParFillSkip
                         | Primitive::TopSkip
+                        | Primitive::XSpaceSkip
                 )
             ) {
                 self.fetch()?;
@@ -901,6 +936,7 @@ impl Expander {
                     EqSlot::Primitive(Primitive::LineSkip) => self.params.lineskip,
                     EqSlot::Primitive(Primitive::ParSkip) => self.params.parskip,
                     EqSlot::Primitive(Primitive::ParFillSkip) => self.params.parfillskip,
+                    EqSlot::Primitive(Primitive::XSpaceSkip) => self.params.xspaceskip,
                     _ => self.params.topskip,
                 };
                 return Ok((if neg { -g.width } else { g.width }, 0));
@@ -1085,6 +1121,27 @@ impl Expander {
         const ORDER_WORDS: &[&str] = &["fil", "fill", "filll"];
         let mut unit_tokens: Vec<(Token, char)> = Vec::new();
         while let Some((tok, _)) = self.fetch()? {
+            // TeX scan_keyword 逐字符 get_x_token：单位字母可经展开产生，
+            // 如 TRIP L390 `72p\iftrue t1i` → `p` 后 \iftrue 展开取真分支 `t`
+            // 组成 "pt"（\iftrue 被求值消费，`t1i` 中 `t` 匹配单位、`1` 放回）。
+            if let Some(csid) = tok.csid() {
+                let slot = self.eqtb.slot(csid).clone();
+                let expandable = match slot {
+                    EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
+                    EqSlot::Primitive(p) => p.is_expandable(),
+                    _ => false,
+                };
+                if expandable {
+                    let mut expansion = Vec::new();
+                    self.expand_once((tok, false), &mut expansion)?;
+                    let items: Vec<(Token, bool)> = expansion.into_iter().collect();
+                    self.stack.push(InputFrame::TokenList {
+                        items: Arc::from(items),
+                        pos: 0,
+                    });
+                    continue;
+                }
+            }
             let Some(ch) = tok.charcode().and_then(char::from_u32) else {
                 self.unread(tok);
                 break;
@@ -1116,7 +1173,14 @@ impl Expander {
             }
             Some((u, len)) => (u.to_owned(), len, 0),
             None if unit_tokens.is_empty() => ("pt".to_owned(), 0, 0),
-            None => (String::new(), 0, 0), // 未知单位：整体放回并报错
+            None => {
+                // TeX scan_dimen：字母串匹配不到完整单位 → "Illegal unit of measure
+                // (pt inserted)" 恢复：整词放回、值按 pt 计（TRIP L390 `\ifdim72p...`）
+                let _ = self
+                    .sink
+                    .write16("! Illegal unit of measure (pt inserted).\n".to_string());
+                ("pt".to_owned(), 0, 0)
+            }
         };
         // 放回未消费的字母（[consumed..]）
         if consumed < unit_tokens.len() {
@@ -1128,9 +1192,6 @@ impl Expander {
                 items: Arc::from(back),
                 pos: 0,
             });
-        }
-        if unit.is_empty() {
-            return Err(Error::invalid_input(format!("未知单位：{word}")));
         }
         // 整数部分 + 四舍五入的小数部分（pdfTeX 实测：3.6pt→235930、0.0001pt→7，
         // 即 round(frac × 65536 / 10^k)）；i128 防溢出。

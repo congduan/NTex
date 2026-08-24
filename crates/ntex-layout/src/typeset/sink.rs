@@ -172,6 +172,46 @@ impl TokenSink for NodeBuilder {
         Ok(())
     }
 
+    /// `\radical<delimiter><math field>`：根式原子（\sqrt 底层，带定界符号；TRIP L412）。
+    fn math_radical(&mut self, delim: Option<u32>) -> Result<()> {
+        if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            return self.math_mode_error("radical");
+        }
+        self.radical_pending = Some(delim.unwrap_or(0));
+        Ok(())
+    }
+
+    /// `\spacefactor` 实时查询（活参数：随字符/句号由排版器调整）。
+    fn space_factor(&self) -> i64 {
+        self.space_factor
+    }
+
+    /// `\spacefactor=<number>` 赋值（组作用域恢复由 save/restore 处理）。
+    fn set_space_factor(&mut self, v: i64) -> Result<()> {
+        self.space_factor = v;
+        Ok(())
+    }
+
+    /// `\/`：斜体校正（水平模式发 kern / 数学模式斜体校正原子 / 垂直模式报错）。
+    fn italic_correction(&mut self) -> Result<()> {
+        // 数学模式：斜体校正原子（当前无字体斜体校正度量，宽度 0）
+        if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            return self.math_push_atom(MathAtom::MSkip {
+                width: 0,
+                stretch: 0,
+                shrink: 0,
+                nonscript: false,
+            });
+        }
+        // 垂直模式：TeX 报 "You can't use `\/' in vertical mode"
+        if matches!(self.mode(), Mode::Vertical) {
+            return self.math_mode_error("/");
+        }
+        // 水平/受限水平：斜体校正 kern（无字体度量数据，宽度 0 不输出；TeX 同理）
+        self.append(Node::Kern { width: 0 });
+        Ok(())
+    }
+
     /// `\mathord` 等：给下一个字段定类。
     fn math_class(&mut self, class: u8) -> Result<()> {
         if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
@@ -256,6 +296,8 @@ impl TokenSink for NodeBuilder {
             3 => (false, 1, 0, GLUE_ORDER_FIL),  // \vfil
             4 => (false, 1, 0, GLUE_ORDER_FILL), // \vfill
             5 => (false, 1, 1, GLUE_ORDER_FIL),  // \vss
+            6 => (false, -1, 0, GLUE_ORDER_FIL), // \vfilneg（负 1fil）
+            7 => (true, -1, 0, GLUE_ORDER_FIL),  // \hfilneg（负 1fil）
             _ => return Err(Error::internal("非法 fill 胶水种类")),
         };
         let in_horizontal =
@@ -408,6 +450,8 @@ impl TokenSink for NodeBuilder {
             } else if self.sqrt_pending {
                 self.sqrt_pending = false;
                 Some(MathFieldKind::Sqrt)
+            } else if let Some(d) = self.radical_pending.take() {
+                Some(MathFieldKind::Radical(d))
             } else {
                 self.class_pending.take().map(MathFieldKind::Class)
             };
@@ -457,6 +501,16 @@ impl TokenSink for NodeBuilder {
                     let mut lv = level;
                     Self::math_finish_fraction(&mut lv);
                     parent.atoms.push(MathAtom::Radical { base: lv.atoms });
+                    return Ok(());
+                }
+                Some(MathFieldKind::Radical(delim)) => {
+                    // `\radical<delim>{...}`：radicand 同 \sqrt（定界符号暂不参与渲染）
+                    let mut lv = level;
+                    Self::math_finish_fraction(&mut lv);
+                    parent
+                        .atoms
+                        .push(MathAtom::Radical { base: lv.atoms });
+                    let _ = delim;
                     return Ok(());
                 }
                 Some(MathFieldKind::Class(class)) => {
@@ -509,22 +563,35 @@ impl TokenSink for NodeBuilder {
             Primitive::HBox => self.pending_box = Some(PendingBox::HBox),
             Primitive::VBox => self.pending_box = Some(PendingBox::VBox),
             Primitive::VTop => self.pending_box = Some(PendingBox::VTop),
-            Primitive::Par => match self.mode() {
-                Mode::Horizontal => {
-                    self.close_paragraph();
-                }
-                // 垂直模式 \par 无操作；受限水平/数学模式拒绝（TeX 报错恢复，TRIP L210）
-                Mode::Vertical => {}
-                Mode::RestrictedHorizontal => {
-                    self.write16(
-                        "! You can't use \\par in restricted horizontal mode.\n".to_string(),
-                    )?;
-                }
-                Mode::Math | Mode::DisplayMath => {
-                    // TeX：数学模式 \par → 报 "Missing $ inserted" 并关数学（当 \par 处理）
-                    self.write16("! Missing $ inserted.\n".to_string())?;
-                    let _ = self.close_math();
-                    self.close_paragraph();
+            Primitive::Par => {
+                eprintln!(
+                    "[dbg par] modes={:?} lists={} math={}",
+                    self.list_modes,
+                    self.lists.len(),
+                    self.math.len()
+                );
+                match self.mode() {
+                    Mode::Horizontal => {
+                        self.close_paragraph();
+                    }
+                    // 垂直模式 \par 无操作；受限水平/数学模式拒绝（TeX 报错恢复，TRIP L210）
+                    Mode::Vertical => {}
+                    Mode::RestrictedHorizontal => {
+                        self.write16(
+                            "! You can't use \\par in restricted horizontal mode.\n".to_string(),
+                        )?;
+                    }
+                    Mode::Math | Mode::DisplayMath => {
+                        // TeX：数学模式 \par → 报 "Missing $ inserted" 并关数学（当 \par 处理）
+                        self.write16("! Missing $ inserted.\n".to_string())?;
+                        let was_display = self.mode() == Mode::DisplayMath;
+                        let _ = self.close_math();
+                        // 显示数学的公式盒已并入外层垂直列表（TeX 中显示公式不在段落内），
+                        // 无需再关段落；行内数学结束后仍需关闭所在段落（TRIP L350 `$$` 未闭合段末 \par）
+                        if !was_display {
+                            self.close_paragraph();
+                        }
+                    }
                 }
             },
             Primitive::Indent => match self.mode() {
@@ -551,6 +618,16 @@ impl TokenSink for NodeBuilder {
                     self.nonscript_pending = true;
                 }
             }
+            // TRIP 冲刺：\accent 在数学模式报错恢复（TRIP L396）
+            Primitive::Accent => {
+                if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+                    self.write16(
+                        "! Please use \\mathaccent for accents in math mode.\n".to_string(),
+                    )?;
+                }
+            }
+            // TRIP 冲刺：\error（plain.tex 宏：errmessage）no-op（TRIP 分支中不执行）
+            Primitive::Error => {}
             // 参数扫描型原语经 glue/kern/penalty/rule 事件处理
             _ => {}
         }
@@ -922,8 +999,13 @@ impl TokenSink for NodeBuilder {
     }
 
     /// `\unhbox<n>`/`\unhcopy<n>`：hbox 拆开，子节点追加到当前列表。
+    /// TeX：void 盒或类型不符 → "! Incompatible list can't be unboxed."
+    /// 报错恢复（空操作继续；TRIP L396 `\unhbox234`——234 未设置）。
     fn unhbox(&mut self, idx: usize, copy: bool) -> Result<()> {
-        let b = self.take_or_clone_box(idx, copy)?;
+        let Ok(b) = self.take_or_clone_box(idx, copy) else {
+            self.unbox_error_continue();
+            return Ok(());
+        };
         match b.kind {
             BoxKind::HBox => {
                 for c in b.children {
@@ -931,15 +1013,19 @@ impl TokenSink for NodeBuilder {
                 }
                 Ok(())
             }
-            BoxKind::VBox => Err(Error::invalid_input(format!(
-                "\\unhbox{idx}: 盒子不是 hbox（TeX \"Not in horizontal mode\"）"
-            ))),
+            BoxKind::VBox => {
+                self.unbox_error_continue();
+                Ok(())
+            }
         }
     }
 
     /// `\unvbox<n>`/`\unvcopy<n>`：vbox 拆开，子节点追加到当前列表。
     fn unvbox(&mut self, idx: usize, copy: bool) -> Result<()> {
-        let b = self.take_or_clone_box(idx, copy)?;
+        let Ok(b) = self.take_or_clone_box(idx, copy) else {
+            self.unbox_error_continue();
+            return Ok(());
+        };
         match b.kind {
             BoxKind::VBox => {
                 for c in b.children {
@@ -947,9 +1033,10 @@ impl TokenSink for NodeBuilder {
                 }
                 Ok(())
             }
-            BoxKind::HBox => Err(Error::invalid_input(format!(
-                "\\unvbox{idx}: 盒子不是 vbox（TeX \"Not in vertical mode\"）"
-            ))),
+            BoxKind::HBox => {
+                self.unbox_error_continue();
+                Ok(())
+            }
         }
     }
 
@@ -1034,6 +1121,18 @@ impl TokenSink for NodeBuilder {
     /// `\raise`/`\lower<dimen>`：记录盒子参考点位移（下一个封装盒子生效）。
     fn raise(&mut self, amount: i64) -> Result<()> {
         self.pending_shift = Some(amount);
+        Ok(())
+    }
+
+    /// `\moveleft<dimen>`：记录盒子水平左移（下一个封装盒子生效；TRIP 冲刺简化）。
+    fn move_left(&mut self, amount: i64) -> Result<()> {
+        self.pending_hshift = Some(-amount);
+        Ok(())
+    }
+
+    /// `\moveright<dimen>`：记录盒子水平右移（下一个封装盒子生效；TRIP 冲刺简化）。
+    fn move_right(&mut self, amount: i64) -> Result<()> {
+        self.pending_hshift = Some(amount);
         Ok(())
     }
 

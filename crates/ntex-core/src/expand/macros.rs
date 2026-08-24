@@ -7,11 +7,12 @@ impl Expander {
     /// - 先匹配前导定界符 P_1（须与输入开头逐 token 相同）；
     /// - 对每个 `#k`：若其后定界符 P_{k+1} 为空 → 无分隔参数（单个 token 或组）；
     ///   否则为分隔参数，收集到 P_{k+1} 在输入中完整出现为止（定界符被消费）。
-    fn collect_args(&mut self, def: &MacroDef) -> Result<Vec<TokenArray>> {
+    fn collect_args(&mut self, csid: u32, def: &MacroDef) -> Result<Vec<TokenArray>> {
         let n = def.params.num_params as usize;
         if n == 0 {
             return Ok(Vec::new());
         }
+        let name = self.intern.name(csid).to_owned();
         // 按 #n 参数 token 分段：segments[0]=P_1（#1 前），segments[k]=P_{k+1}（#k 后）
         let mut segments: Vec<Vec<Token>> = vec![Vec::new()];
         for t in def.params.text.iter() {
@@ -42,13 +43,40 @@ impl Expander {
         for k in 0..n {
             let delim = &segments[k + 1]; // P_{k+2}：紧跟在 #(k+1) 后的定界符
             let arg = if delim.is_empty() {
-                self.collect_undelimited_arg(def.params.long)?
+                self.collect_undelimited_arg(def.params.long, &name)?
             } else {
-                self.collect_delimited_arg(delim, def.params.long)?
+                self.collect_delimited_arg(delim, def.params.long, &name)?
             };
             args.push(arg);
         }
         Ok(args)
+    }
+
+    /// TeX "Paragraph ended" 恢复辅助：丢弃当前行中 `\par` 之后的 token，
+    /// 直到行尾（EOL）或下一个 `\par`（放回保留，供后续分隔符/主循环使用）。
+    fn skip_to_line_end_after_par(&mut self) -> Result<()> {
+        loop {
+            let Some((tok, _)) = self.fetch()? else { return Ok(()) };
+            if self.is_par_token(tok) {
+                self.unread(tok);
+                return Ok(());
+            }
+            if tok.catcode() == Some(Catcode::EndOfLine) {
+                return Ok(());
+            }
+        }
+    }
+
+    /// TeX：non-long 宏参数扫描中遇 `\par` → "Paragraph ended before \<name>
+    /// was complete." 恢复：报错 + 跳过本行剩余 + `\par` 放回（TRIP L357）。
+    fn recover_par_in_argument(&mut self, name: &str, tok: Token) -> Result<()> {
+        let _ = self.sink.write16(format!(
+            "! Paragraph ended before \\{name} was complete.\n\
+             <to be read again>\n                   \\par\n"
+        ));
+        self.skip_to_line_end_after_par()?;
+        self.unread(tok);
+        Ok(())
     }
 
     /// 逐 token 匹配输入与定界符序列（用于前导定界符 P_1）。
@@ -81,7 +109,12 @@ impl Expander {
     }
 
     /// 收集一个分隔实参：读入 token 直到定界符序列在输入中完整匹配（后缀匹配）。
-    fn collect_delimited_arg(&mut self, delim: &[Token], long: bool) -> Result<TokenArray> {
+    fn collect_delimited_arg(
+        &mut self,
+        delim: &[Token],
+        long: bool,
+        name: &str,
+    ) -> Result<TokenArray> {
         if std::env::var("NTEX_COND_TRACE").is_ok() {
             let d: String = delim
                 .iter()
@@ -99,7 +132,8 @@ impl Expander {
                 .ok_or_else(|| Error::invalid_input("分隔实参扫描到输入末尾（定界符未出现）"))?
                 .0;
             if !long && self.is_par_token(tok) {
-                return Err(Error::invalid_input("参数包含 \\par（宏未声明 \\long）"));
+                self.recover_par_in_argument(name, tok)?;
+                return Ok(Arc::from(buf));
             }
             // 实参内条件：开 `\if*` 作数据并计数；闭合 token 先匹配参数内条件，
             // 无匹配（arg_cond==0）时是**外层**条件的 `\else/\fi/\or` → 交条件机，
@@ -155,7 +189,7 @@ impl Expander {
 
     /// 收集一个无分隔实参：
     /// 跳过前导空格；`{...}` 取组内容（去外层花括号），否则取单个 token。
-    fn collect_undelimited_arg(&mut self, long: bool) -> Result<TokenArray> {
+    fn collect_undelimited_arg(&mut self, long: bool, name: &str) -> Result<TokenArray> {
         // 跳过前导空格
         loop {
             let tok = self
@@ -180,7 +214,7 @@ impl Expander {
                 CondOp::Else | CondOp::Fi | CondOp::Or => {
                     self.step_conditional(op)?;
                     // 继续扫描实参（\fi 已消费）
-                    return self.collect_undelimited_arg(long);
+                    return self.collect_undelimited_arg(long, name);
                 }
                 _ => {} // \if*：实参数据（TeX 参数内开条件作数据）
             }
@@ -194,6 +228,12 @@ impl Expander {
                         .fetch()?
                         .ok_or_else(|| Error::invalid_input("实参组未闭合"))?
                         .0;
+                    // TeX scan_toks(macro=true)：non-long 宏参数中任意深度的
+                    // `\par` 都触发 "Paragraph ended"（TRIP L357 `\b{\par`）
+                    if !long && self.is_par_token(t) {
+                        self.recover_par_in_argument(name, t)?;
+                        return Ok(Arc::from(tokens));
+                    }
                     // TeX：组实参内的 outer 宏同样 forbidden
                     self.check_not_outer(t)?;
                     match t.catcode() {
@@ -215,7 +255,8 @@ impl Expander {
             }
             _ => {
                 if !long && self.is_par_token(tok) {
-                    return Err(Error::invalid_input("参数包含 \\par（宏未声明 \\long）"));
+                    self.recover_par_in_argument(name, tok)?;
+                    return Ok(Arc::from([]));
                 }
                 // TeX：单 token 实参为 outer 宏 → forbidden
                 self.check_not_outer(tok)?;
@@ -554,7 +595,10 @@ impl Expander {
                 pos: 0,
             });
             while self.process_one()? {}
-            if self.cond_stack.len() != cond_depth {
+            // TeX 允许条件帧跨 \message/\write 参数边界（\ifx 在参数内求值、
+            // \fi 在括号外闭合），故只对"过度闭合"（深度低于入口）报错；
+            // 遗留的帧交由外层主循环正常闭合。
+            if self.cond_stack.len() < cond_depth {
                 #[cfg(debug_assertions)]
                 {
                     let frames: Vec<String> = self

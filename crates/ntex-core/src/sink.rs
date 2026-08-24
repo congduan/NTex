@@ -68,6 +68,22 @@ pub trait TokenSink: std::fmt::Debug {
     fn math_sqrt(&mut self) -> Result<()> {
         Ok(())
     }
+    /// `\radical<delimiter><math field>`：根式原子（\sqrt 底层，带定界符号；TRIP L412）。
+    fn math_radical(&mut self, _delim: Option<u32>) -> Result<()> {
+        Ok(())
+    }
+    /// `\spacefactor` 实时查询（活参数，由排版器维护；TRIP L277 `\showthe\spacefactor`）。
+    fn space_factor(&self) -> i64 {
+        1000
+    }
+    /// `\spacefactor=<number>` 赋值（组作用域恢复由排版器负责；TRIP L209/L288）。
+    fn set_space_factor(&mut self, _v: i64) -> Result<()> {
+        Ok(())
+    }
+    /// `\/`：斜体校正（水平模式发 kern / 数学模式斜体校正原子 / 垂直模式报错；TRIP L410/L412）。
+    fn italic_correction(&mut self) -> Result<()> {
+        Ok(())
+    }
     /// `\mathord`=0/`\mathbin`=1/`\mathop`=2/`\mathrel`=3/`\mathopen`=4/
     /// `\mathclose`=5/`\mathpunct`=6/`\mathinner`=7：给下一字段定类（M4-2）。
     fn math_class(&mut self, _class: u8) -> Result<()> {
@@ -340,6 +356,14 @@ pub trait TokenSink: std::fmt::Debug {
     }
     /// `\raise`/`\lower<dimen>`：记录盒子参考点位移（下一个封装盒子生效）。
     fn raise(&mut self, _amount: i64) -> Result<()> {
+        Ok(())
+    }
+    /// `\moveleft<dimen>`：记录盒子水平左移（TRIP 冲刺；默认 no-op）。
+    fn move_left(&mut self, _amount: i64) -> Result<()> {
+        Ok(())
+    }
+    /// `\moveright<dimen>`：记录盒子水平右移（TRIP 冲刺；默认 no-op）。
+    fn move_right(&mut self, _amount: i64) -> Result<()> {
         Ok(())
     }
     /// 累积的终端转录文本（默认空；收集型 sink 实现）。

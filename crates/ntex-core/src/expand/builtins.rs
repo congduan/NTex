@@ -1,6 +1,6 @@
 impl Expander {
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 282] = [
+        const BUILTINS: [(&str, Primitive); 302] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -217,6 +217,31 @@ impl Expander {
             ("vfil", Primitive::VFil),
             ("vfill", Primitive::VFill),
             ("vss", Primitive::VSS),
+            // TRIP 冲刺：\moveleft/\moveright<dimen><box>（盒子水平位移）
+            ("moveleft", Primitive::MoveLeft),
+            ("moveright", Primitive::MoveRight),
+            // TRIP 冲刺：\accent<8-bit number><字符>（读音符）
+            ("accent", Primitive::Accent),
+            // TRIP 冲刺：\vfilneg（plain.tex 宏：负 1fil vskip）
+            ("vfilneg", Primitive::VFilNeg),
+            // TRIP 冲刺：\hfilneg（plain.tex 宏：负 1fil hskip）
+            ("hfilneg", Primitive::HFilNeg),
+            // TRIP 冲刺：\error（plain.tex 宏：errmessage）
+            ("error", Primitive::Error),
+            // TRIP 冲刺：\varunit（plain.tex 字体标识符；TRIP L404 引用）
+            ("varunit", Primitive::VarUnit),
+            // TRIP 冲刺：\xspaceskip（plain.tex 胶水参数；TRIP L410 `\advance\xspaceskip`）
+            ("xspaceskip", Primitive::XSpaceSkip),
+            // TRIP 冲刺：\spacefactor（活空间因子，L209/L288 赋值、L277 读取）
+            ("spacefactor", Primitive::SpaceFactor),
+            // TRIP 冲刺：\everymath（数学模式进入注入 token 列表，L411）
+            ("everymath", Primitive::EveryMath),
+            // TRIP 冲刺：\/（斜体校正，控制符号；L410/L412）
+            ("/", Primitive::ItalicCorrection),
+            // TRIP 冲刺：\radical<delimiter><math field>（根式原子，L412 everymath 注入）
+            ("radical", Primitive::Radical),
+            // TRIP 冲刺：\delimiterfactor（内部整数参数；L412 赋值 1600）
+            ("delimiterfactor", Primitive::DelimiterFactor),
             // ETRIP 冲刺：\vsplit<n> to/spread <dimen>（纵向拆分盒子寄存器）
             ("vsplit", Primitive::VSplit),
             // ETRIP 冲刺：\everyjob=<tokens>（作业开始 token 表；暂映射到 toks 0）
@@ -359,6 +384,16 @@ impl Expander {
             ("omit", Primitive::Omit),
             // TRIP：放大倍数整数参数
             ("mag", Primitive::Mag),
+            // TRIP 冲刺：dimen 内部参数（initex 预定义；排版器经 param_changed 镜像）
+            ("nulldelimiterspace", Primitive::NullDelimiterSpace),
+            ("scriptspace", Primitive::ScriptSpace),
+            ("overfullrule", Primitive::OverfullRule),
+            ("voffset", Primitive::VOffset),
+            ("hoffset", Primitive::HOffset),
+            // TRIP 冲刺：\mathcode<num>=<num>（字符数学码表）
+            ("mathcode", Primitive::MathCode),
+            // TRIP 冲刺：\noboundary（数学字符边界抑制；直通 sink）
+            ("noboundary", Primitive::NoBoundary),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);

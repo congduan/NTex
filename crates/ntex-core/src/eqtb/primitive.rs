@@ -363,6 +363,41 @@ pub enum Primitive {
     Omit,
     // TRIP：\mag（放大倍数整数参数；L67 赋值 2000，L160 `.5\mag` 作 dimen 乘子）
     Mag,
+    // TRIP 冲刺：dimen 内部参数（initex 预定义）
+    NullDelimiterSpace,
+    ScriptSpace,
+    OverfullRule,
+    VOffset,
+    HOffset,
+    // TRIP 冲刺：\mathcode（字符数学码表）
+    MathCode,
+    // TRIP 冲刺：\noboundary（数学字符边界抑制；水平/垂直模式 no-op）
+    NoBoundary,
+    // TRIP 冲刺：\moveleft/\moveright<dimen><box>（盒子水平位移）
+    MoveLeft,
+    MoveRight,
+    // TRIP 冲刺：\accent<8-bit number><字符>（读音符；数学模式报错恢复）
+    Accent,
+    // TRIP 冲刺：\vfilneg（plain.tex：负 1fil 的 vskip）
+    VFilNeg,
+    // TRIP 冲刺：\hfilneg（plain.tex：负 1fil 的 hskip）
+    HFilNeg,
+    // TRIP 冲刺：\error（plain.tex 宏：errmessage；TRIP L402 分支不执行）
+    Error,
+    // TRIP 冲刺：\varunit（plain.tex 字体标识符；TRIP L404 `\fontdimen1000=20\varunit`）
+    VarUnit,
+    // TRIP 冲刺：\xspaceskip（plain.tex 胶水参数；TRIP L410 `\advance\xspaceskip by-\xspaceskip`）
+    XSpaceSkip,
+    // TRIP 冲刺：\spacefactor（活空间因子；由排版器维护，赋值/读取实时经 sink）
+    SpaceFactor,
+    // TRIP 冲刺：\everymath（进入数学模式时注入的 token 列表；VM 存储）
+    EveryMath,
+    // TRIP 冲刺：\/（斜体校正；水平模式发 kern，数学模式为斜体校正原子）
+    ItalicCorrection,
+    // TRIP 冲刺：\radical<delimiter><math field>（根式原子，\sqrt 底层，带定界符号）
+    Radical,
+    // TRIP 冲刺：\delimiterfactor（内部整数参数，misc 数组；delimiter 缩放因子，默认 901）
+    DelimiterFactor,
 }
 
 impl Primitive {
@@ -688,6 +723,27 @@ impl Primitive {
             279 => Self::TracingParagraphs,
             280 => Self::Omit,
             281 => Self::Mag,
+            282 => Self::NullDelimiterSpace,
+            283 => Self::ScriptSpace,
+            284 => Self::OverfullRule,
+            285 => Self::VOffset,
+            286 => Self::HOffset,
+            287 => Self::MathCode,
+            288 => Self::NoBoundary,
+            289 => Self::MoveLeft,
+            290 => Self::MoveRight,
+            291 => Self::Accent,
+            292 => Self::VFilNeg,
+            293 => Self::Error,
+            294 => Self::VarUnit,
+            295 => Self::HFilNeg,
+            296 => Self::XSpaceSkip,
+            // TRIP 冲刺：\spacefactor/\everymath/\/\radical/\delimiterfactor（297-301）
+            297 => Self::SpaceFactor,
+            298 => Self::EveryMath,
+            299 => Self::ItalicCorrection,
+            300 => Self::Radical,
+            301 => Self::DelimiterFactor,
             _ => return None,
         })
     }

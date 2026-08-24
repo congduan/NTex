@@ -1,5 +1,24 @@
 // ---------- 自由函数 ----------
 
+/// TRIP 冲刺：TeX initex 默认 mathcode 表（tex.web `init_math_codes`）：
+/// catcode 11/12（letter/other_char）→ `0x7000+码`（class 7 variable、family 0、
+/// 字符码本身），其余 → `0x8000`（无效，触发 "Missing character"）。
+///
+/// initex 初始 catcode：A-Z/a-z = 11；数字/标点/非 ASCII = 12；
+/// 排除特殊字符（0=ignored、tab/CR=end_line/space、`\ { } $ # ^ _ ~ %`）。
+fn default_mathcodes() -> HashMap<u32, u32> {
+    // 非 catcode 11/12 的码点（tex.web `@<Initialize the catcode tables@>`）。
+    const NON_LETTER_OTHER: [u32; 13] = [
+        0x00, 0x09, 0x0D, 0x20, 0x23, 0x24, 0x25, 0x5C, 0x5E, 0x5F, 0x7B, 0x7D, 0x7E,
+    ];
+    let mut m = HashMap::with_capacity(256);
+    for k in 0..=255u32 {
+        let v = if NON_LETTER_OTHER.contains(&k) { 0x8000 } else { 0x7000 + k };
+        m.insert(k, v);
+    }
+    m
+}
+
 /// 宏体实参替换：`#n` → 第 n 个实参（整段借用，零拷贝）。
 fn materialize(body: &[Token], args: &[TokenArray]) -> Vec<Token> {
     let mut out = Vec::with_capacity(body.len());
@@ -56,6 +75,8 @@ fn int_param_index(p: Primitive) -> Option<usize> {
         Primitive::PageDiscards => 30,
         Primitive::SplitDiscards => 31,
         Primitive::LostChars => 32,
+        // TRIP 冲刺：\delimiterfactor（misc 33；plain 默认 901）
+        Primitive::DelimiterFactor => 33,
         _ => return None,
     })
 }

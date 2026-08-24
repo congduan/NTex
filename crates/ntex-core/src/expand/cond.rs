@@ -156,19 +156,24 @@ impl Expander {
                     truth = !truth;
                 }
                 self.cur_if_branch = if truth { 1 } else { -1 };
-                self.cond_stack.push(CondFrame {
-                    is_case: false,
-                    state: if truth {
-                        CondState::Processing
-                    } else {
-                        CondState::Skipping
-                    },
-                    owns_skip: !truth,
-                    ors_left: None,
-                    else_seen: false,
-                    saved_if_type: saved_type,
-                    saved_if_branch: saved_branch,
-                });
+                if truth {
+                    self.cond_stack.push(CondFrame {
+                        is_case: false,
+                        state: CondState::Processing,
+                        owns_skip: false,
+                        ors_left: None,
+                        else_seen: false,
+                        saved_if_type: saved_type,
+                        saved_if_branch: saved_branch,
+                    });
+                } else {
+                    // TeX：false 条件不压帧，立即 `skip_ahead` 到匹配的
+                    // \else/\or/\fi（tex.web P27）。若等外层主循环跳过，扫描
+                    // 内部的条件（TRIP L82 `\scriptspace...\ifnum'\ifnum10=10 12="\fi`）
+                    // 已错位——\fi 必须闭合栈顶的内层帧（内层 \ifnum），
+                    // 而本条件的跳过恰好消费该 \fi 结束。
+                    self.skip_ahead(saved_type, saved_branch)?;
+                }
                 Ok(())
             }
             CondOp::IfCase => {
@@ -208,6 +213,97 @@ impl Expander {
                 });
                 Ok(())
             }
+        }
+    }
+
+    /// TeX `skip_ahead`：false 条件求值后立即跳到匹配的 `\else`/`\or`/`\fi`。
+    /// 本条件不压帧（TeX 语义），期间：
+    /// - 普通 token 丢弃（不展开）；
+    /// - 嵌套 `\if*` 惰性计数（压 Skipping 帧，`\fi` 时弹出）；
+    /// - 嵌套的 `\else`/`\or` 不计数（TeX skip_ahead 同样忽略）；
+    /// - 到达本层级的 `\fi` → 结束（本条件直接闭合，无帧）；
+    /// - 到达本层级的 `\else` → 进入 else 分支（压 Processing 帧）。
+    fn skip_ahead(&mut self, saved_type: i32, saved_branch: i32) -> Result<()> {
+        let target = self.cond_stack.len();
+        loop {
+            let Some((tok, _ne)) = self.fetch()? else {
+                return Err(Error::invalid_input("\\if 缺少 \\fi"));
+            };
+            let Some(op) = self.cond_op(tok) else {
+                continue; // 普通 token 丢弃
+            };
+            match op {
+                CondOp::Fi => {
+                    if self.cond_stack.len() == target {
+                        // 本条件的 \fi：直接闭合，无帧，恢复外层类型
+                        self.cur_if_type = saved_type;
+                        self.cur_if_branch = saved_branch;
+                        return Ok(());
+                    }
+                    self.cond_stack.pop(); // 嵌套条件闭合
+                }
+                CondOp::Else | CondOp::Or => {
+                    if self.cond_stack.len() == target {
+                        // 本条件的 \else/\or：进入该分支
+                        return self.enter_skipped_branch(op, saved_type, saved_branch);
+                    }
+                    // 嵌套条件的 \else/\or：TeX skip_ahead 忽略，不计数
+                }
+                _ => {
+                    // 嵌套条件开始：惰性计数（跳过中不评估测试）
+                    self.cond_stack.push(CondFrame {
+                        is_case: matches!(op, CondOp::IfCase),
+                        state: CondState::Skipping,
+                        owns_skip: false,
+                        ors_left: None,
+                        else_seen: false,
+                        saved_if_type: self.cur_if_type,
+                        saved_if_branch: self.cur_if_branch,
+                    });
+                }
+            }
+        }
+    }
+
+    /// 跳过结束于本条件的 `\else`/`\or` 时进入该分支。
+    fn enter_skipped_branch(
+        &mut self,
+        op: CondOp,
+        saved_type: i32,
+        saved_branch: i32,
+    ) -> Result<()> {
+        match op {
+            CondOp::Else => {
+                // 进入 else 分支：压 Processing 帧（等价于 \else 状态机转换）
+                self.cur_if_branch = -1;
+                self.cond_stack.push(CondFrame {
+                    is_case: false,
+                    state: CondState::Processing,
+                    owns_skip: false,
+                    ors_left: None,
+                    else_seen: true,
+                    saved_if_type: saved_type,
+                    saved_if_branch: saved_branch,
+                });
+                Ok(())
+            }
+            CondOp::Or => {
+                // 非 case 条件的 \or 是错误（TeX：! Extra \or.），保守恢复：
+                // 压 Processing 帧让后续 \fi 正常闭合。
+                let _ = self.sink.write16("! Extra \\or.\n".to_string());
+                self.cur_if_branch = -1;
+                self.cond_stack.push(CondFrame {
+                    is_case: false,
+                    state: CondState::Processing,
+                    owns_skip: false,
+                    ors_left: None,
+                    else_seen: true,
+                    saved_if_type: saved_type,
+                    saved_if_branch: saved_branch,
+                });
+                Ok(())
+            }
+            _ => Ok(()),
         }
     }
 
@@ -285,7 +381,7 @@ impl Expander {
             }
             CondOp::IfNum => {
                 let a = self.scan_number()?;
-                let rel = self.scan_relation()?;
+                let rel = self.scan_relation("ifnum")?;
                 let b = self.scan_number()?;
                 if std::env::var("NTEX_IFNUM_TRACE").is_ok() {
                     eprintln!("[trace-ifnum] {a} {rel:?} {b}");
@@ -294,7 +390,7 @@ impl Expander {
             }
             CondOp::IfDim => {
                 let a = self.scan_dimen()?;
-                let rel = self.scan_relation()?;
+                let rel = self.scan_relation("ifdim")?;
                 let b = self.scan_dimen()?;
                 if std::env::var("NTEX_IFNUM_TRACE").is_ok() {
                     eprintln!("[trace-ifdim] {a} {rel:?} {b}");
@@ -438,24 +534,34 @@ impl Expander {
         }
     }
 
-    fn scan_relation(&mut self) -> Result<Relation> {
+    fn scan_relation(&mut self, cond: &str) -> Result<Relation> {
         self.skip_spaces()?;
-        let tok = self
-            .fetch()?
-            .ok_or_else(|| Error::invalid_input("关系符扫描到输入末尾"))?
-            .0;
+        let Some((tok, _)) = self.fetch()? else {
+            // TeX scan_relation：输入耗尽 → 按 = 恢复
+            let _ = self.sink.write16(format!(
+                "! Missing = inserted for \\{cond}.\n\
+                 I was expecting to see `<', `=', or `>'. Didn't.\n"
+            ));
+            return Ok(Relation::Eq);
+        };
         match tok.charcode() {
             Some(c) if c == b'<' as u32 => Ok(Relation::Lt),
             Some(c) if c == b'=' as u32 => Ok(Relation::Eq),
             Some(c) if c == b'>' as u32 => Ok(Relation::Gt),
             _ => {
+                // TeX scan_relation：非关系符 → "Missing = inserted for \<cond>"，
+                // token 放回、关系按 = 恢复（TRIP L390 `\ifdim72p\iftrue t1i` 后遇 `1`）
                 let name = tok
                     .csid()
                     .map(|id| self.intern.name(id).to_string())
                     .unwrap_or_else(|| format!("{:?}", tok));
-                Err(Error::invalid_input(format!(
-                    "预期 < = > 关系符（实际读到 {name}）"
-                )))
+                let _ = self.sink.write16(format!(
+                    "! Missing = inserted for \\{cond}.\n\
+                     <to be read again>\n                   {name}\n\
+                     I was expecting to see `<', `=', or `>'. Didn't.\n"
+                ));
+                self.unread(tok);
+                Ok(Relation::Eq)
             }
         }
     }

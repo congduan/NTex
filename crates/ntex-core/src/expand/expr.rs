@@ -63,7 +63,7 @@ impl Expander {
                 EqSlot::Macro(m) => {
                     let def = m.value.clone();
                     let args = if def.params.num_params > 0 {
-                        self.collect_args(&def)?
+                        self.collect_args(csid, &def)?
                     } else {
                         Vec::new()
                     };
@@ -585,7 +585,7 @@ impl Expander {
                 match self.eqtb.slot(csid).clone() {
                     EqSlot::Macro(m) => {
                         let args = if m.value.params.num_params > 0 {
-                            self.collect_args(&m.value)?
+                            self.collect_args(csid, &m.value)?
                         } else {
                             Vec::new()
                         };
