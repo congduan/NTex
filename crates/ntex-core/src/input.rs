@@ -20,6 +20,9 @@ use crate::token::Token;
 /// - 后随两位十六进制数字（`^^5e`）→ 按十六进制取值；
 /// - 否则单字符规则：字符码 <64 加 64，64..=127 减 64（如 `^^A`→1、`^^@`→0、`^^?`→127）。
 ///
+/// 十六进制对仅限小写 `a`-`f` 与 `0`-`9`（pdfTeX 实测：`^^Ab`→字符1+'b'、
+/// `^^A0`→字符1+'0'，大写 A-F 不参与配对）；`^^a`（后随非 hex）→ 97-64=33。
+///
 /// 非 `^^` 情形返回 `None` 且不消费任何字节。
 fn decode_circumflex(bytes: &[u8], pos: &mut usize, catcodes: &CatcodeTable) -> Option<u8> {
     // 第一个 `^` 必须 catcode 7（superscript），第二个仅按字符码 94 匹配（tex.web 同规则）
@@ -34,7 +37,6 @@ fn decode_circumflex(bytes: &[u8], pos: &mut usize, catcodes: &CatcodeTable) -> 
         match b {
             b'0'..=b'9' => Some(b - b'0'),
             b'a'..=b'f' => Some(b - b'a' + 10),
-            b'A'..=b'F' => Some(b - b'A' + 10),
             _ => None,
         }
     };
@@ -104,8 +106,11 @@ pub fn scan_token(
                 continue;
             }
             Catcode::Invalid => {
+                // TeX（tex.web get_next invalid_char）：报 "! Text line contains an
+                // invalid character." 并**跳过该字符继续**（不产生 token）；错误消息
+                // 由调用方（fetch）写入转录，此处仅消费字节并返回可恢复错误。
                 *pos += 1;
-                return Err(Error::invalid_input(format!("非法字符 0x{b:02X}")));
+                return Err(Error::invalid_character(b));
             }
             Catcode::Escape => {
                 *pos += 1;
@@ -126,14 +131,34 @@ pub fn scan_token(
                 }
                 if catcodes.get(first).is_letter() {
                     // 控制词：首字符（可能为 ^^ 解码）+ 连续字母（cat 11）
+                    // 及 ^^ 转义解码后为 cat 11 的字符（`\bigtr^^@p` → 名字 "bigtr\0p"）。
                     if !advanced {
                         *pos += 1; // 首字符未解码：越过它再读后续字母
                     }
                     let mut name = vec![first];
                     let mut i = *pos;
-                    while i < bytes.len() && catcodes.get(bytes[i]).is_letter() {
-                        name.push(bytes[i]);
-                        i += 1;
+                    while i < bytes.len() {
+                        let b = bytes[i];
+                        if catcodes.get(b).is_letter() {
+                            name.push(b);
+                            i += 1;
+                        } else if b == b'^'
+                            && catcodes.get(b) == Catcode::Superscript
+                            && bytes.get(i + 1) == Some(&b'^')
+                        {
+                            // ^^ 转义：解码后若 cat 11（letter）则并入控制词名
+                            let mut dpos = i;
+                            if let Some(d) = decode_circumflex(bytes, &mut dpos, catcodes) {
+                                if catcodes.get(d).is_letter() {
+                                    name.push(d);
+                                    i = dpos;
+                                    continue;
+                                }
+                            }
+                            break;
+                        } else {
+                            break;
+                        }
                     }
                     *pos = i;
                     let name = std::str::from_utf8(&name)

@@ -89,11 +89,19 @@ impl Expander {
         Ok(name)
     }
 
-    /// 扫描流号（0..=max）。
-    fn scan_stream_index(&mut self, what: &str, max: i64) -> Result<usize> {
+    /// 扫描流号（0..=max）；越界报 "! Bad number (n)." 并钳制（负数 → 0，
+    /// 过大 → max），TeX 错误恢复语义（trip.tex L94 `\openout-'78terminal`
+    /// → -7 → 钳 0，文件名 "8terminal"）。
+    fn scan_stream_index(&mut self, _what: &str, max: i64) -> Result<usize> {
         let n = self.scan_number()?;
         if !(0..=max).contains(&n) {
-            return Err(Error::invalid_input(format!("{what} 流号越界：{n}")));
+            let _ = self.sink.write16(format!(
+                "! Bad number ({}).\n\
+                 Since I expected to read a number between 0 and {max},\n\
+                 I changed this one to zero.\n",
+                n
+            ));
+            return Ok(if n < 0 { 0 } else { max as usize });
         }
         Ok(n as usize)
     }
@@ -245,13 +253,42 @@ impl Expander {
 
     /// `\write<n><general text>`：token 列表入队（延迟）或立即展开落盘（`\immediate`）。
     fn exec_write(&mut self) -> Result<()> {
-        let idx = self.scan_stream_index("\\write", 18)?;
-        if idx == 18 {
+        // TeX 语义：\write 流号 -1..=18（-1 = log-only；16 = 终端；18 = shell）。
+        let n = self.scan_number()?;
+        if n == 18 {
             return Err(Error::invalid_input("\\write18（shell 转义）暂不支持"));
         }
         let toks = Arc::from(self.scan_general_text()?);
         // 消费 \immediate 前缀（流 15/16 终端写也须消费，避免污染后续 \write）
         let immediate = self.take_immediate();
+        if n == -1 {
+            // 流 -1：log-only（`\write-1{...}`）。\immediate 立即写 log；否则
+            // whatsit 节点 + 延迟到 shipout 边界（TeX 语义，参考 log L44/L58）。
+            if immediate {
+                let s = self.expand_to_string(&toks)?;
+                return self.sink.write16(s);
+            }
+            let text: String = toks
+                .iter()
+                .filter_map(|t| t.charcode())
+                .filter_map(char::from_u32)
+                .collect();
+            self.sink.whatsit(text)?;
+            self.log_write_pending.push(toks);
+            return Ok(());
+        }
+        if !(0..=17).contains(&n) {
+            // TeX：无效流号（如 trip.tex L137 `\write111`）→ 忽略 whatsit
+            // （参考 log 显示 `.\write*{\help }`，不报错不写出）。
+            let text: String = toks
+                .iter()
+                .filter_map(|t| t.charcode())
+                .filter_map(char::from_u32)
+                .collect();
+            self.sink.whatsit(text)?;
+            return Ok(());
+        }
+        let idx = n as usize;
         // 流 16 = 终端（TeX：\write16 写终端与日志，无需 \openout）；
         // ETRIP 的 \typeout/\error 用 \write15（同终端；TeX 预留流 15 作 log 输出）
         if idx == 16 || idx == 15 {
@@ -387,6 +424,16 @@ impl Expander {
     pub fn flush_writes(&mut self) -> Result<()> {
         for i in 0..self.write_streams.len() {
             self.flush_write_stream(i)?;
+        }
+        // TRIP：`\write-1`（log-only）待写内容展开后写 log（每条后加换行）。
+        if !self.log_write_pending.is_empty() {
+            let pending = std::mem::take(&mut self.log_write_pending);
+            let mut out = String::new();
+            for toks in pending {
+                out.push_str(&self.expand_to_string(&toks)?);
+                out.push('\n');
+            }
+            self.sink.write16(out)?;
         }
         Ok(())
     }

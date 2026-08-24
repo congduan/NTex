@@ -287,12 +287,18 @@ impl Expander {
                 let a = self.scan_number()?;
                 let rel = self.scan_relation()?;
                 let b = self.scan_number()?;
+                if std::env::var("NTEX_IFNUM_TRACE").is_ok() {
+                    eprintln!("[trace-ifnum] {a} {rel:?} {b}");
+                }
                 Ok(compare(a, b, rel))
             }
             CondOp::IfDim => {
                 let a = self.scan_dimen()?;
                 let rel = self.scan_relation()?;
                 let b = self.scan_dimen()?;
+                if std::env::var("NTEX_IFNUM_TRACE").is_ok() {
+                    eprintln!("[trace-ifdim] {a} {rel:?} {b}");
+                }
                 Ok(compare(a, b, rel))
             }
             CondOp::IfOdd => Ok(self.scan_number()? % 2 != 0),

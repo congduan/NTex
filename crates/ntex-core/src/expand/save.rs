@@ -264,6 +264,28 @@ impl Expander {
                     let idx = self.scan_register_index()?;
                     Ok(self.registers.toks(idx).to_vec())
                 }
+                // TRIP：\the\textfont/\scriptfont/\scriptscriptfont<n> → 数学族字体
+                // （族号越界报 "! Bad number" 钳制 0；expander 侧无 font→cs 名映射，
+                // 输出字体 id 文本，值被丢弃的场景足够——L269 `\the\scriptscriptfont-1`）。
+                Primitive::TextFont | Primitive::ScriptFont | Primitive::ScriptScriptFont => {
+                    let kind = match p {
+                        Primitive::TextFont => 0,
+                        Primitive::ScriptFont => 1,
+                        _ => 2,
+                    };
+                    let n = self.scan_number()?;
+                    if !(0..=15).contains(&n) {
+                        let _ = self.sink.write16(format!(
+                            "! Bad number ({}).\n\
+                             Since I expected to read a number between 0 and 15,\n\
+                             I changed this one to zero.\n",
+                            n
+                        ));
+                    }
+                    let fam = if (0..=15).contains(&n) { n as usize } else { 0 };
+                    let f = self.math_fonts[kind][fam];
+                    Ok(emit_count(f as i64))
+                }
                 Primitive::ParIndent
                 | Primitive::BaselineSkip
                 | Primitive::LineSkip
@@ -283,7 +305,8 @@ impl Expander {
                 | Primitive::EndlineChar
                 | Primitive::NewlineChar
                 | Primitive::DefaultHyphenChar
-                | Primitive::DefaultSkewChar => {
+                | Primitive::DefaultSkewChar
+                | Primitive::Mag => {
                     let kind = match p {
                         Primitive::ParIndent => ParamKind::ParIndent,
                         Primitive::BaselineSkip => ParamKind::BaselineSkip,
@@ -305,7 +328,7 @@ impl Expander {
                         Primitive::NewlineChar => ParamKind::NewlineChar,
                         Primitive::DefaultHyphenChar => ParamKind::DefaultHyphenChar,
                         Primitive::DefaultSkewChar => ParamKind::DefaultSkewChar,
-                        _ => unreachable!("\\the 参数匹配已穷举"),
+                        _ => ParamKind::Mag,
                     };
                     Ok(match self.params.get(kind) {
                         ParamValue::Dimen(v) => emit_dimen(v),
@@ -317,6 +340,13 @@ impl Expander {
                 p if int_param_index(*p).is_some() => {
                     let idx = int_param_index(*p).expect("已检查 is_some");
                     Ok(emit_count(self.params.misc[idx]))
+                }
+                // TRIP：\the\catcode`X → 当前 catcode 值（L295 `\the\catcode`J`）
+                Primitive::Catcode => {
+                    let code = self.scan_char_code()?;
+                    let byte =
+                        u8::try_from(code).map_err(|_| Error::invalid_input("\\catcode 字符码越界"))?;
+                    Ok(emit_count(i64::from(self.catcodes.get(byte).as_u8())))
                 }
                 // ETRIP 冲刺：e-TeX 只读整数（\the/\number 上下文，与 scan_number 对齐）
                 Primitive::InputLineNo => Ok(emit_count(0)),
@@ -434,6 +464,11 @@ impl Expander {
                         u8::try_from(byte).map_err(|_| Error::invalid_input("\\lccode 字符码越界"))?;
                     Ok(emit_count(self.lccodes[byte as usize]))
                 }
+                // \the\font：当前字体选择器（expander 侧无排版状态——NTex 简化返回
+                // 空；trip.tex L30 `\showthe\font`，trip.log 参考为 preload 场景跳过）
+                Primitive::Font => Ok(Vec::new()),
+                // \the\output：输出例程 token 列表（trip.tex L60 `\message{\the\output...}`）
+                Primitive::Output => Ok(self.output_toks.clone().unwrap_or_default().to_vec()),
                 _ => Err(Error::invalid_input(
                     "\\the 只支持 \\count\\dimen\\skip\\toks 与内部参数",
                 )),
@@ -455,7 +490,16 @@ impl Expander {
                 let t = Token::control_sequence(*target);
                 self.the_tokens_after(t)
             }
-            _ => Err(Error::invalid_input("\\the 需要寄存器参数")),
+            _ => {
+                // TeX：\the 对不可用内部量 → 报错恢复（trip.tex L30 `\showthe\pageshrink`——
+                // pageshrink 为排版状态量未接线，未定义/不可用恢复为空，不终止）
+                let mut msg = "! You can't use \\the with this.\n".to_string();
+                if let Some((n, line)) = self.error_context() {
+                    msg.push_str(&format!("l.{n} {line}\n"));
+                }
+                let _ = self.sink.write16(msg);
+                Ok(Vec::new())
+            }
         }
     }
 
@@ -470,7 +514,9 @@ impl Expander {
 
     fn end_group(&mut self) -> Result<()> {
         if self.group_level == 0 {
-            return Err(Error::invalid_input("多余的 }"));
+            // TeX：多余的 `}` → "! Too many }'s." 报错恢复（忽略并继续；TRIP L291）
+            let _ = self.sink.write16("! Too many }'s.\n".to_string());
+            return Ok(());
         }
         // 条件栈与组栈相互独立（TeX：条件可跨组，如 `\begingroup\iftrue a\egroup\fi`，
         // ETRIP line 433 的 `\begingroup \iftrue \scantokens... \egroup \fi` 即依赖此语义）。

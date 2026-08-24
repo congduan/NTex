@@ -20,6 +20,9 @@ pub enum Error {
     },
     /// 输入非法（M1 起由输入层/展开层产生）。
     InvalidInput { message: String },
+    /// 输入流中的非法字符（cat 15）：TeX 语义为报错后跳过该字符继续（可恢复），
+    /// 由 `fetch` 拦截并写入转录（tex.web `get_next` invalid_char）。
+    InvalidCharacter { byte: u8 },
     /// 内部不变量被破坏（bug 保护，表示引擎自身缺陷而非用户输入问题）。
     Internal { message: String },
 }
@@ -41,6 +44,11 @@ impl Error {
         }
     }
 
+    /// 构造非法字符（cat 15）错误（可恢复：TeX 报错后跳过该字符）。
+    pub fn invalid_character(byte: u8) -> Self {
+        Self::InvalidCharacter { byte }
+    }
+
     /// 构造内部不变量错误。
     pub fn internal(message: impl Into<String>) -> Self {
         Self::Internal {
@@ -54,6 +62,7 @@ impl fmt::Display for Error {
         match self {
             Error::Io { op, path, .. } => write!(f, "{op} 失败：{}", path.display()),
             Error::InvalidInput { message } => write!(f, "非法输入：{message}"),
+            Error::InvalidCharacter { byte } => write!(f, "非法输入：非法字符 0x{byte:02X}"),
             Error::Internal { message } => write!(f, "内部错误：{message}"),
         }
     }

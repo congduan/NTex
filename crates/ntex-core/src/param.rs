@@ -66,6 +66,8 @@ pub enum ParamKind {
     DefaultHyphenChar,
     /// `\defaultskewchar`：缺省 skew 字符（TeX 默认 -1 = 未激活）。
     DefaultSkewChar,
+    /// TRIP：`\mag`：放大倍数（TeX initex 默认 1000；TRIP L67 设 2000）。
+    Mag,
     /// TeX/e-TeX 内部整数参数（ETRIP 冲刺）：`misc[idx]`（见 [`MISC_INTS`]）。
     MiscInt(usize),
 }
@@ -182,6 +184,8 @@ pub struct Params {
     pub defaulthyphenchar: i64,
     /// `\defaultskewchar`（TeX 默认 -1 = 未激活）。
     pub defaultskewchar: i64,
+    /// TRIP：`\mag`：放大倍数（TeX initex 默认 1000）。
+    pub mag: i64,
     /// TeX/e-TeX 内部整数参数（ETRIP 冲刺；下标见 [`MISC_INTS`]）。
     pub misc: [i64; MISC_INTS],
 }
@@ -226,6 +230,7 @@ impl Default for Params {
             newlinechar: -1,
             defaulthyphenchar: 45,
             defaultskewchar: -1,
+            mag: 1000,
             misc: default_misc(),
         }
     }
@@ -262,6 +267,7 @@ impl Params {
             ParamKind::NewlineChar => ParamValue::Number(self.newlinechar),
             ParamKind::DefaultHyphenChar => ParamValue::Number(self.defaulthyphenchar),
             ParamKind::DefaultSkewChar => ParamValue::Number(self.defaultskewchar),
+            ParamKind::Mag => ParamValue::Number(self.mag),
             ParamKind::MiscInt(idx) => ParamValue::Number(self.misc[idx]),
         }
     }
@@ -300,6 +306,7 @@ impl Params {
             (ParamKind::NewlineChar, ParamValue::Number(v)) => self.newlinechar = v,
             (ParamKind::DefaultHyphenChar, ParamValue::Number(v)) => self.defaulthyphenchar = v,
             (ParamKind::DefaultSkewChar, ParamValue::Number(v)) => self.defaultskewchar = v,
+            (ParamKind::Mag, ParamValue::Number(v)) => self.mag = v,
             (ParamKind::MiscInt(idx), ParamValue::Number(v)) => self.misc[idx] = v,
             // 类型不匹配忽略（VM 侧保证参数种类与值类型匹配）
             _ => {}

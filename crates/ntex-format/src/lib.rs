@@ -90,6 +90,7 @@ pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
         p.newlinechar,
         p.defaulthyphenchar,
         p.defaultskewchar,
+        p.mag,
     ] {
         w.write_all(&v.to_le_bytes())?;
     }
@@ -185,6 +186,7 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
     let newlinechar = read_i64(r)?;
     let defaulthyphenchar = read_i64(r)?;
     let defaultskewchar = read_i64(r)?;
+    let mag = read_i64(r)?;
     // ETRIP 冲刺（v4）：TeX/e-TeX 内部整数参数（misc 数组）
     let mut misc = [0i64; ntex_core::param::MISC_INTS];
     for v in &mut misc {
@@ -229,6 +231,7 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
         newlinechar,
         defaulthyphenchar,
         defaultskewchar,
+        mag,
         misc,
     };
 

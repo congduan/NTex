@@ -10,6 +10,7 @@ rust-version.workspace = true
 anyhow.workspace = true
 ntex-core.workspace = true
 ntex-format.workspace = true
+ntex-io.workspace = true
 ntex-layout.workspace = true
 regex.workspace = true
 similar.workspace = true

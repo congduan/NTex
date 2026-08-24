@@ -28,7 +28,17 @@ impl Expander {
 
         let mut args = Vec::with_capacity(n);
         // 前导定界符 P_1
-        self.match_input_delim(&segments[0])?;
+        if self.match_input_delim(&segments[0]).is_err() {
+            // TeX：宏调用与定义不匹配 → "Use of \X doesn't match its definition."
+            // 报错恢复（忽略该宏调用，按无参展开；TRIP L332 `\t2` 等）
+            let _ = self.sink.write16(
+                "! Use of macro doesn't match its definition.\n\
+                 The macro here has not been followed by the required stuff,\n\
+                 so I'm ignoring it.\n"
+                    .to_string(),
+            );
+            return Ok(Vec::new());
+        }
         for k in 0..n {
             let delim = &segments[k + 1]; // P_{k+2}：紧跟在 #(k+1) 后的定界符
             let arg = if delim.is_empty() {
@@ -72,6 +82,14 @@ impl Expander {
 
     /// 收集一个分隔实参：读入 token 直到定界符序列在输入中完整匹配（后缀匹配）。
     fn collect_delimited_arg(&mut self, delim: &[Token], long: bool) -> Result<TokenArray> {
+        if std::env::var("NTEX_COND_TRACE").is_ok() {
+            let d: String = delim
+                .iter()
+                .filter_map(|t| t.charcode())
+                .filter_map(char::from_u32)
+                .collect();
+            eprintln!("[trace-arg] 定界符 {:?} n={}", d, delim.len());
+        }
         let mut buf: Vec<Token> = Vec::new();
         // 参数内未闭合 `\if*` 数：TeX scan_toks 跟踪实参内条件配对
         let mut arg_cond = 0usize;
@@ -235,9 +253,21 @@ impl Expander {
             .fetch()?
             .ok_or_else(|| Error::invalid_input("\\def 后缺少控制序列"))?
             .0;
-        let csid = name
-            .csid()
-            .ok_or_else(|| Error::invalid_input("\\def 后必须是控制序列"))?;
+        let csid = name.csid().map(Ok).unwrap_or_else(|| {
+            // TeX：`\def{...}`（非 cs）→ "! Missing control sequence inserted."
+            // 恢复（插入 \inaccessible；TRIP L347 `\outer\def{}?`）。**offending
+            // token 必须放回输入流**（tex.web back_input：`<to be read again> {`），
+            // 否则参数文本扫描会吞掉它后面的整段文本当作参数文本。
+            let _ = self.sink.write16(
+                "! Missing control sequence inserted.\n\
+                 Please don't say `\\def cs{...}', say `\\def\\cs{...}'.\n\
+                 I've inserted an inaccessible control sequence so that your\n\
+                 definition will be completed without mixing me up too badly.\n"
+                    .to_string(),
+            );
+            self.unread(name);
+            Ok(self.intern.intern("\u{0}inaccessible"))
+        })?;
 
         let (num_params, param_text) = self.scan_parameter_text()?;
         // 取错误消息本体再补定义上下文，避免 "非法输入：非法输入：" 双前缀
@@ -312,6 +342,11 @@ impl Expander {
                     } else if is_parameter_char(next) {
                         // ## → 字面 #：文本中保留一个 #
                         text.push(tok);
+                    } else if next.catcode() == Some(Catcode::BeginGroup) {
+                        // TeX：`#{` → 丢弃 `#`，`{` 作参数文本终止符被消费（**不**计入
+                        // 定界符——pdfTeX 实测 `\t120100101001001{\relax}` 参数
+                        // = `01001010`、剩余 `{\relax }` 含 `{`，TRIP L159/L161）。
+                        break;
                     } else {
                         return Err(Error::invalid_input("参数文本中 # 后必须跟数字或 #"));
                     }

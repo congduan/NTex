@@ -171,6 +171,10 @@ pub trait TokenSink: std::fmt::Debug {
     fn font_selected(&mut self, _font: u32) -> Result<()> {
         Ok(())
     }
+    /// 当前字体（TRIP：`\textfont1=\font` 中 `\font` 作当前字体选择器）。
+    fn current_font(&self) -> u32 {
+        0
+    }
     /// RFC-3：页面真正输出（`\shipout` 边界）时置位；Expander 在 token 边界
     /// 检查并 flush 延迟写流。默认 sink（纯展开轨道）不置位 → 无副作用。
     fn take_write_flush_pending(&mut self) -> bool {

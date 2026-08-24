@@ -43,6 +43,12 @@ pub fn run_test(driver: &dyn EngineDriver, fixtures: &TestFixtures) -> Result<Tr
     let tex_name = kind.tex_name();
     fs::copy(fixtures.tex(), work.path().join(tex_name))
         .with_context(|| format!("复制 {} 失败：{}", tex_name, fixtures.tex().display()))?;
+    // TRIP：trip.tex 内 `\input tripos`（补充测试文件）——一并复制到工作目录。
+    let tripos = fixtures.dir().join("tripos.tex");
+    if tripos.exists() {
+        fs::copy(&tripos, work.path().join("tripos.tex"))
+            .with_context(|| format!("复制 tripos.tex 失败：{}", tripos.display()))?;
+    }
 
     // 测试字体（trip.tfm/etrip.tfm）与源码同目录：让 ntex-font::find_tfm 能找到。
     // 环境变量进程级、只读一次即可（两个 kind 的 fixtures 目录不同，各设置一次）。

@@ -102,6 +102,9 @@ pub fn unit_to_sp(unit: &str) -> Option<i64> {
         "in" => Some(4_736_286),
         "cm" => Some(1_864_679),
         "mm" => Some(186_467),
+        // TRIP：pica（1pc = 12pt）+ cicero（1cc = 12pt × 1157/1236 ≈ 736166sp）
+        "pc" => Some(12 * SP_PER_PT),
+        "cc" => Some(736_166),
         _ => None,
     }
 }

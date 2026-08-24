@@ -361,6 +361,8 @@ pub enum Primitive {
     TracingParagraphs,
     // ETRIP 第二波：对齐模板跳过（\omit；简化为 no-op，由对齐组后续实现语义）
     Omit,
+    // TRIP：\mag（放大倍数整数参数；L67 赋值 2000，L160 `.5\mag` 作 dimen 乘子）
+    Mag,
 }
 
 impl Primitive {
@@ -685,6 +687,7 @@ impl Primitive {
             278 => Self::ShowLists,
             279 => Self::TracingParagraphs,
             280 => Self::Omit,
+            281 => Self::Mag,
             _ => return None,
         })
     }

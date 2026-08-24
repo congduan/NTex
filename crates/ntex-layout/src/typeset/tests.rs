@@ -4,6 +4,52 @@ mod tests {
     use crate::node::BoxKind;
     use ntex_core::SP_PER_PT;
 
+    /// TRIP 冲刺调试（临时）：trip.tex 前段逐行二分。
+    #[test]
+    fn dbg_trip_lines() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/trip");
+        std::env::set_var("NTEX_TFM_DIR", dir);
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/trip/trip.tex");
+        let full = std::fs::read_to_string(path).unwrap();
+        let lines: Vec<&str> = full.lines().collect();
+        for end in [29, 30] {
+            let src = lines[1..end].join("\n");
+            let mut ts = Typesetter::with_tfm();
+            match ts.typeset(&src) {
+                Ok(_) => eprintln!("DBG L2..{end}: ok"),
+                Err(e) => {
+                    eprintln!("DBG L2..{end}: ERR {e}");
+                    break;
+                }
+            }
+        }
+        // 隔离：L2..28 状态 + 单独 \toksdef / \def\on
+        for (label, extra) in [
+            ("toksdef", "\\toksdef\\tokens=256"),
+            ("defon", "\\def\\on{1}"),
+            ("on+toksdef", "\\def\\on{1} \\toksdef\\tokens=256"),
+        ] {
+            let src = format!("{}\n{extra}", lines[1..28].join("\n"));
+            let mut ts = Typesetter::with_tfm();
+            match ts.typeset(&src) {
+                Ok(_) => eprintln!("DBG [{}] ok", label),
+                Err(e) => eprintln!("DBG [{}] ERR {e}", label),
+            }
+        }
+        // L32 分段隔离
+        for (label, src) in [
+            ("skip200-plUs", "\\skip200=10pt plUs5fil"),
+            ("skip200-ifdim", "\\skip200=10pt plus5fil\\ifdim\\hsize<\\hsize\\fi lllminus 0 fill"),
+            ("skip200-full", "\\skip200 = 10pt plUs5fil\\ifdim\\hsize<\\hsize\\fi lllminus 0 fill"),
+        ] {
+            let mut ts = Typesetter::with_tfm();
+            match ts.typeset(src) {
+                Ok(_) => eprintln!("DBG [L32-{label}] ok"),
+                Err(e) => eprintln!("DBG [L32-{label}] ERR {e}"),
+            }
+        }
+    }
+
     fn metrics(_font: FontId, ch: u32) -> (i64, i64, i64) {
         // 测试度量：宽 1000sp + 码点，高 6000，深 1500。
         (1000 + i64::from(ch), 6000, 1500)

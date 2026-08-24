@@ -373,6 +373,8 @@ pub struct Expander {
     read_streams: Vec<Option<ReadStream>>,
     /// 写流表（`\openout`/`\write`；下标 = 流号）。
     write_streams: Vec<Option<WriteStream>>,
+    /// TRIP：`\write-1`（log-only 特殊流）的延迟待写 token 列表（shipout 边界写 log）。
+    log_write_pending: Vec<Arc<[Token]>>,
     /// `\immediate` 前缀（作用于下一个 write/openout/closeout）。
     immediate_pending: bool,
     /// e-TeX（M4-5）：
@@ -456,6 +458,7 @@ impl Expander {
             vfs: Box::new(LocalVfs),
             read_streams: Vec::new(),
             write_streams: Vec::new(),
+            log_write_pending: Vec::new(),
             immediate_pending: false,
             protected_pending: false,
             outer_pending: false,
@@ -703,6 +706,16 @@ impl Expander {
         if let Some((n, line)) = self.error_context() {
             let _ = self.sink.write16(format!("l.{n} {line}\n"));
         }
+    }
+
+    /// TeX scan_int 缺数恢复：`! Missing number, treated as zero.` + 上下文行
+    /// （TRIP 冲刺：`\countdef\countz` 等缺操作数原语）。
+    fn report_missing_number(&mut self) {
+        let mut msg = "! Missing number, treated as zero.\n".to_string();
+        if let Some((n, line)) = self.error_context() {
+            msg.push_str(&format!("l.{n} {line}\n"));
+        }
+        let _ = self.sink.write16(msg);
     }
 
     /// 输入耗尽后的收尾：执行所有待执行的输出例程（`finish` 冲页产生）。
@@ -987,12 +1000,27 @@ impl Expander {
             };
             match frame {
                 InputFrame::Source { bytes, pos, state } => {
-                    match scan_token(bytes, pos, &self.catcodes, &mut self.intern, state)? {
-                        Some(tok) => return Ok(Some((tok, false))),
-                        None => {
+                    match scan_token(bytes, pos, &self.catcodes, &mut self.intern, state) {
+                        Ok(Some(tok)) => return Ok(Some((tok, false))),
+                        Ok(None) => {
                             self.stack.pop();
                             continue;
                         }
+                        // M1-13 错误恢复（TRIP L351）：cat 15 非法字符 → TeX
+                        // "Text line contains an invalid character." + 跳过该字符继续
+                        // （tex.web get_next invalid_char；scan_token 已消费该字节）。
+                        Err(Error::InvalidCharacter { .. }) => {
+                            let mut msg =
+                                "! Text line contains an invalid character.\n".to_string();
+                            if let Some((n, line)) = self.error_context() {
+                                msg.push_str(&format!("l.{n} {line}\n"));
+                            }
+                            msg.push_str("A funny symbol that I can't read has just been input.\n");
+                            msg.push_str("Continue, and I'll forget that it ever happened.\n");
+                            let _ = self.sink.write16(msg);
+                            continue;
+                        }
+                        Err(e) => return Err(e),
                     }
                 }
                 InputFrame::Macro { body, pos, args } => {

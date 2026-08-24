@@ -258,6 +258,7 @@ dependencies = [
  "anyhow",
  "ntex-core",
  "ntex-format",
+ "ntex-io",
  "ntex-layout",
  "regex",
  "similar",

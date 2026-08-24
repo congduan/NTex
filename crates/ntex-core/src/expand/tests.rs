@@ -957,8 +957,11 @@ mod tests {
     }
 
     #[test]
-    fn too_many_end_groups_errors() {
-        assert!(expand("\\def\\a{X}\\a}").is_err());
+    fn too_many_end_groups_recovers() {
+        // TRIP：多余的 } → "! Too many }'s." 报错恢复（忽略并继续），不终止
+        let (r, t) = run_transcript("\\def\\a{X}\\a}");
+        assert!(r.is_ok());
+        assert!(t.contains("Too many }'s."));
     }
 
     // ---------- A3：错误上下文行（l.N） ----------
@@ -973,6 +976,24 @@ mod tests {
         let mut sink = sink;
         let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
         (r, std::mem::take(&mut sink.transcript))
+    }
+
+    /// TRIP 冲刺调试（临时）。
+    #[test]
+    fn dbg_trip_l26_mathchardef() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/trip/trip.tex");
+        let full = std::fs::read_to_string(path).unwrap();
+        let lines: Vec<&str> = full.lines().collect();
+        // 逐行扩展：找第一个失败行（L2 起；"条件未闭合"是 \ifx 未到 \fi 的干扰）
+        for end in [24, 28, 29, 30] {
+            let src = lines[1..end].join("\n");
+            let (r, t) = run_transcript(&src);
+            eprintln!("DBG L2..{}: ok={} err={r:?}", end, r.is_ok());
+            if r.is_err() && !r.unwrap_err().to_string().contains("条件未闭合") {
+                eprintln!("   tail: {}", tail(&t, 300));
+                break;
+            }
+        }
     }
 
     #[test]
@@ -1195,9 +1216,12 @@ mod tests {
     }
 
     #[test]
-    fn font_without_loader_errors() {
+    fn font_without_loader_recovers() {
+        // TRIP：字体加载失败 → 报 "! Font ... not loadable" 并恢复（绑定字体 0），不终止
         let mut e = Expander::new(); // 默认 NoFontLoader
-        assert!(e.run_source("\\font\\foo=cmr10").is_err());
+        let r = e.run_source("\\font\\foo=cmr10");
+        assert!(r.is_ok());
+        assert!(e.transcript().contains("not loadable"));
     }
 
     #[test]
@@ -1618,5 +1642,31 @@ ab5c}").unwrap();
         assert_eq!(expand(r"\def\x{abc}\scantokens{\x}").unwrap(), "abc");
         // 扫描过程中定义并展开宏
         assert_eq!(expand(r"\scantokens{a\def\y{b}\y}").unwrap(), "ab");
+    }
+
+    // ==== 临时复现：\muexpr 现状（待删） ====
+    #[test]
+    fn tmp_muexpr_repro() {
+        for (name, src) in [
+            ("the_muexpr", r"\muskip43=\muexpr(5muminus1mu)\relax\the\muexpr\muskip43"),
+            ("muskip_the", r"\muskip43=5mu minus 1mu\the\muskip43"),
+            ("quot5c", r#"\def\9{\relax}\ifnum-6=\glueexpr\muexpr32mu/"10000\9/-5 T\else F\fi"#),
+            ("quot5d", r#"\def\9{\relax}\ifnum6=\muexpr-\dimexpr32spplus-1muminus-1fil/-5 T\else F\fi"#),
+            ("gluetomu_muskip", r"\muskip1=5mu\skip2=\gluetomu\muskip1\the\skip2"),
+        ] {
+            let mut e = Expander::new();
+            match e.run_source(src) {
+                Ok(_) => {
+                    let out: String = e
+                        .output()
+                        .iter()
+                        .map(|t| t.charcode().and_then(char::from_u32).unwrap_or('\u{FFFD}'))
+                        .collect();
+                    println!("[{name}] OUT={out:?}");
+                }
+                Err(err) => println!("[{name}] ERR={err:?}"),
+            }
+            println!("[{name}] TRANSCRIPT={:?}", e.transcript());
+        }
     }
 }

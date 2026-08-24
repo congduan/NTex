@@ -214,13 +214,15 @@ impl Expander {
             Primitive::EndlineChar
             | Primitive::NewlineChar
             | Primitive::DefaultHyphenChar
-            | Primitive::DefaultSkewChar => {
+            | Primitive::DefaultSkewChar
+            | Primitive::Mag => {
                 let v = self.scan_number()?;
                 let kind = match prim {
                     Primitive::EndlineChar => ParamKind::EndlineChar,
                     Primitive::NewlineChar => ParamKind::NewlineChar,
                     Primitive::DefaultHyphenChar => ParamKind::DefaultHyphenChar,
-                    _ => ParamKind::DefaultSkewChar,
+                    Primitive::DefaultSkewChar => ParamKind::DefaultSkewChar,
+                    _ => ParamKind::Mag,
                 };
                 self.assign_param(kind, ParamValue::Number(v))
             }
@@ -759,9 +761,19 @@ impl Expander {
     /// `\textfont<fam>=<fontcs>` 族分配：扫描 fam 号、可选 `=`、字体选择器 cs。
     fn exec_math_font(&mut self, kind: u8) -> Result<()> {
         let fam = self.scan_number()?;
-        if !(0..=15).contains(&fam) {
-            return Err(Error::invalid_input("数学字体族号必须为 0..15"));
-        }
+        // TeX：族号越界报 "! Bad number" 钳制（<0 → 0，>15 → 15；TRIP L346
+        // `\textfont16=\relax`）
+        let fam = if (0..=15).contains(&fam) {
+            fam
+        } else {
+            let _ = self.sink.write16(format!(
+                "! Bad number ({}).\n\
+                 Since I expected to read a number between 0 and 15,\n\
+                 I changed this one to zero.\n",
+                fam
+            ));
+            fam.clamp(0, 15)
+        };
         // 可选赋值符 '='
         self.skip_spaces()?;
         let probe = self
@@ -783,6 +795,8 @@ impl Expander {
         // （TeX：族未赋值时为 nullfont；引擎以 FontId 0 兜底）
         let font = match self.eqtb.slot(csid).clone() {
             EqSlot::Font(f) => f,
+            // TRIP：`\textfont1=\font`：`\font` 作当前字体选择器
+            EqSlot::Primitive(Primitive::Font) => self.sink.current_font(),
             EqSlot::Primitive(
                 Primitive::TextFont | Primitive::ScriptFont | Primitive::ScriptScriptFont,
             ) => {
@@ -792,16 +806,25 @@ impl Expander {
                     _ => 2,
                 };
                 let rhs_fam = self.scan_number()?;
-                if !(0..=15).contains(&rhs_fam) {
-                    return Err(Error::invalid_input("数学字体族号必须为 0..15"));
-                }
+                let rhs_fam = if (0..=15).contains(&rhs_fam) {
+                    rhs_fam
+                } else {
+                    let _ = self.sink.write16(format!(
+                        "! Bad number ({}).\nI changed this one to zero.\n",
+                        rhs_fam
+                    ));
+                    rhs_fam.clamp(0, 15)
+                };
                 self.math_fonts[rhs_kind][rhs_fam as usize]
             }
             _ => {
-                return Err(Error::invalid_input(format!(
-                    "\\textfont 的 \\{} 不是字体选择器",
+                // TeX：\textfont<fam>=<非字体> → 报错恢复（绑定字体 0/nullfont；
+                // TRIP L347 `\textfont16=\relax`）
+                let _ = self.sink.write16(format!(
+                    "! \\textfont 的 \\{} 不是字体选择器。\n",
                     self.intern.name(csid)
-                )));
+                ));
+                0
             }
         };
         self.math_fonts[kind as usize][fam as usize] = font;
@@ -851,6 +874,14 @@ impl Expander {
     /// 简化：暂按单语言全局表存储（sink 侧不分语言）；词比较不做 lccode 二次
     /// 转换（段落词需已小写）。ETRIP 用例均满足。
     fn exec_hyphenation(&mut self) -> Result<()> {
+        // TeX：\hyphenation 参数为 <general text>；前导 \relax 跳过
+        // （trip.tex L72 `\hyphenation\relax{...}`，TeX scan_toks 的 \relax 分隔）
+        self.skip_spaces()?;
+        if let Some(csid) = self.peek_csid()? {
+            if matches!(self.eqtb.slot(csid), EqSlot::Primitive(Primitive::Relax)) {
+                self.fetch()?;
+            }
+        }
         let tokens = self.scan_group_contents()?;
         // 断字符：默认 `-`（45）；ETRIP 用例均用字面 `-`。
         const HYPHEN_CHAR: u32 = 45;
@@ -965,7 +996,18 @@ impl Expander {
             Some("scaled") => (None, Some(self.scan_number()?)),
             _ => (None, None),
         };
-        let font = self.font_loader.load(&font_name, at, scaled)?;
+        let font = match self.font_loader.load(&font_name, at, scaled) {
+            Ok(f) => f,
+            Err(_) => {
+                // TeX：字体加载失败 → "! Font not loadable" 报错恢复（绑定字体 0，
+                // 后续使用报更多错但作业继续；TRIP L211 `\font\mumble=mumble`）。
+                let _ = self.sink.write16(format!(
+                    "! Font {font_name} not loadable: Metric (TFM) file not found.\n\
+                     I'm not loading it.\n"
+                ));
+                0
+            }
+        };
         // 组作用域 + \global 语义（同 \def）
         let global = self.is_global();
         if !global && self.group_level > 0 {
@@ -1043,6 +1085,8 @@ impl Expander {
             .ok_or_else(|| Error::invalid_input("预期字体标识符（\\font 定义的 cs 或 \\nullfont）"))?;
         match self.eqtb.slot(csid).clone() {
             EqSlot::Font(f) => Ok(f),
+            // TRIP：`\font`（无参数）作当前字体选择器（\textfont1=\font）
+            EqSlot::Primitive(Primitive::Font) => Ok(self.sink.current_font()),
             // \textfont<n>/...：字体位置读取当前族字体（TeX find_font 语义）
             EqSlot::Primitive(
                 Primitive::TextFont | Primitive::ScriptFont | Primitive::ScriptScriptFont,
@@ -1053,10 +1097,51 @@ impl Expander {
                     _ => 2,
                 };
                 let fam = self.scan_number()?;
-                if !(0..=15).contains(&fam) {
-                    return Err(Error::invalid_input("数学字体族号必须为 0..15"));
-                }
+                let fam = if (0..=15).contains(&fam) {
+                    fam
+                } else {
+                    let _ = self.sink.write16(format!(
+                        "! Bad number ({}).\nI changed this one to zero.\n",
+                        fam
+                    ));
+                    fam.clamp(0, 15)
+                };
                 Ok(self.math_fonts[kind][fam as usize])
+            }
+            // TRIP：`\fontdimen6\the\scriptfont2` —— \the 展开为字体选择器
+            EqSlot::Primitive(Primitive::The) => {
+                let t2 = self
+                    .fetch()?
+                    .ok_or_else(|| Error::invalid_input("\\the 后缺少内部量"))?
+                    .0;
+                let csid2 = t2
+                    .csid()
+                    .ok_or_else(|| Error::invalid_input("\\the 需要内部量参数"))?;
+                match self.eqtb.slot(csid2).clone() {
+                    EqSlot::Primitive(
+                        Primitive::TextFont | Primitive::ScriptFont | Primitive::ScriptScriptFont,
+                    ) => {
+                        let kind = match self.eqtb.slot(csid2) {
+                            EqSlot::Primitive(Primitive::TextFont) => 0,
+                            EqSlot::Primitive(Primitive::ScriptFont) => 1,
+                            _ => 2,
+                        };
+                        let fam = self.scan_number()?;
+                        let fam = if (0..=15).contains(&fam) {
+                            fam
+                        } else {
+                            let _ = self.sink.write16(format!(
+                                "! Bad number ({}).\nI changed this one to zero.\n",
+                                fam
+                            ));
+                            fam.clamp(0, 15)
+                        };
+                        Ok(self.math_fonts[kind][fam as usize])
+                    }
+                    _ => Err(Error::invalid_input(
+                        "预期字体标识符（\\font 定义的 cs 或 \\nullfont）",
+                    )),
+                }
             }
             _ => Err(Error::invalid_input(
                 "预期字体标识符（\\font 定义的 cs 或 \\nullfont）",
@@ -1134,9 +1219,18 @@ impl Expander {
             .fetch()?
             .ok_or_else(|| Error::invalid_input("\\showthe 后缺少内部量"))?
             .0;
-        let csid = tok
-            .csid()
-            .ok_or_else(|| Error::invalid_input("\\showthe 需要内部量参数"))?;
+        let Some(csid) = tok.csid() else {
+            // TeX：非内部量 → "! You can't use `X' after \the." + 恢复显示 0
+            // （参考 log L216 `\showthe$`）。
+            let what = tok
+                .charcode()
+                .and_then(char::from_u32)
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "token".to_owned());
+            self.sink
+                .write16(format!("! You can't use `{what}' after \\the.\n"))?;
+            return self.sink.show("> 0.".to_owned());
+        };
         let name = self.intern.name(csid).to_owned();
         let value_toks = self.the_tokens_after(tok)?;
         let value = detok_tokens(&value_toks, &self.intern);
@@ -1243,8 +1337,18 @@ impl Expander {
     /// `\lccode<char>=<num>`：设置字符的小写码（TeX assign_int；etrip 断字用）。
     /// 字符码接受反引号或寄存器值（如 `\lccode\count20=0`，TeX scan_char_num）。
     fn exec_lccode(&mut self) -> Result<()> {
-        let byte = self.scan_char_code()?;
-        let byte = u8::try_from(byte).map_err(|_| Error::invalid_input("\\lccode 字符码越界"))?;
+        let mut byte = self.scan_char_code()?;
+        if !(0..=255).contains(&byte) {
+            // TeX scan_char_num：越界报 "Improper \lccode" 并钳制为 0（恢复继续，
+            // trip.tex L26 `\lccode256-0`——TRIP 冲刺卡点）。
+            let mut msg = "! Improper \\lccode.\n".to_string();
+            if let Some((n, line)) = self.error_context() {
+                msg.push_str(&format!("l.{n} {line}\n"));
+            }
+            let _ = self.sink.write16(msg);
+            byte = 0;
+        }
+        let byte = byte as u8;
         self.expect_equals()?;
         let value = self.scan_number()?;
         let global = self.is_global();

@@ -6,6 +6,7 @@
 
 use std::fmt;
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -216,6 +217,42 @@ pub struct NtexDriver {
     pub name: String,
 }
 
+/// 本地 VFS 包装：`read` 先试原路径（进程 cwd），失败回退工作目录
+/// （in-process 驱动下 `\input tripos` 等相对路径按 TeX 语义在工作目录解析）。
+#[derive(Debug)]
+struct WorkDirVfs {
+    wd: std::path::PathBuf,
+}
+
+impl ntex_io::Vfs for WorkDirVfs {
+    fn read(&mut self, path: &str) -> io::Result<Option<Vec<u8>>> {
+        if let Ok(bytes) = std::fs::read(path) {
+            return Ok(Some(bytes));
+        }
+        match std::fs::read(self.wd.join(path)) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn write(&mut self, path: &str, bytes: &[u8]) -> io::Result<()> {
+        std::fs::write(path, bytes)
+    }
+
+    fn append(&mut self, path: &str, bytes: &[u8]) -> io::Result<()> {
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        f.write_all(bytes)
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
 impl Default for NtexDriver {
     fn default() -> Self {
         Self {
@@ -244,7 +281,11 @@ impl EngineDriver for NtexDriver {
         log.push_str(&format!("(input: {})\n", request.source.display()));
 
         // TRIP/ETRIP 需要真实 TFM 度量：用 with_tfm()（\font 加载 cmr10/trip/etrip）。
+        // \input 相对路径（tripos 等）在工作目录解析：注入回退 VFS。
         let mut ts = ntex_layout::Typesetter::with_tfm();
+        ts.set_vfs(Box::new(WorkDirVfs {
+            wd: request.working_dir.clone(),
+        }));
         let run = ts.typeset_bytes(source.clone());
         // 终端转录（\message/\show/\showthe/\write16）→ .log 与 .typ 共用
         let transcript = ts.take_transcript();
@@ -264,6 +305,9 @@ impl EngineDriver for NtexDriver {
             fs::write(&fmt_path, &buf).with_context(|| "写入 .fmt 产物失败")?;
 
             let mut ts2 = ntex_layout::Typesetter::with_tfm();
+            ts2.set_vfs(Box::new(WorkDirVfs {
+                wd: request.working_dir.clone(),
+            }));
             let mut reader = &buf[..];
             let state = ntex_format::load(&mut reader).with_context(|| "加载 .fmt 快照失败")?;
             ts2.import_state(state);

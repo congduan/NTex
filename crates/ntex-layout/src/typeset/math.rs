@@ -66,9 +66,11 @@ impl NodeBuilder {
         let style = self.math_style;
         let was_display = self.list_modes.pop() == Some(Mode::DisplayMath);
         self.lists.pop();
-        // 公式末尾收尾：未闭合 \left 报错；待定分式收尾（TeX 允许空分母）
+        // 公式末尾收尾：未闭合 \left 报错恢复（TeX "Extra } or forgotten \right."，
+        // 自动闭合；TRIP L298 `\left(\over\left(...`）；待定分式收尾（TeX 允许空分母）
         if level.left.is_some() {
-            return Err(Error::invalid_input("\\left 后缺少 \\right（Extra } or forgotten \\right）"));
+            self.write16("! Extra } or forgotten \\right.\n".to_string())?;
+            level.left = None;
         }
         Self::math_finish_fraction(&mut level);
         let nodes = self.math_to_hlist(&level.atoms, style);
@@ -189,14 +191,25 @@ impl NodeBuilder {
 
     /// 原始追加（含脚本挂载）：`x^2`/`x_i`/`x_i^2`。
     fn math_push_atom_raw(&mut self, atom: MathAtom) -> Result<()> {
+        // 先探测原子缺失（报错写 transcript 需 &mut self，避免与 level 借用冲突）
+        if self.pending_script.is_some()
+            && self.math.last().is_some_and(|l| l.atoms.is_empty())
+        {
+            // TeX：^/_ 前无原子 → "Missing { inserted" 恢复（插入空原子；TRIP L263）
+            self.write16("! Missing { inserted.\n".to_string())?;
+        }
         let level = self
             .math
             .last_mut()
             .ok_or_else(|| Error::internal("数学原子无数学层"))?;
         if let Some(is_sup) = self.pending_script.take() {
-            let mut base = level.atoms.pop().ok_or_else(|| {
-                Error::invalid_input("数学模式中 ^/_ 前缺少原子（Missing { inserted）")
-            })?;
+            let mut base = match level.atoms.pop() {
+                Some(b) => b,
+                None => MathAtom::Classed {
+                    class: MathClass::Ord,
+                    content: Vec::new(),
+                },
+            };
             if let MathAtom::Scripts { sub, sup, .. } = &mut base {
                 if is_sup {
                     if sup.is_some() {
@@ -242,14 +255,16 @@ impl NodeBuilder {
     }
 
     /// 脚本字段组结束（`x^{...}`/`x_{...}`）：字段挂到外层末尾原子。
+    /// 无原子可挂（`x^{}` 前空）→ TeX "Missing { inserted" 语义：插入空原子恢复。
     fn math_attach_script(
         parent: &mut MathLevel,
         is_sup: bool,
         field: Vec<MathAtom>,
     ) -> Result<()> {
-        let mut base = parent.atoms.pop().ok_or_else(|| {
-            Error::invalid_input("数学模式中 ^/_ 前缺少原子（Missing { inserted）")
-        })?;
+        let mut base = parent.atoms.pop().unwrap_or(MathAtom::Classed {
+            class: MathClass::Ord,
+            content: Vec::new(),
+        });
         if let MathAtom::Scripts { sub, sup, .. } = &mut base {
             if is_sup {
                 if sup.is_some() {

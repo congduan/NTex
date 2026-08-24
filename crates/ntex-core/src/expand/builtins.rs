@@ -1,6 +1,6 @@
 impl Expander {
     fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 281] = [
+        const BUILTINS: [(&str, Primitive); 282] = [
             ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -357,6 +357,8 @@ impl Expander {
             ("tracingparagraphs", Primitive::TracingParagraphs),
             // ETRIP 第二波：对齐模板跳过
             ("omit", Primitive::Omit),
+            // TRIP：放大倍数整数参数
+            ("mag", Primitive::Mag),
         ];
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);

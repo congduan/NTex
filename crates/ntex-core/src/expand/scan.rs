@@ -1,6 +1,20 @@
 impl Expander {
     // ---------- 数字与赋值辅助 ----------
 
+    /// TRIP：数字/尺寸扫描中遇到条件原语 → 求值并返回 true（TeX get_x_token
+    /// 嵌套条件：`'\ifnum10=10 12="`——外层 \ifnum 操作数含内层条件，先求值）。
+    fn maybe_eval_cond(&mut self, tok: Token) -> Result<bool> {
+        if let Some(op) = self.cond_op(tok) {
+            if std::env::var("NTEX_COND_TRACE").is_ok() {
+                eprintln!("[trace-maybe] 求值条件 {op:?}");
+            }
+            self.step_conditional(op)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     /// 扫描十进制整数；支持 `\count<idx>` 寄存器引用（M1 简化版）。
     fn scan_number(&mut self) -> Result<i64> {
         self.skip_spaces()?;
@@ -20,6 +34,10 @@ impl Expander {
                 neg = !neg;
                 continue;
             }
+            // TeX scan_int：正号忽略（`\varunit=+1,001...`，TRIP L160）
+            if tok.charcode() == Some(b'+' as u32) {
+                continue;
+            }
             if let Some(csid) = tok.csid() {
                 if matches!(self.eqtb.slot(csid), EqSlot::Undefined) {
                     let _ = self
@@ -28,6 +46,10 @@ impl Expander {
                             "! Undefined control sequence.\n\\{}\n",
                             self.intern.name(csid)
                         ));
+                    continue;
+                }
+                // TRIP：条件原语在数字中先求值（TeX get_x_token 嵌套条件）
+                if self.maybe_eval_cond(tok)? {
                     continue;
                 }
             }
@@ -53,17 +75,27 @@ impl Expander {
                 while let Some((t, _)) = self.fetch()? {
                     match radix_digit_value(t, base) {
                         Some(d) => {
-                            val = val * i64::from(base) + i64::from(d);
+                            // 防溢出：达到上限后停止累加（TeX scan_int 钳制语义）
+                            if val < i64::MAX / i64::from(base) {
+                                val = val * i64::from(base) + i64::from(d);
+                            }
                             any = true;
                         }
                         None => {
+                            // TRIP：条件原语在数字中先求值（`'\ifnum10=10 12="`）
+                            if self.maybe_eval_cond(t)? {
+                                continue;
+                            }
                             self.unread(t);
                             break;
                         }
                     }
                 }
                 if !any {
-                    return Err(Error::invalid_input("预期数字"));
+                    // TeX scan_int：基数前缀后无数位 → "Missing number, treated as zero"
+                    // 恢复（trip.tex 等；token 已放回，继续后续输入）
+                    self.report_missing_number();
+                    return Ok(0);
                 }
                 self.skip_trailing_spaces()?;
                 return Ok(if neg { -val } else { val });
@@ -128,6 +160,12 @@ impl Expander {
                     self.fetch()?; // 消费原语
                     let idx = int_param_index(p).expect("已检查 is_some");
                     let v = self.params.misc[idx];
+                    return Ok(if neg { -v } else { v });
+                }
+                // TRIP：\mag（放大倍数，数字上下文读取；L160 `.5\mag` 等）
+                EqSlot::Primitive(Primitive::Mag) => {
+                    self.fetch()?; // 消费 \mag
+                    let v = self.params.mag;
                     return Ok(if neg { -v } else { v });
                 }
                 EqSlot::Register(RegKind::Count, idx) => {
@@ -267,7 +305,10 @@ impl Expander {
         while let Some((tok, _)) = self.fetch()? {
             match digit_value(tok) {
                 Some(d) => {
-                    val = val * 10 + i64::from(d);
+                    // TRIP：防 i64 溢出（超大整数钳制——TeX scan_int 同报错钳制）
+                    if val < i64::MAX / 10 {
+                        val = val * 10 + i64::from(d);
+                    }
                     any = true;
                 }
                 None => {
@@ -277,7 +318,10 @@ impl Expander {
             }
         }
         if !any {
-            return Err(Error::invalid_input("预期数字"));
+            // TeX scan_int：数字缺失 → "Missing number, treated as zero" 恢复
+            // （`\countdef\countz` 等，trip.tex L28；token 已放回）
+            self.report_missing_number();
+            return Ok(0);
         }
         // TeX 规则：数字后跟随的空格被吞掉（实测 pdfTeX `\ifnum3>2 yes` → "yes"）
         self.skip_trailing_spaces()?;
@@ -327,7 +371,15 @@ impl Expander {
                 if name.len() == 1 {
                     Ok(Some(name.as_bytes()[0] as i64))
                 } else {
-                    Err(Error::invalid_input("Improper alphabetic constant"))
+                    // TeX：反引号后多字符 cs → "! Improper alphabetic constant."
+                    // 恢复插入 \0（TRIP L249 `\delcode`\relax`）。
+                    let _ = self.sink.write16(
+                        "! Improper alphabetic constant.\n\
+                         A one-character control sequence belongs after a ` mark.\n\
+                         So I'm essentially inserting \\0 here.\n"
+                            .to_string(),
+                    );
+                    Ok(Some(0))
                 }
             }
             _ => Err(Error::invalid_input("反引号后必须是字符或单字符控制序列")),
@@ -390,8 +442,20 @@ impl Expander {
             .fetch()?
             .ok_or_else(|| Error::invalid_input("缺少控制序列"))?
             .0;
-        tok.csid()
-            .ok_or_else(|| Error::invalid_input("此处必须是控制序列"))
+        tok.csid().map(Ok).unwrap_or_else(|| {
+            // TeX：`\mathchardef A`（非 cs）→ "! Missing control sequence inserted."
+            // 恢复（插入 \inaccessible 完成定义；TRIP L298）。**被拒 token 放回输入**
+            // （TeX back_input：`<to be read again> {`），参数文本扫描从 `{` 重新开始。
+            let _ = self.sink.write16(
+                "! Missing control sequence inserted.\n\
+                 Please don't say `\\def cs{...}', say `\\def\\cs{...}'.\n\
+                 I've inserted an inaccessible control sequence so that your\n\
+                 definition will be completed without mixing me up too badly.\n"
+                    .to_string(),
+            );
+            self.unread(tok);
+            Ok(self.intern.intern("\u{0}inaccessible"))
+        })
     }
 
     /// 注册 M1 内建原语。
@@ -620,14 +684,20 @@ impl Expander {
         }
         // 连续负号循环（TeX 表达式 `--\skip90` 等）+ 未定义 cs 跳过
         // （`-\mutoglue-\gluetomu9pt`，报错当 \relax 继续）：奇偶决定符号。
+        // TeX get_x_token 语义：可展开 cs 展开后压回输入流顶并**重新进入符号处理**
+        // （`\t` 展开 `-.01001010pt` 以 `-` 开头，TRIP L161）。
         let mut neg = false;
         loop {
             self.skip_spaces()?;
-            let Some(tok) = self.fetch()?.map(|t| t.0) else {
+            let Some((tok, ne)) = self.fetch()? else {
                 break;
             };
             if tok.charcode() == Some(b'-' as u32) {
                 neg = !neg;
+                continue;
+            }
+            // TeX scan_dimen：正号忽略（`\varunit=+1,001...`，TRIP L160）
+            if tok.charcode() == Some(b'+' as u32) {
                 continue;
             }
             if let Some(csid) = tok.csid() {
@@ -640,47 +710,31 @@ impl Expander {
                         ));
                     continue;
                 }
+                // TRIP：条件原语在尺寸中先求值（TeX get_x_token 嵌套条件）
+                if self.maybe_eval_cond(tok)? {
+                    continue;
+                }
+                // 可展开 cs（宏/可展开原语）：展开**当前** token（第一次 fetch 的），
+                // 结果压栈后重新符号处理（\t 展开 `-.01001010pt` 以 `-` 开头，TRIP L161）。
+                let expandable = match self.eqtb.slot(csid).clone() {
+                    EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
+                    EqSlot::Primitive(p) if p.is_expandable() => true,
+                    _ => false,
+                };
+                if expandable {
+                    let mut expansion = Vec::new();
+                    self.expand_once((tok, ne), &mut expansion)?;
+                    if !expansion.is_empty() {
+                        self.stack.push(InputFrame::TokenList {
+                            items: Arc::from(expansion),
+                            pos: 0,
+                        });
+                    }
+                    continue;
+                }
             }
             self.unread(tok);
             break;
-        }
-        // TeX get_x_token 语义：展开可展开 cs（`\ifdim\csname fontcharwd\endcsname...`）。
-        // 未定义 cs 报 "! Undefined control sequence." 并当 \relax 继续。
-        // 展开结果压回输入流顶，循环直至不可展开项或数量原语。
-        loop {
-            let Some(csid) = self.peek_csid()? else {
-                break;
-            };
-            if matches!(self.eqtb.slot(csid), EqSlot::Undefined) {
-                self.fetch()?; // 消费未定义 cs
-                let _ = self
-                    .sink
-                    .write16(format!(
-                        "! Undefined control sequence.\n\\{}\n",
-                        self.intern.name(csid)
-                    ));
-                continue;
-            }
-            let expandable = match self.eqtb.slot(csid).clone() {
-                EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
-                EqSlot::Primitive(p) if p.is_expandable() => true,
-                _ => false,
-            };
-            if !expandable {
-                break;
-            }
-            let (tok, ne) = self
-                .fetch()?
-                .ok_or_else(|| Error::invalid_input("扫描尺寸时输入耗尽"))?;
-            let mut expansion = Vec::new();
-            self.expand_once((tok, ne), &mut expansion)?;
-            if expansion.is_empty() {
-                continue;
-            }
-            self.stack.push(InputFrame::TokenList {
-                items: Arc::from(expansion),
-                pos: 0,
-            });
         }
         // 寄存器引用：\dimen<idx>
         if let Some(csid) = self.peek_csid()? {
@@ -809,7 +863,49 @@ impl Expander {
                 let v = self.params.prevdepth;
                 return Ok((if neg { -v } else { v }, 0));
             }
-            // ETRIP 第二波：\mutoglue<mu 胶水> / \gluetomu<胶水> → 胶水宽度（尺寸上下文）
+            // TRIP 冲刺：dimen 内部参数作尺寸（\ifdim\hsize<\hsize、\the\hsize 等）
+            if matches!(
+                self.eqtb.slot(csid),
+                EqSlot::Primitive(
+                    Primitive::HSize
+                        | Primitive::ParIndent
+                        | Primitive::VSize
+                        | Primitive::MaxDepth
+                        | Primitive::LineSkipLimit
+                )
+            ) {
+                self.fetch()?;
+                let v = match self.eqtb.slot(csid) {
+                    EqSlot::Primitive(Primitive::HSize) => self.params.hsize,
+                    EqSlot::Primitive(Primitive::ParIndent) => self.params.parindent,
+                    EqSlot::Primitive(Primitive::VSize) => self.params.vsize,
+                    EqSlot::Primitive(Primitive::MaxDepth) => self.params.maxdepth,
+                    _ => self.params.lineskiplimit,
+                };
+                return Ok((if neg { -v } else { v }, 0));
+            }
+            // TRIP 冲刺：glue 内部参数作尺寸（宽度分量）——`minus\baselineskip` 等
+            if matches!(
+                self.eqtb.slot(csid),
+                EqSlot::Primitive(
+                    Primitive::BaselineSkip
+                        | Primitive::LineSkip
+                        | Primitive::ParSkip
+                        | Primitive::ParFillSkip
+                        | Primitive::TopSkip
+                )
+            ) {
+                self.fetch()?;
+                let g = match self.eqtb.slot(csid) {
+                    EqSlot::Primitive(Primitive::BaselineSkip) => self.params.baselineskip,
+                    EqSlot::Primitive(Primitive::LineSkip) => self.params.lineskip,
+                    EqSlot::Primitive(Primitive::ParSkip) => self.params.parskip,
+                    EqSlot::Primitive(Primitive::ParFillSkip) => self.params.parfillskip,
+                    _ => self.params.topskip,
+                };
+                return Ok((if neg { -g.width } else { g.width }, 0));
+            }
+            // ETRIP 第二波：\mutoglue<mu 胶水> / \gluetomu<胶水> → 胶水宽度（尺寸上下文），
             // 转换为胶水后取 width 分量（1mu = 1pt = 65536sp，数值不变）。
             if let EqSlot::Primitive(Primitive::MuToGlue | Primitive::GlueToMu) =
                 self.eqtb.slot(csid)
@@ -821,6 +917,12 @@ impl Expander {
         }
         // 基数前缀：十六进制 `"` / 八进制 `'`（TeX scan_dimen 同 scan_int，TeXbook p.267）
         let mut radix_val: Option<i64> = None;
+        // TRIP：反引号字符常量（TeX scan_dimen 的 alphabetic constant）：`<char> →
+        // 字符码作整数部分，后随单位正常扫描（trip.tex L83 `\ifdim1,0pt<`^^Abpt`：
+        // `` ` `` + ^^A(字符1) → 1，单位 bpt 取最长前缀 bp，剩余 `t` 留在流中）。
+        if let Some(code) = self.try_scan_backquote()? {
+            radix_val = Some(code);
+        }
         if let Some((tok, _)) = self.fetch()? {
             let base = match (tok.catcode(), tok.charcode()) {
                 (Some(Catcode::Other), Some(c)) if c == b'"' as u32 => Some(16u32),
@@ -843,7 +945,9 @@ impl Expander {
                     }
                 }
                 if !any_radix {
-                    return Err(Error::invalid_input("预期尺寸数字"));
+                    // TeX：基数前缀无数位 → "Missing number" 恢复 0（\leftskip \parshape pt）
+                    self.report_missing_number();
+                    return Ok((0, 0));
                 }
                 radix_val = Some(val);
             } else {
@@ -872,8 +976,24 @@ impl Expander {
                 ) || matches!(
                     &slot,
                     EqSlot::Primitive(p)
-                        if matches!(p, Primitive::Count | Primitive::NumExpr)
-                            || int_param_index(*p).is_some()
+                        if matches!(
+                            p,
+                            Primitive::Count
+                                | Primitive::NumExpr
+                                // TRIP：内部整数读取原语作数字（\catcode`\} 等）
+                                | Primitive::Catcode
+                                | Primitive::LcCode
+                                | Primitive::Badness
+                                | Primitive::ETeXVersion
+                                | Primitive::ETeXRevision
+                                | Primitive::InputLineNo
+                                | Primitive::CurrentGroupLevel
+                                | Primitive::CurrentGroupType
+                                | Primitive::LastNodeType
+                                | Primitive::CurrentIfLevel
+                                | Primitive::CurrentIfType
+                                | Primitive::CurrentIfBranch
+                        ) || int_param_index(*p).is_some()
                 );
             }
             if number_cs {
@@ -883,14 +1003,23 @@ impl Expander {
                 while let Some((tok, _)) = self.fetch()? {
                     if let Some(d) = digit_value(tok) {
                         if saw_dot {
-                            frac = frac * 10 + i64::from(d);
-                            frac_len += 1;
-                        } else {
+                            // TRIP：`16383.99999237060546875pt` 17 位小数——防 i64
+                            // 溢出，超限位截断（TeX scan_dimen 定点累加同效）。
+                            if frac < i64::MAX / 10 {
+                                frac = frac * 10 + i64::from(d);
+                                frac_len += 1;
+                            }
+                        } else if int_part < i64::MAX / 10 {
                             int_part = int_part * 10 + i64::from(d);
                         }
                         any = true;
-                    } else if tok.charcode() == Some(b'.' as u32) && !saw_dot {
+                    } else if matches!(tok.charcode(), Some(c) if c == b'.' as u32 || c == b',' as u32)
+                        && !saw_dot
+                    {
+                        // TeX scan_dimen：`.` 与 `,` 均可作小数点（trip.tex L40 `,0015...in`）；
+                        // 无整数部分也合法（`.5in`、`.pt` → 0pt，TRIP L151 `\vsize.pt`）
                         saw_dot = true;
+                        any = true;
                     } else {
                         self.unread(tok);
                         break;
@@ -899,7 +1028,9 @@ impl Expander {
             }
         }
         if !any {
-            return Err(Error::invalid_input("预期尺寸数字"));
+            // TeX：尺寸数字缺失 → "Missing number" 恢复 0（\leftskip \parshape pt plus...）
+            self.report_missing_number();
+            return Ok((0, 0));
         }
         // <整数>[<小数>]<内部尺寸量>：`11\parshapedimen4` = 11 × 4pt、
         // `2\fontdimen6\font` 等（TeX scan_dimen 的数量乘内部量）。
@@ -932,6 +1063,12 @@ impl Expander {
                     self.fetch()?; // 消费 \dimendef'd cs
                     Some(self.registers.dimen(idx))
                 }
+                // TRIP：内部整数作数量乘子（TeX scan_dimen `<factor><internal integer>`：
+                // 值×65536sp 作 dimen；L160 `\ifdim.5\mag>0cc0` → .5×2000pt）
+                EqSlot::Primitive(Primitive::Mag) => {
+                    self.fetch()?; // 消费 \mag
+                    Some(self.params.mag * SP_PER_PT)
+                }
                 _ => None,
             };
             if let Some(q) = quantity {
@@ -944,7 +1081,7 @@ impl Expander {
         // 单位/阶后缀：连续字母，取**最长**已知单位或 fil/fill/filll 阶前缀
         // （TeX scan_keyword 逐个字母匹配的等价：`1ptminus0fil` → "pt" + 放回 "minus"；
         // `0fillminus0filll` → 阶词 "fill" 被消费并回传，放回 "minus"）。
-        const UNITS: &[&str] = &["sp", "pt", "bp", "in", "cm", "mm", "mu"];
+        const UNITS: &[&str] = &["sp", "pt", "bp", "in", "cm", "mm", "pc", "cc", "mu"];
         const ORDER_WORDS: &[&str] = &["fil", "fill", "filll"];
         let mut unit_tokens: Vec<(Token, char)> = Vec::new();
         while let Some((tok, _)) = self.fetch()? {
@@ -1113,8 +1250,10 @@ impl Expander {
         if word.is_empty() {
             return Ok(None);
         }
-        if is_kw(&word) {
-            return Ok(Some(word));
+        // TeX scan_keyword：关键字大小写不敏感（`plUs`/`lllminus` = plus/minus）
+        let lower = word.to_ascii_lowercase();
+        if is_kw(&lower) {
+            return Ok(Some(lower));
         }
         self.stack.push(InputFrame::TokenList {
             items: Arc::from(letters),

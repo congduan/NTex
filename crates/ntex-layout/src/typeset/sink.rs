@@ -10,7 +10,10 @@ impl TokenSink for NodeBuilder {
                 if display {
                     self.close_math()
                 } else {
-                    Err(Error::invalid_input("Display math should end with $$."))
+                    // TeX：单 `$` 结束显示数学 → 报错但恢复（该 `$` 按 `$$` 处理，
+                    // 关闭公式；TRIP L206 `$$\eqno^{}$`）。
+                    self.write16("! Display math should end with $$.\n".to_string())?;
+                    self.close_math()
                 }
             }
             Mode::Vertical => {
@@ -61,9 +64,9 @@ impl TokenSink for NodeBuilder {
             }
             Mode::RestrictedHorizontal => {
                 if display {
-                    Err(Error::invalid_input(
-                        "显示数学不允许出现在 \\hbox 内（restricted horizontal mode）",
-                    ))
+                    // TeX：\hbox 内 `$$` → 报错恢复（按行内数学继续；TRIP L210）
+                    self.write16("! Display math in restricted mode.\n".to_string())?;
+                    self.enter_math(Mode::Math)
                 } else {
                     self.enter_math(Mode::Math)
                 }
@@ -296,15 +299,15 @@ impl TokenSink for NodeBuilder {
         if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
             return self.math_char_tok(tok);
         }
-        // M4-7 错误模型：数学模式外遇到 ^/_（cat 7/8）→ TeX "Missing $ inserted"，
-        // 而非静默渲染为字面字符（TeX 会插入 $ 恢复；我们直接报错）。
+        // M4-7 错误模型：数学模式外遇到 ^/_（cat 7/8）→ TeX "Missing $ inserted"
+        // 并插入 $ 恢复（进入数学模式处理脚本；TRIP L263）。
         if matches!(
             tok.catcode(),
             Some(ntex_core::Catcode::Superscript) | Some(ntex_core::Catcode::Subscript)
         ) {
-            return Err(Error::invalid_input(
-                "Missing $ inserted（^/_ 只能在数学模式内使用）",
-            ));
+            self.write16("! Missing $ inserted.\n".to_string())?;
+            let _ = self.enter_math(Mode::Math);
+            return self.math_char_tok(tok);
         }
         let Some(node) = self.char_node(tok) else {
             return Ok(()); // 控制序列等无可排版语义
@@ -510,17 +513,18 @@ impl TokenSink for NodeBuilder {
                 Mode::Horizontal => {
                     self.close_paragraph();
                 }
-                // 垂直模式 \par 无操作；受限水平/数学模式拒绝
+                // 垂直模式 \par 无操作；受限水平/数学模式拒绝（TeX 报错恢复，TRIP L210）
                 Mode::Vertical => {}
                 Mode::RestrictedHorizontal => {
-                    return Err(Error::invalid_input(
-                        "\\par 不允许出现在受限水平模式（\\hbox 内）",
-                    ));
+                    self.write16(
+                        "! You can't use \\par in restricted horizontal mode.\n".to_string(),
+                    )?;
                 }
                 Mode::Math | Mode::DisplayMath => {
-                    return Err(Error::invalid_input(
-                        "\\par 不允许出现在数学模式（\\par 应在 $ 外）",
-                    ));
+                    // TeX：数学模式 \par → 报 "Missing $ inserted" 并关数学（当 \par 处理）
+                    self.write16("! Missing $ inserted.\n".to_string())?;
+                    let _ = self.close_math();
+                    self.close_paragraph();
                 }
             },
             Primitive::Indent => match self.mode() {
@@ -614,7 +618,8 @@ impl TokenSink for NodeBuilder {
                 }
             });
         let Some(b) = b else {
-            return Err(Error::invalid_input(format!("盒子 {idx} 为空（void）")));
+            // TeX：\box 取 void 盒子 → 空节点（不报错，TRIP L104 前 \copy200 void）
+            return Ok(());
         };
         if self.shipout_next {
             self.shipout_next = false;
@@ -630,6 +635,10 @@ impl TokenSink for NodeBuilder {
         // fn 指针模式恒为 FontId(0)；TFM 模式更新当前字体
         self.current_font = FontId(font);
         Ok(())
+    }
+
+    fn current_font(&self) -> u32 {
+        self.current_font.0
     }
 
     fn take_write_flush_pending(&mut self) -> bool {
@@ -898,7 +907,8 @@ impl TokenSink for NodeBuilder {
             h.clone()
         } else {
             let Some(b) = self.boxes.get(idx).and_then(|s| s.as_ref()) else {
-                return Err(Error::invalid_input(format!("盒子 {idx} 为空（void）")));
+                // TeX：\copy 取 void 盒子 → 空节点（不报错，TRIP L104 `\copy200`）
+                return Ok(());
             };
             b.clone()
         };
@@ -958,7 +968,8 @@ impl TokenSink for NodeBuilder {
     /// `\wd/\ht/\dp<n>=<dimen>`：设置盒子寄存器维度。
     fn set_box_dim(&mut self, idx: usize, dim: u8, value: i64) -> Result<()> {
         let Some(b) = self.boxes.get_mut(idx).and_then(|s| s.as_mut()) else {
-            return Err(Error::invalid_input(format!("盒子 {idx} 为空（void）")));
+            // void 盒子无维度可设：忽略（TeX 恢复语义，TRIP halign 模板场景）
+            return Ok(());
         };
         match dim {
             0 => b.width = value,
@@ -1061,7 +1072,10 @@ impl TokenSink for NodeBuilder {
     /// `\showbox<n>`：把盒子寄存器内容格式化到转录（TeX show_box 风格）。
     fn showbox(&mut self, idx: usize) -> Result<()> {
         let Some(b) = self.boxes.get(idx).and_then(|s| s.as_ref()) else {
-            return Err(Error::invalid_input(format!("\\showbox{idx}: 盒子为空（void）")));
+            // TeX：\showbox 空盒 → 显示 void 并恢复（TRIP 中 box 状态差异不致命）
+            let out = format!("> \\box{idx}=\nvoid\n! OK.\n");
+            self.transcript.push_str(&out);
+            return Ok(());
         };
         let mut out = format!("> \\box{idx}=\n");
         showbox_format_box(b, 0, &mut out);
