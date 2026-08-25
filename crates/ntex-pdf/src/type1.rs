@@ -17,17 +17,45 @@ pub struct Type1Font {
     pub pfb: Vec<u8>,
 }
 
-/// 在 TeX 树中查找 Type1 字体文件（`<name>.pfb`；kpsewhich 同路径规则）。
+/// 在 TeX 树中查找 Type1 字体文件（`<name>.pfb`）。
+/// 查找链与 `ntex-font::find_tfm` 对齐：环境变量 NTEX_TFM_DIR → 常见 TeX Live
+/// 安装路径（amsfonts/cm 等 Type1 目录）→ kpsewhich。
 pub fn find_pfb(name: &str) -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+    let file = format!("{name}.pfb");
+    if let Ok(dir) = std::env::var("NTEX_TFM_DIR") {
+        let p = PathBuf::from(dir).join(&file);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    // CM Type1 字体常见安装位置（texlive texmf-dist / texmf）
+    const ROOTS: [&str; 3] = [
+        "/usr/local/texlive/2024basic",
+        "/usr/local/texlive/2023",
+        "/usr/share/texlive",
+    ];
+    for root in ROOTS {
+        for sub in [
+            "/texmf-dist/fonts/type1/public/amsfonts/cm/",
+            "/texmf-dist/fonts/type1/public/cm-super/",
+            "/texmf/fonts/type1/public/amsfonts/cm/",
+        ] {
+            let p = PathBuf::from(root).join(sub).join(&file);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
     // kpsewhich 直接查 .pfb（覆盖 TFM 同目录、texmf 树等）
     let out = std::process::Command::new("kpsewhich")
-        .arg(format!("{name}.pfb"))
+        .arg(&file)
         .output()
         .ok()?;
     if out.status.success() {
         let p = String::from_utf8_lossy(&out.stdout).trim().to_owned();
         if !p.is_empty() {
-            let pb = std::path::PathBuf::from(p);
+            let pb = PathBuf::from(p);
             if pb.exists() {
                 return Some(pb);
             }
