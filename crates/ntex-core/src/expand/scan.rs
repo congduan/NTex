@@ -661,10 +661,7 @@ impl Expander {
             return Ok(tokens);
         }
         let mut depth = 0usize;
-        loop {
-            let Some((fetched, _)) = self.fetch()? else {
-                break;
-            };
+        while let Some((fetched, _)) = self.fetch()? {
             let t = self.resolve_group_char(fetched);
             match t.catcode() {
                 Some(Catcode::BeginGroup) => {

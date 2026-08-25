@@ -73,8 +73,8 @@ fn fmt_reload_then_run_etrip_preamble() {
         "pass2(fullfmt fullsrc): {:?} tr_len={} tr_head={:?} tr_tail={:?}",
         r3.as_ref().err(),
         tr4.len(),
-        &tr4.chars().take(120).collect::<String>(),
-        &tr4.chars()
+        tr4.chars().take(120).collect::<String>(),
+        tr4.chars()
             .rev()
             .take(300)
             .collect::<String>()
@@ -92,7 +92,7 @@ fn fmt_reload_then_run_etrip_preamble() {
     eprintln!(
         "pass2(body-only): {:?} transcript_head={:?}",
         r5.as_ref().err(),
-        &ts5.take_transcript().chars().take(80).collect::<String>()
+        ts5.take_transcript().chars().take(80).collect::<String>()
     );
 
     // 二分 body 定位下一个失败点
@@ -109,7 +109,7 @@ fn fmt_reload_then_run_etrip_preamble() {
         eprintln!(
             "seg {tag}: {:?} tr_tail={:?}",
             rr.as_ref().err(),
-            &tr.chars()
+            tr.chars()
                 .rev()
                 .take(60)
                 .collect::<String>()

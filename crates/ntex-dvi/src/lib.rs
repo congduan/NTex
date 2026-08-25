@@ -648,7 +648,7 @@ mod tests {
         assert_eq!(fonts[0].checksum, fm.checksum, "checksum 应来自 TFM 头");
 
         let dvi = write_dvi(&pages, &fonts);
-        for ch in [b'N', b'T', b'e', b'x'] {
+        for ch in *b"NTex" {
             assert!(dvi.contains(&ch), "缺字符 {ch} 的 set_char");
         }
         // 字体名出现两次：页面 fnt_def + post 字体列表
