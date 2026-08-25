@@ -84,8 +84,10 @@ impl Expander {
                 self.assign_muskip(idx, val);
             }
             Primitive::Toks => {
-                let val = self.scan_group_contents(Some("toks"))?;
-                self.assign_toks(idx, Arc::from(val));
+                // RHS 可为 `{token list}` 或另一 toks 寄存器（内容复制，
+                // TRIP L418 `\tokens\toks1`）；见 scan_toks_rhs。
+                let val = self.scan_toks_rhs()?;
+                self.assign_toks(idx, val);
             }
             _ => unreachable!("exec_register 只处理寄存器原语"),
         }

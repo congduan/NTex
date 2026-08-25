@@ -889,9 +889,12 @@ impl Expander {
                                 self.assign_muskip(idx, val);
                             }
                             RegKind::Toks => {
-                                let name = self.intern.name(csid).to_owned();
-                                let val = self.scan_group_contents(Some(&name))?;
-                                self.assign_toks(idx, Arc::from(val));
+                                // RHS 可为 `{token list}` 或另一 toks 寄存器（内容复制，
+                                // TRIP L418 `\tokens\toks1`）——统一走 scan_toks_rhs；
+                                // 旧的 scan_register_index 路径会把 `\toks1` 的 `\toks`
+                                // 原语误判为数字（Missing number）后再丢回主循环。
+                                let val = self.scan_toks_rhs()?;
+                                self.assign_toks(idx, val);
                             }
                         }
                         Ok(())

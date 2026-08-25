@@ -187,8 +187,15 @@ impl TokenSink for NodeBuilder {
     }
 
     /// `\spacefactor=<number>` 赋值（组作用域恢复由 save/restore 处理）。
+    /// TeX 只允许 1..32767：越界 `int_error("Bad space factor")` 报错恢复、不赋值
+    /// （tex.web L23220-23228；TRIP L289 `\showbox0\spacefactor=0`——否则后续
+    ///  `app_space` 中 `xn_over_d(shrink, 1000, sf)` 除零）。
     fn set_space_factor(&mut self, v: i64) -> Result<()> {
-        self.space_factor = v;
+        if !(1..=32767).contains(&v) {
+            self.write16("! Bad space factor.".to_string())?;
+        } else {
+            self.space_factor = v;
+        }
         Ok(())
     }
 

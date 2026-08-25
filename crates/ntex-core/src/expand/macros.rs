@@ -131,10 +131,6 @@ impl Expander {
                 .fetch()?
                 .ok_or_else(|| Error::invalid_input("分隔实参扫描到输入末尾（定界符未出现）"))?
                 .0;
-            if !long && self.is_par_token(tok) {
-                self.recover_par_in_argument(name, tok)?;
-                return Ok(Arc::from(buf));
-            }
             // 实参内条件：开 `\if*` 作数据并计数；闭合 token 先匹配参数内条件，
             // 无匹配（arg_cond==0）时是**外层**条件的 `\else/\fi/\or` → 交条件机，
             // 不作为实参（同无分隔实参的修复）。
@@ -167,9 +163,18 @@ impl Expander {
             // TeX：分隔实参内的 outer 宏 → forbidden
             self.check_not_outer(tok)?;
             buf.push(tok);
+            // 分隔符匹配优先：`\par` 作为定界符时合法（TRIP L354 `\a#1\par#2` 调
+            // `\a\par!` → `#1` 空、`#2`=`!`；non-long 参数扫描的 Paragraph ended
+            // 检查须在分隔符匹配之后，否则定界符 `\par` 被误报）。
             if self.suffix_matches_delim(&buf, delim) {
                 buf.truncate(buf.len() - delim.len());
                 break;
+            }
+            // non-long 参数中 `\par`（非定界符位置）→ "Paragraph ended"
+            if !long && self.is_par_token(tok) {
+                buf.pop();
+                self.recover_par_in_argument(name, tok)?;
+                return Ok(Arc::from(buf));
             }
         }
         Ok(Arc::from(buf))
@@ -641,10 +646,21 @@ impl Expander {
             .ok_or_else(|| Error::invalid_input("\\let 后缺少被别名 token"))?
             .0;
         let rhs = if probe.charcode() == Some(b'=' as u32) {
-            self.skip_spaces()?;
-            self.fetch()?
+            // TeX `\let` 的 '=' 分支：`get_token` 读一个 token；若它是空格
+            // （cat 10）则再读一个——只跳**恰好一个**空格，源 token 不跳过空白
+            // （TRIP L416 `\test. \show\test` 中 `\let\test= ` 后 `\test`
+            //  必须别名到空格 token，而非 `\show`）。
+            let mut t = self
+                .fetch()?
                 .ok_or_else(|| Error::invalid_input("\\let 后缺少被别名 token"))?
-                .0
+                .0;
+            if t.catcode() == Some(Catcode::Space) {
+                t = self
+                    .fetch()?
+                    .ok_or_else(|| Error::invalid_input("\\let 后缺少被别名 token"))?
+                    .0;
+            }
+            t
         } else {
             self.unread(probe);
             self.fetch()?

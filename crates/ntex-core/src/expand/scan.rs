@@ -501,6 +501,58 @@ impl Expander {
         Ok(n as usize)
     }
 
+    /// `\toks<n>` 赋值 RHS（TeX `toks_register` 分支，tex.web L22945-22979）：
+    /// RHS 可为 `{<token list>}`（scan_toks），也可为另一个 toks 寄存器
+    /// （`\toks<n>` 或 `\toksdef` 命名的 cs，如 TRIP L418 `\tokens\toks1`，
+    /// 无 `=` 经 `scan_optional_equals`）——此时**内容复制**；空源寄存器 →
+    /// 空 token 列表（TeX 定义为 undefined_cs/null，`\the` 输出空，等价）。
+    fn scan_toks_rhs(&mut self) -> Result<TokenArray> {
+        loop {
+            self.skip_spaces()?;
+            let fetched = self.fetch()?;
+            let Some((tok, _)) = fetched else {
+                // 输入耗尽：TeX 报 "Missing { inserted" 后以空 token list 收尾
+                return Ok(Arc::from(Vec::<Token>::new()));
+            };
+            // TeX `@<Get the next non-blank non-relax non-call token@>`：
+            // `\relax` 分隔跳过（`\hyphenation\relax{...}` 既有处理同款）。
+            if let Some(csid) = tok.csid() {
+                if matches!(self.eqtb.slot(csid), EqSlot::Primitive(Primitive::Relax)) {
+                    continue;
+                }
+            }
+            // 组开始 → scan_toks 收集（本实现用 scan_group_contents，
+            // 它入口自行 fetch 组开始 token，故先放回）
+            if tok.catcode() == Some(Catcode::BeginGroup) {
+                self.unread(tok);
+                let val = self.scan_group_contents(Some("toks"))?;
+                return Ok(Arc::from(val));
+            }
+            // toks 寄存器内容复制
+            if let Some(idx) = self.toks_rhs_index(tok)? {
+                return Ok(self.registers.toks(idx));
+            }
+            return Err(Error::invalid_input(
+                "\\toks 赋值 RHS 需为 {token list} 或 toks 寄存器",
+            ));
+        }
+    }
+
+    /// 判断 RHS token 是否为 toks 寄存器（`\toks<n>` 或 `\toksdef` cs），
+    /// 返回寄存器下标；否则返回 None。
+    fn toks_rhs_index(&mut self, tok: Token) -> Result<Option<usize>> {
+        let Some(csid) = tok.csid() else { return Ok(None) };
+        match self.eqtb.slot(csid) {
+            EqSlot::Register(RegKind::Toks, idx) => Ok(Some(*idx)),
+            EqSlot::Primitive(Primitive::Toks) => {
+                // `\toks<n>`：放回原语 token 再扫描数字
+                self.unread(tok);
+                Ok(Some(self.scan_register_index()?))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// 扫描平衡花括号内的 token 列表（`\toks0={...}` 用）。
     ///
     /// TeX `scan_toks(macro, xpand)` 恢复语义：
@@ -541,7 +593,10 @@ impl Expander {
                                  <to be read again>\n                   \\{csname}\n"
                             ));
                             self.unread(t);
-                            return Ok(tokens);
+                            // TeX 语义：Forbidden 时报错并放弃整个赋值
+                            // （scan_toks 返回空列表），否则部分写入 toks 寄存器会
+                            // 在 `\the\tokens` 时被重新展开造成死循环（TRIP L417）。
+                            return Ok(Vec::new());
                         }
                     }
                 }
