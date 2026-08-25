@@ -137,6 +137,30 @@ impl Expander {
                     detokenize_token(t, &self.intern, &mut buf);
                     out.extend(buf.into_iter().map(|t| (t, false)));
                 }
+                EqSlot::Primitive(Primitive::Meaning) => {
+                    // \meaning<token>：token 含义文本（与 exec_meaning 对齐）。
+                    // 此前缺失：\meaning 在 is_expandable() 中但此处落入 `_` 分支被原样
+                    // 保留，`\the\meaning\cs` 使 the_tokens_after 对 \meaning 无限递归
+                    // → 输入栈溢出（fuzz 命中，畸形输入不 panic 契约违约）。
+                    let t = self
+                        .fetch()?
+                        .ok_or_else(|| Error::invalid_input("\\meaning 后无 token"))?
+                        .0;
+                    let text = self.meaning_text(t);
+                    out.extend(
+                        text.bytes()
+                            .map(|b| (Token::char(Catcode::Other, u32::from(b)), false)),
+                    );
+                }
+                EqSlot::Primitive(Primitive::JobName) => {
+                    // \jobname：作业名（与 exec 对齐：恒 "texput"）。
+                    // 此前缺失：同 \meaning，`\the\jobname` 会无限递归。
+                    out.extend(
+                        "texput"
+                            .bytes()
+                            .map(|b| (Token::char(Catcode::Other, u32::from(b)), false)),
+                    );
+                }
                 EqSlot::Primitive(Primitive::Csname) => {
                     // \csname...\endcsname：名字扫描 → 控制序列 token（TeX expand() 语义）
                     let name = self.scan_csname()?;

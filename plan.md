@@ -55,24 +55,36 @@
 
 - [ ] 生产路径 unwrap/expect 审计（input.rs 10 / ntex-format 15 / ntex-io 6 等），
   输入可达路径一律改 `Error`（与 M1-13 错误模型收尾联动）
-- [ ] `cargo-fuzz` 目标：随机字节喂 `Expander + scan_token`，断言永不 panic
-  （复用 TRIP/ETRIP in-process 驱动）
-  - 已发现实例（2026-08-22，P0 验证时）：`ntex-bench --driver ntex --bench
-    expand-throughput`（200k 宏调用）在 in-process 引擎**死循环**（HEAD 与
-    P0 改动后均复现；CI 仅 stub 驱动未覆盖此路径）——优先列入 fuzz 回归集
-  - **✅ 已修复（2026-08-23）**：根因 = `knuth_plass` 折行 O(n²)（active 集不淘汰）
-    + 默认 `\tolerance=10000`（应为 TeX 默认 200）→ active 永不淘汰。修复 = active
-    集淘汰（tex.web §880）+ `\tolerance` 默认 200。基准 expand-throughput 现 730ms
-    / 27.4 万调用/s（原约 39 分钟"死循环"）；折行与暴力最优对照全绿。
-- 验证：fuzz 长时间运行零 panic；错误路径输出与 pdfTeX 一致
+- [x] `cargo-fuzz` 目标（2026-08-25，基础设施 #2）：`ntex-layout/tests/fuzz.rs`
+  随机字节喂 `Typesetter::typeset_bytes`（复用 in-process 驱动，策略：片段/ascii/
+  转义深，quick 2k 轮入 CI、深 5k 轮/策略 `--ignored`）——**已修复违约 2 处**：
+  - `\the\meaning` / `\the\jobname` 无限递归栈溢出（`expand_once` 缺 Meaning/
+    JobName 分支，`\meaning` 被保留 → `the_tokens_after` 自递归）——expr.rs 补分支
+  - 垂直模式行内数学后 `\par` 空列表栈 panic（`close_math` 后无条件
+    `close_paragraph`，把唯一主列表弹空）——sink.rs 仅在仍处水平模式时关段落
+  - 回归测试：`the_meaning_expands_without_recursion`、
+    `the_jobname_expands_without_recursion`（ntex-core）、
+    `par_after_vertical_inline_math_keeps_main_list`（ntex-layout）
+  - 既有实例（2026-08-22）：`ntex-bench --driver ntex --bench expand-throughput`
+    死循环——**✅ 已修复（2026-08-23）**：根因 = `knuth_plass` 折行 O(n²)
+    （active 集不淘汰）+ 默认 `\tolerance=10000`（应为 200）→ active 永不淘汰。
+    修复 = active 集淘汰（tex.web §880）+ `\tolerance` 默认 200。基准
+    expand-throughput 现 730ms / 27.4 万调用/s；折行与暴力最优对照全绿。
+- 验证：深 fuzz 2 万轮零 panic ✅；错误路径输出与 pdfTeX 一致（待 TRIP 收尾）
 
 ### P2 工程化闭环：CI/基准门禁
 
+- [x] CI 门禁（2026-08-25，基础设施 #1）：`.github/workflows/ci.yml`
+  - `check` job（门禁）：fmt + clippy（`-D warnings`）+ 单元测试
+    （`cargo test --workspace`，含 fuzz quick）+ stub 冒烟（trip/diff/bench）
+  - `real-engine` job（观测，`continue-on-error`）：ntex 驱动 TRIP/ETRIP/diff/
+    bench + 深 fuzz，让每次提交看到"离全绿差多远"；全绿后移除
+    `continue-on-error` 即转硬门禁
 - [ ] `make bench` 补 `--release`（现为 debug + stub，数字无参考价值）
 - [ ] nightly perf job：release 跑 `ntex-bench`（真实驱动），对照入库基线，
   吞吐下降 >15% 即失败（plan 中"基准数字入库，CI 防回归"落地）
 - [ ] token 级微基准引入 divan（秒级宏基准保留手写 measure）
-- 验证：CI 绿且基线数字可追踪
+- 验证：check job 可全绿；TRIP/ETRIP 观测待冲刺后转门禁
 
 ***
 

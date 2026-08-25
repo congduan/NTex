@@ -916,6 +916,22 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_meaning_expands_without_recursion() {
+        // 回归（fuzz 命中）：\the\meaning 此前 expand_once 缺失 Meaning 分支，\meaning 被原样
+        // 保留 → the_tokens_after 无限递归 → 栈溢出（畸形输入不 panic 契约违约）。
+        assert_eq!(
+            expand("\\the\\meaning\\undefinedcs").unwrap(),
+            "undefined"
+        );
+    }
+
+    #[test]
+    fn the_jobname_expands_without_recursion() {
+        // 回归（fuzz 命中）：\the\jobname 此前同 \meaning 无限递归。
+        assert_eq!(expand("\\the\\jobname").unwrap(), "texput");
+    }
+
     // ---------- M1-11 组与作用域 ----------
 
     #[test]

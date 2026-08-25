@@ -36,3 +36,39 @@ jobs:
 
       - name: 冒烟：基准管路（stub 驱动）
         run: cargo run -p ntex-bench -- --driver stub
+
+  # 真实引擎回归（基础设施 #1）：TRIP/ETRIP/diff/bench 全用 ntex 驱动，
+  # 让每次提交都看到"离全绿差多远"。
+  # TRIP/ETRIP 尚未全绿 → continue-on-error 只观测不门禁；全绿后移除该开关即成硬门禁。
+  real-engine:
+    runs-on: ubuntu-latest
+    needs: check
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: 安装参考引擎（pdflatex，差分管路用）
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends texlive-latex-base texlive-plain-generic
+
+      - name: 获取 TRIP/ETRIP fixtures
+        run: bash scripts/fetch-trip-fixtures.sh
+
+      - name: TRIP/ETRIP（ntex 驱动）
+        run: cargo run -p ntex-trip -- --driver ntex --test both
+
+      - name: 差分管路（ntex vs pdflatex）
+        run: cargo run -p ntex-diff -- --fixtures fixtures/diff --reference external=pdflatex --engine ntex
+
+      - name: 基准冒烟（ntex 驱动）
+        run: cargo run -p ntex-bench -- --driver ntex --bench all --warmup 1 --iterations 3
+
+      - name: 深 fuzz（畸形输入不 panic，5k 轮/策略）
+        run: timeout 600 cargo test -p ntex-layout --test fuzz -- --ignored --nocapture

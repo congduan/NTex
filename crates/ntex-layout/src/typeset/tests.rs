@@ -114,6 +114,19 @@ mod tests {
     }
 
     #[test]
+    fn par_after_vertical_inline_math_keeps_main_list() {
+        // 回归（fuzz 命中）：垂直模式行内数学 + \par 此前在 close_math 后无条件
+        // close_paragraph，把唯一主列表弹空 → append 时空栈 panic。
+        let main = typeset("$x$\\par y").unwrap();
+        // 垂直模式行内数学关闭后追加 baselineskip glue：公式盒 + 胶水 + 段落盒
+        assert_eq!(main.len(), 3);
+        assert!(matches!(main[0], Node::Box(_)));
+        assert!(matches!(main[1], Node::Glue { .. }));
+        let p = as_box(&main[2]);
+        assert_eq!(as_char(&p.children[0]), b'y' as u32);
+    }
+
+    #[test]
     fn empty_input_gives_empty_main_list() {
         assert!(typeset("").unwrap().is_empty());
     }

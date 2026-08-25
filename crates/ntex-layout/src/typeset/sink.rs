@@ -564,12 +564,6 @@ impl TokenSink for NodeBuilder {
             Primitive::VBox => self.pending_box = Some(PendingBox::VBox),
             Primitive::VTop => self.pending_box = Some(PendingBox::VTop),
             Primitive::Par => {
-                eprintln!(
-                    "[dbg par] modes={:?} lists={} math={}",
-                    self.list_modes,
-                    self.lists.len(),
-                    self.math.len()
-                );
                 match self.mode() {
                     Mode::Horizontal => {
                         self.close_paragraph();
@@ -587,8 +581,11 @@ impl TokenSink for NodeBuilder {
                         let was_display = self.mode() == Mode::DisplayMath;
                         let _ = self.close_math();
                         // 显示数学的公式盒已并入外层垂直列表（TeX 中显示公式不在段落内），
-                        // 无需再关段落；行内数学结束后仍需关闭所在段落（TRIP L350 `$$` 未闭合段末 \par）
-                        if !was_display {
+                        // 无需再关段落；行内数学结束时若仍在段落（水平模式）则关闭所在段落
+                        // （TRIP L350 `$$` 未闭合段末 \par）。注意：垂直模式开启的行内数学
+                        // （`$...$\par`）close_math 后模式已退回 Vertical——此时再关段落会把
+                        // 唯一的主列表也弹出（fuzz 命中"列表栈非空"panic，畸形输入不 panic 契约）。
+                        if !was_display && self.mode() == Mode::Horizontal {
                             self.close_paragraph();
                         }
                     }

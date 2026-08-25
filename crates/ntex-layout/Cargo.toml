@@ -11,5 +11,8 @@ ntex-core.workspace = true
 ntex-font.workspace = true
 ntex-io.workspace = true
 
+[dev-dependencies]
+fastrand = "2"
+
 [lints]
 workspace = true
