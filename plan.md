@@ -533,6 +533,9 @@ gluestretchorder 段值语义核对 + `etrip.log` 逐字节比对。
 - [ ] OpenType 字体：fontspec 兼容路径 + HarfBuzz 复杂整形
 - [ ] **CJK 整形捷径**：无复杂特性时跳过 HarfBuzz，直接读 hmtx（目标 5\~10x）
 - [ ] 宏包 CI 回归集：geometry、amsmath、hyperref、biblatex、tikz、ctex
+- [ ] **宏包管理**（用户需求，2026-08-25）：借鉴 Go 包管理器（go.mod 依赖声明、
+  版本化模块仓库、go.sum 校验和、本地模块缓存）设计宏包仓库与依赖解析机制，
+  实现 `.sty`/`.cls` 宏包的版本化安装/更新/依赖管理
 - [ ] 引擎身份模拟（`\pdftexversion` 等），兼容依赖引擎行为的宏包
 
 **验收**：目标宏包回归全绿；300 页中文冷编基准达标。
