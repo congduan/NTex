@@ -1100,6 +1100,25 @@ mod tests {
     }
 
     #[test]
+    fn spacefactor_zero_rejected_without_panic() {
+        // TRIP L289 `\spacefactor=0`：tex.web alter_aux 合法范围 1..32767，
+        // 越界报 "! Bad space factor (n)." + help，且不改 space_factor
+        // （旧实现直接赋 0 → 后续词间空白 xn_over_d(shrink,1000,0) 除零 panic）。
+        let mut ts = Typesetter::with_metrics(metrics);
+        ts.typeset(r"a\spacefactor=0 b").unwrap();
+        let t = ts.take_transcript();
+        assert!(
+            t.contains("! Bad space factor (0)."),
+            "应报 Bad space factor：{t}"
+        );
+        assert!(
+            t.contains("I allow only values in the range 1..32767 here."),
+            "应含 help 行：{t}"
+        );
+        // 越界不生效：后续空格按原 space_factor（1000）处理，不 panic、正常排版
+    }
+
+    #[test]
     fn math_unclosed_formula_rejected() {
         let err = typeset(r"$x").unwrap_err();
         assert!(

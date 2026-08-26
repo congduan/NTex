@@ -906,9 +906,9 @@ impl Expander {
             // 内部整数参数（\tracingstats 等 25 个）与交互模式命令（\batchmode 等 4 个）
             // 已由上方 int_param_index / interaction_mode_value 守卫分支处理；编译器
             // 不计守卫为覆盖，此处兜底仅满足穷尽性检查（未来新增原语会在此显式报错）。
-            _ => Err(Error::internal(
-                "未接入 exec_primitive 的原语（内部整数/交互模式应走守卫分支）",
-            )),
+            other => Err(Error::internal(format!(
+                "未接入 exec_primitive 的原语 {other:?}（内部整数/交互模式应走守卫分支）"
+            ))),
         }
     }
 

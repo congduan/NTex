@@ -192,7 +192,12 @@ impl TokenSink for NodeBuilder {
     ///  `app_space` 中 `xn_over_d(shrink, 1000, sf)` 除零）。
     fn set_space_factor(&mut self, v: i64) -> Result<()> {
         if !(1..=32767).contains(&v) {
-            self.write16("! Bad space factor.".to_string())?;
+            // 参考 log 格式（int_error 带值 + help 行，TRIP L289）
+            let _ = self.write16(format!(
+                "! Bad space factor ({}).\n\
+                 I allow only values in the range 1..32767 here.\n",
+                v
+            ));
         } else {
             self.space_factor = v;
         }
