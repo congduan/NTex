@@ -36,6 +36,11 @@ impl Expander {
                 self.outer_pending = true;
                 Ok(())
             }
+            // \long：宏定义前缀（允许参数中含 \par；同 \outer 仅置前缀）
+            Primitive::Long => {
+                self.long_pending = true;
+                Ok(())
+            }
             Primitive::Let => self.exec_let(),
             Primitive::Catcode => self.exec_catcode(),
             Primitive::SfCode => self.exec_sfcode(),
@@ -110,7 +115,9 @@ impl Expander {
                 self.sink.semisimple_begin()?;
                 self.begin_group()
             }
-            Primitive::EndGroup => self.end_group(),
+            Primitive::EndGroup => {
+                self.end_group()
+            }
             // M3-2 排版原语
             // 盒子：扫描可选 to/spread 规格，直通 sink（排版器解释）。
             Primitive::HBox | Primitive::VBox | Primitive::VTop => {
@@ -419,8 +426,26 @@ impl Expander {
                 let toks = self.scan_group_contents(None)?;
                 self.sink.vadjust(toks)
             }
-            // ETRIP 冲刺：\valign/\halign：下一个组为对齐组（组种类 6）
-            Primitive::Valign | Primitive::Halign => self.sink.align_begin(),
+            // ETRIP 冲刺：\valign/\halign：下一个组为对齐组（组种类 6）。
+            // TeX 语义：`\halign` 的 `{` 由 scan_left_brace 消费，alignment 内容中
+            // 的 `{`/`}` 由对齐状态机管理（不建普通组）——VM 侧用 align_depth 模拟。
+            Primitive::Valign | Primitive::Halign => {
+                self.sink.align_begin()?;
+                let fetched = self.fetch()?;
+                if let Some((tok, _)) = fetched {
+                    if tok.catcode() == Some(Catcode::BeginGroup) {
+                        self.begin_group()?;
+                        self.align_depth = 1;
+                        Ok(())
+                    } else {
+                        self.unread(tok);
+                        self.align_depth = 0;
+                        Ok(())
+                    }
+                } else {
+                    Ok(())
+                }
+            }
             // ETRIP 冲刺：\noalign{...}：下一个组为无对齐组（组种类 7）
             Primitive::NoAlign => self.sink.noalign_begin(),
             // ETRIP 冲刺：\cr（对齐行结束）：无操作（简化；对齐组按盒子处理）
@@ -477,6 +502,12 @@ impl Expander {
             Primitive::MathPunct => self.sink.math_class(6),
             Primitive::MathInner => self.sink.math_class(7),
             Primitive::Nonscript => self.sink.primitive(prim),
+            // TRIP 冲刺：\limits/\nolimits/\displaylimits（\mathop 后置上下限标志；
+            // 布局层数学原子按 `\mathop` 标志处理；单独出现时 TeX 报
+            // "Limit controls must follow a math operator"——差异待 etrip.log 校准）
+            Primitive::Limits | Primitive::NoLimits | Primitive::DisplayLimits => {
+                self.sink.primitive(prim)
+            }
             // TRIP 冲刺：\noboundary（数学字符边界抑制；水平/垂直模式 no-op）
             Primitive::NoBoundary => self.sink.primitive(prim),
             // TRIP 冲刺：\moveleft/\moveright<dimen><box>（盒子水平位移）
@@ -1169,6 +1200,11 @@ impl Expander {
             let _ = self
                 .sink
                 .write16("! Font \\FONT? has only 13 fontdimen parameters.\n".to_string());
+            // TeX 恢复：消费 `= <dimen>`（`20\varunit`），不改变字体参数；后续
+            // `\showthe\fontdimen1000\trip\let\PAR=\par` 正常继续（trip.log L5831）。
+            if self.expect_equals().is_ok() {
+                let _ = self.scan_dimen();
+            }
             return Ok(());
         }
         self.expect_equals()?;
@@ -1200,6 +1236,9 @@ impl Expander {
             return self.missing_font_ident();
         };
         let Some(csid) = tok.csid() else {
+            // TeX scan_font_ident：非字体 cs 报错后 **放回** token（TRIP L404
+            // `\fontdimen 1000=20\varunit` —— `=` 放回，供错误恢复跳过赋值）。
+            self.unread(tok);
             return self.missing_font_ident();
         };
         match self.eqtb.slot(csid).clone() {
@@ -1430,10 +1469,19 @@ impl Expander {
         let byte = u8::try_from(byte).map_err(|_| Error::invalid_input("\\catcode 字符码越界"))?;
         self.expect_equals()?;
         let code = self.scan_number()?;
-        let cat = Catcode::from_u8(
-            u8::try_from(code).map_err(|_| Error::invalid_input("catcode 必须在 0..=15"))?,
-        )
-        .ok_or_else(|| Error::invalid_input("catcode 必须在 0..=15"))?;
+        let cat = match Catcode::from_u8(u8::try_from(code).unwrap_or(u8::MAX)) {
+            Some(c) => c,
+            // TeX assign_catcode（tex.web L3736-3744）：超 0..=15 → "Invalid code" 恢复，
+            // 跳过赋值不中断（TRIP L429 `\catcode`\qq1qM=13` 中 scan_int 取 `\1`=49）。
+            None => {
+                let _ = self.sink.write16(format!(
+                    "! Invalid code ({}), should be in the range 0..15.\n\
+                     <to be read again> \nI didn't change it.\n",
+                    code
+                ));
+                return Ok(());
+            }
+        };
         let global = self.is_global();
         if !global && self.group_level > 0 {
             self.save_stack.push((
@@ -1553,6 +1601,17 @@ impl Expander {
                     ParamKind::XSpaceSkip,
                     ParamValue::Glue(self.params.xspaceskip),
                 )?;
+                self.finish_assignment();
+                Ok(())
+            }
+            // TRIP L434：\advance\prevdepth —— restricted horizontal mode 下
+            // prevdepth 不可赋值，TeX 报错恢复（trip.log L6604-6607），不扫描增量。
+            EqSlot::Primitive(Primitive::PrevDepth) => {
+                let _ = self.sink.write16(
+                    "! You can't use `\\prevdepth' after \\advance.\n\
+                     I'm forgetting what you said and not changing anything.\n"
+                        .to_string(),
+                );
                 self.finish_assignment();
                 Ok(())
             }

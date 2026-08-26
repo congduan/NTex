@@ -452,6 +452,9 @@ impl Expander {
     /// `\glueexpr` 胶水表达式：`<glue> (('+'|'-'|'*'|'/') <glue>)`。
     /// width 逐项求和；stretch/shrink **值求和**，其**无穷阶 = 最后一个非零分量项**
     /// 的阶（无则 NORMAL；etrip L800/L950：`\skip90+0pt` 保留 1fil、`\skip5+0pt` 清 0）。
+    /// **仅一项（无任何运算符）** 时保留 first 的完整 order（0 值分量也保留，
+    /// etrip L949：`\glueexpr\mutoglue\muexpr\gluetomu\skip5` 的 0shrink 保留 fil）；
+    /// 出现任一运算符（含 `*`/`/`）后按"最后非零分量项"规则。
     /// `*`/`/` 为 `<glue width> * <number>` 标量运算（etrip L872-873）。
     /// 支持 `( <expr> )` 括号（`\muexpr(5muminus1mu)`）。
     fn eval_glue_expression(&mut self) -> Result<Glue> {
@@ -461,11 +464,13 @@ impl Expander {
         let mut shrink = first.shrink;
         let mut stretch_order = if first.stretch != 0 { first.stretch_order } else { 0 };
         let mut shrink_order = if first.shrink != 0 { first.shrink_order } else { 0 };
+        let mut has_op = false;
         while let Some(op) = self.peek_int_op()? {
             if op != b'+' && op != b'-' && op != b'*' && op != b'/' {
                 self.unread(Token::char(Catcode::Other, op as u32));
                 break;
             }
+            has_op = true;
             if op == b'*' || op == b'/' {
                 let rhs = self.expr_number_factor()?;
                 width = if op == b'*' {
@@ -494,6 +499,11 @@ impl Expander {
             if term.shrink != 0 {
                 shrink_order = term.shrink_order;
             }
+        }
+        // 仅一项（无任何运算符）：保留 first 的完整 order（0 值分量的阶也保留）
+        if !has_op {
+            stretch_order = first.stretch_order;
+            shrink_order = first.shrink_order;
         }
         // 仅最终宽度超限才报（中间量 i128，与 eTeX 一致）
         if width > i128::from(MAX_DIMEN) || width < -i128::from(MAX_DIMEN) {
@@ -632,7 +642,17 @@ impl Expander {
                         });
                         continue;
                     }
-                    _ => return Err(Error::invalid_input("\\csname 名字中含控制序列")),
+                    // TeX `scan_csname`（tex.web L19368-19379）：不可展开控制序列 →
+                    // 报 "Missing endcsname inserted"，放回该 cs，插入 `\endcsname`
+                    // 结束名字扫描（可恢复，不中断引擎；TRIP L428 `\csname^^Mendcsname=\^^@`）。
+                    _ => {
+                        let csname = self.intern.name(csid);
+                        let _ = self.sink.write16(format!(
+                            "! Missing endcsname inserted.\n<to be read again>\n \\{csname}\n"
+                        ));
+                        self.unread(tok);
+                        return Ok(name);
+                    }
                 }
             }
             if let Some(ch) = tok.charcode().and_then(char::from_u32) {

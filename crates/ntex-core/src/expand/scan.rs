@@ -545,8 +545,10 @@ impl Expander {
         match self.eqtb.slot(csid) {
             EqSlot::Register(RegKind::Toks, idx) => Ok(Some(*idx)),
             EqSlot::Primitive(Primitive::Toks) => {
-                // `\toks<n>`：放回原语 token 再扫描数字
-                self.unread(tok);
+                // `\toks<n>`：token 形式即 `\toks`+`1`（\toks 原语后跟数字），
+                // 原语 token 已被 fetch，直接扫描其后的寄存器下标即可——
+                // 不可 unread，否则 scan_number 会 fetch 到 `\toks` 本身
+                // 报 "Missing number" 返回 0，数字与后续 token 全部错位。
                 Ok(Some(self.scan_register_index()?))
             }
             _ => Ok(None),
@@ -1186,6 +1188,25 @@ impl Expander {
                 if expandable {
                     let mut expansion = Vec::new();
                     self.expand_once((tok, false), &mut expansion)?;
+                    // TeX scan_keyword 逐字符语义：展开结果**第一个 token 是字母**
+                    // 才并入单位词（`p\iftrue t1i` → `\iftrue` 展开为字母 `t`
+                    // 组成 "pt"）；否则（如 `2.5pt\the\dimen0` 的 `\the` 展开为
+                    // 数字 `0`）放回**展开结果的第一个 token**（cs 本身已消费其参数，
+                    // 不能放回 cs 否则主循环重复执行报"缺少参数"），结束单位扫描。
+                    let first_is_letter = expansion
+                        .first()
+                        .is_some_and(|(t, _)| t.catcode() == Some(Catcode::Letter));
+                    if !first_is_letter {
+                        // 展开结果整体放回（TeX get_x_token：`\the` 等被展开后其
+                        // 输出全部进入流，如 `0fil\the\count7` → 展开 "77" 保留为
+                        // 文本；只放回首个 token 会丢失其余输出）。
+                        let items: Vec<(Token, bool)> = expansion.into_iter().collect();
+                        self.stack.push(InputFrame::TokenList {
+                            items: Arc::from(items),
+                            pos: 0,
+                        });
+                        break;
+                    }
                     let items: Vec<(Token, bool)> = expansion.into_iter().collect();
                     self.stack.push(InputFrame::TokenList {
                         items: Arc::from(items),
@@ -1203,6 +1224,14 @@ impl Expander {
                 break;
             }
             unit_tokens.push((tok, ch));
+            // TeX scan_keyword：单位词一旦完整（且不可能再扩展成更长单位，
+            // 如 "pt"；"fil"/"fill" 可能是 "filll" 前缀故不在此列）立即停止
+            // 收集，不再 fetch 后续 token —— 保证 `2.5pt\the\dimen0` 中
+            // `\the` 不被单位扫描消费（修复 save.rs exec_register 错位）。
+            let w: String = unit_tokens.iter().map(|(_, c)| c).collect();
+            if UNITS.contains(&w.as_str()) {
+                break;
+            }
         }
         let word: String = unit_tokens.iter().map(|(_, c)| c).collect();
         // 最长完整候选前缀（单位优先于阶词；同长按出现顺序取首个）

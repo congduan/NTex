@@ -230,6 +230,34 @@ impl Expander {
                 return Err(Error::invalid_input("\\if 缺少 \\fi"));
             };
             let Some(op) = self.cond_op(tok) else {
+                // TeX：跳过 text 中出现 outer 宏 → "Incomplete \if...; all text
+                // was ignored after line N." + "A forbidden control sequence
+                // occurred in skipped text."（tex.web `get_next` 的 forbidden 检查）。
+                // 插入 `\fi` 结束跳过、offending cs 放回输入流（TRIP L363
+                // `\^^C{{ \span\ifcase3 \lo...`：\lo 为 \outer，触发本恢复）。
+                if let Some(csid) = tok.csid() {
+                    if let EqSlot::Macro(m) = self.eqtb.slot(csid) {
+                        if m.value.outer {
+                            let name = self.intern.name(csid).to_owned();
+                            let ln = self.error_context().map(|(n, _)| n).unwrap_or(0);
+                            let _ = self.sink.write16(format!(
+                                "! Incomplete \\if; all text was ignored after line {ln}.\n\
+                                 <inserted text>\n                \\fi \n\
+                                 <to be read again>\n                   \\{name}\n\
+                                 A forbidden control sequence occurred in skipped text.\n\
+                                 This kind of error happens when you say `\\if...' and forget\n\
+                                 the matching `\\fi'. I've inserted a `\\fi'; this might work.\n"
+                            ));
+                            self.unread(tok);
+                            while self.cond_stack.len() > target {
+                                self.cond_stack.pop();
+                            }
+                            self.cur_if_type = saved_type;
+                            self.cur_if_branch = saved_branch;
+                            return Ok(());
+                        }
+                    }
+                }
                 continue; // 普通 token 丢弃
             };
             match op {

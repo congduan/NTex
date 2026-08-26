@@ -302,12 +302,16 @@ impl Expander {
         self.ensure_write_stream(idx);
         if immediate {
             let s = self.expand_to_string(&toks)?;
-            let path = self
+            // TeX 语义：\immediate\write 到未打开的流 → 内容静默丢弃（trip.log
+            // L431 `\immediate\write10`，流 10 已于 L153 \closeout）。
+            let Some(path) = self
                 .write_streams
                 .get(idx)
                 .and_then(|s| s.as_ref())
                 .and_then(|st| st.path.clone())
-                .ok_or_else(|| Error::invalid_input("\\write 到未打开的流"))?;
+            else {
+                return Ok(());
+            };
             let mut out = s;
             out.push('\n');
             self.vfs

@@ -1,7 +1,90 @@
-/// M1 原语集（随里程碑扩充）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u16)]
-pub enum Primitive {
+/// 原语变体单一事实源：由 [`define_primitives!`] 生成枚举、编号映射与可展开判定。
+///
+/// 语法（`EXPANDABLE:` 列表置于最前并用方括号包裹，规避宏匹配器对
+/// `expr` 片段后继 token 的限制与 ident 列表歧义）：
+/// ```text
+/// define_primitives! {
+///     (可选枚举文档注释)
+///     EXPANDABLE: [可展开原语列表],   // 与变体列表同义，拼错由编译器兜底
+///     变体列表（可带 `= 初始编号`，默认自前一变体 +1；编号自 1 起连续），
+/// }
+/// ```
+/// - `from_u16` 从枚举声明自动推导编号，杜绝手写表与枚举错位（历史教训：
+///   `HFilNeg`/`Error`/`VarUnit` 的 from_u16 编号曾漂移）；
+/// - `EXPANDABLE:` 列表中的标识符若拼错，展开为 `Self::X` 时由编译器报错兜底；
+/// - 新增原语只需在变体列表登记（并按需加入 `EXPANDABLE:`），
+///   注册表与一致性测试分别见 `crates/ntex-core/src/expand/builtins.rs`
+///   与 `expand/tests.rs` 的 `primitive_*` 测试。
+macro_rules! define_primitives {
+    (
+        $(#[$enum_meta:meta])*
+        EXPANDABLE: [$($expandable:ident),* $(,)?]
+        $(
+            $variant:ident $(= $init:expr)?
+        ),+ $(,)?
+    ) => {
+        $(#[$enum_meta])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        #[repr(u16)]
+        pub enum Primitive {
+            $($variant $(= $init)?,)+
+        }
+
+        impl Primitive {
+            /// 全部变体（定义顺序；builtins 注册与一致性测试共用）。
+            pub const ALL: &[Primitive] = &[$(Self::$variant,)+];
+
+            /// 参与展开的原语（其余为不可展开，直接执行）。
+            ///
+            /// TeX 可展开集：`\expandafter`/`\noexpand`/`\the`/`\number`、
+            /// e-TeX `\unexpanded`/`\detokenize`/`\eTeXversion`/`\eTeXrevision`；
+            /// 条件原语由 process_one 单独拦截（\edef 中同样展开）。
+            pub fn is_expandable(self) -> bool {
+                matches!(self, $(Self::$expandable)|+)
+            }
+
+            /// 原始值（`.fmt` 快照序列化；变体自 1 起连续）。
+            pub const fn as_u16(self) -> u16 {
+                self as u16
+            }
+
+            /// 从原始值恢复（`.fmt` 快照反序列化）。
+            pub const fn from_u16(v: u16) -> Option<Self> {
+                Some(match v {
+                    $(x if x == Self::$variant as u16 => Self::$variant,)+
+                    _ => return None,
+                })
+            }
+        }
+    };
+}
+
+define_primitives! {
+    /// M1 原语集（随里程碑扩充）。
+    EXPANDABLE: [
+        Expandafter,
+        Noexpand,
+        The,
+        Number,
+        Unexpanded,
+        Detokenize,
+        // \eTeXrevision 可展开（→".6"，etrip 版本宏习语 `\number\eTeXversion\eTeXrevision`）；
+        // \eTeXversion 是内部整数（非可展开），`\the\eTeXversion` 由 the_tokens_after 直读。
+        ETeXRevision,
+        String_,
+        JobName,
+        Csname,
+        // \meaning<token>（TeX 可展开原语）
+        Meaning,
+        // e-TeX marks 族查询（可展开：返回字符 token 文本）
+        TopMarks,
+        FirstMarks,
+        BotMarks,
+        SplitFirstMarks,
+        SplitTopMarks,
+        SplitBotMarks,
+    ]
+    // 变体列表：自 1 起连续编号（0 为 eqtb 槽 Undefined 哨兵）
     Def = 1,
     Edef,
     Gdef,
@@ -104,6 +187,10 @@ pub enum Primitive {
     MathPunct,
     MathInner,
     Nonscript,
+    // TRIP 冲刺：\limits/\nolimits/\displaylimits（mathop 后置上下限标志；单独出现报错）
+    Limits,
+    NoLimits,
+    DisplayLimits,
     // M4-5 e-TeX 展开扩展
     Protected,
     IfDefined,
@@ -139,6 +226,7 @@ pub enum Primitive {
     DefaultSkewChar,
     // ETRIP 冲刺：宏定义前缀与变体
     Outer,
+    Long,
     Xdef,
     // ETRIP 冲刺：内部只读整数
     Badness,
@@ -398,353 +486,4 @@ pub enum Primitive {
     Radical,
     // TRIP 冲刺：\delimiterfactor（内部整数参数，misc 数组；delimiter 缩放因子，默认 901）
     DelimiterFactor,
-}
-
-impl Primitive {
-    /// 参与展开的原语（其余为不可展开，直接执行）。
-    ///
-    /// TeX 可展开集：`\expandafter`/`\noexpand`/`\the`/`\number`、
-    /// e-TeX `\unexpanded`/`\detokenize`/`\eTeXversion`/`\eTeXrevision`；
-    /// 条件原语由 process_one 单独拦截（\edef 中同样展开）。
-    pub fn is_expandable(self) -> bool {
-        matches!(
-            self,
-            Self::Expandafter
-                | Self::Noexpand
-                | Self::The
-                | Self::Number
-                | Self::Unexpanded
-                | Self::Detokenize
-                // \eTeXrevision 可展开（→".6"，etrip 版本宏习语 `\number\eTeXversion\eTeXrevision`）；
-                // \eTeXversion 是内部整数（非可展开），`\the\eTeXversion` 由 the_tokens_after 直读。
-                | Self::ETeXRevision
-                | Self::String_
-                | Self::JobName
-                | Self::Csname
-                // ETRIP 冲刺：\meaning<token>（TeX 可展开原语）
-                | Self::Meaning
-                // ETRIP 冲刺：e-TeX marks 族查询（可展开：返回字符 token 文本）
-                | Self::TopMarks
-                | Self::FirstMarks
-                | Self::BotMarks
-                | Self::SplitFirstMarks
-                | Self::SplitTopMarks
-                | Self::SplitBotMarks
-        )
-    }
-
-    /// 原始值（`.fmt` 快照序列化；变体自 1 起连续）。
-    pub const fn as_u16(self) -> u16 {
-        self as u16
-    }
-
-    /// 从原始值恢复（`.fmt` 快照反序列化）。
-    pub const fn from_u16(v: u16) -> Option<Self> {
-        Some(match v {
-            1 => Self::Def,
-            2 => Self::Edef,
-            3 => Self::Gdef,
-            4 => Self::Let,
-            5 => Self::Relax,
-            6 => Self::Expandafter,
-            7 => Self::Noexpand,
-            8 => Self::Catcode,
-            9 => Self::End,
-            10 => Self::Futurelet,
-            11 => Self::Aftergroup,
-            12 => Self::Afterassignment,
-            13 => Self::If,
-            14 => Self::IfCat,
-            15 => Self::IfNum,
-            16 => Self::IfDim,
-            17 => Self::IfX,
-            18 => Self::IfOdd,
-            19 => Self::IfCase,
-            20 => Self::IfTrue,
-            21 => Self::IfFalse,
-            22 => Self::Else,
-            23 => Self::Fi,
-            24 => Self::Or,
-            25 => Self::Count,
-            26 => Self::Dimen,
-            27 => Self::Skip,
-            28 => Self::Toks,
-            29 => Self::The,
-            30 => Self::Global,
-            31 => Self::BeginGroup,
-            32 => Self::EndGroup,
-            33 => Self::HBox,
-            34 => Self::VBox,
-            35 => Self::VTop,
-            36 => Self::HSkip,
-            37 => Self::VSkip,
-            38 => Self::Kern,
-            39 => Self::Penalty,
-            40 => Self::HRule,
-            41 => Self::VRule,
-            42 => Self::Par,
-            43 => Self::ParIndent,
-            44 => Self::BaselineSkip,
-            45 => Self::LineSkip,
-            46 => Self::LineSkipLimit,
-            47 => Self::Indent,
-            48 => Self::NoIndent,
-            49 => Self::HSize,
-            50 => Self::Tolerance,
-            51 => Self::Font,
-            52 => Self::ShipOut,
-            53 => Self::VSize,
-            54 => Self::TopSkip,
-            55 => Self::MaxDepth,
-            56 => Self::ParSkip,
-            57 => Self::SfCode,
-            58 => Self::Output,
-            59 => Self::Box,
-            60 => Self::Input,
-            61 => Self::OpenIn,
-            62 => Self::CloseIn,
-            63 => Self::NewRead,
-            64 => Self::Read,
-            65 => Self::NewWrite,
-            66 => Self::OpenOut,
-            67 => Self::CloseOut,
-            68 => Self::Write,
-            69 => Self::Immediate,
-            70 => Self::DisplayStyle,
-            71 => Self::TextStyle,
-            72 => Self::ScriptStyle,
-            73 => Self::ScriptScriptStyle,
-            74 => Self::Over,
-            75 => Self::Atop,
-            76 => Self::Left,
-            77 => Self::Right,
-            78 => Self::Sqrt,
-            79 => Self::MathOrd,
-            80 => Self::MathBin,
-            81 => Self::MathOp,
-            82 => Self::MathRel,
-            83 => Self::MathOpen,
-            84 => Self::MathClose,
-            85 => Self::MathPunct,
-            86 => Self::MathInner,
-            87 => Self::Nonscript,
-            88 => Self::Protected,
-            89 => Self::IfDefined,
-            90 => Self::IfCsname,
-            91 => Self::Unless,
-            92 => Self::NumExpr,
-            93 => Self::Detokenize,
-            94 => Self::Unexpanded,
-            95 => Self::ETeXVersion,
-            96 => Self::ETeXRevision,
-            97 => Self::TextFont,
-            98 => Self::ScriptFont,
-            99 => Self::ScriptScriptFont,
-            100 => Self::Patterns,
-            101 => Self::AboveDisplaySkip,
-            102 => Self::BelowDisplaySkip,
-            103 => Self::AboveDisplayShortSkip,
-            104 => Self::BelowDisplayShortSkip,
-            105 => Self::PreDisplayPenalty,
-            106 => Self::PostDisplayPenalty,
-            107 => Self::Dimexpr,
-            108 => Self::Glueexpr,
-            109 => Self::IfPrimitive,
-            110 => Self::Scantokens,
-            111 => Self::EndlineChar,
-            112 => Self::NewlineChar,
-            113 => Self::DefaultHyphenChar,
-            114 => Self::DefaultSkewChar,
-            115 => Self::Outer,
-            116 => Self::Xdef,
-            117 => Self::Badness,
-            118 => Self::FontDimen,
-            119 => Self::Message,
-            120 => Self::Show,
-            121 => Self::ShowThe,
-            122 => Self::Number,
-            123 => Self::TracingStats,
-            124 => Self::TracingLostChars,
-            125 => Self::TracingOnline,
-            126 => Self::TracingCommands,
-            127 => Self::TracingRestores,
-            128 => Self::TracingAssigns,
-            129 => Self::TracingGroups,
-            130 => Self::TracingIfs,
-            131 => Self::TracingScantokens,
-            132 => Self::TracingNesting,
-            133 => Self::LeftHyphenMin,
-            134 => Self::RightHyphenMin,
-            135 => Self::HBadness,
-            136 => Self::PreTolerance,
-            137 => Self::ShowBoxDepth,
-            138 => Self::ShowBoxBreadth,
-            139 => Self::Language,
-            140 => Self::SavingHyphCodes,
-            141 => Self::SavingVDiscards,
-            142 => Self::InteractionMode,
-            143 => Self::TeXXeTState,
-            144 => Self::MathSurround,
-            145 => Self::LastLineFit,
-            146 => Self::PredisplayDirection,
-            147 => Self::EveryEof,
-            148 => Self::BatchMode,
-            149 => Self::NonstopMode,
-            150 => Self::ScrollMode,
-            151 => Self::ErrorStopMode,
-            152 => Self::Chardef,
-            153 => Self::Countdef,
-            154 => Self::Dimendef,
-            155 => Self::Skipdef,
-            156 => Self::Toksdef,
-            157 => Self::HyphenChar,
-            158 => Self::DelCode,
-            159 => Self::Muskip,
-            160 => Self::Muskipdef,
-            161 => Self::ThinMuskip,
-            162 => Self::MedMuskip,
-            163 => Self::ThickMuskip,
-            164 => Self::LcCode,
-            165 => Self::Advance,
-            166 => Self::Hyphenation,
-            167 => Self::SetBox,
-            168 => Self::ParFillSkip,
-            169 => Self::ControlSpace,
-            170 => Self::HFil,
-            171 => Self::HFill,
-            172 => Self::HSS,
-            173 => Self::VFil,
-            174 => Self::VFill,
-            175 => Self::VSS,
-            176 => Self::VSplit,
-            177 => Self::EveryJob,
-            178 => Self::Dump,
-            179 => Self::BeginL,
-            180 => Self::EndL,
-            181 => Self::BeginR,
-            182 => Self::EndR,
-            183 => Self::Middle,
-            184 => Self::Mark,
-            185 => Self::Marks,
-            186 => Self::ShowBox,
-            187 => Self::InputLineNo,
-            188 => Self::String_,
-            189 => Self::CurrentGroupLevel,
-            190 => Self::CurrentGroupType,
-            191 => Self::LastNodeType,
-            192 => Self::Discretionary,
-            193 => Self::Insert,
-            194 => Self::VAdjust,
-            195 => Self::Valign,
-            196 => Self::Halign,
-            197 => Self::Cr,
-            198 => Self::NoAlign,
-            199 => Self::MathChoice,
-            200 => Self::DeadCycles,
-            201 => Self::TracingMacros,
-            202 => Self::TracingOutput,
-            203 => Self::ErrorContextLines,
-            204 => Self::Raise,
-            205 => Self::Lower,
-            206 => Self::Span,
-            207 => Self::Special,
-            208 => Self::JobName,
-            209 => Self::VCenter,
-            210 => Self::IfInner,
-            211 => Self::Csname,
-            212 => Self::EndCsname,
-            213 => Self::IfVMode,
-            214 => Self::IfHMode,
-            215 => Self::IfMMode,
-            216 => Self::IfEof,
-            217 => Self::IfVoid,
-            218 => Self::IfHBox,
-            219 => Self::IfVBox,
-            220 => Self::Multiply,
-            221 => Self::Divide,
-            222 => Self::CurrentIfLevel,
-            223 => Self::CurrentIfType,
-            224 => Self::CurrentIfBranch,
-            225 => Self::Meaning,
-            226 => Self::MathCharDef,
-            227 => Self::GlueStretchOrder,
-            228 => Self::GlueShrinkOrder,
-            229 => Self::GlueStretch,
-            230 => Self::GlueShrink,
-            231 => Self::ShowTokens,
-            232 => Self::ReadLine,
-            233 => Self::IfFontChar,
-            234 => Self::FontCharWd,
-            235 => Self::FontCharHt,
-            236 => Self::FontCharDp,
-            237 => Self::FontCharIc,
-            238 => Self::ShowIfs,
-            239 => Self::Parshape,
-            240 => Self::ParshapeLength,
-            241 => Self::ParshapeIndent,
-            242 => Self::ParshapeDimen,
-            243 => Self::TopMarks,
-            244 => Self::FirstMarks,
-            245 => Self::BotMarks,
-            246 => Self::SplitFirstMarks,
-            247 => Self::SplitTopMarks,
-            248 => Self::SplitBotMarks,
-            // ETRIP 第二波：新原语变体（249-280）
-            249 => Self::MuToGlue,
-            250 => Self::GlueToMu,
-            251 => Self::InterLinePenalties,
-            252 => Self::ClubPenalties,
-            253 => Self::WidowPenalties,
-            254 => Self::DisplayWidowPenalties,
-            255 => Self::PageDiscards,
-            256 => Self::SplitDiscards,
-            257 => Self::LostChars,
-            258 => Self::Copy,
-            259 => Self::UnHBox,
-            260 => Self::UnVBox,
-            261 => Self::UnHCopy,
-            262 => Self::UnVCopy,
-            263 => Self::LastBox,
-            264 => Self::Wd,
-            265 => Self::Ht,
-            266 => Self::Dp,
-            267 => Self::LeftSkip,
-            268 => Self::RightSkip,
-            269 => Self::PrevDepth,
-            270 => Self::InterLinePenalty,
-            271 => Self::ClubPenalty,
-            272 => Self::WidowPenalty,
-            273 => Self::DisplayWidowPenalty,
-            274 => Self::UnSkip,
-            275 => Self::LastPenalty,
-            276 => Self::UnPenalty,
-            277 => Self::ShowGroups,
-            278 => Self::ShowLists,
-            279 => Self::TracingParagraphs,
-            280 => Self::Omit,
-            281 => Self::Mag,
-            282 => Self::NullDelimiterSpace,
-            283 => Self::ScriptSpace,
-            284 => Self::OverfullRule,
-            285 => Self::VOffset,
-            286 => Self::HOffset,
-            287 => Self::MathCode,
-            288 => Self::NoBoundary,
-            289 => Self::MoveLeft,
-            290 => Self::MoveRight,
-            291 => Self::Accent,
-            292 => Self::VFilNeg,
-            293 => Self::Error,
-            294 => Self::VarUnit,
-            295 => Self::HFilNeg,
-            296 => Self::XSpaceSkip,
-            // TRIP 冲刺：\spacefactor/\everymath/\/\radical/\delimiterfactor（297-301）
-            297 => Self::SpaceFactor,
-            298 => Self::EveryMath,
-            299 => Self::ItalicCorrection,
-            300 => Self::Radical,
-            301 => Self::DelimiterFactor,
-            _ => return None,
-        })
-    }
 }

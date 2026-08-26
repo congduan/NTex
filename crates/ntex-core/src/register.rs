@@ -285,17 +285,19 @@ fn glue_part(value: i64, order: u8, unit: &str) -> String {
     }
 }
 
-/// 胶水 → `\the` 输出（"1.0pt plus 2.0pt minus 0.5pt"，零部分省略；
+/// 胶水 → `\the` 输出（"1.0pt plus 2.0pt minus 0.5pt"，零值分量省略；
 /// 非零阶在分量后附 fil/fill/filll）。
+/// TeX print_glue：`(order < normal) or (d <> 0)` 才显示分量——
+/// 值 0（即使带 fil 阶，如 `1pt minus 0.0fil`）不显示。
 pub fn format_glue(g: Glue) -> String {
     let mut out = format!("{}pt", format_dimen(g.width));
-    if g.stretch != 0 || g.stretch_order != 0 {
+    if g.stretch != 0 {
         out.push_str(&format!(
             " plus {}",
             glue_part(g.stretch, g.stretch_order, "pt")
         ));
     }
-    if g.shrink != 0 || g.shrink_order != 0 {
+    if g.shrink != 0 {
         out.push_str(&format!(
             " minus {}",
             glue_part(g.shrink, g.shrink_order, "pt")
@@ -308,13 +310,13 @@ pub fn format_glue(g: Glue) -> String {
 /// pdfTeX 实测：mu 值定点存储（1mu = 65536 单位），数值直通。
 pub fn format_mu_glue(g: Glue) -> String {
     let mut out = format!("{}mu", format_dimen(g.width));
-    if g.stretch != 0 || g.stretch_order != 0 {
+    if g.stretch != 0 {
         out.push_str(&format!(
             " plus {}",
             glue_part(g.stretch, g.stretch_order, "mu")
         ));
     }
-    if g.shrink != 0 || g.shrink_order != 0 {
+    if g.shrink != 0 {
         out.push_str(&format!(
             " minus {}",
             glue_part(g.shrink, g.shrink_order, "mu")

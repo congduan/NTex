@@ -348,6 +348,8 @@ pub struct Expander {
     cond_stack: Vec<CondFrame>,
     /// 组层级（M1-11）。
     group_level: u32,
+    /// 对齐组深度（`\halign`/`\valign` 组内 `{`/`}` 不建普通组，TeX alignment 状态机语义）。
+    align_depth: i32,
     /// 组开始时的条件栈深度（组结束必须回到该深度）。
     group_cond_depth: Vec<usize>,
     /// 赋值保存栈：组结束时按层回滚（朴素快照回滚）。
@@ -388,6 +390,8 @@ pub struct Expander {
     /// `\outer` 前缀：下一个 `\def`/`\xdef` 等定义的宏标记 outer。
     /// （当前仅消费前缀；outer 语义限制——实参不得含 outer 宏——后续迭代补。）
     outer_pending: bool,
+    /// `\long` 前缀：下一个 `\def` 等定义的宏允许参数中含 `\par`。
+    long_pending: bool,
     /// `\fontdimen` 覆盖表：(font_id, 参数号) → 值（sp）。TFM 度量在排版层，
     /// 此处仅存覆盖项；无覆盖读回 0（后续接入 TFM 时回退真实参数）。
     fontdimens: HashMap<(u32, u32), i64>,
@@ -455,6 +459,7 @@ impl Expander {
             read_floor: 0,
             cond_stack: Vec::new(),
             group_level: 0,
+            align_depth: 0,
             group_cond_depth: Vec::new(),
             save_stack: Vec::new(),
             global_pending: false,
@@ -474,6 +479,7 @@ impl Expander {
             immediate_pending: false,
             protected_pending: false,
             outer_pending: false,
+            long_pending: false,
             fontdimens: HashMap::new(),
             hyphenchars: HashMap::new(),
             delcodes: HashMap::new(),
@@ -579,11 +585,13 @@ impl Expander {
         self.read_floor = 0;
         self.cond_stack.clear();
         self.group_level = 0;
+        self.align_depth = 0;
         self.group_cond_depth.clear();
         self.save_stack.clear();
         self.global_pending = false;
         self.protected_pending = false;
         self.outer_pending = false;
+        self.long_pending = false;
         self.fontdimens.clear();
         self.aftergroup.clear();
         self.afterassignment = None;
@@ -941,8 +949,22 @@ impl Expander {
                     }
                     return self.sink.math_shift(display);
                 }
-                // 组定界符（cat 1/2）在主流层建立/结束组（M1-11）
+                // 组定界符（cat 1/2）在主流层建立/结束组（M1-11）。
+                // alignment 组内（`\halign`/`\valign`）：`{`/`}` 只调整对齐深度，
+                // 不建立普通组（TeX alignment 状态机语义，`\cr`/`&` 由布局层消费）。
                 match tok.catcode() {
+                    Some(Catcode::BeginGroup) if self.align_depth > 0 => {
+                        self.align_depth += 1;
+                        Ok(())
+                    }
+                    Some(Catcode::EndGroup) if self.align_depth > 0 => {
+                        self.align_depth -= 1;
+                        if self.align_depth == 0 {
+                            self.end_group()
+                        } else {
+                            Ok(())
+                        }
+                    }
                     Some(Catcode::BeginGroup) => self.begin_group(),
                     Some(Catcode::EndGroup) => self.end_group(),
                     _ => self.sink.token(tok),

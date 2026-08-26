@@ -1,7 +1,9 @@
-impl Expander {
-    fn register_builtins(&mut self) {
-        const BUILTINS: [(&str, Primitive); 302] = [
-            ("def", Primitive::Def),
+/// 内建原语注册表：`名字 → Primitive` 的单一事实源。
+///
+/// 306 项（`\muexpr` 为 `Glueexpr` 的别名，故比 `Primitive::ALL` 多一项），
+/// 供 `register_builtins` 注册与 `tests.rs` 的一致性测试共用。
+pub(crate) const BUILTINS: [(&str, Primitive); 306] = [
+    ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
             ("let", Primitive::Let),
@@ -102,6 +104,9 @@ impl Expander {
             ("mathpunct", Primitive::MathPunct),
             ("mathinner", Primitive::MathInner),
             ("nonscript", Primitive::Nonscript),
+            ("limits", Primitive::Limits),
+            ("nolimits", Primitive::NoLimits),
+            ("displaylimits", Primitive::DisplayLimits),
             // M4-5 e-TeX 展开扩展
             ("protected", Primitive::Protected),
             ("ifdefined", Primitive::IfDefined),
@@ -139,6 +144,7 @@ impl Expander {
             ("defaultskewchar", Primitive::DefaultSkewChar),
             // ETRIP 冲刺：宏定义前缀与变体
             ("outer", Primitive::Outer),
+            ("long", Primitive::Long),
             ("xdef", Primitive::Xdef),
             // ETRIP 冲刺：内部只读整数
             ("badness", Primitive::Badness),
@@ -394,7 +400,10 @@ impl Expander {
             ("mathcode", Primitive::MathCode),
             // TRIP 冲刺：\noboundary（数学字符边界抑制；直通 sink）
             ("noboundary", Primitive::NoBoundary),
-        ];
+];
+
+impl Expander {
+    fn register_builtins(&mut self) {
         for (name, prim) in BUILTINS {
             let csid = self.intern.intern(name);
             self.eqtb.set_primitive(csid, prim);

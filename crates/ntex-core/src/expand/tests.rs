@@ -2,6 +2,7 @@
 mod tests {
     use super::*;
     use std::cell::RefCell;
+    use std::collections::HashSet;
     use std::rc::Rc;
     use ntex_io::MemVfs;
 
@@ -30,6 +31,51 @@ mod tests {
             .iter()
             .map(|t| t.charcode().and_then(char::from_u32).unwrap_or('\u{FFFD}'))
             .collect())
+    }
+
+    // ─── 原语表三向一致性（枚举 ↔ builtins 注册表 ↔ from_u16 编号）─────────
+    // 枚举与 from_u16 由 `define_primitives!` 宏生成；这两个测试锁死"新增原语
+    // 必须在 builtins 注册、编号连续无空洞"的契约，防止三处再次脱节。
+
+    /// `from_u16` 编号空间自 1 起连续无空洞，且与 `as_u16` 往返一致。
+    #[test]
+    fn primitive_numbering_contiguous() {
+        let count = Primitive::ALL.len() as u16;
+        for v in 1..=count {
+            let p = Primitive::from_u16(v).unwrap_or_else(|| panic!("编号 {v} 无对应变体（空洞）"));
+            assert_eq!(p.as_u16(), v, "from_u16({v}) 与 as_u16 往返不一致");
+        }
+        // 0 与越界值必须为 None（0 是 eqtb 槽的 Undefined 哨兵）
+        assert!(Primitive::from_u16(0).is_none());
+        assert!(Primitive::from_u16(count + 1).is_none());
+    }
+
+    /// `BUILTINS` 注册表覆盖全部变体、名字唯一；别名只允许出现在值侧
+    /// （如 `\muexpr` → `Glueexpr`，故注册项数可多于变体数）。
+    #[test]
+    fn primitive_builtins_cover_enum() {
+        let mut names: HashSet<&str> = HashSet::new();
+        let mut seen: Vec<Primitive> = Vec::new();
+        for (name, prim) in BUILTINS {
+            assert!(names.insert(name), "内建名字重复：\\{name}");
+            assert_eq!(
+                Primitive::from_u16(prim.as_u16()),
+                Some(prim),
+                "内建 \\{name} 的编号不在枚举编号空间内"
+            );
+            if !seen.contains(&prim) {
+                seen.push(prim);
+            }
+        }
+        for p in Primitive::ALL {
+            assert!(seen.contains(p), "变体 {p:?} 未注册内建名字");
+        }
+        assert!(
+            BUILTINS.len() >= Primitive::ALL.len(),
+            "注册表少于变体数：{} < {}",
+            BUILTINS.len(),
+            Primitive::ALL.len()
+        );
     }
 
     #[test]
@@ -686,6 +732,11 @@ mod tests {
 \def\error#1{\immediate\write15{Bug in your e-TeX implementation!}\immediate\write15 }
 \chardef\zero=0\chardef\one=1\chardef\two=2
 \countdef\ctmp=255 \countdef\cndx=254
+\begingroup
+\skip1=\mutoglue1muplus-2muminus-3fil
+\muskip1=\gluetomu1ptplus-2ptminus-3fil
+\skip2=\mutoglue-4muplus5fillminus6filll
+\muskip2=\gluetomu-4ptplus5fillminus6filll
 ";
         let src = format!("{pre}\n{body}\n");
         // 用 VecSink 捕获 write15 转录，确认 wrong glue 是否在 expand 环境复现
@@ -909,6 +960,24 @@ mod tests {
     }
 
     #[test]
+    fn catcode_backquote_control_word() {
+        // q=letter(11) 时 \qq 是多字符控制词：反引号报 "Improper alphabetic
+        // constant" 恢复、q 保持 letter（真实 TeX 同；控制符号语义需先
+        // `\catcode`q=7`（TRIP L428）使 \qq 成单字符 cs）。scan_int 在 `\` 处停，
+        // 无遗留文本。
+        assert_eq!(expand("\\catcode`\\qq1\\the\\catcode`q").unwrap(), "11");
+    }
+
+    #[test]
+    fn toks_register_copy_via_toksdef_cs() {
+        // TRIP L418 场景：\tokens 是 \toksdef 绑定的 cs，RHS 为 \toks1 寄存器复制
+        assert_eq!(
+            expand("\\toksdef\\tokens=256 \\toks1={abc}\\tokens\\toks1\\the\\tokens").unwrap(),
+            "abc"
+        );
+    }
+
+    #[test]
     fn the_in_edef_expands() {
         assert_eq!(
             expand("\\count0=7\\edef\\x{\\the\\count0}\\x").unwrap(),
@@ -1024,9 +1093,14 @@ mod tests {
 
     #[test]
     fn error_reports_line_context() {
-        // A3：不可恢复错误（非 long 宏参数含 \par）→ Err 但转录带 l.N 上下文行
+        // A3：可恢复错误（非 long 宏参数含 \par）→ "Paragraph ended" 报错后恢复
+        // 继续（is_ok），转录带 l.N 上下文行（TRIP L357 / 真实 TeX 同）
         let (r, t) = run_transcript("\\def\\a#1{#1}\n\\a\\par");
-        assert!(r.is_err(), "非 long 参数含 \\par 应报错");
+        assert!(r.is_ok(), "非 long 参数含 \\par 应报错恢复继续");
+        assert!(
+            t.contains("! Paragraph ended before \\a was complete."),
+            "应报 Paragraph ended：{t}"
+        );
         assert!(t.contains("l.2"), "应带第 2 行上下文：{t}");
         assert!(t.contains("\\a\\par"), "上下文行应为出错行内容：{t}");
     }
@@ -1280,9 +1354,9 @@ ab5c}").unwrap();
         let mut sink = e.take_sink();
         let sink = sink.as_any_mut().downcast_mut::<EventSink>().unwrap();
         assert_eq!(sink.patterns, vec![b"ab5c xy7z".to_vec()]);
-        // 未闭合组报错
+        // 未闭合组 → "Runaway text?" 报错恢复继续（真实 TeX INITEX 同）
         let mut e = Expander::new();
-        assert!(e.run_source(r"\patterns{ab5c").is_err());
+        assert!(e.run_source(r"\patterns{ab5c").is_ok());
     }
 
     // ---------- M3 收尾（RFC-3）：VFS 副作用原语 ----------
@@ -1402,14 +1476,15 @@ ab5c}").unwrap();
 
     #[test]
     fn glue_order_parsing_and_queries() {
-        // 阶后缀解析 + \the\skip 显示（fil/fill/filll）
+        // 阶后缀解析 + \the\skip 显示（fil/fill/filll；pdfTeX：0 分量省略、
+        // 且阶词后的 `\the` 需 `\relax` 隔离避免被 get_x_token 展开吞参数）
         assert_eq!(
-            expand("\\skip5=1ptminus0fil\\the\\skip5").unwrap(),
-            "1.0pt minus 0.0fil"
+            expand("\\skip5=1ptminus0fil\\relax\\the\\skip5").unwrap(),
+            "1.0pt"
         );
         assert_eq!(
-            expand("\\skip6=1ptplus3fillminus0filll\\the\\skip6").unwrap(),
-            "1.0pt plus 3.0fill minus 0.0filll"
+            expand("\\skip6=1ptplus3fillminus0filll\\relax\\the\\skip6").unwrap(),
+            "1.0pt plus 3.0fill"
         );
         // \gluestretchorder/\glueshrinkorder（整数上下文）
         assert_eq!(
@@ -1417,7 +1492,7 @@ ab5c}").unwrap();
             "01"
         );
         assert_eq!(
-            expand("\\skip6=1ptplus3fill\\number\\gluestretchorder\\skip6").unwrap(),
+            expand("\\skip6=1ptplus3fill\\relax\\number\\gluestretchorder\\skip6").unwrap(),
             "2"
         );
         // \gluestretch/\glueshrink（尺寸上下文）
@@ -1431,7 +1506,7 @@ ab5c}").unwrap();
         );
         // skipdef 绑定 cs 也可作为胶水参数
         assert_eq!(
-            expand("\\skipdef\\S=7\\skip7=2ptplus1fil\\number\\gluestretchorder\\S").unwrap(),
+            expand("\\skipdef\\S=7\\skip7=2ptplus1fil\\relax\\number\\gluestretchorder\\S").unwrap(),
             "1"
         );
     }

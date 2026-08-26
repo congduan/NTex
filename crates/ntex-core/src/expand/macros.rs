@@ -74,6 +74,8 @@ impl Expander {
             "! Paragraph ended before \\{name} was complete.\n\
              <to be read again>\n                   \\par\n"
         ));
+        // TeX error() 的上下文行：`l.2 \a\par`（真实 TeX 同格式）
+        self.report_error_context();
         self.skip_to_line_end_after_par()?;
         self.unread(tok);
         Ok(())
@@ -127,10 +129,23 @@ impl Expander {
         // 参数内未闭合 `\if*` 数：TeX scan_toks 跟踪实参内条件配对
         let mut arg_cond = 0usize;
         loop {
-            let tok = self
-                .fetch()?
-                .ok_or_else(|| Error::invalid_input("分隔实参扫描到输入末尾（定界符未出现）"))?
-                .0;
+            let tok = match self.fetch()? {
+                Some(t) => t.0,
+                None => {
+                    // TeX：定界参数扫描到输入末尾 → "Runaway argument?" +
+                    // "! Paragraph ended before \<name> was complete." 恢复
+                    // （trip.log L6557-6560）：`\par` 插入输入流终止参数，
+                    // 返回已收集内容（可恢复，不中断；TRIP L431 `\l}`）。
+                    let _ = self.sink.write16(format!(
+                        "Runaway argument?\n\
+                         ! Paragraph ended before \\{name} was complete.\n\
+                         <to be read again>\n                   \\par\n"
+                    ));
+                    let par = Token::control_sequence(self.intern.intern("par"));
+                    self.unread(par);
+                    return Ok(Arc::from(buf));
+                }
+            };
             // 实参内条件：开 `\if*` 作数据并计数；闭合 token 先匹配参数内条件，
             // 无匹配（arg_cond==0）时是**外层**条件的 `\else/\fi/\or` → 交条件机，
             // 不作为实参（同无分隔实参的修复）。
@@ -169,6 +184,28 @@ impl Expander {
             if self.suffix_matches_delim(&buf, delim) {
                 buf.truncate(buf.len() - delim.len());
                 break;
+            }
+            // TeX scan_macro_arg：定界参数扫描遇 `}`（end_group，非定界符）→
+            // "! Argument of \X has an extra }." 恢复（trip.log L6541）：long 宏
+            // 参数补 `\par` 终止并放回 `}`；non-long 宏同 "Paragraph ended"。
+            if tok.catcode() == Some(Catcode::EndGroup) {
+                buf.pop();
+                let _ = self.sink.write16(format!(
+                    "! Argument of \\{name} has an extra }}.\n\
+                     I've run across a `}}' that doesn't seem to match anything.\n\
+                     For example, `\\def\\a#1{{...}}' and `\\a}}' would produce\n\
+                     this error. If you simply proceed now, the `\\par' that\n\
+                     I've just inserted will cause me to report a runaway\n\
+                     argument that might be the root of the problem. But if\n\
+                     your `}}' was spurious, just type `2' and it will go away.\n"
+                ));
+                self.unread(tok);
+                if long {
+                    buf.push(Token::control_sequence(self.intern.intern("par")));
+                    return Ok(Arc::from(buf));
+                }
+                self.recover_par_in_argument(name, tok)?;
+                return Ok(Arc::from(buf));
             }
             // non-long 参数中 `\par`（非定界符位置）→ "Paragraph ended"
             if !long && self.is_par_token(tok) {
@@ -258,6 +295,17 @@ impl Expander {
                 }
                 Ok(Arc::from(tokens))
             }
+            Some(Catcode::EndGroup) => {
+                // TeX scan_arg：无分隔实参遇 `}` → "! Argument of \X has an
+                // extra }." 报错恢复（trip.log L6541），`}` 放回输入流供
+                // 定界符扫描/主循环，实参为空（可恢复，不中断）。
+                let _ = self.sink.write16(format!(
+                    "! Argument of \\{name} has an extra }}.\n\
+                     <to be read again>\n                   }}\n"
+                ));
+                self.unread(tok);
+                Ok(Arc::from([]))
+            }
             _ => {
                 if !long && self.is_par_token(tok) {
                     self.recover_par_in_argument(name, tok)?;
@@ -338,13 +386,15 @@ impl Expander {
         };
 
         // e-TeX（M4-5）：`\protected` 前缀标记宏（`\edef`/`\write` 等上下文不展开）；
-        // `\outer` 前缀标记宏（禁止出现在实参/展开上下文/general text/`\read` 中）。
+        // `\outer` 前缀标记宏（禁止出现在实参/展开上下文/general text/`\read` 中）；
+        // `\long` 前缀标记宏（参数允许含 `\par`）。
         let protected = std::mem::take(&mut self.protected_pending);
         let outer = std::mem::take(&mut self.outer_pending);
+        let long = std::mem::take(&mut self.long_pending);
         let mut def = MacroDef {
             params: ParamSpec {
                 num_params,
-                long: false,
+                long,
                 text: param_text,
             },
             body,

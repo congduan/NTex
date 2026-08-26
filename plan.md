@@ -537,8 +537,19 @@ gluestretchorder 段值语义核对 + `etrip.log` 逐字节比对。
   版本化模块仓库、go.sum 校验和、本地模块缓存）设计宏包仓库与依赖解析机制，
   实现 `.sty`/`.cls` 宏包的版本化安装/更新/依赖管理
 - [ ] 引擎身份模拟（`\pdftexversion` 等），兼容依赖引擎行为的宏包
+- [ ] **MCP server / AI 工具链**（用户需求，2026-08-25）：stdio JSON-RPC 服务，复用
+  `Typesetter::typeset_dvi` 库接口 + `ntex-io::MemVfs`（无落盘内存 VFS），暴露三种工具形态：
+  - ① 排版渲染：TeX/LaTeX 源码 → PDF（base64 返回；纯 Rust 单二进制部署，
+    无需目标机装 TeX Live——对比裸调 pdflatex 的核心卖点）
+  - ② 宏展开/诊断：TeX 片段 → 展开后 token 流 + 结构化错误（复用 M1-13 错误模型，
+    任意畸形输入不 panic 的引擎契约正适合 AI 驱动）
+  - ③ 会话式增量编译：接 M5 增量计算，多轮编辑只重排改动段落（差异化卖点）
+  - 安全基线 = RFC-3 副作用隔离（`\write18` 拒绝、写文件走 VFS shipout 边界提交）
+  - 排期依赖：形态①依赖输出端（已就绪），纯 TeX 子集即可起步；
+    形态②随 M1 错误模型收尾接线；形态③依赖 M5
+- [ ] MCP 工具验收：`tex→PDF` 端到端经 stdio 调用，返回 PDF + 结构化日志/错误（首个里程碑口径）
 
-**验收**：目标宏包回归全绿；300 页中文冷编基准达标。
+**验收**：目标宏包回归全绿；300 页中文冷编基准达标；MCP `tex→PDF` 工具经 stdio 端到端可调用。
 
 ***
 
@@ -555,6 +566,7 @@ gluestretchorder 段值语义核对 + `etrip.log` 逐字节比对。
 | `ntex-io`                | VFS、aux 增量                                                                                                                | ✅ 已建（RFC-3：Vfs trait + LocalVfs/MemVfs + 读写原语）        |
 | `ntex-backend`           | PDF/Skia/WebGPU 后端 trait + 实现                                                                                             | 未建（M8）                                                |
 | `ntex-cli` / `ntex-wasm` | 命令行 / WASM 前端                                                                                                             | 未建（M9）                                                |
+| `ntex-mcp`              | **MCP server（stdio JSON-RPC）**：tex→PDF / 宏展开诊断 / 增量会话（M9 生态，复用 ntex-cli 库化接口 + ntex-io MemVfs）                       | 未建（M9）                                                |
 
 ***
 
@@ -581,6 +593,9 @@ gluestretchorder 段值语义核对 + `etrip.log` 逐字节比对。
 4. **ctex 兼容范围**：先 xeCJK 最小子集（简体中文常用排版），而非一步到位全量。
 5. **数学输出**：先保证 DVI/PDF 逐位一致，MathML 输出为可选项（不阻塞主线）。
 6. **RFC-1 开放问题 Q2\~Q4**：保留位用途 / 内部标记拆分 / InternTable CoW 粒度——M0 评审会拍板。
+7. **MCP 工具形态优先级**（2026-08-25）：先做"排版渲染"（依赖输出端即可起步，纯 TeX
+   子集）；"宏展开/诊断"随 M1 错误模型收尾即可接；"会话式增量编译"依赖 M5。三项
+   不阻塞主线，M9 生态冲刺期实施，不影响 L1 兼容 / .fmt / 增量主线排期。
 
 ***
 
