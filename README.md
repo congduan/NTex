@@ -42,12 +42,14 @@ TeX/LaTeX 源码
 ```
 crates/
   ntex-core        引擎基础类型 + TeX VM 数据模型 + 展开引擎 + 字节码 VM（RFC-1 / RFC-4）
-  ntex-layout      排版核心：主循环（模式状态机）/ 折行 / 断页 / 输出例程（M3）
+  ntex-layout      排版核心：主循环（模式状态机）/ 折行 / 断页 / 数学 / 输出例程（M3/M4）
   ntex-font        TFM 解析与真实字体度量（M3-4；ttf/HarfBuzz 待 M9）
   ntex-dvi         DVI 写出器，与真实 TeX 逐字节一致（M3-5）
-  ntex-pdf         DVI → PDF 正式后端：Type1 字体嵌入（M8 提前落地）
+  ntex-pdf         DVI → PDF 正式后端：Type1 字体嵌入
+  ntex-io          VFS 抽象 + LocalVfs/MemVfs（RFC-3 副作用隔离）
+  ntex-format      .fmt v1 状态快照序列化 / 反序列化（v2 待 M7）
   ntex-test-support 测试/差分/基准基础设施（EngineDriver 抽象）
-  ntex-trip        TRIP 一致性测试框架
+  ntex-trip        TRIP/ETRIP 一致性测试框架
   ntex-diff        差分测试工具（参考引擎 vs 本引擎）
   ntex-bench       基准框架
 fixtures/          测试 fixtures（diff 示例 / trip 获取脚本）
@@ -55,7 +57,7 @@ scripts/           辅助脚本（如 fetch-trip-fixtures.sh）
 docs（RFC）        RFC-1 token 表示 / RFC-4 字节码指令集
 ```
 
-后续里程碑按计划加入：`ntex-format`（.fmt，M7）、`ntex-incremental`（增量计算，M5）、`ntex-io`（VFS，M3/M5）、`ntex-backend`（Skia/WebGPU，M8）、`ntex-cli` / `ntex-wasm`（M9）。
+后续里程碑按计划加入：`ntex-incremental`（增量计算，M5）、`ntex-backend`（Skia/WebGPU，M8）、`ntex-cli` / `ntex-wasm`（M9）。
 
 ## 快速开始
 
@@ -87,11 +89,12 @@ cargo run -p ntex-bench --release -- --driver external=pdflatex
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
 | M0 地基 | workspace / CI / 基准 / TRIP / 差分工具链 | ✅ 完成 |
-| M1 内核 | Token/InternTable/eqtb/catcode/扫描器/展开引擎 | 🟡 核心完成；TRIP 未全绿（分隔参数 / 错误模型待补） |
-| M2 字节码 | 定长 u64 IR + 编译器 + 双轨等价 | 🟡 等价 100 用例全绿；吞吐 1.12x 未达 2x，arena 未做 |
-| M3 排版 | 折行/TFM/断页/lig+kern/\output/shipout→DVI | 🟡 核心完成（DVI 逐字节对照一致）；VFS / .fmt v1 待做 |
-| 输出端 | DVI→PDF 正式后端（Type1 嵌入） | 🔄 M8 提前推进中 |
-| M4+ | 数学+e-TeX / 增量 / 并行 / .fmt v2 / 渲染 / 生态 | ⏳ 待实施 |
+| M1 内核 | Token/InternTable/eqtb/catcode/扫描器/展开引擎 | 🟡 核心完成；**TRIP 冲刺推进中**（扫描/字体/数学错误恢复已落地，逐段攻剩余恢复点） |
+| M2 字节码 | 定长 u64 IR + 编译器 + 双轨等价 | 🟡 双轨 100 用例等价全绿；吞吐 1.12x 未达 2x，arena 未做 |
+| M3 排版 | 折行/TFM/断页/lig+kern/`\output`/shipout→DVI | ✅ 核心完成（DVI 逐字节对照一致）；VFS + `.fmt` v1 已落地 |
+| M4 数学 + e-TeX | 数学模式/e-TeX 原语/断字/错误模型 | ✅ 完成；**ETRIP 冲刺进行中**（A 组 41/42、B 组 36/36、C 组已接线） |
+| 输出端 | DVI→PDF 正式后端（Type1 嵌入） | ✅ 可用（dvipdfmx 渲染一致） |
+| M5+ | 增量 / 并行 / .fmt v2 / 渲染 / 生态 | ⏳ 待实施 |
 
 ## License
 
