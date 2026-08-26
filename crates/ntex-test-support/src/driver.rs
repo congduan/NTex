@@ -287,14 +287,13 @@ impl EngineDriver for NtexDriver {
             wd: request.working_dir.clone(),
         }));
         let run = ts.typeset_bytes(source.clone());
-        // 终端转录（\message/\show/\showthe/\write16）→ .log 与 .typ 共用
+        // 终端转录（\message/\show/\showthe/\write16）。注意：TRIP/ETRIP 参考
+        // （trip.log/etrip.log）是**预加载格式**路径的输出；pass1 是 initex 路径
+        // （`\dump` 前），仅作驱动诊断，不进入最终 log/typ。pass1 转录先暂存，
+        // 若发生 dump 则最终产物只取 pass2（格式路径）。
         let transcript = ts.take_transcript();
-        log.push_str(&transcript);
-        if !transcript.is_empty() && !transcript.ends_with('\n') {
-            log.push('\n');
-        }
         // e-IniTeX 语义：`\dump` 后保存 fmt，再以该格式重跑同一源（\einitex 已定义
-        // → 跳过前导，进入 ETRIP 测试体）；两段转录同入 .log。
+        // → 跳过前导，进入 ETRIP 测试体）；最终产物只保留 pass2 转录。
         let dumped = ts.dumped();
         let mut transcript2 = String::new();
         let (status, produced) = if dumped {
@@ -341,10 +340,7 @@ impl EngineDriver for NtexDriver {
             }
             let produced = vec![format!("{base}.log"), format!("{base}.typ")];
             match run2 {
-                Ok(_) => {
-                    log.push_str("Engine: run completed.\n");
-                    (DriverStatus::Success, produced)
-                }
+                Ok(_) => (DriverStatus::Success, produced),
                 Err(e) => {
                     log.push_str(&format!("Engine error: {e}\n"));
                     (DriverStatus::Failure { code: None }, produced)
@@ -354,7 +350,15 @@ impl EngineDriver for NtexDriver {
             let produced = vec![format!("{base}.log"), format!("{base}.typ")];
             match run {
                 Ok(_) => {
-                    log.push_str("Engine: run completed.\n");
+                    if !transcript.is_empty() {
+                        if !log.ends_with('\n') {
+                            log.push('\n');
+                        }
+                        log.push_str(&transcript);
+                        if !transcript.ends_with('\n') {
+                            log.push('\n');
+                        }
+                    }
                     (DriverStatus::Success, produced)
                 }
                 Err(e) => {
@@ -370,17 +374,8 @@ impl EngineDriver for NtexDriver {
 
         fs::write(request.working_dir.join(format!("{base}.log")), &log)
             .with_context(|| "写入 .log 产物失败")?;
-        // .typ（终端转录）：\message/\show 等累积文本（两段同录）
-        let typ = if dumped {
-            let mut t = transcript;
-            if !t.is_empty() && !t.ends_with('\n') {
-                t.push('\n');
-            }
-            t.push_str(&transcript2);
-            t
-        } else {
-            transcript
-        };
+        // .typ（终端转录）：\message/\show 等累积文本（仅格式路径，pass1 不入 typ）
+        let typ = if dumped { transcript2 } else { transcript };
         fs::write(request.working_dir.join(format!("{base}.typ")), &typ)
             .with_context(|| "写入 .typ 产物失败")?;
 

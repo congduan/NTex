@@ -1,8 +1,8 @@
 /// 内建原语注册表：`名字 → Primitive` 的单一事实源。
 ///
-/// 307 项（`\muexpr` 为 `Glueexpr` 的别名，故比 `Primitive::ALL` 多一项），
+/// 334 项（`\muexpr` 为 `Glueexpr` 的别名，故比 `Primitive::ALL` 多一项），
 /// 供 `register_builtins` 注册与 `tests.rs` 的一致性测试共用。
-pub(crate) const BUILTINS: [(&str, Primitive); 307] = [
+pub(crate) const BUILTINS: [(&str, Primitive); 334] = [
     ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -133,8 +133,8 @@ pub(crate) const BUILTINS: [(&str, Primitive); 307] = [
             // M4-5 e-TeX 扩展
             ("dimexpr", Primitive::Dimexpr),
             ("glueexpr", Primitive::Glueexpr),
-            // ETRIP 冲刺：\muexpr（mu 表达式；暂按胶水表达式求值）
-            ("muexpr", Primitive::Glueexpr),
+            // ETRIP 冲刺：\muexpr（独立原语，mu 单位表达式；\the 显示 "X.0mu"）
+            ("muexpr", Primitive::Muexpr),
             ("ifprimitive", Primitive::IfPrimitive),
             ("scantokens", Primitive::Scantokens),
             // ETRIP 冲刺：TeX 内部整数参数
@@ -182,6 +182,36 @@ pub(crate) const BUILTINS: [(&str, Primitive); 307] = [
             ("lastlinefit", Primitive::LastLineFit),
             ("predisplaydirection", Primitive::PredisplayDirection),
             ("everyeof", Primitive::EveryEof),
+            // TRIP 冲刺：内部整数参数（misc 下标 35-50）
+            ("vbadness", Primitive::VBadness),
+            ("globaldefs", Primitive::GlobalDefs),
+            ("floatingpenalty", Primitive::FloatingPenalty),
+            ("linepenalty", Primitive::LinePenalty),
+            ("binoppenalty", Primitive::BinoPenalty),
+            ("relpenalty", Primitive::RelPenalty),
+            ("adjdemerits", Primitive::AdjDemerits),
+            ("looseness", Primitive::Looseness),
+            ("maxdeadcycles", Primitive::MaxDeadCycles),
+            ("hangafter", Primitive::HangAfter),
+            ("uchyph", Primitive::Uchyph),
+            ("fam", Primitive::Fam),
+            ("hyphenpenalty", Primitive::HyphenPenalty),
+            ("doublehyphendemerits", Primitive::DoubleHyphenDemerits),
+            ("finalhyphendemerits", Primitive::FinalHyphenDemerits),
+            ("holdinginserts", Primitive::HoldingInserts),
+            // TRIP 冲刺：可展开原语（\romannumeral/\char/\uppercase/\lowercase/\endinput/\ignorespaces/\fontname）
+            ("romannumeral", Primitive::RomanNumeral),
+            ("char", Primitive::Char),
+            ("uppercase", Primitive::Uppercase),
+            ("lowercase", Primitive::Lowercase),
+            ("endinput", Primitive::EndInput),
+            ("ignorespaces", Primitive::Ignorespaces),
+            ("fontname", Primitive::FontName),
+            // TRIP 冲刺：不可展开原语
+            ("uccode", Primitive::Uccode),
+            ("cleaders", Primitive::Cleaders),
+            ("xleaders", Primitive::XLeaders),
+            ("unkern", Primitive::Unkern),
             // ETRIP 冲刺：交互模式命令
             ("batchmode", Primitive::BatchMode),
             ("nonstopmode", Primitive::NonstopMode),

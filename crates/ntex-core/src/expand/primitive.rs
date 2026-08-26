@@ -594,13 +594,25 @@ impl Expander {
                 }
             }
             Primitive::Glueexpr => {
-                let g = self.eval_glue_expression();
+                let g = self.eval_glue_expression(false);
                 match g {
                     Ok(g) => self.emit_tokens(emit_glue(g)),
                     Err(_) => {
                         let _ = self
                             .sink
                             .write16("! You can't use \\glueexpr in vertical mode.\n".to_string());
+                        Ok(())
+                    }
+                }
+            }
+            Primitive::Muexpr => {
+                let g = self.eval_glue_expression(true);
+                match g {
+                    Ok(g) => self.emit_tokens(emit_glue(g)),
+                    Err(_) => {
+                        let _ = self
+                            .sink
+                            .write16("! You can't use \\muexpr in vertical mode.\n".to_string());
                         Ok(())
                     }
                 }
@@ -853,6 +865,15 @@ impl Expander {
             // ETRIP 第二波：列表尾操作（\unskip/\unpenalty）
             Primitive::UnSkip => self.sink.unskip(),
             Primitive::UnPenalty => self.sink.unpenalty(),
+            // TRIP 冲刺：纯 VM 原语（\romannumeral/\char/\uppercase/\lowercase/
+            // \endinput/\ignorespaces/\uccode）
+            Primitive::RomanNumeral => self.exec_roman_numeral(),
+            Primitive::Char => self.exec_char(),
+            Primitive::Uppercase => self.exec_uppercase(),
+            Primitive::Lowercase => self.exec_lowercase(),
+            Primitive::EndInput => self.exec_endinput(),
+            Primitive::Ignorespaces => self.exec_ignorespaces(),
+            Primitive::Uccode => self.exec_uccode(),
             // ETRIP 第二波：盒子尺寸赋值（\wd/\ht/\dp<n>=<dimen>；无 '=' 时按 TeX 报错）
             Primitive::Wd | Primitive::Ht | Primitive::Dp => {
                 let dim: u8 = match prim {
@@ -873,7 +894,7 @@ impl Expander {
             // ETRIP 第二波：\mutoglue/\gluetomu 单独出现（数字/尺寸上下文由扫描函数处理）。
             // 裸用按 TeX 报 "You can't use \mutoglue in vertical mode." 并恢复（简化：发胶水 token）。
             Primitive::MuToGlue => {
-                let g = self.scan_glue()?;
+                let g = self.scan_glue_mu()?;
                 self.emit_tokens(emit_glue(g))
             }
             Primitive::GlueToMu => {
@@ -1557,6 +1578,134 @@ impl Expander {
         Ok(())
     }
 
+    /// TRIP：`\romannumeral<number>`：数字 → 小写罗马数字文本（tex.web
+    /// `print_roman_numeral`；l.94 `\romannumeral1 \gobble`）。非正数 → 空；
+    /// >4999 → "! Roman numeral too large." 并截断为 4999。输出字符为 other。
+    fn exec_roman_numeral(&mut self) -> Result<()> {
+        let mut n = self.scan_number()?;
+        if n > 4999 {
+            let mut msg = "! Roman numeral too large.\n".to_string();
+            if let Some((ln, line)) = self.error_context() {
+                msg.push_str(&format!("l.{ln} {line}\n"));
+            }
+            let _ = self.sink.write16(msg);
+            n = 4999;
+        }
+        let mut out = Vec::new();
+        if n > 0 {
+            const TABLES: [(&str, i64); 13] = [
+                ("m", 1000), ("cm", 900), ("d", 500), ("cd", 400), ("c", 100),
+                ("xc", 90), ("l", 50), ("xl", 40), ("x", 10), ("ix", 9),
+                ("v", 5), ("iv", 4), ("i", 1),
+            ];
+            let mut roman = String::new();
+            for (sym, val) in TABLES {
+                while n >= val {
+                    roman.push_str(sym);
+                    n -= val;
+                }
+            }
+            for b in roman.bytes() {
+                out.push(Token::char(Catcode::Other, u32::from(b)));
+            }
+        }
+        self.emit_tokens(out)
+    }
+
+    /// TRIP：`\char<num>`：字符码 → 输出 other 字符 token（tex.web scan_char_num；
+    /// trip.tex l.195 `A /A\char`A`）。越界 → "! Bad character code (..)." 钳制 0。
+    fn exec_char(&mut self) -> Result<()> {
+        let n = self.scan_number()?;
+        if !(0..=255).contains(&n) {
+            let mut msg = format!("! Bad character code ({n}).\n");
+            if let Some((ln, line)) = self.error_context() {
+                msg.push_str(&format!("l.{ln} {line}\n"));
+            }
+            let _ = self.sink.write16(msg);
+            return self.emit_tokens(vec![Token::char(Catcode::Other, 0)]);
+        }
+        self.emit_tokens(vec![Token::char(Catcode::Other, n as u32)])
+    }
+
+    /// TRIP：`\uppercase<general text>`：展开扫描 general text 后，按 `\uccode` 表
+    /// 转换字符 token（tex.web upper_case；trip.tex l.96/97/338）。可展开项
+    /// （如 `\number`）在扫描时展开，不可展开原语/组定界原样保留。
+    fn exec_uppercase(&mut self) -> Result<()> {
+        self.case_convert(true)
+    }
+
+    /// TRIP：`\lowercase<general text>`：同 `\uppercase`，按 `\lccode` 表转换。
+    fn exec_lowercase(&mut self) -> Result<()> {
+        self.case_convert(false)
+    }
+
+    fn case_convert(&mut self, upper: bool) -> Result<()> {
+        let toks = self.scan_general_text()?;
+        let table = if upper { &self.uccodes } else { &self.lccodes };
+        let mut out = Vec::with_capacity(toks.len());
+        for tok in toks {
+            if let (Some(ch), Some(cc)) = (tok.charcode(), tok.catcode()) {
+                if matches!(cc, Catcode::Letter | Catcode::Other) && ch <= 0xff {
+                    let nv = table[ch as usize];
+                    if nv != 0 && nv != ch as i64 {
+                        out.push(Token::char(cc, nv as u32));
+                        continue;
+                    }
+                }
+            }
+            out.push(tok);
+        }
+        self.emit_tokens(out)
+    }
+
+    /// TRIP：`\endinput`：终止当前输入文件（tex.web end_input；trip.tex l.424
+    /// `\endinput\input % one line of tripos`），弹出栈顶 Source 帧。
+    fn exec_endinput(&mut self) -> Result<()> {
+        for i in (0..self.stack.len()).rev() {
+            if matches!(self.stack[i], InputFrame::Source { .. }) {
+                self.stack.truncate(i);
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// TRIP：`\ignorespaces`：跳过后续空格 token（tex.web；trip.tex l.315）。
+    fn exec_ignorespaces(&mut self) -> Result<()> {
+        self.skip_spaces()?;
+        Ok(())
+    }
+
+    /// TRIP：`\uccode<char>=<num>`：设置字符的大写码（tex.web assign_int；
+    /// trip.tex l.211 `\uccode`m=`A`）。语义与 `\lccode` 一致。
+    fn exec_uccode(&mut self) -> Result<()> {
+        let mut byte = self.scan_char_code()?;
+        if !(0..=255).contains(&byte) {
+            let mut msg = "! Improper \\uccode.\n".to_string();
+            if let Some((n, line)) = self.error_context() {
+                msg.push_str(&format!("l.{n} {line}\n"));
+            }
+            let _ = self.sink.write16(msg);
+            byte = 0;
+        }
+        let byte = byte as u8;
+        self.expect_equals()?;
+        let value = self.scan_number()?;
+        let global = self.is_global();
+        if !global && self.group_level > 0 {
+            self.save_stack.push((
+                self.group_level,
+                SavedValue::LcCode {
+                    byte,
+                    prev: self.uccodes[byte as usize],
+                },
+            ));
+        }
+        self.uccodes[byte as usize] = value;
+        self.finish_assignment();
+        Ok(())
+    }
+
     /// `\advance<寄存器> <增量>`：寄存器运算（TeX arithmetic；etrip.tex 91 行
     /// `\advance\count20 1`）。目标支持 `\count/\dimen/\skip/\muskip` 寄存器
     /// （数字下标或 `\countdef` 等 cs 绑定）与内部整数参数。
@@ -1665,7 +1814,7 @@ impl Expander {
                 self.assign_skip(idx, add_glue(old, delta));
             }
             RegKind::Muskip => {
-                let delta = self.scan_glue()?;
+                let delta = self.scan_glue_mu()?;
                 let old = self.registers.muskip(idx);
                 self.assign_muskip(idx, add_glue(old, delta));
             }

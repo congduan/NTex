@@ -83,6 +83,14 @@ define_primitives! {
         SplitFirstMarks,
         SplitTopMarks,
         SplitBotMarks,
+        // TRIP 冲刺：可展开原语（\romannumeral/\char/\uppercase/\lowercase/\endinput/\ignorespaces/\fontname）
+        RomanNumeral,
+        Char,
+        Uppercase,
+        Lowercase,
+        EndInput,
+        Ignorespaces,
+        FontName,
     ]
     // 变体列表：自 1 起连续编号（0 为 eqtb 槽 Undefined 哨兵）
     Def = 1,
@@ -217,6 +225,7 @@ define_primitives! {
     // M4-5 e-TeX 扩展：\dimexpr/\glueexpr/\ifprimitive/\scantokens
     Dimexpr,
     Glueexpr,
+    Muexpr,
     IfPrimitive,
     Scantokens,
     // ETRIP 冲刺：TeX 内部整数参数
@@ -264,6 +273,23 @@ define_primitives! {
     LastLineFit,
     PredisplayDirection,
     EveryEof,
+    // TRIP 冲刺：内部整数参数（misc 下标 35-50，见 int_param_index/param::default_misc）
+    VBadness,
+    GlobalDefs,
+    FloatingPenalty,
+    LinePenalty,
+    BinoPenalty,
+    RelPenalty,
+    AdjDemerits,
+    Looseness,
+    MaxDeadCycles,
+    HangAfter,
+    Uchyph,
+    Fam,
+    HyphenPenalty,
+    DoubleHyphenDemerits,
+    FinalHyphenDemerits,
+    HoldingInserts,
     // ETRIP 冲刺：交互模式命令（\batchmode/\nonstopmode/\scrollmode/\errorstopmode）
     BatchMode,
     NonstopMode,
@@ -407,6 +433,19 @@ define_primitives! {
     SplitFirstMarks,
     SplitTopMarks,
     SplitBotMarks,
+    // TRIP 冲刺：可展开原语（\romannumeral/\char/\uppercase/\lowercase/\endinput/\ignorespaces/\fontname）
+    RomanNumeral,
+    Char,
+    Uppercase,
+    Lowercase,
+    EndInput,
+    Ignorespaces,
+    FontName,
+    // TRIP 冲刺：不可展开原语（\uccode 字符码表/\cleaders/\xleaders/\unkern）
+    Uccode,
+    Cleaders,
+    XLeaders,
+    Unkern,
     // ETRIP 第二波：e-TeX mu 转换原语（可展开，参数为 mu/skip 胶水，输出胶水/mu 胶水 token）
     MuToGlue,
     GlueToMu,

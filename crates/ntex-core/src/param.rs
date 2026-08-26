@@ -93,48 +93,64 @@ pub enum ParamValue {
     Number(i64),
 }
 
-/// 内部整数参数总数（TeX/e-TeX 内部整数，ETRIP 冲刺；仅存储/回读）。
+/// 内部整数参数总数（TeX/e-TeX 内部整数，ETRIP/TRIP 冲刺；仅存储/回读）。
 /// 下标与 [`crate::expand::int_param_index`] 的映射一致。
-pub const MISC_INTS: usize = 35;
+pub const MISC_INTS: usize = 51;
 
 /// 内部整数参数默认值（TeX initex/plain 默认）。
 pub fn default_misc() -> [i64; MISC_INTS] {
     [
-        0,    // 0 TracingStats
-        1,    // 1 TracingLostChars（initex 默认 1）
-        0,    // 2 TracingOnline
-        0,    // 3 TracingCommands
-        0,    // 4 TracingRestores
-        0,    // 5 TracingAssigns
-        0,    // 6 TracingGroups
-        0,    // 7 TracingIfs
-        0,    // 8 TracingScantokens
-        0,    // 9 TracingNesting
-        2,    // 10 LeftHyphenMin（plain 默认 2）
-        3,    // 11 RightHyphenMin（plain 默认 3）
-        1000, // 12 HBadness（plain 默认 1000）
-        100,  // 13 PreTolerance（plain 默认 100）
-        0,    // 14 ShowBoxDepth
-        5,    // 15 ShowBoxBreadth
-        0,    // 16 Language
-        0,    // 17 SavingHyphCodes
-        0,    // 18 SavingVDiscards
-        0,    // 19 InteractionMode（驱动以 batchmode 启动）
-        0,    // 20 TeXXeTState
-        0,    // 21 MathSurround
-        0,    // 22 LastLineFit
-        0,    // 23 PredisplayDirection
-        -1,   // 24 EveryEof（-1 = 无）
-        0,    // 25 DeadCycles（输出例程循环计数）
-        0,    // 26 TracingMacros
-        0,    // 27 TracingOutput
-        100,  // 28 ErrorContextLines（plain 默认 100）
-        0,    // 29 TracingParagraphs（折行追踪；plain 默认 0）
-        0,    // 30 PageDiscards（e-TeX：保存页面丢弃物；0=不保存）
-        0,    // 31 SplitDiscards（e-TeX：保存 vsplit 丢弃物；0=不保存）
-        2,    // 32 LostChars（e-TeX：丢失字符提示级；plain 默认 2 = 计数）
-        901, // 33 DelimiterFactor（plain 默认 901；delimiter 缩放因子）
-        92,  // 34 EscapeChar（initex 默认 92 = `\`；控制序列显示用 escape 字符）
+        0,     // 0 TracingStats
+        1,     // 1 TracingLostChars（initex 默认 1）
+        0,     // 2 TracingOnline
+        0,     // 3 TracingCommands
+        0,     // 4 TracingRestores
+        0,     // 5 TracingAssigns
+        0,     // 6 TracingGroups
+        0,     // 7 TracingIfs
+        0,     // 8 TracingScantokens
+        0,     // 9 TracingNesting
+        2,     // 10 LeftHyphenMin（plain 默认 2）
+        3,     // 11 RightHyphenMin（plain 默认 3）
+        1000,  // 12 HBadness（plain 默认 1000）
+        100,   // 13 PreTolerance（plain 默认 100）
+        0,     // 14 ShowBoxDepth
+        5,     // 15 ShowBoxBreadth
+        0,     // 16 Language
+        0,     // 17 SavingHyphCodes
+        0,     // 18 SavingVDiscards
+        0,     // 19 InteractionMode（驱动以 batchmode 启动）
+        0,     // 20 TeXXeTState
+        0,     // 21 MathSurround
+        0,     // 22 LastLineFit
+        0,     // 23 PredisplayDirection
+        -1,    // 24 EveryEof（-1 = 无）
+        0,     // 25 DeadCycles（输出例程循环计数）
+        0,     // 26 TracingMacros
+        0,     // 27 TracingOutput
+        100,   // 28 ErrorContextLines（plain 默认 100）
+        0,     // 29 TracingParagraphs（折行追踪；plain 默认 0）
+        0,     // 30 PageDiscards（e-TeX：保存页面丢弃物；0=不保存）
+        0,     // 31 SplitDiscards（e-TeX：保存 vsplit 丢弃物；0=不保存）
+        2,     // 32 LostChars（e-TeX：丢失字符提示级；plain 默认 2 = 计数）
+        901,   // 33 DelimiterFactor（plain 默认 901；delimiter 缩放因子）
+        92,    // 34 EscapeChar（initex 默认 92 = `\`；控制序列显示用 escape 字符）
+        1000,  // 35 VBadness（plain 默认 1000）
+        0,     // 36 GlobalDefs（plain 默认 0）
+        0,     // 37 FloatingPenalty（plain 默认 0）
+        10,    // 38 LinePenalty（plain 默认 10）
+        700,   // 39 BinoPenalty（plain 默认 700）
+        500,   // 40 RelPenalty（plain 默认 500）
+        10000, // 41 AdjDemerits（plain 默认 10000）
+        0,     // 42 Looseness（plain 默认 0）
+        25,    // 43 MaxDeadCycles（plain 默认 25）
+        1,     // 44 HangAfter（plain 默认 1）
+        1,     // 45 Uchyph（plain 默认 1）
+        -1,    // 46 Fam（plain 默认 -1）
+        50,    // 47 HyphenPenalty（plain 默认 50）
+        10000, // 48 DoubleHyphenDemerits（plain 默认 10000）
+        5000,  // 49 FinalHyphenDemerits（plain 默认 5000）
+        0,     // 50 HoldingInserts（plain 默认 0）
     ]
 }
 

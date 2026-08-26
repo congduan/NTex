@@ -406,6 +406,8 @@ pub struct Expander {
     mathcodes: HashMap<u32, u32>,
     /// `\lccode` 表：字符码 → 小写码（TeX 默认全 0；etrip 断字测试用）。
     lccodes: [i64; 256],
+    /// TRIP 冲刺：`\uccode` 表：字符码 → 大写码（TeX 默认全 0；`\uppercase` 用）。
+    uccodes: [i64; 256],
     /// ETRIP 冲刺：`\dump` 已执行（initex 收尾；驱动据此保存 fmt 并二次运行）。
     dumped: bool,
     /// `\unless` 前缀：取反下一个条件的结果。
@@ -491,6 +493,7 @@ impl Expander {
             // 其余 → 0x8000（无效，触发 "Missing character" 语义一致）。
             mathcodes: default_mathcodes(),
             lccodes: [0; 256],
+            uccodes: [0; 256],
             dumped: false,
             unless_pending: false,
             cur_if_type: 0,
@@ -901,7 +904,7 @@ impl Expander {
                                 self.assign_skip(idx, val);
                             }
                             RegKind::Muskip => {
-                                let val = self.scan_glue()?;
+                                let val = self.scan_glue_mu()?;
                                 self.assign_muskip(idx, val);
                             }
                             RegKind::Toks => {

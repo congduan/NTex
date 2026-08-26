@@ -79,6 +79,23 @@ fn int_param_index(p: Primitive) -> Option<usize> {
         Primitive::DelimiterFactor => 33,
         // TRIP 冲刺：\escapechar（misc 34；initex 默认 92 = `\`）
         Primitive::EscapeChar => 34,
+        // TRIP 冲刺：内部整数参数（misc 35-50；默认值见 param::default_misc）
+        Primitive::VBadness => 35,
+        Primitive::GlobalDefs => 36,
+        Primitive::FloatingPenalty => 37,
+        Primitive::LinePenalty => 38,
+        Primitive::BinoPenalty => 39,
+        Primitive::RelPenalty => 40,
+        Primitive::AdjDemerits => 41,
+        Primitive::Looseness => 42,
+        Primitive::MaxDeadCycles => 43,
+        Primitive::HangAfter => 44,
+        Primitive::Uchyph => 45,
+        Primitive::Fam => 46,
+        Primitive::HyphenPenalty => 47,
+        Primitive::DoubleHyphenDemerits => 48,
+        Primitive::FinalHyphenDemerits => 49,
+        Primitive::HoldingInserts => 50,
         _ => return None,
     })
 }

@@ -16,6 +16,11 @@ static NORMALIZE_RULES: LazyLock<Vec<(regex::Regex, &'static str)>> = LazyLock::
             regex::Regex::new(r"^This is [A-Za-z]+, Version .* \(preloaded format=.*\)$").unwrap(),
             "<ENGINE BANNER>",
         ),
+        // 本引擎横幅：This is NTex, Version 0.1.0 (TRIP/ETRIP pipeline v1)
+        (
+            regex::Regex::new(r"^This is NTex, Version .*$").unwrap(),
+            "<ENGINE BANNER>",
+        ),
         // 产物统计行（含路径与页数）
         (
             regex::Regex::new(r"^Output written on .* \(\d+ pages?, .*\)\.$").unwrap(),

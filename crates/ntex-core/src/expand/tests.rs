@@ -1779,15 +1779,35 @@ ab5c}").unwrap();
         assert_eq!(expand("\\mark{Hello}\\topmarks0").unwrap(), "");
     }
 
-    // ==== 临时复现：\muexpr 现状（待删） ====
+    // ==== 临时复现：\muexpr 行为校准（对照 pdfTeX；待并入正式测试后删） ====
     #[test]
     fn tmp_muexpr_repro() {
         for (name, src) in [
+            // 前导量合法：mu 上下文 + muexpr 输出 → 无 Incompatible
             ("the_muexpr", r"\muskip43=\muexpr(5muminus1mu)\relax\the\muexpr\muskip43"),
+            // 直接赋值 + \the 显示 "5.0mu minus 1.0mu"
             ("muskip_the", r"\muskip43=5mu minus 1mu\the\muskip43"),
             ("quot5c", r#"\def\9{\relax}\ifnum-6=\glueexpr\muexpr32mu/"10000\9/-5 T\else F\fi"#),
             ("quot5d", r#"\def\9{\relax}\ifnum6=\muexpr-\dimexpr32spplus-1muminus-1fil/-5 T\else F\fi"#),
             ("gluetomu_muskip", r"\muskip1=5mu\skip2=\gluetomu\muskip1\the\skip2"),
+            // \the\muexpr 直接求值显示 mu 单位
+            ("the_muexpr_val", r"\the\muexpr 5mu+3mu"),
+            // \skip=\muexpr：Incompatible glue units（pt 上下文遇 mu 胶水）
+            ("skip_from_muexpr", r"\skip2=\muexpr5mu\the\skip2"),
+            // \muskip=\glueexpr：Incompatible glue units（mu 上下文遇 pt 胶水）
+            ("muskip_from_glueexpr", r"\muskip2=\glueexpr5pt\the\muskip2"),
+            // \muskip=\skip 前导：Incompatible glue units
+            ("muskip_from_skip", r"\skip0=1pt plus 2pt\muskip1=\skip0\the\muskip1"),
+            // mu 上下文单位错误：5pt → "(mu inserted)" 恢复 5.0mu
+            ("muskip_pt_unit", r"\muskip2=5pt\the\muskip2"),
+            // mu 上下文无单位：→ "(mu inserted)" 恢复 5.0mu
+            ("muskip_bare", r"\muskip3=5\the\muskip3"),
+            // mu 上下文 width 带阶：→ "(mu inserted)"（width 不认 fil）
+            ("muskip_width_fil", r"\muskip4=5fil\the\muskip4"),
+            // mu 上下文 stretch 带阶：合法（stretch 认 fil）→ "1.0mu plus 1.0fil"
+            ("muskip_stretch_fil", r"\muskip5=1mu plus 1fil\the\muskip5"),
+            // pt 上下文遇 mu 单位：→ "(pt inserted)" 恢复
+            ("skip_mu_unit", r"\skip6=5mu\the\skip6"),
         ] {
             let mut e = Expander::new();
             match e.run_source(src) {

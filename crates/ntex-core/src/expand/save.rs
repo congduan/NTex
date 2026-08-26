@@ -80,7 +80,8 @@ impl Expander {
                 self.assign_skip(idx, val);
             }
             Primitive::Muskip => {
-                let val = self.scan_glue()?;
+                // mu 上下文：只认 mu 胶水（\muexpr/\muskip 前导合法；\skip/\glueexpr → Incompatible）
+                let val = self.scan_glue_mu()?;
                 self.assign_muskip(idx, val);
             }
             Primitive::Toks => {
@@ -97,7 +98,7 @@ impl Expander {
     /// `\thinmuskip/\medmuskip/\thickmuskip=<mu glue>`：muskip 寄存器 0/1/2 赋值。
     fn exec_muskip_param(&mut self, idx: usize) -> Result<()> {
         self.expect_equals()?;
-        let val = self.scan_glue()?;
+        let val = self.scan_glue_mu()?;
         self.assign_muskip(idx, val);
         Ok(())
     }
@@ -373,7 +374,9 @@ impl Expander {
                 // M4-5 e-TeX：\numexpr 表达式、\eTeXversion/\eTeXrevision
                 Primitive::NumExpr => Ok(emit_count(self.eval_int_expression()?)),
                 Primitive::Dimexpr => Ok(emit_dimen(self.eval_dimen_expression()?)),
-                Primitive::Glueexpr => Ok(emit_glue(self.eval_glue_expression()?)),
+                Primitive::Glueexpr => Ok(emit_glue(self.eval_glue_expression(false)?)),
+                // \the\muexpr：mu 胶水按 "X.0mu" 显示（对照 etrip.tex \the\muexpr 输出）
+                Primitive::Muexpr => Ok(emit_mu_glue(self.eval_glue_expression(true)?)),
                 Primitive::ETeXVersion => Ok(emit_count(2)),
                 Primitive::ETeXRevision => Ok(".6"
                     .bytes()
@@ -461,7 +464,7 @@ impl Expander {
                 Primitive::DisplayWidowPenalty => Ok(emit_count(self.params.displaywidowpenalty)),
                 // ETRIP 第二波：\the\mutoglue<mu 胶水>：mu 胶水转胶水（1mu = 1pt = 65536sp）
                 Primitive::MuToGlue => {
-                    let g = self.scan_glue()?;
+                    let g = self.scan_glue_mu()?;
                     Ok(emit_glue(g))
                 }
                 // ETRIP 第二波：\the\gluetomu<胶水>：胶水转 mu 胶水

@@ -449,7 +449,7 @@ impl Expander {
         self.scan_dimen()
     }
 
-    /// `\glueexpr` 胶水表达式：`<glue> (('+'|'-'|'*'|'/') <glue>)`。
+    /// `\glueexpr`/`\muexpr` 胶水表达式：`<glue> (('+'|'-'|'*'|'/') <glue>)`。
     /// width 逐项求和；stretch/shrink **值求和**，其**无穷阶 = 最后一个非零分量项**
     /// 的阶（无则 NORMAL；etrip L800/L950：`\skip90+0pt` 保留 1fil、`\skip5+0pt` 清 0）。
     /// **仅一项（无任何运算符）** 时保留 first 的完整 order（0 值分量也保留，
@@ -457,8 +457,11 @@ impl Expander {
     /// 出现任一运算符（含 `*`/`/`）后按"最后非零分量项"规则。
     /// `*`/`/` 为 `<glue width> * <number>` 标量运算（etrip L872-873）。
     /// 支持 `( <expr> )` 括号（`\muexpr(5muminus1mu)`）。
-    fn eval_glue_expression(&mut self) -> Result<Glue> {
-        let first = self.glue_expr_term()?;
+    ///
+    /// `mu`：mu 上下文——项用 `scan_glue_mu`（只认 mu 单位；前导 pt 胶水报
+    /// "Incompatible glue units"）；false 为 pt 上下文（`\glueexpr`）。
+    fn eval_glue_expression(&mut self, mu: bool) -> Result<Glue> {
+        let first = self.glue_expr_term(mu)?;
         let mut width = i128::from(first.width);
         let mut stretch = first.stretch;
         let mut shrink = first.shrink;
@@ -483,7 +486,7 @@ impl Expander {
                 };
                 continue;
             }
-            let term = self.glue_expr_term()?;
+            let term = self.glue_expr_term(mu)?;
             if op == b'+' {
                 width += i128::from(term.width);
                 stretch += term.stretch;
@@ -519,14 +522,16 @@ impl Expander {
         })
     }
 
-    /// 胶水表达式项：`( <expr> )` 括号或 [`Self::scan_glue`]。
-    fn glue_expr_term(&mut self) -> Result<Glue> {
+    /// 胶水表达式项：`( <expr> )` 括号或 [`Self::scan_glue`]/[`Self::scan_glue_mu`]。
+    /// 括号内嵌套同一单位上下文（`\muexpr(5muminus1mu)`、`\glueexpr(\muexpr...)` 由
+    /// 前导量分支报 "Incompatible glue units"）。
+    fn glue_expr_term(&mut self, mu: bool) -> Result<Glue> {
         let tok = self
             .fetch()?
             .ok_or_else(|| Error::invalid_input("\\glueexpr 表达式未闭合"))?;
         let (t, _) = tok;
         if t.charcode() == Some(b'(' as u32) {
-            let v = self.eval_glue_expression()?;
+            let v = self.eval_glue_expression(mu)?;
             let close = self
                 .fetch()?
                 .ok_or_else(|| Error::invalid_input("\\glueexpr 括号未闭合"))?
@@ -540,7 +545,11 @@ impl Expander {
             return Ok(v);
         }
         self.unread(t);
-        self.scan_glue()
+        if mu {
+            self.scan_glue_mu()
+        } else {
+            self.scan_glue()
+        }
     }
 
     /// `\detokenize{...}`：组内容转字符 token 流（字符 catcode 12、空格 10、
