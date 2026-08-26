@@ -288,6 +288,10 @@ pub trait TokenSink: std::fmt::Debug {
     fn unpenalty(&mut self) -> Result<()> {
         Ok(())
     }
+    /// TRIP 冲刺：`\unkern`：移除当前列表尾的 kern 节点（无则无操作）。
+    fn unkern(&mut self) -> Result<()> {
+        Ok(())
+    }
     /// ETRIP 第二波：`\copy<n>`：取出盒子寄存器 n 的内容（保留寄存器），
     /// 作为节点追加或封装为页面（`\shipout` 前缀时）。
     fn copy_box(&mut self, _idx: usize) -> Result<()> {

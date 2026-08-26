@@ -386,8 +386,9 @@ impl PageBuilder {
                 Node::Leaders {
                     width: w, inner, ..
                 } => {
-                    x += d + inner.height + inner.depth;
-                    d = inner.depth;
+                    let dims = inner.dimensions();
+                    x += d + dims.height + dims.depth;
+                    d = dims.depth;
                     width = width.max(*w);
                 }
                 Node::Char { .. }

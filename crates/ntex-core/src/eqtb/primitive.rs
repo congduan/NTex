@@ -441,8 +441,9 @@ define_primitives! {
     EndInput,
     Ignorespaces,
     FontName,
-    // TRIP 冲刺：不可展开原语（\uccode 字符码表/\cleaders/\xleaders/\unkern）
+    // TRIP 冲刺：不可展开原语（\uccode 字符码表/\leaders 家族/\unkern）
     Uccode,
+    Leaders,
     Cleaders,
     XLeaders,
     Unkern,

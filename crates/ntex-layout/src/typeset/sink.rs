@@ -331,6 +331,14 @@ impl TokenSink for NodeBuilder {
     }
 
     fn token(&mut self, tok: Token) -> Result<()> {
+        // `\leaders` 引导盒子已就位：非胶水 token → TeX "Leaders not followed by
+        // proper glue"（空格跳过——TeX "get next non-blank non-relax" 语义）。
+        if self.leaders_box.is_some() {
+            if tok.catcode() == Some(ntex_core::Catcode::Space) {
+                return Ok(());
+            }
+            self.report_leaders_misplaced();
+        }
         // 空格（cat 10）：垂直/数学模式忽略；水平模式转词间空白胶水
         // （行首或胶水/惩罚之后忽略，TeX spacer 语义）。
         if tok.catcode() == Some(ntex_core::Catcode::Space) {
@@ -438,10 +446,18 @@ impl TokenSink for NodeBuilder {
                 GroupKind::Simple
             }
         });
+        // `\leaders` 引导盒子：认领到紧邻的盒子组（组结束封装时挂起等胶水）。
+        // 内层盒子（如引导 hbox 里的 \vbox）不消费该标记。
+        let leaders = if box_kind.is_some() {
+            self.pending_leaders.take()
+        } else {
+            None
+        };
         self.groups.push(GroupCtx {
             kind: gkind,
             box_kind,
             shipout: ship,
+            leaders,
         });
         self.param_stack.push(self.params);
         if let Some(k) = box_kind {
@@ -565,7 +581,8 @@ impl TokenSink for NodeBuilder {
             | GroupKind::VBox
             | GroupKind::VTop => {
                 if let Some(kind) = ctx.box_kind {
-                    self.package_box(kind, ctx.shipout);
+                    let leaders = ctx.leaders;
+                    self.package_box(kind, ctx.shipout, leaders);
                 }
             }
             _ => {}
@@ -574,10 +591,20 @@ impl TokenSink for NodeBuilder {
     }
 
     fn primitive(&mut self, prim: Primitive) -> Result<()> {
+        // TeX box_end leader 分支：盒子后必须是 \hskip/\vskip 胶水，否则
+        // "Leaders not followed by proper glue" 报错并丢弃引导盒子。
+        if self.leaders_box.is_some() {
+            self.report_leaders_misplaced();
+        }
         match prim {
             Primitive::HBox => self.pending_box = Some(PendingBox::HBox),
             Primitive::VBox => self.pending_box = Some(PendingBox::VBox),
             Primitive::VTop => self.pending_box = Some(PendingBox::VTop),
+            // TRIP 冲刺：\leaders/\cleaders/\xleaders —— 引导符，等待其后的盒子
+            // （tex.web scan_box(leader_flag+kind)；盒子经 group/rule 路径挂起）。
+            Primitive::Leaders => self.pending_leaders = Some(LeadersKind::Leaders),
+            Primitive::Cleaders => self.pending_leaders = Some(LeadersKind::Cleaders),
+            Primitive::XLeaders => self.pending_leaders = Some(LeadersKind::Xleaders),
             Primitive::Par => {
                 match self.mode() {
                     Mode::Horizontal => {
@@ -759,6 +786,18 @@ impl TokenSink for NodeBuilder {
     }
 
     fn glue(&mut self, g: Glue) -> Result<()> {
+        // `\leaders` 引导盒子已就位：\hskip/\vskip 胶水到来 → 组成 Leader 节点
+        // （tex.web box_end leader 分支：append_glue + subtype + leader_ptr）。
+        if let Some((kind, box_node)) = self.leaders_box.take() {
+            self.append(Node::Leaders {
+                kind,
+                inner: Box::new(box_node),
+                width: g.width,
+                stretch: g.stretch,
+                shrink: g.shrink,
+            });
+            return Ok(());
+        }
         // 数学模式 `\hskip`：转数学空格原子（TeX 数学模式 \hskip ≡ \mskip）。
         if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
             self.math_push_atom(MathAtom::MSkip {
@@ -804,10 +843,18 @@ impl TokenSink for NodeBuilder {
     }
 
     fn rule(&mut self, width: i64, height: i64, depth: i64) -> Result<()> {
+        // `\leaders\hrule/\vrule`：rule 作引导内容（tex.web scan_box leader 分支
+        // 允许 hrule/vrule；宽度保持 NULL_FLAG，showbox 显示 `x*`）。
+        if let Some(kind) = self.pending_leaders.take() {
+            self.leaders_box = Some((kind, Node::Rule { width, height, depth }));
+            return Ok(());
+        }
         // 数学模式 `\vrule`：M4-1 忽略（规则原子后续补）。
         if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
             return Ok(());
         }
+        // 非引导上下文：未定宽度（TeX 在 hpack/vpack 解析；NTex 简化落 0）。
+        let width = if width == ntex_core::NULL_FLAG { 0 } else { width };
         self.append(Node::Rule { width, height, depth });
         Ok(())
     }
@@ -983,6 +1030,16 @@ impl TokenSink for NodeBuilder {
     fn unpenalty(&mut self) -> Result<()> {
         if let Some(list) = self.lists.last_mut() {
             while let Some(Node::Penalty { .. }) = list.last() {
+                list.pop();
+            }
+        }
+        Ok(())
+    }
+
+    /// `\unkern`：移除当前列表尾部的 kern 节点（无则无操作；TRIP L189）。
+    fn unkern(&mut self) -> Result<()> {
+        if let Some(list) = self.lists.last_mut() {
+            while let Some(Node::Kern { .. }) = list.last() {
                 list.pop();
             }
         }
@@ -1264,13 +1321,45 @@ fn showbox_format_node(n: &Node, depth: usize, out: &mut String) {
             width,
             height,
             depth,
-        } => out.push_str(&format!(
-            "{p}\\rule({}+{})x{}\n",
-            showbox_pt(*height),
-            showbox_pt(*depth),
-            showbox_pt(*width)
-        )),
-        Node::Leaders { .. } => out.push_str(&format!("{p}\\leaders\n")),
+        } => {
+            // 未定宽度（NULL_FLAG，如 `\leaders\hrule` 引导）显示 `*`（tex.web print_rule_dimen）
+            let w = if *width == ntex_core::NULL_FLAG {
+                "*".to_string()
+            } else {
+                showbox_pt(*width)
+            };
+            out.push_str(&format!(
+                "{p}\\rule({}+{})x{}\n",
+                showbox_pt(*height),
+                showbox_pt(*depth),
+                w
+            ));
+        }
+        Node::Leaders {
+            kind,
+            width,
+            stretch,
+            shrink,
+            inner,
+        } => {
+            // TeX show_box：`\{kind} {胶水规格}` + 引导内容作为子节点递归显示
+            // （tex.web "Display leaders"：node_list_display(leader_ptr)）。
+            let name = match kind {
+                LeadersKind::Leaders => "leaders",
+                LeadersKind::Cleaders => "cleaders",
+                LeadersKind::Xleaders => "xleaders",
+            };
+            let mut s = format!("{p}\\{name} {}", showbox_pt(*width));
+            if *stretch != 0 {
+                s.push_str(&format!(" plus {}", showbox_pt(*stretch)));
+            }
+            if *shrink != 0 {
+                s.push_str(&format!(" minus {}", showbox_pt(*shrink)));
+            }
+            s.push('\n');
+            out.push_str(&s);
+            showbox_format_node(inner, depth + 1, out);
+        }
         Node::Discretionary { .. } => out.push_str(&format!("{p}\\discretionary\n")),
         Node::Direction { kind } => {
             let name = match kind {

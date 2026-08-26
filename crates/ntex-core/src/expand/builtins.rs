@@ -1,8 +1,8 @@
 /// 内建原语注册表：`名字 → Primitive` 的单一事实源。
 ///
-/// 334 项（`\muexpr` 为 `Glueexpr` 的别名，故比 `Primitive::ALL` 多一项），
+/// 335 项（`\muexpr` 为 `Glueexpr` 的别名，故比 `Primitive::ALL` 多一项），
 /// 供 `register_builtins` 注册与 `tests.rs` 的一致性测试共用。
-pub(crate) const BUILTINS: [(&str, Primitive); 334] = [
+pub(crate) const BUILTINS: [(&str, Primitive); 335] = [
     ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -211,6 +211,7 @@ pub(crate) const BUILTINS: [(&str, Primitive); 334] = [
             ("uccode", Primitive::Uccode),
             ("cleaders", Primitive::Cleaders),
             ("xleaders", Primitive::XLeaders),
+            ("leaders", Primitive::Leaders),
             ("unkern", Primitive::Unkern),
             // ETRIP 冲刺：交互模式命令
             ("batchmode", Primitive::BatchMode),

@@ -162,8 +162,8 @@ pub enum Node {
     /// 引导符：行为类似胶水（width/stretch/shrink），内部重复 box 提供 height/depth。
     Leaders {
         kind: LeadersKind,
-        /// 被重复的 box。
-        inner: BoxNode,
+        /// 被重复的 box（或 rule——`\leaders\hrule\hskip10pt`，TeX 允许 rule 作引导内容）。
+        inner: Box<Node>,
         /// 胶水规格。
         width: i64,
         stretch: i64,
@@ -230,11 +230,14 @@ impl Node {
                 depth: 0,
             },
             Node::Penalty { .. } => BoxDimensions::ZERO,
-            Node::Leaders { width, inner, .. } => BoxDimensions {
-                width: *width,
-                height: inner.height,
-                depth: inner.depth,
-            },
+            Node::Leaders { width, inner, .. } => {
+                let dims = inner.dimensions();
+                BoxDimensions {
+                    width: *width,
+                    height: dims.height,
+                    depth: dims.depth,
+                }
+            }
             // 断字节点：未断时宽度 = replace（本实现为空 → 0）；连字符只在断点计入行宽。
             Node::Discretionary { replace, .. } => {
                 if replace.is_empty() {
@@ -604,7 +607,7 @@ mod tests {
         let inner = BoxNode::new_hbox(vec![char_of(12, 3, 4)]);
         let ld = Node::Leaders {
             kind: LeadersKind::Leaders,
-            inner: inner.clone(),
+            inner: Box::new(Node::Box(inner.clone())),
             width: 120,
             stretch: 0,
             shrink: 0,

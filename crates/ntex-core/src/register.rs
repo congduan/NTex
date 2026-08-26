@@ -18,6 +18,10 @@ pub const REGISTER_COUNT: usize = 32768;
 /// 1 pt = 65536 sp。
 pub const SP_PER_PT: i64 = 65_536;
 
+/// TeX null_flag：尺寸\"未定\"哨兵（tex.web `null_flag=-2^30`；showbox 显示 `*`，
+/// 如 TRIP `\leaders\hrule\hskip10pt` 的 rule width）。
+pub const NULL_FLAG: i64 = -1_073_741_824;
+
 /// TeX max_int：整数范围 |v| ≤ 0x7FFFFFFF（e-TeX 表达式超限 → "! Arithmetic overflow."）。
 pub const MAX_INT: i64 = 0x7FFF_FFFF;
 /// TeX max_dimen：尺寸范围 |v| ≤ 0x3FFFFFFF（scan_dimen 超限 → "! Dimension too large."）。

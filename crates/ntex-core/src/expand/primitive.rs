@@ -141,8 +141,14 @@ impl Expander {
                 self.sink.penalty(p)
             }
             Primitive::HRule | Primitive::VRule => {
-                let [h, d, w] = self.scan_rule_specs()?;
+                let [h, d, w] = self.scan_rule_specs(prim)?;
                 self.sink.rule(w, h, d)
+            }
+            // TRIP 冲刺：\leaders/\cleaders/\xleaders —— 后续盒子（\hbox/\vbox/\hrule/
+            // 盒子寄存器）由既有路径扫描，sink 侧挂起为引导符，等 \hskip/\vskip 胶水
+            // 组成 Leader 节点（tex.web scan_box(leader_flag+kind) + box_end）。
+            Primitive::Leaders | Primitive::Cleaders | Primitive::XLeaders => {
+                self.sink.primitive(prim)
             }
             // M3-2-2 内部参数赋值
             Primitive::ParIndent | Primitive::LineSkipLimit => {
@@ -865,6 +871,8 @@ impl Expander {
             // ETRIP 第二波：列表尾操作（\unskip/\unpenalty）
             Primitive::UnSkip => self.sink.unskip(),
             Primitive::UnPenalty => self.sink.unpenalty(),
+            // TRIP 冲刺：\unkern：移除当前列表尾的 kern 节点（TRIP L189）
+            Primitive::Unkern => self.sink.unkern(),
             // TRIP 冲刺：纯 VM 原语（\romannumeral/\char/\uppercase/\lowercase/
             // \endinput/\ignorespaces/\uccode）
             Primitive::RomanNumeral => self.exec_roman_numeral(),

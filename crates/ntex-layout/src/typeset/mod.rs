@@ -31,8 +31,8 @@ use ntex_font::{FontMetrics, LigKern};
 use crate::hyphen::PatternTrie;
 use crate::linebreak::knuth_plass;
 use crate::node::{
-    hbox_dimensions, hpack, split_vbox, vbox_dimensions, vpack, BoxKind, BoxNode, FontId, Node,
-    GLUE_ORDER_FIL, GLUE_ORDER_FILL,
+    hbox_dimensions, hpack, split_vbox, vbox_dimensions, vpack, BoxKind, BoxNode, FontId,
+    LeadersKind, Node, GLUE_ORDER_FIL, GLUE_ORDER_FILL,
 };
 use crate::page::PageBuilder;
 
@@ -248,6 +248,8 @@ struct GroupCtx {
     /// 本组是否为 `\shipout` 的目标（封装的盒子作为页面而非追加）。
     /// 随组传递：`\shipout\vbox{...\box255...}` 内层盒子不被 shipout。
     shipout: bool,
+    /// 本组是否为 `\leaders` 家族的引导盒子（封装结果挂起等胶水，不入当前列表）。
+    leaders: Option<LeadersKind>,
 }
 
 /// 字符度量函数：`(width, height, depth)`，单位 sp。
@@ -364,10 +366,15 @@ struct NodeBuilder {
     pending_box: Option<PendingBox>,
     /// 等待下一个组的显式种类（`\begingroup`/`\valign`/`\noalign`；优先于 pending_box）。
     pending_kind: Option<GroupKind>,
-    /// `\raise`/`\lower`：下一个封装盒子的参考点位移（sp）。
+    /// `\\raise`/`\\lower`：下一个封装盒子的参考点位移（sp）。
     pending_shift: Option<i64>,
-    /// `\moveleft`/`\moveright`：下一个封装盒子的水平位移（sp）。
+    /// `\\moveleft`/`\\moveright`：下一个封装盒子的水平位移（sp）。
     pending_hshift: Option<i64>,
+    /// `\\leaders`/`\\cleaders`/`\\xleaders`：已见引导符、等待其后的盒子。
+    pending_leaders: Option<LeadersKind>,
+    /// 引导符盒子已就位（`\\leaders\\hbox{...}` 封装完成或 `\\leaders\\hrule`），
+    /// 等待 \\hskip/\\vskip 胶水组成 Leader 节点（tex.web box_end leader 分支）。
+    leaders_box: Option<(LeadersKind, Node)>,
     /// 内部参数镜像（随 `param_changed` 事件更新，组作用域快照/恢复）。
     params: Params,
     /// 组开始时的参数快照（group_end 恢复）。
@@ -510,6 +517,8 @@ impl NodeBuilder {
             pending_box_spec: None,
             display_short: false,
             after_display: false,
+            pending_leaders: None,
+            leaders_box: None,
             transcript: String::new(),
             fonts,
             marks_top: std::collections::HashMap::new(),
@@ -592,7 +601,7 @@ impl NodeBuilder {
 
     /// 接收一个已产出的页面（M3-5-3）：定义了输出例程 → 进入待处理队列
     /// （`\box255` 逐页取出）；否则直接进 shipped（与 M3-5-2 默认行为一致）。
-    fn package_box(&mut self, kind: PendingBox, ship: bool) {
+    fn package_box(&mut self, kind: PendingBox, ship: bool, leaders: Option<LeadersKind>) {
         let children = self.lists.pop().expect("盒子列表");
         self.list_modes.pop();
         // ETRIP 冲刺：\hbox/\vbox to/spread 规格（目标宽/高）
@@ -659,6 +668,11 @@ impl NodeBuilder {
                 other => unreachable!("数学模式盒子封装必产出 Box 节点：{other:?}"),
             };
             self.math_push_atom(atom).expect("数学模式盒子挂载");
+            return;
+        }
+        // `\leaders` 引导盒子：封装结果挂起，等 \hskip/\vskip 胶水组成 Leader 节点。
+        if let Some(ld) = leaders {
+            self.leaders_box = Some((ld, node));
             return;
         }
         self.push_box(node);
@@ -748,6 +762,19 @@ impl NodeBuilder {
             height: h,
             depth: d,
         })
+    }
+
+    /// TeX box_end leader 分支报错：引导盒子后缺少 `\hskip`/`\vskip`（tex.web L20927），
+    /// 报错并丢弃引导盒子。
+    fn report_leaders_misplaced(&mut self) {
+        let _ = self.write16(
+            "! Leaders not followed by proper glue.\n\
+             You should say `\\leaders <box or rule><hskip or vskip>'.\n\
+             I found the <box or rule>, but there's no suitable\n\
+             <hskip or vskip>, so I'm ignoring these leaders.\n"
+                .to_string(),
+        );
+        self.leaders_box = None;
     }
 
     /// 词间空白胶水（tex.web `append_normal_space` / `app_space`）：

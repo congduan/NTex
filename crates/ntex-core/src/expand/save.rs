@@ -33,10 +33,15 @@ impl Expander {
     }
 
     /// 扫描 `\hrule`/`\vrule` 的可选规格：
-    /// `height <dimen> depth <dimen> width <dimen>`（任意顺序、可省略，缺省 0）。
+    /// `height <dimen> depth <dimen> width <dimen>`（任意顺序、可省略）。
+    /// TeX 缺省（tex.web scan_rule_specs）：`\hrule` → height=0.4pt、width=未定；
+    /// `\vrule` → width=0.4pt；未定宽度以 [`crate::NULL_FLAG`] 表达（showbox 显示 `*`）。
     /// 返回 `[height, depth, width]`。
-    fn scan_rule_specs(&mut self) -> Result<[i64; 3]> {
-        let mut specs = [0i64; 3];
+    fn scan_rule_specs(&mut self, prim: Primitive) -> Result<[i64; 3]> {
+        let mut specs = match prim {
+            Primitive::HRule => [26214, 0, crate::NULL_FLAG], // 0.4pt
+            _ => [0, 0, 26214], // VRule
+        };
         for _ in 0..3 {
             let Some(kw) = self.scan_keyword(|w| matches!(w, "height" | "depth" | "width"))?
             else {
