@@ -50,6 +50,7 @@ impl Expander {
             Primitive::End => {
                 self.stack.clear();
                 self.output_active = false;
+                self.ended = true;
                 self.cond_stack.clear();
                 // TeX `\end` 收尾：flush 所有延迟写流（final_cleanup 语义）
                 self.flush_writes()?;
@@ -450,10 +451,14 @@ impl Expander {
             Primitive::NoAlign => self.sink.noalign_begin(),
             // ETRIP 冲刺：\cr（对齐行结束）：无操作（简化；对齐组按盒子处理）
             Primitive::Cr => self.sink.align_row_end(),
-            // ETRIP 冲刺：\mathchoice{D}{T}{S}{SS}：收集四个分支（内容不执行）
+            // ETRIP 冲刺：\mathchoice{D}{T}{S}{SS}：收集四个分支（内容不执行）。
+            // TeX 语义（tex.web scan_left_brace + build_choices）：每个分支强制以
+            // `{` 开头，非 `{`（含 `}`/单 token）报 "Missing { inserted." 并把
+            // token 放回、隐含插入 `{` 后收集到下一个 `}`（TRIP L438
+            // `\mathchoice{}a}{A|{}}{\mathchoice}`）。
             Primitive::MathChoice => {
                 for _ in 0..4 {
-                    self.scan_group_contents(None)?;
+                    self.scan_mathchoice_branch()?;
                 }
                 Ok(())
             }

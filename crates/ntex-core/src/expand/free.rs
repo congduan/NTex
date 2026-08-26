@@ -77,6 +77,8 @@ fn int_param_index(p: Primitive) -> Option<usize> {
         Primitive::LostChars => 32,
         // TRIP 冲刺：\delimiterfactor（misc 33；plain 默认 901）
         Primitive::DelimiterFactor => 33,
+        // TRIP 冲刺：\escapechar（misc 34；initex 默认 92 = `\`）
+        Primitive::EscapeChar => 34,
         _ => return None,
     })
 }

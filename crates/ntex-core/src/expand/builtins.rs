@@ -1,8 +1,8 @@
 /// 内建原语注册表：`名字 → Primitive` 的单一事实源。
 ///
-/// 306 项（`\muexpr` 为 `Glueexpr` 的别名，故比 `Primitive::ALL` 多一项），
+/// 307 项（`\muexpr` 为 `Glueexpr` 的别名，故比 `Primitive::ALL` 多一项），
 /// 供 `register_builtins` 注册与 `tests.rs` 的一致性测试共用。
-pub(crate) const BUILTINS: [(&str, Primitive); 306] = [
+pub(crate) const BUILTINS: [(&str, Primitive); 307] = [
     ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -248,6 +248,8 @@ pub(crate) const BUILTINS: [(&str, Primitive); 306] = [
             ("radical", Primitive::Radical),
             // TRIP 冲刺：\delimiterfactor（内部整数参数；L412 赋值 1600）
             ("delimiterfactor", Primitive::DelimiterFactor),
+            // TRIP 冲刺：\escapechar（内部整数参数；控制序列显示用 escape 字符，默认 `\`）
+            ("escapechar", Primitive::EscapeChar),
             // ETRIP 冲刺：\vsplit<n> to/spread <dimen>（纵向拆分盒子寄存器）
             ("vsplit", Primitive::VSplit),
             // ETRIP 冲刺：\everyjob=<tokens>（作业开始 token 表；暂映射到 toks 0）

@@ -32,6 +32,10 @@ tmp_pngcmp.py
 /demo.dvi
 /demo.pdf
 
+# TRIP/ETRIP 运行产物
+/tr
+/par_ended.dvi
+
 # ETRIP/数学调试产物
 /delim*.dvi
 /mt2.pdf

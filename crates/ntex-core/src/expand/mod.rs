@@ -370,6 +370,8 @@ pub struct Expander {
     output_toks: Option<TokenArray>,
     /// 输出例程正在执行（防嵌套：例程内再次断页报错）。
     output_active: bool,
+    /// 是否已执行显式 `\end`（finish 收尾对未闭合组/math 按 TeX 语义降级为警告）。
+    ended: bool,
     /// 上一轮注入输出例程时待处理页面的数量（判断例程是否消费了 box255）。
     output_prev_count: usize,
     /// 是否启用字节码轨道（M2；解释器轨道用于双轨等价验证）。
@@ -470,6 +472,7 @@ impl Expander {
             font_loader: Box::new(NoFontLoader),
             output_toks: None,
             output_active: false,
+            ended: false,
             output_prev_count: usize::MAX,
             use_bytecode,
             vfs: Box::new(LocalVfs),
@@ -742,6 +745,11 @@ impl Expander {
             msg.push_str(&format!("l.{n} {line}\n"));
         }
         let _ = self.sink.write16(msg);
+    }
+
+    /// 是否已执行显式 `\end`（finish 对未闭合组/math 按 TeX 语义降级为警告）。
+    pub fn is_ended(&self) -> bool {
+        self.ended
     }
 
     /// 输入耗尽后的收尾：执行所有待执行的输出例程（`finish` 冲页产生）。

@@ -621,6 +621,60 @@ impl Expander {
         Ok(tokens)
     }
 
+    /// TeX `\mathchoice` 分支扫描（tex.web `scan_left_brace` + `scan_balanced_group`
+    /// 语义）：每个分支强制以 `{` 开头（跳过前导空格）；非 `{` → 报
+    /// "Missing { inserted." 并把 token 放回、隐含插入 `{` 后收集到下一个 `}`
+    /// （`}` 消费），与 build_choices 逐分支划分一致（TRIP L438
+    /// `\mathchoice{}a}{A|{}}{\mathchoice}` → 分支 `{}`/`a`/`A|{}`/`\mathchoice`）。
+    /// 返回收集到的分支 token（内容不执行）。
+    fn scan_mathchoice_branch(&mut self) -> Result<Vec<Token>> {
+        self.skip_spaces()?;
+        let fetched = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input("\\mathchoice 分支扫描到输入末尾"))?
+            .0;
+        let t = self.resolve_group_char(fetched);
+        if t.catcode() == Some(Catcode::BeginGroup) {
+            self.unread(t);
+            return self.scan_group_contents(None);
+        }
+        // 非 `{`：TeX scan_left_brace 报 "Missing { inserted."，token 放回、隐含 `{`
+        self.unread(t);
+        let _ = self.sink.write16(
+            "! Missing { inserted.\n\
+             A left brace was mandatory here, so I've put one in.\n\
+             You might want to delete and/or insert some corrections\n\
+             so that I will find a matching right brace soon.\n\
+             (If you're confused by all this, try typing `I}' now.)\n"
+                .to_string(),
+        );
+        self.report_error_context();
+        // 隐含 `{` 后按平衡组收集到下一个 `}`（`}` 消费）
+        let mut tokens = Vec::new();
+        let mut depth = 0usize;
+        loop {
+            let Some((fetched, _)) = self.fetch()? else {
+                let _ = self.sink.write16("Runaway text?\n".to_owned());
+                return Ok(tokens);
+            };
+            let tt = self.resolve_group_char(fetched);
+            match tt.catcode() {
+                Some(Catcode::BeginGroup) => {
+                    depth += 1;
+                    tokens.push(tt);
+                }
+                Some(Catcode::EndGroup) => {
+                    if depth == 0 {
+                        return Ok(tokens);
+                    }
+                    depth -= 1;
+                    tokens.push(tt);
+                }
+                _ => tokens.push(tt),
+            }
+        }
+    }
+
     /// `\let\bgroup={`/`\let\egroup=}` 别名解析：绑定为组定界符字符的 cs → 底层字符 token。
     fn resolve_group_char(&self, tok: Token) -> Token {
         let Some(csid) = tok.csid() else {

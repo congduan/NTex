@@ -95,7 +95,7 @@ pub enum ParamValue {
 
 /// 内部整数参数总数（TeX/e-TeX 内部整数，ETRIP 冲刺；仅存储/回读）。
 /// 下标与 [`crate::expand::int_param_index`] 的映射一致。
-pub const MISC_INTS: usize = 34;
+pub const MISC_INTS: usize = 35;
 
 /// 内部整数参数默认值（TeX initex/plain 默认）。
 pub fn default_misc() -> [i64; MISC_INTS] {
@@ -133,7 +133,8 @@ pub fn default_misc() -> [i64; MISC_INTS] {
         0,    // 30 PageDiscards（e-TeX：保存页面丢弃物；0=不保存）
         0,    // 31 SplitDiscards（e-TeX：保存 vsplit 丢弃物；0=不保存）
         2,    // 32 LostChars（e-TeX：丢失字符提示级；plain 默认 2 = 计数）
-        901,  // 33 DelimiterFactor（plain 默认 901；delimiter 缩放因子）
+        901, // 33 DelimiterFactor（plain 默认 901；delimiter 缩放因子）
+        92,  // 34 EscapeChar（initex 默认 92 = `\`；控制序列显示用 escape 字符）
     ]
 }
 

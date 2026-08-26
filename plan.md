@@ -14,7 +14,7 @@
 | M4 数学 + e-TeX | ✅ **全部完成**：数学模式状态机（`$`/`$$`、8 类原子、spacing 表、上下标、字阶）、分式/根式/定界符、样式原语、fontdimen 数学参数 + 数学字体族、显示数学细化、Liang 断字、错误模型、e-TeX 核心 + 扩展（`\protected`/`\ifdefined`/`\ifcsname`/`\unless`/`\numexpr`/`\detokenize`/`\unexpanded`/`\eTeXversion`/`\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens`）；**ETRIP 冲刺**：A 组 41/42（仅 `\muexpr` 待校准）、B 组 36/36、C 组全部已接线（2026-08-23），`etrip.log` 逐字节比对未开始 |
 | 输出端           | 🟢 正式 PDF 后端可用（`ntex-pdf`：DVI → PDF 直出 + Type1 嵌入，替换临时 Helvetica 切片；demo 两页与 dvipdfmx 渲染一致）                                                                                                                                                                                                                |
 
-**下一步**：**TRIP 冲刺**（M1-14 收尾，a00a4d9 已落地扫描/字体/数学/排版错误恢复，恢复点逐一攻克至 trip 全绿）+ **ETRIP 收尾**（`\muexpr` 校准 + sparse arrays 段越界恢复 + `etrip.log` 逐字节比对）+ 性能 backlog **P1**（热路径消分配 / 修通 ntex 驱动基准补测吞吐）。
+**下一步**：按 **§6 不符规范原语待办**（P0 优先级）推进——**TRIP 冲刺**（M1-13 错误恢复机制 `back_input`/`\errhelp` 是 trip.tex 停于"组未闭合"恢复点的根因，先行攻克）+ **ETRIP 收尾**（`\muexpr` 1mu 校准 + sparse arrays 段越界恢复 + gluestretchorder 值语义 + `etrip.log` 逐字节比对）+ 性能 backlog **P1**（热路径消分配 / 修通 ntex 驱动基准补测吞吐）。
 
 ***
 
@@ -249,7 +249,8 @@
 
 - [x] 四种交互模式（`\batchmode`/`\nonstopmode`/`\scrollmode`/`\errorstopmode` + `\interactionmode` 参数，默认 batchmode）——✅（free.rs 已接线，评审补查）
 - [x] 错误上下文行（"! ..." + `l.N <行内容>`）——✅ 2026-08-23（A3：`error_context`/`report_error_context`；Undefined cs 消息附 `l.N`，宏内未定义回退调用行）
-- [ ] 出错后继续排版（TeX 逐错误特化恢复：`back_input`/插入恢复 token）+ `\errhelp`——待补（与 ETRIP 错误段联动）
+- [ ] 出错后继续排版（TeX 逐错误特化恢复：`back_input`/插入恢复 token）+ `\errhelp`——待补
+  （与 ETRIP 错误段联动；**TRIP 卡点根因**——trip.tex 停于"非法输入：组未闭合"等恢复点）
 - 验证：构造错误用例，输出与 pdfTeX 逐字符一致（待恢复机制后）
 
 **M1-14 TRIP 冲刺**
@@ -269,8 +270,14 @@
 - [x] `\mag` 整数参数（默认 1000）+ pc/cc 单位 + `\the\catcode`/`\the\output`（a00a4d9）
 - [x] 测试基建：WorkDirVfs（`\input` 相对路径）+ tripos.tex 复制（a00a4d9）
 - [ ] 涉及排版/字体的部分用 `\hbox` 兜底占位（硬口径：语义 bug 绝不带进 M2）——未完成
+  （2026-08-26 核查：M3 已真实实现排版，TRIP 排版段走真实路径，此占位实际已被 M3 取代）
+- [ ] `\muskip`/`\muskipdef`：1mu=1pt 硬映射（真实 TeX 1mu = em/18，随数学字体族变化）——
+      mu→sp 换算上下文与 pdfTeX 不符（与 ETRIP `\muexpr` 同源，见 §6 待办）
+- [ ] `\showbox`/`\showlists` 等诊断输出格式逐字节对齐（TRIP log diff 重灾区）
 - [ ] **TRIP 全绿**（输出 diff 可读化脚本已在 M0 就绪）——trip.tex 当前停于
-  "非法输入：组未闭合" 等恢复点，恢复路径继续补齐
+  "非法输入：组未闭合" 等恢复点，根因 = M1-13 错误恢复机制未实现（back_input/插入恢复 token）
+- 文档同步（2026-08-26）：`\long`（M1-8）/`\chardef`（M1-3）/`\box`/`\muskip`（M1-10）
+  代码均已实现，旧标注"待补/未实现"是文档滞后，勿再按旧标注排期
 - 验证：`\input trip` 输出与参考文件一致
 
 **M1-15 性能基线**
@@ -452,10 +459,39 @@
   `\tracingparagraphs/\omit`；**Primitive 枚举 repr(u8)→repr(u16)**（变体超 256 防回绕）
   + `.fmt` codec 同步
 
-**剩余原语待办**：完整分组清单 + 每原语进展标记见 **[ETRIP-primitives.md](ETRIP-primitives.md)**（唯一状态源，2026-08-23 更新）。
-当前总览：**A 组** ✅ 41/42（仅 `\muexpr` 待校准）· **B 组** ✅ 36/36 · **C 组** ✅ 全部已接线 · **收尾**（`etrip.log` 逐字节比对）⏳。
-下一批：`\muexpr` 的 1mu 校准与 "5.0mu" 显示 + sparse arrays 段寄存器越界恢复 +
-gluestretchorder 段值语义核对 + `etrip.log` 逐字节比对。
+**不符规范原语待办**（2026-08-26 盘点，按优先级；完整分组清单 + 每原语进展标记见
+**[ETRIP-primitives.md](ETRIP-primitives.md)** 唯一状态源。总览：A 组 ✅ 41/42 ·
+B 组 ✅ 36/36 · C 组 ✅ 全部已接线 · 收尾 ⏳）。
+
+P0 —— ETRIP 收尾硬差距：
+- [ ] `\muexpr`：① 1mu=1pt 硬映射 → 改按 `\scriptfont` 字阶换算（1mu = em/18）；
+      ② `\the\muexpr` "5.0mu" 显示校准；③ mu_error "! Incompatible glue units." 恢复消息
+- [ ] sparse arrays 段：寄存器越界报 "! Bad register code" 后无恢复路径
+      （etrip.tex L970 `\2\countdef` 处中止）——钳制/恢复待补
+- [ ] gluestretchorder 段：仍报 "wrong glue stretch/shrink order"（2026-08-25 实测）——
+      `\gluestretchorder/\glueshrinkorder` 值语义逐段核对
+- [ ] `\tracingassigns`：补 `{changing/into}` 输出行
+- [ ] `etrip.log` 逐字节比对（消息格式/上下文行；dvitype 暂不纳入）
+
+P0 —— TRIP 硬差距（M1-13 联动，trip.tex 停于"非法输入：组未闭合"恢复点的根因）：
+- [ ] 错误恢复通用机制：`back_input`/插入恢复 token + `\errhelp`——
+      影响**所有报错原语**的"报错后继续路径"（扫描/模式/宏错误消息已对齐，继续跑缺）
+- [ ] `\muskip`/`\muskipdef`：1mu=1pt 硬映射（与 `\muexpr` 同源）——mu→sp 换算上下文不符
+- [ ] `\showbox`/`\showlists` 等诊断输出格式与 trip.log 参考逐字节对齐
+
+P1 —— D 组语义简化点（REVIEW-2026-08-23，偏离规范但可接受）：
+- [ ] `\insert` 只收集不排版（脚注不可用）
+- [ ] `\badness` 等只读整数单独出现为 no-op（规范应报错）
+- [ ] `\omit` no-op 占位 + `\halign/\valign/\cr/\noalign/\span` 对齐语义未实现
+- [ ] 数学矩阵（`\matrix`/`\eqalign` 等）
+- [ ] `\scriptfont` 未接真实字体
+- [ ] `\vsplit` marks 拆分暂空（`\splitfirstmarks` 等返回空）
+- [ ] `\output` 例程消费判定用 count 启发式（应显式 `\shipout\box255`）
+- [ ] `\lefthyphenmin`/`\righthyphenmin` 词界规则待校准
+
+P2 —— 架构决策：
+- [ ] A5 输入层 8-bit catcode：CJK 多字节被切单字节 token，影响所有字符类原语
+      （P0 决策项，需独立排期）
 
 **冲刺纪律**：每次迭代前先 `cargo build -p ntex-trip` 确认全绿再跑（避免脏构建旧产物
 误报，如误报过的 `\ifcase 序号不能为负`）；对照 etrip.log 参考逐段验证，不做整体 diff。

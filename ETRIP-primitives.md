@@ -2,7 +2,10 @@
 
 > 数据来源：etrip.tex 全量控制序列 vs builtins 注册表对照（2026-08-18 生成），
 > 进展随冲刺迭代更新。本文件是 ETRIP 原语状态的**唯一状态源**（plan.md §6 引用）。
-> 最近更新：2026-08-23（第二波：表达式 i128/胶水阶语义/未定义恢复/eTeX 32768 寄存器；
+> **不符规范项待办全集**（ETRIP + TRIP 硬差距 + D 组简化点 + A5，按 P0/P1/P2 优先级）见
+> **plan.md §6 待办清单**（2026-08-26 盘点）。
+> 最近更新：2026-08-26（不符规范项盘点入待办；`\long`/`\chardef`/`\box`/`\muskip` 确认已实现）；
+> 2026-08-23（第二波：表达式 i128/胶水阶语义/未定义恢复/eTeX 32768 寄存器；
 > marks 族原语 6 项全实现；第三波：A/B 组剩余原语批量补全——盒子操作（\copy/\unhbox/
 > \unvbox/\unhcopy/\unvcopy/\lastbox）、盒子尺寸（\wd/\ht/\dp）、段落/断页参数（\leftskip/
 > \rightskip/\prevdepth/\interlinepenalty/\clubpenalty/\widowpenalty/\displaywidowpenalty）、

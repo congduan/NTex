@@ -450,8 +450,9 @@ impl TokenSink for NodeBuilder {
             if new_mode == Mode::RestrictedHorizontal {
                 self.space_factor = 1000;
             }
-        } else if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+        } else if gkind == GroupKind::Math {
             // 数学组：`{...}`（含脚本/根式/定类字段）压 math 层。
+            // `\begingroup`（SemiSimple）等显式组不压 math 层（tex.web math_group 语义）。
             let field = if let Some(is_sup) = self.pending_script.take() {
                 Some(MathFieldKind::Script(is_sup))
             } else if self.sqrt_pending {
@@ -482,7 +483,9 @@ impl TokenSink for NodeBuilder {
             self.params = prev;
         }
         // 数学组：内容并入外层（普通组）或作为字段挂到外层 base（^/_ 后组等）。
-        if ctx.box_kind.is_none() && matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+        // 仅 `{` 数学组（GroupKind::Math）push/pop math 层；`\begingroup`（SemiSimple）
+        // 等显式组不新建数学列表（tex.web math_group 语义，TRIP L438 \begingroup）。
+        if ctx.kind == GroupKind::Math {
             let level = self
                 .math
                 .pop()

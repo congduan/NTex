@@ -486,4 +486,6 @@ define_primitives! {
     Radical,
     // TRIP 冲刺：\delimiterfactor（内部整数参数，misc 数组；delimiter 缩放因子，默认 901）
     DelimiterFactor,
+    // TRIP 冲刺：\escapechar（内部整数参数，misc 数组；控制序列显示用 escape 字符，默认 `\`）
+    EscapeChar,
 }

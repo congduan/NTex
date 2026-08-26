@@ -181,7 +181,11 @@ impl Typesetter {
     /// sink 仍挂接引擎时进行：close_paragraph / eject_one_page 产出的页面
     /// 经 box255+例程（或直通 shipout），随后 `run_pending_output` 执行例程。
     fn finish(&mut self) -> Result<FinishOutput> {
-        // 1) 校验 + 关闭开放段落（可能产出页面 → box255 + pending）
+        // 1) 校验 + 关闭开放段落（可能产出页面 → box255 + pending）。
+        //    显式 `\end` 时未闭合组/数学列表按 TeX 语义降级为警告继续
+        //    （tex.web final_end：`(\end occurred inside a group at level N)`，
+        //    trip.log L7293），仅纯 EOF 缺 `\end` 才报错。
+        let ended = self.expander.is_ended();
         {
             let builder = self
                 .expander
@@ -190,28 +194,59 @@ impl Typesetter {
                 .downcast_mut::<NodeBuilder>()
                 .ok_or_else(|| Error::internal("typesetter 安装了 NodeBuilder"))?;
             if builder.pending_box.is_some() {
-                return Err(Error::invalid_input("\\hbox/\\vbox 后缺少组"));
+                if ended {
+                    builder.pending_box = None;
+                } else {
+                    return Err(Error::invalid_input("\\hbox/\\vbox 后缺少组"));
+                }
             }
             if builder.shipout_next {
-                return Err(Error::invalid_input("\\shipout 后缺少盒子"));
+                if ended {
+                    builder.shipout_next = false;
+                } else {
+                    return Err(Error::invalid_input("\\shipout 后缺少盒子"));
+                }
             }
             if !builder.groups.is_empty() {
-                let dbg = builder
-                    .groups
-                    .iter()
-                    .map(|g| format!("{:?}", g.kind))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let m = format!(
-                    "组未闭合（缺少 }}）：groups=[{dbg}] pending_box={:?} pending_kind={:?} math={}",
-                    builder.pending_box,
-                    builder.pending_kind,
-                    builder.math.len()
-                );
-                return Err(Error::invalid_input(&m));
+                if ended {
+                    // TeX：\end 时组未闭合 → 警告不中断（trip.log L7293）
+                    let _ = builder.write16(format!(
+                        "(end occurred inside a group at level {})\n",
+                        builder.groups.len()
+                    ));
+                    builder.groups.clear();
+                } else {
+                    let dbg = builder
+                        .groups
+                        .iter()
+                        .map(|g| format!("{:?}", g.kind))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let m = format!(
+                        "组未闭合（缺少 }}）：groups=[{dbg}] pending_box={:?} pending_kind={:?} math={}",
+                        builder.pending_box,
+                        builder.pending_kind,
+                        builder.math.len()
+                    );
+                    return Err(Error::invalid_input(&m));
+                }
             }
             if !builder.math.is_empty() {
-                return Err(Error::invalid_input("数学模式未闭合（缺少 $）"));
+                if ended {
+                    // TeX：\end 时数学列表未闭合 → 同样警告不中断
+                    let _ = builder.write16("(end occurred inside a math list)\n".to_string());
+                    builder.math.clear();
+                } else {
+                    return Err(Error::invalid_input("数学模式未闭合（缺少 $）"));
+                }
+            }
+            if ended {
+                // TeX `\end`：丢弃未闭合盒子/组的内容（tex.web final_end 后
+                // 各列表就地废弃），仅保留主垂直列表。
+                while builder.lists.len() > 1 {
+                    builder.lists.pop();
+                    builder.list_modes.pop();
+                }
             }
             if builder.mode() == Mode::Horizontal {
                 builder.close_paragraph();
