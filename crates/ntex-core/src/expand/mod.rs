@@ -410,6 +410,8 @@ pub struct Expander {
     ended: bool,
     /// 最近一次处理的 token（watchdog/单步超时诊断用；不参与 .fmt 序列化）。
     last_tok: Option<String>,
+    /// `\tracingcommands`：上次打印的模式（tex.web shown_mode——模式变化才打前缀）。
+    shown_trace_mode: Option<String>,
     /// 上一轮注入输出例程时待处理页面的数量（判断例程是否消费了 box255）。
     output_prev_count: usize,
     /// 是否启用字节码轨道（M2；解释器轨道用于双轨等价验证）。
@@ -516,6 +518,7 @@ impl Expander {
             output_active: false,
             ended: false,
             last_tok: None,
+            shown_trace_mode: None,
             output_prev_count: usize::MAX,
             use_bytecode,
             vfs: Box::new(LocalVfs),
@@ -853,6 +856,31 @@ impl Expander {
         self.ended
     }
 
+    /// `\tracingcommands` 的 token 描述（tex.web print_cmd_chr 语义：
+    /// 控制序列 `\名`；字符按 catcode 分类显示 "the letter A" / "blank space  " 等）。
+    fn trace_token_desc(&self, tok: Token) -> String {
+        if let Some(csid) = tok.csid() {
+            return format!("\\{}", self.intern.name(csid));
+        }
+        let c = tok
+            .charcode()
+            .and_then(char::from_u32)
+            .unwrap_or('\u{FFFD}');
+        match tok.catcode() {
+            Some(Catcode::Letter) => format!("the letter {c}"),
+            Some(Catcode::Other) => format!("the character {c}"),
+            // 描述后跟空格字符本身（tex.web chr_cmd：print 描述 + print_char(chr)）
+            Some(Catcode::Space) => format!("blank space {c}"),
+            Some(Catcode::BeginGroup) => format!("begin-group character {c}"),
+            Some(Catcode::EndGroup) => format!("end-group character {c}"),
+            Some(Catcode::MathShift) => format!("math shift character {c}"),
+            Some(Catcode::Parameter) => format!("macro parameter character {c}"),
+            Some(Catcode::Superscript) => format!("superscript character {c}"),
+            Some(Catcode::Subscript) => format!("subscript character {c}"),
+            _ => format!("the character {c}"),
+        }
+    }
+
     /// 诊断：输入栈摘要（watchdog 超限 / 单步超时 / 定期进度 dump 用）。
     fn debug_stack_summary(&self) -> String {
         self.stack
@@ -940,6 +968,19 @@ impl Expander {
                     Some(csid) => format!("\\{}", self.intern.name(csid)),
                     None => format!("{tok:?}"),
                 });
+                // \tracingcommands（misc 下标 3）：每命令一行 `{模式: 描述}`；
+                // 模式只在变化时打印（tex.web show_cur_cmd_chr 的 shown_mode 语义）。
+                if self.params.misc[3] > 0 {
+                    let m = self.sink.mode_name();
+                    let desc = self.trace_token_desc(tok);
+                    let line = if self.shown_trace_mode.as_deref() == Some(m.as_str()) {
+                        format!("{{{desc}}}\n")
+                    } else {
+                        self.shown_trace_mode = Some(m.clone());
+                        format!("{{{m}: {desc}}}\n")
+                    };
+                    let _ = self.sink.write16(line);
+                }
                 // noexpand（`\noexpand`/`\unexpanded` 输出）：临时不可展开，原样输出。
                 // 优先于条件机拦截——`\unexpanded{\ifx...}` 里的条件 token 是数据，
                 // 不得 push 条件帧，也不得匹配外层 `\else`/`\fi`。

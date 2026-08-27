@@ -757,6 +757,17 @@ impl TokenSink for NodeBuilder {
         self.current_font.0
     }
 
+    /// 当前模式名（`\tracingcommands` 追踪；tex.web print_mode 语义）。
+    fn mode_name(&self) -> String {
+        match self.mode() {
+            Mode::Vertical => "vertical mode".to_string(),
+            Mode::Horizontal => "horizontal mode".to_string(),
+            Mode::RestrictedHorizontal => "restricted horizontal mode".to_string(),
+            Mode::Math => "math mode".to_string(),
+            Mode::DisplayMath => "display math mode".to_string(),
+        }
+    }
+
     fn take_write_flush_pending(&mut self) -> bool {
         let v = self.write_flush_pending;
         self.write_flush_pending = false;

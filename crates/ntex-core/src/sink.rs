@@ -191,6 +191,11 @@ pub trait TokenSink: std::fmt::Debug {
     fn current_font(&self) -> u32 {
         0
     }
+    /// 当前模式名（`\tracingcommands` 追踪输出用；tex.web print_mode 语义，
+    /// 如 "vertical mode"/"restricted horizontal mode"）。
+    fn mode_name(&self) -> String {
+        "no mode".to_string()
+    }
     /// RFC-3：页面真正输出（`\shipout` 边界）时置位；Expander 在 token 边界
     /// 检查并 flush 延迟写流。默认 sink（纯展开轨道）不置位 → 无副作用。
     fn take_write_flush_pending(&mut self) -> bool {
