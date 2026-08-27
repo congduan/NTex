@@ -274,6 +274,8 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
         registers,
         params,
         output_toks,
+        // .fmt v1 不含字体表（加载后需重新 \font）：font_names 一并置空
+        font_names: Vec::new(),
     })
 }
 

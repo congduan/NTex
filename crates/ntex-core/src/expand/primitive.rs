@@ -881,6 +881,8 @@ impl Expander {
             Primitive::Lowercase => self.exec_lowercase(),
             Primitive::EndInput => self.exec_endinput(),
             Primitive::Ignorespaces => self.exec_ignorespaces(),
+            // TRIP 冲刺：\fontname<font>：展开为字体外部名（TRIP L218）
+            Primitive::FontName => self.exec_fontname(),
             Primitive::Uccode => self.exec_uccode(),
             // ETRIP 第二波：盒子尺寸赋值（\wd/\ht/\dp<n>=<dimen>；无 '=' 时按 TeX 报错）
             Primitive::Wd | Primitive::Ht | Primitive::Dp => {
@@ -1179,6 +1181,11 @@ impl Expander {
                 0
             }
         };
+        // `\fontname` 查询登记：FontId → 外部名（失败加载绑定 0 也登记，保留名字）
+        if self.font_names.len() <= font as usize {
+            self.font_names.resize(font as usize + 1, None);
+        }
+        self.font_names[font as usize] = Some(font_name.clone());
         // 组作用域 + \global 语义（同 \def）
         let global = self.is_global();
         if !global && self.group_level > 0 {
@@ -1193,6 +1200,22 @@ impl Expander {
         self.eqtb.set_font(csid, font);
         self.finish_assignment();
         Ok(())
+    }
+
+    /// `\fontname<font>`：展开为字体外部名（cat 12 字符 token；tex.web 可展开原语，
+    /// `\font` 加载时登记的 [`Expander::font_names`] 查询；TRIP L218 `\fontname\ip`）。
+    fn exec_fontname(&mut self) -> Result<()> {
+        let font = self.scan_font_ident()?;
+        let name = self
+            .font_names
+            .get(font as usize)
+            .and_then(|n| n.clone())
+            .unwrap_or_default();
+        self.emit_tokens(
+            name.bytes()
+                .map(|b| Token::char(Catcode::Other, u32::from(b)))
+                .collect(),
+        )
     }
 
     /// 扫描外部字体名：连续 cat 11（字母）/ cat 12（其他）字符，遇空格/组/控制序列结束。

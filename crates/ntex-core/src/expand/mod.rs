@@ -327,6 +327,8 @@ pub struct FmtState {
     pub params: Params,
     /// `\output` 例程 token 列表。
     pub output_toks: Option<TokenArray>,
+    /// FontId → 外部字体名（`\fontname` 查询用；加载后需重新 `\font`）。
+    pub font_names: Vec<Option<String>>,
 }
 
 /// 展开引擎。
@@ -366,6 +368,8 @@ pub struct Expander {
     params: Params,
     /// 字体加载器（M3-4）：`\font` 执行时把字体名解析为 FontId。
     font_loader: Box<dyn FontLoader>,
+    /// `\fontname` 查询用：FontId → 外部字体名（`\font` 加载时登记；TRIP L218）。
+    font_names: Vec<Option<String>>,
     /// `\output` 例程 token 列表（M3-5-3）；None = 未定义（断页直通 shipout）。
     output_toks: Option<TokenArray>,
     /// 输出例程正在执行（防嵌套：例程内再次断页报错）。
@@ -472,6 +476,7 @@ impl Expander {
             registers: Registers::new(),
             params: Params::default(),
             font_loader: Box::new(NoFontLoader),
+            font_names: Vec::new(),
             output_toks: None,
             output_active: false,
             ended: false,
@@ -538,6 +543,7 @@ impl Expander {
             registers: self.registers.export(),
             params: self.params,
             output_toks: self.output_toks.clone(),
+            font_names: self.font_names.clone(),
         }
     }
 
@@ -586,6 +592,7 @@ impl Expander {
         self.registers = Registers::import(state.registers);
         self.params = state.params;
         self.output_toks = state.output_toks;
+        self.font_names = state.font_names;
         // 运行时状态重置（新文档起点）
         self.stack.clear();
         self.read_floor = 0;
