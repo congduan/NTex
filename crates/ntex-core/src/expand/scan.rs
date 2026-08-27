@@ -316,6 +316,26 @@ impl Expander {
         let mut val: i64 = 0;
         let mut any = false;
         while let Some((tok, _)) = self.fetch()? {
+            // eTeX 表达式分组：{1+}{2*3} 的 {1+} 组（组只是分隔，组内数字+运算符
+            // 继续；etrip L880 `\numexpr{1+}{2*3}`）。仅在数字未开始（!any）时把
+            // { 当数字组（\write15{...} 的 { 是参数组——数字 15 已读后 { 是下一 token）。
+            if !any && tok.catcode() == Some(Catcode::BeginGroup) {
+                let inner = self.scan_number()?;
+                val = inner;
+                any = true;
+                // 消费组结束 }：组内运算符（如 {1+} 的 +）放回给表达式循环
+                let mut pending: Vec<Token> = Vec::new();
+                while let Some((c, _)) = self.fetch()? {
+                    if c.catcode() == Some(Catcode::EndGroup) {
+                        break;
+                    }
+                    pending.push(c);
+                }
+                for t in pending.into_iter().rev() {
+                    self.unread(t);
+                }
+                continue;
+            }
             match digit_value(tok) {
                 Some(d) => {
                     // TRIP：防 i64 溢出（超大整数钳制——TeX scan_int 同报错钳制）
@@ -871,9 +891,24 @@ impl Expander {
                 neg = !neg;
                 continue;
             }
-            // TeX scan_dimen：正号忽略（`\varunit=+1,001...`，TRIP L160）
+            // TeX scan_dimen：正号忽略（`\varunit=+1,001...`，TRIP L160）。
+            // 但 \glueexpr 表达式里 {7pt+} 的 + 是运算符（+ 后非数字）——放回由
+            // 表达式循环（peek_int_op）处理；仅 + 后跟数字时才是正号（etrip L888
+            // `\glueexpr{7pt+}{12pt/4}` = 7pt + 12pt/4）。
             if tok.charcode() == Some(b'+' as u32) {
-                continue;
+                let next = self.fetch()?;
+                match next {
+                    Some((n, _)) if n.charcode().is_some_and(|c| (c as u8).is_ascii_digit()) => {
+                        continue;
+                    }
+                    _ => {
+                        if let Some((n, _)) = next {
+                            self.unread(n);
+                        }
+                        self.unread(tok);
+                        break;
+                    }
+                }
             }
             if let Some(csid) = tok.csid() {
                 if matches!(self.eqtb.slot(csid), EqSlot::Undefined) {
@@ -1187,6 +1222,28 @@ impl Expander {
                 any = true;
             } else {
                 while let Some((tok, _)) = self.fetch()? {
+                    // eTeX 表达式分组：{7pt+}{12pt/4} 的 {7pt+} 组（组内尺寸+运算符
+                    // 继续；etrip L884-888）。仅数字未开始（!any）时 { 才是数字组
+                    // （\hsize=5pt{...} 等场景 { 是下一 token）。
+                    if !any && tok.catcode() == Some(Catcode::BeginGroup) {
+                        // inner 已是完整尺寸（含单位换算的 sp 值）——直接返回，
+                        // 不能再当 int_part 二次换算（×SP_PER_PT 会溢出钳制）。
+                        let inner = self.scan_dimen_inner(mu, true)?;
+                        // 消费组结束 }：组内运算符（如 {7pt+} 的 +）放回给表达式
+                        // 循环（LIFO 栈上 + 在 } 之前，须循环读取直到 }）。
+                        let mut pending: Vec<Token> = Vec::new();
+                        while let Some((c, _)) = self.fetch()? {
+                            if c.catcode() == Some(Catcode::EndGroup) {
+                                break;
+                            }
+                            pending.push(c);
+                        }
+                        // 放回非 } token（逆序——保持原顺序）
+                        for t in pending.into_iter().rev() {
+                            self.unread(t);
+                        }
+                        return Ok((if neg { -inner.0 } else { inner.0 }, inner.1));
+                    }
                     if let Some(d) = digit_value(tok) {
                         if saw_dot {
                             // TRIP：`16383.99999237060546875pt` 17 位小数——防 i64

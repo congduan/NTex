@@ -446,41 +446,29 @@ impl Expander {
     /// `\glueexpr`/`\muexpr` 胶水表达式：`<glue> (('+'|'-'|'*'|'/') <glue>)`。
     /// width 逐项求和；stretch/shrink **值求和**，其**无穷阶 = 最后一个非零分量项**
     /// 的阶（无则 NORMAL；etrip L800/L950：`\skip90+0pt` 保留 1fil、`\skip5+0pt` 清 0）。
-    /// **仅一项（无任何运算符）** 时保留 first 的完整 order（0 值分量也保留，
-    /// etrip L949：`\glueexpr\mutoglue\muexpr\gluetomu\skip5` 的 0shrink 保留 fil）；
-    /// 出现任一运算符（含 `*`/`/`）后按"最后非零分量项"规则。
-    /// `*`/`/` 为 `<glue width> * <number>` 标量运算（etrip L872-873）。
-    /// 支持 `( <expr> )` 括号（`\muexpr(5muminus1mu)`）。
-    ///
-    /// `mu`：mu 上下文——项用 `scan_glue_mu`（只认 mu 单位；前导 pt 胶水报
-    /// "Incompatible glue units"）；false 为 pt 上下文（`\glueexpr`）。
     fn eval_glue_expression(&mut self, mu: bool) -> Result<Glue> {
-        let first = self.glue_expr_term(mu)?;
+        let first = self.glue_expr_mul_term(mu)?;
         let mut width = i128::from(first.width);
         let mut stretch = first.stretch;
         let mut shrink = first.shrink;
-        let mut stretch_order = if first.stretch != 0 { first.stretch_order } else { 0 };
-        let mut shrink_order = if first.shrink != 0 { first.shrink_order } else { 0 };
+        let mut stretch_order = if first.stretch != 0 {
+            first.stretch_order
+        } else {
+            0
+        };
+        let mut shrink_order = if first.shrink != 0 {
+            first.shrink_order
+        } else {
+            0
+        };
         let mut has_op = false;
         while let Some(op) = self.peek_int_op()? {
-            if op != b'+' && op != b'-' && op != b'*' && op != b'/' {
+            if op != b'+' && op != b'-' {
                 self.unread(Token::char(Catcode::Other, op as u32));
                 break;
             }
             has_op = true;
-            if op == b'*' || op == b'/' {
-                let rhs = self.expr_number_factor()?;
-                width = if op == b'*' {
-                    width * rhs
-                } else if rhs == 0 {
-                    self.report_error("Arithmetic overflow.");
-                    0
-                } else {
-                    expr_quotient_i128(width, rhs)
-                };
-                continue;
-            }
-            let term = self.glue_expr_term(mu)?;
+            let term = self.glue_expr_mul_term(mu)?;
             if op == b'+' {
                 width += i128::from(term.width);
                 stretch += term.stretch;
@@ -497,7 +485,8 @@ impl Expander {
                 shrink_order = term.shrink_order;
             }
         }
-        // 仅一项（无任何运算符）：保留 first 的完整 order（0 值分量的阶也保留）
+        // 仅一项（无任何运算符）：保留 first 的完整 order（0 值分量的阶也保留，
+        // etrip L949：`\glueexpr\mutoglue\muexpr\gluetomu\skip5` 的 0shrink 保留 fil）
         if !has_op {
             stretch_order = first.stretch_order;
             shrink_order = first.shrink_order;
@@ -514,6 +503,29 @@ impl Expander {
             stretch_order,
             shrink_order,
         })
+    }
+
+    /// 胶水乘法项：`<胶水项> (('*'|'/') <factor>)*`——`*/` 优先级高于 `+ -`，
+    /// 作用于**本项**（`7pt+12pt/4` = 7pt + (12pt/4)，etrip L888）。
+    fn glue_expr_mul_term(&mut self, mu: bool) -> Result<Glue> {
+        let mut g = self.glue_expr_term(mu)?;
+        while let Some(op) = self.peek_int_op()? {
+            if op != b'*' && op != b'/' {
+                self.unread(Token::char(Catcode::Other, op as u32));
+                break;
+            }
+            let rhs = self.expr_number_factor()?;
+            let w = if op == b'*' {
+                i128::from(g.width) * rhs
+            } else if rhs == 0 {
+                self.report_error("Arithmetic overflow.");
+                0
+            } else {
+                expr_quotient_i128(i128::from(g.width), rhs)
+            };
+            g.width = w as i64;
+        }
+        Ok(g)
     }
 
     /// 胶水表达式项：`( <expr> )` 括号或 [`Self::scan_glue`]/[`Self::scan_glue_mu`]。

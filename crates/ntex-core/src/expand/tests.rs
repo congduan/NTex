@@ -743,15 +743,8 @@ mod tests {
         let src = format!("{pre}\n{body}\n");
         let mut e = Expander::new();
         e.set_sink(Box::new(VecSink::default()));
-        match e.run_source(&src) {
-            Ok(()) => {
-                let sink = e.take_sink();
-                let mut sink = sink;
-                let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
-                eprintln!("[dbg-etripbox] transcript={:?}", sink.transcript);
-            }
-            Err(err) => eprintln!("[dbg-etripbox] ERR={err}"),
-        }
+        // 运行验证不 panic（错误细节由 ETRIP 全量覆盖）
+        let _ = e.run_source(&src);
         // 数字 cs 词法：\22000 应为 \2 + 2000（数字 catcode 12 → 单字符 cs）
         assert_eq!(expand("\\def\\2{X}\\22000").unwrap(), "X2000");
         // \the\count2000（原语 \count + 数字，etrip \the\22000 模式）
@@ -785,44 +778,68 @@ mod tests {
                 .unwrap(),
             "2"
         );
-
-        // etrip.tex L983-1050 段（\4 寄存器测试驱动器 + \8 + box 寄存器段）：
-        // 复现完整上下文的 Missing number / "You can't use \the"
-        let path2 = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../fixtures/etrip/etrip.tex"
-        );
-        let full2 = std::fs::read_to_string(path2).unwrap();
-        let lines2: Vec<&str> = full2.lines().collect();
-        let pre2 = r"\def\typeout{\immediate\write15 }
-\def\error#1{\immediate\write15{Bug in your e-TeX implementation!}\immediate\write15 }
-\def\empty{} \def\space{ }
-\chardef\zero=0\chardef\one=1\chardef\two=2
-\newlinechar=`^^J";
-        let body2 = format!("{}\n", lines2[982..1050].join("\n"));
-        let src2 = format!("{pre2}\n{body2}\n");
-        let mut e = Expander::new();
-        e.set_sink(Box::new(VecSink::default()));
-        match e.run_source(&src2) {
-            Ok(()) => {
-                let sink = e.take_sink();
-                let mut sink = sink;
-                let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
-                eprintln!("[dbg-etrip4] transcript={:?}", sink.transcript);
-                let has_missing = sink.transcript.contains("Missing number");
-                eprintln!("[dbg-etrip4] has_missing={has_missing}");
-            }
-            Err(err) => eprintln!("[dbg-etrip4] ERR={err}"),
-        }
     }
 
     #[test]
-    fn gluestretchorder_cant_use_repro() {
-        // etrip.tex L932-933：\gluestretchorder \gluestretch（can't use 错误场景）
+    fn expr_cross_group_and_glue_preservation() {
+        // ── eTeX 表达式跨组（etrip L880-888 运算符优先级段；scan_number/scan_dimen
+        // 组处理 + 正号放回 + glueexpr 优先级修复的回归）──
+        // \numexpr{1+}{2*3} = 1 + 2*3 = 7（组内运算符放回、组 } 消费）
+        assert_eq!(expand("\\the\\numexpr{1+}{2*3}").unwrap(), "7");
+        // \glueexpr{7pt+}{12pt/4} = 7pt + 12pt/4 = 10pt（跨组 + 优先级：/ 绑定项）
+        assert_eq!(expand("\\the\\glueexpr{7pt+}{12pt/4}").unwrap(), "10.0pt");
         assert_eq!(
-            expand("\\gluestretchorder \\gluestretch\\skip5=1ptminus0fil\\ifnum\\gluestretchorder\\skip5=0 yes\\else no\\fi")
-                .unwrap(),
+            expand("\\ifdim\\glueexpr{7pt+}{12pt/4}=10pt yes\\else no\\fi").unwrap(),
             "yes"
+        );
+        // \1 宏实参收集场景（etrip L879）：#3={1+} #4={2*3} 组实参展开后表达式求值
+        assert_eq!(
+            expand("\\def\\1#1#2#3#4{#1#2#3#4=#2#3(#4)\\else X\\fi}\\1\\ifnum\\numexpr{1+}{2*3}")
+                .unwrap(),
+            ""
+        );
+        // ── 胶水寄存器 fil 赋值 + \the 读回（\relax 终止单位扫描，避免 \the 被吞）──
+        assert_eq!(
+            expand("\\skip43=4pt plus 3fil\\relax\\the\\skip43").unwrap(),
+            "4.0pt plus 3.0fil"
+        );
+        // ── 括号表达式 + 前导量（etrip L869-873 表达式段逐项）──
+        assert_eq!(
+            expand("\\skip43=4pt plus 3fil\\relax\\the\\glueexpr(\\skip43)+3pt").unwrap(),
+            "7.0pt plus 3.0fil"
+        );
+        assert_eq!(
+            expand("\\count43=2\\skip43=4pt plus 3fil\\relax\\the\\dimexpr\\skip43+\\count43pt")
+                .unwrap(),
+            "6.0pt"
+        );
+        assert_eq!(
+            expand(
+                "\\count43=2\\skip43=4pt plus 3fil\\relax\\the\\dimexpr(\\skip43)+(\\count43pt)"
+            )
+            .unwrap(),
+            "6.0pt"
+        );
+        assert_eq!(
+            expand("\\count43=2\\skip43=4pt plus 3fil\\relax\\the\\glueexpr\\skip43/\\count43")
+                .unwrap(),
+            "2.0pt plus 3.0fil"
+        );
+        assert_eq!(
+            expand("\\muskip43=5mu minus 1mu\\relax\\the\\muexpr(\\muskip43)+3muplus1fill")
+                .unwrap(),
+            "8.0mu plus 1.0fill minus 1.0mu"
+        );
+        assert_eq!(
+            expand("\\count43=2\\skip43=4pt plus 3fil\\relax\\the\\glueexpr\\skip43*2/3")
+                .unwrap(),
+            "2.66667pt plus 3.0fil"
+        );
+        // ── 表达式单独用（can't use 测试）后 \let 定义不受污染（etrip L764-766）──
+        assert_eq!(
+            expand("\\numexpr \\dimexpr \\glueexpr \\muexpr \\let\\9=\\relax \\ifx\\9\\relax T\\else F\\fi")
+                .unwrap(),
+            "0T"
         );
     }
 
