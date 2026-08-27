@@ -821,6 +821,46 @@ impl Expander {
                 let v = self.scan_dimen()?;
                 self.assign_param(ParamKind::PrevDepth, ParamValue::Dimen(v))
             }
+            // TRIP 冲刺：补充标准胶水参数（\hangindent/\spaceskip/\tabskip/
+            // \lastskip/\splittopskip——普通槽存储；只读语义（\lastskip）暂不区分）
+            Primitive::HangIndent
+            | Primitive::SpaceSkip
+            | Primitive::TabSkip
+            | Primitive::LastSkip
+            | Primitive::SplitTopSkip => {
+                let g = self.scan_glue()?;
+                let kind = match prim {
+                    Primitive::HangIndent => ParamKind::HangIndent,
+                    Primitive::SpaceSkip => ParamKind::SpaceSkip,
+                    Primitive::TabSkip => ParamKind::TabSkip,
+                    Primitive::LastSkip => ParamKind::LastSkip,
+                    _ => ParamKind::SplitTopSkip,
+                };
+                self.assign_param(kind, ParamValue::Glue(g))
+            }
+            // TRIP 冲刺：补充标准尺寸参数（\hfuzz/\vfuzz/\boxmaxdepth/\splitmaxdepth/
+            // \emergencystretch/\displayindent/\delimitershortfall/\lastkern）
+            Primitive::Hfuzz
+            | Primitive::Vfuzz
+            | Primitive::BoxMaxDepth
+            | Primitive::SplitMaxDepth
+            | Primitive::EmergencyStretch
+            | Primitive::DisplayIndent
+            | Primitive::DelimiterShortfall
+            | Primitive::LastKern => {
+                let v = self.scan_dimen()?;
+                let kind = match prim {
+                    Primitive::Hfuzz => ParamKind::Hfuzz,
+                    Primitive::Vfuzz => ParamKind::Vfuzz,
+                    Primitive::BoxMaxDepth => ParamKind::BoxMaxDepth,
+                    Primitive::SplitMaxDepth => ParamKind::SplitMaxDepth,
+                    Primitive::EmergencyStretch => ParamKind::EmergencyStretch,
+                    Primitive::DisplayIndent => ParamKind::DisplayIndent,
+                    Primitive::DelimiterShortfall => ParamKind::DelimiterShortfall,
+                    _ => ParamKind::LastKern,
+                };
+                self.assign_param(kind, ParamValue::Dimen(v))
+            }
             Primitive::InterLinePenalty
             | Primitive::ClubPenalty
             | Primitive::WidowPenalty

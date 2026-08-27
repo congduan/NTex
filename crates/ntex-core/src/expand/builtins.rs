@@ -1,8 +1,9 @@
 /// 内建原语注册表：`名字 → Primitive` 的单一事实源。
 ///
-/// 335 项（`\muexpr` 为 `Glueexpr` 的别名，故比 `Primitive::ALL` 多一项），
+/// 348 项（`\muexpr` 为 `Glueexpr` 的别名，故比 `Primitive::ALL` 多一项；
+/// TRIP 冲刺补充 13 个标准参数原语），
 /// 供 `register_builtins` 注册与 `tests.rs` 的一致性测试共用。
-pub(crate) const BUILTINS: [(&str, Primitive); 335] = [
+pub(crate) const BUILTINS: [(&str, Primitive); 348] = [
     ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -410,6 +411,20 @@ pub(crate) const BUILTINS: [(&str, Primitive); 335] = [
             ("clubpenalty", Primitive::ClubPenalty),
             ("widowpenalty", Primitive::WidowPenalty),
             ("displaywidowpenalty", Primitive::DisplayWidowPenalty),
+            // TRIP 冲刺：补充标准参数原语
+            ("hangindent", Primitive::HangIndent),
+            ("spaceskip", Primitive::SpaceSkip),
+            ("tabskip", Primitive::TabSkip),
+            ("lastskip", Primitive::LastSkip),
+            ("hfuzz", Primitive::Hfuzz),
+            ("vfuzz", Primitive::Vfuzz),
+            ("boxmaxdepth", Primitive::BoxMaxDepth),
+            ("splitmaxdepth", Primitive::SplitMaxDepth),
+            ("splittopskip", Primitive::SplitTopSkip),
+            ("emergencystretch", Primitive::EmergencyStretch),
+            ("displayindent", Primitive::DisplayIndent),
+            ("delimitershortfall", Primitive::DelimiterShortfall),
+            ("lastkern", Primitive::LastKern),
             // ETRIP 第二波：列表尾操作
             ("unskip", Primitive::UnSkip),
             ("lastpenalty", Primitive::LastPenalty),

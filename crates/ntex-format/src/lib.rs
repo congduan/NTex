@@ -127,6 +127,30 @@ pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
     ] {
         w.write_all(&v.to_le_bytes())?;
     }
+    // TRIP 冲刺（v12 追加）：补充标准参数原语（\hangindent/\spaceskip/\tabskip/
+    // \lastskip/\splittopskip 胶水 + \hfuzz/\vfuzz/\boxmaxdepth/\splitmaxdepth/
+    // \emergencystretch/\displayindent/\delimitershortfall/\lastkern 尺寸）
+    for g in [
+        p.hangindent,
+        p.spaceskip,
+        p.tabskip,
+        p.lastskip,
+        p.splittopskip,
+    ] {
+        write_glue(w, g)?;
+    }
+    for v in [
+        p.hfuzz,
+        p.vfuzz,
+        p.boxmaxdepth,
+        p.splitmaxdepth,
+        p.emergencystretch,
+        p.displayindent,
+        p.delimitershortfall,
+        p.lastkern,
+    ] {
+        w.write_all(&v.to_le_bytes())?;
+    }
 
     // output_toks
     write_opt_tokens(w, state.output_toks.as_deref())?;
@@ -224,6 +248,19 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
     let clubpenalty = read_i64(r)?;
     let widowpenalty = read_i64(r)?;
     let displaywidowpenalty = read_i64(r)?;
+    let hangindent = read_glue(r)?;
+    let spaceskip = read_glue(r)?;
+    let tabskip = read_glue(r)?;
+    let lastskip = read_glue(r)?;
+    let splittopskip = read_glue(r)?;
+    let hfuzz = read_i64(r)?;
+    let vfuzz = read_i64(r)?;
+    let boxmaxdepth = read_i64(r)?;
+    let splitmaxdepth = read_i64(r)?;
+    let emergencystretch = read_i64(r)?;
+    let displayindent = read_i64(r)?;
+    let delimitershortfall = read_i64(r)?;
+    let lastkern = read_i64(r)?;
     let params = ntex_core::param::Params {
         parindent,
         baselineskip,
@@ -250,6 +287,19 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
         clubpenalty,
         widowpenalty,
         displaywidowpenalty,
+        hangindent,
+        spaceskip,
+        tabskip,
+        lastskip,
+        hfuzz,
+        vfuzz,
+        boxmaxdepth,
+        splitmaxdepth,
+        splittopskip,
+        emergencystretch,
+        displayindent,
+        delimitershortfall,
+        lastkern,
         endlinechar,
         newlinechar,
         defaulthyphenchar,

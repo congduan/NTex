@@ -59,6 +59,33 @@ pub enum ParamKind {
     WidowPenalty,
     /// `\displaywidowpenalty`：显示公式前段尾行断页惩罚（plain 默认 50）。
     DisplayWidowPenalty,
+    // TRIP 冲刺：补充标准参数
+    /// `\hangindent`：TRIP 冲刺补充标准参数。
+    HangIndent,
+    /// `\spaceskip`：TRIP 冲刺补充标准参数。
+    SpaceSkip,
+    /// `\tabskip`：TRIP 冲刺补充标准参数。
+    TabSkip,
+    /// `\lastskip`：TRIP 冲刺补充标准参数。
+    LastSkip,
+    /// `\hfuzz`：TRIP 冲刺补充标准参数。
+    Hfuzz,
+    /// `\vfuzz`：TRIP 冲刺补充标准参数。
+    Vfuzz,
+    /// `\boxmaxdepth`：TRIP 冲刺补充标准参数。
+    BoxMaxDepth,
+    /// `\splitmaxdepth`：TRIP 冲刺补充标准参数。
+    SplitMaxDepth,
+    /// `\splittopskip`：TRIP 冲刺补充标准参数。
+    SplitTopSkip,
+    /// `\emergencystretch`：TRIP 冲刺补充标准参数。
+    EmergencyStretch,
+    /// `\displayindent`：TRIP 冲刺补充标准参数。
+    DisplayIndent,
+    /// `\delimitershortfall`：TRIP 冲刺补充标准参数。
+    DelimiterShortfall,
+    /// `\lastkern`：TRIP 冲刺补充标准参数。
+    LastKern,
     // ETRIP 冲刺：TeX 内部整数参数（非排版参数，仅存储/回读）
     /// `\endlinechar`：行尾字符（TeX initex 默认 13 = CR；-1 表示不追加）。
     EndlineChar,
@@ -209,6 +236,32 @@ pub struct Params {
     pub widowpenalty: i64,
     /// `\displaywidowpenalty`（plain 默认 50）。
     pub displaywidowpenalty: i64,
+    /// TRIP 冲刺补充：`\hangindent`。
+    pub hangindent: Glue,
+    /// TRIP 冲刺补充：`\spaceskip`。
+    pub spaceskip: Glue,
+    /// TRIP 冲刺补充：`\tabskip`。
+    pub tabskip: Glue,
+    /// TRIP 冲刺补充：`\lastskip`。
+    pub lastskip: Glue,
+    /// TRIP 冲刺补充：`\hfuzz`。
+    pub hfuzz: i64,
+    /// TRIP 冲刺补充：`\vfuzz`。
+    pub vfuzz: i64,
+    /// TRIP 冲刺补充：`\boxmaxdepth`。
+    pub boxmaxdepth: i64,
+    /// TRIP 冲刺补充：`\splitmaxdepth`。
+    pub splitmaxdepth: i64,
+    /// TRIP 冲刺补充：`\splittopskip`。
+    pub splittopskip: Glue,
+    /// TRIP 冲刺补充：`\emergencystretch`。
+    pub emergencystretch: i64,
+    /// TRIP 冲刺补充：`\displayindent`。
+    pub displayindent: i64,
+    /// TRIP 冲刺补充：`\delimitershortfall`。
+    pub delimitershortfall: i64,
+    /// TRIP 冲刺补充：`\lastkern`。
+    pub lastkern: i64,
     /// `\endlinechar`（TeX initex 默认 13）。
     pub endlinechar: i64,
     /// `\newlinechar`（TeX 默认 -1 = 未激活）。
@@ -269,6 +322,19 @@ impl Default for Params {
             clubpenalty: 150,
             widowpenalty: 150,
             displaywidowpenalty: 50,
+            hangindent: Glue::ZERO,
+            spaceskip: Glue::ZERO,
+            tabskip: Glue::ZERO,
+            lastskip: Glue::ZERO,
+            hfuzz: SP_PER_PT / 10,
+            vfuzz: SP_PER_PT / 10,
+            boxmaxdepth: 16_384 * SP_PER_PT,
+            splitmaxdepth: 16_384 * SP_PER_PT,
+            splittopskip: Glue::new(10 * SP_PER_PT, 0, 0),
+            emergencystretch: 0,
+            displayindent: 0,
+            delimitershortfall: 5 * SP_PER_PT,
+            lastkern: 0,
             // TeX 内部整数参数（initex 默认）
             endlinechar: 13,
             newlinechar: -1,
@@ -314,6 +380,19 @@ impl Params {
             ParamKind::ClubPenalty => ParamValue::Number(self.clubpenalty),
             ParamKind::WidowPenalty => ParamValue::Number(self.widowpenalty),
             ParamKind::DisplayWidowPenalty => ParamValue::Number(self.displaywidowpenalty),
+            ParamKind::HangIndent => ParamValue::Glue(self.hangindent),
+            ParamKind::SpaceSkip => ParamValue::Glue(self.spaceskip),
+            ParamKind::TabSkip => ParamValue::Glue(self.tabskip),
+            ParamKind::LastSkip => ParamValue::Glue(self.lastskip),
+            ParamKind::Hfuzz => ParamValue::Dimen(self.hfuzz),
+            ParamKind::Vfuzz => ParamValue::Dimen(self.vfuzz),
+            ParamKind::BoxMaxDepth => ParamValue::Dimen(self.boxmaxdepth),
+            ParamKind::SplitMaxDepth => ParamValue::Dimen(self.splitmaxdepth),
+            ParamKind::SplitTopSkip => ParamValue::Glue(self.splittopskip),
+            ParamKind::EmergencyStretch => ParamValue::Dimen(self.emergencystretch),
+            ParamKind::DisplayIndent => ParamValue::Dimen(self.displayindent),
+            ParamKind::DelimiterShortfall => ParamValue::Dimen(self.delimitershortfall),
+            ParamKind::LastKern => ParamValue::Dimen(self.lastkern),
             ParamKind::EndlineChar => ParamValue::Number(self.endlinechar),
             ParamKind::NewlineChar => ParamValue::Number(self.newlinechar),
             ParamKind::DefaultHyphenChar => ParamValue::Number(self.defaulthyphenchar),
@@ -359,6 +438,19 @@ impl Params {
             (ParamKind::ClubPenalty, ParamValue::Number(v)) => self.clubpenalty = v,
             (ParamKind::WidowPenalty, ParamValue::Number(v)) => self.widowpenalty = v,
             (ParamKind::DisplayWidowPenalty, ParamValue::Number(v)) => self.displaywidowpenalty = v,
+            (ParamKind::HangIndent, ParamValue::Glue(v)) => self.hangindent = v,
+            (ParamKind::SpaceSkip, ParamValue::Glue(v)) => self.spaceskip = v,
+            (ParamKind::TabSkip, ParamValue::Glue(v)) => self.tabskip = v,
+            (ParamKind::LastSkip, ParamValue::Glue(v)) => self.lastskip = v,
+            (ParamKind::Hfuzz, ParamValue::Dimen(v)) => self.hfuzz = v,
+            (ParamKind::Vfuzz, ParamValue::Dimen(v)) => self.vfuzz = v,
+            (ParamKind::BoxMaxDepth, ParamValue::Dimen(v)) => self.boxmaxdepth = v,
+            (ParamKind::SplitMaxDepth, ParamValue::Dimen(v)) => self.splitmaxdepth = v,
+            (ParamKind::SplitTopSkip, ParamValue::Glue(v)) => self.splittopskip = v,
+            (ParamKind::EmergencyStretch, ParamValue::Dimen(v)) => self.emergencystretch = v,
+            (ParamKind::DisplayIndent, ParamValue::Dimen(v)) => self.displayindent = v,
+            (ParamKind::DelimiterShortfall, ParamValue::Dimen(v)) => self.delimitershortfall = v,
+            (ParamKind::LastKern, ParamValue::Dimen(v)) => self.lastkern = v,
             (ParamKind::EndlineChar, ParamValue::Number(v)) => self.endlinechar = v,
             (ParamKind::NewlineChar, ParamValue::Number(v)) => self.newlinechar = v,
             (ParamKind::DefaultHyphenChar, ParamValue::Number(v)) => self.defaulthyphenchar = v,

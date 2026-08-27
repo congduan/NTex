@@ -319,6 +319,19 @@ impl Expander {
                 | Primitive::NewlineChar
                 | Primitive::DefaultHyphenChar
                 | Primitive::DefaultSkewChar
+                | Primitive::HangIndent
+                | Primitive::SpaceSkip
+                | Primitive::TabSkip
+                | Primitive::LastSkip
+                | Primitive::SplitTopSkip
+                | Primitive::Hfuzz
+                | Primitive::Vfuzz
+                | Primitive::BoxMaxDepth
+                | Primitive::SplitMaxDepth
+                | Primitive::EmergencyStretch
+                | Primitive::DisplayIndent
+                | Primitive::DelimiterShortfall
+                | Primitive::LastKern
                 | Primitive::Mag => {
                     let kind = match p {
                         Primitive::ParIndent => ParamKind::ParIndent,
@@ -341,6 +354,19 @@ impl Expander {
                         Primitive::NewlineChar => ParamKind::NewlineChar,
                         Primitive::DefaultHyphenChar => ParamKind::DefaultHyphenChar,
                         Primitive::DefaultSkewChar => ParamKind::DefaultSkewChar,
+                        Primitive::HangIndent => ParamKind::HangIndent,
+                        Primitive::SpaceSkip => ParamKind::SpaceSkip,
+                        Primitive::TabSkip => ParamKind::TabSkip,
+                        Primitive::LastSkip => ParamKind::LastSkip,
+                        Primitive::SplitTopSkip => ParamKind::SplitTopSkip,
+                        Primitive::Hfuzz => ParamKind::Hfuzz,
+                        Primitive::Vfuzz => ParamKind::Vfuzz,
+                        Primitive::BoxMaxDepth => ParamKind::BoxMaxDepth,
+                        Primitive::SplitMaxDepth => ParamKind::SplitMaxDepth,
+                        Primitive::EmergencyStretch => ParamKind::EmergencyStretch,
+                        Primitive::DisplayIndent => ParamKind::DisplayIndent,
+                        Primitive::DelimiterShortfall => ParamKind::DelimiterShortfall,
+                        Primitive::LastKern => ParamKind::LastKern,
                         Primitive::NullDelimiterSpace => ParamKind::NullDelimiterSpace,
                         Primitive::ScriptSpace => ParamKind::ScriptSpace,
                         Primitive::OverfullRule => ParamKind::OverfullRule,
