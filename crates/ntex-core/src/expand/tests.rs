@@ -696,6 +696,127 @@ mod tests {
     }
 
     #[test]
+    fn nested_param_in_macro_arg_repro() {
+        // ETRIP etrip.tex L1038：\def\1#1{\2{3210#1}}，\11 调用时 #1 应被替换
+        // 为实参 1（\2 实参 = 32101），而非保持 macro_param 导致 3210+Param(1)
+        // 错位（\ifvbox 读到 Param → Missing number）。
+        // 对照：字母宏名（应正常）
+        assert_eq!(expand("\\def\\a#1{ARG=#1}\\a{abc}").unwrap(), "ARG=abc");
+        // 最小链拆解：\2 单独调用（数字 cs）
+        assert_eq!(expand("\\def\\2#1{ARG=#1}\\2{abc}").unwrap(), "ARG=abc");
+        // 最小链拆解：\1 单独定义+调用（无嵌套）
+        assert_eq!(expand("\\def\\1#1{X#1}\\1{5}").unwrap(), "X5");
+        // 直接输出实参内容：期望 ARG=32101（实参 3210 后跟 \1 的实参 1）
+        // 注意：% 后必须真实换行（Rust `%\` 续行会把 % 注释吞到 EOF！）
+        let src = "\\def\\2#1{ARG=#1}%\n\\def\\1#1{\\2{3210#1}}%\n\\1{5}";
+        assert_eq!(expand(src).unwrap(), "ARG=32105");
+        // \11 词法：\1 + 数字 1（catcode 12 → 单字符 cs）
+        let src2 = "\\def\\2#1{ARG=#1}%\n\\def\\1#1{\\2{3210#1}}%\n\\11";
+        assert_eq!(expand(src2).unwrap(), "ARG=32101");
+        // e-TeX 大寄存器号（etrip L1039 \setbox32101；e-Trip 扩展 32768 寄存器）：
+        // \ifhbox32101 不应 Missing number / Bad register code。
+        // 注：VecSink 环境 setbox 是 no-op（box 未设置 → \ifhbox 假、\hbox{X} 输出 X），
+        // 这里只断言无 Missing number 报错（真实 sink 由 etrip 段验证）。
+        let bigsrc = "\\setbox32101=\\hbox{X}\\ifhbox32101 A\\else B\\fi";
+        let mut e = Expander::new();
+        e.set_sink(Box::new(VecSink::default()));
+        e.run_source(bigsrc).unwrap();
+        let sink = e.take_sink();
+        let mut sink = sink;
+        let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+        assert!(
+            !sink.transcript.contains("Missing number"),
+            "大寄存器号不应 Missing number：{}",
+            sink.transcript
+        );
+
+        // etrip.tex L1020-1050 段复现（box 寄存器测试：\setbox32101 + \11 调用）
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/etrip/etrip.tex"
+        );
+        let full = std::fs::read_to_string(path).unwrap();
+        let lines: Vec<&str> = full.lines().collect();
+        let pre = r"\def\typeout{\immediate\write15 }
+\def\error#1{\immediate\write15{Bug in your e-TeX implementation!}\immediate\write15 }";
+        let body = format!("{}\n", lines[1019..1050].join("\n"));
+        let src = format!("{pre}\n{body}\n");
+        let mut e = Expander::new();
+        e.set_sink(Box::new(VecSink::default()));
+        match e.run_source(&src) {
+            Ok(()) => {
+                let sink = e.take_sink();
+                let mut sink = sink;
+                let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+                eprintln!("[dbg-etripbox] transcript={:?}", sink.transcript);
+            }
+            Err(err) => eprintln!("[dbg-etripbox] ERR={err}"),
+        }
+        // 数字 cs 词法：\22000 应为 \2 + 2000（数字 catcode 12 → 单字符 cs）
+        assert_eq!(expand("\\def\\2{X}\\22000").unwrap(), "X2000");
+        // \the\count2000（原语 \count + 数字，etrip \the\22000 模式）
+        assert_eq!(expand("\\count2000=5\\the\\count2000").unwrap(), "5");
+        // \write15 内容走转录（VecSink）而非 output：
+        let mut e = Expander::new();
+        e.set_sink(Box::new(VecSink::default()));
+        e.run_source("\\count2000=5\\write15{\\the\\count2000}").unwrap();
+        let sink = e.take_sink();
+        let mut sink = sink;
+        let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+        assert_eq!(
+            sink.transcript, "5\n",
+            "\\write15 内 \\the\\count2000 应输出 5：{:?}",
+            sink.transcript
+        );
+        // \advance/\multiply/\divide 目标支持宏别名展开（etrip \edef\2{\csname
+        // count\endcsname} 模式：\advance\22000by3 = \advance\count2000by3）
+        assert_eq!(
+            expand("\\count2000=5\\edef\\2{\\csname count\\endcsname}\\advance\\22000by3\\the\\count2000")
+                .unwrap(),
+            "8"
+        );
+        assert_eq!(
+            expand("\\count2000=5\\edef\\2{\\csname count\\endcsname}\\multiply\\22000by3\\the\\count2000")
+                .unwrap(),
+            "15"
+        );
+        assert_eq!(
+            expand("\\count2000=12\\edef\\2{\\csname count\\endcsname}\\divide\\22000by5\\the\\count2000")
+                .unwrap(),
+            "2"
+        );
+
+        // etrip.tex L983-1050 段（\4 寄存器测试驱动器 + \8 + box 寄存器段）：
+        // 复现完整上下文的 Missing number / "You can't use \the"
+        let path2 = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/etrip/etrip.tex"
+        );
+        let full2 = std::fs::read_to_string(path2).unwrap();
+        let lines2: Vec<&str> = full2.lines().collect();
+        let pre2 = r"\def\typeout{\immediate\write15 }
+\def\error#1{\immediate\write15{Bug in your e-TeX implementation!}\immediate\write15 }
+\def\empty{} \def\space{ }
+\chardef\zero=0\chardef\one=1\chardef\two=2
+\newlinechar=`^^J";
+        let body2 = format!("{}\n", lines2[982..1050].join("\n"));
+        let src2 = format!("{pre2}\n{body2}\n");
+        let mut e = Expander::new();
+        e.set_sink(Box::new(VecSink::default()));
+        match e.run_source(&src2) {
+            Ok(()) => {
+                let sink = e.take_sink();
+                let mut sink = sink;
+                let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+                eprintln!("[dbg-etrip4] transcript={:?}", sink.transcript);
+                let has_missing = sink.transcript.contains("Missing number");
+                eprintln!("[dbg-etrip4] has_missing={has_missing}");
+            }
+            Err(err) => eprintln!("[dbg-etrip4] ERR={err}"),
+        }
+    }
+
+    #[test]
     fn gluestretchorder_cant_use_repro() {
         // etrip.tex L932-933：\gluestretchorder \gluestretch（can't use 错误场景）
         assert_eq!(

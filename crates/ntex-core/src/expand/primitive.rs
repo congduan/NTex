@@ -1795,18 +1795,47 @@ impl Expander {
         Ok(())
     }
 
+    /// 读取寄存器运算目标（`\advance/\multiply/\divide` 共用）：TeX get_x_token
+    /// 语义——宏别名（etrip `\edef\2{\csname count\endcsname}` 使 `\advance\22000by…`
+    /// 即 `\advance\count2000by…`）与 `\let` 别名须展开/跟随到不可展开目标。
+    fn fetch_register_target(&mut self, prim_name: &str) -> Result<u32> {
+        let mut tok = self
+            .fetch()?
+            .ok_or_else(|| Error::invalid_input(format!("{prim_name} 后缺少寄存器")))?
+            .0;
+        loop {
+            let Some(csid) = tok.csid() else {
+                return Err(Error::invalid_input(format!(
+                    "{prim_name} 后必须是寄存器"
+                )));
+            };
+            match self.eqtb.slot(csid).clone() {
+                // 宏别名：展开后压帧，继续读下一个 token（展开结果可能仍是宏）
+                EqSlot::Macro(m) if !(m.value.protected && self.suppress_expansion > 0) => {
+                    let mut expansion = Vec::new();
+                    self.expand_once((tok, false), &mut expansion)?;
+                    self.stack.push(InputFrame::TokenList {
+                        items: Arc::from(expansion),
+                        pos: 0,
+                    });
+                    tok = self
+                        .fetch()?
+                        .ok_or_else(|| Error::invalid_input(format!("{prim_name} 后缺少寄存器")))?
+                        .0;
+                }
+                // \let 别名：跟随目标
+                EqSlot::Alias(target) => tok = Token::control_sequence(target),
+                _ => return Ok(csid),
+            }
+        }
+    }
+
     /// `\advance<寄存器> <增量>`：寄存器运算（TeX arithmetic；etrip.tex 91 行
-    /// `\advance\count20 1`）。目标支持 `\count/\dimen/\skip/\muskip` 寄存器
+    /// `\advance\count20 1`）。目标支持 `\count/`\dimen/`\skip/`\muskip` 寄存器
     /// （数字下标或 `\countdef` 等 cs 绑定）与内部整数参数。
     fn exec_advance(&mut self) -> Result<()> {
         self.skip_spaces()?;
-        let tok = self
-            .fetch()?
-            .ok_or_else(|| Error::invalid_input("\\advance 后缺少寄存器"))?
-            .0;
-        let csid = tok
-            .csid()
-            .ok_or_else(|| Error::invalid_input("\\advance 后必须是寄存器"))?;
+        let csid = self.fetch_register_target("\\advance")?;
         match self.eqtb.slot(csid).clone() {
             EqSlot::Primitive(prim)
                 if matches!(
@@ -1917,13 +1946,7 @@ impl Expander {
     /// 除数为 0 时按 TeX 语义保持不变。
     fn exec_multiply_divide(&mut self, prim: Primitive) -> Result<()> {
         self.skip_spaces()?;
-        let tok = self
-            .fetch()?
-            .ok_or_else(|| Error::invalid_input("\\multiply/\\divide 后缺少寄存器"))?
-            .0;
-        let csid = tok
-            .csid()
-            .ok_or_else(|| Error::invalid_input("\\multiply/\\divide 后必须是寄存器"))?;
+        let csid = self.fetch_register_target("\\multiply/\\divide")?;
         match self.eqtb.slot(csid).clone() {
             EqSlot::Primitive(p)
                 if matches!(
