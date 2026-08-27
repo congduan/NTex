@@ -370,11 +370,13 @@ struct NodeBuilder {
     pending_shift: Option<i64>,
     /// `\\moveleft`/`\\moveright`：下一个封装盒子的水平位移（sp）。
     pending_hshift: Option<i64>,
-    /// `\\leaders`/`\\cleaders`/`\\xleaders`：已见引导符、等待其后的盒子。
+    /// `\leaders`/`\cleaders`/`\xleaders`：已见引导符、等待盒子。
     pending_leaders: Option<LeadersKind>,
-    /// 引导符盒子已就位（`\\leaders\\hbox{...}` 封装完成或 `\\leaders\\hrule`），
-    /// 等待 \\hskip/\\vskip 胶水组成 Leader 节点（tex.web box_end leader 分支）。
+    /// 引导符盒子已就位（`\leaders\hbox{...}` 封装完成 / `\leaders\hrule`）、等待胶水。
     leaders_box: Option<(LeadersKind, Node)>,
+    /// 诊断：累计追加节点数 + 最近追加节点（layout 侧死循环/OOM 定位用）。
+    nodes_appended: u64,
+    last_appended: String,
     /// 内部参数镜像（随 `param_changed` 事件更新，组作用域快照/恢复）。
     params: Params,
     /// 组开始时的参数快照（group_end 恢复）。
@@ -519,6 +521,8 @@ impl NodeBuilder {
             after_display: false,
             pending_leaders: None,
             leaders_box: None,
+            nodes_appended: 0,
+            last_appended: String::new(),
             transcript: String::new(),
             fonts,
             marks_top: std::collections::HashMap::new(),
@@ -586,6 +590,21 @@ impl NodeBuilder {
     }
 
     fn append(&mut self, node: Node) {
+        // 诊断：节点增长监控（TRIP L338 `\halign` 内挂死 = 列表无限增长 OOM；
+        // 死循环在 layout 侧不经 process_one，VM 看门狗不计数）。
+        self.nodes_appended += 1;
+        self.last_appended = format!("{node:?}");
+        if self.nodes_appended % 200_000 == 0 {
+            eprintln!(
+                "[layout-watchdog] nodes={} mode={:?} lists={} top_len={} groups={} last={:?}",
+                self.nodes_appended,
+                self.mode(),
+                self.lists.len(),
+                self.lists.last().map_or(0, |l| l.len()),
+                self.groups.len(),
+                self.last_appended
+            );
+        }
         self.lists.last_mut().expect("列表栈非空").push(node);
         // M3-5-2：顶层垂直模式追加后运行页面构建器（TeX build_page 的触发点）。
         // 增量（feed_one）：每产出一页即暂停——若定义了输出例程，让引擎在 token

@@ -1116,8 +1116,16 @@ mod tests {
 
     #[test]
     fn conditional_inside_group_must_close() {
-        // 组内开 \if 未闭合就 \endgroup → 错误
-        assert!(expand("\\begingroup\\iftrue A\\endgroup").is_err());
+        // TeX 语义：\if 跨组合法（组结束不要求条件闭合）；输入结束时未闭合
+        // 条件按 final_cleanup 报 "! Incomplete \iftrue; ..."（可恢复，不报错）。
+        // （旧断言 is_err 是错误语义——TRIP L413 `\iftrue` 开、L424 `\endinput`
+        // 结束即依赖此行为。）
+        let (r, t) = run_transcript("\\begingroup\\iftrue A\\endgroup");
+        assert!(r.is_ok(), "未闭合条件应可恢复：{t}");
+        assert!(
+            t.contains("! Incomplete \\iftrue; all text was ignored after line 1."),
+            "转录：{t}"
+        );
     }
 
     // ---------- M2-6 展开吞吐基准（手动运行：cargo test -p ntex-core -- --ignored） ----------

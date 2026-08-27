@@ -148,6 +148,8 @@ impl Expander {
                         else_seen: false,
                         saved_if_type: saved_type,
                         saved_if_branch: saved_branch,
+                        if_type: code,
+                        line: self.error_context().map(|(n, _)| n).unwrap_or(0),
                     });
                     return Ok(());
                 }
@@ -165,6 +167,8 @@ impl Expander {
                         else_seen: false,
                         saved_if_type: saved_type,
                         saved_if_branch: saved_branch,
+                        if_type: code,
+                        line: self.error_context().map(|(n, _)| n).unwrap_or(0),
                     });
                 } else {
                     // TeX：false 条件不压帧，立即 `skip_ahead` 到匹配的
@@ -192,6 +196,8 @@ impl Expander {
                         else_seen: false,
                         saved_if_type: saved_type,
                         saved_if_branch: saved_branch,
+                        if_type: code,
+                        line: self.error_context().map(|(n, _)| n).unwrap_or(0),
                     });
                     return Ok(());
                 }
@@ -210,6 +216,8 @@ impl Expander {
                     else_seen: false,
                     saved_if_type: saved_type,
                     saved_if_branch: saved_branch,
+                    if_type: code,
+                    line: self.error_context().map(|(n, _)| n).unwrap_or(0),
                 });
                 Ok(())
             }
@@ -287,6 +295,8 @@ impl Expander {
                         else_seen: false,
                         saved_if_type: self.cur_if_type,
                         saved_if_branch: self.cur_if_branch,
+                        if_type: Self::if_type_code(op),
+                        line: self.error_context().map(|(n, _)| n).unwrap_or(0),
                     });
                 }
             }
@@ -312,13 +322,15 @@ impl Expander {
                     else_seen: true,
                     saved_if_type: saved_type,
                     saved_if_branch: saved_branch,
+                    if_type: saved_type,
+                    line: self.error_context().map(|(n, _)| n).unwrap_or(0),
                 });
                 Ok(())
             }
             CondOp::Or => {
                 // 非 case 条件的 \or 是错误（TeX：! Extra \or.），保守恢复：
                 // 压 Processing 帧让后续 \fi 正常闭合。
-                let _ = self.sink.write16("! Extra \\or.\n".to_string());
+                let _ = self.sink.write16("! Extra \\\\or.\n".to_string());
                 self.cur_if_branch = -1;
                 self.cond_stack.push(CondFrame {
                     is_case: false,
@@ -328,6 +340,8 @@ impl Expander {
                     else_seen: true,
                     saved_if_type: saved_type,
                     saved_if_branch: saved_branch,
+                    if_type: saved_type,
+                    line: self.error_context().map(|(n, _)| n).unwrap_or(0),
                 });
                 Ok(())
             }
@@ -364,6 +378,34 @@ impl Expander {
             CondOp::IfFontChar => 20,
             CondOp::IfPrimitive => 21,
             _ => 0,
+        }
+    }
+
+    /// 条件类型码 → TeX 显示名（`Incomplete \ifxxx` 消息；tex.web if_type_name 语义）。
+    fn if_type_name(code: i32) -> &'static str {
+        match code.abs() {
+            1 => "\\if",
+            2 => "\\ifcat",
+            3 => "\\ifnum",
+            4 => "\\ifdim",
+            5 => "\\ifodd",
+            6 => "\\ifvmode",
+            7 => "\\ifhmode",
+            8 => "\\ifmmode",
+            9 => "\\ifinner",
+            10 => "\\ifvoid",
+            11 => "\\ifhbox",
+            12 => "\\ifvbox",
+            13 => "\\ifx",
+            14 => "\\ifeof",
+            15 => "\\iftrue",
+            16 => "\\iffalse",
+            17 => "\\ifcase",
+            18 => "\\ifdefined",
+            19 => "\\ifcsname",
+            20 => "\\iffontchar",
+            21 => "\\ifprimitive",
+            _ => "\\if",
         }
     }
 

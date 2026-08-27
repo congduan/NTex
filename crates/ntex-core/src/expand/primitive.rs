@@ -1691,10 +1691,20 @@ impl Expander {
 
     /// TRIP：`\endinput`：终止当前输入文件（tex.web end_input；trip.tex l.424
     /// `\endinput\input % one line of tripos`），弹出栈顶 Source 帧。
+    /// 若结束的是**主输入文件** → 作业结束（tex.web final_cleanup：未闭合
+    /// 组/数学直接丢弃，只报 Incomplete 条件）——置 `ended` 让排版器收尾
+    /// 走宽松路径（此前报"数学模式未闭合"内部错误卡住 TRIP）。
     fn exec_endinput(&mut self) -> Result<()> {
         for i in (0..self.stack.len()).rev() {
             if matches!(self.stack[i], InputFrame::Source { .. }) {
                 self.stack.truncate(i);
+                if self
+                    .stack
+                    .iter()
+                    .all(|f| !matches!(f, InputFrame::Source { .. }))
+                {
+                    self.ended = true;
+                }
                 break;
             }
         }

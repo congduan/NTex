@@ -605,6 +605,14 @@ impl Expander {
                 EqSlot::Primitive(p) if p.is_expandable() => {
                     let mut expansion = Vec::new();
                     self.expand_once((tok, noexpand), &mut expansion)?;
+                    // expand_once 不识别但声明可展开的原语（\uppercase/\lowercase/
+                    // \char/\romannumeral 等）：原样返回自身——若压帧会无限循环
+                    // （TRIP L338 `\edef\A{\uppercase{...}}` 曾因此 OOM 挂死）。
+                    // TeX scan_toks 语义：展开不成则**执行**（扫描参数 + 发射结果）。
+                    if expansion.len() == 1 && expansion[0].0 == tok {
+                        self.exec_primitive(p)?;
+                        continue;
+                    }
                     if expansion.is_empty() {
                         continue;
                     }

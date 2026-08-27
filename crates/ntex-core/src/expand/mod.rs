@@ -17,7 +17,8 @@
 //! - 空行 → `\par` 已实现（`scan_token` 行状态机，A2）。
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::bytecode::{compile, Bytecode};
 use crate::catcode::{Catcode, CatcodeTable};
@@ -95,6 +96,10 @@ struct CondFrame {
     /// 进入该条件前的外层 `cur_if_type`/`cur_if_branch`（`\fi` 时恢复）。
     saved_if_type: i32,
     saved_if_branch: i32,
+    /// 本条件类型码（`if_type_code`；输入结束报 `Incomplete \ifxxx` 用）。
+    if_type: i32,
+    /// 开条件时的源码行号（Incomplete 消息 "after line N"；tex.web final_cleanup）。
+    line: usize,
 }
 
 /// 条件操作（process_one 拦截的 token）。
@@ -331,11 +336,38 @@ pub struct FmtState {
     pub font_names: Vec<Option<String>>,
 }
 
+/// 线程看门狗共享状态（挂死诊断）。
+///
+/// `run()` 主循环每步更新心跳与状态快照；独立线程每 2s 检查心跳，
+/// 停更超过 10s（单步内部死循环 / layout 侧死循环导致 process_one 不返回）
+/// 即打印最后状态并退出（one-shot）。不参与 `.fmt` 序列化。
+#[derive(Debug, Default)]
+struct WatchdogShared {
+    /// 主循环最后心跳（UNIX 毫秒）。
+    heartbeat_ms: AtomicU64,
+    /// `run()` 正常结束标志（避免正常完成后误报）。
+    done: AtomicBool,
+    /// 最近处理 token（每步更新，卡死时必留痕）。
+    last_tok: Mutex<String>,
+    /// 状态快照（steps / 输入栈），每 5000 步刷新。
+    state: Mutex<String>,
+}
+
+/// 当前 UNIX 毫秒（线程看门狗心跳用）。
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 /// 展开引擎。
 #[derive(Debug)]
 pub struct Expander {
     intern: InternTable,
     eqtb: Eqtb,
+    /// 线程看门狗共享状态（挂死诊断；不参与 .fmt 序列化，run 时创建）。
+    watchdog: Option<Arc<WatchdogShared>>,
     catcodes: CatcodeTable,
     /// `\sfcode` 表（M3-4 词间距 spacefactor；TeX 默认全 1000，plain 对
     /// .,?!=3000、:=2000、;=1500、,=1250，由排版器按 plain 默认初始化）。
@@ -376,6 +408,8 @@ pub struct Expander {
     output_active: bool,
     /// 是否已执行显式 `\end`（finish 收尾对未闭合组/math 按 TeX 语义降级为警告）。
     ended: bool,
+    /// 最近一次处理的 token（watchdog/单步超时诊断用；不参与 .fmt 序列化）。
+    last_tok: Option<String>,
     /// 上一轮注入输出例程时待处理页面的数量（判断例程是否消费了 box255）。
     output_prev_count: usize,
     /// 是否启用字节码轨道（M2；解释器轨道用于双轨等价验证）。
@@ -477,9 +511,11 @@ impl Expander {
             params: Params::default(),
             font_loader: Box::new(NoFontLoader),
             font_names: Vec::new(),
+            watchdog: None,
             output_toks: None,
             output_active: false,
             ended: false,
+            last_tok: None,
             output_prev_count: usize::MAX,
             use_bytecode,
             vfs: Box::new(LocalVfs),
@@ -638,35 +674,76 @@ impl Expander {
     /// 放入 box255 并置 pending；本循环在每次取 token 前检查并注入例程 token 帧。
     pub fn run(&mut self) -> Result<()> {
         let mut steps = 0u64;
+        let mut step_start = std::time::Instant::now();
+        // 线程看门狗：独立执行上下文，主线程卡在单步内部（process_one 不返回）
+        // 或 layout 侧死循环时仍能打印最后状态（TRIP L338 挂死定位）。
+        let wd = Arc::new(WatchdogShared::default());
+        self.watchdog = Some(wd.clone());
+        {
+            let wd = wd.clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_millis(2000));
+                if wd.done.load(Ordering::Relaxed) {
+                    return;
+                }
+                let now = now_millis();
+                let hb = wd.heartbeat_ms.load(Ordering::Relaxed);
+                if now.saturating_sub(hb) > 10_000 {
+                    let last = wd
+                        .last_tok
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .clone();
+                    let state = wd.state.lock().unwrap_or_else(|p| p.into_inner()).clone();
+                    eprintln!(
+                        "[watchdog] 疑似挂死：{}ms 无心跳。last_tok={last} {state}",
+                        now.saturating_sub(hb)
+                    );
+                    return; // one-shot：报一次即退，避免刷屏
+                }
+            });
+        }
         loop {
             // 看门狗：防死循环（ETRIP 诊断用；正常作业远低于此）
             steps += 1;
+            // 心跳 + last_tok（每步）+ 状态快照（每 5000 步，卡死时保留最后状态）
+            wd.heartbeat_ms.store(now_millis(), Ordering::Relaxed);
+            *wd.last_tok.lock().unwrap_or_else(|p| p.into_inner()) =
+                self.last_tok.clone().unwrap_or_default();
+            if steps % 5000 == 0 {
+                let state = format!(
+                    "steps={steps} last_tok={:?} stack={}",
+                    self.last_tok,
+                    self.debug_stack_summary()
+                );
+                *wd.state.lock().unwrap_or_else(|p| p.into_inner()) = state;
+            }
             if steps > 10_000_000 {
-                let frames: Vec<String> = self
-                    .stack
-                    .iter()
-                    .map(|f| match f {
-                        InputFrame::Source { bytes, pos, state } => {
-                            format!("Source({}B,pos={},state={:?})", bytes.len(), pos, state)
-                        }
-                        InputFrame::Macro { body, pos, .. } => {
-                            format!("Macro({}tok,pos={})", body.len(), pos)
-                        }
-                        InputFrame::Bytecode { pc, .. } => format!("Bytecode(pc={})", pc),
-                        InputFrame::TokenList { items, pos } => {
-                            format!("TokenList({}tok,pos={})", items.len(), pos)
-                        }
-                        InputFrame::One { tok, .. } => format!("One({tok:?})"),
-                        InputFrame::OutputRoutine { items, pos } => {
-                            format!("OutputRoutine({}tok,pos={})", items.len(), pos)
-                        }
-                    })
-                    .collect();
+                wd.done.store(true, Ordering::Relaxed);
                 return Err(Error::invalid_input(format!(
                     "处理步骤超限（疑似死循环）；输入栈深 {}：{}",
                     self.stack.len(),
-                    frames.join(" | ")
+                    self.debug_stack_summary()
                 )));
+            }
+            // 诊断：定期进度日志（stderr 实时可见，进程被 SIGKILL 也不丢）
+            if steps % 50_000 == 0 {
+                eprintln!(
+                    "[watchdog] steps={steps} elapsed={:.1}s last_tok={:?} stack={}",
+                    step_start.elapsed().as_secs_f32(),
+                    self.last_tok,
+                    self.debug_stack_summary()
+                );
+            }
+            // 诊断：单步耗时看门狗——检查放 step **之前**（卡在单步内部时永远到不了
+            // step 之后的检查点）。超时 dump 当前状态（TRIP L338 `\halign` 内挂死）。
+            if step_start.elapsed().as_secs() >= 5 {
+                eprintln!(
+                    "[watchdog] 单步超时 5s steps={steps} last_tok={:?} stack={}",
+                    self.last_tok,
+                    self.debug_stack_summary()
+                );
+                step_start = std::time::Instant::now();
             }
             // A3：单步执行（注入输出例程 / flush 写流 / 处理一个 token）——
             // 出错时先写 `l.N` 上下文行到转录，再上抛（TeX error() 的上下文行）。
@@ -685,12 +762,19 @@ impl Expander {
                 Ok(false) => break,
                 Ok(true) => {}
                 Err(e) => {
+                    wd.done.store(true, Ordering::Relaxed);
                     self.report_error_context();
                     return Err(e);
                 }
             }
         }
+        wd.done.store(true, Ordering::Relaxed);
         if !self.cond_stack.is_empty() {
+            // TeX final_cleanup：输入结束（\endinput/EOF）时未闭合条件 → 可恢复
+            // 转录消息 "! Incomplete \ifxxx; all text was ignored after line N."
+            // （tex.web final_cleanup；TRIP L363 `\ifcase3` 故意不闭合，参考 log
+            // 报此消息后正常结束），**不终止作业**（旧实现 return Err 曾导致
+            // TRIP 全量在 \endinput 后报"条件未闭合"内部错误）。
             #[cfg(debug_assertions)]
             {
                 let frames: Vec<String> = self
@@ -698,8 +782,8 @@ impl Expander {
                     .iter()
                     .map(|f| {
                         format!(
-                            "{{is_case={} state={:?} owns_skip={} else={}}}",
-                            f.is_case, f.state, f.owns_skip, f.else_seen
+                            "{{is_case={} state={:?} owns_skip={} else={} line={}}}",
+                            f.is_case, f.state, f.owns_skip, f.else_seen, f.line
                         )
                     })
                     .collect();
@@ -709,7 +793,14 @@ impl Expander {
                     frames
                 );
             }
-            return Err(Error::invalid_input("条件未闭合（缺少 \\fi）"));
+            for f in self.cond_stack.iter() {
+                let _ = self.sink.write16(format!(
+                    "! Incomplete {}; all text was ignored after line {}.\n",
+                    Self::if_type_name(f.if_type),
+                    f.line
+                ));
+            }
+            self.cond_stack.clear();
         }
         Ok(())
     }
@@ -760,6 +851,30 @@ impl Expander {
     /// 是否已执行显式 `\end`（finish 对未闭合组/math 按 TeX 语义降级为警告）。
     pub fn is_ended(&self) -> bool {
         self.ended
+    }
+
+    /// 诊断：输入栈摘要（watchdog 超限 / 单步超时 / 定期进度 dump 用）。
+    fn debug_stack_summary(&self) -> String {
+        self.stack
+            .iter()
+            .map(|f| match f {
+                InputFrame::Source { bytes, pos, state } => {
+                    format!("Source({}B,pos={},state={:?})", bytes.len(), pos, state)
+                }
+                InputFrame::Macro { body, pos, .. } => {
+                    format!("Macro({}tok,pos={})", body.len(), pos)
+                }
+                InputFrame::Bytecode { pc, .. } => format!("Bytecode(pc={})", pc),
+                InputFrame::TokenList { items, pos } => {
+                    format!("TokenList({}tok,pos={})", items.len(), pos)
+                }
+                InputFrame::One { tok, .. } => format!("One({tok:?})"),
+                InputFrame::OutputRoutine { items, pos } => {
+                    format!("OutputRoutine({}tok,pos={})", items.len(), pos)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" | ")
     }
 
     /// 输入耗尽后的收尾：执行所有待执行的输出例程（`finish` 冲页产生）。
@@ -820,6 +935,11 @@ impl Expander {
         match self.fetch()? {
             None => Ok(false),
             Some((tok, noexpand)) => {
+                // 诊断：记录最近处理的 token（watchdog/单步超时 dump 用；cs 显示真实名字）
+                self.last_tok = Some(match tok.csid() {
+                    Some(csid) => format!("\\{}", self.intern.name(csid)),
+                    None => format!("{tok:?}"),
+                });
                 // noexpand（`\noexpand`/`\unexpanded` 输出）：临时不可展开，原样输出。
                 // 优先于条件机拦截——`\unexpanded{\ifx...}` 里的条件 token 是数据，
                 // 不得 push 条件帧，也不得匹配外层 `\else`/`\fi`。
@@ -943,7 +1063,13 @@ impl Expander {
                         self.call_macro(csid, def)
                     }
                     SlotAction::Font(font) => self.sink.font_selected(font),
-                    SlotAction::Primitive(p) => self.exec_primitive(p),
+                    SlotAction::Primitive(p) => {
+                        // 诊断（NTEX_TRACE_EXEC=1）：打印每个执行的原语，定位挂死点
+                        if std::env::var("NTEX_TRACE_EXEC").is_ok() {
+                            eprintln!("[trace-exec] {p:?}");
+                        }
+                        self.exec_primitive(p)
+                    }
                 }
             }
             TokenKind::Char => {
