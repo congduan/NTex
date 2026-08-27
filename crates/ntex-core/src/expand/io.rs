@@ -140,11 +140,12 @@ impl Expander {
     fn scan_stream_index(&mut self, _what: &str, max: i64) -> Result<usize> {
         let n = self.scan_number()?;
         if !(0..=max).contains(&n) {
+            // TeX error() + show_context：`! 消息` + <to be read again> + l.N 两行
+            //（TRIP L94 `\openout-'78` 的 Bad number 恢复段逐字对齐）
+            self.write_error(&format!("Bad number ({n})."));
             let _ = self.sink.write16(format!(
-                "! Bad number ({}).\n\
-                 Since I expected to read a number between 0 and {max},\n\
-                 I changed this one to zero.\n",
-                n
+                "Since I expected to read a number between 0 and {max},\n\
+                 I changed this one to zero.\n"
             ));
             return Ok(if n < 0 { 0 } else { max as usize });
         }

@@ -845,6 +845,85 @@ impl Expander {
         }
     }
 
+    /// 错误上下文带行内错误位置（Source 帧 pos 相对行首的偏移）。
+    fn error_context_pos(&self) -> Option<(usize, String, usize)> {
+        for frame in self.stack.iter().rev() {
+            if let InputFrame::Source { bytes, pos, .. } = frame {
+                let bytes: &[u8] = bytes;
+                let end = (*pos).min(bytes.len());
+                let line_no = bytes[..end].iter().filter(|&&b| b == b'\n').count() + 1;
+                let line_start = bytes[..end]
+                    .iter()
+                    .rposition(|&b| b == b'\n')
+                    .map(|i| i + 1)
+                    .unwrap_or(0);
+                let line_end = bytes[line_start..]
+                    .iter()
+                    .position(|&b| b == b'\n')
+                    .map(|i| line_start + i)
+                    .unwrap_or(bytes.len());
+                let line = String::from_utf8_lossy(&bytes[line_start..line_end]).into_owned();
+                let pos = end.saturating_sub(line_start).min(line.len());
+                return Some((line_no, line, pos));
+            }
+        }
+        None
+    }
+
+    /// 错误上下文 token 的简单显示（TeX show_token_list：字符直接显示、cs 显示 `\名`）。
+    fn trace_tok_simple(&self, tok: Token) -> String {
+        if let Some(csid) = tok.csid() {
+            format!("\\{}", self.intern.name(csid))
+        } else if let Some(ch) = tok.charcode() {
+            char::from_u32(ch).unwrap_or('?').to_string()
+        } else {
+            "?".to_string()
+        }
+    }
+
+    /// 统一错误消息输出（TeX error()/show_context 语义）：
+    /// `! 消息` + `<to be read again>` 段（peek 输入流下一个 token，18 列）
+    /// + `l.N` 行上下文两行显示（位置前内容；n 空格 + 位置后 ≤trick 字符 + `...`）。
+    /// TRIP 对齐：参考 log L9-11 的 `<to be read again>` / l.94 段。
+    fn write_error(&mut self, msg: &str) {
+        let mut s = format!("! {msg}\n");
+        // <to be read again>：错误恢复后将被读取的 token（peek 输入流下一个）；
+        // 第二行 = 描述宽度（19：`<to be read again> `）空格 + token 直接显示。
+        if let Some((tok, _)) = self.fetch().ok().flatten() {
+            let desc = self.trace_tok_simple(tok);
+            s.push_str("<to be read again> \n");
+            s.push_str(&format!("{}{}\n", " ".repeat(19), desc));
+            self.unread(tok);
+        }
+        // l.N 行上下文（两行：位置前内容 + n 空格 + 位置后字符）
+        if let Some((n, line, pos)) = self.error_context_pos() {
+            let before = &line[..pos.min(line.len())];
+            let l1 = format!("l.{n} {before}");
+            s.push_str(&l1);
+            s.push('\n');
+            // 第二行上限：TeX trick_count = first_count+1+error_line-half_error_line
+            //（TRIP 参考 L94：pos=11 → 42 字符）
+            let max_after = pos + 1 + 79 - 48;
+            let after: String = line[pos.min(line.len())..]
+                .chars()
+                .take(max_after)
+                .collect();
+            let after_full: String = line[pos.min(line.len())..].chars().collect();
+            let suffix = if after_full.chars().count() > max_after {
+                "..."
+            } else {
+                ""
+            };
+            s.push_str(&format!(
+                "{}{}{}\n",
+                " ".repeat(l1.chars().count()),
+                after,
+                suffix
+            ));
+        }
+        let _ = self.sink.write16(s);
+    }
+
     /// TeX scan_int 缺数恢复：`! Missing number, treated as zero.` + 上下文行
     /// （TRIP 冲刺：`\countdef\countz` 等缺操作数原语）。
     fn report_missing_number(&mut self) {
