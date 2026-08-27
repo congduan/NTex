@@ -240,6 +240,12 @@ impl Typesetter {
                     return Err(Error::invalid_input("数学模式未闭合（缺少 $）"));
                 }
             }
+            // 先收尾进行中的段落（tex.web final_end：\end 前 end_graf 收段折行），
+            // 再丢弃未闭合盒子/组的残留列表——顺序不能反：先 pop 会把进行中的
+            // 水平段列表一起扔掉（VFS 分章测试 `\input{ch1}...\end` 无页面根因）。
+            if builder.mode() == Mode::Horizontal {
+                builder.close_paragraph();
+            }
             if ended {
                 // TeX `\end`：丢弃未闭合盒子/组的内容（tex.web final_end 后
                 // 各列表就地废弃），仅保留主垂直列表。
@@ -247,9 +253,6 @@ impl Typesetter {
                     builder.lists.pop();
                     builder.list_modes.pop();
                 }
-            }
-            if builder.mode() == Mode::Horizontal {
-                builder.close_paragraph();
             }
         }
         // 2) 执行 close_paragraph 产出的待执行输出例程

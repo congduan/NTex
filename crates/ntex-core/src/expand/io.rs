@@ -3,8 +3,6 @@ impl Expander {
 
     /// `\input<file>`：读文件内容推入 `Source` 输入帧（支持嵌套）。
     ///
-    /// 文件名扫描（TeX `scan_file_name`）：`{file}` 花括号形式或普通形式
-    /// （cat 11/12 字符，空格终止）。找不到时先试原名、再补 `.tex`。
     fn exec_input(&mut self) -> Result<()> {
         let name = self.scan_file_name()?;
         let mut content = self

@@ -206,9 +206,15 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "已知失败：\\par 在 \\hbox 内未报错（TeX 报 Forbidden control sequence，实现宽松未拦截）"]
     fn par_in_hbox_is_rejected() {
-        assert!(typeset(r"\hbox{a\par}").is_err());
+        // \par 在 \hbox（restricted horizontal mode）：TeX 报错恢复（消息入转录）
+        let mut ts = Typesetter::with_metrics(metrics);
+        let _ = ts.typeset(r"\hbox{a\par}");
+        let t = ts.take_transcript();
+        assert!(
+            t.contains("You can't use \\par in restricted horizontal mode."),
+            "转录应含 par 模式错误：{t}"
+        );
     }
 
     #[test]
@@ -711,15 +717,15 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "已知失败：\\input 分章文档无页面产出（VFS \\input 路径未完整）"]
     fn vfs_input_splits_document() {
-        let (mut ts, mut vfs) = ts_with_vfs();
+        // with_metrics（假字体）而非 with_tfm：测试环境无 TFM 目录，
+        // 真实字体加载静默失败会导致字符无节点、页面为空
+        let mut ts = Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+        let mut vfs = ntex_io::MemVfs::new();
         vfs.insert("ch1.tex", "Chapter One. ");
         vfs.insert("ch2.tex", "Chapter Two. ");
         ts.set_vfs(Box::new(vfs));
-        let (pages, _) = ts
-            .typeset_dvi("\\input{ch1}\\input{ch2}\\end")
-            .unwrap();
+        let (pages, _) = ts.typeset_dvi("\\input{ch1}\\input{ch2}\\end").unwrap();
         assert!(!pages.is_empty(), "\\input 分章文档应产出页面");
         // 页面文本应包含两章内容（合并后页数 ≥ 1，且文本含 Chapter）
         let mut text = String::new();
@@ -1030,10 +1036,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "已知失败：数学错误消息未对齐 TeX（远程 WIP 测试先写期望、实现未跟进，实际报数学模式未闭合）"]
     fn math_display_inside_hbox_rejected() {
-        // $$ 不允许出现在 \hbox（restricted horizontal mode）内
-        assert!(typeset(r"\hbox{$$x$$}").is_err(), "显示数学不能在 \\hbox 内");
+        // $$ 在 \hbox（restricted horizontal mode）内：TeX 报错恢复按行内数学
+        // 继续（参考 trip.log L210 附近；消息入转录而非 Err）
+        assert_math_transcript(r"\hbox{$$x$$}", "Display math in restricted mode.");
     }
 
     // ---------- M4-7 错误模型：数学错误消息 ----------
@@ -1047,13 +1053,24 @@ mod tests {
         );
     }
 
+    /// 断言转录含 `expected`（TeX 恢复式错误：报错后继续，消息入转录）。
+    fn assert_math_transcript(src: &str, expected: &str) {
+        let mut ts = Typesetter::with_metrics(metrics);
+        let _ = ts.typeset(src);
+        let t = ts.take_transcript();
+        assert!(
+            t.contains(expected),
+            "{src:?} 转录应含 {expected:?}：{t}"
+        );
+    }
+
     #[test]
-    #[ignore = "已知失败：数学错误消息未对齐 TeX（远程 WIP 测试先写期望、实现未跟进，实际报数学模式未闭合）"]
     fn math_caret_outside_math_rejected() {
-        // 数学模式外 ^/_（cat 7/8）：TeX "Missing $ inserted"（不再静默渲染字面）
-        assert_math_error(r"a^b", "Missing $ inserted");
-        assert_math_error(r"x_2", "Missing $ inserted");
-        assert_math_error(r"\hbox{a^b}", "Missing $ inserted");
+        // 数学模式外 ^/_（cat 7/8）：TeX "Missing $ inserted" 报错并插入 $ 恢复
+        //（参考 trip.log L5330/L5384；恢复式，消息入转录而非 Err）
+        assert_math_transcript(r"a^b", "Missing $ inserted");
+        assert_math_transcript(r"x_2", "Missing $ inserted");
+        assert_math_transcript(r"\hbox{a^b}", "Missing $ inserted");
     }
 
     #[test]
@@ -1062,17 +1079,18 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "已知失败：数学错误消息未对齐 TeX（远程 WIP 测试先写期望、实现未跟进，实际报数学模式未闭合）"]
     fn math_missing_base_message() {
-        assert_math_error(r"$^2$", "数学模式中 ^/_ 前缺少原子（Missing { inserted）");
-        assert_math_error(r"$_{2}$", "数学模式中 ^/_ 前缺少原子（Missing { inserted）");
+        // ^/_ 前无原子：TeX "Missing { inserted" 恢复（参考 trip.log L2851/L5344）
+        assert_math_transcript(r"$^2$", "Missing { inserted");
+        assert_math_transcript(r"$_2$", "Missing { inserted");
     }
 
     #[test]
-    #[ignore = "已知失败：数学错误消息未对齐 TeX（应报 \\left 后缺少 \\right，实际报数学模式未闭合）"]
     fn math_left_right_message() {
+        // \right 前缺少 \left：Err（math_right 检查）；\left 未配对（$ 关数学时）：
+        // TeX "Extra } or forgotten \right." 恢复自动闭合（参考 trip.log L299 附近）
         assert_math_error(r"$\right)$", "\\right 前缺少 \\left（Missing \\left inserted）");
-        assert_math_error(r"$\left(x$", "\\left 后缺少 \\right（Extra } or forgotten \\right）");
+        assert_math_transcript(r"$\left(x$", "Extra } or forgotten \\right.");
     }
 
     #[test]
@@ -1081,9 +1099,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "已知失败：数学错误消息未对齐 TeX（远程 WIP 测试先写期望、实现未跟进，实际报数学模式未闭合）"]
     fn math_display_end_message() {
-        assert_math_error(r"$$x$", "Display math should end with $$.");
+        // 显示数学以单 $ 结束：TeX "Display math should end with $$." 恢复
+        //（参考 trip.log L1761/L4004；该 $ 按 $$ 处理关闭公式）
+        assert_math_transcript(r"$$x$", "Display math should end with $$.");
     }
 
     #[test]
@@ -1102,9 +1121,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "已知失败：数学错误消息未对齐 TeX（远程 WIP 测试先写期望、实现未跟进，实际报数学模式未闭合）"]
     fn math_display_requires_double_dollar_end() {
-        assert!(typeset(r"$$x$").is_err(), "显示数学必须以 $$ 结束");
+        // $$x$ 的 $ 按 $$ 处理关闭公式（TeX 恢复语义），公式正常产出
+        assert_math_transcript(r"$$x$", "Display math should end with $$.");
+        let main = typeset(r"$$x$").unwrap();
+        assert!(!main.is_empty(), "公式应产出：{main:?}");
     }
 
     #[test]
@@ -1136,10 +1157,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "已知失败：数学错误消息未对齐 TeX（远程 WIP 测试先写期望、实现未跟进，实际报数学模式未闭合）"]
     fn math_script_without_base_rejected() {
-        assert!(typeset(r"$^2$").is_err(), "^ 前缺原子应报错");
-        assert!(typeset(r"$_{2}$").is_err(), "_ 前缺原子应报错");
+        // ^/_ 前缺原子：TeX "Missing { inserted" 恢复（不终止；参考 trip.log L2851）
+        assert_math_transcript(r"$^2$", "Missing { inserted");
+        assert_math_transcript(r"$_2$", "Missing { inserted");
     }
 
     #[test]
