@@ -67,6 +67,44 @@ impl Expander {
                         name.push_str("texput");
                         continue;
                     }
+                    // 可展开项（\romannumeral/\number/\the/宏）：TeX get_x_token
+                    // 语义——展开后重新收集（TRIP L94
+                    // `\openout10=tr\romannumeral1 \gobble\newcs pos` → 流名
+                    // "tripos"：\romannumeral1→"i"、\gobble 吞 \newcs、pos 收集）。
+                    let slot = self.eqtb.slot(csid).clone();
+                    let expandable = match &slot {
+                        EqSlot::Macro(_) => true,
+                        EqSlot::Primitive(p) => p.is_expandable(),
+                        _ => false,
+                    };
+                    if expandable {
+                        self.trace_suppress += 1;
+                        let mut expansion = Vec::new();
+                        let r = self.expand_once((t, false), &mut expansion);
+                        let no_progress = expansion.len() == 1 && expansion[0].0 == t;
+                        let r = r.and_then(|_| {
+                            if no_progress {
+                                // expand_once 不识别（\romannumeral 等）：exec
+                                // 发射（压帧）后重新收集
+                                match slot {
+                                    EqSlot::Primitive(p) => self.exec_primitive(p),
+                                    _ => Ok(()),
+                                }
+                            } else {
+                                Ok(())
+                            }
+                        });
+                        self.trace_suppress -= 1;
+                        r?;
+                        if !expansion.is_empty() && !no_progress {
+                            let items: Vec<(Token, bool)> = expansion;
+                            self.stack.push(InputFrame::TokenList {
+                                items: Arc::from(items),
+                                pos: 0,
+                            });
+                        }
+                        continue; // 展开结果压帧，重新 fetch 收集
+                    }
                 }
                 match t.catcode() {
                     Some(Catcode::Letter) | Some(Catcode::Other) => {
@@ -223,7 +261,8 @@ impl Expander {
 
     /// `\openout<n>=<file>`：登记写流目标路径（不立即创建文件）。
     fn exec_openout(&mut self) -> Result<()> {
-        let idx = self.scan_stream_index("\\openout", 17)?;
+        // TeX：\openout 流号 0..=15（trip.tex L94 报错消息 "between 0 and 15"）
+        let idx = self.scan_stream_index("\\openout", 15)?;
         self.expect_equals()?;
         let name = self.scan_file_name()?;
         let immediate = self.take_immediate();
@@ -243,7 +282,7 @@ impl Expander {
 
     /// `\closeout<n>`：flush 待写内容并关闭。
     fn exec_closeout(&mut self) -> Result<()> {
-        let idx = self.scan_stream_index("\\closeout", 17)?;
+        let idx = self.scan_stream_index("\\closeout", 15)?;
         // \closeout 恒 flush（immediate 前缀对 closeout 无额外效果，两分支等价）
         self.flush_write_stream(idx)?;
         self.ensure_write_stream(idx);
