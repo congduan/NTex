@@ -412,6 +412,9 @@ pub struct Expander {
     last_tok: Option<String>,
     /// `\tracingcommands`：上次打印的模式（tex.web shown_mode——模式变化才打前缀）。
     shown_trace_mode: Option<String>,
+    /// 子展开（`\write` 内容、marks 查询等 expand_region）追踪抑制计数——
+    /// TeX 只在 main_control 主循环追踪（show_cur_cmd_chr），扫描器内部不追踪。
+    trace_suppress: u32,
     /// 上一轮注入输出例程时待处理页面的数量（判断例程是否消费了 box255）。
     output_prev_count: usize,
     /// 是否启用字节码轨道（M2；解释器轨道用于双轨等价验证）。
@@ -519,6 +522,7 @@ impl Expander {
             ended: false,
             last_tok: None,
             shown_trace_mode: None,
+            trace_suppress: 0,
             output_prev_count: usize::MAX,
             use_bytecode,
             vfs: Box::new(LocalVfs),
@@ -969,8 +973,9 @@ impl Expander {
                     None => format!("{tok:?}"),
                 });
                 // \tracingcommands（misc 下标 3）：每命令一行 `{模式: 描述}`；
-                // 模式只在变化时打印（tex.web show_cur_cmd_chr 的 shown_mode 语义）。
-                if self.params.misc[3] > 0 {
+                // 模式只在变化时打印（tex.web show_cur_cmd_chr 的 shown_mode 语义）；
+                // 子展开（expand_region：\write 内容等）抑制——TeX 只在主循环追踪。
+                if self.params.misc[3] > 0 && self.trace_suppress == 0 {
                     let m = self.sink.mode_name();
                     let desc = self.trace_token_desc(tok);
                     let line = if self.shown_trace_mode.as_deref() == Some(m.as_str()) {

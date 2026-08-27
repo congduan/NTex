@@ -641,6 +641,8 @@ impl Expander {
         self.read_floor = depth;
         // e-TeX（M4-5）：\edef/\write 等展开上下文抑制 protected 宏展开
         self.suppress_expansion += 1;
+        // TeX：\tracingcommands 只在 main_control 主循环追踪——区域展开抑制
+        self.trace_suppress += 1;
         // \edef/\xdef/\write：TeX expand() 语义——只展开可展开项，
         // 不可展开原语/未定义 cs/字符/组定界原样保留（不执行、不建组）
         self.expand_only = true;
@@ -681,6 +683,7 @@ impl Expander {
         })();
         // 统一恢复（错误路径下 sink 保持区域 VecSink，引擎随之终止）
         self.suppress_expansion -= 1;
+        self.trace_suppress -= 1;
         self.expand_only = false;
         self.read_floor = saved_floor;
         outcome

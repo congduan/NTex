@@ -343,8 +343,30 @@ impl Expander {
             Primitive::CloseOut => self.exec_closeout(),
             Primitive::Write => self.exec_write(),
             Primitive::Immediate => {
-                self.immediate_pending = true;
-                Ok(())
+                // tex.web `<Implement \immediate>`：立即取下一个 token；是
+                // \write/\openout/\closeout → 设前缀后执行（立即写）；否则放回、
+                // 前缀无效（不残留——旧实现残留标志导致 TRIP L2
+                // `\immediate\catcode` 污染 L93 `\write-1` 被误判立即写，
+                // "log file only" 提前输出）。
+                self.immediate_pending = false;
+                let Some((next, _)) = self.fetch()? else {
+                    return Err(Error::invalid_input("\\immediate 后无 token"));
+                };
+                let is_write_family = next.csid().is_some_and(|c| {
+                    matches!(
+                        self.eqtb.slot(c),
+                        EqSlot::Primitive(
+                            Primitive::Write | Primitive::OpenOut | Primitive::CloseOut
+                        )
+                    )
+                });
+                if is_write_family {
+                    self.immediate_pending = true;
+                    self.process_token(next)
+                } else {
+                    self.unread(next);
+                    Ok(())
+                }
             }
             // M4-2 数学原语：直通 sink（排版器解释；delimiter 参数在 VM 侧扫描）
             Primitive::DisplayStyle => self.sink.math_style(0),
