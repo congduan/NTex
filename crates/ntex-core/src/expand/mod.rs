@@ -885,6 +885,8 @@ impl Expander {
     /// `! 消息` + `<to be read again>` 段（peek 输入流下一个 token，18 列）
     /// + `l.N` 行上下文两行显示（位置前内容；n 空格 + 位置后 ≤trick 字符 + `...`）。
     /// TRIP 对齐：参考 log L9-11 的 `<to be read again>` / l.94 段。
+    ///
+    /// 该格式逐字对齐 web2c TRIP 参考输出（error_line=79 的 show_context 伪打印）。
     fn write_error(&mut self, msg: &str) {
         let mut s = format!("! {msg}\n");
         // <to be read again>：错误恢复后将被读取的 token（peek 输入流下一个）；
