@@ -415,7 +415,7 @@ impl Expander {
                     let font = self.scan_font_ident()?;
                     let ch = self.scan_number()?;
                     if !(0..=255).contains(&ch) {
-                        let _ = self.report_error("Bad character code.");
+                        self.report_error("Bad character code.");
                         return Ok(emit_dimen(0));
                     }
                     let m = self.font_loader.char_metric(font, ch as u32);
@@ -551,7 +551,7 @@ impl Expander {
     fn end_group(&mut self) -> Result<()> {
         if self.group_level == 0 {
             // TeX：多余的 `}` → "! Too many }'s." 报错恢复（忽略并继续；TRIP L291）
-            let _ = self.report_error("Too many }'s.");
+            self.report_error("Too many }'s.");
             return Ok(());
         }
         // 条件栈与组栈相互独立（TeX：条件可跨组，如 `\begingroup\iftrue a\egroup\fi`，

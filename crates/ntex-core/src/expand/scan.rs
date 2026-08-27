@@ -832,10 +832,10 @@ impl Expander {
     /// "! Dimension too large." 并钳到 ±MAX_DIMEN（如 `\dimen45=\skip44` 读超大胶水）。
     fn clamp_dimen(&mut self, v: i64) -> i64 {
         if v > MAX_DIMEN {
-            let _ = self.report_error("Dimension too large.");
+            self.report_error("Dimension too large.");
             MAX_DIMEN
         } else if v < -MAX_DIMEN {
-            let _ = self.report_error("Dimension too large.");
+            self.report_error("Dimension too large.");
             -MAX_DIMEN
         } else {
             v
@@ -997,7 +997,7 @@ impl Expander {
                 let font = self.scan_font_ident()?;
                 let ch = self.scan_number()?;
                 if !(0..=255).contains(&ch) {
-                    let _ = self.report_error("Bad character code.");
+                    self.report_error("Bad character code.");
                     return Ok((0, 0));
                 }
                 let m = self.font_loader.char_metric(font, ch as u32);
@@ -1430,7 +1430,7 @@ impl Expander {
     /// glue 与 mu 胶水混用（`\skip=\muskip`、`\muskip=\skip`、`\glueexpr` 嵌 `\muexpr` 等）。
     /// 恢复：按 1mu=1pt 换算继续（数值不变，仅单位语义标记）。
     fn report_incompatible_glue_units(&mut self) {
-        let _ = self.report_error("Incompatible glue units.");
+        self.report_error("Incompatible glue units.");
     }
 
     /// 扫描胶水（非 mu 上下文）：`\hskip`/`\vskip`/`\skip<idx>=`/`\glueexpr` 项等。

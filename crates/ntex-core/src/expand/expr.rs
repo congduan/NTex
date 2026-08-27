@@ -235,7 +235,7 @@ impl Expander {
             value = if op == b'+' { value + rhs } else { value - rhs };
         }
         if value > i128::from(MAX_INT) || value < -i128::from(MAX_INT) {
-            let _ = self.report_error("Arithmetic overflow.");
+            self.report_error("Arithmetic overflow.");
             return Ok(0);
         }
         Ok(value as i64)
@@ -254,7 +254,7 @@ impl Expander {
                 value * rhs
             } else if rhs == 0 {
                 // eTeX：除零 → "! Arithmetic overflow."，结果 0（etrip L789-791）
-                let _ = self.report_error("Arithmetic overflow.");
+                self.report_error("Arithmetic overflow.");
                 0
             } else {
                 expr_quotient_i128(value, rhs)
@@ -400,7 +400,7 @@ impl Expander {
                 value = if op == b'*' {
                     value * rhs
                 } else if rhs == 0 {
-                    let _ = self.report_error("Arithmetic overflow.");
+                    self.report_error("Arithmetic overflow.");
                     0
                 } else {
                     expr_quotient_i128(value, rhs)
@@ -412,7 +412,7 @@ impl Expander {
         }
         // 仅最终结果超限才报（中间量 i128 不逐项检查，与 eTeX 一致）
         if value > i128::from(MAX_DIMEN) || value < -i128::from(MAX_DIMEN) {
-            let _ = self.report_error("Arithmetic overflow.");
+            self.report_error("Arithmetic overflow.");
             return Ok(0);
         }
         Ok(value as i64)
@@ -473,7 +473,7 @@ impl Expander {
                 width = if op == b'*' {
                     width * rhs
                 } else if rhs == 0 {
-                    let _ = self.report_error("Arithmetic overflow.");
+                    self.report_error("Arithmetic overflow.");
                     0
                 } else {
                     expr_quotient_i128(width, rhs)
@@ -504,7 +504,7 @@ impl Expander {
         }
         // 仅最终宽度超限才报（中间量 i128，与 eTeX 一致）
         if width > i128::from(MAX_DIMEN) || width < -i128::from(MAX_DIMEN) {
-            let _ = self.report_error("Arithmetic overflow.");
+            self.report_error("Arithmetic overflow.");
             width = 0;
         }
         Ok(Glue {

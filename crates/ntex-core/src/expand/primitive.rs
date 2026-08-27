@@ -643,7 +643,7 @@ impl Expander {
             // \csname...\endcsname：构造控制序列（TeX 可展开原语）
             Primitive::Csname => self.exec_csname(),
             Primitive::EndCsname => {
-                let _ = self.report_error("Extra \\endcsname.");
+                self.report_error("Extra \\endcsname.");
                 Ok(())
             }
             // \number<number>：整数十进制展开（TeX 可展开原语）
@@ -1290,7 +1290,7 @@ impl Expander {
     /// TeX `scan_font_ident` 的 "Missing font identifier" 报错恢复：
     /// 报错后用当前字体继续（TRIP L404 `\fontdimen 1000=20\varunit`——`=` 非字体）。
     fn missing_font_ident(&mut self) -> Result<u32> {
-        let _ = self.report_error("Missing font identifier.");
+        self.report_error("Missing font identifier.");
         Ok(self.sink.current_font())
     }
 
@@ -2083,7 +2083,7 @@ impl Expander {
         let (font, ch) = match scanned {
             Ok(v) => v,
             Err(_) => {
-                let _ = self.report_error("Bad character code.");
+                self.report_error("Bad character code.");
                 return Ok(());
             }
         };
