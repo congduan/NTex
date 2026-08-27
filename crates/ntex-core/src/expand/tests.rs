@@ -836,16 +836,36 @@ mod tests {
             "2.66667pt plus 3.0fil"
         );
         // ── 表达式单独用（can't use 测试）后 \let 定义不受污染（etrip L764-766）──
-        assert_eq!(
-            expand("\\numexpr \\dimexpr \\glueexpr \\muexpr \\let\\9=\\relax \\ifx\\9\\relax T\\else F\\fi")
-                .unwrap(),
-            "0T"
-        );
+        // \numexpr 等裸用报 "can't use" 不输出 0（修复前输出 "0" 污染）；
+        // \let\9=\relax 正常定义 → \ifx 为 T
+        {
+            let mut e = Expander::new();
+            e.set_sink(Box::new(VecSink::default()));
+            e.run_source(
+                "\\numexpr \\dimexpr \\glueexpr \\muexpr \\let\\9=\\relax \\ifx\\9\\relax T\\else F\\fi",
+            )
+            .unwrap();
+            let sink = e.take_sink();
+            let mut sink = sink;
+            let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+            assert_eq!(
+                sink.transcript.matches("can't use").count(),
+                4,
+                "四个表达式原语裸用都应报 can't use：{:?}",
+                sink.transcript
+            );
+            // output 在 VecSink.tokens（take_sink 后 e.output() 为空）
+            let out: String = sink
+                .tokens
+                .iter()
+                .filter_map(|t| t.charcode().and_then(char::from_u32))
+                .collect();
+            assert_eq!(out, "T", "\\9 应保持 \\relax 定义（输出 T 而非 0T）");
+        }
     }
 
     #[test]
     fn gluestretchorder_delim_macro_repro() {
-        // etrip.tex L937-943 的完整宏调用：分隔参数 #2pt/#4pt + \gluestretchorder#5
         // （调用末尾空格是 #5 的定界符，对应 etrip 中行尾换行→空格）
         let src = "\\def\\1#1#2pt#3#4pt#5 {\\ifnum\\gluestretchorder#5=#1 T\\else F\\fi}\\100pt10pt1ptminus0fil ";
         assert_eq!(expand(src).unwrap(), "T");

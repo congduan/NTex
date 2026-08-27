@@ -1,7 +1,53 @@
 use crate::sink::DirectionKind;
 
+/// 表达式原语种类（\numexpr/\dimexpr/\glueexpr/\muexpr）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ExprKind {
+    Num,
+    Dim,
+    Glue,
+    Mu,
+}
+
 impl Expander {
     // ---------- 原语执行 ----------
+
+    /// 命令位置表达式原语：首 token 是否"表达式起点"。
+    /// 非起点（异类表达式原语、\let/\relax 等命令类、普通字符）→ 报
+    /// "You can't use \<expr> in vertical mode."（TeX 垂直模式裸用语义；
+    /// 避免 Missing number 恢复输出 0 污染后续——etrip L764 连续裸用）。
+    fn expr_start_ok(&mut self, kind: ExprKind, tok: Token) -> Result<bool> {
+        if let Some(c) = tok.charcode() {
+            let b = c as u8;
+            return Ok(b.is_ascii_digit() || matches!(b, b'.' | b'(' | b'+' | b'-'));
+        }
+        let Some(csid) = tok.csid() else {
+            return Ok(false);
+        };
+        match self.eqtb.slot(csid) {
+            EqSlot::Primitive(p) => Ok(match p {
+                // 表达式原语：同类可嵌套（\numexpr\numexpr）；异类 → can't use
+                Primitive::NumExpr => kind == ExprKind::Num,
+                Primitive::Dimexpr => kind == ExprKind::Dim,
+                Primitive::Glueexpr => kind == ExprKind::Glue,
+                Primitive::Muexpr => kind == ExprKind::Mu,
+                // 量类原语：整数/尺寸/胶水寄存器与 \the/\number 等 → 表达式起点
+                Primitive::Count
+                | Primitive::Dimen
+                | Primitive::Skip
+                | Primitive::Muskip
+                | Primitive::Toks
+                | Primitive::The
+                | Primitive::Number
+                | Primitive::GlueToMu
+                | Primitive::MuToGlue => true,
+                // 命令类（\let/\relax/定义/条件/组等）→ 垂直模式裸用 → can't use
+                _ => false,
+            }),
+            // 宏（可能展开为量）/寄存器绑定 cs/未定义 → 放行（scan 展开或恢复）
+            _ => Ok(true),
+        }
+    }
 
     fn exec_primitive(&mut self, prim: Primitive) -> Result<()> {
         match prim {
@@ -597,45 +643,61 @@ impl Expander {
             }
             Primitive::NumExpr => {
                 // 裸用（`\numexpr \dimexpr ...` 错误用例）：TeX 报错并恢复
-                let v = self.eval_int_expression();
-                match v {
-                    Ok(v) => self.emit_tokens(emit_count(v)),
-                    Err(_) => {
-                        self.report_error("You can't use \\numexpr in vertical mode.");
-                        Ok(())
-                    }
+                let t = self
+                    .fetch()?
+                    .ok_or_else(|| Error::invalid_input("\\numexpr 后缺少参数"))?
+                    .0;
+                if !self.expr_start_ok(ExprKind::Num, t)? {
+                    self.unread(t);
+                    self.report_error("You can't use \\numexpr in vertical mode.");
+                    return Ok(());
                 }
+                self.unread(t);
+                let v = self.eval_int_expression()?;
+                self.emit_tokens(emit_count(v))
             }
             // M4-5 e-TeX 扩展：\dimexpr/\glueexpr 可展开求值（\the 上下文由 the_tokens 直接读取）
             Primitive::Dimexpr => {
-                let v = self.eval_dimen_expression();
-                match v {
-                    Ok(v) => self.emit_tokens(emit_dimen(v)),
-                    Err(_) => {
-                        self.report_error("You can't use \\dimexpr in vertical mode.");
-                        Ok(())
-                    }
+                let t = self
+                    .fetch()?
+                    .ok_or_else(|| Error::invalid_input("\\dimexpr 后缺少参数"))?
+                    .0;
+                if !self.expr_start_ok(ExprKind::Dim, t)? {
+                    self.unread(t);
+                    self.report_error("You can't use \\dimexpr in vertical mode.");
+                    return Ok(());
                 }
+                self.unread(t);
+                let v = self.eval_dimen_expression()?;
+                self.emit_tokens(emit_dimen(v))
             }
             Primitive::Glueexpr => {
-                let g = self.eval_glue_expression(false);
-                match g {
-                    Ok(g) => self.emit_tokens(emit_glue(g)),
-                    Err(_) => {
-                        self.report_error("You can't use \\glueexpr in vertical mode.");
-                        Ok(())
-                    }
+                let t = self
+                    .fetch()?
+                    .ok_or_else(|| Error::invalid_input("\\glueexpr 后缺少参数"))?
+                    .0;
+                if !self.expr_start_ok(ExprKind::Glue, t)? {
+                    self.unread(t);
+                    self.report_error("You can't use \\glueexpr in vertical mode.");
+                    return Ok(());
                 }
+                self.unread(t);
+                let g = self.eval_glue_expression(false)?;
+                self.emit_tokens(emit_glue(g))
             }
             Primitive::Muexpr => {
-                let g = self.eval_glue_expression(true);
-                match g {
-                    Ok(g) => self.emit_tokens(emit_glue(g)),
-                    Err(_) => {
-                        self.report_error("You can't use \\muexpr in vertical mode.");
-                        Ok(())
-                    }
+                let t = self
+                    .fetch()?
+                    .ok_or_else(|| Error::invalid_input("\\muexpr 后缺少参数"))?
+                    .0;
+                if !self.expr_start_ok(ExprKind::Mu, t)? {
+                    self.unread(t);
+                    self.report_error("You can't use \\muexpr in vertical mode.");
+                    return Ok(());
                 }
+                self.unread(t);
+                let g = self.eval_glue_expression(true)?;
+                self.emit_tokens(emit_glue(g))
             }
             Primitive::Scantokens => self.exec_scantokens(),
             Primitive::Detokenize => self.exec_detokenize(),
