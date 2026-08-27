@@ -396,9 +396,7 @@ impl Expander {
                     let font = self.scan_font_ident()?;
                     // TRIP L404：参数号越界 → 报错并返回 0（TeX "Font \X has only N ..."）
                     if num >= 13 {
-                        let _ = self
-                            .sink
-                            .write16("! Font \\FONT? has only 13 fontdimen parameters.\n".to_string());
+                        self.report_error("Font \\FONT? has only 13 fontdimen parameters.");
                         return Ok(emit_dimen(0));
                     }
                     Ok(emit_dimen(self.fontdimen(font, num)))
@@ -417,7 +415,7 @@ impl Expander {
                     let font = self.scan_font_ident()?;
                     let ch = self.scan_number()?;
                     if !(0..=255).contains(&ch) {
-                        let _ = self.sink.write16("! Bad character code.\n".to_string());
+                        let _ = self.report_error("Bad character code.");
                         return Ok(emit_dimen(0));
                     }
                     let m = self.font_loader.char_metric(font, ch as u32);
@@ -553,7 +551,7 @@ impl Expander {
     fn end_group(&mut self) -> Result<()> {
         if self.group_level == 0 {
             // TeX：多余的 `}` → "! Too many }'s." 报错恢复（忽略并继续；TRIP L291）
-            let _ = self.sink.write16("! Too many }'s.\n".to_string());
+            let _ = self.report_error("Too many }'s.");
             return Ok(());
         }
         // 条件栈与组栈相互独立（TeX：条件可跨组，如 `\begingroup\iftrue a\egroup\fi`，

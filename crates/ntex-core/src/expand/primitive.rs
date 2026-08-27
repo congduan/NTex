@@ -601,9 +601,7 @@ impl Expander {
                 match v {
                     Ok(v) => self.emit_tokens(emit_count(v)),
                     Err(_) => {
-                        let _ = self
-                            .sink
-                            .write16("! You can't use \\numexpr in vertical mode.\n".to_string());
+                        self.report_error("You can't use \\numexpr in vertical mode.");
                         Ok(())
                     }
                 }
@@ -614,9 +612,7 @@ impl Expander {
                 match v {
                     Ok(v) => self.emit_tokens(emit_dimen(v)),
                     Err(_) => {
-                        let _ = self
-                            .sink
-                            .write16("! You can't use \\dimexpr in vertical mode.\n".to_string());
+                        self.report_error("You can't use \\dimexpr in vertical mode.");
                         Ok(())
                     }
                 }
@@ -626,9 +622,7 @@ impl Expander {
                 match g {
                     Ok(g) => self.emit_tokens(emit_glue(g)),
                     Err(_) => {
-                        let _ = self
-                            .sink
-                            .write16("! You can't use \\glueexpr in vertical mode.\n".to_string());
+                        self.report_error("You can't use \\glueexpr in vertical mode.");
                         Ok(())
                     }
                 }
@@ -638,9 +632,7 @@ impl Expander {
                 match g {
                     Ok(g) => self.emit_tokens(emit_glue(g)),
                     Err(_) => {
-                        let _ = self
-                            .sink
-                            .write16("! You can't use \\muexpr in vertical mode.\n".to_string());
+                        self.report_error("You can't use \\muexpr in vertical mode.");
                         Ok(())
                     }
                 }
@@ -651,7 +643,7 @@ impl Expander {
             // \csname...\endcsname：构造控制序列（TeX 可展开原语）
             Primitive::Csname => self.exec_csname(),
             Primitive::EndCsname => {
-                let _ = self.sink.write16("! Extra \\endcsname.\n".to_string());
+                let _ = self.report_error("Extra \\endcsname.");
                 Ok(())
             }
             // \number<number>：整数十进制展开（TeX 可展开原语）
@@ -723,9 +715,7 @@ impl Expander {
             Primitive::ParshapeLength
             | Primitive::ParshapeIndent
             | Primitive::ParshapeDimen => {
-                let _ = self
-                    .sink
-                    .write16("! You can't use \\parshape... in vertical mode.\n".to_string());
+                self.report_error("You can't use \\parshape... in vertical mode.");
                 let _ = self.scan_number();
                 Ok(())
             }
@@ -1152,9 +1142,7 @@ impl Expander {
                 if name == "." {
                     Ok(None)
                 } else {
-                    let _ = self
-                        .sink
-                        .write16("! Missing delimiter (. inserted).\n".to_string());
+                    self.report_error("Missing delimiter (. inserted).");
                     Ok(Some(b'(' as u32))
                 }
             }
@@ -1276,9 +1264,7 @@ impl Expander {
         let font = self.scan_font_ident()?;
         // TRIP L404：fontdimen 参数号越界（`\fontdimen 1000=...`）→ 报错并跳过赋值
         if num >= 13 {
-            let _ = self
-                .sink
-                .write16("! Font \\FONT? has only 13 fontdimen parameters.\n".to_string());
+            self.report_error("Font \\FONT? has only 13 fontdimen parameters.");
             // TeX 恢复：消费 `= <dimen>`（`20\varunit`），不改变字体参数；后续
             // `\showthe\fontdimen1000\trip\let\PAR=\par` 正常继续（trip.log L5831）。
             if self.expect_equals().is_ok() {
@@ -1304,7 +1290,7 @@ impl Expander {
     /// TeX `scan_font_ident` 的 "Missing font identifier" 报错恢复：
     /// 报错后用当前字体继续（TRIP L404 `\fontdimen 1000=20\varunit`——`=` 非字体）。
     fn missing_font_ident(&mut self) -> Result<u32> {
-        let _ = self.sink.write16("! Missing font identifier.\n".to_string());
+        let _ = self.report_error("Missing font identifier.");
         Ok(self.sink.current_font())
     }
 
@@ -2097,7 +2083,7 @@ impl Expander {
         let (font, ch) = match scanned {
             Ok(v) => v,
             Err(_) => {
-                let _ = self.sink.write16("! Bad character code.\n".to_string());
+                let _ = self.report_error("Bad character code.");
                 return Ok(());
             }
         };

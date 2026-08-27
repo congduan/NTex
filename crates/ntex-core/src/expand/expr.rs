@@ -235,7 +235,7 @@ impl Expander {
             value = if op == b'+' { value + rhs } else { value - rhs };
         }
         if value > i128::from(MAX_INT) || value < -i128::from(MAX_INT) {
-            let _ = self.sink.write16("! Arithmetic overflow.\n".to_string());
+            let _ = self.report_error("Arithmetic overflow.");
             return Ok(0);
         }
         Ok(value as i64)
@@ -254,7 +254,7 @@ impl Expander {
                 value * rhs
             } else if rhs == 0 {
                 // eTeX：除零 → "! Arithmetic overflow."，结果 0（etrip L789-791）
-                let _ = self.sink.write16("! Arithmetic overflow.\n".to_string());
+                let _ = self.report_error("Arithmetic overflow.");
                 0
             } else {
                 expr_quotient_i128(value, rhs)
@@ -280,9 +280,7 @@ impl Expander {
                     if let Some((c, _)) = close {
                         self.unread(c);
                     }
-                    let _ = self
-                        .sink
-                        .write16("! Missing ) inserted for expression.\n".to_string());
+                    self.report_error("Missing ) inserted for expression.");
                 }
             }
             return Ok(v);
@@ -377,9 +375,7 @@ impl Expander {
                     if let Some((c, _)) = close {
                         self.unread(c);
                     }
-                    let _ = self
-                        .sink
-                        .write16("! Missing ) inserted for expression.\n".to_string());
+                    self.report_error("Missing ) inserted for expression.");
                 }
             }
             return Ok(i128::from(v));
@@ -404,7 +400,7 @@ impl Expander {
                 value = if op == b'*' {
                     value * rhs
                 } else if rhs == 0 {
-                    let _ = self.sink.write16("! Arithmetic overflow.\n".to_string());
+                    let _ = self.report_error("Arithmetic overflow.");
                     0
                 } else {
                     expr_quotient_i128(value, rhs)
@@ -416,7 +412,7 @@ impl Expander {
         }
         // 仅最终结果超限才报（中间量 i128 不逐项检查，与 eTeX 一致）
         if value > i128::from(MAX_DIMEN) || value < -i128::from(MAX_DIMEN) {
-            let _ = self.sink.write16("! Arithmetic overflow.\n".to_string());
+            let _ = self.report_error("Arithmetic overflow.");
             return Ok(0);
         }
         Ok(value as i64)
@@ -438,9 +434,7 @@ impl Expander {
                     if let Some((c, _)) = close {
                         self.unread(c);
                     }
-                    let _ = self
-                        .sink
-                        .write16("! Missing ) inserted for expression.\n".to_string());
+                    self.report_error("Missing ) inserted for expression.");
                 }
             }
             return Ok(v);
@@ -479,7 +473,7 @@ impl Expander {
                 width = if op == b'*' {
                     width * rhs
                 } else if rhs == 0 {
-                    let _ = self.sink.write16("! Arithmetic overflow.\n".to_string());
+                    let _ = self.report_error("Arithmetic overflow.");
                     0
                 } else {
                     expr_quotient_i128(width, rhs)
@@ -510,7 +504,7 @@ impl Expander {
         }
         // 仅最终宽度超限才报（中间量 i128，与 eTeX 一致）
         if width > i128::from(MAX_DIMEN) || width < -i128::from(MAX_DIMEN) {
-            let _ = self.sink.write16("! Arithmetic overflow.\n".to_string());
+            let _ = self.report_error("Arithmetic overflow.");
             width = 0;
         }
         Ok(Glue {
@@ -538,9 +532,7 @@ impl Expander {
                 .0;
             if close.charcode() != Some(b')' as u32) {
                 self.unread(close);
-                let _ = self
-                    .sink
-                    .write16("! Missing ) inserted for expression.\n".to_string());
+                self.report_error("Missing ) inserted for expression.");
             }
             return Ok(v);
         }

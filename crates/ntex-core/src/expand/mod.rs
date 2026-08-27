@@ -870,6 +870,13 @@ impl Expander {
         None
     }
 
+    /// TeX 错误恢复模式统一入口：`! 消息` 写入转录（格式与既有散落调用完全
+    /// 一致，TRIP 对齐不受影响）。恢复动作由调用方决定（钳制/插入/忽略——
+    /// TeX error() 语义：报错后继续执行，不终止作业）。
+    fn report_error(&mut self, msg: &str) {
+        self.sink.report_error(msg);
+    }
+
     /// 错误上下文 token 的简单显示（TeX show_token_list：字符直接显示、cs 显示 `\名`）。
     fn trace_tok_simple(&self, tok: Token) -> String {
         if let Some(csid) = tok.csid() {

@@ -69,7 +69,7 @@ impl NodeBuilder {
         // 公式末尾收尾：未闭合 \left 报错恢复（TeX "Extra } or forgotten \right."，
         // 自动闭合；TRIP L298 `\left(\over\left(...`）；待定分式收尾（TeX 允许空分母）
         if level.left.is_some() {
-            self.write16("! Extra } or forgotten \\right.\n".to_string())?;
+            self.report_error("Extra } or forgotten \\right.");
             level.left = None;
         }
         Self::math_finish_fraction(&mut level);
@@ -205,7 +205,7 @@ impl NodeBuilder {
             && self.math.last().is_some_and(|l| l.atoms.is_empty())
         {
             // TeX：^/_ 前无原子 → "Missing { inserted" 恢复（插入空原子；TRIP L263）
-            self.write16("! Missing { inserted.\n".to_string())?;
+            self.report_error("Missing { inserted.");
         }
         let level = self
             .math

@@ -12,7 +12,7 @@ impl TokenSink for NodeBuilder {
                 } else {
                     // TeX：单 `$` 结束显示数学 → 报错但恢复（该 `$` 按 `$$` 处理，
                     // 关闭公式；TRIP L206 `$$\eqno^{}$`）。
-                    self.write16("! Display math should end with $$.\n".to_string())?;
+                    self.report_error("Display math should end with $$.");
                     self.close_math()
                 }
             }
@@ -65,7 +65,7 @@ impl TokenSink for NodeBuilder {
             Mode::RestrictedHorizontal => {
                 if display {
                     // TeX：\hbox 内 `$$` → 报错恢复（按行内数学继续；TRIP L210）
-                    self.write16("! Display math in restricted mode.\n".to_string())?;
+                    self.report_error("Display math in restricted mode.");
                     self.enter_math(Mode::Math)
                 } else {
                     self.enter_math(Mode::Math)
@@ -367,7 +367,7 @@ impl TokenSink for NodeBuilder {
             tok.catcode(),
             Some(ntex_core::Catcode::Superscript) | Some(ntex_core::Catcode::Subscript)
         ) {
-            self.write16("! Missing $ inserted.\n".to_string())?;
+            self.report_error("Missing $ inserted.");
             let _ = self.enter_math(Mode::Math);
             return self.math_char_tok(tok);
         }
@@ -619,7 +619,7 @@ impl TokenSink for NodeBuilder {
                     }
                     Mode::Math | Mode::DisplayMath => {
                         // TeX：数学模式 \par → 报 "Missing $ inserted" 并关数学（当 \par 处理）
-                        self.write16("! Missing $ inserted.\n".to_string())?;
+                        self.report_error("Missing $ inserted.");
                         let was_display = self.mode() == Mode::DisplayMath;
                         let _ = self.close_math();
                         // 显示数学的公式盒已并入外层垂直列表（TeX 中显示公式不在段落内），

@@ -818,24 +818,24 @@ impl Expander {
     /// 其他单位词/无单位 → "(mu inserted)" 恢复（值按 mu、词放回）。
     /// help 行（tex.web L8992-8995）在 etrip.log 收尾比对阶段统一补。
     fn report_bad_unit(&mut self, mu: bool) {
-        let _ = if mu {
-            self.sink.write16(
+        if mu {
+            let _ = self.sink.write16(
                 "! Illegal unit of measure (mu inserted).\nThe unit of measurement in math glue must be mu.\n"
                     .to_string(),
-            )
+            );
         } else {
-            self.sink.write16("! Illegal unit of measure (pt inserted).\n".to_string())
-        };
+            self.report_error("Illegal unit of measure (pt inserted).");
+        }
     }
 
     /// TeX scan_dimen 末尾的尺寸钳制：|v| > 0x3FFFFFFF →
     /// "! Dimension too large." 并钳到 ±MAX_DIMEN（如 `\dimen45=\skip44` 读超大胶水）。
     fn clamp_dimen(&mut self, v: i64) -> i64 {
         if v > MAX_DIMEN {
-            let _ = self.sink.write16("! Dimension too large.\n".to_string());
+            let _ = self.report_error("Dimension too large.");
             MAX_DIMEN
         } else if v < -MAX_DIMEN {
-            let _ = self.sink.write16("! Dimension too large.\n".to_string());
+            let _ = self.report_error("Dimension too large.");
             -MAX_DIMEN
         } else {
             v
@@ -997,7 +997,7 @@ impl Expander {
                 let font = self.scan_font_ident()?;
                 let ch = self.scan_number()?;
                 if !(0..=255).contains(&ch) {
-                    let _ = self.sink.write16("! Bad character code.\n".to_string());
+                    let _ = self.report_error("Bad character code.");
                     return Ok((0, 0));
                 }
                 let m = self.font_loader.char_metric(font, ch as u32);
@@ -1430,7 +1430,7 @@ impl Expander {
     /// glue 与 mu 胶水混用（`\skip=\muskip`、`\muskip=\skip`、`\glueexpr` 嵌 `\muexpr` 等）。
     /// 恢复：按 1mu=1pt 换算继续（数值不变，仅单位语义标记）。
     fn report_incompatible_glue_units(&mut self) {
-        let _ = self.sink.write16("! Incompatible glue units.\n".to_string());
+        let _ = self.report_error("Incompatible glue units.");
     }
 
     /// 扫描胶水（非 mu 上下文）：`\hskip`/`\vskip`/`\skip<idx>=`/`\glueexpr` 项等。

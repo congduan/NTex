@@ -51,17 +51,17 @@ impl Expander {
                 } else {
                     // TeX 错误恢复：`! Extra \fi.` —— 记录消息并继续（ETRIP 的
                     // \scantokens 恶魔测试会故意制造多余 \fi/\else）。
-                    let _ = self.sink.write16("! Extra \\fi.\n".to_string());
+                    let _ = self.report_error("Extra \\fi.");
                 }
                 Ok(())
             }
             CondOp::Else => {
                 let Some(top) = self.cond_stack.last_mut() else {
-                    let _ = self.sink.write16("! Extra \\else.\n".to_string());
+                    let _ = self.report_error("Extra \\else.");
                     return Ok(());
                 };
                 if top.else_seen {
-                    let _ = self.sink.write16("! Extra \\else.\n".to_string());
+                    let _ = self.report_error("Extra \\else.");
                     return Ok(());
                 }
                 top.else_seen = true;
@@ -82,11 +82,11 @@ impl Expander {
             }
             CondOp::Or => {
                 let Some(top) = self.cond_stack.last_mut() else {
-                    let _ = self.sink.write16("! Extra \\or.\n".to_string());
+                    let _ = self.report_error("Extra \\or.");
                     return Ok(());
                 };
                 if !top.is_case {
-                    let _ = self.sink.write16("! Extra \\or.\n".to_string());
+                    let _ = self.report_error("Extra \\or.");
                     return Ok(());
                 }
                 match top.state {
@@ -330,7 +330,7 @@ impl Expander {
             CondOp::Or => {
                 // 非 case 条件的 \or 是错误（TeX：! Extra \or.），保守恢复：
                 // 压 Processing 帧让后续 \fi 正常闭合。
-                let _ = self.sink.write16("! Extra \\\\or.\n".to_string());
+                let _ = self.report_error("Extra \\\\or.");
                 self.cur_if_branch = -1;
                 self.cond_stack.push(CondFrame {
                     is_case: false,
@@ -526,7 +526,7 @@ impl Expander {
                 let (font, ch) = match scanned {
                     Ok(v) => v,
                     Err(_) => {
-                        let _ = self.sink.write16("! Bad character code.\n".to_string());
+                        let _ = self.report_error("Bad character code.");
                         return Ok(false);
                     }
                 };

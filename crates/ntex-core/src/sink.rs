@@ -214,6 +214,12 @@ pub trait TokenSink: std::fmt::Debug {
     fn write16(&mut self, _text: String) -> Result<()> {
         Ok(())
     }
+    /// TeX 错误恢复模式统一入口：`! 消息` 写入转录（与既有散落调用格式
+    /// 一致）；恢复动作由调用方决定（钳制/插入/忽略——TeX error() 语义：
+    /// 报错后继续执行，不终止作业）。
+    fn report_error(&mut self, msg: &str) {
+        let _ = self.write16(format!("! {msg}\n"));
+    }
     /// TeXXeT 方向节点（`\beginL`/`\endL`/`\beginR`/`\endR`；\TeXXeTstate=1 时）。
     fn direction_node(&mut self, _kind: DirectionKind) -> Result<()> {
         Ok(())
