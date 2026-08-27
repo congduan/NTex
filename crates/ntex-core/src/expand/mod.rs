@@ -860,6 +860,22 @@ impl Expander {
         self.ended
     }
 
+    /// `\tracingcommands` 输出一行 `{模式: 描述}`（tex.web show_cur_cmd_chr：
+    /// 模式只在变化时打印，shown_mode 记忆）。扫描器内部的可展开原语展开
+    /// （tex.web expand() 开头 `if tracing_commands>1 then show_cur_cmd_chr`）
+    /// 也复用此方法——级别 2（\tracingcommands2）时展开入口同样追踪。
+    fn trace_token_now(&mut self, tok: Token) {
+        let m = self.sink.mode_name();
+        let desc = self.trace_token_desc(tok);
+        let line = if self.shown_trace_mode.as_deref() == Some(m.as_str()) {
+            format!("{{{desc}}}\n")
+        } else {
+            self.shown_trace_mode = Some(m.clone());
+            format!("{{{m}: {desc}}}\n")
+        };
+        let _ = self.sink.write16(line);
+    }
+
     /// `\tracingcommands` 的 token 描述（tex.web print_cmd_chr 语义：
     /// 控制序列 `\名`；字符按 catcode 分类显示 "the letter A" / "blank space  " 等）。
     fn trace_token_desc(&self, tok: Token) -> String {
@@ -976,15 +992,7 @@ impl Expander {
                 // 模式只在变化时打印（tex.web show_cur_cmd_chr 的 shown_mode 语义）；
                 // 子展开（expand_region：\write 内容等）抑制——TeX 只在主循环追踪。
                 if self.params.misc[3] > 0 && self.trace_suppress == 0 {
-                    let m = self.sink.mode_name();
-                    let desc = self.trace_token_desc(tok);
-                    let line = if self.shown_trace_mode.as_deref() == Some(m.as_str()) {
-                        format!("{{{desc}}}\n")
-                    } else {
-                        self.shown_trace_mode = Some(m.clone());
-                        format!("{{{m}: {desc}}}\n")
-                    };
-                    let _ = self.sink.write16(line);
+                    self.trace_token_now(tok);
                 }
                 // noexpand（`\noexpand`/`\unexpanded` 输出）：临时不可展开，原样输出。
                 // 优先于条件机拦截——`\unexpanded{\ifx...}` 里的条件 token 是数据，

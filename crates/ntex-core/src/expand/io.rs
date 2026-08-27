@@ -78,6 +78,13 @@ impl Expander {
                         _ => false,
                     };
                     if expandable {
+                        // 级别 2（\tracingcommands2）：tex.web expand() 开头
+                        // `if tracing_commands>1 then show_cur_cmd_chr`——展开入口
+                        // 也追踪。原语（\romannumeral 等）追踪；宏（\gobble 吞
+                        // 参数）参考不追踪（TRIP L94 无 {\gobble}）。
+                        if self.params.misc[3] >= 2 && !matches!(slot, EqSlot::Macro(_)) {
+                            self.trace_token_now(t);
+                        }
                         self.trace_suppress += 1;
                         let mut expansion = Vec::new();
                         let r = self.expand_once((t, false), &mut expansion);
