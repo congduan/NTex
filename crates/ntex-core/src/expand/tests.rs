@@ -179,6 +179,12 @@ mod tests {
 
     #[test]
     fn let_primitive_survives_redefinition() {
+        // \let\PAR=\par 后 \PAR 应可用（TRIP L404；L418 报 Undefined 是 bug 线索）
+        assert_eq!(
+            expand("\\let\\PAR=\\par\\PAR x").unwrap(),
+            "x",
+            "\\PAR 应别名 \\par 原语"
+        );
         // trip.tex 第 6-10 行：\let\paR=\par → 重定义 \par → \let\par=\paR 恢复
         assert_eq!(
             expand(

@@ -540,6 +540,48 @@ define_primitives! {
     Radical,
     // TRIP 冲刺：\delimiterfactor（内部整数参数，misc 数组；delimiter 缩放因子，默认 901）
     DelimiterFactor,
-    // TRIP 冲刺：\escapechar（内部整数参数，misc 数组；控制序列显示用 escape 字符，默认 `\`）
+    // TRIP 冲刺：\\escapechar（内部整数参数，misc 数组；控制序列显示用 escape 字符，默认 `\\`）
     EscapeChar,
+    // TRIP 冲刺：\\prevgraf（上一段落行数，只读内部量；misc 槽，默认 0）
+    PrevGraf,
+    // TRIP 冲刺：\\errmessage{...}（报错到转录；plain.tex \\error 宏的底层原语）
+    ErrMessage,
+    // TRIP 冲刺：\\pagetotal/\\pagegoal/\\predisplaysize（dimen 只读内部量；
+    // expander 无排版状态返回 0——TRIP L56 `\\showthe\\pagetotal\\showthe\\pagegoal`）
+    PageTotal,
+    PageGoal,
+    PreDisplaySize,
+    // TRIP 冲刺：\pagestretch/\pagefilstretch/\pagefillstretch（glue 内部量；
+    // TRIP L249 `\pagestretch=-1` 可写）
+    PageStretch,
+    PageFilStretch,
+    PageFillStretch,
+    // TRIP 冲刺：数学原语（存在性测试为主；简化实现"消费参数"）——
+    // \mskip/\mkern 数学胶水/kern；\mathaccent/\mathchar/\delimiter 数学字段；
+    // \eqno/\leqno 显示公式编号；\abovewithdelims/\overwithdelims 分数；
+    // \underline/\overline 上下划线；\crcr 对齐行结束；\- 断字断点
+    MSkip,
+    MKern,
+    MathAccent,
+    MathChar,
+    Delimiter,
+    EqNo,
+    LeqNo,
+    AboveWithDelims,
+    OverWithDelims,
+    Underline,
+    Overline,
+    CrCr,
+    DiscMinus,
+    // TRIP 冲刺：toks 参数（\everypar/\everyhbox/\everyvbox/\everycr/\errhelp）
+    // 与 \insertpenalties（int 只读）
+    EveryPar,
+    EveryHBox,
+    EveryVBox,
+    EveryCr,
+    ErrHelp,
+    InsertPenalties,
+    // TRIP 冲刺：\above（分数）与 \atopwithdelims（带定界分数）——B 批遗漏
+    Above,
+    AtopWithDelims,
 }

@@ -480,6 +480,16 @@ pub struct Expander {
     penalty_arrays: [Vec<i64>; 4],
     /// TRIP 冲刺：`\everymath` token 列表（进入数学模式时注入输入栈）。
     everymath: Vec<Token>,
+    /// TRIP 冲刺：`\everypar` token 列表（段落开始时注入；存储与查询）。
+    everypar_toks: Vec<Token>,
+    /// TRIP 冲刺：`\everyhbox` token 列表。
+    everyhbox_toks: Vec<Token>,
+    /// TRIP 冲刺：`\everyvbox` token 列表。
+    everyvbox_toks: Vec<Token>,
+    /// TRIP 冲刺：`\everycr` token 列表。
+    everycr_toks: Vec<Token>,
+    /// TRIP 冲刺：`\errhelp` token 列表（错误帮助文本）。
+    errhelp_toks: Vec<Token>,
     /// TRIP 冲刺：当前是否处于数学模式（`$`/`$$` 切换；决定 everymath 注入时机）。
     in_math: bool,
 }
@@ -554,6 +564,11 @@ impl Expander {
             parshape: Vec::new(),
             penalty_arrays: Default::default(),
             everymath: Vec::new(),
+            everypar_toks: Vec::new(),
+            everyhbox_toks: Vec::new(),
+            everyvbox_toks: Vec::new(),
+            everycr_toks: Vec::new(),
+            errhelp_toks: Vec::new(),
             in_math: false,
         };
         e.register_builtins();

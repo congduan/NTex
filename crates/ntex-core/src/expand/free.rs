@@ -96,6 +96,9 @@ fn int_param_index(p: Primitive) -> Option<usize> {
         Primitive::DoubleHyphenDemerits => 48,
         Primitive::FinalHyphenDemerits => 49,
         Primitive::HoldingInserts => 50,
+        // TRIP 冲刺：\prevgraf（上一段落行数，只读内部量；plain 默认 0）
+        Primitive::PrevGraf => 51,
+        Primitive::InsertPenalties => 52,
         _ => return None,
     })
 }

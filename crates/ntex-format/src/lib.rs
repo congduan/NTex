@@ -136,6 +136,9 @@ pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
         p.tabskip,
         p.lastskip,
         p.splittopskip,
+        p.pagestretch,
+        p.pagefilstretch,
+        p.pagefillstretch,
     ] {
         write_glue(w, g)?;
     }
@@ -253,6 +256,9 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
     let tabskip = read_glue(r)?;
     let lastskip = read_glue(r)?;
     let splittopskip = read_glue(r)?;
+    let pagestretch = read_glue(r)?;
+    let pagefilstretch = read_glue(r)?;
+    let pagefillstretch = read_glue(r)?;
     let hfuzz = read_i64(r)?;
     let vfuzz = read_i64(r)?;
     let boxmaxdepth = read_i64(r)?;
@@ -300,6 +306,9 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
         displayindent,
         delimitershortfall,
         lastkern,
+        pagestretch,
+        pagefilstretch,
+        pagefillstretch,
         endlinechar,
         newlinechar,
         defaulthyphenchar,

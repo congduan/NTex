@@ -3,7 +3,7 @@
 /// 348 项（`\muexpr` 为 `Glueexpr` 的别名，故比 `Primitive::ALL` 多一项；
 /// TRIP 冲刺补充 13 个标准参数原语），
 /// 供 `register_builtins` 注册与 `tests.rs` 的一致性测试共用。
-pub(crate) const BUILTINS: [(&str, Primitive); 348] = [
+pub(crate) const BUILTINS: [(&str, Primitive); 377] = [
     ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -282,6 +282,40 @@ pub(crate) const BUILTINS: [(&str, Primitive); 348] = [
             ("delimiterfactor", Primitive::DelimiterFactor),
             // TRIP 冲刺：\escapechar（内部整数参数；控制序列显示用 escape 字符，默认 `\`）
             ("escapechar", Primitive::EscapeChar),
+            // TRIP 冲刺：\prevgraf（上一段落行数，只读内部量）
+            ("prevgraf", Primitive::PrevGraf),
+            // TRIP 冲刺：\errmessage{...}（报错到转录）
+            ("errmessage", Primitive::ErrMessage),
+            // TRIP 冲刺：页面内部量（\pagetotal/\pagegoal/\predisplaysize 只读；\pagestretch 系可写）
+            ("pagetotal", Primitive::PageTotal),
+            ("pagegoal", Primitive::PageGoal),
+            ("predisplaysize", Primitive::PreDisplaySize),
+            ("pagestretch", Primitive::PageStretch),
+            ("pagefilstretch", Primitive::PageFilStretch),
+            ("pagefillstretch", Primitive::PageFillStretch),
+            // TRIP 冲刺：数学原语（存在性测试；简化实现）
+            ("mskip", Primitive::MSkip),
+            ("mkern", Primitive::MKern),
+            ("mathaccent", Primitive::MathAccent),
+            ("mathchar", Primitive::MathChar),
+            ("delimiter", Primitive::Delimiter),
+            ("eqno", Primitive::EqNo),
+            ("leqno", Primitive::LeqNo),
+            ("abovewithdelims", Primitive::AboveWithDelims),
+            ("overwithdelims", Primitive::OverWithDelims),
+            ("underline", Primitive::Underline),
+            ("overline", Primitive::Overline),
+            ("crcr", Primitive::CrCr),
+            ("-", Primitive::DiscMinus),
+            // TRIP 冲刺：toks 参数与 \insertpenalties
+            ("everypar", Primitive::EveryPar),
+            ("everyhbox", Primitive::EveryHBox),
+            ("everyvbox", Primitive::EveryVBox),
+            ("everycr", Primitive::EveryCr),
+            ("errhelp", Primitive::ErrHelp),
+            ("insertpenalties", Primitive::InsertPenalties),
+            ("above", Primitive::Above),
+            ("atopwithdelims", Primitive::AtopWithDelims),
             // ETRIP 冲刺：\vsplit<n> to/spread <dimen>（纵向拆分盒子寄存器）
             ("vsplit", Primitive::VSplit),
             // ETRIP 冲刺：\everyjob=<tokens>（作业开始 token 表；暂映射到 toks 0）

@@ -86,6 +86,10 @@ pub enum ParamKind {
     DelimiterShortfall,
     /// `\lastkern`：TRIP 冲刺补充标准参数。
     LastKern,
+    /// `\pagestretch` 等：页面胶水内部量（TRIP L249 可写）。
+    PageStretch,
+    PageFilStretch,
+    PageFillStretch,
     // ETRIP 冲刺：TeX 内部整数参数（非排版参数，仅存储/回读）
     /// `\endlinechar`：行尾字符（TeX initex 默认 13 = CR；-1 表示不追加）。
     EndlineChar,
@@ -122,7 +126,7 @@ pub enum ParamValue {
 
 /// 内部整数参数总数（TeX/e-TeX 内部整数，ETRIP/TRIP 冲刺；仅存储/回读）。
 /// 下标与 [`crate::expand::int_param_index`] 的映射一致。
-pub const MISC_INTS: usize = 51;
+pub const MISC_INTS: usize = 53;
 
 /// 内部整数参数默认值（TeX initex/plain 默认）。
 pub fn default_misc() -> [i64; MISC_INTS] {
@@ -178,6 +182,8 @@ pub fn default_misc() -> [i64; MISC_INTS] {
         10000, // 48 DoubleHyphenDemerits（plain 默认 10000）
         5000,  // 49 FinalHyphenDemerits（plain 默认 5000）
         0,     // 50 HoldingInserts（plain 默认 0）
+        0,     // 51 PrevGraf（只读内部量：上一段落行数；plain 默认 0）
+        0,     // 52 InsertPenalties（只读内部量：插入惩罚；plain 默认 0）
     ]
 }
 
@@ -262,6 +268,12 @@ pub struct Params {
     pub delimitershortfall: i64,
     /// TRIP 冲刺补充：`\lastkern`。
     pub lastkern: i64,
+    /// TRIP 冲刺补充：`\pagestretch`（页面自然胶水）。
+    pub pagestretch: Glue,
+    /// TRIP 冲刺补充：`\pagefilstretch`。
+    pub pagefilstretch: Glue,
+    /// TRIP 冲刺补充：`\pagefillstretch`。
+    pub pagefillstretch: Glue,
     /// `\endlinechar`（TeX initex 默认 13）。
     pub endlinechar: i64,
     /// `\newlinechar`（TeX 默认 -1 = 未激活）。
@@ -335,6 +347,9 @@ impl Default for Params {
             displayindent: 0,
             delimitershortfall: 5 * SP_PER_PT,
             lastkern: 0,
+            pagestretch: Glue::new(0, 0, 0),
+            pagefilstretch: Glue::new(0, 0, 0),
+            pagefillstretch: Glue::new(0, 0, 0),
             // TeX 内部整数参数（initex 默认）
             endlinechar: 13,
             newlinechar: -1,
@@ -393,6 +408,9 @@ impl Params {
             ParamKind::DisplayIndent => ParamValue::Dimen(self.displayindent),
             ParamKind::DelimiterShortfall => ParamValue::Dimen(self.delimitershortfall),
             ParamKind::LastKern => ParamValue::Dimen(self.lastkern),
+            ParamKind::PageStretch => ParamValue::Glue(self.pagestretch),
+            ParamKind::PageFilStretch => ParamValue::Glue(self.pagefilstretch),
+            ParamKind::PageFillStretch => ParamValue::Glue(self.pagefillstretch),
             ParamKind::EndlineChar => ParamValue::Number(self.endlinechar),
             ParamKind::NewlineChar => ParamValue::Number(self.newlinechar),
             ParamKind::DefaultHyphenChar => ParamValue::Number(self.defaulthyphenchar),
@@ -451,6 +469,9 @@ impl Params {
             (ParamKind::DisplayIndent, ParamValue::Dimen(v)) => self.displayindent = v,
             (ParamKind::DelimiterShortfall, ParamValue::Dimen(v)) => self.delimitershortfall = v,
             (ParamKind::LastKern, ParamValue::Dimen(v)) => self.lastkern = v,
+            (ParamKind::PageStretch, ParamValue::Glue(g)) => self.pagestretch = g,
+            (ParamKind::PageFilStretch, ParamValue::Glue(g)) => self.pagefilstretch = g,
+            (ParamKind::PageFillStretch, ParamValue::Glue(g)) => self.pagefillstretch = g,
             (ParamKind::EndlineChar, ParamValue::Number(v)) => self.endlinechar = v,
             (ParamKind::NewlineChar, ParamValue::Number(v)) => self.newlinechar = v,
             (ParamKind::DefaultHyphenChar, ParamValue::Number(v)) => self.defaulthyphenchar = v,

@@ -552,6 +552,35 @@ impl Expander {
                     };
                     Ok(emit_count(v))
                 }
+                // \\the\\pagetotal/\\pagegoal/\\predisplaysize：页面 dimen 只读
+                // （expander 无排版状态返回 0）；\\the\\pagestretch 系：页面 glue 参数
+                Primitive::PageTotal | Primitive::PageGoal | Primitive::PreDisplaySize => {
+                    Ok(emit_dimen(0))
+                }
+                // \\the\\everypar 等 toks 参数：输出存储的 token 列表
+                Primitive::EveryPar
+                | Primitive::EveryHBox
+                | Primitive::EveryVBox
+                | Primitive::EveryCr
+                | Primitive::ErrHelp => Ok(match p {
+                    Primitive::EveryPar => self.everypar_toks.clone(),
+                    Primitive::EveryHBox => self.everyhbox_toks.clone(),
+                    Primitive::EveryVBox => self.everyvbox_toks.clone(),
+                    Primitive::EveryCr => self.everycr_toks.clone(),
+                    _ => self.errhelp_toks.clone(),
+                }),
+                // \\the\\insertpenalties：int 只读（expander 无排版状态返回 0）
+                Primitive::InsertPenalties => Ok(emit_count(0)),
+                Primitive::PageStretch
+                | Primitive::PageFilStretch
+                | Primitive::PageFillStretch => {
+                    let g = match p {
+                        Primitive::PageStretch => self.params.pagestretch,
+                        Primitive::PageFilStretch => self.params.pagefilstretch,
+                        _ => self.params.pagefillstretch,
+                    };
+                    Ok(emit_glue(g))
+                }
                 _ => Err(Error::invalid_input(
                     "\\the 只支持 \\count\\dimen\\skip\\toks 与内部参数",
                 )),

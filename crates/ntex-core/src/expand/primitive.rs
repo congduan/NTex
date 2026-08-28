@@ -594,6 +594,55 @@ impl Expander {
             }
             // TRIP 冲刺：\noboundary（数学字符边界抑制；水平/垂直模式 no-op）
             Primitive::NoBoundary => self.sink.primitive(prim),
+            // TRIP 冲刺：数学原语（存在性测试；简化实现"消费参数"——
+            // 数学列表节点由排版器处理，expander 侧跳过）
+            Primitive::MSkip => {
+                let _ = self.scan_glue()?;
+                Ok(())
+            }
+            Primitive::MKern => {
+                let _ = self.scan_dimen()?;
+                Ok(())
+            }
+            Primitive::MathAccent => {
+                let _ = self.scan_number()?;
+                let _ = self.scan_group_contents(None)?;
+                Ok(())
+            }
+            Primitive::MathChar | Primitive::Delimiter => {
+                let _ = self.scan_number()?;
+                Ok(())
+            }
+            // \eqno/\leqno：显示公式编号分隔符——no-op（后续数学内容照常处理）
+            Primitive::EqNo | Primitive::LeqNo => Ok(()),
+            Primitive::AboveWithDelims => {
+                let _ = self.scan_dimen()?;
+                let _ = self.scan_delimiter()?;
+                let _ = self.scan_delimiter()?;
+                Ok(())
+            }
+            // TRIP 冲刺：\above<dimen>（分数）与 \atopwithdelims<delim><delim>（带定界分数）
+            Primitive::Above => {
+                let _ = self.scan_dimen()?;
+                Ok(())
+            }
+            Primitive::AtopWithDelims => {
+                let _ = self.scan_delimiter()?;
+                let _ = self.scan_delimiter()?;
+                Ok(())
+            }
+            Primitive::OverWithDelims => {
+                let _ = self.scan_delimiter()?;
+                let _ = self.scan_delimiter()?;
+                Ok(())
+            }
+            Primitive::Underline | Primitive::Overline => {
+                let _ = self.scan_group_contents(None)?;
+                Ok(())
+            }
+            // \crcr（对齐行结束）与 \-（断字断点）：简化 no-op
+            Primitive::CrCr | Primitive::DiscMinus => Ok(()),
+
             // TRIP 冲刺：\moveleft/\moveright<dimen><box>（盒子水平位移）
             Primitive::MoveLeft => {
                 let d = self.scan_dimen()?;
@@ -626,6 +675,42 @@ impl Expander {
                 self.everymath = toks;
                 Ok(())
             }
+            // TRIP 冲刺：toks 参数（\everypar/\everyhbox/\everyvbox/\everycr/\errhelp）
+            // ——RHS 支持组内容或 toks 参数/寄存器引用（TRIP L140 `\everypar=\errhelp`）
+            Primitive::EveryPar
+            | Primitive::EveryHBox
+            | Primitive::EveryVBox
+            | Primitive::EveryCr
+            | Primitive::ErrHelp => {
+                self.expect_equals()?;
+                self.skip_spaces()?;
+                let (tok, _) = self
+                    .fetch()?
+                    .ok_or_else(|| Error::invalid_input("toks 参数缺少 RHS"))?;
+                let toks = if tok.catcode() == Some(Catcode::BeginGroup) {
+                    self.unread(tok);
+                    self.scan_group_contents(None)?
+                } else if let Some(csid) = tok.csid() {
+                    match self.eqtb.slot(csid).clone() {
+                        EqSlot::Primitive(_) => self.the_tokens_after(tok)?,
+                        EqSlot::Register(RegKind::Toks, idx) => self.registers.toks(idx).to_vec(),
+                        _ => Vec::new(),
+                    }
+                } else {
+                    Vec::new()
+                };
+                match prim {
+                    Primitive::EveryPar => self.everypar_toks = toks,
+                    Primitive::EveryHBox => self.everyhbox_toks = toks,
+                    Primitive::EveryVBox => self.everyvbox_toks = toks,
+                    Primitive::EveryCr => self.everycr_toks = toks,
+                    _ => self.errhelp_toks = toks,
+                }
+                self.finish_assignment();
+                Ok(())
+            }
+            // TRIP 冲刺：\insertpenalties（int 只读——数字上下文由 scan_number 读取）
+            Primitive::InsertPenalties => Ok(()),
             // TRIP 冲刺：\/（斜体校正，直通 sink）
             Primitive::ItalicCorrection => self.sink.italic_correction(),
             // TRIP 冲刺：\radical<delimiter><math field>（根式原子，\sqrt 底层）
@@ -748,7 +833,18 @@ impl Expander {
             | Primitive::LastNodeType
             | Primitive::CurrentIfLevel
             | Primitive::CurrentIfType
-            | Primitive::CurrentIfBranch => {
+            | Primitive::CurrentIfBranch => Ok(()),
+            // TRIP 冲刺：页面 dimen 内部量（\pagetotal/\pagegoal/\predisplaysize
+            // 只读——expander 无排版状态，单独出现无操作；\the 查询在 save.rs 返回 0）
+            Primitive::PageTotal | Primitive::PageGoal | Primitive::PreDisplaySize => Ok(()),
+            // TRIP 冲刺：\errmessage{...} 报错到转录（plain.tex \error 宏的底层原语）
+            Primitive::ErrMessage => {
+                let msg = self.scan_group_contents(None)?;
+                let text: String = msg
+                    .iter()
+                    .filter_map(|t| t.charcode().and_then(char::from_u32))
+                    .collect();
+                self.report_error(&format!("{text}."));
                 Ok(())
             }
             // ETRIP 冲刺：寄存器算术 \multiply/\divide<寄存器> by<n>
@@ -894,13 +990,19 @@ impl Expander {
             | Primitive::SpaceSkip
             | Primitive::TabSkip
             | Primitive::LastSkip
-            | Primitive::SplitTopSkip => {
+            | Primitive::SplitTopSkip
+            | Primitive::PageStretch
+            | Primitive::PageFilStretch
+            | Primitive::PageFillStretch => {
                 let g = self.scan_glue()?;
                 let kind = match prim {
                     Primitive::HangIndent => ParamKind::HangIndent,
                     Primitive::SpaceSkip => ParamKind::SpaceSkip,
                     Primitive::TabSkip => ParamKind::TabSkip,
                     Primitive::LastSkip => ParamKind::LastSkip,
+                    Primitive::PageStretch => ParamKind::PageStretch,
+                    Primitive::PageFilStretch => ParamKind::PageFilStretch,
+                    Primitive::PageFillStretch => ParamKind::PageFillStretch,
                     _ => ParamKind::SplitTopSkip,
                 };
                 self.assign_param(kind, ParamValue::Glue(g))
