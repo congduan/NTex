@@ -66,6 +66,26 @@ impl Expander {
                 if self.maybe_eval_cond(tok)? {
                     continue;
                 }
+                // tex.web scan_int 符号循环的 get_x_token 语义：宏/可展开原语
+                // 展开后重新进入符号处理（trip.tex L103 `\tracingoutput\on`：
+                // \on 宏展开为 1 作为参数值——缺此分支则报 Missing number 并把
+                // \on 遗留到输入流，L104 \moveleft 连锁错位）。
+                let expandable = match self.eqtb.slot(csid).clone() {
+                    EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
+                    EqSlot::Primitive(p) if p.is_expandable() => true,
+                    _ => false,
+                };
+                if expandable {
+                    let mut expansion = Vec::new();
+                    self.expand_once((tok, false), &mut expansion)?;
+                    if !expansion.is_empty() {
+                        self.stack.push(InputFrame::TokenList {
+                            items: Arc::from(expansion),
+                            pos: 0,
+                        });
+                    }
+                    continue;
+                }
             }
             self.unread(tok);
             break;
