@@ -380,6 +380,10 @@ pub struct Expander {
     read_floor: usize,
     /// 条件栈（M1-9）。
     cond_stack: Vec<CondFrame>,
+    /// NTEX_SANITY_CHECK 设施：错误恢复前状态快照 (组级, 条件栈深)。
+    /// report_error 时记录第一个错误；主循环下一次迭代校验恢复后的状态
+    /// 与错误前是否大幅偏离（偏离 = 错误恢复本身写坏了状态，内部 bug 信号）。
+    err_snapshot: Option<(u32, usize)>,
     /// 组层级（M1-11）。
     group_level: u32,
     /// 对齐组深度（`\halign`/`\valign` 组内 `{`/`}` 不建普通组，TeX alignment 状态机语义）。
@@ -515,6 +519,7 @@ impl Expander {
             sink: Box::new(VecSink::default()),
             read_floor: 0,
             cond_stack: Vec::new(),
+            err_snapshot: None,
             group_level: 0,
             align_depth: 0,
             group_cond_depth: Vec::new(),
@@ -767,6 +772,8 @@ impl Expander {
                 );
                 step_start = std::time::Instant::now();
             }
+            // NTEX_SANITY_CHECK：错误恢复后状态完整性校验（每次迭代检查）
+            self.sanity_check_after_error();
             // A3：单步执行（注入输出例程 / flush 写流 / 处理一个 token）——
             // 出错时先写 `l.N` 上下文行到转录，再上抛（TeX error() 的上下文行）。
             let step = (|| -> Result<bool> {
@@ -889,7 +896,31 @@ impl Expander {
     /// 一致，TRIP 对齐不受影响）。恢复动作由调用方决定（钳制/插入/忽略——
     /// TeX error() 语义：报错后继续执行，不终止作业）。
     fn report_error(&mut self, msg: &str) {
+        if self.err_snapshot.is_none() {
+            self.err_snapshot = Some((self.group_level, self.cond_stack.len()));
+        }
         self.sink.report_error(msg);
+    }
+
+    /// NTEX_SANITY_CHECK 设施：错误恢复后状态完整性校验。
+    /// 在主循环每次迭代开始调用——若存在待校验快照（刚发生过错误恢复），
+    /// 对比当前 (组级, 条件栈深) 与错误前：组级偏离 >1 或条件栈偏离 >1 视为
+    /// 恢复路径写坏了状态（内部 bug），NTEX_SANITY_CHECK=1 时打警告。
+    /// 快照一律清除（一次错误只校验一次）。
+    fn sanity_check_after_error(&mut self) {
+        let Some((g0, c0)) = self.err_snapshot.take() else {
+            return;
+        };
+        let dg = self.group_level.abs_diff(g0);
+        let dc = (self.cond_stack.len() as i64 - c0 as i64).abs();
+        if std::env::var("NTEX_SANITY_CHECK").is_ok() && (dg > 1 || dc > 1) {
+            eprintln!(
+                "[sanity] 错误恢复后状态偏离：组级 {g0}->{} (Δ{dg})，条件栈 {c0}->{} (Δ{dc}) last_tok={:?}",
+                self.group_level,
+                self.cond_stack.len(),
+                self.last_tok
+            );
+        }
     }
 
     /// 错误上下文 token 的简单显示（TeX show_token_list：字符直接显示、cs 显示 `\名`）。

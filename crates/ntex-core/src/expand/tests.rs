@@ -185,6 +185,24 @@ mod tests {
             "x",
             "\\PAR 应别名 \\par 原语"
         );
+        // TRIP L397-418 模拟：\def 错误 + \let\c + 条件 + \let\PAR + \gdef\par
+        assert_eq!(
+            expand(
+                "\\def\\a}{\\let\\a\\xyzzy\\csname a\\endcsname}\\def\\a{ab\\par\\c}\\def\\b{ab*\\par\\c}\\let\\c\\b \\ifx\\a\\ifx.\\else\\expandafter\\ifx\\b\\ifinner\\error\\else\\relax\\fi\\else\\error\\fi\\fi\\let\\PAR=\\par\\gdef\\par{\\relax\\PAR}\\PAR x"
+            )
+            .unwrap(),
+            "x",
+            "TRIP 序列后 \\PAR 应可用"
+        );
+        // TRIP L6-10（\par 覆盖+恢复）+ L397-418 序列：\PAR 应可用
+        assert_eq!(
+            expand(
+                "\\let\\paR=\\par\\outer\\xdef\\par{\\catcode`\\%14}\\let\\par=\\paR\\def\\a}{\\let\\a\\xyzzy\\csname a\\endcsname}\\def\\a{ab\\par\\c}\\def\\b{ab*\\par\\c}\\let\\c\\b \\ifx\\a\\ifx.\\else\\expandafter\\ifx\\b\\ifinner\\error\\else\\relax\\fi\\else\\error\\fi\\fi\\let\\PAR=\\par\\gdef\\par{\\relax\\PAR}\\PAR x"
+            )
+            .unwrap(),
+            "x",
+            "L6-10 + L397-418 序列后 \\PAR 应可用"
+        );
         // trip.tex 第 6-10 行：\let\paR=\par → 重定义 \par → \let\par=\paR 恢复
         assert_eq!(
             expand(
