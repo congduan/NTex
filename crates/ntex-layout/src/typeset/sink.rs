@@ -665,8 +665,22 @@ impl TokenSink for NodeBuilder {
                     )?;
                 }
             }
-            // TRIP 冲刺：\error（plain.tex 宏：errmessage）no-op（TRIP 分支中不执行）
-            Primitive::Error => {}
+            // TeX \error 原语（tex.web @<Report an improper...@> /
+            // error 命令：报告 "! OK." 并进入错误交互——nonstop/batch 模式下
+            // 仅转录后继续；trip.tex 多处 \error 依赖此消息，参考 log 14 处）。
+            Primitive::Error => {
+                let mode = self.params.misc[19]; // interactionmode（0=batch 1=nonstop 2=scroll 3=errorstop）
+                let _ = self.transcript.push_str("! OK.\n");
+                if mode >= 2 {
+                    let _ = self.transcript.push_str("(Please type a command or say \\end)\n");
+                }
+                if mode == 0 || mode == 1 {
+                    self.transcript.push_str(
+                        "This error message was issued in nonstop or batch mode,\n\
+                         so I can't continue interacting with you.\n",
+                    );
+                }
+            }
             // 参数扫描型原语经 glue/kern/penalty/rule 事件处理
             _ => {}
         }
