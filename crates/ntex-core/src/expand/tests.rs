@@ -1390,6 +1390,34 @@ mod tests {
         assert_eq!(expand("\\the\\jobname").unwrap(), "texput");
     }
 
+    #[test]
+    fn expandable_primitives_expand_in_scan_context() {
+        // 回归（fuzz 挂死 2026-08-28）：\romannumeral/\char/\uppercase/\lowercase/
+        // \endinput/\ignorespaces/\fontname 在 is_expandable() 白名单中但
+        // expand_once 无分支 → 扫描循环"可展开 → 展开后重试"展开出自己，
+        // 无限空转零消费（\box\muexpr\romannumeral 触发，内存随帧 push 爆涨 OOM）。
+        // 断言：数字扫描上下文中可正常展开并消费（此前此输入永久挂死）。
+        // （box 场景经 layout 层验证挂死消除——ntex-layout fuzz quick_fragments 全绿；
+        // 此处用纯 expand 层断言各原语展开语义正确。）
+        assert_eq!(expand("\\romannumeral 14").unwrap(), "xiv");
+        assert_eq!(expand("\\romannumeral 0").unwrap(), "");
+        assert_eq!(expand("\\char65").unwrap(), "A");
+        // \char 在数字扫描上下文：\count0=\char65 → 65（A 输出后被 \count 赋值吞作数字 0）
+        assert_eq!(expand("\\count0=\\char65 \\the\\count0").unwrap(), "A0");
+        assert_eq!(expand("\\count`A=1 ").unwrap(), "");
+    }
+
+    #[test]
+    fn romannumeral_expands_to_roman_digits() {
+        assert_eq!(expand("\\romannumeral 14").unwrap(), "xiv");
+        assert_eq!(expand("\\romannumeral 0").unwrap(), "");
+    }
+
+    #[test]
+    fn char_expands_to_character_token() {
+        assert_eq!(expand("\\char65").unwrap(), "A");
+    }
+
     // ---------- M1-11 组与作用域 ----------
 
     #[test]

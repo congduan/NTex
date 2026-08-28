@@ -218,6 +218,47 @@ impl Expander {
                         (Token::char(cat, u32::from(b)), false)
                     }));
                 }
+                // fuzz 挂死修复（2026-08-28）：以下原语在 is_expandable() 白名单中，
+                // 但此前此处无分支 → 落 `_` 原样保留。扫描循环（scan_dimen_inner/
+                // scan_number 的"可展开 → 展开后重试"）撞上它们时展开结果仍是自己，
+                // 无限空转零消费（`\box\muexpr\romannumeral` 触发；内存随 TokenList
+                // 帧无限 push 爆涨 → OOM）。与 exec_* 共用 helper，语义一致。
+                EqSlot::Primitive(Primitive::RomanNumeral) => {
+                    let toks = self.roman_numeral_tokens()?;
+                    out.extend(toks.into_iter().map(|t| (t, false)));
+                }
+                EqSlot::Primitive(Primitive::Char) => {
+                    let toks = self.char_tokens()?;
+                    out.extend(toks.into_iter().map(|t| (t, false)));
+                }
+                EqSlot::Primitive(Primitive::Uppercase) => {
+                    let toks = self.case_convert_tokens(true)?;
+                    out.extend(toks.into_iter().map(|t| (t, false)));
+                }
+                EqSlot::Primitive(Primitive::Lowercase) => {
+                    let toks = self.case_convert_tokens(false)?;
+                    out.extend(toks.into_iter().map(|t| (t, false)));
+                }
+                EqSlot::Primitive(Primitive::EndInput) => {
+                    // \endinput 展开语义 = 执行语义（弹 Source 帧/置 ended），无 token 输出
+                    self.exec_endinput()?;
+                }
+                EqSlot::Primitive(Primitive::Ignorespaces) => {
+                    // \ignorespaces 展开语义 = 执行语义（跳空格），无 token 输出
+                    self.exec_ignorespaces()?;
+                }
+                EqSlot::Primitive(Primitive::FontName) => {
+                    let font = self.scan_font_ident()?;
+                    let name = self
+                        .font_names
+                        .get(font as usize)
+                        .and_then(|n| n.clone())
+                        .unwrap_or_default();
+                    out.extend(
+                        name.bytes()
+                            .map(|b| (Token::char(Catcode::Other, u32::from(b)), false)),
+                    );
+                }
                 _ => {
                     // 未定义/不可展开原语：原样保留
                     out.push((tok, false));

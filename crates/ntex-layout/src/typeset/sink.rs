@@ -1318,11 +1318,17 @@ fn showbox_format_box(b: &BoxNode, depth: usize, out: &mut String) {
         BoxKind::VBox => "vbox",
     };
     out.push_str(&format!(
-        "{p}\\{kind}({}+{})x{}\n",
+        "{p}\\{kind}({}+{})x{}",
         showbox_pt(b.height),
         showbox_pt(b.depth),
         showbox_pt(b.width)
     ));
+    // tex.web show_node_list：shift ≠ 0 时追加 ", shifted <dimen>"
+    // （\raise/\lower 参考点位移、\vtop 基线移到首行、\moveleft/\moveright 水平位移）
+    if b.shift != 0 {
+        out.push_str(&format!(", shifted {}", showbox_pt(b.shift)));
+    }
+    out.push('\n');
     for c in &b.children {
         showbox_format_node(c, depth + 1, out);
     }

@@ -1919,6 +1919,12 @@ impl Expander {
     /// `print_roman_numeral`；l.94 `\romannumeral1 \gobble`）。非正数 → 空；
     /// >4999 → "! Roman numeral too large." 并截断为 4999。输出字符为 other。
     fn exec_roman_numeral(&mut self) -> Result<()> {
+        let out = self.roman_numeral_tokens()?;
+        self.emit_tokens(out)
+    }
+
+    /// `\romannumeral` 展开 token 计算（exec 与 expand_once 共用；n≤0 → 空列表）。
+    fn roman_numeral_tokens(&mut self) -> Result<Vec<Token>> {
         let mut n = self.scan_number()?;
         if n > 4999 {
             let mut msg = "! Roman numeral too large.\n".to_string();
@@ -1946,12 +1952,18 @@ impl Expander {
                 out.push(Token::char(Catcode::Other, u32::from(b)));
             }
         }
-        self.emit_tokens(out)
+        Ok(out)
     }
 
     /// TRIP：`\char<num>`：字符码 → 输出 other 字符 token（tex.web scan_char_num；
     /// trip.tex l.195 `A /A\char`A`）。越界 → "! Bad character code (..)." 钳制 0。
     fn exec_char(&mut self) -> Result<()> {
+        let toks = self.char_tokens()?;
+        self.emit_tokens(toks)
+    }
+
+    /// `\char<num>` 展开 token 计算（exec 与 expand_once 共用）。
+    fn char_tokens(&mut self) -> Result<Vec<Token>> {
         let n = self.scan_number()?;
         if !(0..=255).contains(&n) {
             let mut msg = format!("! Bad character code ({n}).\n");
@@ -1959,11 +1971,10 @@ impl Expander {
                 msg.push_str(&format!("l.{ln} {line}\n"));
             }
             let _ = self.sink.write16(msg);
-            return self.emit_tokens(vec![Token::char(Catcode::Other, 0)]);
+            return Ok(vec![Token::char(Catcode::Other, 0)]);
         }
-        self.emit_tokens(vec![Token::char(Catcode::Other, n as u32)])
+        Ok(vec![Token::char(Catcode::Other, n as u32)])
     }
-
     /// TRIP：`\uppercase<general text>`：展开扫描 general text 后，按 `\uccode` 表
     /// 转换字符 token（tex.web upper_case；trip.tex l.96/97/338）。可展开项
     /// （如 `\number`）在扫描时展开，不可展开原语/组定界原样保留。
@@ -1977,6 +1988,12 @@ impl Expander {
     }
 
     fn case_convert(&mut self, upper: bool) -> Result<()> {
+        let out = self.case_convert_tokens(upper)?;
+        self.emit_tokens(out)
+    }
+
+    /// `\uppercase`/`\lowercase` 展开 token 计算（exec 与 expand_once 共用）。
+    fn case_convert_tokens(&mut self, upper: bool) -> Result<Vec<Token>> {
         let toks = self.scan_general_text()?;
         let table = if upper { &self.uccodes } else { &self.lccodes };
         let mut out = Vec::with_capacity(toks.len());
@@ -1992,7 +2009,7 @@ impl Expander {
             }
             out.push(tok);
         }
-        self.emit_tokens(out)
+        Ok(out)
     }
 
     /// TRIP：`\endinput`：终止当前输入文件（tex.web end_input；trip.tex l.424
@@ -2024,7 +2041,9 @@ impl Expander {
         // 空格被吸收不打印 blank space（tracingcommands）；NTex 此前只跳
         // 空格 token，\space 展开的空格漏到主循环多打印（TRIP diff 之一）。
         loop {
-            let Some((tok, _)) = self.fetch()? else { return Ok(()) };
+            let Some((tok, _)) = self.fetch()? else {
+                return Ok(());
+            };
             match tok.catcode() {
                 Some(Catcode::Space) => continue,
                 _ => {
