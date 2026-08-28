@@ -312,6 +312,10 @@ impl EngineDriver for NtexDriver {
             ts2.import_state(state);
             let run2 = ts2.typeset_bytes(source);
             transcript2 = ts2.take_transcript();
+            // 调试辅助：NTEX_KEEP_TRANSCRIPT=<path> 保存 pass2 转录到文件
+            if let Ok(path) = std::env::var("NTEX_KEEP_TRANSCRIPT") {
+                let _ = std::fs::write(&path, &transcript2);
+            }
             if let Err(e) = &run2 {
                 let tail: String = transcript2
                     .chars()

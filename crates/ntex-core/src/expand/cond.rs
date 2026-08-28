@@ -153,7 +153,11 @@ impl Expander {
                     });
                     return Ok(());
                 }
-                let mut truth = self.evaluate_if(op)?;
+                // TeX 错误恢复：条件求值失败（Arithmetic overflow / Missing number
+                // 等）后按 false 继续——条件帧照常建立（truth=false 走 skip_ahead），
+                // 否则后续 \else/\fi 找不到帧全部错乱（etrip L805-873 \1 体
+                // \ifnum 的 overflow 连锁 → l.880 Extra \else + Missing =）。
+                let mut truth = self.evaluate_if(op).unwrap_or_default();
                 if neg {
                     truth = !truth;
                 }

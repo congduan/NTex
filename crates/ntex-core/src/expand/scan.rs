@@ -12,6 +12,13 @@ impl Expander {
     /// 外层 \ifnum 求值为 false 后跳过分支时再闭合。
     fn maybe_eval_cond(&mut self, tok: Token) -> Result<bool> {
         if let Some(op) = self.cond_op(tok) {
+            // 仅条件开始（\if*）在数字中先求值；\fi/\else/\or 是不可展开终结符，
+            // 放回由外层条件状态机在扫描结束后消费（TeX scan_int back_input
+            // 语义）——否则 \numexpr...\else 求值时栈深 0 触发 Extra \else
+            // 错乱（etrip L805-873 \1 体 \ifnum 的连锁，l.880 Extra \else）。
+            if matches!(op, CondOp::Fi | CondOp::Else | CondOp::Or) {
+                return Ok(false);
+            }
             if std::env::var("NTEX_COND_TRACE").is_ok() {
                 eprintln!("[trace-maybe] 求值条件 {op:?}");
             }
@@ -591,6 +598,7 @@ impl Expander {
     ///   control sequence found while scanning text of \X."，插入 `}` 结束扫描、
     ///   offending cs 放回输入流（TRIP L354 `\tokens{\a^^@^^@a\par!`）。
     fn scan_group_contents(&mut self, forbidden: Option<&str>) -> Result<Vec<Token>> {
+        self.skip_spaces()?; // TeX scan_general_text：跳过 = 后的空格再读组（etrip L1178 \output = {）
         let fetched = self
             .fetch()?
             .ok_or_else(|| Error::invalid_input("扫描到输入末尾"))?

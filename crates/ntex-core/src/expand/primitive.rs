@@ -338,8 +338,13 @@ impl Expander {
             | Primitive::Toksdef => {
                 let csid = self.scan_cs_ident()?;
                 let idx = self.scan_number()?;
-                let idx = usize::try_from(idx)
-                    .map_err(|_| Error::invalid_input("寄存器下标越界"))?;
+                // TeX：\countdef\cs=-1 / 32768 → "! Bad register code (-1)."
+                // 恢复式（不定义、继续；ETRIP L970 稀疏数组测试的故意用例）。
+                if idx < 0 || idx >= REGISTER_COUNT as i64 {
+                    self.report_error(&format!("Bad register code ({idx})."));
+                    return Ok(());
+                }
+                let idx = idx as usize;
                 let kind = match prim {
                     Primitive::Countdef => RegKind::Count,
                     Primitive::Dimendef => RegKind::Dimen,

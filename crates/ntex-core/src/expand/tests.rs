@@ -862,6 +862,85 @@ mod tests {
                 .collect();
             assert_eq!(out, "T", "\\9 应保持 \\relax 定义（输出 T 而非 0T）");
         }
+        // 宏参数 token 的表达式求值：\def\m#1#2{\the\numexpr#1#2}\m{1+}{2*3}
+        // #1=[1,+] #2=[2,*,3] → \numexpr 1+ 2*3 = 7（+/* 是宏参数 token）
+        let m1 = expand("\\def\\m#1#2{\\the\\numexpr#1#2}\\m{1+}{2*3}");
+                assert_eq!(m1.unwrap(), "7");
+        // l.880 精确场景：\1\ifnum\numexpr{1+}{2*3}（\1 体含 \else 分支）
+        let m2 = expand("\\def\\1#1#2#3#4{#1#2#3#4=#2#3(#4)\\else X\\fi}\\1\\ifnum\\numexpr{1+}{2*3}");
+                assert_eq!(m2.unwrap(), "");
+        // \noexpand 定义的 \1（etrip L32）是否干扰后续 \def\1 覆盖
+        let m3 = expand(
+            "\\def\\noexpand\\1{\\number\\eTeXversion.#1}}\\1}\\def\\1#1#2#3#4{OK}\\1 a b c d",
+        );
+                assert_eq!(m3.unwrap(), "OK");
+        // L32 定义 + l.880 场景组合
+        let m4 = expand(
+            "\\def\\noexpand\\1{\\number\\eTeXversion.#1}}\\1}\\def\\1#1#2#3#4{#1#2#3#4=#2#3(#4)\\else X\\fi}\\1\\ifnum\\numexpr{1+}{2*3}",
+        );
+                assert_eq!(m4.unwrap(), "");
+        // 实参收集诊断：\1 的 #2#3#4 实际 token（\string 序列化）
+                        // \def 定义体内含 \else：是否报 Extra \else（l.880 前的 L1595）
+                        {
+            let mut e6 = Expander::new();
+            e6.set_sink(Box::new(VecSink::default()));
+            e6.run_source("\\def\\1#1#2#3#4{#1#2#3#4=#2#3(#4)\\else X\\fi}\\relax")
+                .unwrap();
+            let sink6 = e6.take_sink();
+            let mut sink6 = sink6;
+            let sink6 = sink6.as_any_mut().downcast_mut::<VecSink>().unwrap();
+                        assert!(
+                !sink6.transcript.contains("Extra \\else"),
+                "\\def 体内 \\else 不应报 Extra：{:?}",
+                sink6.transcript
+            );
+        }
+        // 条件栈非空时 \def 体含 \else：是否报 Extra \else（全量 l.880 前状态）
+                        {
+            let mut e7 = Expander::new();
+            e7.set_sink(Box::new(VecSink::default()));
+            e7.run_source(
+                "\\iftrue\\relax\\def\\1#1#2#3#4{#1#2#3#4=#2#3(#4)\\else X\\fi}\\fi\\relax",
+            )
+            .unwrap();
+            let sink7 = e7.take_sink();
+            let mut sink7 = sink7;
+            let sink7 = sink7.as_any_mut().downcast_mut::<VecSink>().unwrap();
+                        assert!(
+                !sink7.transcript.contains("Extra \\else"),
+                "条件内 \\def 体 \\else 不应报 Extra：{:?}",
+                sink7.transcript
+            );
+        }
+        // 最小复现：\ifnum 的 RHS \numexpr 后直接跟 \else（\1 体模式）
+                        {
+            let mut e8 = Expander::new();
+            e8.set_sink(Box::new(VecSink::default()));
+            e8.run_source("\\ifnum0=\\numexpr1+1\\else X\\fi").unwrap();
+            let sink8 = e8.take_sink();
+            let mut sink8 = sink8;
+            let sink8 = sink8.as_any_mut().downcast_mut::<VecSink>().unwrap();
+                        assert!(
+                !sink8.transcript.contains("Extra \\else"),
+                "\\numexpr 后 \\else 不应报 Extra：{:?}",
+                sink8.transcript
+            );
+        }
+        // hex 版本：\ifnum0=\numexpr"3FFFFFFF/"7FFFFFFF\else X\fi（\1 体模式）
+        {
+            let mut e9 = Expander::new();
+            e9.set_sink(Box::new(VecSink::default()));
+            e9.run_source("\\ifnum0=\\numexpr\"3FFFFFFF/\"7FFFFFFF\\else X\\fi")
+                .unwrap();
+            let sink9 = e9.take_sink();
+            let mut sink9 = sink9;
+            let sink9 = sink9.as_any_mut().downcast_mut::<VecSink>().unwrap();
+                        assert!(
+                !sink9.transcript.contains("Extra \\else"),
+                "hex \\numexpr 后 \\else 不应报 Extra：{:?}",
+                sink9.transcript
+            );
+        }
     }
 
     #[test]
@@ -875,9 +954,81 @@ mod tests {
     }
 
     #[test]
+    fn etrip_precedence_section_repro() {
+        // etrip L866-891 组合段：前置表达式段（\skip44/\muskip44/\dimen44 赋值）
+        // + 运算符优先级段（\def\1 + \1\ifnum\numexpr{1+}{2*3} 等）。
+        // 全量上下文 l.880 报 "Missing = inserted for \ifnum"（孤立段复现通过）。
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/etrip/etrip.tex");
+        let src = std::fs::read_to_string(path).unwrap();
+        let lines: Vec<&str> = src.lines().collect();
+        // 前置：\typeout/\error/\empty/\space 宏定义（etrip 顶部）
+        let pre = r"\def\empty{} \def\space{ }
+\def\typeout{\immediate\write15 }
+\def\error#1{\immediate\write15{Bug in your e-TeX implementation!}\immediate\write15 }";
+        // 前置状态段（L767-773 \count43/\skip43/\muskip43 赋值）+ L866-891 表达式段 + 优先级段
+        let body = format!(
+            "{}\n{}\n",
+            lines[766..773].join("\n"),
+            lines[865..891].join("\n")
+        );
+        // 二分 2：L700-891 全段（含 \numexpr 裸用段 + parshape + \1 定义）
+        let body2 = format!("{}\n", lines[765..891].join("\n"));
+        let full2 = format!("{pre}\n{body2}\n");
+        let mut e2 = Expander::new();
+        e2.set_sink(Box::new(VecSink::default()));
+        e2.run_source(&full2).unwrap();
+        let sink2 = e2.take_sink();
+        let mut sink2 = sink2;
+        let sink2 = sink2.as_any_mut().downcast_mut::<VecSink>().unwrap();
+        assert!(
+            !sink2.transcript.contains("Missing = inserted"),
+            "L766-891 段不应报 Missing = inserted：{:?}",
+            sink2.transcript
+        );
+        let full = format!("{pre}\n{body}\n");
+        let mut e = Expander::new();
+        e.set_sink(Box::new(VecSink::default()));
+        e.run_source(&full).unwrap();
+        let sink = e.take_sink();
+        let mut sink = sink;
+        let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+        assert!(
+            !sink.transcript.contains("Missing = inserted"),
+            "l.880 不应报 Missing = inserted：{:?}",
+            sink.transcript
+        );
+    }
+
+    #[test]
+    fn countdef_bad_register_code_recovers() {
+        // ETRIP L970 稀疏数组：\countdef\1=-1/32768 → "Bad register code" 恢复
+        // （不定义、继续），合法值 0/32767 正常绑定。
+        let mut e = Expander::new();
+        e.set_sink(Box::new(VecSink::default()));
+        e.run_source(
+            "\\countdef\\1=-1 \\countdef\\1=32768 \\countdef\\1=0 \\countdef\\1=32767 \\relax",
+        )
+        .unwrap();
+        let sink = e.take_sink();
+        let mut sink = sink;
+        let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+        assert_eq!(
+            sink.transcript,
+            "! Bad register code (-1).\n\n! Bad register code (32768).\n\n",
+            "转录：{:?}",
+            sink.transcript
+        );
+        // 越界不改变绑定；合法绑定 \1=count32767 可用
+        assert_eq!(
+            expand("\\countdef\\1=32767 \\count32767=42 \\the\\1").unwrap(),
+            "42"
+        );
+    }
+
+    #[test]
     fn etrip_full_gluestretchorder_section() {
         // 复现 etrip.tex mutoglue 段（L902-963）+ gluestretchorder 段：
-        // 前段复杂表达式（\2=--\gluetomu--\glueexpr(...)）可能污染后续 \ifnum 扫描
+        // 前段复杂表达式（\\2=--\\gluetomu--\\glueexpr(...)）可能污染后续 \\ifnum 扫描
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/etrip/etrip.tex");
         let src = std::fs::read_to_string(path).unwrap();
         let lines: Vec<&str> = src.lines().collect();

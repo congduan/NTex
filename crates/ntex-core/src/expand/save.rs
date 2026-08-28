@@ -529,8 +529,29 @@ impl Expander {
                 // \the\font：当前字体选择器（expander 侧无排版状态——NTex 简化返回
                 // 空；trip.tex L30 `\showthe\font`，trip.log 参考为 preload 场景跳过）
                 Primitive::Font => Ok(Vec::new()),
-                // \the\output：输出例程 token 列表（trip.tex L60 `\message{\the\output...}`）
+                // \\the\\output：输出例程 token 列表（trip.tex L60 `\\message{\\the\\output...}`）
                 Primitive::Output => Ok(self.output_toks.clone().unwrap_or_default().to_vec()),
+                // \\the\\interlinepenalties<idx> 等：惩罚数组元素（越界 → 0；
+                // etrip L1206-1211 `\\the#1-1`/`\\the#10` 稀疏数组读取）
+                Primitive::InterLinePenalties
+                | Primitive::ClubPenalties
+                | Primitive::WidowPenalties
+                | Primitive::DisplayWidowPenalties => {
+                    let kind: usize = match p {
+                        Primitive::InterLinePenalties => 0,
+                        Primitive::ClubPenalties => 1,
+                        Primitive::WidowPenalties => 2,
+                        _ => 3,
+                    };
+                    let idx = self.scan_number()?;
+                    let arr = &self.penalty_arrays[kind];
+                    let v = if idx >= 0 && (idx as usize) < arr.len() {
+                        arr[idx as usize]
+                    } else {
+                        0
+                    };
+                    Ok(emit_count(v))
+                }
                 _ => Err(Error::invalid_input(
                     "\\the 只支持 \\count\\dimen\\skip\\toks 与内部参数",
                 )),
