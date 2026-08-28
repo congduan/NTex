@@ -311,7 +311,14 @@ impl Expander {
             p if int_param_index(p).is_some() => {
                 let idx = int_param_index(p).expect("已检查 is_some");
                 let v = self.scan_number()?;
-                self.assign_param(ParamKind::MiscInt(idx), ParamValue::Number(v))
+                // TRIP 语义：\prevgraf 只允许非负（trip L392 `\prevgraf=-1` 报
+                // "! Bad \prevgraf (-1)." 恢复为 0；参考 log 对齐）
+                if p == Primitive::PrevGraf && v < 0 {
+                    self.report_error(&format!("Bad \\\\prevgraf ({v})."));
+                    self.assign_param(ParamKind::MiscInt(idx), ParamValue::Number(0))
+                } else {
+                    self.assign_param(ParamKind::MiscInt(idx), ParamValue::Number(v))
+                }
             }
             // ETRIP 冲刺：交互模式命令（\batchmode/\nonstopmode/\scrollmode/\errorstopmode）
             p if interaction_mode_value(p).is_some() => {

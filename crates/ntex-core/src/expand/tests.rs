@@ -185,6 +185,37 @@ mod tests {
             "x",
             "\\PAR 应别名 \\par 原语"
         );
+        // TRIP L392-404 组结构：{ 组 + \c}（\c 未定义）+ \let\c\b + 条件 + \let\PAR
+        // 参考里 \c} 的 } 闭合 L392 组 → \let\PAR 顶层定义；NTex 曾组级=1 泄漏
+        assert_eq!(
+            expand("{\\c}\\let\\PAR=\\par\\PAR x").unwrap(),
+            "x",
+            "最小 c-闭组（未定义）场景 PAR 应可用"
+        );
+        // \\if 11 后的空格：参考 log 同样输出 {blank space  }（TeX 语义：
+        // get_x_token 跳过 \\if 后的空格，但 11 与 A 之间的空格在输入流照常处理）
+        assert_eq!(expand(r"{\if11 A\else B\fi}").unwrap(), " A");
+        // \\PAR 别名链在条件/组后仍成立（\\ifx 验证）
+        for (name, pre) in [
+            ("纯条件", r"{\if 11 A\else B\fi}"),
+            ("纯组", r"{A}"),
+        ] {
+            assert!(
+                expand(&format!(r"{pre}\let\PAR=\par\ifx\PAR\par yes\else no\fi"))
+                    .unwrap()
+                    .contains("yes"),
+                "{name} 后 PAR 应别名 par"
+            );
+        }
+        let out392 = expand(
+            "{\\if 11 \\prevgraf=-1\\if 0123\\error\\else\\relax\\fi\\else\\error\\fi\\c}\\let\\c\\b \\ifx\\a\\ifx.\\else\\error\\fi\\fi\\let\\PAR=\\par\\gdef\\par{\\relax\\PAR}\\PAR x",
+        )
+        .unwrap();
+        // \\if 11 前导空格是 TeX 语义（参考同样输出）；\\PAR 应正常展开为段落结束
+        assert!(
+            out392.ends_with("x"),
+            "L392-404 组结构后 PAR 应可用：{out392:?}"
+        );
         // TRIP L397-418 模拟：\def 错误 + \let\c + 条件 + \let\PAR + \gdef\par
         assert_eq!(
             expand(
