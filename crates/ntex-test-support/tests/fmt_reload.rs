@@ -29,13 +29,10 @@ fn fmt_reload_minimal() {
 #[test]
 fn fmt_reload_then_run_etrip_preamble() {
     // 与驱动一致：TFM 目录 + 完整文件 → dump → 载入 → 重跑
-    std::env::set_var(
-        "NTEX_TFM_DIR",
-        "/Users/congduan/Desktop/code/_vibe_coding_/NTex/fixtures/etrip",
-    );
-    let src =
-        std::fs::read("/Users/congduan/Desktop/code/_vibe_coding_/NTex/fixtures/etrip/etrip.tex")
-            .unwrap();
+    // fixtures 路径按 CARGO_MANIFEST_DIR 定位（硬编码 /Users/... 仅原作者机器可用）
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/etrip");
+    std::env::set_var("NTEX_TFM_DIR", dir);
+    let src = std::fs::read(format!("{dir}/etrip.tex")).unwrap();
 
     let mut ts = ntex_layout::Typesetter::with_tfm();
     let r1 = ts.typeset_bytes(src.clone());
@@ -68,65 +65,9 @@ fn fmt_reload_then_run_etrip_preamble() {
     let state4 = ntex_format::load(&mut &buf[..]).unwrap();
     ts4.import_state(state4);
     let r3 = ts4.typeset_bytes(src.clone());
-    let tr4 = ts4.take_transcript();
     eprintln!(
-        "pass2(fullfmt fullsrc): {:?} tr_len={} tr_head={:?} tr_tail={:?}",
+        "pass2(fullfmt @full): {:?} transcript={:?}",
         r3.as_ref().err(),
-        tr4.len(),
-        tr4.chars().take(120).collect::<String>(),
-        tr4.chars()
-            .rev()
-            .take(300)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect::<String>()
-    );
-
-    // 只跑测试体（line 119+）
-    let mut ts5 = ntex_layout::Typesetter::with_tfm();
-    let state5 = ntex_format::load(&mut &buf[..]).unwrap();
-    ts5.import_state(state5);
-    let body: Vec<u8> = lines[118..].join(&b'\n');
-    let r5 = ts5.typeset_bytes(body);
-    eprintln!(
-        "pass2(body-only): {:?} transcript_head={:?}",
-        r5.as_ref().err(),
-        ts5.take_transcript().chars().take(80).collect::<String>()
-    );
-
-    // 二分 body 定位下一个失败点
-    for (tag, end) in [
-        ("to399", 399usize),
-        ("to414", 414usize),
-        ("to470", 470usize),
-    ] {
-        let mut t = ntex_layout::Typesetter::with_tfm();
-        t.import_state(ntex_format::load(&mut &buf[..]).unwrap());
-        let seg: Vec<u8> = lines[118..end].join(&b'\n');
-        let rr = t.typeset_bytes(seg);
-        let tr = t.take_transcript();
-        eprintln!(
-            "seg {tag}: {:?} tr_tail={:?}",
-            rr.as_ref().err(),
-            tr.chars()
-                .rev()
-                .take(60)
-                .collect::<String>()
-                .chars()
-                .rev()
-                .collect::<String>()
-        );
-    }
-
-    // 诊断：fmt 载入后 e-TeX 原语是否保持原语身份
-    let mut ts6 = ntex_layout::Typesetter::with_tfm();
-    let state6 = ntex_format::load(&mut &buf[..]).unwrap();
-    ts6.import_state(state6);
-    let d = ts6.typeset_bytes(r"\message{D2: \ifx\unexpanded\relax UNEXP-REL\else UNEXP-OK\fi|\ifx\ifdefined\relax IFDEF-REL\else IFDEF-OK\fi|\ifx\eTeXversion\relax ETV-REL\else ETV-OK\fi}");
-    eprintln!(
-        "diag(primitives): {:?} transcript={:?}",
-        d.as_ref().err(),
-        ts6.take_transcript()
+        ts4.take_transcript()
     );
 }
