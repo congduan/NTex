@@ -584,4 +584,28 @@ define_primitives! {
     // TRIP 冲刺：\above（分数）与 \atopwithdelims（带定界分数）——B 批遗漏
     Above,
     AtopWithDelims,
+    // TRIP 补全批次（tex.web 标准原语 22 个）：日期时间、marks TeX 版、
+    // 参数类、只读内部量
+    Day,
+    Month,
+    Year,
+    Time,
+    TopMark,
+    FirstMark,
+    BotMark,
+    SplitFirstMark,
+    SplitBotMark,
+    BrokenPenalty,
+    ExHyphenPenalty,
+    TracingPages,
+    Pausing,
+    SetLanguage,
+    SkewChar,
+    DisplayWidth,
+    EveryDisplay,
+    NullFont,
+    OutputPenalty,
+    PageDepth,
+    PageFillLStretch,
+    PageShrink,
 }

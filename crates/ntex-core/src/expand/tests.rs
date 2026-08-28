@@ -1081,6 +1081,31 @@ mod tests {
     }
 
     #[test]
+    fn trip_full_standard_primitives_22() {
+        // TRIP 补全批次：tex.web 标准原语 22 个的赋值/查询/展开
+        // 日期时间（int 参数四件套）
+        assert_eq!(expand("\\year=2026\\the\\year").unwrap(), "2026");
+        assert_eq!(expand("\\day=28\\month=8\\time=1200\\the\\day\\the\\month\\the\\time").unwrap(), "2881200");
+        // 参数类
+        assert_eq!(expand("\\brokenpenalty=77\\the\\brokenpenalty").unwrap(), "77");
+        assert_eq!(expand("\\exhyphenpenalty=55\\the\\exhyphenpenalty").unwrap(), "55");
+        assert_eq!(expand("\\tracingpages=1\\the\\tracingpages").unwrap(), "1");
+        // marks TeX 版（class 0，与 eTeX 版同源）
+        assert_eq!(expand("\\topmark\\firstmark\\botmark").unwrap(), "");
+        // \skewchar 字体参数（仿 \hyphenchar）
+        assert_eq!(expand("\\the\\skewchar\\nullfont").unwrap(), "-1");
+        // 只读内部量（无排版状态返回 0）
+        assert_eq!(expand("\\the\\displaywidth\\the\\pagedepth").unwrap(), "0.0pt0.0pt");
+        // \nullfont 是合法字体标识符（scan_font_ident 接受）
+        assert_eq!(expand("\\the\\fontdimen1\\nullfont").unwrap(), "0.0pt");
+        // \everydisplay toks 参数
+        assert_eq!(
+            expand("\\everydisplay={X}\\the\\everydisplay").unwrap(),
+            "X"
+        );
+    }
+
+    #[test]
     fn etrip_full_gluestretchorder_section() {
         // 复现 etrip.tex mutoglue 段（L902-963）+ gluestretchorder 段：
         // 前段复杂表达式（\\2=--\\gluetomu--\\glueexpr(...)）可能污染后续 \\ifnum 扫描

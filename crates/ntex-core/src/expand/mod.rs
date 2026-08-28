@@ -230,6 +230,11 @@ enum SavedValue {
         font: u32,
         prev: Option<i64>,
     },
+    /// `\skewchar`：字体偏斜字符覆盖（TRIP 补全批次）。
+    SkewChar {
+        font: u32,
+        prev: Option<i64>,
+    },
     /// `\delcode`：定界符码表项（ETRIP；组内局部保存）。
     DelCode {
         byte: u8,
@@ -494,6 +499,10 @@ pub struct Expander {
     everycr_toks: Vec<Token>,
     /// TRIP 冲刺：`\errhelp` token 列表（错误帮助文本）。
     errhelp_toks: Vec<Token>,
+    /// TRIP 补全批次：`\everydisplay` token 列表（显示数学进入时注入）。
+    everydisplay_toks: Vec<Token>,
+    /// TRIP 补全批次：`\skewchar<font>=<num>` 字体偏斜字符表。
+    skewchars: HashMap<u32, i64>,
     /// TRIP 冲刺：当前是否处于数学模式（`$`/`$$` 切换；决定 everymath 注入时机）。
     in_math: bool,
 }
@@ -574,6 +583,8 @@ impl Expander {
             everyvbox_toks: Vec::new(),
             everycr_toks: Vec::new(),
             errhelp_toks: Vec::new(),
+            everydisplay_toks: Vec::new(),
+            skewchars: HashMap::new(),
             in_math: false,
         };
         e.register_builtins();

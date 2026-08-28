@@ -490,6 +490,65 @@ impl Expander {
                         .collect(),
                 )
             }
+            // TRIP 补全批次：TeX 版 marks 查询（\topmark 等，无 class 参数，class 0）
+            Primitive::TopMark
+            | Primitive::FirstMark
+            | Primitive::BotMark
+            | Primitive::SplitFirstMark
+            | Primitive::SplitBotMark => {
+                let text = match prim {
+                    Primitive::TopMark => self.sink.topmarks(0),
+                    Primitive::FirstMark => self.sink.firstmarks(0),
+                    Primitive::BotMark => self.sink.botmarks(0),
+                    Primitive::SplitFirstMark => self.sink.splitfirstmarks(0),
+                    _ => self.sink.splitbotmarks(0),
+                };
+                self.emit_tokens(
+                    text.bytes()
+                        .map(|b| {
+                            let cat = if b == b' ' {
+                                Catcode::Space
+                            } else {
+                                Catcode::Other
+                            };
+                            Token::char(cat, u32::from(b))
+                        })
+                        .collect(),
+                )?;
+                Ok(())
+            }
+            // TRIP 补全批次：\skewchar<font>=<num>（字体偏斜字符，仿 \hyphenchar）
+            Primitive::SkewChar => self.exec_skewchar(),
+            // TRIP 补全批次：\everydisplay={<tokens>}（显示数学进入时注入）
+            Primitive::EveryDisplay => {
+                self.expect_equals()?;
+                self.skip_spaces()?;
+                let (tok, _) = self
+                    .fetch()?
+                    .ok_or_else(|| Error::invalid_input("everydisplay 缺少 RHS"))?;
+                if tok.catcode() == Some(Catcode::BeginGroup) {
+                    self.unread(tok);
+                    self.everydisplay_toks = self.scan_group_contents(None)?;
+                } else if let Some(csid) = tok.csid() {
+                    match self.eqtb.slot(csid).clone() {
+                        EqSlot::Primitive(_) => {
+                            self.everydisplay_toks = self.the_tokens_after(tok)?
+                        }
+                        EqSlot::Register(RegKind::Toks, idx) => {
+                            self.everydisplay_toks = self.registers.toks(idx).to_vec()
+                        }
+                        _ => {}
+                    }
+                }
+                self.finish_assignment();
+                Ok(())
+            }
+            // TRIP 补全批次：页面只读内部量（\the 查询在 save.rs 返回 0）
+            Primitive::DisplayWidth
+            | Primitive::PageDepth
+            | Primitive::PageFillLStretch
+            | Primitive::PageShrink
+            | Primitive::NullFont => Ok(()),
             // ETRIP 冲刺：\showbox<n>：显示盒子寄存器内容（sink 格式化到转录）
             Primitive::ShowBox => {
                 let idx = self.scan_register_index()?;
@@ -1526,6 +1585,8 @@ impl Expander {
             EqSlot::Font(f) => Ok(f),
             // TRIP：`\font`（无参数）作当前字体选择器（\textfont1=\font）
             EqSlot::Primitive(Primitive::Font) => Ok(self.sink.current_font()),
+            // TRIP 补全批次：\\nullfont（预定义空字体，id 0）
+            EqSlot::Primitive(Primitive::NullFont) => Ok(0),
             // \textfont<n>/...：字体位置读取当前族字体（TeX find_font 语义）
             EqSlot::Primitive(
                 Primitive::TextFont | Primitive::ScriptFont | Primitive::ScriptScriptFont,
@@ -1599,6 +1660,24 @@ impl Expander {
             ));
         }
         self.hyphenchars.insert(font, value);
+        self.finish_assignment();
+        Ok(())
+    }
+
+    /// TRIP 补全批次：`\skewchar<font>=<num>`：设置字体偏斜字符（仿 \hyphenchar）。
+    fn exec_skewchar(&mut self) -> Result<()> {
+        let font = self.scan_font_ident()?;
+        self.expect_equals()?;
+        let value = self.scan_number()?;
+        let prev = self.skewchars.get(&font).copied();
+        let global = self.is_global();
+        if !global && self.group_level > 0 {
+            self.save_stack.push((
+                self.group_level,
+                SavedValue::SkewChar { font, prev },
+            ));
+        }
+        self.skewchars.insert(font, value);
         self.finish_assignment();
         Ok(())
     }

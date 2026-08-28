@@ -196,6 +196,28 @@ impl Expander {
                         (Token::char(cat, u32::from(b)), false)
                     }));
                 }
+                // TRIP 补全批次：TeX 版 marks（\topmark 等，class 0 不扫描）
+                EqSlot::Primitive(p @ (Primitive::TopMark
+                    | Primitive::FirstMark
+                    | Primitive::BotMark
+                    | Primitive::SplitFirstMark
+                    | Primitive::SplitBotMark)) => {
+                    let text = match p {
+                        Primitive::TopMark => self.sink.topmarks(0),
+                        Primitive::FirstMark => self.sink.firstmarks(0),
+                        Primitive::BotMark => self.sink.botmarks(0),
+                        Primitive::SplitFirstMark => self.sink.splitfirstmarks(0),
+                        _ => self.sink.splitbotmarks(0),
+                    };
+                    out.extend(text.bytes().map(|b| {
+                        let cat = if b == b' ' {
+                            Catcode::Space
+                        } else {
+                            Catcode::Other
+                        };
+                        (Token::char(cat, u32::from(b)), false)
+                    }));
+                }
                 _ => {
                     // 未定义/不可展开原语：原样保留
                     out.push((tok, false));

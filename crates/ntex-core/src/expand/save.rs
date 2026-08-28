@@ -571,6 +571,18 @@ impl Expander {
                 }),
                 // \\the\\insertpenalties：int 只读（expander 无排版状态返回 0）
                 Primitive::InsertPenalties => Ok(emit_count(0)),
+                // TRIP 补全批次：\\the\\skewchar<font>：字体偏斜字符（无覆盖 = -1）
+                Primitive::SkewChar => {
+                    let font = self.scan_font_ident()?;
+                    Ok(emit_count(self.skewchars.get(&font).copied().unwrap_or(-1)))
+                }
+                // TRIP 补全批次：\\the\\everydisplay：显示数学注入 token 列表
+                Primitive::EveryDisplay => Ok(self.everydisplay_toks.clone()),
+                // TRIP 补全批次：页面只读内部量（无排版状态返回 0）
+                Primitive::DisplayWidth
+                | Primitive::PageDepth
+                | Primitive::PageFillLStretch
+                | Primitive::PageShrink => Ok(emit_dimen(0)),
                 Primitive::PageStretch
                 | Primitive::PageFilStretch
                 | Primitive::PageFillStretch => {
@@ -696,6 +708,14 @@ impl Expander {
                 }
                 None => {
                     self.hyphenchars.remove(&font);
+                }
+            },
+            SavedValue::SkewChar { font, prev } => match prev {
+                Some(v) => {
+                    self.skewchars.insert(font, v);
+                }
+                None => {
+                    self.skewchars.remove(&font);
                 }
             },
             SavedValue::DelCode { byte, prev } => match prev {

@@ -3,7 +3,7 @@
 /// 348 项（`\muexpr` 为 `Glueexpr` 的别名，故比 `Primitive::ALL` 多一项；
 /// TRIP 冲刺补充 13 个标准参数原语），
 /// 供 `register_builtins` 注册与 `tests.rs` 的一致性测试共用。
-pub(crate) const BUILTINS: [(&str, Primitive); 377] = [
+pub(crate) const BUILTINS: [(&str, Primitive); 399] = [
     ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -316,6 +316,29 @@ pub(crate) const BUILTINS: [(&str, Primitive); 377] = [
             ("insertpenalties", Primitive::InsertPenalties),
             ("above", Primitive::Above),
             ("atopwithdelims", Primitive::AtopWithDelims),
+            // TRIP 补全批次：tex.web 标准原语 22 个
+            ("day", Primitive::Day),
+            ("month", Primitive::Month),
+            ("year", Primitive::Year),
+            ("time", Primitive::Time),
+            ("topmark", Primitive::TopMark),
+            ("firstmark", Primitive::FirstMark),
+            ("botmark", Primitive::BotMark),
+            ("splitfirstmark", Primitive::SplitFirstMark),
+            ("splitbotmark", Primitive::SplitBotMark),
+            ("brokenpenalty", Primitive::BrokenPenalty),
+            ("exhyphenpenalty", Primitive::ExHyphenPenalty),
+            ("tracingpages", Primitive::TracingPages),
+            ("pausing", Primitive::Pausing),
+            ("setlanguage", Primitive::SetLanguage),
+            ("skewchar", Primitive::SkewChar),
+            ("displaywidth", Primitive::DisplayWidth),
+            ("everydisplay", Primitive::EveryDisplay),
+            ("nullfont", Primitive::NullFont),
+            ("outputpenalty", Primitive::OutputPenalty),
+            ("pagedepth", Primitive::PageDepth),
+            ("pagefilllstretch", Primitive::PageFillLStretch),
+            ("pageshrink", Primitive::PageShrink),
             // ETRIP 冲刺：\vsplit<n> to/spread <dimen>（纵向拆分盒子寄存器）
             ("vsplit", Primitive::VSplit),
             // ETRIP 冲刺：\everyjob=<tokens>（作业开始 token 表；暂映射到 toks 0）

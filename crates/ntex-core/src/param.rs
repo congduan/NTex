@@ -126,7 +126,7 @@ pub enum ParamValue {
 
 /// 内部整数参数总数（TeX/e-TeX 内部整数，ETRIP/TRIP 冲刺；仅存储/回读）。
 /// 下标与 [`crate::expand::int_param_index`] 的映射一致。
-pub const MISC_INTS: usize = 53;
+pub const MISC_INTS: usize = 63;
 
 /// 内部整数参数默认值（TeX initex/plain 默认）。
 pub fn default_misc() -> [i64; MISC_INTS] {
@@ -184,6 +184,16 @@ pub fn default_misc() -> [i64; MISC_INTS] {
         0,     // 50 HoldingInserts（plain 默认 0）
         0,     // 51 PrevGraf（只读内部量：上一段落行数；plain 默认 0）
         0,     // 52 InsertPenalties（只读内部量：插入惩罚；plain 默认 0）
+        0,     // 53 Day（当前日期日；plain 默认 0）
+        0,     // 54 Month（当前日期月；plain 默认 0）
+        0,     // 55 Year（当前日期年；plain 默认 0）
+        0,     // 56 Time（当前时间分钟；plain 默认 0）
+        0,     // 57 BrokenPenalty（断行惩罚；plain 默认 0）
+        0,     // 58 ExHyphenPenalty（显式连字符惩罚；plain 默认 0）
+        0,     // 59 TracingPages（断页追踪开关；plain 默认 0）
+        0,     // 60 Pausing（交互暂停开关；plain 默认 0）
+        0,     // 61 SetLanguage（当前语言；plain 默认 0）
+        0,     // 62 OutputPenalty（\\output 时惩罚；plain 默认 0）
     ]
 }
 

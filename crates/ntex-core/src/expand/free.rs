@@ -99,7 +99,17 @@ fn int_param_index(p: Primitive) -> Option<usize> {
         // TRIP 冲刺：\prevgraf（上一段落行数，只读内部量；plain 默认 0）
         Primitive::PrevGraf => 51,
         Primitive::InsertPenalties => 52,
-        _ => return None,
+        // TRIP 补全批次：日期时间与参数类（53-62）
+        Primitive::Day => 53,
+        Primitive::Month => 54,
+        Primitive::Year => 55,
+        Primitive::Time => 56,
+        Primitive::BrokenPenalty => 57,
+        Primitive::ExHyphenPenalty => 58,
+        Primitive::TracingPages => 59,
+        Primitive::Pausing => 60,
+        Primitive::SetLanguage => 61,
+        Primitive::OutputPenalty => 62,        _ => return None,
     })
 }
 
