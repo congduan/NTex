@@ -625,7 +625,19 @@ impl Expander {
             .0;
         let open = self.resolve_group_char(fetched);
         if open.catcode() != Some(Catcode::BeginGroup) {
-            return Err(Error::invalid_input("预期 {（组开始）"));
+            // TeX scan_left_brace（tex.web L692-696）：非 { → 报
+            // "Missing { inserted."（token 放回、隐含 `{` 恢复继续），
+            // 不再硬错误（trip.tex L396 `\accent\x\vfill` 等 20 处依赖此恢复）
+            self.unread(open);
+            let _ = self.sink.write16(
+                "! Missing { inserted.\n\
+                 A left brace was mandatory here, so I've put one in.\n\
+                 You might want to delete and/or insert some corrections\n\
+                 so that I will find a matching right brace soon.\n\
+                 (If you're confused by all this, try typing `I}' now.)\n"
+                    .to_string(),
+            );
+            self.report_error_context();
         }
         let mut tokens = Vec::new();
         let mut depth = 0usize;

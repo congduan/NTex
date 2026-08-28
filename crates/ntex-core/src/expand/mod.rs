@@ -833,7 +833,7 @@ impl Expander {
                     frames
                 );
             }
-            for f in self.cond_stack.iter() {
+            for f in self.cond_stack.iter().rev() {
                 let _ = self.sink.write16(format!(
                     "! Incomplete {}; all text was ignored after line {}.\n",
                     Self::if_type_name(f.if_type),

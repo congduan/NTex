@@ -423,6 +423,23 @@ impl Expander {
                 .0;
             match tok.catcode() {
                 Some(Catcode::BeginGroup) => break,
+                // TeX scan_toks macro_def（tex.web L22945 `if cur_chr=...end_group`）：
+                // 参数文本遇 `}` → 报 "Missing { inserted."（该 } 是 body 的开始括号
+                // 缺失——`}` 放回作为隐含 `{` 后的 body 首内容起点，body 为空）。
+                // trip.tex L397 `\def\a}{\let\a\xyzzy...` 依赖此恢复。
+                Some(Catcode::EndGroup) => {
+                    self.unread(tok);
+                    let _ = self.sink.write16(
+                        "! Missing { inserted.\n\
+                         A left brace was mandatory here, so I've put one in.\n\
+                         You might want to delete and/or insert some corrections\n\
+                         so that I will find a matching right brace soon.\n\
+                         (If you're confused by all this, try typing `I}' now.)\n"
+                            .to_string(),
+                    );
+                    self.report_error_context();
+                    break;
+                }
                 _ if is_parameter_char(tok) => {
                     let next = self
                         .fetch()?
