@@ -2019,8 +2019,26 @@ impl Expander {
 
     /// TRIP：`\ignorespaces`：跳过后续空格 token（tex.web；trip.tex l.315）。
     fn exec_ignorespaces(&mut self) -> Result<()> {
-        self.skip_spaces()?;
-        Ok(())
+        // TeX get_x_token 语义：跳过后续空格，且**展开宏**（\space 等）——
+        // 展开结果若为空格继续跳。参考 log 中 \ignorespaces\space\space 的
+        // 空格被吸收不打印 blank space（tracingcommands）；NTex 此前只跳
+        // 空格 token，\space 展开的空格漏到主循环多打印（TRIP diff 之一）。
+        loop {
+            let Some((tok, _)) = self.fetch()? else { return Ok(()) };
+            match tok.catcode() {
+                Some(Catcode::Space) => continue,
+                _ => {
+                    if let Some(csid) = tok.csid() {
+                        if let EqSlot::Macro(def) = self.eqtb.slot(csid).clone() {
+                            self.call_macro(csid, def.value.clone())?;
+                            continue;
+                        }
+                    }
+                    self.unread(tok);
+                    return Ok(());
+                }
+            }
+        }
     }
 
     /// TRIP：`\uccode<char>=<num>`：设置字符的大写码（tex.web assign_int；
