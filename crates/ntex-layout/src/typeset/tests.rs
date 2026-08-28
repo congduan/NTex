@@ -198,11 +198,24 @@ mod tests {
     }
 
     #[test]
-    fn vtop_gets_shift() {
+    fn vtop_readjusts_height_depth() {
+        // tex.web L21083-21087 Readjust：\vtop 的高度取首项高度，depth 相应调整；
+        // shift_amount 保持 0（box_context 只由 \raise/\lower/\moveleft/\moveright 设置）
         let main = typeset(r"\vtop{\hbox{a}\hbox{b}}").unwrap();
         let b = as_box(&main[0]);
         assert_eq!(b.kind, BoxKind::VBox);
-        assert_eq!(b.shift, b.height);
+        assert_eq!(b.shift, 0, "\\vtop 不设置 shift");
+        // 首项 hbox{a} 的高度成为 vtop 高度；depth = 原 depth + 原高度 - 首项高
+        let first_h = match &b.children[0] {
+            Node::Box(inner) => inner.height,
+            other => panic!("首项应为 Box：{other:?}"),
+        };
+        assert_eq!(b.height, first_h);
+        assert_eq!(
+            b.depth,
+            b.depth - b.height + first_h,
+            "depth = 原 depth + 原高度 - 首项高（Readjust 后 height 已是 first_h）"
+        );
     }
 
     #[test]

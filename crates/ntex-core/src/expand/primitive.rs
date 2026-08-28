@@ -607,10 +607,14 @@ impl Expander {
                 }
                 Ok(())
             }
-            // ETRIP 冲刺：\raise/\lower<dimen><box>：记录盒子参考点位移（下一个封装盒子生效）
+            // tex.web L20859-20861：hmove/vmove 扫描 dimen 后按 chr_code 取正负
+            // 传入 scan_box（`if t=0 then scan_box(cur_val) else scan_box(-cur_val)`）。
+            // box_context 最终整体写入 shift_amount（L20894），showbox 显示该值。
+            // 参考实测（trip.log L401）：\lower2pt → shifted 2.0（正值，非直觉的 -2）。
             Primitive::Raise | Primitive::Lower => {
                 let amount = self.scan_dimen()?;
-                let amount = if prim == Primitive::Lower {
+                // lower(chr=0) → +amount；raise(chr=1) → -amount（tex.web t=0/1 规则）
+                let amount = if prim == Primitive::Raise {
                     -amount
                 } else {
                     amount
@@ -710,9 +714,14 @@ impl Expander {
             Primitive::CrCr | Primitive::DiscMinus => Ok(()),
 
             // TRIP 冲刺：\moveleft/\moveright<dimen><box>（盒子水平位移）
+            // tex.web L20859-20861 符号规则：moveleft(chr=1)→+cur_val、
+            // moveright(chr=0)→-cur_val（box_context 直写 shift_amount；
+            // trip.log 参考实测 \moveleft20pt\copy200 → shifted -20.0，
+            // \moveright20pt\hbox → shifted 20.0——hmove 的位移最终以
+            // "盒内内容的坐标偏移"形式表现，与 vmove 方向约定相反）。
             Primitive::MoveLeft => {
                 let d = self.scan_dimen()?;
-                self.sink.move_left(d)
+                self.sink.move_left(-d)
             }
             Primitive::MoveRight => {
                 let d = self.scan_dimen()?;

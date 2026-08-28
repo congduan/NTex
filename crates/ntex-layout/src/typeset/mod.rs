@@ -609,6 +609,22 @@ impl NodeBuilder {
                 self.last_appended
             );
         }
+        // tex.web box_end（L20894 `shift_amount(cur_box):=box_context`）：
+        // \raise/\lower/\moveleft/\moveright 的位移值对**下一个进入列表的盒子**
+        // 生效（\box/\copy/\hbox 等所有 make_box 路径）。参照 append_to_vlist/
+        // hlist_out 的语义：shift 沿盒子进入当前列表时写入，非包装完成时。
+        let mut node = node;
+        if let Node::Box(b) = &mut node {
+            if let Some(v) = self.pending_shift.take() {
+                b.shift = v;
+            }
+            // 水平位移（\moveleft/\moveright）：tex.web 同一 box_context 机制，
+            // hlist 中 vbox 的 shift 也可表示水平偏移（vlist_out L12590
+            // `cur_h:=left_edge+shift_amount(p)`）——同一字段按列表方向解释。
+            if let Some(v) = self.pending_hshift.take() {
+                b.shift = v;
+            }
+        }
         self.lists.last_mut().expect("列表栈非空").push(node);
         // M3-5-2：顶层垂直模式追加后运行页面构建器（TeX build_page 的触发点）。
         // 增量（feed_one）：每产出一页即暂停——若定义了输出例程，让引擎在 token
@@ -649,7 +665,8 @@ impl NodeBuilder {
                 Node::Box(vpack(children, target))
             }
             PendingBox::VTop => {
-                // \vtop：维度同 vbox，参考点移到首行基线（shift 待 M3-5 对 DVI 校准）。
+                // tex.web L21083-21087 Readjust：\vtop 的高度取首项高度（首项为
+                // box/rule 时），depth 相应调整——不修改 shift_amount。
                 let natural = vbox_dimensions(&children);
                 let target = match spec {
                     Some((Some(to), _)) => to,
@@ -657,7 +674,14 @@ impl NodeBuilder {
                     _ => natural.height + natural.depth,
                 };
                 let mut b = vpack(children, target);
-                b.shift = b.height;
+                let first_h = match b.children.first() {
+                    // type(p)<=rule_node：box/rule 节点取 height，其余（glue 等）为 0
+                    Some(Node::Box(inner)) => inner.height,
+                    Some(Node::Rule { height, .. }) => *height,
+                    _ => 0,
+                };
+                b.depth = b.depth - first_h + b.height;
+                b.height = first_h;
                 Node::Box(b)
             }
         };
