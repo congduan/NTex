@@ -1285,9 +1285,30 @@ fn toks_to_text(toks: &[Token]) -> String {
         .collect()
 }
 
-/// sp → pt 字符串（固定 1 位小数）。
+/// sp → pt 字符串（tex.web print_scaled：整数 + 最多 5 位小数去尾 0；
+/// 余数 0 显示 `X.0`——如 `4.4`、`1055.44061`、`-1.0`）。
 fn showbox_pt(sp: i64) -> String {
-    format!("{:.1}", sp as f64 / SP_PER_PT as f64)
+    let neg = sp < 0;
+    let sp = sp.abs();
+    let int = sp / SP_PER_PT;
+    let rem = sp % SP_PER_PT;
+    let sign = if neg { "-" } else { "" };
+    if rem == 0 {
+        return format!("{sign}{int}.0");
+    }
+    let frac = rem * 100_000 / SP_PER_PT;
+    let frac_s = format!("{frac:05}").trim_end_matches('0').to_string();
+    format!("{sign}{int}.{frac_s}")
+}
+
+/// 胶水阶名（tex.web print_glue：1=fil、2=fill、3=filll、0 无）。
+fn order_name(order: u8) -> &'static str {
+    match order {
+        1 => "fil",
+        2 => "fill",
+        3 => "filll",
+        _ => "",
+    }
 }
 
 fn showbox_format_box(b: &BoxNode, depth: usize, out: &mut String) {
@@ -1321,14 +1342,23 @@ fn showbox_format_node(n: &Node, depth: usize, out: &mut String) {
             width,
             stretch,
             shrink,
-            ..
+            stretch_order,
+            shrink_order,
         } => {
             let mut s = format!("{p}\\glue {}", showbox_pt(*width));
             if *stretch != 0 {
-                s.push_str(&format!(" plus {}", showbox_pt(*stretch)));
+                s.push_str(&format!(
+                    " plus {}{}",
+                    showbox_pt(*stretch),
+                    order_name(*stretch_order)
+                ));
             }
             if *shrink != 0 {
-                s.push_str(&format!(" minus {}", showbox_pt(*shrink)));
+                s.push_str(&format!(
+                    " minus {}{}",
+                    showbox_pt(*shrink),
+                    order_name(*shrink_order)
+                ));
             }
             s.push('\n');
             out.push_str(&s);
