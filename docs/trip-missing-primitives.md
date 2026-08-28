@@ -1,9 +1,21 @@
-# TRIP 缺原语清单（2026-08-27 调研，diff 8528 阶段）
+# TRIP 缺原语清单（2026-08-27 调研；**2026-08-28 补 29 个后 Undefined 124→~10，剩故意测试**）
 
 ## 背景
 TRIP diff 收敛中发现：NTex 报 Undefined control sequence 158 处 vs 参考 7 处。
 根因：**Primitive enum（eqtb/primitive.rs）与 builtins 注册表缺约 50 个标准 TeX 原语**。
 缺原语被当 \relax 恢复（TRIP 能跑通但不报错 ≠ 语义正确），是 log diff 的硬缺口。
+
+## 已补（269e0a3，29 个）
+- 页面/只读内部量：\prevgraf \pagetotal \pagegoal \predisplaysize
+  \pagestretch \pagefilstretch \pagefillstretch \errmessage \insertpenalties
+- 数学原语（存在性简化）：\mskip \mkern \mathaccent \mathchar \delimiter
+  \eqno \leqno \above \abovewithdelims \overwithdelims \atopwithdelims
+  \underline \overline \crcr \-
+- toks 参数：\everypar \everyhbox \everyvbox \everycr \errhelp
+
+## 剩余
+- 故意测试（参考也报，勿修）：\J \foo \err \a^^@^^@a \! \# \\ \input
+- 待查：\PAR（TRIP L404 \let\PAR=\par 在 L418 报 Undefined——疑似组作用域，仅 2 次）
 
 ## 完整清单（NTEX_TRACE_EXEC 收集，按次数排序）
 
