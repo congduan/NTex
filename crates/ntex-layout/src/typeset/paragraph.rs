@@ -25,8 +25,21 @@ impl NodeBuilder {
             shrink_order: 0,
         });
         let lines = knuth_plass(&children, self.params.hsize, self.params.tolerance);
+        // 行间惩罚（tex.web interline_penalty 语义）：除首行外每行前插入
+        // \interlinepenalties 数组值（按行序索引，超出用末值；数组空用
+        // \interlinepenalty 单值参数）。节点留在列表 → \lastpenalty 可读
+        // （ETRIP L1243 \3 检查），断页器也据此决策。
+        let interline = self.penalty_arrays[0].clone();
+        let interline_default = self.params.interlinepenalty;
         let mut last_natural: Option<i64> = None;
-        for (s, e) in lines {
+        for (line_no, (s, e)) in lines.into_iter().enumerate() {
+            if line_no > 0 {
+                let p = interline
+                    .get((line_no - 1).min(interline.len().saturating_sub(1)))
+                    .copied()
+                    .unwrap_or(interline_default);
+                self.push_node(Node::Penalty { penalty: p });
+            }
             // 断点胶水已在折行时排除；末行保留 \parfillskip（fil 拉伸填满行宽）。
             // discretionary 物化：行首补前一断点的 post、行内用 replace、行尾断点补 pre
             let mut line: Vec<Node> = Vec::new();

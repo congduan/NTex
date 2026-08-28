@@ -1400,8 +1400,8 @@ mod tests {
         // 窄 \hsize 下折行唯一可行路径断在词内：
         // 行1 = "m ab-"（discretionary pre 连字符收尾）、行2 = "cdefgh n"。
         let main = typeset_hyphen(r"\patterns{ab5c}\hsize 10700sp m abcdefgh n").unwrap();
-        // [行1, interline glue, 行2]
-        assert_eq!(main.len(), 3, "应折成两行（行间 interline glue）：{main:?}");
+        // [行1, interline penalty, interline glue, 行2]（行间惩罚节点 tex.web 语义）
+        assert_eq!(main.len(), 4, "应折成两行（行间 penalty + interline glue）：{main:?}");
         let l1 = as_box(&main[0]);
         // [m, 词间 glue, a, b, 连字符]
         assert_eq!(l1.children.len(), 5, "行1 = m ab-：{l1:?}");
@@ -1410,8 +1410,9 @@ mod tests {
         assert_eq!(as_char(&l1.children[2]), b'a' as u32);
         assert_eq!(as_char(&l1.children[3]), b'b' as u32);
         assert_eq!(as_char(&l1.children[4]), b'-' as u32, "行尾应补连字符");
-        assert!(matches!(main[1], Node::Glue { .. }), "行间应插 interline glue");
-        let l2 = as_box(&main[2]);
+        assert!(matches!(main[1], Node::Penalty { .. }), "行间应插 interline penalty");
+        assert!(matches!(main[2], Node::Glue { .. }), "行间应插 interline glue");
+        let l2 = as_box(&main[3]);
         // [c d e f g h, 词间 glue, n, \parfillskip]
         assert_eq!(l2.children.len(), 9, "行2 = cdefgh n：{l2:?}");
         for (k, ch) in (b'c'..=b'h').enumerate() {

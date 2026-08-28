@@ -1138,6 +1138,9 @@ impl Expander {
                     ));
                 }
                 self.penalty_arrays[kind as usize] = arr;
+                // 推送给折行器（linebreak 行间惩罚读取；tex.web interline 语义）
+                self.sink
+                    .penalty_array_changed(kind, &self.penalty_arrays[kind as usize])?;
                 self.finish_assignment();
                 Ok(())
             }

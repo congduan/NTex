@@ -379,6 +379,9 @@ struct NodeBuilder {
     last_appended: String,
     /// 内部参数镜像（随 `param_changed` 事件更新，组作用域快照/恢复）。
     params: Params,
+    /// e-TeX 惩罚数组镜像（随 `penalty_array_changed` 事件更新；kind 0-3：
+    /// interline/club/widow/displaywidow）。折行时行间惩罚按索引取值，超出用末值。
+    penalty_arrays: [Vec<i64>; 4],
     /// 组开始时的参数快照（group_end 恢复）。
     param_stack: Vec<Params>,
     /// `\sfcode` 表（随 `sfcode_changed` 事件更新；plain 默认 .,?!=3000、:=2000、
@@ -492,6 +495,7 @@ impl NodeBuilder {
             pending_shift: None,
             pending_hshift: None,
             params: Params::default(),
+            penalty_arrays: Default::default(),
             param_stack: Vec::new(),
             sfcodes,
             space_factor: 1000,
@@ -700,6 +704,12 @@ impl NodeBuilder {
     /// 追加盒子到当前列表；垂直列表中前驱为盒子时插入 interline glue
     /// （tex.web `append_to_vlist`：d = \baselineskip − (depth 前 + height 新)，
     /// d < \lineskiplimit 用 \lineskip，否则用宽度调整为 d 的 \baselineskip）。
+    fn push_node(&mut self, node: Node) {
+        self.nodes_appended += 1;
+        self.last_appended = format!("{node:?}");
+        self.lists.last_mut().expect("列表栈非空").push(node);
+    }
+
     fn push_box(&mut self, node: Node) {
         if self.mode() == Mode::Vertical {
             // 分页模式下顶层前驱盒子的深度/类型：页面构建器里的盒子，或
@@ -718,7 +728,13 @@ impl NodeBuilder {
                     ),
                 }
             } else {
-                match self.lists.last().and_then(|l| l.last()) {
+                // 行间惩罚节点（折行插入的 interline penalty）不阻断行间胶水：
+                // Box → Penalty → Box 场景仍按"前驱是 Box"插 baselineskip glue
+                match self
+                    .lists
+                    .last()
+                    .and_then(|l| l.iter().rev().find(|n| !matches!(n, Node::Penalty { .. })))
+                {
                     Some(Node::Box(prev)) => (true, prev.depth),
                     _ => (false, 0),
                 }

@@ -678,6 +678,13 @@ impl TokenSink for NodeBuilder {
         Ok(())
     }
 
+    fn penalty_array_changed(&mut self, kind: u8, values: &[i64]) -> Result<()> {
+        if let Some(slot) = self.penalty_arrays.get_mut(kind as usize) {
+            *slot = values.to_vec();
+        }
+        Ok(())
+    }
+
     fn sfcode_changed(&mut self, charcode: u8, value: u32) -> Result<()> {
         self.sfcodes[charcode as usize] = value;
         Ok(())

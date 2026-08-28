@@ -156,6 +156,12 @@ pub trait TokenSink: std::fmt::Debug {
     fn param_changed(&mut self, _kind: ParamKind, _value: ParamValue) -> Result<()> {
         Ok(())
     }
+    /// e-TeX 惩罚数组变化（`\interlinepenalties`/`\clubpenalties`/`\widowpenalties`/
+    /// `\displaywidowpenalties` 赋值；kind 0-3 与 expander 的 penalty_arrays 下标一致）。
+    /// 折行器在行间插入惩罚节点时读取（tex.web 语义：数组按索引、超出用末值）。
+    fn penalty_array_changed(&mut self, _kind: u8, _values: &[i64]) -> Result<()> {
+        Ok(())
+    }
     /// `\sfcode<字符>=<值>` 赋值（M3-4 词间距 spacefactor 表）。
     fn sfcode_changed(&mut self, _charcode: u8, _value: u32) -> Result<()> {
         Ok(())
