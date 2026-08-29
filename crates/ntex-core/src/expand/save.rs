@@ -677,6 +677,13 @@ impl Expander {
     }
 
     fn restore(&mut self, v: SavedValue) {
+        // \tracingrestores>0：恢复动作输出 `{restoring ...}`（tex.web restore_trace + show_eqtb）。
+        // 先用不可变借用构造消息体（值即写回值），再执行恢复，最后写转录。
+        let trace = if self.params.misc[4] > 0 {
+            Some(self.restore_trace_body(&v))
+        } else {
+            None
+        };
         match v {
             SavedValue::Eqtb { csid, prev } => {
                 *self.eqtb.slot_mut(csid) = prev;
@@ -743,6 +750,166 @@ impl Expander {
                 }
             }
         }
+        if let Some(body) = trace {
+            if !body.is_empty() {
+                let _ = self.sink.write16(format!("{{restoring {body}}}\n"));
+            }
+        }
+    }
+
+    // ---------- \tracingrestores 跟踪输出（tex.web restore_trace + show_eqtb） ----------
+
+    /// 构造 `{restoring ...}` 的消息体（不含花括号与换行；tex.web `show_eqtb` 分区格式）。
+    fn restore_trace_body(&self, v: &SavedValue) -> String {
+        match v {
+            SavedValue::Eqtb { csid, prev } => {
+                format!("{}{}", self.cs_name_display(*csid), self.slot_display(*csid, prev))
+            }
+            SavedValue::Count { idx, prev } => format!("{}{}={}", self.esc("count"), idx, prev),
+            SavedValue::Dimen { idx, prev } => {
+                format!("{}{}={}pt", self.esc("dimen"), idx, format_dimen(*prev))
+            }
+            SavedValue::Skip { idx, prev } => {
+                format!("{}{}={}", self.esc("skip"), idx, format_glue(*prev))
+            }
+            SavedValue::Muskip { idx, prev } => {
+                format!("{}{}={}", self.esc("muskip"), idx, format_mu_glue(*prev))
+            }
+            SavedValue::Toks { idx, prev } => {
+                format!("{}{}={}", self.esc("toks"), idx, self.show_toks(prev))
+            }
+            SavedValue::Catcode { byte, prev } => {
+                format!("{}{}={}", self.esc("catcode"), byte, *prev as u8)
+            }
+            SavedValue::Param { kind, prev } => {
+                format!(
+                    "{}={}",
+                    self.esc(param_name(*kind)),
+                    param_value_display(*prev)
+                )
+            }
+            SavedValue::Sfcode { byte, prev } => format!("{}{}={}", self.esc("sfcode"), byte, prev),
+            SavedValue::Output { prev } => match prev {
+                Some(t) => format!("{}={{{}}}", self.esc("output"), self.show_toks(t)),
+                None => format!("{}=", self.esc("output")),
+            },
+            SavedValue::LcCode { byte, prev } => {
+                format!("{}{}={}", self.esc("lccode"), byte, prev)
+            }
+            SavedValue::DelCode { byte, prev } => format!(
+                "{}{}={}",
+                self.esc("delcode"),
+                byte,
+                prev.unwrap_or(0)
+            ),
+            SavedValue::MathCode { byte, prev } => format!(
+                "{}{}={}",
+                self.esc("mathcode"),
+                byte,
+                prev.unwrap_or(0)
+            ),
+            // tex.web 恢复跟踪不覆盖：FontDimen/HyphenChar/SkewChar/PenaltyArray
+            // （参考 trip.log 无对应 restoring 行）。
+            _ => String::new(),
+        }
+    }
+
+    /// 当前 escape 字符（`\escapechar`，misc[34]；256 = 不可见 → 空串）。
+    fn escape_char_str(&self) -> String {
+        let esc = self.params.misc[34];
+        if esc == 256 {
+            String::new()
+        } else {
+            char::from_u32(esc as u32)
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "\\".to_string())
+        }
+    }
+
+    /// `print_esc(s)`：escape 字符 + 字符串。
+    fn esc(&self, s: &str) -> String {
+        format!("{}{}", self.escape_char_str(), s)
+    }
+
+    /// `print_cs` 语义：单字符非字母 cs 直接显示字符（无 escape）；
+    /// 其余 escape + 名字（tex.web §5598）。
+    fn cs_name_display(&self, csid: u32) -> String {
+        let name = self.intern.name(csid);
+        let b = name.as_bytes();
+        if b.len() == 1 && !b[0].is_ascii_alphabetic() {
+            name.to_string()
+        } else {
+            self.esc(name)
+        }
+    }
+
+    /// token 列表 → 可见文本（tex.web `show_token_list(..., null, 32)`：
+    /// 32 项截断后补 `\ETC.`；字符取字符、cs 带 escape、宏参数 `#n`）。
+    fn show_toks(&self, toks: &[Token]) -> String {
+        let mut s = String::new();
+        for (i, t) in toks.iter().enumerate() {
+            if i >= 32 {
+                s.push_str(&self.esc("ETC."));
+                break;
+            }
+            match t.kind() {
+                TokenKind::Char => {
+                    if let Some(ch) = t.charcode().and_then(char::from_u32) {
+                        s.push(ch);
+                    }
+                }
+                TokenKind::ControlSeq => {
+                    if let Some(csid) = t.csid() {
+                        s.push_str(&self.cs_name_display(csid));
+                    }
+                }
+                TokenKind::MacroParam => {
+                    s.push('#');
+                    if let Some(n) = t.param_number() {
+                        s.push_str(&n.to_string());
+                    }
+                }
+                TokenKind::EndGroup => {}
+            }
+        }
+        s
+    }
+
+    /// eqtb 槽值显示（tex.web `print_cmd_chr` + 宏体；无结尾点，供 `{restoring ...}`）。
+    fn slot_display(&self, csid: u32, slot: &EqSlot) -> String {
+        match slot {
+            EqSlot::Undefined => "undefined".to_string(),
+            // 原语槽：显示 cs 名（`{restoring \box=\box}`）
+            EqSlot::Primitive(_) => self.cs_name_display(csid),
+            EqSlot::Macro(m) => {
+                let params: String = (1..=m.value.params.num_params)
+                    .map(|n| format!("#{n}"))
+                    .collect();
+                format!("macro:{params}->{}", self.show_toks(&m.value.body))
+            }
+            // \let 到字符：`char"XX`（print_esc("char") + print_hex）
+            EqSlot::Char { charcode, .. } => {
+                format!("{}\"{:X}", self.esc("char"), charcode)
+            }
+            EqSlot::Font(_) => self.cs_name_display(csid),
+            EqSlot::Register(k, n) => format!("{}{}{}", self.esc(reg_kind_name(*k)), n, ""),
+            EqSlot::Stream(_, n) => format!("{}{}", self.esc("write"), n),
+            EqSlot::MathChar(code) => format!("{}{:X}", self.esc("mathchar\""), code),
+            EqSlot::Alias(target) => {
+                // \let 别名：沿链解析（防环）后显示目标槽
+                let mut id = *target;
+                let mut hops = 0;
+                while let EqSlot::Alias(t) = self.eqtb.slot(id) {
+                    id = *t;
+                    hops += 1;
+                    if hops > 64 {
+                        break;
+                    }
+                }
+                let slot = self.eqtb.slot(id).clone();
+                self.slot_display(id, &slot)
+            }
+        }
     }
 
     /// 带作用域的宏定义：组内局部保存 + `\afterassignment` 触发。
@@ -784,11 +951,149 @@ impl Expander {
         g
     }
 
-    /// 赋值完成后触发 `\afterassignment`。
+    /// 赋值完成后触发 `\\afterassignment`。
     fn finish_assignment(&mut self) {
         if let Some(tok) = self.afterassignment.take() {
             self.unread(tok);
         }
     }
 
+}
+
+// ---------- \tracingrestores 显示辅助（自由函数） ----------
+
+/// 内部参数显示名（tex.web `print_param`/`print_length_param`/`print_skip_param`）。
+fn param_name(kind: ParamKind) -> &'static str {
+    use ParamKind::*;
+    match kind {
+        ParIndent => "parindent",
+        BaselineSkip => "baselineskip",
+        LineSkip => "lineskip",
+        LineSkipLimit => "lineskiplimit",
+        HSize => "hsize",
+        Tolerance => "tolerance",
+        VSize => "vsize",
+        TopSkip => "topskip",
+        MaxDepth => "maxdepth",
+        ParSkip => "parskip",
+        ParFillSkip => "parfillskip",
+        XSpaceSkip => "xspaceskip",
+        AboveDisplaySkip => "abovedisplayskip",
+        BelowDisplaySkip => "belowdisplayskip",
+        AboveDisplayShortSkip => "abovedisplayshortskip",
+        BelowDisplayShortSkip => "belowdisplayshortskip",
+        PreDisplayPenalty => "predisplaypenalty",
+        PostDisplayPenalty => "postdisplaypenalty",
+        LeftSkip => "leftskip",
+        RightSkip => "rightskip",
+        PrevDepth => "prevdepth",
+        InterLinePenalty => "interlinepenalty",
+        ClubPenalty => "clubpenalty",
+        WidowPenalty => "widowpenalty",
+        DisplayWidowPenalty => "displaywidowpenalty",
+        HangIndent => "hangindent",
+        SpaceSkip => "spaceskip",
+        TabSkip => "tabskip",
+        LastSkip => "lastskip",
+        Hfuzz => "hfuzz",
+        Vfuzz => "vfuzz",
+        BoxMaxDepth => "boxmaxdepth",
+        SplitMaxDepth => "splitmaxdepth",
+        SplitTopSkip => "splittopskip",
+        EmergencyStretch => "emergencystretch",
+        DisplayIndent => "displayindent",
+        DelimiterShortfall => "delimitershortfall",
+        MathSurround => "mathsurround",
+        LastKern => "lastkern",
+        PageStretch => "pagestretch",
+        PageFilStretch => "pagefilstretch",
+        PageFillStretch => "pagefillstretch",
+        EndlineChar => "endlinechar",
+        NewlineChar => "newlinechar",
+        DefaultHyphenChar => "defaulthyphenchar",
+        DefaultSkewChar => "defaultskewchar",
+        Mag => "mag",
+        NullDelimiterSpace => "nulldelimiterspace",
+        ScriptSpace => "scriptspace",
+        OverfullRule => "overfullrule",
+        VOffset => "voffset",
+        HOffset => "hoffset",
+        MiscInt(idx) => misc_int_name(idx),
+    }
+}
+
+/// 参数值显示（`{restoring \lineskip=0.0pt plus 40.0pt}` 等；`\the` 同格式）。
+fn param_value_display(v: ParamValue) -> String {
+    match v {
+        ParamValue::Number(n) => n.to_string(),
+        ParamValue::Dimen(d) => format!("{}pt", format_dimen(d)),
+        ParamValue::Glue(g) => format_glue(g),
+    }
+}
+
+/// 内部整数参数（misc 数组）显示名（与 [`crate::expand::int_param_index`] 反向）。
+fn misc_int_name(idx: usize) -> &'static str {
+    match idx {
+        0 => "tracingstats",
+        1 => "tracinglostchars",
+        2 => "tracingonline",
+        3 => "tracingcommands",
+        4 => "tracingrestores",
+        5 => "tracingassigns",
+        6 => "tracinggroups",
+        7 => "tracingifs",
+        8 => "tracingscantokens",
+        9 => "tracingnesting",
+        10 => "lefthyphenmin",
+        11 => "righthyphenmin",
+        12 => "hbadness",
+        13 => "pretolerance",
+        14 => "showboxdepth",
+        15 => "showboxbreadth",
+        16 => "language",
+        17 => "savinghyphcodes",
+        18 => "savingvdiscards",
+        19 => "interactionmode",
+        20 => "texxetstate",
+        22 => "lastlinefit",
+        23 => "predisplaydirection",
+        24 => "everyeof",
+        25 => "deadcycles",
+        26 => "tracingmacros",
+        27 => "tracingoutput",
+        28 => "errorcontextlines",
+        29 => "tracingparagraphs",
+        30 => "pagediscards",
+        31 => "splitdiscards",
+        32 => "lostchars",
+        33 => "delimiterfactor",
+        34 => "escapechar",
+        35 => "vbadness",
+        36 => "globaldefs",
+        37 => "floatingpenalty",
+        38 => "linepenalty",
+        39 => "binoppenalty",
+        40 => "relpenalty",
+        41 => "adjdemerits",
+        42 => "looseness",
+        43 => "maxdeadcycles",
+        44 => "hangafter",
+        45 => "uchyph",
+        46 => "fam",
+        47 => "hyphenpenalty",
+        48 => "doublehyphendemerits",
+        49 => "finalhyphendemerits",
+        50 => "holdinginserts",
+        51 => "prevgraf",
+        52 => "insertpenalties",
+        53 => "day",
+        54 => "month",
+        55 => "year",
+        56 => "time",
+        57 => "brokenpenalty",
+        58 => "exhyphenpenalty",
+        59 => "tracingpages",
+        60 => "parshape",
+        _ => "?",
+    }
 }
