@@ -719,9 +719,9 @@ impl TokenSink for NodeBuilder {
             // 仅转录后继续；trip.tex 多处 \error 依赖此消息，参考 log 14 处）。
             Primitive::Error => {
                 let mode = self.params.misc[19]; // interactionmode（0=batch 1=nonstop 2=scroll 3=errorstop）
-                let _ = self.transcript.push_str("! OK.\n");
+                self.transcript.push_str("! OK.\n");
                 if mode >= 2 {
-                    let _ = self.transcript.push_str("(Please type a command or say \\end)\n");
+                    self.transcript.push_str("(Please type a command or say \\end)\n");
                 }
                 if mode == 0 || mode == 1 {
                     self.transcript.push_str(
