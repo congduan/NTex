@@ -102,6 +102,17 @@ struct CondFrame {
     line: usize,
 }
 
+/// 对齐模板（preamble）阶段的 token 处置（TeX get_preamble_token 语义）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreambleAction {
+    /// 模板结束（首个到达模板起始深度的 `\cr`/`\crcr`）：交给正常处理。
+    End,
+    /// 收集不执行（`\dp`/`\wd`/`\tabskip` 等模板原语、字符、组定界副作用已处理）。
+    Collect,
+    /// 可展开项（宏/可展开原语/条件）：正常展开求值（展开产物回流后仍按模板收集）。
+    Process,
+}
+
 /// 条件操作（process_one 拦截的 token）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CondOp {
@@ -393,6 +404,14 @@ pub struct Expander {
     group_level: u32,
     /// 对齐组深度（`\halign`/`\valign` 组内 `{`/`}` 不建普通组，TeX alignment 状态机语义）。
     align_depth: i32,
+    /// 对齐模板（preamble）阶段：`\halign{` 后到第一个 `\cr`/`\crcr` 之间是模板
+    /// 定义（tex.web get_preamble_token），内容**收集不执行**（`\dp`/`\wd`/`\tabskip`
+    /// 等作为模板 token 原样保留；TRIP L332-333 的 `\dp3\A`/`\wd4\d#\d` 不得当命令执行）。
+    align_preamble: bool,
+    /// 模板开始时的对齐深度：只有对齐深度回到该深度时的 `\cr`/`\crcr` 才结束模板
+    /// （外层模板可含嵌套 `\vbox{\halign{...\crcr}}`——内层 `\crcr` 是模板 token，
+    /// 不结束外层模板；TRIP L331-333 外层 `\halign` 模板跨行含内层 `\halign`）。
+    align_preamble_depth: i32,
     /// 组开始时的条件栈深度（组结束必须回到该深度）。
     group_cond_depth: Vec<usize>,
     /// 赋值保存栈：组结束时按层回滚（朴素快照回滚）。
@@ -531,6 +550,8 @@ impl Expander {
             err_snapshot: None,
             group_level: 0,
             align_depth: 0,
+            align_preamble: false,
+            align_preamble_depth: 0,
             group_cond_depth: Vec::new(),
             save_stack: Vec::new(),
             global_pending: false,
@@ -673,6 +694,8 @@ impl Expander {
         self.cond_stack.clear();
         self.group_level = 0;
         self.align_depth = 0;
+        self.align_preamble = false;
+        self.align_preamble_depth = 0;
         self.group_cond_depth.clear();
         self.save_stack.clear();
         self.global_pending = false;
@@ -1156,6 +1179,19 @@ impl Expander {
                     Some(csid) => format!("\\{}", self.intern.name(csid)),
                     None => format!("{tok:?}"),
                 });
+                // 对齐模板（preamble）阶段：`\halign{` 后到对齐深度回到模板起始层的
+                // `\cr`/`\crcr` 之间，模板 token 只收集不执行（tex.web get_preamble_token）。
+                // - 可展开项（宏/可展开原语/条件）**照常展开**（TeX get_x_token 语义，
+                //   `\iftrue`/`\d` 在模板中求值；tracingcommands=2 时展开也追踪）；
+                // - 不可展开原语（`\dp`/`\wd`/`\tabskip`）与字符等原样收集，**不追踪**；
+                // - 首个到达模板起始深度的 `\cr`/`\crcr` 结束模板，交给下方正常处理。
+                if self.align_preamble && !noexpand {
+                    match self.preamble_classify(&tok)? {
+                        PreambleAction::End => { /* 落到正常处理 */ }
+                        PreambleAction::Collect => return Ok(true),
+                        PreambleAction::Process => { /* 落到正常处理（展开/条件） */ }
+                    }
+                }
                 // \tracingcommands（misc 下标 3）：每命令一行 `{模式: 描述}`；
                 // 模式只在变化时打印（tex.web show_cur_cmd_chr 的 shown_mode 语义）；
                 // 子展开（expand_region：\write 内容等）抑制——TeX 只在主循环追踪。
@@ -1397,6 +1433,58 @@ impl Expander {
     }
 
     // ---------- 输入获取 ----------
+
+    /// 对齐模板（preamble）阶段的 token 分类：决定收集不执行 / 正常展开 / 结束模板。
+    fn preamble_classify(&mut self, tok: &Token) -> Result<PreambleAction> {
+        match tok.kind() {
+            TokenKind::ControlSeq => {
+                let csid = tok.csid().expect("ControlSeq 必有 csid");
+                let slot = self.eqtb.slot(csid).clone();
+                // 模板起始深度的 `\cr`/`\crcr` 结束模板（更内层的嵌套 `\halign` 模板
+                // 内 `\crcr` 是外层模板 token）
+                if matches!(slot, EqSlot::Primitive(Primitive::Cr | Primitive::CrCr))
+                    && self.align_depth == self.align_preamble_depth
+                {
+                    self.align_preamble = false;
+                    self.align_preamble_depth = 0;
+                    return Ok(PreambleAction::End);
+                }
+                // 条件 token：照常求值（TeX get_x_token 嵌套条件；TRIP L331 `\iftrue`）
+                if self.cond_op(*tok).is_some() {
+                    return Ok(PreambleAction::Process);
+                }
+                // 可展开 cs（宏/可展开原语）：照常展开，产物回流后仍按模板收集
+                match &slot {
+                    EqSlot::Macro(m) => {
+                        if !(m.value.protected && self.suppress_expansion > 0) {
+                            return Ok(PreambleAction::Process);
+                        }
+                    }
+                    EqSlot::Primitive(p) if p.is_expandable() => return Ok(PreambleAction::Process),
+                    _ => {}
+                }
+                Ok(PreambleAction::Collect)
+            }
+            TokenKind::Char => match tok.catcode() {
+                Some(Catcode::BeginGroup) => {
+                    self.align_depth += 1;
+                    Ok(PreambleAction::Collect)
+                }
+                Some(Catcode::EndGroup) => {
+                    self.align_depth -= 1;
+                    if self.align_depth == 0 {
+                        // 模板未遇 `\cr` 就闭合（空模板/畸形）：退出模板阶段并关组
+                        self.align_preamble = false;
+                        self.align_preamble_depth = 0;
+                        self.end_group()?;
+                    }
+                    Ok(PreambleAction::Collect)
+                }
+                _ => Ok(PreambleAction::Collect),
+            },
+            _ => Ok(PreambleAction::Collect),
+        }
+    }
 
     /// 探测下一个 token 是否为数学移位（`$$` 检测）：
     /// 是 → 消费该 `$`（连续 `$$` 由 sink 一并处理，不放回）；

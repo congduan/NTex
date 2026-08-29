@@ -1431,7 +1431,7 @@ impl Expander {
         // 单位/阶后缀：连续字母，取**最长**已知单位或 fil/fill/filll 阶前缀
         // （TeX scan_keyword 逐个字母匹配的等价：`1ptminus0fil` → "pt" + 放回 "minus"；
         // `0fillminus0filll` → 阶词 "fill" 被消费并回传，放回 "minus"）。
-        const UNITS: &[&str] = &["sp", "pt", "bp", "in", "cm", "mm", "pc", "cc", "mu"];
+        const UNITS: &[&str] = &["sp", "pt", "bp", "in", "cm", "mm", "pc", "cc", "dd", "mu"];
         const ORDER_WORDS: &[&str] = &["fil", "fill", "filll"];
         let mut unit_tokens: Vec<(Token, char)> = Vec::new();
         while let Some((tok, _)) = self.fetch()? {
@@ -1499,6 +1499,18 @@ impl Expander {
         for u in UNITS.iter().chain(ORDER_WORDS.iter()) {
             if word.starts_with(u) && best.map_or(true, |(_, l)| u.len() > l) {
                 best = Some((u, u.len()));
+            }
+        }
+        // TeX `true<unit>`：绝对单位（忽略放大系数；NTex 无放大系数，等同 `<unit>`）。
+        // 需在 "truedd"/"truept" 等整体匹配失败时剥离 "true" 前缀后按单位匹配
+        // （TRIP L331 `\halign spread-12.truedd{...}`——参考不报 "Illegal unit"）。
+        if let Some(rest) = word.strip_prefix("true") {
+            if !rest.is_empty() {
+                for u in UNITS.iter() {
+                    if rest.starts_with(u) && best.map_or(true, |(_, l)| u.len() + 4 > l) {
+                        best = Some((u, u.len() + 4)); // consumed 含 "true"
+                    }
+                }
             }
         }
         let (unit, consumed, order) = match best {

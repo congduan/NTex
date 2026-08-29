@@ -578,12 +578,19 @@ impl Expander {
             // TeX 语义：`\halign` 的 `{` 由 scan_left_brace 消费，alignment 内容中
             // 的 `{`/`}` 由对齐状态机管理（不建普通组）——VM 侧用 align_depth 模拟。
             Primitive::Valign | Primitive::Halign => {
+                // 可选 `to <dimen>`/`spread <dimen>` 规格（同 \hbox 的 scan_box_spec；
+                // TRIP L332 `\halign to 0pt{...}`、L407 `\halign to 1truemm...`）
+                let (to, spread) = self.scan_box_spec()?;
+                self.sink.box_spec(to, spread)?;
                 self.sink.align_begin()?;
                 let fetched = self.fetch()?;
                 if let Some((tok, _)) = fetched {
                     if tok.catcode() == Some(Catcode::BeginGroup) {
                         self.begin_group()?;
                         self.align_depth = 1;
+                        // 模板（preamble）阶段：`{` 后到首个 `\cr`/`\crcr` 之间收集不执行
+                        self.align_preamble = true;
+                        self.align_preamble_depth = self.align_depth;
                         Ok(())
                     } else {
                         self.unread(tok);

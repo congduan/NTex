@@ -109,6 +109,8 @@ pub fn unit_to_sp(unit: &str) -> Option<i64> {
         // TRIP：pica（1pc = 12pt）+ cicero（1cc = 12pt × 1157/1236 ≈ 736166sp）
         "pc" => Some(12 * SP_PER_PT),
         "cc" => Some(736_166),
+        // didot（1dd = 1157/1238 pt ≈ 61347sp）；TRIP L331 `\halign spread-12.truedd`
+        "dd" => Some(61_347),
         _ => None,
     }
 }
