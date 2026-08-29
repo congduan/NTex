@@ -1494,6 +1494,7 @@ impl Expander {
     /// 探测下一个 token 是否为数学移位（`$$` 检测）：
     /// 是 → 消费该 `$`（连续 `$$` 由 sink 一并处理，不放回）；
     /// 否 → 放回（不消费）。输入耗尽返回 false。
+    ///
     fn next_is_math_shift(&mut self) -> Result<bool> {
         let Some((tok, ne)) = self.fetch()? else {
             return Ok(false);

@@ -1049,10 +1049,23 @@ mod tests {
     }
 
     #[test]
-    fn math_display_inside_hbox_rejected() {
-        // $$ 在 \hbox（restricted horizontal mode）内：TeX 报错恢复按行内数学
-        // 继续（参考 trip.log L210 附近；消息入转录而非 Err）
-        assert_math_transcript(r"\hbox{$$x$$}", "Display math in restricted mode.");
+    fn math_display_inside_hbox_falls_back_to_inline_math() {
+        // $$ 在 \hbox（受限水平模式，mode=-hmode<0）内：tex.web init_math 的
+        // `if (cur_cmd=math_shift) and (mode>0)` 不成立 → back_input 放回第二个
+        // `$`，按**普通**数学进出，不报任何错。（TeX 无
+        // "Display math in restricted mode." 这一错误；trip.log L210 附近为证。）
+        let mut ts = Typesetter::with_metrics(metrics);
+        let _ = ts.typeset(r"\hbox{$$x$$}");
+        let t = ts.take_transcript();
+        assert!(
+            !t.contains("Display math in restricted mode"),
+            "tex.web 无此错误，不应自创：{t}"
+        );
+        // 不进入显示数学（否则盒子内容会作为独立公式垂直元素出现）
+        assert!(
+            !t.contains("display math"),
+            "受限水平模式不应进入显示数学：{t}"
+        );
     }
 
     // ---------- M4-7 错误模型：数学错误消息 ----------

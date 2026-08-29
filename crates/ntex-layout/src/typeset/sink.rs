@@ -63,13 +63,14 @@ impl TokenSink for NodeBuilder {
                 }
             }
             Mode::RestrictedHorizontal => {
-                if display {
-                    // TeX：\hbox 内 `$$` → 报错恢复（按行内数学继续；TRIP L210）
-                    self.report_error("Display math in restricted mode.");
-                    self.enter_math(Mode::Math)
-                } else {
-                    self.enter_math(Mode::Math)
-                }
+                // tex.web init_math：`$$` 只有在 mode>0 时才进入显示数学（
+                // `if (cur_cmd=math_shift) and (mode>0)`）。受限水平模式的
+                // mode=-hmode<0，故两个 $ 各自进出**普通**数学——不报任何错。
+                // 此前 NTex 自创 "Display math in restricted mode." 并在进入
+                // 行内数学后丢失第二个 $，导致组/模式错位（TRIP L210
+                // `\hbox{$$}$\par}` 之后整段落在受限水平模式）。
+                let _ = display;
+                self.enter_math(Mode::Math)
             }
         }
     }
