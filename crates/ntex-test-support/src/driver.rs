@@ -298,7 +298,6 @@ impl EngineDriver for NtexDriver {
         // → 跳过前导，进入 ETRIP 测试体）；最终产物只保留 pass2 转录。
         let dumped = ts.dumped();
         let mut transcript2 = String::new();
-        let mut dvi_written = false;
         // (DVI 字节, 页数)：由**实际生成 DVI 的那个 typesetter**提供，两者必须同源
         // （dumped 路径 DVI 来自 pass2 的 ts2，若取 pass1 的 ts 页数必错——pass1
         // 在 \dump 处停止，没有页面）。
@@ -344,7 +343,7 @@ impl EngineDriver for NtexDriver {
             if run2.is_ok() {
                 let fonts = ts2.fonts_snapshot();
                 dvi = Some((
-                    ntex_dvi::write_dvi(&ts2.shipped_pages(), &fonts),
+                    ntex_dvi::write_dvi(ts2.shipped_pages(), &fonts),
                     ts2.shipped_pages().len(),
                 ));
             }
@@ -397,7 +396,6 @@ impl EngineDriver for NtexDriver {
             }
             match dvi {
                 Some((bytes, pages)) => {
-                    dvi_written = true;
                     fs::write(request.working_dir.join(format!("{base}.dvi")), &bytes)
                         .with_context(|| "写入 .dvi 产物失败")?;
                     log.push_str(&format!(

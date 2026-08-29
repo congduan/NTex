@@ -1058,11 +1058,14 @@ impl Expander {
     fn trace_token_now(&mut self, tok: Token) {
         let m = self.sink.mode_name();
         let desc = self.trace_token_desc(tok);
+        // tex.web show_cur_cmd_chr：`{...}` 不带换行，由 end_diagnostic(false) 的
+        // print_nl("") 收尾——即 write16 追加的那一个换行。此处不得再带 `\n`
+        // （否则每条追踪后多一空行；TRIP 参考中追踪行是连续的）。
         let line = if self.shown_trace_mode.as_deref() == Some(m.as_str()) {
-            format!("{{{desc}}}\n")
+            format!("{{{desc}}}")
         } else {
             self.shown_trace_mode = Some(m.clone());
-            format!("{{{m}: {desc}}}\n")
+            format!("{{{m}: {desc}}}")
         };
         let _ = self.sink.write16(line);
     }
@@ -1460,7 +1463,9 @@ impl Expander {
                             return Ok(PreambleAction::Process);
                         }
                     }
-                    EqSlot::Primitive(p) if p.is_expandable() => return Ok(PreambleAction::Process),
+                    EqSlot::Primitive(p) if p.is_expandable() => {
+                        return Ok(PreambleAction::Process)
+                    }
                     _ => {}
                 }
                 Ok(PreambleAction::Collect)
