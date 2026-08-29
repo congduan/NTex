@@ -136,6 +136,16 @@ impl FontMetrics {
             .unwrap_or((0, 0, 0))
     }
 
+    /// 字符是否在字体中定义（tex.web `char_exists(char_info(f)(c))`；
+    /// `new_character` 据此决定建节点还是发 "Missing character" 警告）。
+    pub fn char_exists(&self, charcode: u32) -> bool {
+        self.chars
+            .get(charcode as usize)
+            .copied()
+            .flatten()
+            .is_some()
+    }
+
     /// 词间空白胶水（space / space_stretch / space_shrink）。
     pub fn space_glue(&self) -> Glue {
         Glue::new(self.space, self.space_stretch, self.space_shrink)

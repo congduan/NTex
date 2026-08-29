@@ -322,6 +322,37 @@ impl Fonts {
         }
     }
 
+    /// 字符是否在字体中定义（tex.web `char_exists`；fn 指针占位一律视为存在）。
+    fn char_exists(&self, font: FontId, charcode: u32) -> bool {
+        match self {
+            Fonts::Fn { .. } => true,
+            Fonts::Tfm(table) => table
+                .borrow()
+                .get(font.0 as usize)
+                .is_some_and(|fm| fm.char_exists(charcode)),
+        }
+    }
+
+    /// 字体是否已加载（TFM 模式查表；fn 指针占位视为已加载）。
+    fn loaded(&self, font: FontId) -> bool {
+        match self {
+            Fonts::Fn { .. } => true,
+            Fonts::Tfm(table) => table.borrow().get(font.0 as usize).is_some(),
+        }
+    }
+
+    /// 字体外部名（`\tracinglostchars` 警告用；tex.web slow_print(font_name[f])）。
+    fn font_name(&self, font: FontId) -> String {
+        match self {
+            Fonts::Fn { .. } => String::new(),
+            Fonts::Tfm(table) => table
+                .borrow()
+                .get(font.0 as usize)
+                .map(|fm| fm.name.clone())
+                .unwrap_or_default(),
+        }
+    }
+
     /// 数学 em（quad = fontdimen 6；数学间距 1em 基准）。fn 指针占位返回 0。
     fn quad(&self, font: FontId) -> i64 {
         match self {
@@ -358,6 +389,9 @@ impl Fonts {
         }
     }
 }
+
+/// `Params.misc` 下标：`\tracinglostchars`（与 ntex-core `int_param_index` 对齐）。
+const MISC_TRACING_LOSTCHARS: usize = 1;
 
 /// 节点构建 sink：把 VM 排版事件转成节点列表。
 #[derive(Debug)]
@@ -849,8 +883,18 @@ impl NodeBuilder {
     }
 
     /// 字符 token → Char 节点；非字符（控制序列等）返回 None。
-    fn char_node(&self, tok: Token) -> Option<Node> {
+    /// 字体中未定义的字符：tex.web `new_character` 返回 null（不建节点）并调
+    /// `char_warning` 发 "Missing character" 警告（`\tracinglostchars>0` 时）。
+    fn char_node(&mut self, tok: Token) -> Option<Node> {
         let charcode = tok.charcode()?;
+        if !self.fonts.char_exists(self.current_font, charcode) {
+            // 字体未加载（`ont` 失败后的悬空当前字体）：NTex 现状是不产生
+            // 度量也不产生节点；tex.web 此时 font_name[f] 亦无定义，不发警告。
+            if self.fonts.loaded(self.current_font) {
+                self.char_warning(charcode);
+            }
+            return None;
+        }
         let (w, h, d) = self.fonts.metrics(self.current_font, charcode);
         Some(Node::Char {
             font: self.current_font,
@@ -859,6 +903,28 @@ impl NodeBuilder {
             height: h,
             depth: d,
         })
+    }
+
+    /// tex.web char_warning：`\tracinglostchars>0` 时报告缺失字符。
+    /// 字符按 TeX 的不可打印渲染（`k<" "` 或 `k>"~"` → `^^` + 偏移/十六进制）。
+    fn char_warning(&mut self, charcode: u32) {
+        if self.params.misc[MISC_TRACING_LOSTCHARS] <= 0 {
+            return;
+        }
+        let printable = (32..=126).contains(&charcode);
+        let shown = if printable {
+            char::from_u32(charcode).unwrap_or('?').to_string()
+        } else if charcode < 64 {
+            format!("^^{}", char::from_u32(charcode + 64).unwrap_or('?'))
+        } else if charcode < 128 {
+            format!("^^{}", char::from_u32(charcode - 64).unwrap_or('?'))
+        } else {
+            format!("^^{:x}{:x}", charcode / 16, charcode % 16)
+        };
+        let _ = self.write16(format!(
+            "Missing character: There is no {shown} in font {}!",
+            self.fonts.font_name(self.current_font)
+        ));
     }
 
     /// TeX box_end leader 分支报错：引导盒子后缺少 `\hskip`/`\vskip`（tex.web L20927），
