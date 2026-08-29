@@ -34,6 +34,11 @@ tmp_pngcmp.py
 
 # TRIP/ETRIP 运行产物
 /tr
+/tripos
+/etrip.out
+/etrip.fmt
+/trip.fmt
+/texput.out
 /par_ended.dvi
 
 # ETRIP/数学调试产物
