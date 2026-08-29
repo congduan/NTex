@@ -280,9 +280,11 @@ impl EngineDriver for NtexDriver {
         log.push_str("This is NTex, Version 0.1.0 (TRIP/ETRIP pipeline v1)\n");
         log.push_str(&format!("(input: {})\n", request.source.display()));
 
-        // TRIP/ETRIP 需要真实 TFM 度量：用 with_tfm()（\font 加载 cmr10/trip/etrip）。
+        // TRIP/ETRIP 需要真实 TFM 度量 + 自动分页（统计行需要页数/DVI 字节数）。
         // \input 相对路径（tripos 等）在工作目录解析：注入回退 VFS。
-        let mut ts = ntex_layout::Typesetter::with_tfm();
+        // DVI 产物与统计行（"Output written on ... (N pages, M bytes)."）需要
+        // 自动分页语义（`\vsize` 断页 + 收尾冲页），与 `ntex-dvi` CLI 一致。
+        let mut ts = ntex_layout::Typesetter::with_tfm_paginated();
         ts.set_vfs(Box::new(WorkDirVfs {
             wd: request.working_dir.clone(),
         }));
@@ -296,6 +298,11 @@ impl EngineDriver for NtexDriver {
         // → 跳过前导，进入 ETRIP 测试体）；最终产物只保留 pass2 转录。
         let dumped = ts.dumped();
         let mut transcript2 = String::new();
+        let mut dvi_written = false;
+        // (DVI 字节, 页数)：由**实际生成 DVI 的那个 typesetter**提供，两者必须同源
+        // （dumped 路径 DVI 来自 pass2 的 ts2，若取 pass1 的 ts 页数必错——pass1
+        // 在 \dump 处停止，没有页面）。
+        let mut dvi: Option<(Vec<u8>, usize)> = None;
         let (status, produced) = if dumped {
             let mut buf = Vec::new();
             ntex_format::save(&mut buf, &ts.export_state())
@@ -303,7 +310,7 @@ impl EngineDriver for NtexDriver {
             let fmt_path = request.working_dir.join(format!("{base}.fmt"));
             fs::write(&fmt_path, &buf).with_context(|| "写入 .fmt 产物失败")?;
 
-            let mut ts2 = ntex_layout::Typesetter::with_tfm();
+            let mut ts2 = ntex_layout::Typesetter::with_tfm_paginated();
             ts2.set_vfs(Box::new(WorkDirVfs {
                 wd: request.working_dir.clone(),
             }));
@@ -332,6 +339,14 @@ impl EngineDriver for NtexDriver {
                     transcript2.chars().take(80).collect::<String>(),
                     tail
                 );
+            }
+            // 成功跑完才有 DVI 产物（TeX：中途出错则无 "Output written" 统计）。
+            if run2.is_ok() {
+                let fonts = ts2.fonts_snapshot();
+                dvi = Some((
+                    ntex_dvi::write_dvi(&ts2.shipped_pages(), &fonts),
+                    ts2.shipped_pages().len(),
+                ));
             }
             if !transcript2.is_empty() {
                 if !log.ends_with('\n') {
@@ -376,9 +391,29 @@ impl EngineDriver for NtexDriver {
             }
         };
 
+        if status == DriverStatus::Success {
+            if !log.is_empty() && !log.ends_with('\n') {
+                log.push('\n');
+            }
+            match dvi {
+                Some((bytes, pages)) => {
+                    dvi_written = true;
+                    fs::write(request.working_dir.join(format!("{base}.dvi")), &bytes)
+                        .with_context(|| "写入 .dvi 产物失败")?;
+                    log.push_str(&format!(
+                        "Output written on {base}.dvi ({pages} pages, {} bytes).\n",
+                        bytes.len()
+                    ));
+                }
+                None => log.push_str("No pages of output.\n"),
+            }
+        }
+
         fs::write(request.working_dir.join(format!("{base}.log")), &log)
             .with_context(|| "写入 .log 产物失败")?;
-        // .typ（终端转录）：\message/\show 等累积文本（仅格式路径，pass1 不入 typ）
+        // .typ（终端转录）：\message/\show 等累积文本（仅格式路径，pass1 不入 typ）。
+        // 统计行只属于 .log（tex.web write_dvi 到 log 文件，终端无此行）——统计行
+        // 只 push 进 log 变量，transcript2 从未含它，typ 无需任何剔除。
         let typ = if dumped { transcript2 } else { transcript };
         fs::write(request.working_dir.join(format!("{base}.typ")), &typ)
             .with_context(|| "写入 .typ 产物失败")?;

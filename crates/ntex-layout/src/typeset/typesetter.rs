@@ -51,6 +51,8 @@ pub struct Typesetter {
     /// 上一次 `finish` 收走的终端转录（`\message`/`\show`/`\write16` 累积；
     /// finish 的 take_sink 会把 NodeBuilder 摘走，先在此留档）。
     last_transcript: String,
+    /// `finish` 收走的 `\shipout` 页面（DVI 统计行：页数）。
+    shipped: Vec<BoxNode>,
 }
 
 impl Typesetter {
@@ -68,6 +70,7 @@ impl Typesetter {
                 space: |_| Glue::ZERO,
             },
             last_transcript: String::new(),
+            shipped: Vec::new(),
         }
     }
 
@@ -116,6 +119,19 @@ impl Typesetter {
             expander: Expander::new(),
             fonts: Fonts::Tfm(Rc::new(RefCell::new(Vec::new()))),
             last_transcript: String::new(),
+            shipped: Vec::new(),
+        }
+    }
+
+    /// TFM 字体模式 + 自动分页（DVI 产物路径）：与 [`Self::with_tfm`] 相同，
+    /// 但打开 M3-5-2 断页（`\vsize` 断页 + 输入结束冲页），使 `\shipout`
+    /// 页面与 DVI 字节数完整（统计行 "Output written" 需要真实页数）。
+    pub fn with_tfm_paginated() -> Self {
+        Self {
+            expander: Expander::new(),
+            fonts: Fonts::Tfm(Rc::new(RefCell::new(Vec::new()))),
+            last_transcript: String::new(),
+            shipped: Vec::new(),
         }
     }
 
@@ -125,7 +141,10 @@ impl Typesetter {
         self.expander
             .set_sink(Box::new(NodeBuilder::new(self.fonts.clone())));
         self.expander.run_source(text)?;
-        self.finish().map(|o| o.main)
+        self.finish().map(|out| {
+            self.shipped = out.shipped;
+            out.main
+        })
     }
 
     /// 排版字节源码。
@@ -135,7 +154,10 @@ impl Typesetter {
             .set_sink(Box::new(NodeBuilder::new(self.fonts.clone())));
         self.expander.feed_source(bytes);
         self.expander.run()?;
-        self.finish().map(|o| o.main)
+        self.finish().map(|out| {
+            self.shipped = out.shipped;
+            out.main
+        })
     }
 
     /// 取走终端转录（`\message`/`\show`/`\write16` 累积文本）。
@@ -164,7 +186,21 @@ impl Typesetter {
         )));
         self.expander.run_source(text)?;
         let out = self.finish()?;
+        self.shipped = out.shipped.clone();
         Ok((out.shipped, out.fonts))
+    }
+
+    /// 排版结束后取回已 shipout 的页面列表（[`Self::finish`] 已执行时有效）。
+    pub fn shipped_pages(&self) -> &[BoxNode] {
+        &self.shipped
+    }
+
+    /// 排版结束后取回字体表快照（[`Self::finish`] 已执行时有效）。
+    pub fn fonts_snapshot(&self) -> Vec<FontMetrics> {
+        match &self.fonts {
+            Fonts::Tfm(table) => table.borrow().clone(),
+            Fonts::Fn { .. } => Vec::new(),
+        }
     }
 
     /// TFM 模式：把共享字体表接给 VM 的 `\font` 加载器。
@@ -295,6 +331,7 @@ impl Typesetter {
         };
         // RFC-3：排版结束收尾 flush 残留延迟写流（TeX \end final_cleanup 语义）
         self.expander.flush_writes()?;
+        self.shipped = shipped.clone();
         Ok(FinishOutput {
             main: lists.pop().expect("主列表"),
             shipped,
