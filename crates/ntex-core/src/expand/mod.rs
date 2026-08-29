@@ -809,40 +809,44 @@ impl Expander {
             }
         }
         wd.done.store(true, Ordering::Relaxed);
-        if !self.cond_stack.is_empty() {
-            // TeX final_cleanup：输入结束（\endinput/EOF）时未闭合条件 → 可恢复
-            // 转录消息 "! Incomplete \ifxxx; all text was ignored after line N."
-            // （tex.web final_cleanup；TRIP L363 `\ifcase3` 故意不闭合，参考 log
-            // 报此消息后正常结束），**不终止作业**（旧实现 return Err 曾导致
-            // TRIP 全量在 \endinput 后报"条件未闭合"内部错误）。
-            #[cfg(debug_assertions)]
-            {
-                let frames: Vec<String> = self
-                    .cond_stack
-                    .iter()
-                    .map(|f| {
-                        format!(
-                            "{{is_case={} state={:?} owns_skip={} else={} line={}}}",
-                            f.is_case, f.state, f.owns_skip, f.else_seen, f.line
-                        )
-                    })
-                    .collect();
-                eprintln!(
-                    "[debug] 条件未闭合: depth={} frames={:?}",
-                    self.cond_stack.len(),
-                    frames
-                );
-            }
-            for f in self.cond_stack.iter().rev() {
-                let _ = self.sink.write16(format!(
-                    "! Incomplete {}; all text was ignored after line {}.\n",
-                    Self::if_type_name(f.if_type),
-                    f.line
-                ));
-            }
-            self.cond_stack.clear();
-        }
+        self.report_incomplete_conditions();
         Ok(())
+    }
+
+    /// TeX final_cleanup：未闭合条件 → 可恢复转录消息
+    /// "! Incomplete \ifxxx; all text was ignored after line N."
+    /// （TRIP L363 `\ifcase3` 故意不闭合；\end 与 \endinput/EOF 两个入口
+    /// 都走此路径——tex.web final_cleanup。LIFO 顺序对齐条件栈。）
+    fn report_incomplete_conditions(&mut self) {
+        if self.cond_stack.is_empty() {
+            return;
+        }
+        #[cfg(debug_assertions)]
+        {
+            let frames: Vec<String> = self
+                .cond_stack
+                .iter()
+                .map(|f| {
+                    format!(
+                        "{{is_case={} state={:?} owns_skip={} else={} line={}}}",
+                        f.is_case, f.state, f.owns_skip, f.else_seen, f.line
+                    )
+                })
+                .collect();
+            eprintln!(
+                "[debug] 条件未闭合: depth={} frames={:?}",
+                self.cond_stack.len(),
+                frames
+            );
+        }
+        for f in self.cond_stack.iter().rev() {
+            let _ = self.sink.write16(format!(
+                "! Incomplete {}; all text was ignored after line {}.\n",
+                Self::if_type_name(f.if_type),
+                f.line
+            ));
+        }
+        self.cond_stack.clear();
     }
 
     /// A3：当前源码上下文——从输入栈找最近的 [`InputFrame::Source`] 帧，

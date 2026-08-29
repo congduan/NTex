@@ -97,7 +97,9 @@ impl Expander {
                 self.stack.clear();
                 self.output_active = false;
                 self.ended = true;
-                self.cond_stack.clear();
+                // tex.web final_cleanup：\end 也报未闭合条件（\endinput 同款；
+                // trip L442 \if 在 \write 组内被 \end 中断 → if 442 incomplete）
+                self.report_incomplete_conditions();
                 // TeX `\end` 收尾：flush 所有延迟写流（final_cleanup 语义）
                 self.flush_writes()?;
                 Ok(())
