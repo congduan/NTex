@@ -1099,7 +1099,7 @@ impl Expander {
                 self.assign_param(kind, ParamValue::Glue(g))
             }
             // TRIP 冲刺：补充标准尺寸参数（\hfuzz/\vfuzz/\boxmaxdepth/\splitmaxdepth/
-            // \emergencystretch/\displayindent/\delimitershortfall/\lastkern）
+            // \emergencystretch/\displayindent/\delimitershortfall/\lastkern/\mathsurround）
             Primitive::Hfuzz
             | Primitive::Vfuzz
             | Primitive::BoxMaxDepth
@@ -1107,6 +1107,7 @@ impl Expander {
             | Primitive::EmergencyStretch
             | Primitive::DisplayIndent
             | Primitive::DelimiterShortfall
+            | Primitive::MathSurround
             | Primitive::LastKern => {
                 let v = self.scan_dimen()?;
                 let kind = match prim {
@@ -1117,6 +1118,7 @@ impl Expander {
                     Primitive::EmergencyStretch => ParamKind::EmergencyStretch,
                     Primitive::DisplayIndent => ParamKind::DisplayIndent,
                     Primitive::DelimiterShortfall => ParamKind::DelimiterShortfall,
+                    Primitive::MathSurround => ParamKind::MathSurround,
                     _ => ParamKind::LastKern,
                 };
                 self.assign_param(kind, ParamValue::Dimen(v))

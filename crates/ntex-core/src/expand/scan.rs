@@ -359,6 +359,13 @@ impl Expander {
                     let v = self.params.displayindent;
                     return Ok(if neg { -v } else { v });
                 }
+                // TRIP：\mathsurround 是 dimen 参数——整数上下文按 sp 读取
+                // （tex.web scan_something_internal(int_val) 的 dimen 转整数）。
+                EqSlot::Primitive(Primitive::MathSurround) => {
+                    self.fetch()?;
+                    let v = self.params.mathsurround;
+                    return Ok(if neg { -v } else { v });
+                }
                 // ETRIP/TRIP：\lastskip → 列表尾 glue 宽度（sp）；\lastkern → 尾 kern
                 // 宽度（tex.web scan_something_internal；无则 0。l.305/318 误报修复）。
                 EqSlot::Primitive(Primitive::LastSkip) => {
@@ -1164,6 +1171,8 @@ impl Expander {
                         | Primitive::LineSkipLimit
                         // TRIP：\displayindent 同为 dimen 参数（l.251/252 误报修复）
                         | Primitive::DisplayIndent
+                        // TRIP：\mathsurround 是 dimen 参数（l.260 `.11em` 赋值）
+                        | Primitive::MathSurround
                 )
             ) {
                 self.fetch()?;
@@ -1173,6 +1182,7 @@ impl Expander {
                     EqSlot::Primitive(Primitive::VSize) => self.params.vsize,
                     EqSlot::Primitive(Primitive::MaxDepth) => self.params.maxdepth,
                     EqSlot::Primitive(Primitive::DisplayIndent) => self.params.displayindent,
+                    EqSlot::Primitive(Primitive::MathSurround) => self.params.mathsurround,
                     _ => self.params.lineskiplimit,
                 };
                 return Ok((if neg { -v } else { v }, 0));

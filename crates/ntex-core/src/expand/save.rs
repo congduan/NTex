@@ -331,6 +331,7 @@ impl Expander {
                 | Primitive::EmergencyStretch
                 | Primitive::DisplayIndent
                 | Primitive::DelimiterShortfall
+                | Primitive::MathSurround
                 | Primitive::LastKern
                 | Primitive::Mag => {
                     let kind = match p {
@@ -366,6 +367,7 @@ impl Expander {
                         Primitive::EmergencyStretch => ParamKind::EmergencyStretch,
                         Primitive::DisplayIndent => ParamKind::DisplayIndent,
                         Primitive::DelimiterShortfall => ParamKind::DelimiterShortfall,
+                        Primitive::MathSurround => ParamKind::MathSurround,
                         Primitive::LastKern => ParamKind::LastKern,
                         Primitive::NullDelimiterSpace => ParamKind::NullDelimiterSpace,
                         Primitive::ScriptSpace => ParamKind::ScriptSpace,

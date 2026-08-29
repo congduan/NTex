@@ -151,6 +151,7 @@ pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
         p.displayindent,
         p.delimitershortfall,
         p.lastkern,
+        p.mathsurround,
     ] {
         w.write_all(&v.to_le_bytes())?;
     }
@@ -267,6 +268,7 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
     let displayindent = read_i64(r)?;
     let delimitershortfall = read_i64(r)?;
     let lastkern = read_i64(r)?;
+    let mathsurround = read_i64(r)?;
     let params = ntex_core::param::Params {
         parindent,
         baselineskip,
@@ -306,6 +308,7 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
         displayindent,
         delimitershortfall,
         lastkern,
+        mathsurround,
         pagestretch,
         pagefilstretch,
         pagefillstretch,

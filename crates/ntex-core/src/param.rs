@@ -84,6 +84,9 @@ pub enum ParamKind {
     DisplayIndent,
     /// `\delimitershortfall`：TRIP 冲刺补充标准参数。
     DelimiterShortfall,
+    /// `\mathsurround`：数学公式周围水平间距（TeX **dimen** 参数，非整数；
+    /// plain 默认 0pt。此前误登记为 int 导致 `\mathsurround.11em` 报 Missing number）。
+    MathSurround,
     /// `\lastkern`：TRIP 冲刺补充标准参数。
     LastKern,
     /// `\pagestretch` 等：页面胶水内部量（TRIP L249 可写）。
@@ -152,7 +155,7 @@ pub fn default_misc() -> [i64; MISC_INTS] {
         0,     // 18 SavingVDiscards
         0,     // 19 InteractionMode（驱动以 batchmode 启动）
         0,     // 20 TeXXeTState
-        0,     // 21 MathSurround
+        0,     // 21 (unused；曾是 \mathsurround，已改 dimen 参数)
         0,     // 22 LastLineFit
         0,     // 23 PredisplayDirection
         -1,    // 24 EveryEof（-1 = 无）
@@ -276,6 +279,8 @@ pub struct Params {
     pub displayindent: i64,
     /// TRIP 冲刺补充：`\delimitershortfall`。
     pub delimitershortfall: i64,
+    /// `\mathsurround`：数学公式周围水平间距（dimen；plain 默认 0pt）。
+    pub mathsurround: i64,
     /// TRIP 冲刺补充：`\lastkern`。
     pub lastkern: i64,
     /// TRIP 冲刺补充：`\pagestretch`（页面自然胶水）。
@@ -356,6 +361,7 @@ impl Default for Params {
             emergencystretch: 0,
             displayindent: 0,
             delimitershortfall: 5 * SP_PER_PT,
+            mathsurround: 0,
             lastkern: 0,
             pagestretch: Glue::new(0, 0, 0),
             pagefilstretch: Glue::new(0, 0, 0),
@@ -417,6 +423,7 @@ impl Params {
             ParamKind::EmergencyStretch => ParamValue::Dimen(self.emergencystretch),
             ParamKind::DisplayIndent => ParamValue::Dimen(self.displayindent),
             ParamKind::DelimiterShortfall => ParamValue::Dimen(self.delimitershortfall),
+            ParamKind::MathSurround => ParamValue::Dimen(self.mathsurround),
             ParamKind::LastKern => ParamValue::Dimen(self.lastkern),
             ParamKind::PageStretch => ParamValue::Glue(self.pagestretch),
             ParamKind::PageFilStretch => ParamValue::Glue(self.pagefilstretch),
@@ -478,6 +485,7 @@ impl Params {
             (ParamKind::EmergencyStretch, ParamValue::Dimen(v)) => self.emergencystretch = v,
             (ParamKind::DisplayIndent, ParamValue::Dimen(v)) => self.displayindent = v,
             (ParamKind::DelimiterShortfall, ParamValue::Dimen(v)) => self.delimitershortfall = v,
+            (ParamKind::MathSurround, ParamValue::Dimen(v)) => self.mathsurround = v,
             (ParamKind::LastKern, ParamValue::Dimen(v)) => self.lastkern = v,
             (ParamKind::PageStretch, ParamValue::Glue(g)) => self.pagestretch = g,
             (ParamKind::PageFilStretch, ParamValue::Glue(g)) => self.pagefilstretch = g,

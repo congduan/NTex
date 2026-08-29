@@ -63,7 +63,8 @@ fn int_param_index(p: Primitive) -> Option<usize> {
         Primitive::SavingVDiscards => 18,
         Primitive::InteractionMode => 19,
         Primitive::TeXXeTState => 20,
-        Primitive::MathSurround => 21,
+        // 21 曾是 \mathsurround——已改为 dimen 参数（param.rs MathSurround），
+        // 槽位保留占位，避免扰动后续整数参数下标。
         Primitive::LastLineFit => 22,
         Primitive::PredisplayDirection => 23,
         Primitive::EveryEof => 24,
