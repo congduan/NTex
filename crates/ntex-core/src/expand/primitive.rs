@@ -690,10 +690,13 @@ impl Expander {
             }
             // \eqno/\leqno：显示公式编号分隔符——no-op（后续数学内容照常处理）
             Primitive::EqNo | Primitive::LeqNo => Ok(()),
+            // tex.web math_fraction：\abovewithdelims<delim1><delim2><dimen>——
+            // 先扫两个定界符再扫厚度（TRIP l.257 漏报修复；原顺序 dimen 在前
+            // 导致参数错位）。
             Primitive::AboveWithDelims => {
+                let _ = self.scan_delimiter()?;
+                let _ = self.scan_delimiter()?;
                 let _ = self.scan_dimen()?;
-                let _ = self.scan_delimiter()?;
-                let _ = self.scan_delimiter()?;
                 Ok(())
             }
             // TRIP 冲刺：\above<dimen>（分数）与 \atopwithdelims<delim><delim>（带定界分数）

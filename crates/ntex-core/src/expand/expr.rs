@@ -348,6 +348,23 @@ impl Expander {
             }
             return Ok(v);
         }
+        // eTeX 表达式分组：{1+}{2*3} 的 {1+} 组（组只是分隔；组内扫描因子后，
+        // 剩余 token 放回给表达式循环——etrip L880）。scan_int 本身不处理组
+        // （{ 在普通整数上下文报 Missing number，TRIP l.106）。
+        if t.catcode() == Some(Catcode::BeginGroup) {
+            let v = self.scan_number()?;
+            let mut pending: Vec<Token> = Vec::new();
+            while let Some((c, _)) = self.fetch()? {
+                if c.catcode() == Some(Catcode::EndGroup) {
+                    break;
+                }
+                pending.push(c);
+            }
+            for tok in pending.into_iter().rev() {
+                self.unread(tok);
+            }
+            return Ok(v);
+        }
         self.unread(t);
         self.scan_number()
     }
@@ -502,6 +519,21 @@ impl Expander {
             }
             return Ok(v);
         }
+        // eTeX 表达式分组：{7pt+}{12pt/4} 的 {7pt+} 组（etrip L884-888）。
+        if t.catcode() == Some(Catcode::BeginGroup) {
+            let v = self.scan_dimen()?;
+            let mut pending: Vec<Token> = Vec::new();
+            while let Some((c, _)) = self.fetch()? {
+                if c.catcode() == Some(Catcode::EndGroup) {
+                    break;
+                }
+                pending.push(c);
+            }
+            for tok in pending.into_iter().rev() {
+                self.unread(tok);
+            }
+            return Ok(v);
+        }
         self.unread(t);
         self.scan_dimen()
     }
@@ -608,6 +640,25 @@ impl Expander {
             if close.charcode() != Some(b')' as u32) {
                 self.unread(close);
                 self.report_error("Missing ) inserted for expression.");
+            }
+            return Ok(v);
+        }
+        // eTeX 表达式分组：{...} 组（组内胶水+运算符，etrip 同 dimen 因子）。
+        if t.catcode() == Some(Catcode::BeginGroup) {
+            let v = if mu {
+                self.scan_glue_mu()?
+            } else {
+                self.scan_glue()?
+            };
+            let mut pending: Vec<Token> = Vec::new();
+            while let Some((c, _)) = self.fetch()? {
+                if c.catcode() == Some(Catcode::EndGroup) {
+                    break;
+                }
+                pending.push(c);
+            }
+            for tok in pending.into_iter().rev() {
+                self.unread(tok);
             }
             return Ok(v);
         }

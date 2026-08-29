@@ -1020,6 +1020,31 @@ impl TokenSink for NodeBuilder {
         }
     }
 
+    /// e-TeX `\lastskip`：当前列表最后 glue 节点的宽度（sp；无 glue 节点 → 0）。
+    /// tex.web：lastskip 只认 glue_node（leaders 是独立节点类型，不计入）。
+    fn last_skip(&self) -> i64 {
+        if let Some(list) = self.lists.last() {
+            for n in list.iter().rev() {
+                if let Node::Glue { width, .. } = n {
+                    return *width;
+                }
+            }
+        }
+        0
+    }
+
+    /// e-TeX `\lastkern`：当前列表最后 kern 节点的宽度（sp；无 kern 节点 → 0）。
+    fn last_kern(&self) -> i64 {
+        if let Some(list) = self.lists.last() {
+            for n in list.iter().rev() {
+                if let Node::Kern { width } = n {
+                    return *width;
+                }
+            }
+        }
+        0
+    }
+
     /// e-TeX `\currentgrouptype`：当前组类型码。
     /// 数学模式：顶组为数学组 → 9，否则为 `$` 进入的数学移位组 → 15。
     fn current_group_type(&self) -> i64 {

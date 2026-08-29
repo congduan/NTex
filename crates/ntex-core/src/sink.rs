@@ -297,6 +297,14 @@ pub trait TokenSink: std::fmt::Debug {
     fn last_penalty(&self) -> i64 {
         0
     }
+    /// ETRIP/TRIP：`\lastskip`：当前列表尾 glue 节点宽度（sp；无则 0）。
+    fn last_skip(&self) -> i64 {
+        0
+    }
+    /// ETRIP/TRIP：`\lastkern`：当前列表尾 kern 节点宽度（sp；无则 0）。
+    fn last_kern(&self) -> i64 {
+        0
+    }
     /// ETRIP 第二波：`\lastbox`：从当前列表尾移除盒子节点。
     /// 若 `\setbox<n>=` 待赋值目标存在，移除的盒子存入该寄存器；否则作为节点
     /// 拆开并入当前列表（TeX lastbox 语义）。无尾盒子节点时空操作（垂直模式无意义）。

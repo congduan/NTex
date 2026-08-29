@@ -31,11 +31,23 @@ impl Expander {
 
     /// 扫描十进制整数；支持 `\count<idx>` 寄存器引用（M1 简化版）。
     fn scan_number(&mut self) -> Result<i64> {
+        // 默认跳过可选 `=`（赋值上下文）；scan_register_index 等内部扫描不跳
+        // （tex.web scan_optional_equals 由调用方处理，scan_int 从不跳 `=`）。
+        self.scan_number_inner(true)
+    }
+
+    /// TeX `scan_int` 核心：读整数。`skip_equals` 控制是否跳过可选赋值符
+    /// `=`——tex.web 中 `=` 由调用方的 `scan_optional_equals` 消费（如 `\count0=5`），
+    /// `scan_int` 本身不跳；NTex 此前把两者折叠导致 `\setbox=` 漏报 Missing number
+    /// （TRIP l.253），现拆出由调用方选择。
+    fn scan_number_inner(&mut self, skip_equals: bool) -> Result<i64> {
         self.skip_spaces()?;
-        // TeX scan_int：跳过可选 `=` 赋值符（`\count0=5` 与 `\count0 5` 等价）
-        if let Some((tok, _)) = self.fetch()? {
-            if tok.charcode() != Some(b'=' as u32) {
-                self.unread(tok);
+        if skip_equals {
+            // TeX scan_optional_equals：跳过可选 `=` 赋值符（`\count0=5` 与 `\count0 5` 等价）
+            if let Some((tok, _)) = self.fetch()? {
+                if tok.charcode() != Some(b'=' as u32) {
+                    self.unread(tok);
+                }
             }
         }
         let mut neg = false;
@@ -331,6 +343,43 @@ impl Expander {
                     let v = self.params.prevdepth;
                     return Ok(if neg { -v } else { v });
                 }
+                // TRIP：\parshape 在数字上下文返回段落形状行数（tex.web set_shape
+                // 内部量；\hangindent- \parshape pt 的整数部分，l.244 误报修复）。
+                EqSlot::Primitive(Primitive::Parshape) => {
+                    self.fetch()?; // 消费 \parshape
+                    let v = self.parshape.len() as i64;
+                    return Ok(if neg { -v } else { v });
+                }
+                // TRIP：显示/页面 dimen 内部量在整数上下文按 sp 读取（tex.web
+                // scan_something_internal(int_val)：dimen 转整数；\displayindent 有
+                // 参数存储，其余为只读内部量（expander 无排版状态，暂 0——
+                // 避免 l.252/253 误报 Missing number）。
+                EqSlot::Primitive(Primitive::DisplayIndent) => {
+                    self.fetch()?;
+                    let v = self.params.displayindent;
+                    return Ok(if neg { -v } else { v });
+                }
+                // ETRIP/TRIP：\lastskip → 列表尾 glue 宽度（sp）；\lastkern → 尾 kern
+                // 宽度（tex.web scan_something_internal；无则 0。l.305/318 误报修复）。
+                EqSlot::Primitive(Primitive::LastSkip) => {
+                    self.fetch()?;
+                    let v = self.sink.last_skip();
+                    return Ok(if neg { -v } else { v });
+                }
+                EqSlot::Primitive(Primitive::LastKern) => {
+                    self.fetch()?;
+                    let v = self.sink.last_kern();
+                    return Ok(if neg { -v } else { v });
+                }
+                EqSlot::Primitive(
+                    Primitive::DisplayWidth
+                        | Primitive::PreDisplaySize
+                        | Primitive::PageTotal
+                        | Primitive::PageGoal,
+                ) => {
+                    self.fetch()?;
+                    return Ok(0);
+                }
                 _ => {}
             }
         }
@@ -343,26 +392,9 @@ impl Expander {
         let mut val: i64 = 0;
         let mut any = false;
         while let Some((tok, _)) = self.fetch()? {
-            // eTeX 表达式分组：{1+}{2*3} 的 {1+} 组（组只是分隔，组内数字+运算符
-            // 继续；etrip L880 `\numexpr{1+}{2*3}`）。仅在数字未开始（!any）时把
-            // { 当数字组（\write15{...} 的 { 是参数组——数字 15 已读后 { 是下一 token）。
-            if !any && tok.catcode() == Some(Catcode::BeginGroup) {
-                let inner = self.scan_number()?;
-                val = inner;
-                any = true;
-                // 消费组结束 }：组内运算符（如 {1+} 的 +）放回给表达式循环
-                let mut pending: Vec<Token> = Vec::new();
-                while let Some((c, _)) = self.fetch()? {
-                    if c.catcode() == Some(Catcode::EndGroup) {
-                        break;
-                    }
-                    pending.push(c);
-                }
-                for t in pending.into_iter().rev() {
-                    self.unread(t);
-                }
-                continue;
-            }
+            // eTeX 表达式分组（{1+}{2*3} 的 {1+}）只属于 \numexpr 表达式因子层
+            // （expr.rs expr_factor），scan_int 遇组字符 { 应报 Missing number
+            // （tex.web scan_int 无分组分支；TRIP l.106 \number{ 漏报修复）。
             match digit_value(tok) {
                 Some(d) => {
                     // TRIP：防 i64 溢出（超大整数钳制——TeX scan_int 同报错钳制）
@@ -541,7 +573,9 @@ impl Expander {
     /// 扫描寄存器下标（eTeX 0..=32767；越界报 "! Bad register code." 并钳到 0，
     /// etrip "Checking sparse arrays" 段：`\countdef\cs=32768` / `=-1`）。
     fn scan_register_index(&mut self) -> Result<usize> {
-        let n = self.scan_number()?;
+        // tex.web scan_register_code → scan_int：不跳 `=`（`\setbox=` 的 `=` 不是
+        // 合法下标，应报 Missing number；赋值符由调用方 expect_equals 消费）。
+        let n = self.scan_number_inner(false)?;
         if !(0..REGISTER_COUNT as i64).contains(&n) {
             let _ = self.sink.write16(format!(
                 "! Bad register code ({}).\n\
@@ -1128,6 +1162,8 @@ impl Expander {
                         | Primitive::VSize
                         | Primitive::MaxDepth
                         | Primitive::LineSkipLimit
+                        // TRIP：\displayindent 同为 dimen 参数（l.251/252 误报修复）
+                        | Primitive::DisplayIndent
                 )
             ) {
                 self.fetch()?;
@@ -1136,8 +1172,34 @@ impl Expander {
                     EqSlot::Primitive(Primitive::ParIndent) => self.params.parindent,
                     EqSlot::Primitive(Primitive::VSize) => self.params.vsize,
                     EqSlot::Primitive(Primitive::MaxDepth) => self.params.maxdepth,
+                    EqSlot::Primitive(Primitive::DisplayIndent) => self.params.displayindent,
                     _ => self.params.lineskiplimit,
                 };
+                return Ok((if neg { -v } else { v }, 0));
+            }
+            // TRIP：只读显示/页面内部量作尺寸（\predisplaysize/\displaywidth/\pagetotal/
+            // \pagegoal）——expander 无排版状态，暂按 0 读，避免 l.253 误报 Missing number。
+            if matches!(
+                self.eqtb.slot(csid),
+                EqSlot::Primitive(
+                    Primitive::DisplayWidth
+                        | Primitive::PreDisplaySize
+                        | Primitive::PageTotal
+                        | Primitive::PageGoal
+                )
+            ) {
+                self.fetch()?;
+                return Ok((0, 0));
+            }
+            // ETRIP/TRIP：\lastskip/\lastkern 作尺寸（sp 值；无则 0）。
+            if let EqSlot::Primitive(Primitive::LastSkip) = self.eqtb.slot(csid) {
+                self.fetch()?;
+                let v = self.sink.last_skip();
+                return Ok((if neg { -v } else { v }, 0));
+            }
+            if let EqSlot::Primitive(Primitive::LastKern) = self.eqtb.slot(csid) {
+                self.fetch()?;
+                let v = self.sink.last_kern();
                 return Ok((if neg { -v } else { v }, 0));
             }
             // TRIP 冲刺：glue 内部参数作尺寸（宽度分量）——`minus\baselineskip` 等
@@ -1248,6 +1310,8 @@ impl Expander {
                                 | Primitive::ETeXVersion
                                 | Primitive::ETeXRevision
                                 | Primitive::InputLineNo
+                                // TRIP：\parshape 作 dimen 的整数部分（\hangindent- \parshape pt）
+                                | Primitive::Parshape
                                 | Primitive::CurrentGroupLevel
                                 | Primitive::CurrentGroupType
                                 | Primitive::LastNodeType
@@ -1262,28 +1326,9 @@ impl Expander {
                 any = true;
             } else {
                 while let Some((tok, _)) = self.fetch()? {
-                    // eTeX 表达式分组：{7pt+}{12pt/4} 的 {7pt+} 组（组内尺寸+运算符
-                    // 继续；etrip L884-888）。仅数字未开始（!any）时 { 才是数字组
-                    // （\hsize=5pt{...} 等场景 { 是下一 token）。
-                    if !any && tok.catcode() == Some(Catcode::BeginGroup) {
-                        // inner 已是完整尺寸（含单位换算的 sp 值）——直接返回，
-                        // 不能再当 int_part 二次换算（×SP_PER_PT 会溢出钳制）。
-                        let inner = self.scan_dimen_inner(mu, true)?;
-                        // 消费组结束 }：组内运算符（如 {7pt+} 的 +）放回给表达式
-                        // 循环（LIFO 栈上 + 在 } 之前，须循环读取直到 }）。
-                        let mut pending: Vec<Token> = Vec::new();
-                        while let Some((c, _)) = self.fetch()? {
-                            if c.catcode() == Some(Catcode::EndGroup) {
-                                break;
-                            }
-                            pending.push(c);
-                        }
-                        // 放回非 } token（逆序——保持原顺序）
-                        for t in pending.into_iter().rev() {
-                            self.unread(t);
-                        }
-                        return Ok((if neg { -inner.0 } else { inner.0 }, inner.1));
-                    }
+                    // eTeX 表达式分组（{7pt+}{12pt/4} 的 {7pt+}）只属于 \dimexpr 因子层
+                    // （expr.rs dimen_expr_term），scan_dimen 遇组字符 { 应报
+                    // Missing number（tex.web scan_dimen 无分组分支）。
                     if let Some(d) = digit_value(tok) {
                         if saw_dot {
                             // TRIP：`16383.99999237060546875pt` 17 位小数——防 i64
