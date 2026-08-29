@@ -1407,6 +1407,18 @@ impl Expander {
                     self.fetch()?; // 消费 \mag
                     Some(self.params.mag * SP_PER_PT)
                 }
+                // TRIP：盒子尺寸作数量乘子（`4\wd4` = 4×盒 4 宽度、`2\dp3` = 2×盒 3
+                // 深度；tex.web scan_dimen `<factor><internal dimen>`，l.332/333 误报修复）
+                EqSlot::Primitive(Primitive::Wd | Primitive::Ht | Primitive::Dp) => {
+                    let dim = match self.eqtb.slot(csid) {
+                        EqSlot::Primitive(Primitive::Wd) => 0,
+                        EqSlot::Primitive(Primitive::Ht) => 1,
+                        _ => 2,
+                    };
+                    self.fetch()?; // 消费 \wd/\ht/\dp
+                    let idx = self.scan_register_index()?;
+                    Some(self.sink.box_dim(idx, dim))
+                }
                 _ => None,
             };
             if let Some(q) = quantity {

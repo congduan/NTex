@@ -727,13 +727,36 @@ impl Expander {
             // trip.log 参考实测 \moveleft20pt\copy200 → shifted -20.0，
             // \moveright20pt\hbox → shifted 20.0——hmove 的位移最终以
             // "盒内内容的坐标偏移"形式表现，与 vmove 方向约定相反）。
-            Primitive::MoveLeft => {
+            // tex.web：\moveleft/\moveright 仅垂直模式合法（vmode），数学模式
+            // 报 "You can't use ..." 且**不扫参数**（l.395 误报修复：此前先 scan_dimen
+            // 导致 \lastbox 被当尺寸报 Missing number）。水平模式（2/5）暂不拦截——
+            // NTex 的 \vskip 尚未实现"水平模式隐式结束段落"（l.316 场景），
+            // 拦截会暴露该系统性缺口，待 \vskip 修好后再补。
+            Primitive::MoveLeft | Primitive::MoveRight => {
+                let mode = self.sink.mode_code();
+                if matches!(mode, 3 | 6) {
+                    let name = if prim == Primitive::MoveLeft {
+                        "moveleft"
+                    } else {
+                        "moveright"
+                    };
+                    let what = "math mode";
+                    self.write_error(&format!("You can't use `\\{name}' in {what}."));
+                    let _ = self.sink.write16(
+                        "Sorry, but I'm not programmed to handle this case;\n\
+                         I'll just pretend that you didn't ask for it.\n\
+                         If you're in the wrong mode, you might be able to\n\
+                         return to the right one by typing `I}' or `I$' or `I\\par'.\n"
+                            .to_string(),
+                    );
+                    return Ok(());
+                }
                 let d = self.scan_dimen()?;
-                self.sink.move_left(-d)
-            }
-            Primitive::MoveRight => {
-                let d = self.scan_dimen()?;
-                self.sink.move_right(d)
+                if prim == Primitive::MoveLeft {
+                    self.sink.move_left(-d)
+                } else {
+                    self.sink.move_right(d)
+                }
             }
             // TRIP 冲刺：\\accent（读音符）。TeX 在数学模式先报错且**继续**扫描
             // <15-bit number> 与 nucleus 字段（tex.web math_ac；TRIP L396
@@ -1071,7 +1094,28 @@ impl Expander {
                 };
                 self.assign_param(kind, ParamValue::Glue(g))
             }
+            // tex.web：\prevdepth 仅垂直模式可读，受限水平/数学模式报错且不扫参数
+            // （l.410 误报修复：此前先 scan_dimen 导致 \advance 被当尺寸）。
             Primitive::PrevDepth => {
+                let mode = self.sink.mode_code();
+                if matches!(mode, 3 | 5 | 6) {
+                    let what = match mode {
+                        5 => "restricted horizontal mode",
+                        6 => "display math mode",
+                        _ => "math mode",
+                    };
+                    self.write_error(&format!(
+                        "You can't use `\\prevdepth' in {what}."
+                    ));
+                    let _ = self.sink.write16(
+                        "Sorry, but I'm not programmed to handle this case;\n\
+                         I'll just pretend that you didn't ask for it.\n\
+                         If you're in the wrong mode, you might be able to\n\
+                         return to the right one by typing `I}' or `I$' or `I\\par'.\n"
+                            .to_string(),
+                    );
+                    return Ok(());
+                }
                 let v = self.scan_dimen()?;
                 self.assign_param(ParamKind::PrevDepth, ParamValue::Dimen(v))
             }

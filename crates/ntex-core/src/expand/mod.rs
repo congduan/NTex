@@ -967,8 +967,23 @@ impl Expander {
         }
         // l.N 行上下文（两行：位置前内容 + n 空格 + 位置后字符）
         if let Some((n, line, pos)) = self.error_context_pos() {
+            // tex.web @<Show the context...@>：第一行超 half_error_line 时左侧
+            // 裁剪（`...` + 尾部）。参考 TRIP log 反推 half_error_line=32
+            // （l.253：l=6,k=58 → 显示尾部 23 字符；l.2：l=4,k=29 → 尾部 25）。
+            let l_desc = format!("l.{n} ");
+            let l_len = l_desc.chars().count();
+            let k = l_len + pos.min(line.len());
+            const HALF_ERROR_LINE: usize = 32;
             let before = &line[..pos.min(line.len())];
-            let l1 = format!("l.{n} {before}");
+            let (prefix, before_shown) = if l_len + k > HALF_ERROR_LINE {
+                // tex.web：trick_buf[(l+k-h+3)..k-1]，trick_buf 前 l_len 字符是描述
+                // → before 起点 = k - h + 3（l.2 参考：k=33 → before[4..]="case..."）
+                let start = k.saturating_sub(HALF_ERROR_LINE - 3).min(before.len());
+                ("...", &before[start..])
+            } else {
+                ("", before)
+            };
+            let l1 = format!("{l_desc}{prefix}{before_shown}");
             s.push_str(&l1);
             s.push('\n');
             // 第二行上限：TeX trick_count = first_count+1+error_line-half_error_line
@@ -994,14 +1009,18 @@ impl Expander {
         let _ = self.sink.write16(s);
     }
 
-    /// TeX scan_int 缺数恢复：`! Missing number, treated as zero.` + 上下文行
-    /// （TRIP 冲刺：`\countdef\countz` 等缺操作数原语）。
+    /// TeX scan_int 缺数恢复：`! Missing number, treated as zero.` + `<to be read
+    /// again>` + l.N 上下文 + 3 行 help（tex.web error() + @<Report an improper...@>；
+    /// 参考 trip.log 各 Missing number 段逐字对齐——l.253/l.419 等格式差即源于
+    /// 此前缺失这些行）。
     fn report_missing_number(&mut self) {
-        let mut msg = "! Missing number, treated as zero.\n".to_string();
-        if let Some((n, line)) = self.error_context() {
-            msg.push_str(&format!("l.{n} {line}\n"));
-        }
-        let _ = self.sink.write16(msg);
+        self.write_error("Missing number, treated as zero.");
+        let _ = self.sink.write16(
+            "A number should have been here; I inserted `0'.\n\
+             (If you can't figure out why I needed to see a number,\n\
+             look up `weird error' in the index to The TeXbook.)\n"
+                .to_string(),
+        );
     }
 
     /// 是否已执行显式 `\end`（finish 对未闭合组/math 按 TeX 语义降级为警告）。
