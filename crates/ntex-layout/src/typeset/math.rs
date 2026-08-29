@@ -124,6 +124,8 @@ impl NodeBuilder {
         let (Some(cat), Some(ch)) = (tok.catcode(), tok.charcode()) else {
             return Ok(());
         };
+        // 字符属于 scan_math 的单字符字段：重音符 nucleus 在重音符字段之后到来
+        // （`\mathaccent 16 x`），经 math_push_atom 挂为 nucleus 原子（不报错）。
         match cat {
             ntex_core::Catcode::Superscript => {
                 self.pending_script = Some(true);
@@ -165,7 +167,21 @@ impl NodeBuilder {
             level.atoms.push(MathAtom::Radical { base: vec![atom] });
             return Ok(());
         }
-        // `\mathbin` 等单原子字段：`\mathbin+`（Char 改类，其余包 Classed）
+        // `\accent`/`\mathaccent` 单原子 nucleus 字段：第一个原子充当重音符，
+        // 第二个原子是被重音内容（tex.web math_ac：accent 字段在前）。
+        if self.accent_pending {
+            if let Some(level) = self.math.last_mut() {
+                if let Some(MathAtom::Accent { nucleus, .. }) = level.atoms.last_mut() {
+                    nucleus.push(atom);
+                    self.accent_pending = false;
+                    return Ok(());
+                }
+            }
+        }
+        // `\mathbin` 等单原子字段：`\mathbin+`（Char 改类，其余包 Classed）。
+        // 单字符是合法字段（tex.web scan_math letter 分支：`\mathord x` 不报错）；
+        // 非字符非 { token 的 Missing { inserted 由 check_math_field_break 负责
+        //（原语事件入口）。
         if let Some(class) = self.class_pending.take() {
             let atom = match atom {
                 MathAtom::Char(mut mc) => {
@@ -205,6 +221,18 @@ impl NodeBuilder {
             && self.math.last().is_some_and(|l| l.atoms.is_empty())
         {
             // TeX：^/_ 前无原子 → "Missing { inserted" 恢复（插入空原子；TRIP L263）
+            self.report_error("Missing { inserted.");
+        }
+        // 重音符 nucleus 字段在重音符之后（`\accent\x`）：TeX scan_math 对非字符
+        // token 报 "Missing { inserted" 放回重扫（trip.tex L396）。
+        if self.accent_pending
+            && self
+                .math
+                .last()
+                .is_some_and(|l| {
+                    matches!(l.atoms.last(), Some(MathAtom::Accent { nucleus, .. }) if nucleus.is_empty())
+                })
+        {
             self.report_error("Missing { inserted.");
         }
         let level = self
@@ -313,6 +341,7 @@ impl NodeBuilder {
             MathAtom::Middle(_) => Some(MathClass::Inner),
             MathAtom::Radical { .. } => Some(MathClass::Ord),
             MathAtom::Box(_) => Some(MathClass::Ord),
+            MathAtom::Accent { .. } => Some(MathClass::Ord),
             MathAtom::MSkip { .. } | MathAtom::Style(_) => None,
         }
     }
@@ -411,6 +440,11 @@ impl NodeBuilder {
                 }
             }
             MathAtom::Classed { content, .. } => self.math_to_hlist(content, style),
+            MathAtom::Accent { accent, nucleus } => self
+                .math_to_hlist(accent, style)
+                .into_iter()
+                .chain(self.math_to_hlist(nucleus, style))
+                .collect(),
             MathAtom::MSkip {
                 width,
                 stretch,
@@ -626,4 +660,3 @@ fn xn_over_d(t: i64, n: i64, d: i64) -> i64 {
         -(((-t) * n + d / 2) / d)
     }
 }
-

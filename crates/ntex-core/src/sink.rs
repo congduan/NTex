@@ -89,6 +89,12 @@ pub trait TokenSink: std::fmt::Debug {
     fn math_class(&mut self, _class: u8) -> Result<()> {
         Ok(())
     }
+    /// `\accent`/`\mathaccent`（M4）：`plain` 为 true 时表示 `\accent` 在数学模式
+    /// 被改道为 `\mathaccent`（tex.web math_ac；已由 sink 报告改道消息）。
+    /// nucleus 字段的 `{` 检查与扫描由排版器按后续 token/组完成。
+    fn math_accent(&mut self, _plain: bool) -> Result<()> {
+        Ok(())
+    }
     /// 数学字体族分配（M4-3）：`\textfont<fam>=<fontcs>` 等。
     /// `kind`：0=text、1=script、2=scriptscript；`fam` 0-15。
     fn math_font(&mut self, _kind: u8, _fam: u8, _font: u32) -> Result<()> {

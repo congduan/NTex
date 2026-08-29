@@ -135,6 +135,12 @@ enum MathAtom {
         class: MathClass,
         content: Vec<MathAtom>,
     },
+    /// 重音符原子（`\accent`/`\mathaccent`）：accent 字段 + nucleus 字段
+    /// （tex.web math_ac：重音符在前、被重音内容在后）。
+    Accent {
+        accent: Vec<MathAtom>,
+        nucleus: Vec<MathAtom>,
+    },
     /// 样式切换（`\displaystyle`/`\textstyle`/`\scriptstyle`/`\scriptscriptstyle`）。
     Style(MathStyle),
     /// 数学空格（`\mskip`/`\mkern` 结果；`nonscript`：`\nonscript` 后脚本模式丢弃）。
@@ -159,6 +165,8 @@ enum MathFieldKind {
     Radical(u32),
     /// `\mathbin` 等后的组：内容作为指定类原子。
     Class(MathClass),
+    /// `\accent`/`\mathaccent` 后的组：内容为 nucleus（被重音）字段。
+    Accent,
 }
 
 /// 数学列表层级：原子列表 + 是否为特殊字段组。
@@ -427,6 +435,8 @@ struct NodeBuilder {
     radical_pending: Option<u32>,
     /// `\mathbin` 等：等待字段（下一个原子或组），应用指定类。
     class_pending: Option<MathClass>,
+    /// `\accent`/`\mathaccent`：重音符字段的 <15-bit number> 已扫描，等待 nucleus 字段。
+    pub(super) accent_pending: bool,
     /// `\nonscript`：下一个数学空格在脚本模式丢弃。
     nonscript_pending: bool,
     /// 数学字体族表（M4-3）：16 族 × 3 阶（text/script/scriptscript）。
@@ -468,6 +478,33 @@ fn is_alpha(charcode: u32) -> bool {
 }
 
 impl NodeBuilder {
+    /// tex.web scan_math：待定数学字段（`\mathord`/`\mathaccent`/`\sqrt`/`\radical`/
+    /// `^`/`_` 后）遇**非字符、非 `{` 组**的 token → othercases 分支 `back_input;
+    /// scan_left_brace` 报 "Missing { inserted" 并隐含空字段恢复（TRIP L272
+    /// `\mathord\radical`、L375 `^\leaders`、L396 `\accent\x\vfill`）。
+    /// 调用点：所有非字符非组的数学事件入口（primitive/math_radical/math_sqrt/
+    /// math_class/math_accent/fill_glue）。字符原子走 math_push_atom、组走
+    /// group_begin——它们消费待定字段，不经过此检查（合法字段）。
+    fn check_math_field_break(&mut self) -> Result<()> {
+        if matches!(self.mode(), Mode::Math | Mode::DisplayMath)
+            && (self.class_pending.is_some()
+                || self.accent_pending
+                || self.radical_pending.is_some()
+                || self.sqrt_pending
+                || self.pending_script.is_some())
+        {
+            self.report_error("Missing { inserted.");
+            // scan_left_brace 隐含 `{` 空字段：待定字段全部清空（tex.web 报错后
+            // cur_tok={ 开 math_group，字段为空；后续原语在组外继续正常执行）
+            self.class_pending = None;
+            self.accent_pending = false;
+            self.radical_pending = None;
+            self.sqrt_pending = false;
+            self.pending_script = None;
+        }
+        Ok(())
+    }
+
     fn new(fonts: Fonts) -> Self {
         Self::with_pagination(fonts, false)
     }
@@ -515,6 +552,7 @@ impl NodeBuilder {
             sqrt_pending: false,
             radical_pending: None,
             class_pending: None,
+            accent_pending: false,
             nonscript_pending: false,
             math_fonts: vec![[None; 3]; 16],
             patterns: PatternTrie::default(),

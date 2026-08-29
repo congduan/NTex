@@ -649,6 +649,9 @@ impl Expander {
                 self.sink.primitive(Primitive::VBox)
             }
             Primitive::Sqrt => self.sink.math_sqrt(),
+            // TeX math_comp（tex.web L22019）：\mathord 等“定类原语”之后必有
+            // <math field>；非 `{` 的 token 经 scan_math → scan_left_brace 报
+            // "Missing { inserted" 放回重扫（TRIP L272 `\mathord \radical`）。
             Primitive::MathOrd => self.sink.math_class(0),
             Primitive::MathBin => self.sink.math_class(1),
             Primitive::MathOp => self.sink.math_class(2),
@@ -678,7 +681,7 @@ impl Expander {
             }
             Primitive::MathAccent => {
                 let _ = self.scan_number()?;
-                let _ = self.scan_group_contents(None)?;
+                self.sink.math_accent(false)?;
                 Ok(())
             }
             Primitive::MathChar | Primitive::Delimiter => {
@@ -729,9 +732,17 @@ impl Expander {
                 let d = self.scan_dimen()?;
                 self.sink.move_right(d)
             }
-            // TRIP 冲刺：\accent（读音符）。TeX 在数学模式先报错且不扫描数字
-            //（TRIP L396 `\accent\x`），模式判断在布局层，故不预扫描。
-            Primitive::Accent => self.sink.primitive(prim),
+            // TRIP 冲刺：\\accent（读音符）。TeX 在数学模式先报错且**继续**扫描
+            // <15-bit number> 与 nucleus 字段（tex.web math_ac；TRIP L396
+            // `\\accent\\x\\vfill` 报错改道后还要求 `{`），故数字预扫描必须保留。
+            // 顺序对齐 tex.web math_ac：先 Complain（sink 报 Please use）再
+            // scan_fifteen_bit_int——`\\x` 必须被数字扫描消费（参考 log 报完
+            // Please use 后 <to be read again> 是 \\vfill 而非 \\x）。
+            Primitive::Accent => {
+                self.sink.math_accent(true)?;
+                let _ = self.scan_number()?;
+                Ok(())
+            }
             // TRIP 冲刺：\vfilneg（plain.tex：负 1fil vskip；走 fill_glue kind=6）
             Primitive::VFilNeg => self.sink.fill_glue(6),
             // TRIP 冲刺：\hfilneg（plain.tex：负 1fil hskip；走 fill_glue kind=7）

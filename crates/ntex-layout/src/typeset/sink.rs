@@ -168,6 +168,8 @@ impl TokenSink for NodeBuilder {
         if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
             return self.math_mode_error("sqrt");
         }
+        // \sqrt 本身不是合法字段开头（tex.web scan_math othercases）
+        self.check_math_field_break()?;
         self.sqrt_pending = true;
         Ok(())
     }
@@ -177,6 +179,9 @@ impl TokenSink for NodeBuilder {
         if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
             return self.math_mode_error("radical");
         }
+        // \radical 不是合法字段开头（tex.web scan_math othercases；TRIP L272
+        // `\mathord \radical` 在此报 Missing { inserted）
+        self.check_math_field_break()?;
         self.radical_pending = Some(delim.unwrap_or(0));
         Ok(())
     }
@@ -229,6 +234,9 @@ impl TokenSink for NodeBuilder {
         if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
             return self.math_mode_error("mathord");
         }
+        // \mathord 等不是合法字段开头（tex.web scan_math othercases；连续
+        // `\mathord\mathord x` 第二个在此报 Missing { inserted）
+        self.check_math_field_break()?;
         self.class_pending = Some(match class {
             0 => MathClass::Ord,
             1 => MathClass::Bin,
@@ -239,6 +247,21 @@ impl TokenSink for NodeBuilder {
             6 => MathClass::Punct,
             _ => MathClass::Inner,
         });
+        Ok(())
+    }
+
+    /// `\accent`（数学模式）：TeX 报错改道为 `\mathaccent`（tex.web math_ac），
+    /// <15-bit number> + nucleus 字段继续扫描（TRIP L396 `\accent\x\vfill`）。
+    /// 水平/受限水平模式的 `\accent` 是合法文本重音——只在数学模式报错改道。
+    fn math_accent(&mut self, plain: bool) -> Result<()> {
+        // \mathaccent 不是合法字段开头（tex.web scan_math othercases）
+        self.check_math_field_break()?;
+        if plain && matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            self.write16(
+                "! Please use \\mathaccent for accents in math mode.\n".to_string(),
+            )?;
+        }
+        self.accent_pending = matches!(self.mode(), Mode::Math | Mode::DisplayMath);
         Ok(())
     }
 
@@ -317,6 +340,9 @@ impl TokenSink for NodeBuilder {
         if horizontal != in_horizontal {
             return Ok(()); // 方向不符：忽略
         }
+        // \vfill 等不是合法数学字段开头（tex.web scan_math othercases；TRIP L396
+        // `\accent\x\vfill` 在 \vfill 处报 Missing { inserted）
+        self.check_math_field_break()?;
         if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
             return Ok(()); // 数学模式中 fill 胶水无效果
         }
@@ -481,6 +507,9 @@ impl TokenSink for NodeBuilder {
                 Some(MathFieldKind::Sqrt)
             } else if let Some(d) = self.radical_pending.take() {
                 Some(MathFieldKind::Radical(d))
+            } else if self.accent_pending {
+                self.accent_pending = false;
+                Some(MathFieldKind::Accent)
             } else {
                 self.class_pending.take().map(MathFieldKind::Class)
             };
@@ -554,6 +583,18 @@ impl TokenSink for NodeBuilder {
                     });
                     return Ok(());
                 }
+                Some(MathFieldKind::Accent) => {
+                    // `\accent<15-bit>{...}`：组内容为 nucleus（被重音）字段，
+                    // 与已扫描的重音符字段合并（tex.web math_ac）。
+                    let mut lv = level;
+                    Self::math_finish_fraction(&mut lv);
+                    let accent = parent.atoms.pop().map_or(Vec::new(), |a| vec![a]);
+                    parent.atoms.push(MathAtom::Accent {
+                        accent,
+                        nucleus: lv.atoms,
+                    });
+                    return Ok(());
+                }
                 None => {
                     // 普通数学组：先收组内分式（`{a\over b}`），再并入外层
                     let mut lv = level;
@@ -596,6 +637,8 @@ impl TokenSink for NodeBuilder {
         if self.leaders_box.is_some() {
             self.report_leaders_misplaced();
         }
+        // tex.web scan_math：待定数学字段遇原语事件（非字符非 {）→ Missing { inserted
+        self.check_math_field_break()?;
         match prim {
             Primitive::HBox => self.pending_box = Some(PendingBox::HBox),
             Primitive::VBox => self.pending_box = Some(PendingBox::VBox),
@@ -657,12 +700,18 @@ impl TokenSink for NodeBuilder {
                     self.nonscript_pending = true;
                 }
             }
+            // M4：\mathaccent（\accent 的数学等价，已报错改道）：记录待定重音符
+            // 字段，nucleus 字段由后续 token/组补齐（tex.web math_ac）。
+            Primitive::MathAccent if matches!(self.mode(), Mode::Math | Mode::DisplayMath) => {
+                self.accent_pending = true;
+            }
             // TRIP 冲刺：\accent 在数学模式报错恢复（TRIP L396）
             Primitive::Accent => {
                 if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
                     self.write16(
                         "! Please use \\mathaccent for accents in math mode.\n".to_string(),
                     )?;
+                    self.accent_pending = true;
                 }
             }
             // TeX \error 原语（tex.web @<Report an improper...@> /

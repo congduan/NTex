@@ -1099,6 +1099,44 @@ mod tests {
     }
 
     #[test]
+    fn math_field_requires_left_brace_message() {
+        // math 原子字段位置的非字符非 { token：TeX scan_math → scan_left_brace 报
+        // "Missing { inserted" 放回重扫（恢复式；trip.tex L272/L375/L396）。
+        // \\mathord 后随 \\radical（trip.log L2851；`"161` 是 16 进制 delimiter 数字）
+        assert_math_transcript(r#"$\mathord\radical"161$"#, "Missing { inserted");
+        // ^ 后随 \\leaders（trip.log L5344）；后续内容继续排版
+        assert_math_transcript(r"$^\leaders\vrule$", "Missing { inserted");
+        // \\accent 报错改道 \\mathaccent 后，nucleus 字段同样要求 {（trip.log
+        // L5663 `\accent\x\vfill`：\x 被 15-bit 数字扫描消费，\vfill 处报错）
+        assert_math_transcript(r"$\accent 100 \vfill$", "Missing { inserted");
+        // 恢复式语义：报错后剩余 token 仍正常产出节点
+        let main = typeset(r"$\mathord x$").unwrap();
+        assert!(!main.is_empty(), "报错后应继续排版：{main:?}");
+    }
+
+    #[test]
+    fn math_single_char_field_is_legal() {
+        // 单字符是合法 math 字段（tex.web scan_math letter/other_char 分支）：
+        // `\mathord x` / `\mathaccent 16 x` / `\sqrt x` 都不报 Missing { inserted
+        for src in [r"$\mathord x$", r"$\mathaccent 16 x$", r"$\sqrt x$"] {
+            let mut ts = Typesetter::with_metrics(metrics);
+            ts.typeset(src).unwrap();
+            assert!(
+                !ts.take_transcript().contains("Missing {"),
+                "合法单字符字段不应报错：{src}"
+            );
+        }
+    }
+
+    #[test]
+    fn math_accent_scans_nucleus_field() {
+        // `\mathaccent <15-bit> {<field>}`：重音符 + nucleus 字段正常扫描，不报错
+        let mut ts = Typesetter::with_metrics(metrics);
+        ts.typeset(r"$\mathaccent 7161 {a}{b}$").unwrap();
+        assert!(!ts.take_transcript().contains("Missing {"), "合法字段不应报错");
+    }
+
+    #[test]
     fn math_left_right_message() {
         // \right 前缺少 \left：Err（math_right 检查）；\left 未配对（$ 关数学时）：
         // TeX "Extra } or forgotten \right." 恢复自动闭合（参考 trip.log L299 附近）
