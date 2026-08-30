@@ -267,20 +267,32 @@ fn line_demerits(bad: u16, pi: i64, fit: FitClass, prev_fit: FitClass) -> i64 {
     d
 }
 
+/// 折行遍（tex.web first_pass/second_pass）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pass {
+    /// 第一遍：\pretolerance（失败 = active 集空，无兜底）。
+    First,
+    /// 第二遍：\tolerance（active 空兜底恢复最近起点，保证强制末点可达）。
+    Second,
+}
+
 /// 核心 DP：返回（最优断点路径下标序列，最小总 demerits）。
 ///
-/// active 集保存可作行起点的断点；badness ≤ tolerance 且非强制时行可接受；
+/// active 集保存可作行起点的断点；badness ≤ 容差且非强制时行可接受；
 /// 强制断点处冲洗 active（此前路径定案）。每个断点按末行拟合类分别保留最优
 /// （tex.web `minimal_demerits[fit_class]`，`\adjdemerits` 依赖相邻行拟合类差）。
 ///
-/// `tracing` 时累积 `\tracingparagraphs` 输出（tex.web `@@firstpass`、
-/// 候选断点 `@<类型> via @@n b=.. p=.. d=..`、活动节点 `@@n: line .. t=.. -> @@m`）。
+/// 第一遍（\pretolerance）active 集变空 = 失败（返回 None，内容断不开）→
+/// 调用方走第二遍（\tolerance）。`tracing` 时累积 `\tracingparagraphs` 输出
+/// （`@firstpass`/`@secondpass`、候选断点 `@<类型> via @@n b=.. p=.. d=..`、
+/// 活动节点 `@@n: line .. t=.. -> @@m`）；失败时已累积的 trace 一并返回。
 fn best_path(
     breaks: &[BreakSpec],
     hsize: i64,
-    tolerance: i64,
+    threshold: i64,
+    pass: Pass,
     tracing: bool,
-) -> (Vec<usize>, i64, String) {
+) -> Option<(Vec<usize>, i64, String)> {
     let n = breaks.len();
     // best[i][fc]：断点 i 结束、末行拟合类 fc 的最小总 demerits。
     let mut best: Vec<[i64; 4]> = vec![[i64::MAX; 4]; n];
@@ -292,7 +304,10 @@ fn best_path(
     best[0][DECENT as usize] = 0; // 虚拟起点拟合类 = decent（tex.web §17032）
     let mut trace = String::new();
     if tracing {
-        trace.push_str("@firstpass\n");
+        trace.push_str(match pass {
+            Pass::First => "@firstpass\n",
+            Pass::Second => "@secondpass\n",
+        });
     }
 
     for i in 1..n {
@@ -305,17 +320,21 @@ fn best_path(
             let mut last_removed = None;
             active.retain(|&a| {
                 let (bad, _) = line_badness_kind(&bi, &breaks[a], hsize);
-                let ok = bad as i64 <= tolerance;
+                let ok = bad as i64 <= threshold;
                 if !ok {
                     last_removed = Some(a);
                 }
                 ok
             });
-            // 兜底：极端容差/词宽下所有起点超容差 → active 空会使末尾强制断点无路径。
-            // 恢复**最后一个被淘汰的起点**（最近的可行断点）——非强制断点仍因超容差
-            // 不产生候选（champion 处 `bad > tolerance` 跳过），仅保证 forced 末点可取。
             if active.is_empty() {
-                active.push(last_removed.unwrap_or(0));
+                match pass {
+                    // 第一遍：内容在 \pretolerance 内断不开 → 失败（tex.web
+                    // `active 空 → goto done`，second_pass 重新开始）
+                    Pass::First => return None,
+                    // 第二遍：兜底恢复最后一个被淘汰的起点（最近的可行断点）——
+                    // 非强制断点仍因超容差不产生候选，仅保证 forced 末点可取。
+                    Pass::Second => active.push(last_removed.unwrap_or(0)),
+                }
             }
         }
         // 按本行拟合类分槽的候选（tex.web `minimal_demerits`/`best_place`）。
@@ -324,7 +343,7 @@ fn best_path(
             let ap = breaks[a];
             let (bad, kind) = line_badness_kind(&bi, &ap, hsize);
             // 强制断点即使过满也可接受
-            if bad as i64 > tolerance && !bi.is_forced {
+            if bad as i64 > threshold && !bi.is_forced {
                 continue;
             }
             let fit = fit_class_of(bad, kind);
@@ -403,27 +422,50 @@ fn best_path(
         fc = prev_fc;
     }
     path.reverse();
-    (path, best[n - 1].iter().min().copied().unwrap_or(0), trace)
+    Some((path, best[n - 1].iter().min().copied().unwrap_or(0), trace))
 }
 
 /// Knuth-Plass 断行：返回行区间 `(start, end)`（`end` 不含；行内容 = `[start, end)`）。
 ///
-/// `hsize`：行目标宽度（sp）；`tolerance`：可接受最大 badness（tex.web `tolerance`）。
-/// active 集按 badness 超容差淘汰（tex.web §880，A1）——复杂度接近 O(n)；
-/// Knuth-Plass 断行：返回行区间 `(start, end)`（`end` 不含；行内容 = `[start, end)`）。
-///
+/// 两遍折行（tex.web line_break）：先以 `pretolerance` 尝试第一遍（失败 =
+/// active 集空、内容断不开）；失败且 `pretolerance >= 0` 时第二遍用
+/// `tolerance`（tex.web `\pretolerance=-1` 跳过第一遍直接第二遍）。
 /// `tracing` 时返回 `\tracingparagraphs` 追踪文本（第二返回值）。
 pub fn knuth_plass(
     hlist: &[Node],
     hsize: i64,
     tolerance: i64,
+    pretolerance: i64,
     tracing: bool,
 ) -> (Vec<(usize, usize)>, String) {
     if hlist.is_empty() {
         return (Vec::new(), String::new());
     }
     let breaks = preprocess(hlist);
-    let (path, _total, trace) = best_path(&breaks, hsize, tolerance, tracing);
+    let mut trace = String::new();
+    // 第一遍：\pretolerance（>=0 时）。成功即用；失败走第二遍 \tolerance。
+    if pretolerance >= 0 {
+        match best_path(&breaks, hsize, pretolerance, Pass::First, tracing) {
+            Some((path, _total, t)) => {
+                trace.push_str(&t);
+                return (path_to_lines(&breaks, &path), trace);
+            }
+            None => {
+                // 失败：保留 @firstpass 标记，走第二遍（tex.web second_pass）
+                if tracing {
+                    trace.push_str("@firstpass\n");
+                }
+            }
+        }
+    }
+    // 第二遍：\tolerance（tex.web second_pass；\pretolerance=-1 时唯一一遍）
+    let (path, _total, t) =
+        best_path(&breaks, hsize, tolerance, Pass::Second, tracing).expect("第二遍必有路径");
+    trace.push_str(&t);
+    (path_to_lines(&breaks, &path), trace)
+}
+
+fn path_to_lines(breaks: &[BreakSpec], path: &[usize]) -> Vec<(usize, usize)> {
     let mut lines = Vec::new();
     for w in path.windows(2) {
         let (a, b) = (breaks[w[0]], breaks[w[1]]);
@@ -432,7 +474,7 @@ pub fn knuth_plass(
             lines.push((start, end));
         }
     }
-    (lines, trace)
+    lines
 }
 
 #[cfg(test)]
@@ -541,7 +583,7 @@ mod tests {
 
     fn dp_min(hlist: &[Node], hsize: i64, tolerance: i64) -> i64 {
         let breaks = preprocess(hlist);
-        let (_, total, _) = best_path(&breaks, hsize, tolerance, false);
+        let (_, total, _) = best_path(&breaks, hsize, tolerance, Pass::Second, false).unwrap();
         total
     }
 
@@ -581,7 +623,7 @@ mod tests {
     #[test]
     fn knuth_plass_single_line_when_fits() {
         let hlist = words(&[10, 10, 10]);
-        assert_eq!(knuth_plass(&hlist, 100, 200, false).0, vec![(0, 5)]);
+        assert_eq!(knuth_plass(&hlist, 100, 200, 100, false).0, vec![(0, 5)]);
     }
 
     #[test]
@@ -589,7 +631,7 @@ mod tests {
         // 三词 a b c：hsize 25 下 "a b" | "c" 为最优（断点胶水不入行——
         // 行 "a" 无内部胶水、badness 10000，故两词行更优）
         let hlist = words(&[10, 10, 10]);
-        let lines = knuth_plass(&hlist, 25, 200, false).0;
+        let lines = knuth_plass(&hlist, 25, 200, 100, false).0;
         assert_eq!(lines, vec![(0, 3), (4, 5)]);
     }
 
@@ -603,20 +645,20 @@ mod tests {
             glue(3, 0, 0),
             char_of(30),
         ];
-        let lines = knuth_plass(&hlist, 10_000, 200, false).0;
+        let lines = knuth_plass(&hlist, 10_000, 200, 100, false).0;
         // 强制断点（index 2）之前定案：第一行 [0, 2)；之后继续
         assert_eq!(lines, vec![(0, 2), (3, 6)]);
     }
 
     #[test]
     fn knuth_plass_empty_input() {
-        assert!(knuth_plass(&[], 100, 200, false).0.is_empty());
+        assert!(knuth_plass(&[], 100, 200, 100, false).0.is_empty());
     }
 
     #[test]
     fn knuth_plass_no_breaks_single_word() {
         assert_eq!(
-            knuth_plass(&[char_of(10), char_of(10)], 5, 200, false).0,
+            knuth_plass(&[char_of(10), char_of(10)], 5, 200, 100, false).0,
             vec![(0, 2)]
         );
     }
@@ -626,7 +668,7 @@ mod tests {
         // 预处理不裁剪尾部（裁剪在排版器 close_paragraph）
         let mut hlist = words(&[10, 10]);
         hlist.push(glue(3, 0, 0));
-        let lines = knuth_plass(&hlist, 100, 200, false).0;
+        let lines = knuth_plass(&hlist, 100, 200, 100, false).0;
         assert_eq!(lines, vec![(0, 4)]);
     }
 
@@ -637,7 +679,7 @@ mod tests {
         // vs 2 行（各 0 badness → demerits 100+100=200）→ 1 行胜（TeX 精确 demerits）
         let mut hlist = words(&[10, 10]);
         hlist.push(fil_glue());
-        let lines = knuth_plass(&hlist, 22, 200, false).0;
+        let lines = knuth_plass(&hlist, 22, 200, 100, false).0;
         assert_eq!(lines, vec![(0, 4)]);
     }
 
@@ -645,7 +687,7 @@ mod tests {
     fn fil_glue_single_line_when_fits() {
         let mut hlist = words(&[10, 10]);
         hlist.push(fil_glue());
-        assert_eq!(knuth_plass(&hlist, 100, 200, false).0, vec![(0, 4)]);
+        assert_eq!(knuth_plass(&hlist, 100, 200, 100, false).0, vec![(0, 4)]);
     }
 
     // ---------- M4-6 断字：discretionary 断点 ----------
@@ -669,7 +711,7 @@ mod tests {
         hlist.push(glue(3, 1000, 14)); // 词间
         hlist.push(char_of(10)); // n
         hlist.push(fil_glue());
-        let lines = knuth_plass(&hlist, 60, 200, false).0;
+        let lines = knuth_plass(&hlist, 60, 200, 100, false).0;
         // 行1 = [0..4]（m 空格 a b）+ discretionary pre；行2 = [5..14]（c..h 空格 n fil）
         assert_eq!(lines, vec![(0, 4), (5, 14)]);
     }
@@ -680,6 +722,6 @@ mod tests {
         let mut hlist: Vec<Node> =
             vec![char_of(10), char_of(10), disc(5), char_of(10), char_of(10)];
         hlist.push(fil_glue());
-        assert_eq!(knuth_plass(&hlist, 100, 200, false).0, vec![(0, 6)]);
+        assert_eq!(knuth_plass(&hlist, 100, 200, 100, false).0, vec![(0, 6)]);
     }
 }

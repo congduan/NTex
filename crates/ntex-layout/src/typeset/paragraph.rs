@@ -24,12 +24,13 @@ impl NodeBuilder {
             stretch_order: if pf.stretch != 0 { GLUE_ORDER_FIL } else { 0 },
             shrink_order: 0,
         });
-        // \tracingparagraphs（misc 29）：折行追踪输出到转录（tex.web @@firstpass 等）
+        // \tracingparagraphs（misc 29）：折行追踪输出到转录（tex.web @firstpass 等）
         let tracing = self.params.misc[29] > 0;
         let (lines, trace) = knuth_plass(
             &children,
             self.params.hsize,
             self.params.tolerance,
+            self.params.misc[13], // \pretolerance（-1 时跳过第一遍）
             tracing,
         );
         if tracing && !trace.is_empty() {
