@@ -131,8 +131,32 @@ pub enum ParamValue {
 /// 下标与 [`crate::expand::int_param_index`] 的映射一致。
 pub const MISC_INTS: usize = 63;
 
+/// 系统时间 → (日, 月, 年, 自午夜分钟数)（tex.web `date_and_time`；\day/\month/\year/\time）。
+/// 公历转换用 Howard Hinnant 的 days-from-civil 逆算法（无外部依赖）。
+fn system_date_time() -> [i64; 4] {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let days = secs.div_euclid(86_400);
+    let minutes = secs.rem_euclid(86_400) / 60;
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    [d, m, y, minutes]
+}
+
 /// 内部整数参数默认值（TeX initex/plain 默认）。
 pub fn default_misc() -> [i64; MISC_INTS] {
+    // 日期时间（tex.web date_and_time）：系统时钟 → (日, 月, 年, 分钟)
+    let dt = system_date_time();
     [
         0,     // 0 TracingStats
         1,     // 1 TracingLostChars（initex 默认 1）
@@ -187,10 +211,11 @@ pub fn default_misc() -> [i64; MISC_INTS] {
         0,     // 50 HoldingInserts（plain 默认 0）
         0,     // 51 PrevGraf（只读内部量：上一段落行数；plain 默认 0）
         0,     // 52 InsertPenalties（只读内部量：插入惩罚；plain 默认 0）
-        0,     // 53 Day（当前日期日；plain 默认 0）
-        0,     // 54 Month（当前日期月；plain 默认 0）
-        0,     // 55 Year（当前日期年；plain 默认 0）
-        0,     // 56 Time（当前时间分钟；plain 默认 0）
+        // 53-56：日期时间（TeX initex 启动时设为系统时间 date_and_time）
+        dt[0], // 53 Day
+        dt[1], // 54 Month
+        dt[2], // 55 Year
+        dt[3], // 56 Time（自午夜分钟数）
         0,     // 57 BrokenPenalty（断行惩罚；plain 默认 0）
         0,     // 58 ExHyphenPenalty（显式连字符惩罚；plain 默认 0）
         0,     // 59 TracingPages（断页追踪开关；plain 默认 0）

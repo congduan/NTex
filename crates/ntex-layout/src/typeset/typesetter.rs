@@ -100,6 +100,16 @@ impl Typesetter {
     /// 加载展开引擎状态快照（`.fmt` v1）。
     pub fn import_state(&mut self, state: ntex_core::expand::FmtState) {
         self.expander.import_state(state);
+        // 排版器参数镜像对齐（fmt 恢复的 \vsize/\tracingpages 等不会经 param_changed 推送）
+        let p = *self.expander.params_ref();
+        if let Some(b) = self
+            .expander
+            .sink_mut()
+            .as_any_mut()
+            .downcast_mut::<NodeBuilder>()
+        {
+            b.sync_params(&p);
+        }
     }
 
     /// ETRIP 冲刺：`\dump` 是否已执行（驱动据此保存 fmt 并二次运行测试体）。
@@ -138,8 +148,7 @@ impl Typesetter {
     /// 排版源码，返回主垂直列表节点。
     pub fn typeset(&mut self, text: &str) -> Result<Vec<Node>> {
         self.install_font_loader();
-        self.expander
-            .set_sink(Box::new(NodeBuilder::new(self.fonts.clone())));
+        self.install_builder(NodeBuilder::new(self.fonts.clone()));
         self.expander.run_source(text)?;
         self.finish().map(|out| {
             self.shipped = out.shipped;
@@ -150,14 +159,34 @@ impl Typesetter {
     /// 排版字节源码。
     pub fn typeset_bytes(&mut self, bytes: impl Into<Vec<u8>>) -> Result<Vec<Node>> {
         self.install_font_loader();
-        self.expander
-            .set_sink(Box::new(NodeBuilder::new(self.fonts.clone())));
+        self.install_builder(NodeBuilder::new(self.fonts.clone()));
         self.expander.feed_source(bytes);
         self.expander.run()?;
         self.finish().map(|out| {
             self.shipped = out.shipped;
             out.main
         })
+    }
+
+    /// 安装 NodeBuilder 并同步参数镜像（`.fmt` 加载的 \\vsize/\\tracingpages 等
+    /// 不会经 param_changed 推送——新建 builder 的 params 是默认值）。
+    fn install_builder(&mut self, builder: NodeBuilder) {
+        let p = *self.expander.params_ref();
+        if std::env::var("NTEX_DEBUG_TRACINGPAGES").is_ok() {
+            eprintln!(
+                "[tracingpages] install_builder: misc59={} misc29={} misc55={}",
+                p.misc[59], p.misc[29], p.misc[55]
+            );
+        }
+        self.expander.set_sink(Box::new(builder));
+        if let Some(b) = self
+            .expander
+            .sink_mut()
+            .as_any_mut()
+            .downcast_mut::<NodeBuilder>()
+        {
+            b.sync_params(&p);
+        }
     }
 
     /// 取走终端转录（`\message`/`\show`/`\write16` 累积文本）。
@@ -177,13 +206,9 @@ impl Typesetter {
     /// 排版源码并取回 `\shipout` 页面（DVI 输出，M3-5）：
     /// 返回 (页面列表, 字体表快照)。需 [`Self::with_tfm`] 模式（否则字体表为空）。
     /// 启用 M3-5-2 断页：顶层垂直列表经页面构建器自动分页（`\vsize`），
-    /// 输入结束按 `\end` 语义冲页（`\hbox to \hsize{}\vfill\penalty-2^30`）。
     pub fn typeset_dvi(&mut self, text: &str) -> Result<(Vec<BoxNode>, Vec<FontMetrics>)> {
         self.install_font_loader();
-        self.expander.set_sink(Box::new(NodeBuilder::with_pagination(
-            self.fonts.clone(),
-            true,
-        )));
+        self.install_builder(NodeBuilder::with_pagination(self.fonts.clone(), true));
         self.expander.run_source(text)?;
         let out = self.finish()?;
         self.shipped = out.shipped.clone();

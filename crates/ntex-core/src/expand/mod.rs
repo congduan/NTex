@@ -1690,6 +1690,11 @@ impl Expander {
     pub fn sink_mut(&mut self) -> &mut dyn TokenSink {
         &mut *self.sink
     }
+
+    /// 只读访问内部参数（`.fmt` 加载后排版器镜像同步用）。
+    pub fn params_ref(&self) -> &Params {
+        &self.params
+    }
 }
 
 impl Default for Expander {

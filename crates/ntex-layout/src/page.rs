@@ -59,6 +59,10 @@ pub struct PageBuilder {
     /// 页面最后**盒子**的深度（tex.web `prev_depth`；胶水不重置，
     /// 规则/断页重置为 [`IGNORE_DEPTH`]——interline glue 的依据）。
     prev_depth: i64,
+    /// `\tracingpages>0`：本次 feed 的断页追踪（tex.web `Display the page break cost`）。
+    tracing: bool,
+    /// 追踪输出缓冲（feed_one 后由调用方取走写转录）。
+    trace_buf: String,
 }
 
 /// `process` 单节点处理结果。
@@ -92,6 +96,8 @@ impl PageBuilder {
             best_size: 0,
             last_is_box: false,
             prev_depth: IGNORE_DEPTH,
+            tracing: false,
+            trace_buf: String::new(),
         }
     }
 
@@ -116,6 +122,11 @@ impl PageBuilder {
     /// 让引擎在 token 边界执行例程，再继续处理剩余贡献）。
     /// 返回 `None` 表示贡献耗尽且无页面产出。
     pub fn feed_one(&mut self, contrib: &mut Vec<Node>, params: &Params) -> Option<BoxNode> {
+        // \tracingpages：misc 59（与 ntex-core int_param_index 对齐）
+        self.tracing = params.misc[59] > 0;
+        if self.tracing && std::env::var("NTEX_DEBUG_TRACINGPAGES").is_ok() {
+            eprintln!("[tracingpages] feed_one: tracing={}", self.tracing);
+        }
         loop {
             if contrib.is_empty() {
                 return None;
@@ -138,19 +149,38 @@ impl PageBuilder {
         match node {
             Node::Box(b) => {
                 if !self.has_box {
-                    // 页面初始化 + 首盒前插入 \topskip 胶水（tex.web §509）
+                    // 页面初始化 + 首盒前插入 \topskip 胶水（tex.web §509）。
+                    // topskip 的断点尝试（p=0，t=0）只输出追踪行，不作为断点候选
+                    // （避免 \vsize 极小 + topskip 超页时空页 fire_up 死循环）。
                     self.freeze(params);
                     let w = (params.topskip.width - b.height).max(0);
                     if w > 0 {
+                        if self.tracing {
+                            let b_now = self.badness_now();
+                            let c = if b_now < AWFUL_BAD {
+                                if b_now < INF_BAD {
+                                    b_now
+                                } else {
+                                    DEPLORABLE
+                                }
+                            } else {
+                                b_now
+                            };
+                            self.trace_buf
+                                .push_str(&self.trace_break_line(0, b_now, c));
+                        }
                         self.page.push(Node::Glue {
                             width: w,
                             stretch: params.topskip.stretch,
                             shrink: params.topskip.shrink,
-                            stretch_order: 0,
-                            shrink_order: 0,
+                            stretch_order: params.topskip.stretch_order,
+                            shrink_order: params.topskip.shrink_order,
                         });
                         // topskip 胶水 update_heights（前驱为 glue 非断点）
                         self.total += w;
+                        self.stretch[params.topskip.stretch_order as usize] +=
+                            params.topskip.stretch;
+                        self.shrink += params.topskip.shrink;
                         self.last_is_box = false;
                     }
                 }
@@ -173,10 +203,13 @@ impl PageBuilder {
                             width: w,
                             stretch: params.topskip.stretch,
                             shrink: params.topskip.shrink,
-                            stretch_order: 0,
-                            shrink_order: 0,
+                            stretch_order: params.topskip.stretch_order,
+                            shrink_order: params.topskip.shrink_order,
                         });
                         self.total += w;
+                        self.stretch[params.topskip.stretch_order as usize] +=
+                            params.topskip.stretch;
+                        self.shrink += params.topskip.shrink;
                         self.last_is_box = false;
                     }
                 }
@@ -316,6 +349,10 @@ impl PageBuilder {
         } else {
             b
         };
+        // \tracingpages：每次断点尝试输出成本行（tex.web `Display the page break cost`）
+        if self.tracing {
+            self.trace_buf.push_str(&self.trace_break_line(pi, b, c));
+        }
         if c <= self.best_cost {
             // 触发节点尚未入页：断点位置 = 页末端
             self.best = Some(self.page.len());
@@ -326,6 +363,65 @@ impl PageBuilder {
             Some(Outcome::FireUp)
         } else {
             None
+        }
+    }
+
+    /// 断点成本追踪行（tex.web §588）：`% t=<totals> g=<goal> b=<b> p=<pi> c=<c>#`。
+    /// `b`/`c` 为 awful 显示 `*`；`#` 仅当该断点成为新最佳（c <= best_cost）。
+    fn trace_break_line(&self, pi: i64, b: i64, c: i64) -> String {
+        let b_str = if b == AWFUL_BAD {
+            "*".to_string()
+        } else {
+            b.to_string()
+        };
+        let c_str = if c == AWFUL_BAD {
+            "*".to_string()
+        } else {
+            c.to_string()
+        };
+        let mut s = format!(
+            "% t={} g={} b={} p={} c={}",
+            self.print_totals(),
+            ntex_core::register::format_dimen(self.goal),
+            b_str,
+            pi,
+            c_str,
+        );
+        if c <= self.best_cost {
+            s.push('#');
+        }
+        s.push('\n');
+        s
+    }
+
+    /// `print_totals`（tex.web §19273）：自然高度 + 各阶拉伸（plus）+ 收缩（minus）。
+    fn print_totals(&self) -> String {
+        let mut s = ntex_core::register::format_dimen(self.total);
+        for (order, suffix) in [(0, ""), (1, "fil"), (2, "fill"), (3, "filll")] {
+            let v = self.stretch[order];
+            if v != 0 {
+                s.push_str(&format!(
+                    " plus {}{}",
+                    ntex_core::register::format_dimen(v),
+                    suffix
+                ));
+            }
+        }
+        if self.shrink != 0 {
+            s.push_str(&format!(
+                " minus {}",
+                ntex_core::register::format_dimen(self.shrink)
+            ));
+        }
+        s
+    }
+
+    /// 取走本次 feed 的追踪输出（调用方写转录）。
+    pub fn take_trace(&mut self) -> Option<String> {
+        if self.trace_buf.is_empty() {
+            None
+        } else {
+            Some(std::mem::take(&mut self.trace_buf))
         }
     }
 
@@ -501,6 +597,14 @@ impl PageBuilder {
         self.best_size = self.goal;
         self.last_is_box = false;
         self.prev_depth = IGNORE_DEPTH;
+        // \tracingpages：freeze 时输出目标行（tex.web freeze_page_specs）
+        if self.tracing {
+            self.trace_buf.push_str(&format!(
+                "%% goal height={}, max depth={}\n",
+                ntex_core::register::format_dimen(self.goal),
+                ntex_core::register::format_dimen(self.max_depth)
+            ));
+        }
     }
 
     /// `@<Start a new current page@>`（tex.web §373-376）。

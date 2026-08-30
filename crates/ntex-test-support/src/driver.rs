@@ -288,7 +288,7 @@ impl EngineDriver for NtexDriver {
         ts.set_vfs(Box::new(WorkDirVfs {
             wd: request.working_dir.clone(),
         }));
-        let run = ts.typeset_bytes(source.clone());
+        let run = ts.typeset_dvi(&String::from_utf8_lossy(&source));
         // 终端转录（\message/\show/\showthe/\write16）。注意：TRIP/ETRIP 参考
         // （trip.log/etrip.log）是**预加载格式**路径的输出；pass1 是 initex 路径
         // （`\dump` 前），仅作驱动诊断，不进入最终 log/typ。pass1 转录先暂存，
@@ -316,7 +316,7 @@ impl EngineDriver for NtexDriver {
             let mut reader = &buf[..];
             let state = ntex_format::load(&mut reader).with_context(|| "加载 .fmt 快照失败")?;
             ts2.import_state(state);
-            let run2 = ts2.typeset_bytes(source);
+            let run2 = ts2.typeset_dvi(&String::from_utf8_lossy(&source));
             transcript2 = ts2.take_transcript();
             // 调试辅助：NTEX_KEEP_TRANSCRIPT=<path> 保存 pass2 转录到文件
             if let Ok(path) = std::env::var("NTEX_KEEP_TRANSCRIPT") {

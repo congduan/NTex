@@ -543,6 +543,11 @@ impl NodeBuilder {
         Self::with_pagination(fonts, false)
     }
 
+    /// 全量同步参数镜像（`.fmt` 加载后：expander 的 params 已恢复，排版器需对齐）。
+    pub fn sync_params(&mut self, p: &Params) {
+        self.params = *p;
+    }
+
     /// 创建构建器；`pagination` 打开 M3-5-2 断页（自动分页 + parskip + 收尾冲页）。
     fn with_pagination(fonts: Fonts, pagination: bool) -> Self {
         // plain 格式 \sfcode 默认（TeXbook p.75）：.,?! = 3000、: = 2000、; = 1500、, = 1250
@@ -706,6 +711,10 @@ impl NodeBuilder {
                 self.accept_page(p);
                 // ETRIP 冲刺：断页 marks 轮转（top = 旧 bot，first 清空，bot 保留继承）
                 self.rotate_marks();
+            }
+            // \tracingpages：断页追踪输出到转录（tex.web begin_diagnostic → log）
+            if let Some(t) = self.page.take_trace() {
+                let _ = self.write16(t);
             }
         }
     }
