@@ -1069,7 +1069,7 @@ mod tests {
         let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
         assert_eq!(
             sink.transcript,
-            "! Bad register code (-1).\n\n! Bad register code (32768).\n\n",
+            "! Bad register code (-1).\n\nl.1 \\countdef\\1=-1 \\countdef\\1=32768 \\countdef\\1=0 \\countdef\\1=32767 \\relax\n\n! Bad register code (32768).\n\nl.1 \\countdef\\1=-1 \\countdef\\1=32768 \\countdef\\1=0 \\countdef\\1=32767 \\relax\n\n",
             "转录：{:?}",
             sink.transcript
         );

@@ -941,14 +941,15 @@ impl Expander {
         None
     }
 
-    /// TeX 错误恢复模式统一入口：`! 消息` 写入转录（格式与既有散落调用完全
-    /// 一致，TRIP 对齐不受影响）。恢复动作由调用方决定（钳制/插入/忽略——
-    /// TeX error() 语义：报错后继续执行，不终止作业）。
+    /// TeX 错误恢复模式统一入口：`! 消息` 写入转录 + `l.N 上下文行`（tex.web
+    /// error()：报错后继续执行，不终止作业）。恢复动作由调用方决定（钳制/插入/
+    /// 忽略）；`<to be read again>` 与 help 行由 write_error 等完整格式路径输出。
     fn report_error(&mut self, msg: &str) {
         if self.err_snapshot.is_none() {
             self.err_snapshot = Some((self.group_level, self.cond_stack.len()));
         }
         self.sink.report_error(msg);
+        self.report_error_context();
     }
 
     /// NTEX_SANITY_CHECK 设施：错误恢复后状态完整性校验。
