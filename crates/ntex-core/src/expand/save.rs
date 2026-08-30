@@ -664,6 +664,13 @@ impl Expander {
             self.report_error("Too many }'s.");
             return Ok(());
         }
+        // \setbox/\moveleft 的 box 参数组（\vbox{} 等）在组结束时恢复追踪：
+        // 参数组内容可能为空（\setbox255\vbox{}），模式变化检测不触发
+        if self.pending_box_arg {
+            self.trace_suppress -= 1;
+            self.pending_box_arg = false;
+            self.trace_suppress_defer = false;
+        }
         // 条件栈与组栈相互独立（TeX：条件可跨组，如 `\begingroup\iftrue a\egroup\fi`，
         // ETRIP line 433 的 `\begingroup \iftrue \scantokens... \egroup \fi` 即依赖此语义）。
         let _ = self.group_cond_depth.pop();

@@ -1027,9 +1027,13 @@ impl Expander {
             // ETRIP 冲刺：\hyphenation{...}（断字异常词表：lccode 转小写 + 断点 → sink）
             Primitive::Hyphenation => self.exec_hyphenation(),
             // ETRIP 冲刺：\setbox<n>=<box>（盒子寄存器赋值：通知 sink 存入寄存器）
+            // box 参数（\vbox{}/\box255 等）同 \moveleft：scan_box 扫描不追踪
             Primitive::SetBox => {
                 let idx = self.scan_register_index()?;
                 self.expect_equals()?;
+                self.trace_suppress += 1;
+                self.pending_box_arg = true;
+                self.pending_box_arg_mode = self.sink.mode_code();
                 self.sink.setbox(idx)
             }
             // ETRIP 冲刺：\␣（control space）：输出空格 token（TeX control_space）
