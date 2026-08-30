@@ -166,8 +166,7 @@ impl PageBuilder {
                             } else {
                                 b_now
                             };
-                            self.trace_buf
-                                .push_str(&self.trace_break_line(0, b_now, c));
+                            self.trace_buf.push_str(&self.trace_break_line(0, b_now, c));
                         }
                         self.page.push(Node::Glue {
                             width: w,
@@ -235,8 +234,9 @@ impl PageBuilder {
                     contrib.remove(0);
                     return Outcome::Continue;
                 }
-                // 胶水是断点 iff 前驱是盒子/规则（tex.web §496）
-                if self.last_is_box && self.try_break(0) == Some(Outcome::FireUp) {
+                // 胶水是断点 iff 前驱节点 precedes_break（tex.web：type < math_node，
+                // 含盒子/规则/胶水/kern——非 penalty/mark/insert 即可断）
+                if self.precedes_break() && self.try_break(0) == Some(Outcome::FireUp) {
                     return Outcome::FireUp;
                 }
                 contrib.remove(0);
@@ -316,6 +316,18 @@ impl PageBuilder {
         if self.depth > self.max_depth {
             self.total += self.depth - self.max_depth;
             self.depth = self.max_depth;
+        }
+    }
+
+    /// tex.web `precedes_break`：最后节点类型 < math_node（盒子/规则/胶水/kern/
+    /// 空页尾）为合法断点前驱；penalty/mark/insert/whatsit 不可断。
+    /// 注意：topskip 不参与（它直接入页，仅手动输出追踪行），避免 \vsize 极小
+    /// 时 topskip 成为空页断点候选 → fire_up 空页死循环。
+    fn precedes_break(&self) -> bool {
+        match self.page.last() {
+            None => true,
+            Some(Node::Box(_) | Node::Rule { .. } | Node::Glue { .. } | Node::Kern { .. }) => true,
+            _ => false,
         }
     }
 

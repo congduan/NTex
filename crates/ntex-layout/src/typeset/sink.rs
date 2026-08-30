@@ -805,7 +805,8 @@ impl TokenSink for NodeBuilder {
                 }
             });
         let Some(b) = b else {
-            // TeX：\box 取 void 盒子 → 空节点（不报错，TRIP L104 前 \copy200 void）
+            // TeX：\box 取 void 盒子 → 空 hbox 节点（tex.web：仍产生节点；TRIP L104 前 \copy200 void）
+            self.append(Node::Box(crate::node::BoxNode::new_hbox(Vec::new())));
             return Ok(());
         };
         if self.shipout_next {
@@ -1160,7 +1161,9 @@ impl TokenSink for NodeBuilder {
             h.clone()
         } else {
             let Some(b) = self.boxes.get(idx).and_then(|s| s.as_ref()) else {
-                // TeX：\copy 取 void 盒子 → 空节点（不报错，TRIP L104 `\copy200`）
+                // TeX：\copy 取 void 盒子 → **空 hbox 节点**（tex.web copy_scan_box：
+                // void → null box，仍产生节点触发 freeze/interline；TRIP L104 `\copy200`）
+                self.append(Node::Box(crate::node::BoxNode::new_hbox(Vec::new())));
                 return Ok(());
             };
             b.clone()
