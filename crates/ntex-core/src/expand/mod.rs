@@ -1517,6 +1517,12 @@ impl Expander {
 
     /// 对齐模板（preamble）阶段的 token 分类：决定收集不执行 / 正常展开 / 结束模板。
     fn preamble_classify(&mut self, tok: &Token) -> Result<PreambleAction> {
+        // \setbox/\moveleft 的 box 参数（\vbox{}/\box255 等）在模板中正常执行
+        // （不 Collect）——否则 setbox target 永不消费 → 后续盒子全被吞 →
+        // 空列表 + 空页输出例程死循环（watchdog 空 hbox 无限）
+        if self.pending_box_arg {
+            return Ok(PreambleAction::Process);
+        }
         match tok.kind() {
             TokenKind::ControlSeq => {
                 let csid = tok.csid().expect("ControlSeq 必有 csid");
@@ -1547,8 +1553,8 @@ impl Expander {
                     // tex.web get_preamble_token：赋值类原语（\global/\hsize/
                     // \baselineskip 等）在模板**读取时立即执行**（TRIP L171
                     // \valign 模板 `\global\hsize13pt` 必须生效）。排版/结构类
-                    // （盒子/胶水/penalty/规则/移动等列模板内容）原样收集。
-                    // 二分排查：\setbox 暂归收集（疑似死循环源）。
+                    // （盒子/胶水/penalty/规则/移动等列模板内容）原样收集；
+                    // \setbox 的 RHS 经 pending_box_arg 豁免（见 preamble_classify 开头）。
                     EqSlot::Primitive(p)
                         if !Self::template_collects(*p) && *p != Primitive::SetBox =>
                     {
