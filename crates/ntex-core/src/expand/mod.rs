@@ -1173,6 +1173,9 @@ impl Expander {
         self.sink.take_output_pending();
         self.output_active = true;
         let items: Vec<(Token, bool)> = toks.iter().map(|&t| (t, false)).collect();
+        // 输出例程隐式组（tex.web：例程在 save_stack 组内执行——\tracingcommands0
+        // 等例程内赋值组结束恢复；TRIP L107 例程后 \tracingcommands 回 30）
+        self.begin_group()?;
         self.stack.push(InputFrame::OutputRoutine {
             items: Arc::from(items),
             pos: 0,
@@ -1481,40 +1484,6 @@ impl Expander {
 
     // ---------- 输入获取 ----------
 
-    /// 对齐模板（preamble）阶段：排版/结构类原语原样收集（列模板内容——
-    /// 盒子/胶水/penalty/规则/移动等），其余（赋值/前缀/杂项）立即执行
-    /// （tex.web get_preamble_token 的 assign 分支语义）。
-    fn template_collects(p: Primitive) -> bool {
-        matches!(
-            p,
-            Primitive::HBox
-                | Primitive::VBox
-                | Primitive::VTop
-                | Primitive::HSkip
-                | Primitive::VSkip
-                | Primitive::Kern
-                | Primitive::Penalty
-                | Primitive::HRule
-                | Primitive::VRule
-                | Primitive::UnHBox
-                | Primitive::UnVBox
-                | Primitive::Copy
-                | Primitive::Box
-                | Primitive::LastBox
-                | Primitive::MoveLeft
-                | Primitive::MoveRight
-                | Primitive::Raise
-                | Primitive::Lower
-                | Primitive::Indent
-                | Primitive::NoIndent
-                | Primitive::Par
-                | Primitive::ShipOut
-                | Primitive::Leaders
-                | Primitive::Cleaders
-                | Primitive::XLeaders
-        )
-    }
-
     /// 对齐模板（preamble）阶段的 token 分类：决定收集不执行 / 正常展开 / 结束模板。
     fn preamble_classify(&mut self, tok: &Token) -> Result<PreambleAction> {
         // \setbox/\moveleft 的 box 参数（\vbox{}/\box255 等）在模板中正常执行
@@ -1541,33 +1510,24 @@ impl Expander {
                     return Ok(PreambleAction::Process);
                 }
                 // 可展开 cs（宏/可展开原语）：照常展开，产物回流后仍按模板收集
+                // 模板行内容（赋值/排版/杂项）一律执行（tex.web get_preamble_token
+                // + 列模板 u_part 语义；TRIP L172-178 的赋值与 \noindent\copy2 均执行）
                 match &slot {
                     EqSlot::Macro(m) => {
                         if !(m.value.protected && self.suppress_expansion > 0) {
                             return Ok(PreambleAction::Process);
                         }
                     }
-                    EqSlot::Primitive(p) if p.is_expandable() => {
-                        return Ok(PreambleAction::Process)
-                    }
-                    // tex.web get_preamble_token：赋值类原语（\global/\hsize/
-                    // \baselineskip 等）在模板**读取时立即执行**（TRIP L171
-                    // \valign 模板 `\global\hsize13pt` 必须生效）。排版/结构类
-                    // （盒子/胶水/penalty/规则/移动等列模板内容）原样收集；
-                    // \setbox 的 RHS 经 pending_box_arg 豁免（见 preamble_classify 开头）。
-                    EqSlot::Primitive(p)
-                        if !Self::template_collects(*p) && *p != Primitive::SetBox =>
-                    {
-                        return Ok(PreambleAction::Process)
-                    }
-                    _ => {}
+                    _ => return Ok(PreambleAction::Process),
                 }
                 Ok(PreambleAction::Collect)
             }
             TokenKind::Char => match tok.catcode() {
                 Some(Catcode::BeginGroup) => {
                     self.align_depth += 1;
-                    Ok(PreambleAction::Collect)
+                    // 模板中的组（列模板内容）正常执行（tex.web 列模板 u_part
+                    // 执行语义；TRIP L176 `\noindent\copy2\hskip2pt...` 开段执行）
+                    Ok(PreambleAction::Process)
                 }
                 Some(Catcode::EndGroup) => {
                     self.align_depth -= 1;
@@ -1577,9 +1537,11 @@ impl Expander {
                         self.align_preamble_depth = 0;
                         self.end_group()?;
                     }
-                    Ok(PreambleAction::Collect)
+                    Ok(PreambleAction::Process)
                 }
-                _ => Ok(PreambleAction::Collect),
+                // `#`（列位置标记，tex.web param）：不执行，收集
+                Some(Catcode::Parameter) => Ok(PreambleAction::Collect),
+                _ => Ok(PreambleAction::Process),
             },
             _ => Ok(PreambleAction::Collect),
         }
@@ -1715,11 +1677,13 @@ impl Expander {
                 }
                 InputFrame::OutputRoutine { items, pos } => {
                     if *pos >= items.len() {
-                        // 例程帧耗尽：复位输出例程激活标志（可再次注入）。
-                        // 剩余待处理页面是否丢弃由 maybe_inject_output 按进度判断
-                        // （例程未取用 box255 时），不在帧弹出时处理——例程末 token
-                        // 的参数扫描（如 \box255 数字）会 fetch 到帧外。
+                        // 例程帧耗尽：关隐式组（恢复例程内赋值），复位输出例程
+                        // 激活标志（可再次注入）。剩余待处理页面是否丢弃由
+                        // maybe_inject_output 按进度判断（例程未取用 box255 时），
+                        // 不在帧弹出时处理——例程末 token 的参数扫描（如 \box255
+                        // 数字）会 fetch 到帧外。
                         self.stack.pop();
+                        self.end_group()?;
                         self.output_active = false;
                         continue;
                     }
