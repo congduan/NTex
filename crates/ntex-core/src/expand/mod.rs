@@ -1206,7 +1206,10 @@ impl Expander {
                 // - 首个到达模板起始深度的 `\cr`/`\crcr` 结束模板，交给下方正常处理。
                 if self.align_preamble && !noexpand {
                     match self.preamble_classify(&tok)? {
-                        PreambleAction::End => { /* 落到正常处理 */ }
+                        // 模板 \cr：已消费（不落正常处理——避免 align_row_end 把
+                        // 模板行内容（读取时执行的 \noindent\copy2 等）封装为列盒，
+                        // 破坏段落状态导致 @firstpass 丢失）
+                        PreambleAction::End => return Ok(true),
                         PreambleAction::Collect => return Ok(true),
                         PreambleAction::Process => { /* 落到正常处理（展开/条件） */ }
                     }

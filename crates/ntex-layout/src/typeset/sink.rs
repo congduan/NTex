@@ -1338,6 +1338,11 @@ impl TokenSink for NodeBuilder {
         if self.align_dir.is_none() {
             return Ok(());
         }
+        // 数据列内开放的段落先封装（\noindent 开段的列内容——tex.web 列处理
+        // 每列一个段落；不 close 则段落悬空、tracingparagraphs 输出丢失）
+        if self.mode() == Mode::Horizontal {
+            self.close_paragraph();
+        }
         let Some(list) = self.lists.last_mut() else {
             return Ok(());
         };
