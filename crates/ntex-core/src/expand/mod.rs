@@ -910,6 +910,7 @@ impl Expander {
     }
 
     /// A3：把错误上下文行（`l.N <行内容>`）写入转录（TeX error() 的上下文行）。
+    /// 尾 \n 由 write16 自动追加（与 write_error 的 `l.N\n\n` 块分隔一致）。
     fn report_error_context(&mut self) {
         if let Some((n, line)) = self.error_context() {
             let _ = self.sink.write16(format!("l.{n} {line}\n"));

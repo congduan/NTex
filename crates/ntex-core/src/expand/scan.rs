@@ -931,12 +931,21 @@ impl Expander {
 
     /// TeX scan_dimen 末尾的尺寸钳制：|v| > 0x3FFFFFFF →
     /// "! Dimension too large." 并钳到 ±MAX_DIMEN（如 `\dimen45=\skip44` 读超大胶水）。
+    /// help 行（tex.web L8992-8995）在 etrip.log 收尾比对阶段统一补。
     fn clamp_dimen(&mut self, v: i64) -> i64 {
+        let too_large = |e: &mut Self| {
+            e.report_error("Dimension too large.");
+            let _ = e.sink.write16(
+                "I can't work with sizes bigger than about 19 feet.\n\
+                 Continue and I'll use the largest value I can.\n"
+                    .to_string(),
+            );
+        };
         if v > MAX_DIMEN {
-            self.report_error("Dimension too large.");
+            too_large(self);
             MAX_DIMEN
         } else if v < -MAX_DIMEN {
-            self.report_error("Dimension too large.");
+            too_large(self);
             -MAX_DIMEN
         } else {
             v
