@@ -759,6 +759,11 @@ impl Expander {
                     return Ok(());
                 }
                 let d = self.scan_dimen()?;
+                // tex.web scan_box：box 参数 token 不追踪（\moveleft20pt\copy200 的
+                // {\copy}、\moveright20pt\hbox{ 的 {\hbox}/{ 均不输出）
+                self.trace_suppress += 1;
+                self.pending_box_arg = true;
+                self.pending_box_arg_mode = self.sink.mode_code();
                 if prim == Primitive::MoveLeft {
                     self.sink.move_left(-d)
                 } else {

@@ -443,6 +443,14 @@ pub struct Expander {
     /// 子展开（`\write` 内容、marks 查询等 expand_region）追踪抑制计数——
     /// TeX 只在 main_control 主循环追踪（show_cur_cmd_chr），扫描器内部不追踪。
     trace_suppress: u32,
+    /// `\moveleft/\moveright` 的 box 参数扫描中（tex.web scan_box：参数 token
+    /// 不追踪——`\moveleft20pt\copy200` 的 `{\copy}`、`\moveright20pt\hbox{` 的
+    /// `{\hbox}`/`{` 均不输出；组内容执行恢复追踪）。
+    pending_box_arg: bool,
+    /// 进入 box 参数扫描时的模式码（模式变化 = 盒子组内容开始 → 立即恢复追踪）。
+    pending_box_arg_mode: i64,
+    /// 非组盒子原语（`\copy`/`\box` 等）处理完恢复追踪的延迟标记（本次仍抑制）。
+    trace_suppress_defer: bool,
     /// 上一轮注入输出例程时待处理页面的数量（判断例程是否消费了 box255）。
     output_prev_count: usize,
     /// 是否启用字节码轨道（M2；解释器轨道用于双轨等价验证）。
@@ -564,6 +572,9 @@ impl Expander {
             watchdog: None,
             output_toks: None,
             output_active: false,
+            pending_box_arg: false,
+            pending_box_arg_mode: 1,
+            trace_suppress_defer: false,
             ended: false,
             last_tok: None,
             shown_trace_mode: None,
@@ -1198,6 +1209,32 @@ impl Expander {
                 // \tracingcommands（misc 下标 3）：每命令一行 `{模式: 描述}`；
                 // 模式只在变化时打印（tex.web show_cur_cmd_chr 的 shown_mode 语义）；
                 // 子展开（expand_region：\write 内容等）抑制——TeX 只在主循环追踪。
+                // \moveleft/\moveright 的 box 参数（tex.web scan_box）同样抑制：
+                // 模式变化 = 盒子组内容开始 → 立即恢复；非组盒子原语（\copy 等）
+                // 本次仍抑制、执行后恢复（trace_suppress_defer）。
+                if self.pending_box_arg {
+                    if self.sink.mode_code() != self.pending_box_arg_mode {
+                        self.trace_suppress -= 1;
+                        self.pending_box_arg = false;
+                    } else if let Some(csid) = tok.csid() {
+                        if let EqSlot::Primitive(p) = self.eqtb.slot(csid) {
+                            if matches!(
+                                p,
+                                Primitive::Copy
+                                    | Primitive::Box
+                                    | Primitive::UnHBox
+                                    | Primitive::UnHCopy
+                                    | Primitive::UnVBox
+                                    | Primitive::UnVCopy
+                                    | Primitive::LastBox
+                                    | Primitive::VSplit
+                            ) {
+                                self.pending_box_arg = false;
+                                self.trace_suppress_defer = true;
+                            }
+                        }
+                    }
+                }
                 if self.params.misc[3] > 0 && self.trace_suppress == 0 {
                     self.trace_token_now(tok);
                 }
@@ -1218,6 +1255,11 @@ impl Expander {
                     return Ok(true);
                 }
                 self.process_token(tok)?;
+                // 非组盒子原语（\copy 等）作为 \moveleft 参数：执行完恢复追踪
+                if self.trace_suppress_defer {
+                    self.trace_suppress -= 1;
+                    self.trace_suppress_defer = false;
+                }
                 Ok(true)
             }
         }
