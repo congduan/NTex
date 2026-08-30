@@ -55,6 +55,25 @@ struct BreakSpec {
     penalty: i64,
     /// 是否强制断行（penalty ≤ -10000）。
     is_forced: bool,
+    /// 断点类型（`\tracingparagraphs` 显示名；tex.web print_esc 语义）。
+    kind: BreakKind,
+}
+
+/// 断点类型（tex.web 断点描述：glue 断点不打印类型名）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BreakKind {
+    /// 虚拟起点（@@0）。
+    Start,
+    /// 胶水断点（类型名空——`@ via @@n`）。
+    Glue,
+    /// 惩罚断点（`@\penalty via`）。
+    Penalty,
+    /// 断字节点（`@\discretionary via`，行号带 `-` 后缀）。
+    Disc,
+    /// kern 断点（`@\kern via`）。
+    Kern,
+    /// 段落末尾强制断点（`@\par via`）。
+    Par,
 }
 
 /// 取最高阶上两侧差值非零的 `(阶, 量)`（tex.web：高阶胶水优先）。
@@ -79,6 +98,7 @@ fn preprocess(hlist: &[Node]) -> Vec<BreakSpec> {
         shrink: [0; 4],
         penalty: 0,
         is_forced: false,
+        kind: BreakKind::Start,
     }];
     let mut width = 0i64;
     let mut stretch = [0i64; 4];
@@ -102,6 +122,7 @@ fn preprocess(hlist: &[Node]) -> Vec<BreakSpec> {
                     shrink,
                     penalty: 0,
                     is_forced: false,
+                    kind: BreakKind::Glue,
                 });
                 width += w;
                 stretch[(*so as usize).min(3)] += st;
@@ -118,6 +139,7 @@ fn preprocess(hlist: &[Node]) -> Vec<BreakSpec> {
                         shrink,
                         penalty: *penalty,
                         is_forced: *penalty <= -10_000,
+                        kind: BreakKind::Penalty,
                     });
                 }
             }
@@ -133,6 +155,7 @@ fn preprocess(hlist: &[Node]) -> Vec<BreakSpec> {
                     shrink,
                     penalty: HYPHEN_PENALTY,
                     is_forced: false,
+                    kind: BreakKind::Disc,
                 });
             }
             other => {
@@ -149,6 +172,7 @@ fn preprocess(hlist: &[Node]) -> Vec<BreakSpec> {
         shrink,
         penalty: -10_000,
         is_forced: true,
+        kind: BreakKind::Par,
     });
     out
 }
@@ -248,14 +272,28 @@ fn line_demerits(bad: u16, pi: i64, fit: FitClass, prev_fit: FitClass) -> i64 {
 /// active 集保存可作行起点的断点；badness ≤ tolerance 且非强制时行可接受；
 /// 强制断点处冲洗 active（此前路径定案）。每个断点按末行拟合类分别保留最优
 /// （tex.web `minimal_demerits[fit_class]`，`\adjdemerits` 依赖相邻行拟合类差）。
-fn best_path(breaks: &[BreakSpec], hsize: i64, tolerance: i64) -> (Vec<usize>, i64) {
+///
+/// `tracing` 时累积 `\tracingparagraphs` 输出（tex.web `@@firstpass`、
+/// 候选断点 `@<类型> via @@n b=.. p=.. d=..`、活动节点 `@@n: line .. t=.. -> @@m`）。
+fn best_path(
+    breaks: &[BreakSpec],
+    hsize: i64,
+    tolerance: i64,
+    tracing: bool,
+) -> (Vec<usize>, i64, String) {
     let n = breaks.len();
     // best[i][fc]：断点 i 结束、末行拟合类 fc 的最小总 demerits。
     let mut best: Vec<[i64; 4]> = vec![[i64::MAX; 4]; n];
     // best_prev[i][fc]：(前一断点下标, 前一行拟合类)。
     let mut best_prev: Vec<[Option<(usize, FitClass)>; 4]> = vec![[None; 4]; n];
+    // best_lines[i][fc]：最优路径到断点 i（fc 结束）的行数（活动节点行号显示）。
+    let mut best_lines: Vec<[i64; 4]> = vec![[0; 4]; n];
     let mut active: Vec<usize> = vec![0];
     best[0][DECENT as usize] = 0; // 虚拟起点拟合类 = decent（tex.web §17032）
+    let mut trace = String::new();
+    if tracing {
+        trace.push_str("@firstpass\n");
+    }
 
     for i in 1..n {
         let bi = breaks[i];
@@ -295,6 +333,23 @@ fn best_path(breaks: &[BreakSpec], hsize: i64, tolerance: i64) -> (Vec<usize>, i
                     continue;
                 }
                 let d = ad + line_demerits(bad, bi.penalty, fit, af as FitClass);
+                // \tracingparagraphs：每个可行断点输出一行（tex.web
+                // `@<类型> via @@<prev> b=.. p=.. d=..`；glue 断点类型名空）。
+                if tracing {
+                    let name = match bi.kind {
+                        BreakKind::Start | BreakKind::Glue => String::new(),
+                        BreakKind::Penalty => "\\penalty".to_string(),
+                        BreakKind::Disc => "\\discretionary".to_string(),
+                        BreakKind::Kern => "\\kern".to_string(),
+                        BreakKind::Par => "\\par".to_string(),
+                    };
+                    let b_str = if bad == 10_000 { "*" } else { &bad.to_string() };
+                    trace.push_str(&format!(
+                        "@{name} via @@{a} b={b_str} p={} d={}\n",
+                        bi.penalty,
+                        line_demerits(bad, bi.penalty, fit, af as FitClass)
+                    ));
+                }
                 let slot = &mut champion[fit as usize];
                 if slot.map_or(true, |(bd, _, _)| d < bd) {
                     *slot = Some((d, a, af as FitClass));
@@ -305,9 +360,26 @@ fn best_path(breaks: &[BreakSpec], hsize: i64, tolerance: i64) -> (Vec<usize>, i
             if let Some((d, a, af)) = *c {
                 best[i][fc] = d;
                 best_prev[i][fc] = Some((a, af));
+                best_lines[i][fc] = best_lines[a][af as usize] + 1;
             }
         }
         if champion.iter().any(|c| c.is_some()) {
+            // \tracingparagraphs：新活动节点（tex.web `@@n: line x.y[-] t=.. -> @@m`）
+            if tracing {
+                let (fc, c) = champion
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, c)| c.is_some())
+                    .min_by_key(|(_, c)| c.unwrap().0)
+                    .map(|(fc, c)| (fc, c.unwrap()))
+                    .unwrap();
+                let (d, a, _af) = c;
+                let hyphen = if bi.kind == BreakKind::Disc { "-" } else { "" };
+                trace.push_str(&format!(
+                    "@@{i}: line {}.{fc}{hyphen} t={d} -> @@{a}\n",
+                    best_lines[i][fc]
+                ));
+            }
             active.push(i);
             if bi.is_forced {
                 // 强制断行：此前的路径已定案，后续只能从本断点起行
@@ -316,35 +388,42 @@ fn best_path(breaks: &[BreakSpec], hsize: i64, tolerance: i64) -> (Vec<usize>, i
             }
         }
     }
-
-    // 末点（末尾强制断点）：取总 demerits 最小的拟合类回溯
-    let (total, fc0) = (0..4)
-        .map(|fc| (best[n - 1][fc], fc as FitClass))
-        .min_by_key(|(d, _)| *d)
-        .expect("末尾强制断点必有路径");
+    // 最优路径回溯（tex.web：last_active 链 + 每断点最优拟合类）
     let mut path = vec![n - 1];
     let mut cur = n - 1;
-    let mut cur_fit = fc0;
-    while let Some((p, pf)) = best_prev[cur][cur_fit as usize] {
-        path.push(p);
-        cur = p;
-        cur_fit = pf;
+    let mut fc = (0..4)
+        .min_by_key(|&fc| best[cur][fc])
+        .expect("末尾强制断点必有路径") as FitClass;
+    loop {
+        let Some((prev, prev_fc)) = best_prev[cur][fc as usize] else {
+            break;
+        };
+        path.push(prev);
+        cur = prev;
+        fc = prev_fc;
     }
     path.reverse();
-    (path, total)
+    (path, best[n - 1].iter().min().copied().unwrap_or(0), trace)
 }
 
 /// Knuth-Plass 断行：返回行区间 `(start, end)`（`end` 不含；行内容 = `[start, end)`）。
 ///
 /// `hsize`：行目标宽度（sp）；`tolerance`：可接受最大 badness（tex.web `tolerance`）。
 /// active 集按 badness 超容差淘汰（tex.web §880，A1）——复杂度接近 O(n)；
-/// `\parfillskip`/右端对齐等留待后续。
-pub fn knuth_plass(hlist: &[Node], hsize: i64, tolerance: i64) -> Vec<(usize, usize)> {
+/// Knuth-Plass 断行：返回行区间 `(start, end)`（`end` 不含；行内容 = `[start, end)`）。
+///
+/// `tracing` 时返回 `\tracingparagraphs` 追踪文本（第二返回值）。
+pub fn knuth_plass(
+    hlist: &[Node],
+    hsize: i64,
+    tolerance: i64,
+    tracing: bool,
+) -> (Vec<(usize, usize)>, String) {
     if hlist.is_empty() {
-        return Vec::new();
+        return (Vec::new(), String::new());
     }
     let breaks = preprocess(hlist);
-    let (path, _total) = best_path(&breaks, hsize, tolerance);
+    let (path, _total, trace) = best_path(&breaks, hsize, tolerance, tracing);
     let mut lines = Vec::new();
     for w in path.windows(2) {
         let (a, b) = (breaks[w[0]], breaks[w[1]]);
@@ -353,7 +432,7 @@ pub fn knuth_plass(hlist: &[Node], hsize: i64, tolerance: i64) -> Vec<(usize, us
             lines.push((start, end));
         }
     }
-    lines
+    (lines, trace)
 }
 
 #[cfg(test)]
@@ -462,7 +541,7 @@ mod tests {
 
     fn dp_min(hlist: &[Node], hsize: i64, tolerance: i64) -> i64 {
         let breaks = preprocess(hlist);
-        let (_, total) = best_path(&breaks, hsize, tolerance);
+        let (_, total, _) = best_path(&breaks, hsize, tolerance, false);
         total
     }
 
@@ -502,7 +581,7 @@ mod tests {
     #[test]
     fn knuth_plass_single_line_when_fits() {
         let hlist = words(&[10, 10, 10]);
-        assert_eq!(knuth_plass(&hlist, 100, 200), vec![(0, 5)]);
+        assert_eq!(knuth_plass(&hlist, 100, 200, false).0, vec![(0, 5)]);
     }
 
     #[test]
@@ -510,7 +589,7 @@ mod tests {
         // 三词 a b c：hsize 25 下 "a b" | "c" 为最优（断点胶水不入行——
         // 行 "a" 无内部胶水、badness 10000，故两词行更优）
         let hlist = words(&[10, 10, 10]);
-        let lines = knuth_plass(&hlist, 25, 200);
+        let lines = knuth_plass(&hlist, 25, 200, false).0;
         assert_eq!(lines, vec![(0, 3), (4, 5)]);
     }
 
@@ -524,20 +603,20 @@ mod tests {
             glue(3, 0, 0),
             char_of(30),
         ];
-        let lines = knuth_plass(&hlist, 10_000, 200);
+        let lines = knuth_plass(&hlist, 10_000, 200, false).0;
         // 强制断点（index 2）之前定案：第一行 [0, 2)；之后继续
         assert_eq!(lines, vec![(0, 2), (3, 6)]);
     }
 
     #[test]
     fn knuth_plass_empty_input() {
-        assert!(knuth_plass(&[], 100, 200).is_empty());
+        assert!(knuth_plass(&[], 100, 200, false).0.is_empty());
     }
 
     #[test]
     fn knuth_plass_no_breaks_single_word() {
         assert_eq!(
-            knuth_plass(&[char_of(10), char_of(10)], 5, 200),
+            knuth_plass(&[char_of(10), char_of(10)], 5, 200, false).0,
             vec![(0, 2)]
         );
     }
@@ -547,7 +626,7 @@ mod tests {
         // 预处理不裁剪尾部（裁剪在排版器 close_paragraph）
         let mut hlist = words(&[10, 10]);
         hlist.push(glue(3, 0, 0));
-        let lines = knuth_plass(&hlist, 100, 200);
+        let lines = knuth_plass(&hlist, 100, 200, false).0;
         assert_eq!(lines, vec![(0, 4)]);
     }
 
@@ -558,7 +637,7 @@ mod tests {
         // vs 2 行（各 0 badness → demerits 100+100=200）→ 1 行胜（TeX 精确 demerits）
         let mut hlist = words(&[10, 10]);
         hlist.push(fil_glue());
-        let lines = knuth_plass(&hlist, 22, 200);
+        let lines = knuth_plass(&hlist, 22, 200, false).0;
         assert_eq!(lines, vec![(0, 4)]);
     }
 
@@ -566,7 +645,7 @@ mod tests {
     fn fil_glue_single_line_when_fits() {
         let mut hlist = words(&[10, 10]);
         hlist.push(fil_glue());
-        assert_eq!(knuth_plass(&hlist, 100, 200), vec![(0, 4)]);
+        assert_eq!(knuth_plass(&hlist, 100, 200, false).0, vec![(0, 4)]);
     }
 
     // ---------- M4-6 断字：discretionary 断点 ----------
@@ -590,7 +669,7 @@ mod tests {
         hlist.push(glue(3, 1000, 14)); // 词间
         hlist.push(char_of(10)); // n
         hlist.push(fil_glue());
-        let lines = knuth_plass(&hlist, 60, 200);
+        let lines = knuth_plass(&hlist, 60, 200, false).0;
         // 行1 = [0..4]（m 空格 a b）+ discretionary pre；行2 = [5..14]（c..h 空格 n fil）
         assert_eq!(lines, vec![(0, 4), (5, 14)]);
     }
@@ -601,6 +680,6 @@ mod tests {
         let mut hlist: Vec<Node> =
             vec![char_of(10), char_of(10), disc(5), char_of(10), char_of(10)];
         hlist.push(fil_glue());
-        assert_eq!(knuth_plass(&hlist, 100, 200), vec![(0, 6)]);
+        assert_eq!(knuth_plass(&hlist, 100, 200, false).0, vec![(0, 6)]);
     }
 }

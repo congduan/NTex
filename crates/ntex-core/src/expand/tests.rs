@@ -2249,4 +2249,37 @@ ab5c}").unwrap();
             println!("[{name}] TRANSCRIPT={:?}", e.transcript());
         }
     }
+    #[test]
+    fn ifcase_ifeof_fi_def_chain() {
+        // trip.tex L419：\the\tokens\ifcase1\or\ifeof\fi\def\stopinput{\error\let\input\die}
+        // \ifeof 缺流号报 Missing number 后，\fi 应闭合 \ifcase（tex.web pass_text 弹栈顶帧），
+        // \def\stopinput 必须执行——否则 L424 \stopinput 报 Undefined。
+        let out = expand("\\ifcase1\\or\\ifeof\\fi\\def\\stopinput{OK}\\stopinput").unwrap();
+        assert!(out.contains("OK"), "\\stopinput 应已定义：out={out:?}");
+        // 完整场景（含 \the\toks 前缀）：toks256 预置内容，\the\tokens 打印后
+        // \ifcase 链照常执行、\def\stopinput 必须生效。
+        let out2 = expand("\\toksdef\\tokens=256\\tokens={ABC}\\the\\tokens\\ifcase1\\or\\ifeof\\fi\\def\\stopinput{OK}\\stopinput").unwrap();
+        assert!(
+            out2.contains("OK"),
+            "完整场景 \\stopinput 应已定义：out={out2:?}"
+        );
+        // L354/L417 场景：toks256 含 \a 宏（\ifcat#1\message...\the\tokens 递归）
+        let out3 = expand(
+            "\\def\\a#1{\\ifcat#1 \\message\\ifx#1 {\\iffalse\\fi\\the\\tokens\\fi\\fi}}\\toksdef\\tokens=256\\tokens={ABC}\\the\\tokens\\ifcase1\\or\\ifeof\\fi\\def\\stopinput{OK}\\stopinput",
+        )
+        .unwrap();
+        assert!(
+            out3.contains("OK"),
+            "宏场景 \\stopinput 应已定义：out={out3:?}"
+        );
+        // 真实 toks256 内容（L354）：\a^^@^^@a\par! —— \a 宏调用在 toks 里
+        let out4 = expand(
+            "\\def\\a#1{\\ifcat#1 \\message\\ifx#1 {\\iffalse\\fi\\the\\tokens\\fi\\fi}}\\toksdef\\tokens=256\\tokens={\\a^^@^^@a\\par!}\\the\\tokens\\ifcase1\\or\\ifeof\\fi\\def\\stopinput{OK}\\stopinput",
+        )
+        .unwrap();
+        assert!(
+            out4.contains("OK"),
+            "真实 toks 场景 \\stopinput 应已定义：out={out4:?}"
+        );
+    }
 }

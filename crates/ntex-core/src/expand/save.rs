@@ -270,7 +270,27 @@ impl Expander {
                 Primitive::ThickMuskip => Ok(emit_mu_glue(self.registers.muskip(2))),
                 Primitive::Toks => {
                     let idx = self.scan_register_index()?;
-                    Ok(self.registers.toks(idx).to_vec())
+                    let toks = self.registers.toks(idx).to_vec();
+                    // tex.web \the\toks：print_toks 打印 token 列表**文本**（字符
+                    // token 输出，不执行内容——TRIP L419 \the\tokens 的内容含
+                    // \long\gdef 等，参考 log 不执行它们）。cs → `\名`（字母 cs
+                    // 后补空格）；字符/组符统一转 catcode Other（文本 `{` 不建组）。
+                    let mut out = Vec::new();
+                    for t in toks {
+                        if let Some(csid) = t.csid() {
+                            let name = self.intern.name(csid);
+                            out.push(Token::char(Catcode::Other, b'\\' as u32));
+                            for &b in name.as_bytes() {
+                                out.push(Token::char(Catcode::Other, u32::from(b)));
+                            }
+                            if !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphabetic()) {
+                                out.push(Token::char(Catcode::Space, b' ' as u32));
+                            }
+                        } else if let Some(ch) = t.charcode() {
+                            out.push(Token::char(Catcode::Other, ch));
+                        }
+                    }
+                    Ok(out)
                 }
                 // TRIP：\the\textfont/\scriptfont/\scriptscriptfont<n> → 数学族字体
                 // （族号越界报 "! Bad number" 钳制 0；expander 侧无 font→cs 名映射，

@@ -24,7 +24,17 @@ impl NodeBuilder {
             stretch_order: if pf.stretch != 0 { GLUE_ORDER_FIL } else { 0 },
             shrink_order: 0,
         });
-        let lines = knuth_plass(&children, self.params.hsize, self.params.tolerance);
+        // \tracingparagraphs（misc 29）：折行追踪输出到转录（tex.web @@firstpass 等）
+        let tracing = self.params.misc[29] > 0;
+        let (lines, trace) = knuth_plass(
+            &children,
+            self.params.hsize,
+            self.params.tolerance,
+            tracing,
+        );
+        if tracing && !trace.is_empty() {
+            let _ = self.write16(trace);
+        }
         // 行间惩罚（tex.web interline_penalty 语义）：除首行外每行前插入
         // \interlinepenalties 数组值（按行序索引，超出用末值；数组空用
         // \interlinepenalty 单值参数）。节点留在列表 → \lastpenalty 可读
