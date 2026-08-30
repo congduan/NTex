@@ -142,6 +142,11 @@ pub trait TokenSink: std::fmt::Debug {
     fn primitive(&mut self, _prim: Primitive) -> Result<()> {
         Ok(())
     }
+    /// `\par` 的源码行号（折行警告 `in paragraph at lines a--b` 用；
+    /// 默认 no-op，排版器实现记录）。
+    fn paragraph_line(&mut self, _line: i64) -> Result<()> {
+        Ok(())
+    }
     /// 胶水（`\hskip`/`\vskip` 的扫描结果）。
     fn glue(&mut self, _g: Glue) -> Result<()> {
         Ok(())

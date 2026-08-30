@@ -174,7 +174,12 @@ impl Expander {
                 self.sink.box_spec(to, spread)?;
                 self.sink.primitive(prim)
             }
-            Primitive::Par => self.sink.primitive(prim),
+            Primitive::Par => {
+                // 传 \par 源码行号给排版器（折行警告 `at lines a--b`）
+                let ln = self.error_context().map(|(n, _)| n as i64).unwrap_or(0);
+                self.sink.paragraph_line(ln)?;
+                self.sink.primitive(prim)
+            }
             // 带参数扫描的排版原语：扫描在 VM 侧完成，结果交给 sink
             Primitive::HSkip | Primitive::VSkip => {
                 let g = self.scan_glue()?;

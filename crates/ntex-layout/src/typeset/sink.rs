@@ -737,6 +737,12 @@ impl TokenSink for NodeBuilder {
         Ok(())
     }
 
+    fn paragraph_line(&mut self, line: i64) -> Result<()> {
+        // 记录 \\par 的源码行号：折行警告 `in paragraph at lines a--b` 的结束行
+        self.last_par_line = line;
+        Ok(())
+    }
+
     fn param_changed(&mut self, kind: ParamKind, value: ParamValue) -> Result<()> {
         self.params.set(kind, value);
         Ok(())

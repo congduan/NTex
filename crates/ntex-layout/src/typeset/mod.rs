@@ -434,6 +434,8 @@ struct NodeBuilder {
     space_factor: i64,
     /// `\noindent`：下一个段落不缩进。
     noindent_next: bool,
+    /// 最近一次 \par 的源码行号（折行警告 `at lines a--b` 的结束行）。
+    last_par_line: i64,
     /// 字体度量来源（M3-4：fn 指针占位或 TFM 字体表）。
     fonts: Fonts,
     /// 当前字体（TFM 模式由 `font_selected` 事件更新；fn 指针模式恒为 FontId(0)）。
@@ -576,6 +578,7 @@ impl NodeBuilder {
             sfcodes,
             space_factor: 1000,
             noindent_next: false,
+            last_par_line: 0,
             current_font: FontId(0),
             shipout_next: false,
             shipped: Vec::new(),

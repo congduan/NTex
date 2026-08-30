@@ -69,6 +69,19 @@ impl NodeBuilder {
                 line.extend(pre.iter().cloned());
             }
             last_natural = Some(hbox_dimensions(&line).width);
+            // 折行警告（tex.web §922-930）：行自然宽超 \\hsize → Overfull
+            // `(<超宽> too wide) in paragraph at lines <a>--<b>`（\par 行号；
+            // 段落开始行暂用 \par 行——单行段落精确，跨行段落待 D 组行号追踪）。
+            let natural = hbox_dimensions(&line).width;
+            if natural > self.params.hsize {
+                let over = natural - self.params.hsize;
+                let _ = self.write16(format!(
+                    "Overfull \\hbox ({} too wide) in paragraph at lines {}--{}\n",
+                    ntex_core::register::format_dimen(over),
+                    self.last_par_line,
+                    self.last_par_line
+                ));
+            }
             // 行盒 = `\hbox to \hsize`（tex.web line_break：恰好 hsize 宽，胶水拉伸/收缩）
             self.push_box(Node::Box(hpack(&line, self.params.hsize)));
         }
