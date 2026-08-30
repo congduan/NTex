@@ -1481,6 +1481,40 @@ impl Expander {
 
     // ---------- 输入获取 ----------
 
+    /// 对齐模板（preamble）阶段：排版/结构类原语原样收集（列模板内容——
+    /// 盒子/胶水/penalty/规则/移动等），其余（赋值/前缀/杂项）立即执行
+    /// （tex.web get_preamble_token 的 assign 分支语义）。
+    fn template_collects(p: Primitive) -> bool {
+        matches!(
+            p,
+            Primitive::HBox
+                | Primitive::VBox
+                | Primitive::VTop
+                | Primitive::HSkip
+                | Primitive::VSkip
+                | Primitive::Kern
+                | Primitive::Penalty
+                | Primitive::HRule
+                | Primitive::VRule
+                | Primitive::UnHBox
+                | Primitive::UnVBox
+                | Primitive::Copy
+                | Primitive::Box
+                | Primitive::LastBox
+                | Primitive::MoveLeft
+                | Primitive::MoveRight
+                | Primitive::Raise
+                | Primitive::Lower
+                | Primitive::Indent
+                | Primitive::NoIndent
+                | Primitive::Par
+                | Primitive::ShipOut
+                | Primitive::Leaders
+                | Primitive::Cleaders
+                | Primitive::XLeaders
+        )
+    }
+
     /// 对齐模板（preamble）阶段的 token 分类：决定收集不执行 / 正常展开 / 结束模板。
     fn preamble_classify(&mut self, tok: &Token) -> Result<PreambleAction> {
         match tok.kind() {
@@ -1508,6 +1542,16 @@ impl Expander {
                         }
                     }
                     EqSlot::Primitive(p) if p.is_expandable() => {
+                        return Ok(PreambleAction::Process)
+                    }
+                    // tex.web get_preamble_token：赋值类原语（\global/\hsize/
+                    // \baselineskip 等）在模板**读取时立即执行**（TRIP L171
+                    // \valign 模板 `\global\hsize13pt` 必须生效）。排版/结构类
+                    // （盒子/胶水/penalty/规则/移动等列模板内容）原样收集。
+                    // 二分排查：\setbox 暂归收集（疑似死循环源）。
+                    EqSlot::Primitive(p)
+                        if !Self::template_collects(*p) && *p != Primitive::SetBox =>
+                    {
                         return Ok(PreambleAction::Process)
                     }
                     _ => {}
