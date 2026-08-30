@@ -616,9 +616,42 @@ impl TokenSink for NodeBuilder {
                 self.lists.pop();
                 self.list_modes.pop();
             }
-            // 对齐组：按 vbox 打包（行内容简化合并；ETRIP 仅需组种类正确）
-            GroupKind::Align
-            | GroupKind::HBox
+            // 对齐组（tex.web alignment）：列/行盒（\cr 分隔）按方向组装——
+            // \halign = vbox of hbox 行（行堆叠）；\valign = hbox of vbox 列（列并排）。
+            GroupKind::Align => {
+                let dir = self.align_dir.take();
+                // 最后一段（未 \cr 的尾部内容）也封装为一列
+                if let Some(list) = self.lists.last_mut() {
+                    let content = std::mem::take(list);
+                    if !content.is_empty() {
+                        self.align_columns.push(Node::Box(crate::node::vpack(
+                            content,
+                            self.params.vsize,
+                        )));
+                    }
+                }
+                let columns = std::mem::take(&mut self.align_columns);
+                self.lists.pop();
+                self.list_modes.pop();
+                match dir {
+                    Some(AlignDir::Halign) => {
+                        // 行堆叠：vbox of 列盒（\halign 数据行 → vbox）
+                        let v = crate::node::vpack(columns, self.params.vsize);
+                        if let Some(outer) = self.lists.last_mut() {
+                            outer.push(Node::Box(v));
+                        }
+                    }
+                    Some(AlignDir::Valign) => {
+                        // 列并排：hbox of 列盒（\valign 数据列 → hbox）
+                        let h = crate::node::hpack(&columns, self.params.hsize);
+                        if let Some(outer) = self.lists.last_mut() {
+                            outer.push(Node::Box(h));
+                        }
+                    }
+                    None => {}
+                }
+            }
+            GroupKind::HBox
             | GroupKind::AdjustedHBox
             | GroupKind::VBox
             | GroupKind::VTop => {
@@ -1287,7 +1320,8 @@ impl TokenSink for NodeBuilder {
     }
 
     /// `\valign{`/`\halign{`：下一个组为对齐组（6）。
-    fn align_begin(&mut self) -> Result<()> {
+    fn align_begin(&mut self, is_halign: bool) -> Result<()> {
+        self.align_dir = Some(if is_halign { AlignDir::Halign } else { AlignDir::Valign });
         self.pending_kind = Some(GroupKind::Align);
         Ok(())
     }
@@ -1298,8 +1332,21 @@ impl TokenSink for NodeBuilder {
         Ok(())
     }
 
-    /// `\cr`：对齐行结束（简化无操作）。
+    /// `\cr`：对齐行/列结束——当前列表内容封装为列盒（tex.web alignment
+    /// 数据行边界；此前简化 no-op 导致列内容混在 vbox）。
     fn align_row_end(&mut self) -> Result<()> {
+        if self.align_dir.is_none() {
+            return Ok(());
+        }
+        let Some(list) = self.lists.last_mut() else {
+            return Ok(());
+        };
+        let content = std::mem::take(list);
+        if content.is_empty() {
+            return Ok(());
+        }
+        let v = crate::node::vpack(content, self.params.vsize);
+        self.align_columns.push(Node::Box(v));
         Ok(())
     }
 

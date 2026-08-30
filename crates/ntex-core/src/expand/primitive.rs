@@ -579,7 +579,7 @@ impl Expander {
                 let toks = self.scan_group_contents(None)?;
                 self.sink.vadjust(toks)
             }
-            // ETRIP 冲刺：\valign/\halign：下一个组为对齐组（组种类 6）。
+            // ETRIP 冲刺：\valign/ \halign：下一个组为对齐组（组种类 6）。
             // TeX 语义：`\halign` 的 `{` 由 scan_left_brace 消费，alignment 内容中
             // 的 `{`/`}` 由对齐状态机管理（不建普通组）——VM 侧用 align_depth 模拟。
             Primitive::Valign | Primitive::Halign => {
@@ -587,7 +587,7 @@ impl Expander {
                 // TRIP L332 `\halign to 0pt{...}`、L407 `\halign to 1truemm...`）
                 let (to, spread) = self.scan_box_spec()?;
                 self.sink.box_spec(to, spread)?;
-                self.sink.align_begin()?;
+                self.sink.align_begin(prim == Primitive::Halign)?;
                 let fetched = self.fetch()?;
                 if let Some((tok, _)) = fetched {
                     if tok.catcode() == Some(Catcode::BeginGroup) {

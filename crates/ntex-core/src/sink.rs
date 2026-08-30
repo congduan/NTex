@@ -383,7 +383,8 @@ pub trait TokenSink: std::fmt::Debug {
         Ok(())
     }
     /// `\valign{`/`\halign{`：下一个组为对齐组（currentgrouptype=6）。
-    fn align_begin(&mut self) -> Result<()> {
+    /// `is_halign`：true=\halign（行堆叠），false=\valign（列并排）。
+    fn align_begin(&mut self, _is_halign: bool) -> Result<()> {
         Ok(())
     }
     /// `\noalign{`：下一个组为无对齐组（currentgrouptype=7）。

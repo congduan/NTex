@@ -230,6 +230,13 @@ enum GroupKind {
     Math,
 }
 
+/// 对齐组方向（tex.web alignment：\halign 行堆叠 / \valign 列并排）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AlignDir {
+    Halign,
+    Valign,
+}
+
 impl GroupKind {
     fn code(self) -> i64 {
         match self {
@@ -434,6 +441,10 @@ struct NodeBuilder {
     space_factor: i64,
     /// `\noindent`：下一个段落不缩进。
     noindent_next: bool,
+    /// 对齐组方向（\halign：行堆叠 vbox；\valign：列并排 hbox）。None = 非对齐组。
+    align_dir: Option<AlignDir>,
+    /// 对齐组已封装的列/行盒（\cr 分隔）。
+    align_columns: Vec<Node>,
     /// 最近一次 \par 的源码行号（折行警告 `at lines a--b` 的结束行）。
     last_par_line: i64,
     /// 字体度量来源（M3-4：fn 指针占位或 TFM 字体表）。
@@ -578,6 +589,8 @@ impl NodeBuilder {
             sfcodes,
             space_factor: 1000,
             noindent_next: false,
+            align_dir: None,
+            align_columns: Vec::new(),
             last_par_line: 0,
             current_font: FontId(0),
             shipout_next: false,
