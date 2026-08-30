@@ -1240,7 +1240,20 @@ impl Expander {
                         }
                     }
                 }
-                if self.params.misc[3] > 0 && self.trace_suppress == 0 {
+                // tex.web pass_text：跳过区（\else/\or 后）的 token 不追踪
+                // （show_cur_cmd_chr 只在 main_control/get_x_token 的处理路径）——
+                // 仅 \fi（跳过区结束标记）保留追踪（参考 log {\fi} 存在）。
+                let skipping = self
+                    .cond_stack
+                    .last()
+                    .map(|c| c.state == CondState::Skipping)
+                    .unwrap_or(false);
+                let is_fi = matches!(tok.kind(), TokenKind::ControlSeq { .. })
+                    && matches!(
+                        self.eqtb.slot(tok.csid().expect("ControlSeq 必有 csid")),
+                        EqSlot::Primitive(Primitive::Fi)
+                    );
+                if self.params.misc[3] > 0 && self.trace_suppress == 0 && !(skipping && !is_fi) {
                     self.trace_token_now(tok);
                 }
                 // noexpand（`\noexpand`/`\unexpanded` 输出）：临时不可展开，原样输出。
