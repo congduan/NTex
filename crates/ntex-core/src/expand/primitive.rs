@@ -1573,9 +1573,24 @@ impl Expander {
         if self.font_names.len() <= font as usize {
             self.font_names.resize(font as usize + 1, None);
         }
-        self.font_names[font as usize] = Some(font_name.clone());
+        // at 规格并入名字（e-TeX \tracingassigns 显示 `select font etrip at 11.0pt`）
+        self.font_names[font as usize] = Some(match at {
+            Some(a) => format!(
+                "{font_name} at {}pt",
+                crate::register::format_dimen(a)
+            ),
+            None => font_name.clone(),
+        });
         // 组作用域 + \global 语义（同 \def）
         let global = self.is_global();
+        // e-TeX \tracingassigns（misc 5）：字体赋值追踪——tex.web \font 先绑定
+        // nullfont 再加载实际字体（etrip 显示 `undefined→nullfont→etrip` 两步）
+        let tracing = self.params.misc[5] > 0;
+        let prev0 = if tracing {
+            Some(self.eqtb.slot(csid).clone())
+        } else {
+            None
+        };
         if !global && self.group_level > 0 {
             self.save_stack.push((
                 self.group_level,
@@ -1585,7 +1600,17 @@ impl Expander {
                 },
             ));
         }
-        self.eqtb.set_font(csid, font);
+        self.eqtb.set_font(csid, 0);
+        if tracing {
+            self.trace_assign(csid, global, prev0.as_ref().expect("tracing 时已存"), &EqSlot::Font(0));
+        }
+        if font != 0 {
+            if tracing {
+                let prev = self.eqtb.slot(csid).clone();
+                self.trace_assign(csid, global, &prev, &EqSlot::Font(font));
+            }
+            self.eqtb.set_font(csid, font);
+        }
         self.finish_assignment();
         Ok(())
     }

@@ -45,8 +45,35 @@ impl Expander {
                 },
             ));
         }
+        // e-TeX \tracingassigns（misc 5）：参数赋值追踪（{changing X=old} 在
+        // 赋值前（旧 misc5>0 才输出——\tracingassigns=1 本身只有 into）；
+        // {into X=new}/{reassigning X=new} 在赋值后）
+        let tracing_assigns = self.params.misc[5] > 0;
+        let old = self.params.get(kind);
+        if tracing_assigns && old != value {
+            let name = param_name(kind);
+            if let ParamValue::Number(n) = old {
+                let _ = self
+                    .sink
+                    .write16(format!("{{changing \\{name}={n}}}\n"));
+            }
+        }
         self.params.set(kind, value);
         self.sink.param_changed(kind, value)?;
+        if tracing_assigns || self.params.misc[5] > 0 {
+            let name = param_name(kind);
+            if let ParamValue::Number(n) = value {
+                if old == value {
+                    let _ = self
+                        .sink
+                        .write16(format!("{{reassigning \\{name}={n}}}\n"));
+                } else {
+                    let _ = self
+                        .sink
+                        .write16(format!("{{into \\{name}={n}}}\n"));
+                }
+            }
+        }
         self.finish_assignment();
         Ok(())
     }
@@ -950,9 +977,21 @@ impl Expander {
             }
             // \let 到字符：`char"XX`（print_esc("char") + print_hex）
             EqSlot::Char { charcode, .. } => {
-                format!("{}\"{:X}", self.esc("char"), charcode)
+                format!("{}\\\"{:X}", self.esc("char"), charcode)
             }
-            EqSlot::Font(_) => self.cs_name_display(csid),
+            // 字体槽：`select font <名>`（tex.web print_font_identifier——
+            // e-TeX \tracingassigns `{changing \6=select font nullfont}`）
+            EqSlot::Font(f) => {
+                let name = if *f == 0 {
+                    "nullfont".to_string()
+                } else {
+                    self.font_names
+                        .get(*f as usize)
+                        .and_then(|n| n.clone())
+                        .unwrap_or_else(|| f.to_string())
+                };
+                format!("select font {name}")
+            }
             EqSlot::Register(k, n) => format!("{}{}{}", self.esc(reg_kind_name(*k)), n, ""),
             EqSlot::Stream(_, n) => format!("{}{}", self.esc("write"), n),
             EqSlot::MathChar(code) => format!("{}{:X}", self.esc("mathchar\""), code),
@@ -976,6 +1015,14 @@ impl Expander {
     /// 带作用域的宏定义：组内局部保存 + `\afterassignment` 触发。
     fn define_macro_scoped(&mut self, csid: u32, def: MacroDef) {
         let global = self.is_global();
+        // e-TeX \tracingassigns（misc 5）：宏定义追踪（define_macro_scoped 不走
+        // set_slot_scoped——这里补钩子）
+        let tracing = self.params.misc[5] > 0;
+        let prev = if tracing {
+            Some(self.eqtb.slot(csid).clone())
+        } else {
+            None
+        };
         if !global && self.group_level > 0 {
             self.save_stack.push((
                 self.group_level,
@@ -986,12 +1033,47 @@ impl Expander {
             ));
         }
         self.eqtb.define_macro(csid, def);
+        if tracing {
+            let new = self.eqtb.slot(csid).clone();
+            self.trace_assign(csid, global, prev.as_ref().expect("tracing 时已存"), &new);
+        }
         self.finish_assignment();
+    }
+    /// e-TeX \tracingassigns（misc 5）>0：赋值追踪（`{changing X=old}` +
+    /// `{into X=new}`，全局为 `{globally changing ...}`；同值重新赋值为
+    /// `{reassigning X=new}`——etrip L422-445 \tracingassigns 检查段）。
+    fn trace_assign(&mut self, csid: u32, global: bool, prev: &EqSlot, new: &EqSlot) {
+        // e-TeX 用 print_esc 显示 cs（\6 带反斜杠——cs_name_display 对单字符
+        // 非字母返回裸字符，不适用）
+        let name = self.esc(self.intern.name(csid));
+        if prev == new {
+            let _ = self.sink.write16(format!(
+                "{{reassigning {name}={}}}\n",
+                self.slot_display(csid, new)
+            ));
+        } else if global {
+            let _ = self.sink.write16(format!(
+                "{{globally changing {name}={}}}\n{{into {name}={}}}\n",
+                self.slot_display(csid, prev),
+                self.slot_display(csid, new)
+            ));
+        } else {
+            let _ = self.sink.write16(format!(
+                "{{changing {name}={}}}\n{{into {name}={}}}\n",
+                self.slot_display(csid, prev),
+                self.slot_display(csid, new)
+            ));
+        }
     }
 
     /// 带作用域的 eqtb 槽赋值（`\chardef`/`\countdef` 等；组内局部保存）。
     fn set_slot_scoped(&mut self, csid: u32, slot: EqSlot) {
         let global = self.is_global();
+        // e-TeX \tracingassigns（misc 5）：赋值追踪（changing/into/reassigning）
+        if self.params.misc[5] > 0 {
+            let prev = self.eqtb.slot(csid).clone();
+            self.trace_assign(csid, global, &prev, &slot);
+        }
         if !global && self.group_level > 0 {
             self.save_stack.push((
                 self.group_level,
