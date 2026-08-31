@@ -961,6 +961,13 @@ impl Expander {
     /// - `inf`：是否允许 fil/fill/filll 阶词（glue 的 width 不允许，stretch/shrink 允许）。
     fn scan_dimen_inner(&mut self, mu: bool, inf: bool) -> Result<(i64, u8)> {
         self.skip_spaces()?;
+        // 报错锚点：值扫描起始位置（clamp_dimen 报错时 pos 已推进——回溯用）
+        for frame in self.stack.iter().rev() {
+            if let InputFrame::Source { pos, .. } = frame {
+                self.error_anchor = Some(*pos);
+                break;
+            }
+        }
         // TeX scan_dimen：跳过可选 `=` 赋值符（`\hsize=5in` 与 `\hsize 5in` 等价）
         if let Some((tok, _)) = self.fetch()? {
             if tok.charcode() != Some(b'=' as u32) {

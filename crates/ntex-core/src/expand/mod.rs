@@ -451,6 +451,9 @@ pub struct Expander {
     pending_box_arg_mode: i64,
     /// 非组盒子原语（`\copy`/`\box` 等）处理完恢复追踪的延迟标记（本次仍抑制）。
     trace_suppress_defer: bool,
+    /// 报错上下文锚点：值扫描起始的 Source pos（clamp_dimen 报错时 pos 已推进
+    /// 到下一行——用锚点回溯到值所在行，tex.web l.N 上下文语义）。
+    error_anchor: Option<usize>,
     /// 上一轮注入输出例程时待处理页面的数量（判断例程是否消费了 box255）。
     output_prev_count: usize,
     /// 是否启用字节码轨道（M2；解释器轨道用于双轨等价验证）。
@@ -575,6 +578,7 @@ impl Expander {
             pending_box_arg: false,
             pending_box_arg_mode: 1,
             trace_suppress_defer: false,
+            error_anchor: None,
             ended: false,
             last_tok: None,
             shown_trace_mode: None,
@@ -890,7 +894,9 @@ impl Expander {
         for frame in self.stack.iter().rev() {
             if let InputFrame::Source { bytes, pos, .. } = frame {
                 let bytes: &[u8] = bytes;
-                let end = (*pos).min(bytes.len());
+                // 报错锚点（clamp_dimen 值扫描报错）：pos 已推进到报错后的行，
+                // 用值扫描起始位置回溯（tex.web l.N 上下文停在值所在行）
+                let end = self.error_anchor.unwrap_or(*pos).min(bytes.len());
                 let line_no = bytes[..end].iter().filter(|&&b| b == b'\n').count() + 1;
                 let line_start = bytes[..end]
                     .iter()
@@ -915,6 +921,8 @@ impl Expander {
         if let Some((n, line)) = self.error_context() {
             let _ = self.sink.write16(format!("l.{n} {line}\n"));
         }
+        // 锚点一次性使用（报错上下文输出后清除——后续报错用当前 pos）
+        self.error_anchor = None;
     }
 
     /// 错误上下文带行内错误位置（Source 帧 pos 相对行首的偏移）。
