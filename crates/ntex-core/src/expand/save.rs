@@ -1,8 +1,11 @@
 impl Expander {
     /// 内部参数赋值（组作用域 + sink 镜像通知）。
+    /// 值不变不 push（tex.web：\vsize.pt 等读值场景不产生 restoring——
+    /// TRIP L152 \vsize.pt\global\vsize=16383.99... 若 push 读值，组结束
+    /// restoring 2000 会覆盖 \global 钳制值 16383.99998）。
     fn assign_param(&mut self, kind: ParamKind, value: ParamValue) -> Result<()> {
         let global = self.is_global();
-        if !global && self.group_level > 0 {
+        if !global && self.group_level > 0 && self.params.get(kind) != value {
             self.save_stack.push((
                 self.group_level,
                 SavedValue::Param {

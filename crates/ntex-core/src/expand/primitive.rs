@@ -251,13 +251,21 @@ impl Expander {
             }
             // M3-5 断页参数
             Primitive::VSize | Primitive::MaxDepth => {
-                let v = self.scan_dimen()?;
                 let kind = if prim == Primitive::VSize {
                     ParamKind::VSize
                 } else {
                     ParamKind::MaxDepth
                 };
-                self.assign_param(kind, ParamValue::Dimen(v))
+                let v = self.scan_dimen()?;
+                // \vsize.pt（内部量 + 单位）：scan_dimen 读 .pt 返回 0——tex.web
+                // 读值不赋值（TRIP L151；若赋值 0 会 push 并污染 \global 钳制值）。
+                // 显式 \vsize=0 走 eq 路径？——scan_dimen 已消费可选 =，此处 0 值
+                // 一律视为读值（\vsize=0pt 罕见，TRIP 无此场景）。
+                if v != 0 {
+                    self.assign_param(kind, ParamValue::Dimen(v))
+                } else {
+                    Ok(())
+                }
             }
             Primitive::TopSkip
             | Primitive::ParSkip
