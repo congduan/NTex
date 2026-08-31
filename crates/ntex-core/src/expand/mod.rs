@@ -888,6 +888,19 @@ impl Expander {
     }
 
     /// A3：当前源码上下文——从输入栈找最近的 [`InputFrame::Source`] 帧，
+    /// 当前输入行号（纯 pos 计算——不经过 error_context 的 error_anchor 锚点，
+    /// 锚点是 clamp_dimen 报错回溯用，会残留污染 \inputlineno 的值）。
+    fn current_line_no(&self) -> usize {
+        for frame in self.stack.iter().rev() {
+            if let InputFrame::Source { bytes, pos, .. } = frame {
+                let bytes: &[u8] = bytes;
+                let end = (*pos).min(bytes.len());
+                return bytes[..end].iter().filter(|&&b| b == b'\n').count() + 1;
+            }
+        }
+        0
+    }
+
     /// 由扫描位置反推 (行号, 行内容)。宏展开中的错误回退到最近的源文件行
     /// （TeX `l.N` 上下文行语义）。
     fn error_context(&self) -> Option<(usize, String)> {

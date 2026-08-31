@@ -5,6 +5,37 @@ impl Expander {
     /// restoring 2000 会覆盖 \global 钳制值 16383.99998）。
     fn assign_param(&mut self, kind: ParamKind, value: ParamValue) -> Result<()> {
         let global = self.is_global();
+        // \interactionmode（MiscInt 19，e-TeX）：全局参数（组内赋值不恢复——
+        // etrip.tex L240 `{\interactionmode=3}` 全局生效）；非法值（<0 或 >3）
+        // 钳制保持当前（etrip L236-238 \interactionmode=-1/4 后校验 nonstop 通过）。
+        // 注意：`current interactionmode (l.N): X` 是 etrip.tex \3 宏的 \typeout，
+        // 引擎不自动显示。
+        if kind == ParamKind::MiscInt(19) {
+            if let ParamValue::Number(v) = value {
+                let cur = self.params.misc[19];
+                let clamped = if (0..=3).contains(&v) { v } else { cur };
+                if clamped != cur {
+                    self.params.set(kind, ParamValue::Number(clamped));
+                    self.sink.param_changed(kind, ParamValue::Number(clamped))?;
+                }
+                // 非法值（<0 或 >3）：e-TeX 报错（etrip L237-238 `\interactionmode=-1/4`
+                // → `! Bad interaction mode (-1).` + show_context 两行 + help），
+                // 然后钳制保持当前。
+                if clamped != v {
+                    // 清报错锚点残留（scan_dimen 的锚点会污染 l.N 行号——这里
+                    // 是数值扫描上下文，用当前 pos 反推即可）
+                    self.error_anchor = None;
+                    self.sink.report_error(&format!("Bad interaction mode ({v})."));
+                    self.report_error_context();
+                    self.sink.write16(
+                        "Modes are 0=batch, 1=nonstop, 2=scroll, and\n3=errorstop. Proceed, and I'll ignore this case.\n"
+                            .to_owned(),
+                    )?;
+                }
+                self.finish_assignment();
+                return Ok(());
+            }
+        }
         if !global && self.group_level > 0 && self.params.get(kind) != value {
             self.save_stack.push((
                 self.group_level,
@@ -420,7 +451,7 @@ impl Expander {
                     Ok(emit_count(i64::from(self.catcodes.get(byte).as_u8())))
                 }
                 // ETRIP 冲刺：e-TeX 只读整数（\the/\number 上下文，与 scan_number 对齐）
-                Primitive::InputLineNo => Ok(emit_count(0)),
+                Primitive::InputLineNo => Ok(emit_count(self.current_line_no() as i64)),
                 Primitive::CurrentGroupLevel => Ok(emit_count(self.group_level as i64)),
                 Primitive::CurrentGroupType => Ok(emit_count(self.sink.current_group_type())),
                 Primitive::LastNodeType => Ok(emit_count(self.sink.last_node_type())),

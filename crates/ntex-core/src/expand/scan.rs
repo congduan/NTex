@@ -271,10 +271,15 @@ impl Expander {
                     let v = charcode as i64;
                     return Ok(if neg { -v } else { v });
                 }
-                // \inputlineno：当前输入行号（行号跟踪后续迭代补，恒 0）
+                // \inputlineno：当前输入行号（e-TeX；宏展开中为调用处行号——
+                // etrip.tex \3 宏的 \typeout{...(l.\number\inputlineno)...} 需要）
                 EqSlot::Primitive(Primitive::InputLineNo) => {
                     self.fetch()?; // 消费 \inputlineno
-                    return Ok(0);
+                    return Ok(if neg {
+                        -(self.current_line_no() as i64)
+                    } else {
+                        self.current_line_no() as i64
+                    });
                 }
                 // e-TeX 内部只读整数（数字上下文读取）
                 EqSlot::Primitive(Primitive::CurrentGroupLevel) => {
