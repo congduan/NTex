@@ -265,6 +265,10 @@ struct GroupCtx {
     shipout: bool,
     /// 本组是否为 `\leaders` 家族的引导盒子（封装结果挂起等胶水，不入当前列表）。
     leaders: Option<LeadersKind>,
+    /// `\setbox<n>=` 的 RHS 盒子组目标寄存器：仅认领**最外层**盒子组
+    /// （tex.web scan_box box_end 语义），内层嵌套 \hbox 组不得消费
+    /// （否则 `\setbox0=\vbox{\hbox{...}}` 的 target 被内层盒抢走）。
+    setbox: Option<usize>,
 }
 
 /// 字符度量函数：`(width, height, depth)`，单位 sp。
@@ -295,6 +299,7 @@ impl Fonts {
         }
     }
 
+    /// 字体外部名（showbox 字符显示 `.\trip 1`；fn 指针占位无名字回退 `\font`）。
     fn space(&self, font: FontId) -> Glue {
         match self {
             Fonts::Fn { space, .. } => (space)(font),
@@ -737,7 +742,13 @@ impl NodeBuilder {
 
     /// 接收一个已产出的页面（M3-5-3）：定义了输出例程 → 进入待处理队列
     /// （`\box255` 逐页取出）；否则直接进 shipped（与 M3-5-2 默认行为一致）。
-    fn package_box(&mut self, kind: PendingBox, ship: bool, leaders: Option<LeadersKind>) {
+    fn package_box(
+        &mut self,
+        kind: PendingBox,
+        ship: bool,
+        leaders: Option<LeadersKind>,
+        setbox: Option<usize>,
+    ) {
         let children = self.lists.pop().expect("盒子列表");
         self.list_modes.pop();
         // ETRIP 冲刺：\hbox/\vbox to/spread 规格（目标宽/高）
@@ -791,8 +802,10 @@ impl NodeBuilder {
         }
         // `\moveleft`/`\moveright`：水平位移（TRIP 冲刺暂不落节点，取走即清）
         let _hshift = self.pending_hshift.take();
-        // ETRIP 冲刺：`\setbox<n>=<box>` —— 封装结果存入寄存器（不入当前列表）
-        if let Some(idx) = self.setbox_target.take() {
+        // ETRIP 冲刺：`\setbox<n>=<box>` —— 封装结果存入寄存器（不入当前列表）。
+        // 仅最外层 RHS 盒子组（group_begin 认领进 GroupCtx）持有目标；内层嵌套盒
+        // （`\setbox0=\vbox{\hbox{...}}` 的 \hbox）不消费。
+        if let Some(idx) = setbox {
             if let Node::Box(b) = node {
                 self.boxes[idx] = Some(b);
             }

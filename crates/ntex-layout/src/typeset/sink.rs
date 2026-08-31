@@ -324,16 +324,19 @@ impl TokenSink for NodeBuilder {
 
     /// 无限阶胶水（ETRIP）：`\hfil`=0/`\hfill`=1/`\hss`=2/`\vfil`=3/`\vfill`=4/`\vss`=5。
     /// 方向不符当前模式的原语忽略（TeX 语义：如水平模式中的 `\vfil` 无效）。
+    /// stretch/shrink 按 TeX 存 **1pt = 65536sp**（`0pt plus 1fil` 的 stretch=65536，
+    /// fil 阶下 gs 按比例缩放、布局不变，showbox 显示 `plus 1.0fil` 对齐参考）。
     fn fill_glue(&mut self, kind: u8) -> Result<()> {
+        let one = ntex_core::register::SP_PER_PT;
         let (horizontal, stretch, shrink, order) = match kind {
-            0 => (true, 1, 0, GLUE_ORDER_FIL),   // \hfil  0pt plus 1fil
-            1 => (true, 1, 0, GLUE_ORDER_FILL),  // \hfill 0pt plus 1fill
-            2 => (true, 1, 1, GLUE_ORDER_FIL),   // \hss   0pt plus 1fil minus 1fil
-            3 => (false, 1, 0, GLUE_ORDER_FIL),  // \vfil
-            4 => (false, 1, 0, GLUE_ORDER_FILL), // \vfill
-            5 => (false, 1, 1, GLUE_ORDER_FIL),  // \vss
-            6 => (false, -1, 0, GLUE_ORDER_FIL), // \vfilneg（负 1fil）
-            7 => (true, -1, 0, GLUE_ORDER_FIL),  // \hfilneg（负 1fil）
+            0 => (true, one, 0, GLUE_ORDER_FIL),      // \hfil  0pt plus 1fil
+            1 => (true, one, 0, GLUE_ORDER_FILL),     // \hfill 0pt plus 1fill
+            2 => (true, one, one, GLUE_ORDER_FIL),    // \hss   0pt plus 1fil minus 1fil
+            3 => (false, one, 0, GLUE_ORDER_FIL),     // \vfil
+            4 => (false, one, 0, GLUE_ORDER_FILL),    // \vfill
+            5 => (false, one, one, GLUE_ORDER_FIL),   // \vss
+            6 => (false, -one, 0, GLUE_ORDER_FIL),    // \vfilneg（负 1fil）
+            7 => (true, -one, 0, GLUE_ORDER_FIL),     // \hfilneg（负 1fil）
             _ => return Err(Error::internal("非法 fill 胶水种类")),
         };
         let in_horizontal =
@@ -480,11 +483,20 @@ impl TokenSink for NodeBuilder {
         } else {
             None
         };
+        // `\setbox<n>=<box>` 目标寄存器：认领到**最外层**盒子组（tex.web scan_box
+        // box_end 语义）。内层嵌套盒（`\setbox0=\vbox{\hbox{...}}` 的 \hbox）不消费，
+        // 否则 target 被第一个内层盒抢走、RHS 的 vbox 无法入寄存器。
+        let setbox = if box_kind.is_some() {
+            self.setbox_target.take()
+        } else {
+            None
+        };
         self.groups.push(GroupCtx {
             kind: gkind,
             box_kind,
             shipout: ship,
             leaders,
+            setbox,
         });
         self.param_stack.push(self.params);
         if let Some(k) = box_kind {
@@ -651,13 +663,10 @@ impl TokenSink for NodeBuilder {
                     None => {}
                 }
             }
-            GroupKind::HBox
-            | GroupKind::AdjustedHBox
-            | GroupKind::VBox
-            | GroupKind::VTop => {
+            GroupKind::HBox | GroupKind::AdjustedHBox | GroupKind::VBox | GroupKind::VTop => {
                 if let Some(kind) = ctx.box_kind {
                     let leaders = ctx.leaders;
-                    self.package_box(kind, ctx.shipout, leaders);
+                    self.package_box(kind, ctx.shipout, leaders, ctx.setbox);
                 }
             }
             _ => {}
@@ -721,9 +730,16 @@ impl TokenSink for NodeBuilder {
                 Mode::Math | Mode::DisplayMath => {}
             },
             Primitive::NoIndent => {
-                // 垂直模式：下一个段落不缩进；水平模式无操作
+                // 垂直模式 \noindent 立即开段（TeX new_graf(0)，缩进 0）——
+                // 不只设标志等字符触发：`\vbox{\noindent\hbox{...}}` 的 \hbox
+                // 必须在水平模式（否则盒被当 AdjustedHBox 进垂直列表、模式错乱）；
+                // 水平模式无操作。
                 if self.mode() == Mode::Vertical {
                     self.noindent_next = true;
+                    self.lists.push(Vec::new());
+                    self.list_modes.push(Mode::Horizontal);
+                    self.space_factor = 1000;
+                    self.insert_indent(); // noindent_next=true → 跳过缩进盒
                 }
             }
             // M3-5：\shipout 后的下一个盒子封装为页面
@@ -1160,6 +1176,13 @@ impl TokenSink for NodeBuilder {
                 self.lastbox_hold = Some(b);
             }
         }
+        // `\setbox0=\lastbox`：摘下的盒子存入目标寄存器（tex.web last_box →
+        // cur_box → set_box 赋值语义）；裸 \lastbox 留给后续 \box 消费。
+        if let Some(t) = self.setbox_target.take() {
+            if let Some(b) = self.lastbox_hold.take() {
+                self.boxes[t] = Some(b);
+            }
+        }
         Ok(())
     }
 
@@ -1305,7 +1328,7 @@ impl TokenSink for NodeBuilder {
                 list.len()
             ));
             for n in list {
-                showbox_format_node(n, 1, &mut out);
+                showbox_format_node(n, 1, &self.fonts, &mut out);
             }
         }
         out.push_str("### end list\n");
@@ -1414,7 +1437,7 @@ impl TokenSink for NodeBuilder {
             return Ok(());
         };
         let mut out = format!("> \\box{idx}=\n");
-        showbox_format_box(b, 0, &mut out);
+        showbox_format_box(b, 0, &self.fonts, &mut out);
         out.push_str("! OK.\n");
         self.transcript.push_str(&out);
         Ok(())
@@ -1461,14 +1484,14 @@ fn order_name(order: u8) -> &'static str {
     }
 }
 
-fn showbox_format_box(b: &BoxNode, depth: usize, out: &mut String) {
+fn showbox_format_box(b: &BoxNode, depth: usize, fonts: &Fonts, out: &mut String) {
     let p = ".".repeat(depth);
     let kind = match b.kind {
         BoxKind::HBox => "hbox",
         BoxKind::VBox => "vbox",
     };
     out.push_str(&format!(
-        "{p}\\{kind}({}+{})x{}",
+        "{p}\\\\{kind}({}+{})x{}",
         showbox_pt(b.height),
         showbox_pt(b.depth),
         showbox_pt(b.width)
@@ -1480,19 +1503,22 @@ fn showbox_format_box(b: &BoxNode, depth: usize, out: &mut String) {
     }
     out.push('\n');
     for c in &b.children {
-        showbox_format_node(c, depth + 1, out);
+        showbox_format_node(c, depth + 1, fonts, out);
     }
 }
 
-fn showbox_format_node(n: &Node, depth: usize, out: &mut String) {
+fn showbox_format_node(n: &Node, depth: usize, fonts: &Fonts, out: &mut String) {
     let p = ".".repeat(depth + 1);
     match n {
-        Node::Box(b) => showbox_format_box(b, depth, out),
-        Node::Char { charcode, .. } => {
+        Node::Box(b) => showbox_format_box(b, depth, fonts, out),
+        Node::Char {
+            font, charcode, ..
+        } => {
+            // TeX show_node_list：`.<字体名> <字符>`（如 `.\trip 1`，字符直接显示）
             let c = char::from_u32(*charcode)
                 .map(|c| c.to_string())
                 .unwrap_or_else(|| format!("{charcode}"));
-            out.push_str(&format!("{p}\\font {c}\n"));
+            out.push_str(&format!("{p}\\\\{} {c}\n", fonts.font_name(*font)));
         }
         Node::Glue {
             width,
@@ -1562,7 +1588,7 @@ fn showbox_format_node(n: &Node, depth: usize, out: &mut String) {
             }
             s.push('\n');
             out.push_str(&s);
-            showbox_format_node(inner, depth + 1, out);
+            showbox_format_node(inner, depth + 1, fonts, out);
         }
         Node::Discretionary { .. } => out.push_str(&format!("{p}\\discretionary\n")),
         Node::Direction { kind } => {
@@ -1575,8 +1601,8 @@ fn showbox_format_node(n: &Node, depth: usize, out: &mut String) {
             out.push_str(&format!("{p}\\{name}\n"));
         }
         Node::Mark { class, text } => match class {
-            Some(c) => out.push_str(&format!("{p}\\marks{c} {text}\n")),
-            None => out.push_str(&format!("{p}\\mark {text}\n")),
+            Some(c) => out.push_str(&format!("{p}\\\\marks{c}{{{text}}}\n")),
+            None => out.push_str(&format!("{p}\\\\mark{{{text}}}\n")),
         },
         Node::Ins { class, text } => out.push_str(&format!("{p}\\insert{class} {text}\n")),
         Node::Adjust { text } => out.push_str(&format!("{p}\\vadjust {text}\n")),

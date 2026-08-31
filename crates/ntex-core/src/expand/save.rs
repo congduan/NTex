@@ -851,7 +851,14 @@ impl Expander {
     fn restore_trace_body(&self, v: &SavedValue) -> String {
         match v {
             SavedValue::Eqtb { csid, prev } => {
-                format!("{}{}", self.cs_name_display(*csid), self.slot_display(*csid, prev))
+                // tex.web restore_trace 用 print_cs（**总是带 escape**，单字符非字母
+                // cs 如 \5 也显示 `\5`）——cs_name_display 会返裸字符，曾导致
+                // `{restoring 5select font...}` 缺反斜杠；且 `=` 分隔符缺失。
+                format!(
+                    "{}={}",
+                    self.esc(self.intern.name(*csid)),
+                    self.slot_display(*csid, prev)
+                )
             }
             SavedValue::Count { idx, prev } => format!("{}{}={}", self.esc("count"), idx, prev),
             SavedValue::Dimen { idx, prev } => {
