@@ -30,6 +30,38 @@ impl FontLoader for TfmLoader {
             _ => fm,
         };
         let mut table = self.table.borrow_mut();
+        // 表空时先放 nullfont 占位（**id 0 = nullfont**，tex.web 内建字体；
+        // 此前第一个 \font 加载返回 id 0 与 nullfont 冲突，且 id=len+1 会与
+        // 表索引错位——loaded(id) 查 table.get(id) 误判未加载）。用户字体 id
+        // 从 1 起、与表索引一一对应。
+        if table.is_empty() {
+            table.push(FontMetrics {
+                design_size_sp: 0,
+                scale: 0,
+                checksum: 0,
+                name: "nullfont".to_owned(),
+                chars: Vec::new(),
+                slant: 0,
+                space: 0,
+                space_stretch: 0,
+                space_shrink: 0,
+                x_height: 0,
+                quad: 0,
+                extra_space: 0,
+                lig_kern_steps: Vec::new(),
+                kern_values: Vec::new(),
+                lig_kern_index: Vec::new(),
+                font_params: Vec::new(),
+            });
+        }
+        // 同名字+同缩放复用 id（tex.web：\font\cs=name 同参重复定义不新加载）。
+        let scale = fm.scale;
+        if let Some(existing) = table
+            .iter()
+            .position(|fm| fm.name == name && fm.scale == scale)
+        {
+            return Ok(existing as u32);
+        }
         let id = u32::try_from(table.len())
             .map_err(|_| Error::internal("字体表溢出（> 2^32 字体）"))?;
         table.push(fm);
