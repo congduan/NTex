@@ -499,6 +499,8 @@ impl TokenSink for NodeBuilder {
             setbox,
         });
         self.param_stack.push(self.params);
+        // 字体选择组作用域：组开始保存当前字体，组结束恢复
+        self.font_stack.push(self.current_font);
         if let Some(k) = box_kind {
             let new_mode = match k {
                 PendingBox::HBox => Mode::RestrictedHorizontal,
@@ -544,6 +546,10 @@ impl TokenSink for NodeBuilder {
         // 先恢复参数镜像（与 VM 的 save_stack 恢复对齐），随后的缩进/interline 用外层值
         if let Some(prev) = self.param_stack.pop() {
             self.params = prev;
+        }
+        // 字体选择组作用域：组结束恢复进入时的字体（tex.web：cur_font 随组保存）
+        if let Some(f) = self.font_stack.pop() {
+            self.current_font = f;
         }
         // 数学组：内容并入外层（普通组）或作为字段挂到外层 base（^/_ 后组等）。
         // 仅 `{` 数学组（GroupKind::Math）push/pop math 层；`\begingroup`（SemiSimple）
@@ -1452,6 +1458,10 @@ impl TokenSink for NodeBuilder {
     }
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+
+    fn as_any_ref(&self) -> &dyn std::any::Any {
         self
     }
 }

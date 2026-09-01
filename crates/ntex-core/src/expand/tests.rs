@@ -1667,6 +1667,9 @@ mod tests {
         fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
             self
         }
+        fn as_any_ref(&self) -> &dyn std::any::Any {
+            self
+        }
     }
 
     /// 记录加载请求的测试加载器（每次加载返回递增 FontId）。

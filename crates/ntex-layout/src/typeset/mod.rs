@@ -441,6 +441,10 @@ struct NodeBuilder {
     /// `\sfcode` 表（随 `sfcode_changed` 事件更新；plain 默认 .,?!=3000、:=2000、
     /// ;=1500、,=1250，其余 1000）。
     sfcodes: [u32; 256],
+    /// 组开始时的当前字体（group_end 恢复——TeX 字体选择**组作用域**：
+    /// `{\bf bold} normal` 组内选择组外恢复；etrip L125 `\nullfont` 在组内
+    /// 选择后 L129 `\endgroup` 须恢复 `\trip`，否则后续段落全 nullfont）。
+    font_stack: Vec<FontId>,
     /// 当前 spacefactor（tex.web `space_factor`；段落/\hbox 开始 = 1000，
     /// 随字符 sfcode 更新，控制词间空格胶水）。
     space_factor: i64,
@@ -595,6 +599,7 @@ impl NodeBuilder {
             penalty_arrays: Default::default(),
             param_stack: Vec::new(),
             sfcodes,
+            font_stack: Vec::new(),
             space_factor: 1000,
             noindent_next: false,
             font_cs_names: Vec::new(),

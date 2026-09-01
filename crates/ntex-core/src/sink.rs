@@ -427,6 +427,8 @@ pub trait TokenSink: std::fmt::Debug {
     }
     /// 类型擦除互转：排版器（ntex-layout）在运行结束后取回其 NodeBuilder。
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
+    /// 类型擦除只读互转（export_state 读当前字体等）。
+    fn as_any_ref(&self) -> &dyn std::any::Any;
 }
 
 /// 默认 sink：收集 token 流（等价于 M1/M2 的 `output: Vec<Token>`）。
@@ -473,6 +475,10 @@ impl TokenSink for VecSink {
     }
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+
+    fn as_any_ref(&self) -> &dyn std::any::Any {
         self
     }
 }

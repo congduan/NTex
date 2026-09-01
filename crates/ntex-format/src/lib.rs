@@ -27,8 +27,9 @@ const MAGIC: &[u8; 8] = b"NTEXFMT1";
 /// v9：`\outer` 宏标志序列化（MacroDef.outer）；
 /// v10：TRIP 冲刺——`\nulldelimiterspace`/`\scriptspace`/`\overfullrule`/`\voffset`/`\hoffset`；
 /// v11：TRIP 冲刺——`\xspaceskip` 胶水参数；
-/// v13：ETRIP——font_loads（pass2 恢复字体表）+ font_cs_names（showbox 字体 cs 名）。
-const VERSION: u8 = 13;
+/// v13：ETRIP——font_loads（pass2 恢复字体表）+ font_cs_names（showbox 字体 cs 名）；
+/// v14：ETRIP——current_font（pass2 恢复当前字体，防全 nullfont）。
+const VERSION: u8 = 14;
 
 /// 编码一个 `.fmt` 快照。
 pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
@@ -186,6 +187,8 @@ pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
             None => w.write_all(&0u32.to_le_bytes())?,
         }
     }
+    // current_font（v14：pass2 恢复当前字体，防全 nullfont）
+    w.write_all(&state.current_font.to_le_bytes())?;
     Ok(())
 }
 
@@ -392,6 +395,8 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
             font_cs_names.push(Some(String::from_utf8_lossy(&buf).into_owned()));
         }
     }
+    // current_font（v14）
+    let current_font = read_u32(r)?;
 
     Ok(FmtState {
         intern_names,
@@ -405,6 +410,7 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
         font_names: Vec::new(),
         font_loads,
         font_cs_names,
+        current_font,
     })
 }
 

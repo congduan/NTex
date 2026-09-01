@@ -85,6 +85,10 @@ pub struct Typesetter {
     last_transcript: String,
     /// `finish` 收走的 `\shipout` 页面（DVI 统计行：页数）。
     shipped: Vec<BoxNode>,
+    /// .fmt 导入的当前字体（import_state 时 sink 未装，install_builder 同步）。
+    fmt_current_font: u32,
+    /// finish 收走的当前字体（take_sink 后 NodeBuilder 不可达，export_state 用）。
+    last_current_font: u32,
 }
 
 impl Typesetter {
@@ -103,6 +107,8 @@ impl Typesetter {
             },
             last_transcript: String::new(),
             shipped: Vec::new(),
+            fmt_current_font: 0,
+            last_current_font: 0,
         }
     }
 
@@ -126,13 +132,18 @@ impl Typesetter {
 
     /// 导出展开引擎状态快照（`.fmt` v1；供 `ntex-format` 序列化）。
     pub fn export_state(&self) -> ntex_core::expand::FmtState {
-        self.expander.export_state()
+        let mut st = self.expander.export_state();
+        // pass1 结束时的当前字体（finish 存档；fmt 恢复后防全 nullfont）
+        st.current_font = self.last_current_font;
+        eprintln!("[DBG-CF] export last_current_font={}", self.last_current_font);
+        st
     }
 
     /// 加载展开引擎状态快照（`.fmt` v1）。
     pub fn import_state(&mut self, state: ntex_core::expand::FmtState) {
         let font_loads = state.font_loads.clone();
         let font_cs_names = state.font_cs_names.clone();
+        self.fmt_current_font = state.current_font;
         self.expander.import_state(state);
         // .fmt 不含字体表：按 font_loads 重新加载 TFM（pass1 定义的
         // `\font\trip` 在 pass2 不重跑，字体表需恢复——否则字符悬空字体）
@@ -176,6 +187,8 @@ impl Typesetter {
             fonts: Fonts::Tfm(Rc::new(RefCell::new(Vec::new()))),
             last_transcript: String::new(),
             shipped: Vec::new(),
+            fmt_current_font: 0,
+            last_current_font: 0,
         }
     }
 
@@ -188,6 +201,8 @@ impl Typesetter {
             fonts: Fonts::Tfm(Rc::new(RefCell::new(Vec::new()))),
             last_transcript: String::new(),
             shipped: Vec::new(),
+            fmt_current_font: 0,
+            last_current_font: 0,
         }
     }
 
@@ -228,6 +243,8 @@ impl Typesetter {
         // .fmt 导入的 FontId → cs 名（pass1 定义的 \font\trip 在 pass2 不重跑；
         // import_state 时 sink 尚未安装，须在 install 时补同步）
         builder.font_cs_names = self.expander.font_cs_names_ref().clone();
+        // .fmt 导入的当前字体（防 pass2 字符全 nullfont + Missing 警告）
+        builder.current_font = FontId(self.fmt_current_font);
         self.expander.set_sink(Box::new(builder));
         if let Some(b) = self
             .expander
@@ -397,6 +414,8 @@ impl Typesetter {
             .ok_or_else(|| Error::internal("typesetter 安装了 NodeBuilder"))?;
         // 转录留档（finish 后 sink 被 VecSink 替换，take_transcript 读不到 NodeBuilder）
         self.last_transcript = std::mem::take(&mut builder.transcript);
+        // 当前字体存档（take_sink 后 export_state 读不到 NodeBuilder）
+        self.last_current_font = builder.current_font.0;
         let mut lists = std::mem::take(&mut builder.lists);
         debug_assert_eq!(lists.len(), 1, "收尾后应只剩主列表");
         let shipped = std::mem::take(&mut builder.shipped);

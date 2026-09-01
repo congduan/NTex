@@ -355,6 +355,9 @@ pub struct FmtState {
     pub font_loads: Vec<Option<(String, Option<i64>, Option<i64>)>>,
     /// FontId → cs 名（showbox 字体标识显示 `.\trip 1`；pass2 保留）。
     pub font_cs_names: Vec<Option<String>>,
+    /// pass1 结束时的当前字体（fmt 恢复后字符用正确字体——etrip.tex L62
+    /// `\trip` 选择后 dump，pass2 若不恢复则全 nullfont + Missing 警告）。
+    pub current_font: u32,
 }
 
 /// 线程看门狗共享状态（挂死诊断）。
@@ -667,6 +670,7 @@ impl Expander {
             font_names: self.font_names.clone(),
             font_loads: self.font_loads.clone(),
             font_cs_names: self.font_cs_names.clone(),
+            current_font: 0, // Typesetter::export_state 从 NodeBuilder 填充
         }
     }
 
@@ -1794,6 +1798,11 @@ impl Expander {
     /// 替换输出 sink（排版器接入点，M3-2）。
     pub fn set_sink(&mut self, sink: Box<dyn TokenSink>) {
         self.sink = sink;
+    }
+
+    /// 只读访问 sink（export_state 读当前字体等）。
+    pub fn sink_ref(&self) -> &dyn TokenSink {
+        self.sink.as_ref()
     }
 
     /// 取出输出 sink（排版器运行结束后取回 builder）。
