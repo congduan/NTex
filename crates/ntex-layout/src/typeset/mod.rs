@@ -254,6 +254,22 @@ impl GroupKind {
             GroupKind::Math => 9,
         }
     }
+
+    /// tex.web group_names（\\tracinggroups 显示 `{entering <名> (level N)...}`）。
+    fn group_name(self) -> &'static str {
+        match self {
+            GroupKind::Simple => "simple group",
+            GroupKind::SemiSimple => "semi simple group",
+            GroupKind::HBox => "hbox group",
+            GroupKind::AdjustedHBox => "adjusted hbox group",
+            GroupKind::VBox => "vbox group",
+            GroupKind::VTop => "vtop group",
+            GroupKind::Align => "align group",
+            GroupKind::NoAlign => "no align group",
+            GroupKind::Output => "output group",
+            GroupKind::Math => "math group",
+        }
+    }
 }
 
 /// 组上下文（group_begin 压栈，group_end 弹出）。
@@ -272,6 +288,10 @@ struct GroupCtx {
     /// （tex.web scan_box box_end 语义），内层嵌套 \hbox 组不得消费
     /// （否则 `\setbox0=\vbox{\hbox{...}}` 的 target 被内层盒抢走）。
     setbox: Option<usize>,
+    /// 进入行号（etrip.tex 行；\tracinggroups 的 `entered at line L`）。
+    entered_line: u32,
+    /// 组深度（1-based；\tracinggroups 的 `(level N)`）。
+    level: u32,
 }
 
 /// 字符度量函数：`(width, height, depth)`，单位 sp。

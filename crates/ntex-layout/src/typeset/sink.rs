@@ -439,7 +439,7 @@ impl TokenSink for NodeBuilder {
         Ok(())
     }
 
-    fn group_begin(&mut self) -> Result<()> {
+    fn group_begin(&mut self, line: u32) -> Result<()> {
         // 显式组种类（\begingroup/\valign/\noalign）优先；否则盒子种类；再否则普通组
         let explicit = self.pending_kind.take();
         let kind = explicit.or_else(|| {
@@ -499,7 +499,17 @@ impl TokenSink for NodeBuilder {
             shipout: ship,
             leaders,
             setbox,
+            entered_line: line,
+            level: (self.groups.len() + 1) as u32,
         });
+        // \tracinggroups（misc 6）：组进入追踪（tex.web begin_group）
+        if self.params.misc[6] > 0 {
+            let name = gkind.group_name();
+            let level = self.groups.len();
+            let _ = self.write16(format!(
+                "{{entering {name} (level {level}) at line {line}}}\n"
+            ));
+        }
         self.param_stack.push(self.params);
         // 字体选择组作用域：组开始保存当前字体，组结束恢复
         self.font_stack.push(self.current_font);
@@ -559,6 +569,15 @@ impl TokenSink for NodeBuilder {
         // 字体选择组作用域：组结束恢复进入时的字体（tex.web：cur_font 随组保存）
         if let Some(f) = self.font_stack.pop() {
             self.current_font = f;
+        }
+        // \tracinggroups（misc 6）：组离开追踪（tex.web end_group；用进入行号）
+        if self.params.misc[6] > 0 {
+            let _ = self.write16(format!(
+                "{{leaving {} (level {}) entered at line {}}}\n",
+                ctx.kind.group_name(),
+                ctx.level,
+                ctx.entered_line
+            ));
         }
         // 数学组：内容并入外层（普通组）或作为字段挂到外层 base（^/_ 后组等）。
         // 仅 `{` 数学组（GroupKind::Math）push/pop math 层；`\begingroup`（SemiSimple）

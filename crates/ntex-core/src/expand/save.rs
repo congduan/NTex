@@ -521,7 +521,7 @@ impl Expander {
                 Primitive::InputLineNo => Ok(emit_count(self.current_line_no() as i64)),
                 Primitive::CurrentGroupLevel => Ok(emit_count(self.group_level as i64)),
                 Primitive::CurrentGroupType => Ok(emit_count(self.query_sink_ref().current_group_type())),
-                Primitive::LastNodeType => Ok(emit_count(self.sink.last_node_type())),
+                Primitive::LastNodeType => Ok(emit_count(self.query_sink_ref().last_node_type())),
                 Primitive::CurrentIfLevel => Ok(emit_count(self.cond_stack.len() as i64)),
                 Primitive::CurrentIfType => Ok(emit_count(self.cur_if_type as i64)),
                 Primitive::CurrentIfBranch => Ok(emit_count(self.cur_if_branch as i64)),
@@ -755,8 +755,9 @@ impl Expander {
         self.group_level += 1;
         // 记录组开始时的条件栈深度：组结束时条件必须回到该深度（跨组开条件 → 错误）
         self.group_cond_depth.push(self.cond_stack.len());
-        // M3-2：通知 sink 组开始（排版器据此构建盒子内容）
-        self.sink.group_begin()
+        // M3-2：通知 sink 组开始（排版器据此构建盒子内容）；带进入行号
+        // （\\tracinggroups 显示 `{entering X (level N) at line L}`）
+        self.sink.group_begin(self.current_line_no() as u32)
     }
 
     fn end_group(&mut self) -> Result<()> {

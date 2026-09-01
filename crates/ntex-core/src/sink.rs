@@ -131,7 +131,7 @@ pub trait TokenSink: std::fmt::Debug {
         Ok(())
     }
     /// 组开始（`{`）：VM 已完成组作用域簿记。
-    fn group_begin(&mut self) -> Result<()> {
+    fn group_begin(&mut self, _line: u32) -> Result<()> {
         Ok(())
     }
     /// 组结束（`}`）：VM 已完成赋值回滚与 `\aftergroup` 处理。
