@@ -131,7 +131,19 @@ impl Typesetter {
 
     /// 加载展开引擎状态快照（`.fmt` v1）。
     pub fn import_state(&mut self, state: ntex_core::expand::FmtState) {
+        let font_loads = state.font_loads.clone();
+        let font_cs_names = state.font_cs_names.clone();
         self.expander.import_state(state);
+        // .fmt 不含字体表：按 font_loads 重新加载 TFM（pass1 定义的
+        // `\font\trip` 在 pass2 不重跑，字体表需恢复——否则字符悬空字体）
+        if let Fonts::Tfm(table) = &self.fonts {
+            let mut loader = TfmLoader {
+                table: table.clone(),
+            };
+            for (name, at, scaled) in font_loads.iter().flatten() {
+                let _ = loader.load(name, *at, *scaled);
+            }
+        }
         // 排版器参数镜像对齐（fmt 恢复的 \vsize/\tracingpages 等不会经 param_changed 推送）
         let p = *self.expander.params_ref();
         if let Some(b) = self
@@ -141,6 +153,8 @@ impl Typesetter {
             .downcast_mut::<NodeBuilder>()
         {
             b.sync_params(&p);
+            // fmt 里的 FontId → cs 名表（showbox 字体标识显示 `.\trip 1`）
+            b.font_cs_names = font_cs_names;
         }
     }
 
@@ -200,7 +214,7 @@ impl Typesetter {
         })
     }
 
-    /// 安装 NodeBuilder 并同步参数镜像（`.fmt` 加载的 \\vsize/\\tracingpages 等
+    /// 安装 NodeBuilder 并同步参数镜像（`.fmt` 加载的 \\\\vsize/\\\\tracingpages 等
     /// 不会经 param_changed 推送——新建 builder 的 params 是默认值）。
     fn install_builder(&mut self, builder: NodeBuilder) {
         let p = *self.expander.params_ref();
@@ -210,6 +224,10 @@ impl Typesetter {
                 p.misc[59], p.misc[29], p.misc[55]
             );
         }
+        let mut builder = builder;
+        // .fmt 导入的 FontId → cs 名（pass1 定义的 \font\trip 在 pass2 不重跑；
+        // import_state 时 sink 尚未安装，须在 install 时补同步）
+        builder.font_cs_names = self.expander.font_cs_names_ref().clone();
         self.expander.set_sink(Box::new(builder));
         if let Some(b) = self
             .expander

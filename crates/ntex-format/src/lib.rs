@@ -26,8 +26,9 @@ const MAGIC: &[u8; 8] = b"NTEXFMT1";
 /// /`\clubpenalty`/`\widowpenalty`/`\displaywidowpenalty` 与 misc 扩 33；
 /// v9：`\outer` 宏标志序列化（MacroDef.outer）；
 /// v10：TRIP 冲刺——`\nulldelimiterspace`/`\scriptspace`/`\overfullrule`/`\voffset`/`\hoffset`；
-/// v11：TRIP 冲刺——`\xspaceskip` 胶水参数。
-const VERSION: u8 = 11;
+/// v11：TRIP 冲刺——`\xspaceskip` 胶水参数；
+/// v13：ETRIP——font_loads（pass2 恢复字体表）+ font_cs_names（showbox 字体 cs 名）。
+const VERSION: u8 = 13;
 
 /// 编码一个 `.fmt` 快照。
 pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
@@ -158,6 +159,33 @@ pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
 
     // output_toks
     write_opt_tokens(w, state.output_toks.as_deref())?;
+
+    // font_loads（v13：pass2 恢复字体表用；FontId → (外部名, at, scaled)）
+    w.write_all(&(state.font_loads.len() as u32).to_le_bytes())?;
+    for load in &state.font_loads {
+        match load {
+            Some((name, at, scaled)) => {
+                w.write_all(&(name.len() as u32).to_le_bytes())?;
+                w.write_all(name.as_bytes())?;
+                w.write_all(&(at.unwrap_or(0) as u32).to_le_bytes())?;
+                w.write_all(&(at.is_some() as u32).to_le_bytes())?;
+                w.write_all(&(scaled.unwrap_or(0) as u32).to_le_bytes())?;
+                w.write_all(&(scaled.is_some() as u32).to_le_bytes())?;
+            }
+            None => w.write_all(&0u32.to_le_bytes())?,
+        }
+    }
+    // font_cs_names（v13：showbox 字体标识 cs 名，pass2 保留）
+    w.write_all(&(state.font_cs_names.len() as u32).to_le_bytes())?;
+    for name in &state.font_cs_names {
+        match name {
+            Some(n) => {
+                w.write_all(&(n.len() as u32).to_le_bytes())?;
+                w.write_all(n.as_bytes())?;
+            }
+            None => w.write_all(&0u32.to_le_bytes())?,
+        }
+    }
     Ok(())
 }
 
@@ -328,6 +356,43 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
     // output_toks
     let output_toks = read_opt_tokens(r)?.map(ntex_core::macrodef::TokenArray::from);
 
+    // font_loads（v13：pass2 恢复字体表；FontId → (外部名, at, scaled)）
+    let n_loads = read_u32(r)? as usize;
+    let mut font_loads = Vec::with_capacity(n_loads);
+    for _ in 0..n_loads {
+        let len = read_u32(r)? as usize;
+        if len == 0 {
+            font_loads.push(None);
+        } else {
+            let mut buf = vec![0u8; len];
+            r.read_exact(&mut buf)?;
+            let name = String::from_utf8_lossy(&buf).into_owned();
+            let at = read_u32(r)? as i64;
+            let at_some = read_u32(r)? != 0;
+            let scaled = read_u32(r)? as i64;
+            let scaled_some = read_u32(r)? != 0;
+            font_loads.push(Some((
+                name,
+                at_some.then_some(at),
+                scaled_some.then_some(scaled),
+            )));
+        }
+    }
+    // font_cs_names（v13：showbox 字体标识 cs 名；**保留**——pass1 定义的
+    // `\font\trip` 在 pass2 不重跑，showbox 需 cs 名）
+    let n = read_u32(r)? as usize;
+    let mut font_cs_names = Vec::with_capacity(n);
+    for _ in 0..n {
+        let len = read_u32(r)? as usize;
+        if len == 0 {
+            font_cs_names.push(None);
+        } else {
+            let mut buf = vec![0u8; len];
+            r.read_exact(&mut buf)?;
+            font_cs_names.push(Some(String::from_utf8_lossy(&buf).into_owned()));
+        }
+    }
+
     Ok(FmtState {
         intern_names,
         catcodes,
@@ -338,6 +403,8 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
         output_toks,
         // .fmt v1 不含字体表（加载后需重新 \font）：font_names 一并置空
         font_names: Vec::new(),
+        font_loads,
+        font_cs_names,
     })
 }
 

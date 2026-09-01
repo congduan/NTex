@@ -454,6 +454,9 @@ struct NodeBuilder {
     last_par_line: i64,
     /// 字体度量来源（M3-4：fn 指针占位或 TFM 字体表）。
     fonts: Fonts,
+    /// `\font<cs>=<name>` 登记的 FontId → cs 名（showbox 字体标识显示
+    /// `.\trip 1`；fmt 导入恢复 + `font_defined` 事件更新）。
+    font_cs_names: Vec<Option<String>>,
     /// 当前字体（TFM 模式由 `font_selected` 事件更新；fn 指针模式恒为 FontId(0)）。
     current_font: FontId,
     /// `\shipout`：下一个封装盒子作为页面（DVI shipout，M3-5）。
@@ -594,6 +597,7 @@ impl NodeBuilder {
             sfcodes,
             space_factor: 1000,
             noindent_next: false,
+            font_cs_names: Vec::new(),
             align_dir: None,
             align_columns: Vec::new(),
             last_par_line: 0,

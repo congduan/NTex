@@ -880,6 +880,14 @@ impl TokenSink for NodeBuilder {
         Ok(())
     }
 
+    fn font_defined(&mut self, font: u32, cs_name: &str) -> Result<()> {
+        if self.font_cs_names.len() <= font as usize {
+            self.font_cs_names.resize(font as usize + 1, None);
+        }
+        self.font_cs_names[font as usize] = Some(cs_name.to_string());
+        Ok(())
+    }
+
     fn current_font(&self) -> u32 {
         self.current_font.0
     }
@@ -1328,7 +1336,7 @@ impl TokenSink for NodeBuilder {
                 list.len()
             ));
             for n in list {
-                showbox_format_node(n, 1, &self.fonts, &mut out);
+                showbox_format_node(n, 1, &self.fonts, &self.font_cs_names, &mut out);
             }
         }
         out.push_str("### end list\n");
@@ -1437,7 +1445,7 @@ impl TokenSink for NodeBuilder {
             return Ok(());
         };
         let mut out = format!("> \\box{idx}=\n");
-        showbox_format_box(b, 0, &self.fonts, &mut out);
+        showbox_format_box(b, 0, &self.fonts, &self.font_cs_names, &mut out);
         out.push_str("! OK.\n");
         self.transcript.push_str(&out);
         Ok(())
@@ -1484,7 +1492,13 @@ fn order_name(order: u8) -> &'static str {
     }
 }
 
-fn showbox_format_box(b: &BoxNode, depth: usize, fonts: &Fonts, out: &mut String) {
+fn showbox_format_box(
+    b: &BoxNode,
+    depth: usize,
+    fonts: &Fonts,
+    cs_names: &[Option<String>],
+    out: &mut String,
+) {
     let p = ".".repeat(depth);
     let kind = match b.kind {
         BoxKind::HBox => "hbox",
@@ -1503,14 +1517,20 @@ fn showbox_format_box(b: &BoxNode, depth: usize, fonts: &Fonts, out: &mut String
     }
     out.push('\n');
     for c in &b.children {
-        showbox_format_node(c, depth + 1, fonts, out);
+        showbox_format_node(c, depth + 1, fonts, cs_names, out);
     }
 }
 
-fn showbox_format_node(n: &Node, depth: usize, fonts: &Fonts, out: &mut String) {
+fn showbox_format_node(
+    n: &Node,
+    depth: usize,
+    fonts: &Fonts,
+    cs_names: &[Option<String>],
+    out: &mut String,
+) {
     let p = ".".repeat(depth + 1);
     match n {
-        Node::Box(b) => showbox_format_box(b, depth, fonts, out),
+        Node::Box(b) => showbox_format_box(b, depth, fonts, cs_names, out),
         Node::Char {
             font, charcode, ..
         } => {
@@ -1518,7 +1538,12 @@ fn showbox_format_node(n: &Node, depth: usize, fonts: &Fonts, out: &mut String) 
             let c = char::from_u32(*charcode)
                 .map(|c| c.to_string())
                 .unwrap_or_else(|| format!("{charcode}"));
-            out.push_str(&format!("{p}\\\\{} {c}\n", fonts.font_name(*font)));
+            let cs = cs_names
+                .get(font.0 as usize)
+                .and_then(|n| n.as_ref())
+                .cloned()
+                .unwrap_or_else(|| fonts.font_name(*font));
+            out.push_str(&format!("{p}\\\\{} {c}\n", cs));
         }
         Node::Glue {
             width,
@@ -1588,7 +1613,7 @@ fn showbox_format_node(n: &Node, depth: usize, fonts: &Fonts, out: &mut String) 
             }
             s.push('\n');
             out.push_str(&s);
-            showbox_format_node(inner, depth + 1, fonts, out);
+            showbox_format_node(inner, depth + 1, fonts, cs_names, out);
         }
         Node::Discretionary { .. } => out.push_str(&format!("{p}\\discretionary\n")),
         Node::Direction { kind } => {

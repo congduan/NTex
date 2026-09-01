@@ -350,6 +350,11 @@ pub struct FmtState {
     pub output_toks: Option<TokenArray>,
     /// FontId → 外部字体名（`\fontname` 查询用；加载后需重新 `\font`）。
     pub font_names: Vec<Option<String>>,
+    /// FontId → (外部名, at, scaled)（pass2 恢复字体表用；.fmt 不含字体表，
+    /// 恢复时按此重新加载 TFM——pass1 定义的 `\font\trip` 在 pass2 不重跑）。
+    pub font_loads: Vec<Option<(String, Option<i64>, Option<i64>)>>,
+    /// FontId → cs 名（showbox 字体标识显示 `.\trip 1`；pass2 保留）。
+    pub font_cs_names: Vec<Option<String>>,
 }
 
 /// 线程看门狗共享状态（挂死诊断）。
@@ -430,6 +435,10 @@ pub struct Expander {
     font_loader: Box<dyn FontLoader>,
     /// `\fontname` 查询用：FontId → 外部字体名（`\font` 加载时登记；TRIP L218）。
     font_names: Vec<Option<String>>,
+    /// FontId → (外部名, at, scaled)：.fmt 序列化用，pass2 恢复字体表。
+    font_loads: Vec<Option<(String, Option<i64>, Option<i64>)>>,
+    /// FontId → cs 名（showbox 字体标识显示；fmt 序列化 + font_defined 事件）。
+    font_cs_names: Vec<Option<String>>,
     /// `\output` 例程 token 列表（M3-5-3）；None = 未定义（断页直通 shipout）。
     output_toks: Option<TokenArray>,
     /// 输出例程正在执行（防嵌套：例程内再次断页报错）。
@@ -572,6 +581,8 @@ impl Expander {
             params: Params::default(),
             font_loader: Box::new(NoFontLoader),
             font_names: Vec::new(),
+            font_loads: Vec::new(),
+            font_cs_names: Vec::new(),
             watchdog: None,
             output_toks: None,
             output_active: false,
@@ -654,10 +665,17 @@ impl Expander {
             params: self.params,
             output_toks: self.output_toks.clone(),
             font_names: self.font_names.clone(),
+            font_loads: self.font_loads.clone(),
+            font_cs_names: self.font_cs_names.clone(),
         }
     }
 
-    /// 加载引擎状态快照（`.fmt` v1）：整体替换展开状态，运行时栈清零。
+    /// FontId → cs 名表（.fmt 导入后供 NodeBuilder 同步 showbox 字体标识）。
+    pub fn font_cs_names_ref(&self) -> &Vec<Option<String>> {
+        &self.font_cs_names
+    }
+
+    /// 加载展开引擎状态快照（`.fmt` v1）。
     ///
     /// 宏定义在字节码轨道下重建预编译字节码（`code` 不随快照序列化）。
     pub fn import_state(&mut self, state: FmtState) {
@@ -703,6 +721,8 @@ impl Expander {
         self.params = state.params;
         self.output_toks = state.output_toks;
         self.font_names = state.font_names;
+        self.font_loads = state.font_loads;
+        self.font_cs_names = state.font_cs_names;
         // 运行时状态重置（新文档起点）
         self.stack.clear();
         self.read_floor = 0;

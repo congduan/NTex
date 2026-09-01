@@ -204,6 +204,12 @@ pub trait TokenSink: std::fmt::Debug {
     fn font_selected(&mut self, _font: u32) -> Result<()> {
         Ok(())
     }
+    /// `\font<cs>=<name>` 定义完成（ETRIP showbox）：登记 FontId → cs 名
+    /// （tex.web 字体标识显示用 cs 名，如 `.\trip 1`；csid 的 intern 表在
+    /// expander 侧，故由 expander 解析名字后推送）。
+    fn font_defined(&mut self, _font: u32, _cs_name: &str) -> Result<()> {
+        Ok(())
+    }
     /// 当前字体（TRIP：`\textfont1=\font` 中 `\font` 作当前字体选择器）。
     fn current_font(&self) -> u32 {
         0

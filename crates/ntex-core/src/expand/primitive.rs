@@ -1581,6 +1581,11 @@ impl Expander {
             ),
             None => font_name.clone(),
         });
+        // .fmt 序列化用：FontId → (外部名, at, scaled)，pass2 恢复字体表
+        if self.font_loads.len() <= font as usize {
+            self.font_loads.resize(font as usize + 1, None);
+        }
+        self.font_loads[font as usize] = Some((font_name.clone(), at, scaled));
         // 组作用域 + \global 语义（同 \def）
         let global = self.is_global();
         // e-TeX \tracingassigns（misc 5）：字体赋值追踪——tex.web \font 先绑定
@@ -1610,6 +1615,13 @@ impl Expander {
                 self.trace_assign(csid, global, &prev, &EqSlot::Font(font));
             }
             self.eqtb.set_font(csid, font);
+            // ETRIP showbox：登记 FontId → cs 名（tex.web 字体标识显示用 cs 名）
+            let cs_name = self.intern.name(csid).to_string();
+            if self.font_cs_names.len() <= font as usize {
+                self.font_cs_names.resize(font as usize + 1, None);
+            }
+            self.font_cs_names[font as usize] = Some(cs_name.clone());
+            self.sink.font_defined(font, &cs_name)?;
         }
         self.finish_assignment();
         Ok(())
