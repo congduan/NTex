@@ -1332,18 +1332,23 @@ mod tests {
     #[test]
     fn math_left_right_delimited() {
         let children = math_line_children(r"$\left(x\right)$");
-        // 定界符 + body + 定界符
-        assert_eq!(children.len(), 3);
-        assert_eq!(as_char(&children[0]), b'(' as u32);
-        assert_eq!(as_char(&children[1]), b'x' as u32);
-        assert_eq!(as_char(&children[2]), b')' as u32);
+        // \\left...\\right 物化为单个 hbox（tex.web：定界符与内容同盒）
+        assert_eq!(children.len(), 1, "\\left(\\right) 应封装为单个 hbox");
+        let b = as_box(&children[0]);
+        assert_eq!(b.children.len(), 3, "盒内 = 定界符 + body + 定界符");
+        assert_eq!(as_char(&b.children[0]), b'(' as u32);
+        assert_eq!(as_char(&b.children[1]), b'x' as u32);
+        assert_eq!(as_char(&b.children[2]), b')' as u32);
     }
 
     #[test]
     fn math_left_right_dot_empty_delims() {
         let children = math_line_children(r"$\left.x\right.$");
-        assert_eq!(children.len(), 1, "空定界符不产生字符");
-        assert_eq!(as_char(&children[0]), b'x' as u32);
+        // 空定界符不产生字符；\left.\right. 仍封装为单个 hbox（盒内仅 body）
+        assert_eq!(children.len(), 1, "\\left.\\right. 封装为单个 hbox");
+        let b = as_box(&children[0]);
+        assert_eq!(b.children.len(), 1, "盒内仅 body（空定界符无字符）");
+        assert_eq!(as_char(&b.children[0]), b'x' as u32);
     }
 
     #[test]

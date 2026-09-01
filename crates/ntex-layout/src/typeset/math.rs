@@ -429,15 +429,20 @@ impl NodeBuilder {
             } => self.fraction_nodes(num, den, *thickness, style),
             MathAtom::Radical { base } => self.radical_nodes(base, style),
             MathAtom::Delimited { left, body, right } => {
-                let mut out = Vec::new();
+                let mut inner = Vec::new();
                 if let Some(d) = left {
-                    out.extend(self.delim_nodes(*d, style));
+                    inner.extend(self.delim_nodes(*d, style));
                 }
-                out.extend(self.math_to_hlist(body, style));
+                inner.extend(self.math_to_hlist(body, style));
                 if let Some(d) = right {
-                    out.extend(self.delim_nodes(*d, style));
+                    inner.extend(self.delim_nodes(*d, style));
                 }
-                out
+                // \\left...\\right 物化为单个 hbox（tex.web：定界符与内容同盒，
+                // 盒高由定界符撑起——参考 etrip `\\hbox(17.0+3.00002)x23.9999`
+                // 含 [ 定界符盒 + 内容 + ] 定界符）。自然宽打包（excess=0 →
+                // 盒内 \\thinmuskip 等 glue 不烘焙，showbox 保留原值）。
+                let w = hbox_dimensions(&inner).width;
+                vec![Node::Box(hpack(&inner, w))]
             }
             // e-TeX \middle：定界符原子（类 Inner，同 \left/\right 的分隔符排版）
             MathAtom::Middle(d) => {
