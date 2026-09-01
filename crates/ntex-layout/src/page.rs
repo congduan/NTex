@@ -169,7 +169,8 @@ impl PageBuilder {
                             self.trace_buf.push_str(&self.trace_break_line(0, b_now, c));
                         }
                         self.page.push(Node::Glue {
-            name: None,                            width: w,
+                            name: None,
+                            width: w,
                             stretch: params.topskip.stretch,
                             shrink: params.topskip.shrink,
                             stretch_order: params.topskip.stretch_order,
@@ -199,7 +200,8 @@ impl PageBuilder {
                     let w = (params.topskip.width - height).max(0);
                     if w > 0 {
                         self.page.push(Node::Glue {
-            name: None,                            width: w,
+                            name: None,
+                            width: w,
                             stretch: params.topskip.stretch,
                             shrink: params.topskip.shrink,
                             stretch_order: params.topskip.stretch_order,
@@ -223,7 +225,8 @@ impl PageBuilder {
                 Outcome::Continue
             }
             Node::Glue {
-            name: None,                width,
+                name: None,
+                width,
                 stretch,
                 shrink,
                 stretch_order,
@@ -241,7 +244,8 @@ impl PageBuilder {
                 }
                 contrib.remove(0);
                 self.page.push(Node::Glue {
-            name: None,                    width,
+                    name: None,
+                    width,
                     stretch,
                     shrink,
                     stretch_order,
@@ -324,11 +328,10 @@ impl PageBuilder {
     /// 注意：topskip 不参与（它直接入页，仅手动输出追踪行），避免 \vsize 极小
     /// 时 topskip 成为空页断点候选 → fire_up 空页死循环。
     fn precedes_break(&self) -> bool {
-        match self.page.last() {
-            None => true,
-            Some(Node::Box(_) | Node::Rule { .. } | Node::Glue { .. } | Node::Kern { .. }) => true,
-            _ => false,
-        }
+        matches!(
+            self.page.last(),
+            None | Some(Node::Box(_) | Node::Rule { .. } | Node::Glue { .. } | Node::Kern { .. })
+        )
     }
 
     /// 计算当前页 badness（tex.web §593-599，不含触发节点自身；C3：与折行共享实现）。
@@ -579,7 +582,8 @@ impl PageBuilder {
                         _ => {}
                     }
                     out.push(Node::Glue {
-            name: None,                        width: w,
+                        name: None,
+                        width: w,
                         stretch: *s,
                         shrink: *sh,
                         stretch_order: *stretch_order,

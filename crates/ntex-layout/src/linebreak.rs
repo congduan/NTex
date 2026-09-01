@@ -70,8 +70,6 @@ enum BreakKind {
     Penalty,
     /// 断字节点（`@\discretionary via`，行号带 `-` 后缀）。
     Disc,
-    /// kern 断点（`@\kern via`）。
-    Kern,
     /// 段落末尾强制断点（`@\par via`）。
     Par,
 }
@@ -106,7 +104,8 @@ fn preprocess(hlist: &[Node]) -> Vec<BreakSpec> {
     for (i, node) in hlist.iter().enumerate() {
         match node {
             Node::Glue {
-            name: None,                width: w,
+                name: None,
+                width: w,
                 stretch: st,
                 shrink: sh,
                 stretch_order: so,
@@ -359,7 +358,6 @@ fn best_path(
                         BreakKind::Start | BreakKind::Glue => String::new(),
                         BreakKind::Penalty => "\\penalty".to_string(),
                         BreakKind::Disc => "\\discretionary".to_string(),
-                        BreakKind::Kern => "\\kern".to_string(),
                         BreakKind::Par => "\\par".to_string(),
                     };
                     let b_str = if bad == 10_000 { "*" } else { &bad.to_string() };
@@ -413,10 +411,7 @@ fn best_path(
     let mut fc = (0..4)
         .min_by_key(|&fc| best[cur][fc])
         .expect("末尾强制断点必有路径") as FitClass;
-    loop {
-        let Some((prev, prev_fc)) = best_prev[cur][fc as usize] else {
-            break;
-        };
+    while let Some((prev, prev_fc)) = best_prev[cur][fc as usize] {
         path.push(prev);
         cur = prev;
         fc = prev_fc;
@@ -494,7 +489,8 @@ mod tests {
 
     fn glue(w: i64, st: i64, sh: i64) -> Node {
         Node::Glue {
-            name: None,            width: w,
+            name: None,
+            width: w,
             stretch: st,
             shrink: sh,
             stretch_order: 0,
@@ -504,7 +500,8 @@ mod tests {
 
     fn fil_glue() -> Node {
         Node::Glue {
-            name: None,            width: 0,
+            name: None,
+            width: 0,
             stretch: 1,
             shrink: 0,
             stretch_order: GLUE_ORDER_FIL,

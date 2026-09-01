@@ -673,16 +673,6 @@ fn code_idx(code: SpacingCode) -> usize {
     }
 }
 
-/// muskip 宽度（1mu = quad/18）：thin=3mu、med=4mu±2mu∓4mu、thick=5mu±5mu。
-fn muskip(code: SpacingCode, quad: i64) -> (i64, i64, i64) {
-    let mu = quad / 18;
-    match code {
-        SpacingCode::Thin => (3 * mu, 0, 0),
-        SpacingCode::Med => (4 * mu, 2 * mu, 4 * mu),
-        SpacingCode::Thick => (5 * mu, 5 * mu, 0),
-        _ => (0, 0, 0),
-    }
-}
 
 /// `xn_over_d`（tex.web）：t×n/d 四舍五入（负值按远离零）。
 fn xn_over_d(t: i64, n: i64, d: i64) -> i64 {

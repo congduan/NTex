@@ -598,6 +598,7 @@ mod tests {
         let page = hbox_page(vec![
             char_node(b'a', 100),
             Node::Glue {
+                name: None,
                 width: 50,
                 stretch: 0,
                 shrink: 0,
@@ -647,9 +648,14 @@ mod tests {
             .typeset_dvi(r"\font\cmr=cmr10\shipout\hbox{\cmr NTex}")
             .expect("排版失败");
         assert_eq!(pages.len(), 1);
-        assert_eq!(fonts.len(), 1);
-        assert_eq!(fonts[0].name, "cmr10");
-        assert_eq!(fonts[0].checksum, fm.checksum, "checksum 应来自 TFM 头");
+        // nullfont 占 id 0（9376715），字体表 = nullfont + cmr10
+        assert_eq!(fonts.len(), 2);
+        let cmr = fonts
+            .iter()
+            .find(|f| f.name == "cmr10")
+            .expect("字体表应含 cmr10");
+        assert_eq!(cmr.name, "cmr10");
+        assert_eq!(cmr.checksum, fm.checksum, "checksum 应来自 TFM 头");
 
         let dvi = write_dvi(&pages, &fonts);
         for ch in *b"NTex" {
@@ -697,8 +703,13 @@ mod tests {
             "小 \\vsize 应至少分两页，实际 {} 页",
             pages.len()
         );
-        assert_eq!(fonts.len(), 1);
-        assert_eq!(fonts[0].checksum, fm.checksum);
+        // nullfont 占 id 0（9376715），字体表 = nullfont + cmr10
+        assert_eq!(fonts.len(), 2);
+        let cmr = fonts
+            .iter()
+            .find(|f| f.name == "cmr10")
+            .expect("字体表应含 cmr10");
+        assert_eq!(cmr.checksum, fm.checksum);
         // 每页为 vbox（自动分页），高度 = vsize（40pt）
         for p in &pages {
             assert_eq!(p.kind, BoxKind::VBox, "自动分页页面应为 vbox");
