@@ -124,6 +124,12 @@ impl TokenSink for NodeBuilder {
         Ok(())
     }
 
+    /// `\left`/`\middle` 的 math left group（16）挂起标记：随后的 begin_group 消费。
+    fn math_left_begin(&mut self) -> Result<()> {
+        self.pending_kind = Some(GroupKind::MathLeft);
+        Ok(())
+    }
+
     /// e-TeX `\middle<delim>`：在 \left...\right 体内插入定界符原子（类 Inner）。
     fn math_middle(&mut self, delim: Option<u32>) -> Result<()> {
         if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
@@ -1148,11 +1154,13 @@ impl TokenSink for NodeBuilder {
     }
 
     /// e-TeX `\currentgrouptype`：当前组类型码。
-    /// 数学模式：顶组为数学组 → 9，否则为 `$` 进入的数学移位组 → 15。
+    /// 数学模式：顶组为数学组 → 9，`\left`/`\middle` 组 → 16（math left group），
+    /// 否则为 `$` 进入的数学移位组 → 15。
     fn current_group_type(&self) -> i64 {
         if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
             return match self.groups.last() {
                 Some(g) if g.kind == GroupKind::Math => 9,
+                Some(g) if g.kind == GroupKind::MathLeft => 16,
                 _ => 15,
             };
         }

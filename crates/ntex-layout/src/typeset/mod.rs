@@ -230,6 +230,9 @@ enum GroupKind {
     /// 输出例程的隐式组（tex.web group_code=output_group；ETRIP L396 检查）。
     Output,
     Math,
+    /// `\left`/`\middle` 打开的数学定界组（tex.web group_code=math_left_group=16；
+    /// `\right` 时闭合。ETRIP L356-358 `\left.\1 16` 检查）。
+    MathLeft,
 }
 
 /// 对齐组方向（tex.web alignment：\halign 行堆叠 / \valign 列并排）。
@@ -252,6 +255,7 @@ impl GroupKind {
             GroupKind::NoAlign => 7,
             GroupKind::Output => 8,
             GroupKind::Math => 9,
+            GroupKind::MathLeft => 16,
         }
     }
 
@@ -268,6 +272,7 @@ impl GroupKind {
             GroupKind::NoAlign => "no align group",
             GroupKind::Output => "output group",
             GroupKind::Math => "math group",
+            GroupKind::MathLeft => "math left group",
         }
     }
 }
@@ -385,18 +390,6 @@ impl Fonts {
                 .get(font.0 as usize)
                 .map(|fm| fm.name.clone())
                 .unwrap_or_default(),
-        }
-    }
-
-    /// 数学 em（quad = fontdimen 6；数学间距 1em 基准）。fn 指针占位返回 0。
-    fn quad(&self, font: FontId) -> i64 {
-        match self {
-            Fonts::Fn { .. } => 0,
-            Fonts::Tfm(table) => table
-                .borrow()
-                .get(font.0 as usize)
-                .map(|fm| fm.quad)
-                .unwrap_or(0),
         }
     }
 
@@ -929,7 +922,8 @@ impl NodeBuilder {
                     g
                 };
                 self.append(Node::Glue {
-            name: None,                    width: g.width,
+                    name: None,
+                    width: g.width,
                     stretch: g.stretch,
                     shrink: g.shrink,
                     stretch_order: 0,
@@ -1041,7 +1035,8 @@ impl NodeBuilder {
             )
         };
         self.append(Node::Glue {
-            name: None,            width,
+            name: None,
+            width,
             stretch,
             shrink,
             stretch_order: 0,

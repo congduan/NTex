@@ -37,6 +37,9 @@ use crate::sink::{TokenSink, VecSink};
 use crate::token::{meaning, Token, TokenKind};
 use ntex_io::{LocalVfs, Vfs};
 
+/// 字体加载记录：外部名 + at 规格 + scaled（pass2 恢复字体表用；.fmt 不含字体表）。
+type FontLoad = (String, Option<i64>, Option<i64>);
+
 /// 输入帧：token 来源栈（LIFO，栈顶为当前帧）。
 #[derive(Debug)]
 enum InputFrame {
@@ -93,6 +96,9 @@ struct CondFrame {
     /// `\ifcase` 跳过计数：还需跳过的 `\or` 数。
     ors_left: Option<usize>,
     else_seen: bool,
+    /// `\ifcase` 已选中分支（跳够 `\or` 进入 Processing 后，多余 `\or`/`\else`
+    /// 应保持跳过——`\else` 是选中分支后的内容，不是兜底落点）。
+    case_selected: bool,
     /// 进入该条件前的外层 `cur_if_type`/`cur_if_branch`（`\fi` 时恢复）。
     saved_if_type: i32,
     saved_if_branch: i32,
@@ -352,7 +358,7 @@ pub struct FmtState {
     pub font_names: Vec<Option<String>>,
     /// FontId → (外部名, at, scaled)（pass2 恢复字体表用；.fmt 不含字体表，
     /// 恢复时按此重新加载 TFM——pass1 定义的 `\font\trip` 在 pass2 不重跑）。
-    pub font_loads: Vec<Option<(String, Option<i64>, Option<i64>)>>,
+    pub font_loads: Vec<Option<FontLoad>>,
     /// FontId → cs 名（showbox 字体标识显示 `.\trip 1`；pass2 保留）。
     pub font_cs_names: Vec<Option<String>>,
     /// pass1 结束时的当前字体（fmt 恢复后字符用正确字体——etrip.tex L62
@@ -416,6 +422,11 @@ pub struct Expander {
     err_snapshot: Option<(u32, usize)>,
     /// 组层级（M1-11）。
     group_level: u32,
+    /// `\left`/`\middle` 打开的 math left group（16）嵌套深度：expander 侧配对
+    /// 保护——`\left` +1、`\middle` 关一开一（净 0）、`\right` -1；为 0 时
+    /// `\right`/`\middle` 不触发 end_group（避免关掉外层非数学组；TeX 语义
+    /// `\right` 前必须有 `\left`，缺配对由 layout 侧报错恢复）。
+    math_left_depth: usize,
     /// 对齐组深度（`\halign`/`\valign` 组内 `{`/`}` 不建普通组，TeX alignment 状态机语义）。
     align_depth: i32,
     /// 对齐模板（preamble）阶段：`\halign{` 后到第一个 `\cr`/`\crcr` 之间是模板
@@ -452,7 +463,7 @@ pub struct Expander {
     /// `\fontname` 查询用：FontId → 外部字体名（`\font` 加载时登记；TRIP L218）。
     font_names: Vec<Option<String>>,
     /// FontId → (外部名, at, scaled)：.fmt 序列化用，pass2 恢复字体表。
-    font_loads: Vec<Option<(String, Option<i64>, Option<i64>)>>,
+    font_loads: Vec<Option<FontLoad>>,
     /// FontId → cs 名（showbox 字体标识显示；fmt 序列化 + font_defined 事件）。
     font_cs_names: Vec<Option<String>>,
     /// `\output` 例程 token 列表（M3-5-3）；None = 未定义（断页直通 shipout）。
@@ -587,6 +598,7 @@ impl Expander {
             cond_stack: Vec::new(),
             err_snapshot: None,
             group_level: 0,
+            math_left_depth: 0,
             align_depth: 0,
             align_preamble: false,
             align_preamble_depth: 0,
@@ -1327,7 +1339,7 @@ impl Expander {
                     .last()
                     .map(|c| c.state == CondState::Skipping)
                     .unwrap_or(false);
-                let is_fi = matches!(tok.kind(), TokenKind::ControlSeq { .. })
+                let is_fi = matches!(tok.kind(), TokenKind::ControlSeq)
                     && matches!(
                         self.eqtb.slot(tok.csid().expect("ControlSeq 必有 csid")),
                         EqSlot::Primitive(Primitive::Fi)
@@ -1540,6 +1552,20 @@ impl Expander {
     /// `\detokenize`/`\eTeXversion`/`\eTeXrevision`）；条件由 process_one 拦截。
     /// 不可展开原语、未定义 cs、字符、组定界、宏参数一律原样保留（不执行、不建组）。
     fn process_expand_only(&mut self, tok: Token) -> Result<()> {
+        // TeX expand() 语义：条件原语在展开上下文（\edef/\write/\message 参数
+        // 收集）中**求值**（tex.web expand 的 if_test/if_case 分支）——`\ifcase`
+        // 在 \edef 里执行、\x 收集的是选中分支文本（etrip \5 宏
+        // `\edef\6{\ifcase\lastnodetype...}`：\6 = else 分支 "empty"）。
+        // 此前原样保留导致 \6 含未求值条件、\typeout 展开时再遇 expand_only
+        // 仍不执行 → 输出空（ETRIP L351 `last node type (l.351): ` 缺 empty）。
+        if let Some(op) = self.cond_op(tok) {
+            return self.step_conditional(op);
+        }
+        // 条件跳过区（\\ifcase-1 的 \\or 段等）：token 丢弃不收集
+        // （TeX expand 的 pass_text 语义；主循环 process_one 同样先查 is_skipping）
+        if self.is_skipping() {
+            return Ok(());
+        }
         match tok.kind() {
             TokenKind::ControlSeq => {
                 let csid = tok.csid().expect("ControlSeq 必有 csid");

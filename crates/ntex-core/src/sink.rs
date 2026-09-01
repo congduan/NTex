@@ -56,6 +56,12 @@ pub trait TokenSink: std::fmt::Debug {
     fn math_left(&mut self, _delim: Option<u32>) -> Result<()> {
         Ok(())
     }
+    /// `\left` 建 math left group（16）前的挂起标记：下一个组为数学定界组。
+    /// expander 在 `\left`/`\middle` 时调用（随后 begin_group 消费）；布局侧
+    /// 置 pending_kind，使 currentgrouptype 返回 16（ETRIP L356 检查）。
+    fn math_left_begin(&mut self) -> Result<()> {
+        Ok(())
+    }
     /// `\right<delimiter>`：`None` = `\right.`（M4-2）。
     fn math_right(&mut self, _delim: Option<u32>) -> Result<()> {
         Ok(())

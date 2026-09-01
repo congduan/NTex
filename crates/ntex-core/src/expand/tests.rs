@@ -1288,6 +1288,36 @@ mod tests {
             expand("\\ifcase5 zero\\or one\\else many\\fi").unwrap(),
             "many"
         );
+        // 负数：跳过所有 \or 直到 \else（tex.web if_case；\ifcase-1 → else 分支）
+        assert_eq!(
+            expand("\\ifcase-1 zero\\or one\\or two\\else many\\fi").unwrap(),
+            "many"
+        );
+        assert_eq!(
+            expand("\\ifcase-1 a\\or b\\else c\\fi").unwrap(),
+            "c"
+        );
+        // 跳过头（n > \or 数量）：同样落入 \else
+        assert_eq!(
+            expand("\\ifcase3 a\\or b\\else c\\fi").unwrap(),
+            "c"
+        );
+        // \edef 收集 + \write 展开路径（ETRIP L351 \5 宏模式：\edef\6{\ifcase\lastnodetype...}）。
+        // \message 输出走 VecSink.transcript（非 output 通道）
+        let mut e = Expander::new();
+        e.set_sink(Box::new(VecSink::default()));
+        e.run_source(
+            "\\edef\\x{\\ifcase-1 char node\\or hlist node\\else empty\\fi}\\message{\\x}",
+        )
+        .unwrap();
+        let sink = e.take_sink();
+        let mut sink = sink;
+        let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+        assert!(
+            sink.transcript.contains("empty"),
+            "\\edef+\\ifcase-1 经 \\message 展开应输出 else 分支，实际 {:?}",
+            sink.transcript
+        );
     }
 
     #[test]

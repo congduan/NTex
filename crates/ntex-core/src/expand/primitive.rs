@@ -462,15 +462,36 @@ impl Expander {
             Primitive::Atop => self.sink.math_fraction(Some(0)),
             Primitive::Left => {
                 let d = self.scan_delimiter()?;
+                // math left group（16）：\left 打开真实组（tex.web new_math_left_group；
+                // \currentgrouptype 检查 + \tracinggroups 显示）。数学层（math_left/
+                // math_right 的 Delimited 物化）由 layout 侧另行维护，互不干扰。
+                self.sink.math_left_begin()?;
+                self.begin_group()?;
+                self.math_left_depth += 1;
                 self.sink.math_left(d)
             }
             Primitive::Right => {
                 let d = self.scan_delimiter()?;
+                // 配对 \left 存在才关组（\right 前缺 \left 由 layout 侧报错，
+                // 这里不动组栈，避免误关外层非数学组）
+                if self.math_left_depth > 0 {
+                    self.math_left_depth -= 1;
+                    self.end_group()?;
+                }
                 self.sink.math_right(d)
             }
             // e-TeX（M4-5）：\middle<delimiter>（\left...\right 内分隔符）
             Primitive::Middle => {
                 let d = self.scan_delimiter()?;
+                // \middle 关闭当前 \left 组并开新组（参考 log：leaving entered at
+                // 前一行 + entering 本行成对；组类型仍为 math left group 16）
+                if self.math_left_depth > 0 {
+                    self.math_left_depth -= 1;
+                    self.end_group()?;
+                }
+                self.sink.math_left_begin()?;
+                self.begin_group()?;
+                self.math_left_depth += 1;
                 self.sink.math_middle(d)
             }
             // ETRIP 冲刺：\mark{<text>}（mark 节点）；e-TeX \marks<n>{<text>}

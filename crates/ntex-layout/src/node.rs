@@ -144,7 +144,11 @@ pub enum Node {
     /// 盒子（hlist / vlist）。
     Box(BoxNode),
     /// 规则（`\hrule` / `\vrule`）。
-    Rule { width: i64, height: i64, depth: i64 },
+    Rule {
+        width: i64,
+        height: i64,
+        depth: i64,
+    },
     /// 胶水：可拉伸 / 可收缩。
     Glue {
         /// 来源名（\thinmuskip/\medmuskip/\thickmuskip 等；showbox 显示
@@ -159,9 +163,13 @@ pub enum Node {
         shrink_order: GlueOrder,
     },
     /// 字距（不可拉伸）。
-    Kern { width: i64 },
+    Kern {
+        width: i64,
+    },
     /// 断行惩罚；`penalty < 0` 表示可选断行点，`penalty >= 10000` 禁止断行。
-    Penalty { penalty: i64 },
+    Penalty {
+        penalty: i64,
+    },
     /// 引导符：行为类似胶水（width/stretch/shrink），内部重复 box 提供 height/depth。
     Leaders {
         kind: LeadersKind,
@@ -188,19 +196,33 @@ pub enum Node {
     },
     /// mark 节点（`\mark`/`\marks<n>`；无维度）：class 为 `\marks` 的寄存器号，
     /// `\mark` 为 None。
-    Mark { class: Option<i64>, text: String },
+    Mark {
+        class: Option<i64>,
+        text: String,
+    },
     /// insert 节点（`\insert<num>{<general text>}`；无维度）：class 为插入寄存器号，
     /// 内容（一般文本）只收集不排版（ETRIP 简化）。
-    Ins { class: usize, text: String },
+    Ins {
+        class: usize,
+        text: String,
+    },
     /// adjust 节点（`\vadjust{<vertical material>}`；无维度）。
-    Adjust { text: String },
+    Adjust {
+        text: String,
+    },
     /// whatsit 节点（`\\write<n>{...}` 等；无维度）。
-    Whatsit { text: String },
+    Whatsit {
+        text: String,
+    },
     /// 行内数学边界标记（tex.web math_node）：`$` 进入/退出时插入；
     /// 无维度。`surrounded` = 当时的 `\\mathsurround`（showbox 显示
     /// `\\mathon, surrounded 12.3`）。
-    MathOn { surrounded: i64 },
-    MathOff { surrounded: i64 },
+    MathOn {
+        surrounded: i64,
+    },
+    MathOff {
+        surrounded: i64,
+    },
 }
 
 impl Node {
@@ -285,8 +307,9 @@ impl Node {
             Node::Adjust { .. } => 6,
             Node::Discretionary { .. } => 8,
             Node::Whatsit { .. } => 9,
-            // tex.web：math_node（\mathon/\mathoff）类型码 15
-            Node::MathOn { .. } | Node::MathOff { .. } => 15,
+            // tex.web：math_node（\mathon/\mathoff）类型码 10；15 是伪节点
+            // math_mode_node（空数学列表的 lastnodetype 值），不是真实节点类型
+            Node::MathOn { .. } | Node::MathOff { .. } => 10,
             Node::Direction { .. } => 10,
             Node::Glue { .. } | Node::Leaders { .. } => 11,
             Node::Kern { .. } => 12,
@@ -416,7 +439,8 @@ pub fn hpack(children: &[Node], width: i64) -> BoxNode {
     let mut total_shrink = [0i64; 4];
     for c in children {
         if let Node::Glue {
-            name: None,            stretch,
+            name: None,
+            stretch,
             shrink,
             stretch_order,
             shrink_order,
@@ -461,7 +485,8 @@ pub fn hpack(children: &[Node], width: i64) -> BoxNode {
     for c in children {
         match c {
             Node::Glue {
-            name: None,                width: w,
+                name: None,
+                width: w,
                 stretch,
                 shrink,
                 stretch_order,
@@ -484,7 +509,8 @@ pub fn hpack(children: &[Node], width: i64) -> BoxNode {
                     _ => {}
                 }
                 out.push(Node::Glue {
-            name: None,                    width: w,
+                    name: None,
+                    width: w,
                     stretch: *stretch,
                     shrink: *shrink,
                     stretch_order: *stretch_order,
@@ -521,7 +547,8 @@ mod tests {
 
     fn glue(w: i64) -> Node {
         Node::Glue {
-            name: None,            width: w,
+            name: None,
+            width: w,
             stretch: 0,
             shrink: 0,
             stretch_order: 0,
@@ -643,7 +670,8 @@ mod tests {
     #[test]
     fn discardable_classification() {
         assert!(Node::Glue {
-            name: None,            width: 0,
+            name: None,
+            width: 0,
             stretch: 0,
             shrink: 0,
             stretch_order: 0,

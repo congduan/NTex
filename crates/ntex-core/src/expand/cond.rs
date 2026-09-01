@@ -65,11 +65,16 @@ impl Expander {
                     return Ok(());
                 }
                 top.else_seen = true;
-                // TeX：\else 后进入 false 分支（\currentifbranch=-1）
+                // TeX：\\else 后进入 false 分支（\\currentifbranch=-1）
                 self.cur_if_branch = -1;
                 match top.state {
                     CondState::Skipping => {
-                        if top.owns_skip {
+                        // \\ifcase 的 \\else 是兜底落点，但仅当分支尚未选中：
+                        // - n<0（负数跳过，ors_left=None）或 n>0 未跳够 → 进入 else 分支
+                        // - 已选中分支（case_selected）后遇多余 \\or 转 Skipping → \\else
+                        //   是选中分支后的内容，保持跳过
+                        // 嵌套在被跳过区域里的非 case 条件（is_case=false）保持 Skipping。
+                        if top.is_case && !top.case_selected {
                             top.state = CondState::Processing;
                         }
                     }
@@ -93,9 +98,10 @@ impl Expander {
                     CondState::Skipping => {
                         if let Some(k) = top.ors_left {
                             if k == 1 {
-                                // 跳够 \or：该分支被选中（\currentifbranch=+1）
+                                // 跳够 \\or：该分支被选中（\\currentifbranch=+1）
                                 top.state = CondState::Processing;
                                 top.ors_left = None;
+                                top.case_selected = true;
                                 self.cur_if_branch = 1;
                             } else {
                                 top.ors_left = Some(k - 1);
@@ -146,7 +152,8 @@ impl Expander {
                         owns_skip: false,
                         ors_left: None,
                         else_seen: false,
-                        saved_if_type: saved_type,
+                        case_selected: false,
+saved_if_type: saved_type,
                         saved_if_branch: saved_branch,
                         if_type: code,
                         line: self.error_context().map(|(n, _)| n).unwrap_or(0),
@@ -169,7 +176,8 @@ impl Expander {
                         owns_skip: false,
                         ors_left: None,
                         else_seen: false,
-                        saved_if_type: saved_type,
+                        case_selected: false,
+saved_if_type: saved_type,
                         saved_if_branch: saved_branch,
                         if_type: code,
                         line: self.error_context().map(|(n, _)| n).unwrap_or(0),
@@ -198,7 +206,8 @@ impl Expander {
                         owns_skip: false,
                         ors_left: None,
                         else_seen: false,
-                        saved_if_type: saved_type,
+                        case_selected: false,
+saved_if_type: saved_type,
                         saved_if_branch: saved_branch,
                         if_type: code,
                         line: self.error_context().map(|(n, _)| n).unwrap_or(0),
@@ -218,7 +227,9 @@ impl Expander {
                     owns_skip: n > 0,
                     ors_left: (n > 0).then_some(n as usize),
                     else_seen: false,
-                    saved_if_type: saved_type,
+                    // n==0：case 0 直接选中（遇多余 \or/\else 保持跳过）
+                    case_selected: n == 0,
+saved_if_type: saved_type,
                     saved_if_branch: saved_branch,
                     if_type: code,
                     line: self.error_context().map(|(n, _)| n).unwrap_or(0),
@@ -297,7 +308,8 @@ impl Expander {
                         owns_skip: false,
                         ors_left: None,
                         else_seen: false,
-                        saved_if_type: self.cur_if_type,
+                        case_selected: false,
+saved_if_type: self.cur_if_type,
                         saved_if_branch: self.cur_if_branch,
                         if_type: Self::if_type_code(op),
                         line: self.error_context().map(|(n, _)| n).unwrap_or(0),
@@ -324,6 +336,7 @@ impl Expander {
                     owns_skip: false,
                     ors_left: None,
                     else_seen: true,
+                    case_selected: false,
                     saved_if_type: saved_type,
                     saved_if_branch: saved_branch,
                     if_type: saved_type,
@@ -342,6 +355,7 @@ impl Expander {
                     owns_skip: false,
                     ors_left: None,
                     else_seen: true,
+                    case_selected: false,
                     saved_if_type: saved_type,
                     saved_if_branch: saved_branch,
                     if_type: saved_type,
