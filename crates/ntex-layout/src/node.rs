@@ -147,6 +147,9 @@ pub enum Node {
     Rule { width: i64, height: i64, depth: i64 },
     /// 胶水：可拉伸 / 可收缩。
     Glue {
+        /// 来源名（\thinmuskip/\medmuskip/\thickmuskip 等；showbox 显示
+        /// `\glue(\thinmuskip)`——tex.web glue_spec 的来源标记）。
+        name: Option<&'static str>,
         width: i64,
         stretch: i64,
         shrink: i64,
@@ -413,7 +416,7 @@ pub fn hpack(children: &[Node], width: i64) -> BoxNode {
     let mut total_shrink = [0i64; 4];
     for c in children {
         if let Node::Glue {
-            stretch,
+            name: None,            stretch,
             shrink,
             stretch_order,
             shrink_order,
@@ -458,7 +461,7 @@ pub fn hpack(children: &[Node], width: i64) -> BoxNode {
     for c in children {
         match c {
             Node::Glue {
-                width: w,
+            name: None,                width: w,
                 stretch,
                 shrink,
                 stretch_order,
@@ -481,7 +484,7 @@ pub fn hpack(children: &[Node], width: i64) -> BoxNode {
                     _ => {}
                 }
                 out.push(Node::Glue {
-                    width: w,
+            name: None,                    width: w,
                     stretch: *stretch,
                     shrink: *shrink,
                     stretch_order: *stretch_order,
@@ -518,7 +521,7 @@ mod tests {
 
     fn glue(w: i64) -> Node {
         Node::Glue {
-            width: w,
+            name: None,            width: w,
             stretch: 0,
             shrink: 0,
             stretch_order: 0,
@@ -640,7 +643,7 @@ mod tests {
     #[test]
     fn discardable_classification() {
         assert!(Node::Glue {
-            width: 0,
+            name: None,            width: 0,
             stretch: 0,
             shrink: 0,
             stretch_order: 0,

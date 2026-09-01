@@ -406,6 +406,11 @@ pub trait TokenSink: std::fmt::Debug {
     fn align_row_end(&mut self) -> Result<()> {
         Ok(())
     }
+    /// `\thinmuskip/\medmuskip/\thickmuskip`（muskip 寄存器 0/1/2）赋值：
+    /// 数学间距参数（math_to_hlist 读；默认 thin=3mu/med=4mu/thick=5mu）。
+    fn muskip_param(&mut self, _idx: usize, _glue: Glue) -> Result<()> {
+        Ok(())
+    }
     /// `\raise`/`\lower<dimen>`：记录盒子参考点位移（下一个封装盒子生效）。
     fn raise(&mut self, _amount: i64) -> Result<()> {
         Ok(())

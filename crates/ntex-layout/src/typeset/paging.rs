@@ -43,7 +43,7 @@ impl NodeBuilder {
             empty_box.width = hsize; // \hbox to \hsize{}
             self.lists[0].push(Node::Box(empty_box));
             self.lists[0].push(Node::Glue {
-                width: 0,
+            name: None,                width: 0,
                 stretch: 1,
                 shrink: 0,
                 stretch_order: GLUE_ORDER_FIL,

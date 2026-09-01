@@ -106,7 +106,7 @@ fn preprocess(hlist: &[Node]) -> Vec<BreakSpec> {
     for (i, node) in hlist.iter().enumerate() {
         match node {
             Node::Glue {
-                width: w,
+            name: None,                width: w,
                 stretch: st,
                 shrink: sh,
                 stretch_order: so,
@@ -494,7 +494,7 @@ mod tests {
 
     fn glue(w: i64, st: i64, sh: i64) -> Node {
         Node::Glue {
-            width: w,
+            name: None,            width: w,
             stretch: st,
             shrink: sh,
             stretch_order: 0,
@@ -504,7 +504,7 @@ mod tests {
 
     fn fil_glue() -> Node {
         Node::Glue {
-            width: 0,
+            name: None,            width: 0,
             stretch: 1,
             shrink: 0,
             stretch_order: GLUE_ORDER_FIL,

@@ -692,6 +692,16 @@ impl Expander {
     }
 
     /// FontId → cs 名表（.fmt 导入后供 NodeBuilder 同步 showbox 字体标识）。
+    /// muskip 寄存器 0-2（\thinmuskip/\medmuskip/\thickmuskip）只读（install_builder
+    /// 同步数学间距参数——pass2 的 NodeBuilder 重建后须从 expander 恢复）。
+    pub fn muskip_registers(&self) -> [Glue; 3] {
+        [
+            self.registers.muskip(0),
+            self.registers.muskip(1),
+            self.registers.muskip(2),
+        ]
+    }
+
     pub fn font_cs_names_ref(&self) -> &Vec<Option<String>> {
         &self.font_cs_names
     }

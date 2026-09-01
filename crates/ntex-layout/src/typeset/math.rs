@@ -41,7 +41,7 @@ impl NodeBuilder {
             self.params.abovedisplayskip
         };
         self.append(Node::Glue {
-            width: above.width,
+            name: None,            width: above.width,
             stretch: above.stretch,
             shrink: above.shrink,
             stretch_order: 0,
@@ -86,7 +86,7 @@ impl NodeBuilder {
             // 公式盒 = `\hbox to \hsize`（两侧 \hfil 居中；displaywidth≈\hsize）
             let mut line: Vec<Node> = Vec::with_capacity(nodes.len() + 2);
             line.push(Node::Glue {
-                width: 0,
+            name: None,                width: 0,
                 stretch: 1,
                 shrink: 0,
                 stretch_order: GLUE_ORDER_FIL,
@@ -94,7 +94,7 @@ impl NodeBuilder {
             });
             line.extend(nodes);
             line.push(Node::Glue {
-                width: 0,
+            name: None,                width: 0,
                 stretch: 1,
                 shrink: 0,
                 stretch_order: GLUE_ORDER_FIL,
@@ -108,7 +108,7 @@ impl NodeBuilder {
                 self.params.belowdisplayskip
             };
             self.append(Node::Glue {
-                width: below.width,
+            name: None,                width: below.width,
                 stretch: below.stretch,
                 shrink: below.shrink,
                 stretch_order: 0,
@@ -370,9 +370,18 @@ impl NodeBuilder {
                 match spacing_code(p, c, style) {
                     SpacingCode::None | SpacingCode::Tight => {}
                     code => {
-                        let quad = self.fonts.quad(self.current_font);
-                        let (w, st, sh) = muskip(code, quad);
+                        // mu 参数（\thinmuskip 等；1mu = quad/18 换算的 sp 已由
+                        // expander scan_glue_mu 完成——muskip_params 存的是 pt 值）
+                        let g = self.muskip_params[code_idx(code)];
+                        let (w, st, sh) = (g.width, g.stretch, g.shrink);
                         out.push(Node::Glue {
+                            // showbox 显示 \glue(\thinmuskip) 等（tex.web 来源名）
+                            name: Some(match code {
+                                SpacingCode::Thin => "thinmuskip",
+                                SpacingCode::Med => "medmuskip",
+                                SpacingCode::Thick => "thickmuskip",
+                                _ => "muskip",
+                            }),
                             width: w,
                             stretch: st,
                             shrink: sh,
@@ -470,7 +479,7 @@ impl NodeBuilder {
                     Vec::new()
                 } else {
                     vec![Node::Glue {
-                        width: *width,
+            name: None,                        width: *width,
                         stretch: *stretch,
                         shrink: *shrink,
                         stretch_order: 0,
@@ -501,7 +510,7 @@ impl NodeBuilder {
         children.push(Node::Box(num_b));
         // 垂直间隙（vbox 内 x 不推进；宽度 0 避免抬高 vbox 总宽）
         children.push(Node::Glue {
-            width: 0,
+            name: None,            width: 0,
             stretch: 0,
             shrink: 0,
             stretch_order: 0,
@@ -515,7 +524,7 @@ impl NodeBuilder {
             });
         }
         children.push(Node::Glue {
-            width: 0,
+            name: None,            width: 0,
             stretch: 0,
             shrink: 0,
             stretch_order: 0,
@@ -541,7 +550,7 @@ impl NodeBuilder {
                 depth: 0,
             },
             Node::Glue {
-                width: 0,
+            name: None,                width: 0,
                 stretch: 0,
                 shrink: 0,
                 stretch_order: 0,
@@ -651,6 +660,16 @@ fn spacing_code(l: MathClass, r: MathClass, style: MathStyle) -> SpacingCode {
         2 => SpacingCode::Med,
         3 => SpacingCode::Thick,
         _ => SpacingCode::Tight,
+    }
+}
+
+/// SpacingCode → muskip 参数表索引（0=thin 1=med 2=thick）。
+fn code_idx(code: SpacingCode) -> usize {
+    match code {
+        SpacingCode::Thin => 0,
+        SpacingCode::Med => 1,
+        SpacingCode::Thick => 2,
+        _ => 0,
     }
 }
 

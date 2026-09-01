@@ -246,6 +246,10 @@ impl Expander {
     }
 
     fn assign_muskip(&mut self, idx: usize, val: Glue) {
+        // \thinmuskip/\medmuskip/\thickmuskip（0/1/2）：通知排版器数学间距参数
+        if idx < 3 {
+            let _ = self.sink.muskip_param(idx, val);
+        }
         let global = self.is_global();
         // e-TeX \tracingassigns（misc 5）：\muskip 寄存器赋值追踪
         if self.params.misc[5] > 0 {

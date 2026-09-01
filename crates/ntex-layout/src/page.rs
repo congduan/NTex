@@ -169,7 +169,7 @@ impl PageBuilder {
                             self.trace_buf.push_str(&self.trace_break_line(0, b_now, c));
                         }
                         self.page.push(Node::Glue {
-                            width: w,
+            name: None,                            width: w,
                             stretch: params.topskip.stretch,
                             shrink: params.topskip.shrink,
                             stretch_order: params.topskip.stretch_order,
@@ -199,7 +199,7 @@ impl PageBuilder {
                     let w = (params.topskip.width - height).max(0);
                     if w > 0 {
                         self.page.push(Node::Glue {
-                            width: w,
+            name: None,                            width: w,
                             stretch: params.topskip.stretch,
                             shrink: params.topskip.shrink,
                             stretch_order: params.topskip.stretch_order,
@@ -223,7 +223,7 @@ impl PageBuilder {
                 Outcome::Continue
             }
             Node::Glue {
-                width,
+            name: None,                width,
                 stretch,
                 shrink,
                 stretch_order,
@@ -241,7 +241,7 @@ impl PageBuilder {
                 }
                 contrib.remove(0);
                 self.page.push(Node::Glue {
-                    width,
+            name: None,                    width,
                     stretch,
                     shrink,
                     stretch_order,
@@ -475,6 +475,7 @@ impl PageBuilder {
                     width = width.max(*w);
                 }
                 Node::Glue {
+                    name: _,
                     width: w,
                     stretch: s,
                     shrink: sh,
@@ -554,6 +555,7 @@ impl PageBuilder {
         for c in children {
             match c {
                 Node::Glue {
+                    name: _,
                     width: w,
                     stretch: s,
                     shrink: sh,
@@ -577,7 +579,7 @@ impl PageBuilder {
                         _ => {}
                     }
                     out.push(Node::Glue {
-                        width: w,
+            name: None,                        width: w,
                         stretch: *s,
                         shrink: *sh,
                         stretch_order: *stretch_order,

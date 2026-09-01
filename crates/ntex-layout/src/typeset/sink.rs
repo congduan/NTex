@@ -24,7 +24,7 @@ impl TokenSink for NodeBuilder {
                     if self.pagination && !self.lists.last().is_some_and(Vec::is_empty) {
                         let ps = self.params.parskip;
                         self.append(Node::Glue {
-                            width: ps.width,
+            name: None,                            width: ps.width,
                             stretch: ps.stretch,
                             shrink: ps.shrink,
                             stretch_order: 0,
@@ -37,7 +37,7 @@ impl TokenSink for NodeBuilder {
                     if self.pagination {
                         let ps = self.params.parskip;
                         self.append(Node::Glue {
-                            width: ps.width,
+            name: None,                            width: ps.width,
                             stretch: ps.stretch,
                             shrink: ps.shrink,
                             stretch_order: 0,
@@ -351,7 +351,7 @@ impl TokenSink for NodeBuilder {
             return Ok(()); // 数学模式中 fill 胶水无效果
         }
         self.append(Node::Glue {
-            width: 0,
+            name: None,            width: 0,
             stretch,
             shrink,
             stretch_order: order,
@@ -419,7 +419,7 @@ impl TokenSink for NodeBuilder {
                     if self.pagination {
                         let ps = self.params.parskip;
                         self.append(Node::Glue {
-                            width: ps.width,
+            name: None,                            width: ps.width,
                             stretch: ps.stretch,
                             shrink: ps.shrink,
                             stretch_order: 0,
@@ -983,7 +983,7 @@ impl TokenSink for NodeBuilder {
             return Ok(());
         }
         self.append(Node::Glue {
-            width: g.width,
+            name: None,            width: g.width,
             stretch: g.stretch,
             shrink: g.shrink,
             stretch_order: 0,
@@ -1429,6 +1429,14 @@ impl TokenSink for NodeBuilder {
         Ok(())
     }
 
+    fn muskip_param(&mut self, idx: usize, glue: ntex_core::Glue) -> Result<()> {
+        // \thinmuskip/\medmuskip/\thickmuskip：存 mu 参数（math_to_hlist 读）
+        if idx < 3 {
+            self.muskip_params[idx] = glue;
+        }
+        Ok(())
+    }
+
     /// `\raise`/`\lower<dimen>`：记录盒子参考点位移（下一个封装盒子生效）。
     fn raise(&mut self, amount: i64) -> Result<()> {
         self.pending_shift = Some(amount);
@@ -1593,13 +1601,18 @@ fn showbox_format_node(
             out.push_str(&format!("{p}\\\\{} {c}\n", cs));
         }
         Node::Glue {
+            name,
             width,
             stretch,
             shrink,
             stretch_order,
             shrink_order,
         } => {
-            let mut s = format!("{p}\\glue {}", showbox_pt(*width));
+            let mut s = if let Some(n) = name {
+                format!("{p}\\glue(\\{n}) {}", showbox_pt(*width))
+            } else {
+                format!("{p}\\glue {}", showbox_pt(*width))
+            };
             if *stretch != 0 {
                 s.push_str(&format!(
                     " plus {}{}",

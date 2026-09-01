@@ -537,6 +537,10 @@ struct NodeBuilder {
     display_short: bool,
     /// M4-4 显示数学：公式刚闭合，后续文字续排（不开新段：无 parskip/缩进）。
     after_display: bool,
+    /// ETRIP 冲刺：数学间距参数（\\thinmuskip/\\medmuskip/\\thickmuskip =
+    /// muskip 寄存器 0/1/2 的 mu glue；`muskip_param` 事件更新，
+    /// 默认 thin=3mu/med=4mu±2mu∓4mu/thick=5mu±5mu）。
+    muskip_params: [ntex_core::Glue; 3],
     /// ETRIP 冲刺：终端转录累积（`\message`/`\show`/`\write16`）。
     transcript: String,
     /// ETRIP 冲刺：e-TeX marks 族状态（断页轮转）。
@@ -653,6 +657,12 @@ impl NodeBuilder {
             pending_box_spec: None,
             display_short: false,
             after_display: false,
+            // 默认数学间距（TeXbook p.170）：thin=3mu、med=4mu±2mu∓4mu、thick=5mu±5mu
+            muskip_params: [
+                ntex_core::Glue::new(3 * SP_PER_PT, 0, 0),
+                ntex_core::Glue::new(4 * SP_PER_PT, 2 * SP_PER_PT, 4 * SP_PER_PT),
+                ntex_core::Glue::new(5 * SP_PER_PT, 5 * SP_PER_PT, 0),
+            ],
             pending_leaders: None,
             leaders_box: None,
             nodes_appended: 0,
@@ -919,7 +929,7 @@ impl NodeBuilder {
                     g
                 };
                 self.append(Node::Glue {
-                    width: g.width,
+            name: None,                    width: g.width,
                     stretch: g.stretch,
                     shrink: g.shrink,
                     stretch_order: 0,
@@ -1031,7 +1041,7 @@ impl NodeBuilder {
             )
         };
         self.append(Node::Glue {
-            width,
+            name: None,            width,
             stretch,
             shrink,
             stretch_order: 0,

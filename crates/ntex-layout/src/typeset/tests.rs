@@ -387,7 +387,7 @@ mod tests {
         assert_eq!(children.len(), 3);
         match &children[1] {
             Node::Glue {
-                width,
+            name: None,                width,
                 stretch,
                 shrink,
                 ..
@@ -576,7 +576,7 @@ mod tests {
         assert_eq!(b.children.len(), 3);
         match &b.children[1] {
             Node::Glue {
-                width,
+            name: None,                width,
                 stretch,
                 shrink,
                 ..
@@ -863,7 +863,7 @@ mod tests {
             .collect();
         // 去掉行尾 \\parfillskip（0pt plus 1fil；hpack 拉伸后宽度非 0，按 fil 阶识别）
         while let Some(Node::Glue {
-            stretch,
+            name: None,            stretch,
             stretch_order,
             ..
         }) = children.last()

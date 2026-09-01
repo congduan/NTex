@@ -18,7 +18,7 @@ impl NodeBuilder {
         // 末行无限拉伸；`\parfillskip=0pt` 时末行保持自然宽度）。
         let pf = self.params.parfillskip;
         children.push(Node::Glue {
-            width: pf.width,
+            name: None,            width: pf.width,
             stretch: pf.stretch,
             shrink: pf.shrink,
             stretch_order: if pf.stretch != 0 { GLUE_ORDER_FIL } else { 0 },

@@ -244,6 +244,9 @@ impl Typesetter {
         builder.font_cs_names = self.expander.font_cs_names_ref().clone();
         // .fmt 导入的当前字体（防 pass2 字符全 nullfont + Missing 警告）
         builder.current_font = FontId(self.fmt_current_font);
+        // pass2 NodeBuilder 重建：同步数学间距参数（\\thinmuskip 等 muskip 寄存器——
+        // pass1 赋值在 dump 前，pass2 不重跑赋值事件）
+        builder.muskip_params = self.expander.muskip_registers();
         self.expander.set_sink(Box::new(builder));
         if let Some(b) = self
             .expander
