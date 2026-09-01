@@ -747,6 +747,12 @@ impl Expander {
         };
 
         let global = self.is_global();
+        // e-TeX \tracingassigns（misc 5）：\let 赋值追踪（changing/into/reassigning）
+        let prev_trace = if self.params.misc[5] > 0 {
+            Some(self.eqtb.slot(csid).clone())
+        } else {
+            None
+        };
         if !global && self.group_level > 0 {
             self.save_stack.push((
                 self.group_level,
@@ -772,6 +778,11 @@ impl Expander {
                 self.eqtb.char_alias(csid, catcode, charcode);
             }
             _ => return Err(Error::invalid_input("\\let 仅支持控制序列或字符")),
+        }
+        // \tracingassigns：\let 赋值后打点（prev 在赋值前已存）
+        if let Some(prev) = prev_trace {
+            let new = self.eqtb.slot(csid).clone();
+            self.trace_assign(csid, global, &prev, &new);
         }
         self.finish_assignment();
         Ok(())

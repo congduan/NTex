@@ -172,6 +172,16 @@ impl Expander {
     /// 扫描寄存器目标：数字下标（`\count0`）或 cs 引用（`\count\foo`，须已分配）。
     fn assign_count(&mut self, idx: usize, val: i64) {
         let global = self.is_global();
+        // e-TeX \tracingassigns（misc 5）：\count 寄存器赋值追踪
+        if self.params.misc[5] > 0 {
+            self.trace_assign_register(
+                "count",
+                idx,
+                global,
+                &self.registers.count(idx).to_string(),
+                &val.to_string(),
+            );
+        }
         if !global && self.group_level > 0 {
             self.save_stack.push((
                 self.group_level,
@@ -187,6 +197,16 @@ impl Expander {
 
     fn assign_dimen(&mut self, idx: usize, val: i64) {
         let global = self.is_global();
+        // e-TeX \tracingassigns（misc 5）：\dimen 寄存器赋值追踪
+        if self.params.misc[5] > 0 {
+            self.trace_assign_register(
+                "dimen",
+                idx,
+                global,
+                &format_dimen(self.registers.dimen(idx)),
+                &format_dimen(val),
+            );
+        }
         if !global && self.group_level > 0 {
             self.save_stack.push((
                 self.group_level,
@@ -202,6 +222,16 @@ impl Expander {
 
     fn assign_skip(&mut self, idx: usize, val: Glue) {
         let global = self.is_global();
+        // e-TeX \tracingassigns（misc 5）：\skip 寄存器赋值追踪
+        if self.params.misc[5] > 0 {
+            self.trace_assign_register(
+                "skip",
+                idx,
+                global,
+                &format_glue(self.registers.skip(idx)),
+                &format_glue(val),
+            );
+        }
         if !global && self.group_level > 0 {
             self.save_stack.push((
                 self.group_level,
@@ -217,6 +247,16 @@ impl Expander {
 
     fn assign_muskip(&mut self, idx: usize, val: Glue) {
         let global = self.is_global();
+        // e-TeX \tracingassigns（misc 5）：\muskip 寄存器赋值追踪
+        if self.params.misc[5] > 0 {
+            self.trace_assign_register(
+                "muskip",
+                idx,
+                global,
+                &format_mu_glue(self.registers.muskip(idx)),
+                &format_mu_glue(val),
+            );
+        }
         if !global && self.group_level > 0 {
             self.save_stack.push((
                 self.group_level,
@@ -839,7 +879,9 @@ impl Expander {
             }
         }
         if let Some(body) = trace {
-            if !body.is_empty() {
+            // \\tracingassigns 开启时组恢复不打 {restoring}（tex.web：恢复走
+            // tracingassigns 的 changing/into 语义或静默；参考 etrip 无恢复行）
+            if !body.is_empty() && self.params.misc[5] <= 0 {
                 let _ = self.sink.write16(format!("{{restoring {body}}}\n"));
             }
         }
@@ -956,6 +998,15 @@ impl Expander {
                 TokenKind::ControlSeq => {
                     if let Some(csid) = t.csid() {
                         s.push_str(&self.cs_name_display(csid));
+                        // tex.web show_token_list：cs 后若非空格 token 则补
+                        // 分隔空格（`macro:->\relax `；\detokenize 同规则）——
+                        // 宏体尾 cs（后面是组结束/结尾）也补
+                        let next_is_space = toks.get(i + 1).is_some_and(|nt| {
+                            nt.charcode() == Some(u32::from(b' '))
+                        });
+                        if !next_is_space {
+                            s.push(' ');
+                        }
                     }
                 }
                 TokenKind::MacroParam => {
@@ -1092,6 +1143,35 @@ impl Expander {
         }
         *self.eqtb.slot_mut(csid) = slot;
         self.finish_assignment();
+    }
+
+    /// e-TeX `\tracingassigns`：寄存器赋值追踪（`\count17=` 的
+    /// changing/into/reassigning；tex.web 对寄存器赋值同样打点）。
+    fn trace_assign_register(
+        &mut self,
+        cmd: &str,
+        idx: usize,
+        global: bool,
+        prev: &str,
+        new: &str,
+    ) {
+        if self.params.misc[5] <= 0 {
+            return;
+        }
+        let name = format!("{}{}", self.esc(cmd), idx);
+        if prev == new {
+            let _ = self
+                .sink
+                .write16(format!("{{reassigning {name}={new}}}\n"));
+        } else if global {
+            let _ = self.sink.write16(format!(
+                "{{globally changing {name}={prev}}}\n{{into {name}={new}}}\n"
+            ));
+        } else {
+            let _ = self
+                .sink
+                .write16(format!("{{changing {name}={prev}}}\n{{into {name}={new}}}\n"));
+        }
     }
 
     /// 消费 `\global` 前缀（每个赋值只消费一次）。
