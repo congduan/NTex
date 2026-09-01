@@ -543,6 +543,13 @@ impl TokenSink for NodeBuilder {
             .groups
             .pop()
             .ok_or_else(|| Error::internal("group_end 无配对 group_begin"))?;
+        // 垂直盒子内容结束时，开放段落先封装（\vbox{a} → vbox[hbox(a)]）。
+        // **必须在参数恢复之前**（TeX 语义：段落折行用组内 \hsize——etrip
+        // L193 `\vbox{\hsize=0pt...}` 折行用 0pt；恢复后折行会错用外层
+        // hsize=469.75pt，行宽/断点全错）。
+        if ctx.box_kind.is_some_and(PendingBox::is_vertical) && self.mode() == Mode::Horizontal {
+            self.close_paragraph();
+        }
         // 先恢复参数镜像（与 VM 的 save_stack 恢复对齐），随后的缩进/interline 用外层值
         if let Some(prev) = self.param_stack.pop() {
             self.params = prev;
@@ -623,10 +630,6 @@ impl TokenSink for NodeBuilder {
             };
             parent.atoms.extend(field_atoms);
             return Ok(());
-        }
-        // 垂直盒子内容结束时，开放段落先封装（\vbox{a} → vbox[hbox(a)]）
-        if ctx.box_kind.is_some_and(PendingBox::is_vertical) && self.mode() == Mode::Horizontal {
-            self.close_paragraph();
         }
         match ctx.kind {
             // noalign 组：对齐行间材料在 TeX 中并入外层垂直列表；ETRIP 简化丢弃
