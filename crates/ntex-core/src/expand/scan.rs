@@ -289,12 +289,12 @@ impl Expander {
                 // 组类型：sink 跟踪组种类（bottom=0 ... math_left=16）
                 EqSlot::Primitive(Primitive::CurrentGroupType) => {
                     self.fetch()?;
-                    return Ok(self.sink.current_group_type());
+                    return Ok(self.query_sink_ref().current_group_type());
                 }
                 // 最近节点类型：当前列表尾节点类型码（sink 查询；空列表 -1）
                 EqSlot::Primitive(Primitive::LastNodeType) => {
                     self.fetch()?;
-                    return Ok(self.sink.last_node_type());
+                    return Ok(self.query_sink_ref().last_node_type());
                 }
                 // e-TeX 只读整数：条件深度/种类/分支（数字上下文读取）
                 EqSlot::Primitive(Primitive::CurrentIfLevel) => {

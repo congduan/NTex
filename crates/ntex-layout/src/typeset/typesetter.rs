@@ -135,7 +135,6 @@ impl Typesetter {
         let mut st = self.expander.export_state();
         // pass1 结束时的当前字体（finish 存档；fmt 恢复后防全 nullfont）
         st.current_font = self.last_current_font;
-        eprintln!("[DBG-CF] export last_current_font={}", self.last_current_font);
         st
     }
 

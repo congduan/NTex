@@ -399,6 +399,9 @@ pub struct Expander {
     stack: Vec<InputFrame>,
     /// 输出 sink（M3-2）：token/组/原语事件流；默认 [`VecSink`] 收集 token。
     sink: Box<dyn TokenSink>,
+    /// 展开区域（\edef/\write/\message）期间 sink 被临时替换为 VecSink，
+    /// 内部量查询（\currentgrouptype/\lastnodetype）转发到原 sink。
+    query_sink: Option<Box<dyn TokenSink>>,
     /// 读取下限：`fetch` 只允许从下标 >= 该值的帧读取；
     /// 用于划分子展开（`\edef`/`\expandafter` 区域）的边界。
     read_floor: usize,
@@ -568,6 +571,7 @@ impl Expander {
             sfcodes: [1000; 256],
             stack: Vec::new(),
             sink: Box::new(VecSink::default()),
+            query_sink: None,
             read_floor: 0,
             cond_stack: Vec::new(),
             err_snapshot: None,
@@ -1803,6 +1807,11 @@ impl Expander {
     /// 只读访问 sink（export_state 读当前字体等）。
     pub fn sink_ref(&self) -> &dyn TokenSink {
         self.sink.as_ref()
+    }
+
+    /// 内部量查询目标：展开区域内转发到原 sink（VecSink 查询全为默认值）。
+    pub fn query_sink_ref(&self) -> &dyn TokenSink {
+        self.query_sink.as_deref().unwrap_or(self.sink.as_ref())
     }
 
     /// 取出输出 sink（排版器运行结束后取回 builder）。

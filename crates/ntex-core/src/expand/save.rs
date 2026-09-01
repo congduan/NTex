@@ -520,7 +520,7 @@ impl Expander {
                 // ETRIP 冲刺：e-TeX 只读整数（\the/\number 上下文，与 scan_number 对齐）
                 Primitive::InputLineNo => Ok(emit_count(self.current_line_no() as i64)),
                 Primitive::CurrentGroupLevel => Ok(emit_count(self.group_level as i64)),
-                Primitive::CurrentGroupType => Ok(emit_count(self.sink.current_group_type())),
+                Primitive::CurrentGroupType => Ok(emit_count(self.query_sink_ref().current_group_type())),
                 Primitive::LastNodeType => Ok(emit_count(self.sink.last_node_type())),
                 Primitive::CurrentIfLevel => Ok(emit_count(self.cond_stack.len() as i64)),
                 Primitive::CurrentIfType => Ok(emit_count(self.cur_if_type as i64)),

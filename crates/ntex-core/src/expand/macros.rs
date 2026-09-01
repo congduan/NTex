@@ -663,8 +663,10 @@ impl Expander {
         // \edef/\xdef/\write：TeX expand() 语义——只展开可展开项，
         // 不可展开原语/未定义 cs/字符/组定界原样保留（不执行、不建组）
         self.expand_only = true;
-        // 区域输出重定向到临时 VecSink（M3-2：sink 替代 output 字段）
+        // 区域输出重定向到临时 VecSink（M3-2：sink 替代 output 字段）；
+        // 内部量查询（\currentgrouptype/\lastnodetype）转发到原 sink
         let saved = std::mem::replace(&mut self.sink, Box::new(VecSink::default()));
+        self.query_sink = Some(saved);
         let outcome = (|| -> Result<Vec<Token>> {
             #[cfg(debug_assertions)]
             let shown: Vec<String> = tokens.iter().take(24).map(|t| match t.csid() {
@@ -695,7 +697,12 @@ impl Expander {
                 }
                 return Err(Error::invalid_input("条件未闭合（缺少 \\fi）"));
             }
-            let temp = std::mem::replace(&mut self.sink, saved);
+            let temp = std::mem::replace(
+                &mut self.sink,
+                self.query_sink
+                    .take()
+                    .expect("expand_region 设置了 query_sink"),
+            );
             Ok(temp.take_tokens().expect("expand_region 安装了 VecSink"))
         })();
         // 统一恢复（错误路径下 sink 保持区域 VecSink，引擎随之终止）
