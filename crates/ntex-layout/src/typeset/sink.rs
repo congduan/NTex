@@ -1575,7 +1575,7 @@ fn showbox_format_node(
     cs_names: &[Option<String>],
     out: &mut String,
 ) {
-    let p = ".".repeat(depth + 1);
+    let p = ".".repeat(depth);
     match n {
         Node::Box(b) => showbox_format_box(b, depth, fonts, cs_names, out),
         Node::Char {

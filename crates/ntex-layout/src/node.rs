@@ -355,6 +355,13 @@ pub fn vbox_dimensions(children: &[Node]) -> BoxDimensions {
 /// 占位度量阶段简化：差额直接调整维度（高度优先，超 `maxdepth` 语义未建模；
 /// 不逐节点烘焙 glue_set）。无差额时与 [`BoxNode::new_vbox`] 等价。
 pub fn vpack(children: Vec<Node>, height: i64) -> BoxNode {
+    // tex.web vpack：删除前导 discardable 节点（glue/penalty/kern/mark/insert 等）——
+    // 垂直列表开段的 \\parskip 前导 glue 在打包时被移除（参考 etrip vbox 无
+    // 前导 \\parskip；\\vbox{\\hsize=0pt a} 的第一个 child 是行盒而非 glue）。
+    let mut children = children;
+    while children.first().is_some_and(Node::is_discardable) {
+        children.remove(0);
+    }
     let natural = vbox_dimensions(&children);
     let mut b = BoxNode::new_vbox(children);
     let diff = height - (natural.height + natural.depth);
