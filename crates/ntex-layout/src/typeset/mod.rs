@@ -1059,9 +1059,15 @@ impl NodeBuilder {
         } = node
         {
             self.adjust_space_factor(charcode);
-            // 先取出前驱 (font, charcode)，避免借用冲突
+            // 先取出前驱 (font, charcode)，避免借用冲突；尾节点为连字节点时
+            // 以结果字符继续匹配（ffi 的第二次 f+i 匹配）
             let prev = match self.lists.last().and_then(|l| l.last()) {
                 Some(Node::Char {
+                    font: pf,
+                    charcode: pc,
+                    ..
+                }) if *pf == font => Some((*pf, *pc)),
+                Some(Node::Ligature {
                     font: pf,
                     charcode: pc,
                     ..
@@ -1074,20 +1080,48 @@ impl NodeBuilder {
                     match action {
                         LigKern::Kern(kern) => self.append(Node::Kern { width: kern }),
                         LigKern::Lig(result) => {
-                            // 尾字符替换为结果字符（fi/fl/ff 等），当前字符丢弃
+                            // 尾节点替换为连字节点（tex.web ligature_node：
+                            // lastnodetype=7；参考 showbox `.\trip r (ligature u|)`）。
+                            // 连续连字（ffi）时尾 Ligature 继续参与匹配，components 累积。
                             let (w, h, d) = self.fonts.metrics(font, result as u32);
-                            if let Some(Node::Char {
-                                charcode: rc,
-                                width: rw,
-                                height: rh,
-                                depth: rd,
-                                ..
-                            }) = self.lists.last_mut().and_then(|l| l.last_mut())
-                            {
-                                *rc = result as u32;
-                                *rw = w;
-                                *rh = h;
-                                *rd = d;
+                            let last = self.lists.last_mut().and_then(|l| l.last_mut());
+                            let replaced = match last {
+                                Some(Node::Char {
+                                    font: cf,
+                                    charcode: rc,
+                                    ..
+                                }) => {
+                                    let comps = vec![*rc as u8, charcode as u8];
+                                    Some(Node::Ligature {
+                                        font: *cf,
+                                        charcode: result as u32,
+                                        width: w,
+                                        height: h,
+                                        depth: d,
+                                        components: comps,
+                                    })
+                                }
+                                Some(Node::Ligature {
+                                    font: cf,
+                                    components: comps,
+                                    ..
+                                }) => {
+                                    comps.push(charcode as u8);
+                                    Some(Node::Ligature {
+                                        font: *cf,
+                                        charcode: result as u32,
+                                        width: w,
+                                        height: h,
+                                        depth: d,
+                                        components: std::mem::take(comps),
+                                    })
+                                }
+                                _ => None,
+                            };
+                            if let Some(node) = replaced {
+                                if let Some(l) = self.lists.last_mut() {
+                                    *l.last_mut().expect("上面已检查非空") = node;
+                                }
                             }
                             drop_cur = true;
                         }

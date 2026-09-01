@@ -153,15 +153,27 @@ impl FontMetrics {
 
     /// 执行左字符的 lig/kern 程序查右字符（tex.web main_loop 的
     /// "ligature/kern command relevant to cur_l and cur_r"）：
-    /// 从程序起点逐条目：stop（skip≥128）→ 无命令；next_char 匹配 → kern/连字；
-    /// 不匹配 → 跳 skip+1。连字仅支持 `x y =: z`（a=b=c=0，左右都删）。
+    /// 从程序起点逐条目：stop（skip==128）→ 无命令；next_char 匹配 → kern/连字；
+    /// 不匹配 → 跳 skip+1。**入口重定向**（skip>128，TFM 紧凑格式：char_info
+    /// 的 remainder 指向重定向表条目，目标 = u16(op_byte, remainder)——texcraft
+    /// deserialize 同款解析）：先解引用到真实程序再匹配。连字仅支持
+    /// `x y =: z`（a=b=c=0，左右都删）。
     pub fn apply_lig_kern(&self, left: u8, right: u8) -> Option<LigKern> {
         let start = self.lig_kern_index.get(left as usize).copied().flatten()? as usize;
-        let mut k = start;
+        // 入口重定向（skip>128）：目标程序索引 = op_byte<<8 | remainder
+        let mut k = match self.lig_kern_steps.get(start) {
+            Some(s) if s.skip_byte > 128 => ((s.op_byte as usize) << 8) | s.remainder as usize,
+            _ => start,
+        };
         loop {
             let s = *self.lig_kern_steps.get(k)?;
-            if s.skip_byte >= 128 {
+            if s.skip_byte == 128 {
                 return None; // stop_flag：程序结束，无命令
+            }
+            // 程序中间的重定向（罕见）：继续解引用
+            if s.skip_byte > 128 {
+                k = ((s.op_byte as usize) << 8) | s.remainder as usize;
+                continue;
             }
             if s.next_char == right {
                 if s.op_byte >= 128 {

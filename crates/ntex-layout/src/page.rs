@@ -504,6 +504,7 @@ impl PageBuilder {
                     width = width.max(*w);
                 }
                 Node::Char { .. }
+                | Node::Ligature { .. }
                 | Node::Penalty { .. }
                 | Node::Discretionary { .. }
                 | Node::Direction { .. }

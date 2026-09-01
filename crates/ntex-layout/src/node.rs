@@ -141,6 +141,18 @@ pub enum Node {
         height: i64,
         depth: i64,
     },
+    /// 连字节点（tex.web ligature_node；lastnodetype=7）：`x y =: z` 程序匹配后
+    /// 左字符替换为结果字符、右字符被消费。`components` = 组成字符序列
+    /// （showbox 显示 `.\trip r (ligature u|)`——组成用 `|` 连接）。
+    /// 连续连字（ffi）时尾 Ligature 继续参与匹配，components 累积。
+    Ligature {
+        font: FontId,
+        charcode: u32,
+        width: i64,
+        height: i64,
+        depth: i64,
+        components: Vec<u8>,
+    },
     /// 盒子（hlist / vlist）。
     Box(BoxNode),
     /// 规则（`\hrule` / `\vrule`）。
@@ -239,6 +251,16 @@ impl Node {
                 height: *height,
                 depth: *depth,
             },
+            Node::Ligature {
+                width,
+                height,
+                depth,
+                ..
+            } => BoxDimensions {
+                width: *width,
+                height: *height,
+                depth: *depth,
+            },
             Node::Box(b) => b.dimensions(),
             Node::Rule {
                 width,
@@ -297,6 +319,8 @@ impl Node {
     pub fn node_type_code(&self) -> i64 {
         match self {
             Node::Char { .. } => 0,
+            // tex.web：ligature_node 类型码 7
+            Node::Ligature { .. } => 7,
             Node::Box(b) => match b.kind {
                 BoxKind::HBox => 1,
                 BoxKind::VBox => 2,
@@ -321,7 +345,11 @@ impl Node {
     pub fn has_vertical_extent(&self) -> bool {
         matches!(
             self,
-            Node::Char { .. } | Node::Box(_) | Node::Rule { .. } | Node::Leaders { .. }
+            Node::Char { .. }
+                | Node::Ligature { .. }
+                | Node::Box(_)
+                | Node::Rule { .. }
+                | Node::Leaders { .. }
         )
     }
 

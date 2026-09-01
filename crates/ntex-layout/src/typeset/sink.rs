@@ -1568,7 +1568,7 @@ fn showbox_format_box(
         BoxKind::VBox => "vbox",
     };
     out.push_str(&format!(
-        "{p}\\\\{kind}({}+{})x{}",
+        "{p}\\{kind}({}+{})x{}",
         showbox_pt(b.height),
         showbox_pt(b.depth),
         showbox_pt(b.width)
@@ -1597,7 +1597,7 @@ fn showbox_format_node(
         Node::Char {
             font, charcode, ..
         } => {
-            // TeX show_node_list：`.<字体名> <字符>`（如 `.\trip 1`，字符直接显示）
+            // TeX show_node_list：`.<字体名> <字符>`（如 `.\\trip 1`，字符直接显示）
             let c = char::from_u32(*charcode)
                 .map(|c| c.to_string())
                 .unwrap_or_else(|| format!("{charcode}"));
@@ -1606,7 +1606,30 @@ fn showbox_format_node(
                 .and_then(|n| n.as_ref())
                 .cloned()
                 .unwrap_or_else(|| fonts.font_name(*font));
-            out.push_str(&format!("{p}\\\\{} {c}\n", cs));
+            out.push_str(&format!("{p}\\{} {c}\n", cs));
+        }
+        Node::Ligature {
+            font,
+            charcode,
+            components,
+            ..
+        } => {
+            // TeX show_node_list：`.<字体名> <结果> (ligature <组成|...>)`
+            // （参考 `..\\rip A (ligature AA)`、`.\\trip r (ligature u|)`）
+            let c = char::from_u32(*charcode)
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| format!("{charcode}"));
+            let cs = cs_names
+                .get(font.0 as usize)
+                .and_then(|n| n.as_ref())
+                .cloned()
+                .unwrap_or_else(|| fonts.font_name(*font));
+            let comps: String = components
+                .iter()
+                .map(|&b| char::from_u32(b as u32).map(|c| c.to_string()).unwrap_or_default())
+                .collect::<Vec<_>>()
+                .join("|");
+            out.push_str(&format!("{p}\\{} {c} (ligature {comps})\n", cs));
         }
         Node::Glue {
             name,
@@ -1638,7 +1661,7 @@ fn showbox_format_node(
             s.push('\n');
             out.push_str(&s);
         }
-        Node::Kern { width } => out.push_str(&format!("{p}\\kern {}\n", showbox_pt(*width))),
+        Node::Kern { width } => out.push_str(&format!("{p}\\kern{}\n", showbox_pt(*width))),
         Node::Penalty { penalty } => out.push_str(&format!("{p}\\penalty {}\n", penalty)),
         Node::Rule {
             width,
@@ -1694,8 +1717,8 @@ fn showbox_format_node(
             out.push_str(&format!("{p}\\{name}\n"));
         }
         Node::Mark { class, text } => match class {
-            Some(c) => out.push_str(&format!("{p}\\\\marks{c}{{{text}}}\n")),
-            None => out.push_str(&format!("{p}\\\\mark{{{text}}}\n")),
+            Some(c) => out.push_str(&format!("{p}\\marks{c}{{{text}}}\n")),
+            None => out.push_str(&format!("{p}\\mark{{{text}}}\n")),
         },
         Node::Ins { class, text } => out.push_str(&format!("{p}\\insert{class} {text}\n")),
         Node::Adjust { text } => out.push_str(&format!("{p}\\vadjust {text}\n")),

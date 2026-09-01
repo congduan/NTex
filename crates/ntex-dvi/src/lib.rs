@@ -205,6 +205,21 @@ impl<'a> Writer<'a> {
                     self.cur_h += width;
                     self.dvi_h = self.cur_h;
                 }
+                Node::Ligature {
+                    font,
+                    charcode,
+                    width,
+                    ..
+                } => {
+                    // 连字节点：DVI 输出结果字符（tex.web：ligature 在 hpack 后
+                    // 已是字符序列，输出同字符）
+                    self.synch_h();
+                    self.synch_v();
+                    self.select_font(font.0);
+                    self.set_char(*charcode);
+                    self.cur_h += width;
+                    self.dvi_h = self.cur_h;
+                }
                 Node::Glue { width, .. } | Node::Kern { width } => self.cur_h += width,
                 Node::Box(inner) => {
                     if inner.children.is_empty() {
@@ -298,6 +313,7 @@ impl<'a> Writer<'a> {
                 Node::Penalty { .. }
                 | Node::Leaders { .. }
                 | Node::Char { .. }
+                | Node::Ligature { .. }
                 | Node::Discretionary { .. }
                 | Node::Ins { .. }
                 | Node::Adjust { .. }
