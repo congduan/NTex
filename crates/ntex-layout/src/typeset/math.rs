@@ -73,7 +73,15 @@ impl NodeBuilder {
             level.left = None;
         }
         Self::math_finish_fraction(&mut level);
-        let nodes = self.math_to_hlist(&level.atoms, style);
+        let mut nodes = self.math_to_hlist(&level.atoms, style);
+        // 行内数学边界标记（tex.web math_node）：`$` 进入/退出插 \\mathon/\\mathoff
+        // （无维度；showbox 显示 `..\\mathon`。显示数学的公式盒内 TeX 同样有
+        // math_node——本引擎显示公式走 `\\hbox to \\hsize` 盒，先只做行内）。
+        let ms = self.params.mathsurround;
+        if !was_display {
+            nodes.insert(0, Node::MathOn { surrounded: ms });
+            nodes.push(Node::MathOff { surrounded: ms });
+        }
         if was_display {
             // 公式盒 = `\hbox to \hsize`（两侧 \hfil 居中；displaywidth≈\hsize）
             let mut line: Vec<Node> = Vec::with_capacity(nodes.len() + 2);

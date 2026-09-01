@@ -191,8 +191,13 @@ pub enum Node {
     Ins { class: usize, text: String },
     /// adjust 节点（`\vadjust{<vertical material>}`；无维度）。
     Adjust { text: String },
-    /// whatsit 节点（`\write<n>{...}` 等；无维度）。
+    /// whatsit 节点（`\\write<n>{...}` 等；无维度）。
     Whatsit { text: String },
+    /// 行内数学边界标记（tex.web math_node）：`$` 进入/退出时插入；
+    /// 无维度。`surrounded` = 当时的 `\\mathsurround`（showbox 显示
+    /// `\\mathon, surrounded 12.3`）。
+    MathOn { surrounded: i64 },
+    MathOff { surrounded: i64 },
 }
 
 impl Node {
@@ -251,7 +256,11 @@ impl Node {
             // mark 节点：无维度。
             Node::Mark { .. } => BoxDimensions::ZERO,
             // insert/adjust/whatsit 节点：无维度。
-            Node::Ins { .. } | Node::Adjust { .. } | Node::Whatsit { .. } => BoxDimensions::ZERO,
+            Node::Ins { .. }
+            | Node::Adjust { .. }
+            | Node::Whatsit { .. }
+            | Node::MathOn { .. }
+            | Node::MathOff { .. } => BoxDimensions::ZERO,
         }
     }
 
@@ -273,6 +282,8 @@ impl Node {
             Node::Adjust { .. } => 6,
             Node::Discretionary { .. } => 8,
             Node::Whatsit { .. } => 9,
+            // tex.web：math_node（\mathon/\mathoff）类型码 15
+            Node::MathOn { .. } | Node::MathOff { .. } => 15,
             Node::Direction { .. } => 10,
             Node::Glue { .. } | Node::Leaders { .. } => 11,
             Node::Kern { .. } => 12,

@@ -1679,5 +1679,22 @@ fn showbox_format_node(
         Node::Ins { class, text } => out.push_str(&format!("{p}\\insert{class} {text}\n")),
         Node::Adjust { text } => out.push_str(&format!("{p}\\vadjust {text}\n")),
         Node::Whatsit { text } => out.push_str(&format!("{p}\\write {text}\n")),
+        // 数学边界标记（tex.web math_node）：`.\mathon`；\mathsurround 非 0
+        // 时补 `, surrounded X`（参考 etrip.log `\mathon, surrounded 12.3`）
+        Node::MathOn { surrounded } | Node::MathOff { surrounded } => {
+            let name = if matches!(n, Node::MathOn { .. }) {
+                "mathon"
+            } else {
+                "mathoff"
+            };
+            if *surrounded != 0 {
+                out.push_str(&format!(
+                    "{p}\\{name}, surrounded {}\n",
+                    showbox_pt(*surrounded)
+                ));
+            } else {
+                out.push_str(&format!("{p}\\{name}\n"));
+            }
+        }
     }
 }

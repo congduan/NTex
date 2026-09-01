@@ -836,10 +836,16 @@ mod tests {
         let main = typeset(text).unwrap();
         assert_eq!(main.len(), 1, "数学公式应封装为单行段落：{text:?}");
         let line = as_box(&main[0]);
-        // 去掉行尾 \parfillskip 胶水
+        // 去掉行尾 \\parfillskip 胶水与 \\mathon/\\mathoff 边界标记
+        // （边界节点是 \\tracinggroups 风格的结构标记，单元测试断言数学内容）
         line.children
             .iter()
-            .filter(|n| !matches!(n, Node::Glue { .. }))
+            .filter(|n| {
+                !matches!(
+                    n,
+                    Node::Glue { .. } | Node::MathOn { .. } | Node::MathOff { .. }
+                )
+            })
             .cloned()
             .collect()
     }
@@ -848,8 +854,14 @@ mod tests {
     fn math_line_all_children(text: &str) -> Vec<Node> {
         let main = typeset(text).unwrap();
         assert_eq!(main.len(), 1, "数学公式应封装为单行段落：{text:?}");
-        let mut children = as_box(&main[0]).children.clone();
-        // 去掉行尾 \parfillskip（0pt plus 1fil；hpack 拉伸后宽度非 0，按 fil 阶识别）
+        let mut children: Vec<Node> = as_box(&main[0])
+            .children
+            .iter()
+            // 去掉 \\mathon/\\mathoff 边界标记（结构标记，测试断言数学内容）
+            .filter(|n| !matches!(n, Node::MathOn { .. } | Node::MathOff { .. }))
+            .cloned()
+            .collect();
+        // 去掉行尾 \\parfillskip（0pt plus 1fil；hpack 拉伸后宽度非 0，按 fil 阶识别）
         while let Some(Node::Glue {
             stretch,
             stretch_order,

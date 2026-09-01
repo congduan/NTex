@@ -506,7 +506,9 @@ impl PageBuilder {
                 | Node::Mark { .. }
                 | Node::Ins { .. }
                 | Node::Adjust { .. }
-                | Node::Whatsit { .. } => {}
+                | Node::Whatsit { .. }
+                | Node::MathOn { .. }
+                | Node::MathOff { .. } => {}
             }
         }
         if d > self.max_depth {

@@ -245,6 +245,8 @@ impl<'a> Writer<'a> {
                 | Node::Ins { .. }
                 | Node::Adjust { .. }
                 | Node::Whatsit { .. }
+                | Node::MathOn { .. }
+                | Node::MathOff { .. }
                 | Node::Direction { .. }
                 | Node::Mark { .. } => {}
             }
@@ -300,6 +302,8 @@ impl<'a> Writer<'a> {
                 | Node::Ins { .. }
                 | Node::Adjust { .. }
                 | Node::Whatsit { .. }
+                | Node::MathOn { .. }
+                | Node::MathOff { .. }
                 | Node::Direction { .. }
                 | Node::Mark { .. } => {}
             }
