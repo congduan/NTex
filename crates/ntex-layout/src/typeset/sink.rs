@@ -1614,8 +1614,9 @@ fn showbox_format_node(
             components,
             ..
         } => {
-            // TeX show_node_list：`.<字体名> <结果> (ligature <组成|...>)`
-            // （参考 `..\\rip A (ligature AA)`、`.\\trip r (ligature u|)`）
+            // TeX show_node_list：`.<字体名> <结果> (ligature <组成>)`——组成字符
+            // **直接连接**（参考 `..\\rip A (ligature AAA)`；etrip 的
+            // `(ligature u|)` 是组成含竖线字符 124，不是分隔符）
             let c = char::from_u32(*charcode)
                 .map(|c| c.to_string())
                 .unwrap_or_else(|| format!("{charcode}"));
@@ -1627,8 +1628,7 @@ fn showbox_format_node(
             let comps: String = components
                 .iter()
                 .map(|&b| char::from_u32(b as u32).map(|c| c.to_string()).unwrap_or_default())
-                .collect::<Vec<_>>()
-                .join("|");
+                .collect();
             out.push_str(&format!("{p}\\{} {c} (ligature {comps})\n", cs));
         }
         Node::Glue {
