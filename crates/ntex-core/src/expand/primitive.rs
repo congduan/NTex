@@ -190,7 +190,15 @@ impl Expander {
                 self.sink.kern(w)
             }
             Primitive::Penalty => {
+                // 记录行号须在 scan_number 之前（数字扫描吞行尾换行 →
+                // current_line_no 已前进到下一行）
+                let line = self.current_line_no();
                 let p = self.scan_number()?;
+                // 强制断页（≤ -10000）触发 output 例程：例程组的 entering
+                // 行 = 断页行（tex.web：例程在断页 token 处注入）
+                if p <= -10_000 {
+                    self.output_trigger_line = line;
+                }
                 self.sink.penalty(p)
             }
             Primitive::HRule | Primitive::VRule => {
@@ -392,7 +400,11 @@ impl Expander {
             Primitive::Show => self.exec_show(),
             Primitive::ShowThe => self.exec_showthe(),
             // M3-5 输出：\shipout 直通 sink（排版器解释：封装下一盒子为页面）
-            Primitive::ShipOut => self.sink.primitive(prim),
+            Primitive::ShipOut => {
+                // 记录触发行号（output 例程组 entering 行 = shipout 行）
+                self.output_trigger_line = self.current_line_no();
+                self.sink.primitive(prim)
+            }
             // M3-5-3 输出例程：\output=<general text> 存储 token 列表
             Primitive::Output => {
                 self.expect_equals()?;

@@ -402,6 +402,9 @@ pub struct Expander {
     /// 展开区域（\edef/\write/\message）期间 sink 被临时替换为 VecSink，
     /// 内部量查询（\currentgrouptype/\lastnodetype）转发到原 sink。
     query_sink: Option<Box<dyn TokenSink>>,
+    /// \shipout 触发行号（tex.web：output 例程在 shipout 行注入——例程组
+    /// 的 entering 行号 = shipout 行而非注入时刻的输入位置）。
+    output_trigger_line: usize,
     /// 读取下限：`fetch` 只允许从下标 >= 该值的帧读取；
     /// 用于划分子展开（`\edef`/`\expandafter` 区域）的边界。
     read_floor: usize,
@@ -579,6 +582,7 @@ impl Expander {
             stack: Vec::new(),
             sink: Box::new(VecSink::default()),
             query_sink: None,
+            output_trigger_line: 0,
             read_floor: 0,
             cond_stack: Vec::new(),
             err_snapshot: None,

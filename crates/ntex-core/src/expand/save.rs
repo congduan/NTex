@@ -756,8 +756,16 @@ impl Expander {
         // 记录组开始时的条件栈深度：组结束时条件必须回到该深度（跨组开条件 → 错误）
         self.group_cond_depth.push(self.cond_stack.len());
         // M3-2：通知 sink 组开始（排版器据此构建盒子内容）；带进入行号
-        // （\\tracinggroups 显示 `{entering X (level N) at line L}`）
-        self.sink.group_begin(self.current_line_no() as u32)
+        // （\\tracinggroups 显示 `{entering X (level N) at line L}`；
+        // output 例程组优先用 \\shipout 触发行号）
+        let line = if self.output_trigger_line != 0 {
+            let l = self.output_trigger_line;
+            self.output_trigger_line = 0;
+            l
+        } else {
+            self.current_line_no()
+        } as u32;
+        self.sink.group_begin(line)
     }
 
     fn end_group(&mut self) -> Result<()> {
