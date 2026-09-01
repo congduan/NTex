@@ -423,6 +423,13 @@ pub struct Expander {
     /// （外层模板可含嵌套 `\vbox{\halign{...\crcr}}`——内层 `\crcr` 是模板 token，
     /// 不结束外层模板；TRIP L331-333 外层 `\halign` 模板跨行含内层 `\halign`）。
     align_preamble_depth: i32,
+    /// `\noalign` 已执行（对齐体内）：下一个 `{` 建立真实组（tex.web noalign，
+    /// 组种类 7——`\currentgrouptype` 在其内部报 no align group）。
+    align_noalign_pending: bool,
+    /// 已建立的 `\noalign` 组各自的对齐深度栈（嵌套 `\noalign` 逐层配对）：
+    /// 对齐体内 `{`/`}` 通常只调整 [`Self::align_depth`] 不建组，`\noalign`
+    /// 例外——配对 `}` 把深度减回记录值时 pop 对应组。
+    align_noalign_depths: Vec<i32>,
     /// 组开始时的条件栈深度（组结束必须回到该深度）。
     group_cond_depth: Vec<usize>,
     /// 赋值保存栈：组结束时按层回滚（朴素快照回滚）。
@@ -579,6 +586,8 @@ impl Expander {
             align_depth: 0,
             align_preamble: false,
             align_preamble_depth: 0,
+            align_noalign_pending: false,
+            align_noalign_depths: Vec::new(),
             group_cond_depth: Vec::new(),
             save_stack: Vec::new(),
             global_pending: false,
@@ -739,6 +748,8 @@ impl Expander {
         self.align_depth = 0;
         self.align_preamble = false;
         self.align_preamble_depth = 0;
+        self.align_noalign_pending = false;
+        self.align_noalign_depths.clear();
         self.group_cond_depth.clear();
         self.save_stack.clear();
         self.global_pending = false;
@@ -1223,7 +1234,9 @@ impl Expander {
         self.output_active = true;
         let items: Vec<(Token, bool)> = toks.iter().map(|&t| (t, false)).collect();
         // 输出例程隐式组（tex.web：例程在 save_stack 组内执行——\tracingcommands0
-        // 等例程内赋值组结束恢复；TRIP L107 例程后 \tracingcommands 回 30）
+        // 等例程内赋值组结束恢复；TRIP L107 例程后 \tracingcommands 回 30）。
+        // 组种类 output_group=8（tex.web group_code，ETRIP L396 \currentgrouptype 检查）
+        self.sink.output_routine_begin()?;
         self.begin_group()?;
         self.stack.push(InputFrame::OutputRoutine {
             items: Arc::from(items),
@@ -1469,14 +1482,31 @@ impl Expander {
                 // 组定界符（cat 1/2）在主流层建立/结束组（M1-11）。
                 // alignment 组内（`\halign`/`\valign`）：`{`/`}` 只调整对齐深度，
                 // 不建立普通组（TeX alignment 状态机语义，`\cr`/`&` 由布局层消费）。
+                // 例外：`\noalign{`（tex.web noalign）建立组种类 7 的真实组——
+                // `\currentgrouptype` 在其内部必须报 no align group。
                 match tok.catcode() {
                     Some(Catcode::BeginGroup) if self.align_depth > 0 => {
-                        self.align_depth += 1;
-                        Ok(())
+                        if self.align_noalign_pending {
+                            // `\noalign` 的 `{`：真实组（sink 消费显式组种类 7）。
+                            // 记递增**前**的深度——配对 `}` 减到该值时 pop 本组。
+                            self.align_noalign_pending = false;
+                            self.align_noalign_depths.push(self.align_depth);
+                            self.align_depth += 1;
+                            self.begin_group()
+                        } else {
+                            self.align_depth += 1;
+                            Ok(())
+                        }
                     }
                     Some(Catcode::EndGroup) if self.align_depth > 0 => {
                         self.align_depth -= 1;
-                        if self.align_depth == 0 {
+                        if self.align_noalign_depths.last() == Some(&self.align_depth) {
+                            // `\noalign` 组配对 `}`：pop 该组（嵌套 \noalign 用栈配对）
+                            self.align_noalign_depths.pop();
+                            self.end_group()
+                        } else if self.align_depth == 0 {
+                            // 对齐自身收尾：栈内无残余（残余 = 输入括号失衡）
+                            self.align_noalign_depths.clear();
                             self.end_group()
                         } else {
                             Ok(())

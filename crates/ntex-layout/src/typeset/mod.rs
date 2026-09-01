@@ -227,6 +227,8 @@ enum GroupKind {
     VTop,
     Align,
     NoAlign,
+    /// 输出例程的隐式组（tex.web group_code=output_group；ETRIP L396 检查）。
+    Output,
     Math,
 }
 
@@ -248,6 +250,7 @@ impl GroupKind {
             GroupKind::VTop => 5,
             GroupKind::Align => 6,
             GroupKind::NoAlign => 7,
+            GroupKind::Output => 8,
             GroupKind::Math => 9,
         }
     }

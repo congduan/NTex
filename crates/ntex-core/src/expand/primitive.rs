@@ -614,8 +614,15 @@ impl Expander {
                     Ok(())
                 }
             }
-            // ETRIP 冲刺：\noalign{...}：下一个组为无对齐组（组种类 7）
-            Primitive::NoAlign => self.sink.noalign_begin(),
+            // ETRIP 冲刺：\noalign{...}：下一个组为无对齐组（组种类 7）。
+            // 对齐体内的 `{`/`}` 只调整 align_depth 不建组——`\noalign` 的 `{`
+            // 例外（主流层据此建真实组，见 process_token 的组定界符分支）。
+            Primitive::NoAlign => {
+                if self.align_depth > 0 {
+                    self.align_noalign_pending = true;
+                }
+                self.sink.noalign_begin()
+            }
             // ETRIP 冲刺：\cr（对齐行结束）：无操作（简化；对齐组按盒子处理）
             Primitive::Cr => self.sink.align_row_end(),
             // ETRIP 冲刺：\mathchoice{D}{T}{S}{SS}：收集四个分支（内容不执行）。

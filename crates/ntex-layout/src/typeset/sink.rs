@@ -456,10 +456,12 @@ impl TokenSink for NodeBuilder {
                 PendingBox::VTop => GroupKind::VTop,
             })
         });
-        // 盒子/对齐组：复用盒子路径（对齐组按 vbox 打包，noalign 组结束时丢弃）
+        // 盒子/对齐组：复用盒子路径（对齐组按 vbox 打包）。`\noalign` 组只补
+        // 组类型（7）不另开列表——其材料沿用对齐组列表（此前行为，ETRIP 简化：
+        // 不并入外层垂直列表），避免组栈变化影响排版结果。
         let box_kind = match kind {
             Some(GroupKind::HBox | GroupKind::AdjustedHBox) => Some(PendingBox::HBox),
-            Some(GroupKind::VBox | GroupKind::Align | GroupKind::NoAlign) => Some(PendingBox::VBox),
+            Some(GroupKind::VBox | GroupKind::Align) => Some(PendingBox::VBox),
             Some(GroupKind::VTop) => Some(PendingBox::VTop),
             _ => None,
         };
@@ -632,11 +634,9 @@ impl TokenSink for NodeBuilder {
             return Ok(());
         }
         match ctx.kind {
-            // noalign 组：对齐行间材料在 TeX 中并入外层垂直列表；ETRIP 简化丢弃
-            GroupKind::NoAlign => {
-                self.lists.pop();
-                self.list_modes.pop();
-            }
+            // noalign 组：只补组类型（\currentgrouptype=7），材料留在对齐组列表
+            // （group_begin 未为其开新列表，见上）
+            GroupKind::NoAlign => {}
             // 对齐组（tex.web alignment）：列/行盒（\cr 分隔）按方向组装——
             // \halign = vbox of hbox 行（行堆叠）；\valign = hbox of vbox 列（列并排）。
             GroupKind::Align => {
@@ -1087,11 +1087,20 @@ impl TokenSink for NodeBuilder {
     }
 
     /// e-TeX `\lastnodetype`：当前列表尾节点类型码（空列表 -1）。
+    ///
+    /// `\noalign{...}` 组内：TeX 把 `\noalign` 材料并入对齐所在的垂直列表，
+    /// 其尾节点是刚 `\cr` 完成的行/列盒——TeX 的 unset node（e-TeX 码 14，
+    /// `\noalign` 只能跟在 `\cr` 后，行盒必已存在）。本引擎行/列盒暂存于
+    /// [`Self::align_columns`]、对齐列表在 `\cr` 时已取空，读取时补此映射
+    /// （不改节点生成；列表已有节点时仍按列表尾报码）。
     fn last_node_type(&self) -> i64 {
-        match self.lists.last().and_then(|l| l.last()) {
-            None => -1,
-            Some(n) => n.node_type_code(),
+        if let Some(n) = self.lists.last().and_then(|l| l.last()) {
+            return n.node_type_code();
         }
+        if matches!(self.groups.last().map(|g| g.kind), Some(GroupKind::NoAlign)) {
+            return 14; // unset node（\cr 完成的行/列盒）
+        }
+        -1
     }
 
     /// e-TeX `\lastskip`：当前列表最后 glue 节点的宽度（sp；无 glue 节点 → 0）。
@@ -1369,6 +1378,12 @@ impl TokenSink for NodeBuilder {
     /// `\noalign{`：下一个组为无对齐组（7）。
     fn noalign_begin(&mut self) -> Result<()> {
         self.pending_kind = Some(GroupKind::NoAlign);
+        Ok(())
+    }
+
+    /// 输出例程的隐式组：组种类 8（output group，tex.web group_code）。
+    fn output_routine_begin(&mut self) -> Result<()> {
+        self.pending_kind = Some(GroupKind::Output);
         Ok(())
     }
 

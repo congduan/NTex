@@ -397,6 +397,11 @@ pub trait TokenSink: std::fmt::Debug {
     fn noalign_begin(&mut self) -> Result<()> {
         Ok(())
     }
+    /// 输出例程的隐式组（tex.web：例程在 group_code=output_group 组内执行，
+    /// currentgrouptype=8）。VM 在注入例程 token 前调用。
+    fn output_routine_begin(&mut self) -> Result<()> {
+        Ok(())
+    }
     /// `\cr`（对齐行结束）：无操作（ETRIP 简化）。
     fn align_row_end(&mut self) -> Result<()> {
         Ok(())
