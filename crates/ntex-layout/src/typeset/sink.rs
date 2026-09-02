@@ -5,7 +5,25 @@ impl TokenSink for NodeBuilder {
     /// - 非数学模式：display → 显示数学（M4-4：收尾段落/开段，公式作垂直元素），否则行内数学。
     fn math_shift(&mut self, display: bool) -> Result<()> {
         match self.mode() {
-            Mode::Math => self.close_math(),
+            Mode::Math => {
+                if display {
+                    // 数学模式内 `$$`（如行内数学未关时紧接的 `$$`）：tex.web
+                    // 报 Missing $ inserted + 结束当前数学 + 开显示数学
+                    // （expander 已消费第二个 `$`，这里连续切换；参考 trip
+                    // L261 前 `$\x` 残留场景）。受限水平（\halign 模板等）下
+                    // 数学内 $$ 结束后续接**普通**数学（tex.web mode<0 语义，
+                    // sink 受限水平分支同款）。
+                    self.report_error("Missing $ inserted.");
+                    self.close_math()?;
+                    if self.mode() == Mode::RestrictedHorizontal {
+                        self.enter_math(Mode::Math)
+                    } else {
+                        self.enter_display_math()
+                    }
+                } else {
+                    self.close_math()
+                }
+            }
             Mode::DisplayMath => {
                 if display {
                     self.close_math()

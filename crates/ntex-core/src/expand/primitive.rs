@@ -751,13 +751,16 @@ impl Expander {
             // TRIP 冲刺：\noboundary（数学字符边界抑制；水平/垂直模式 no-op）
             Primitive::NoBoundary => self.sink.primitive(prim),
             // TRIP 冲刺：数学原语（存在性测试；简化实现"消费参数"——
-            // 数学列表节点由排版器处理，expander 侧跳过）
+            // 数学列表节点由排版器处理，expander 侧跳过）。
+            // tex.web：\mskip/\mkern 是 **mu 上下文**（scan_glue_mu/scan_dimen_mu，
+            // 只认 "mu" 单位）——用 pt 上下文扫描会把 `\mkern-9mu` 报 Illegal
+            // unit（8d0a71c muskip 参数化后暴露；trip L262/L275）。
             Primitive::MSkip => {
-                let _ = self.scan_glue()?;
+                let _ = self.scan_glue_mu()?;
                 Ok(())
             }
             Primitive::MKern => {
-                let _ = self.scan_dimen()?;
+                let _ = self.scan_dimen_mu()?;
                 Ok(())
             }
             Primitive::MathAccent => {
