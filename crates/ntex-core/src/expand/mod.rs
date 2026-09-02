@@ -48,6 +48,8 @@ enum InputFrame {
         bytes: Arc<[u8]>,
         pos: usize,
         state: ScanState,
+        /// 行起始偏移表（预建，`current_line_no` 二分用；替代逐帧线性数 `\n`）。
+        line_starts: Arc<[u32]>,
     },
     /// 宏展开帧：宏体 + 实参。
     Macro {
@@ -796,8 +798,10 @@ impl Expander {
 
     /// 追加一个源码输入（后续 `\input`/VFS 在 M3 接入）。
     pub fn feed_source(&mut self, text: impl Into<Vec<u8>>) {
+        let bytes = Arc::from(text.into());
         self.stack.push(InputFrame::Source {
-            bytes: Arc::from(text.into()),
+            line_starts: Arc::from(crate::input::line_starts(&bytes)),
+            bytes,
             pos: 0,
             state: ScanState::LineStart,
         });
@@ -957,10 +961,14 @@ impl Expander {
     /// 锚点是 clamp_dimen 报错回溯用，会残留污染 \inputlineno 的值）。
     fn current_line_no(&self) -> usize {
         for frame in self.stack.iter().rev() {
-            if let InputFrame::Source { bytes, pos, .. } = frame {
-                let bytes: &[u8] = bytes;
-                let end = (*pos).min(bytes.len());
-                return bytes[..end].iter().filter(|&&b| b == b'\n').count() + 1;
+            if let InputFrame::Source {
+                line_starts, pos, ..
+            } = frame
+            {
+                // 预建行索引二分（原实现每帧从头数 \n——组事件高频调用下的 O(pos) 热点）。
+                return line_starts
+                    .partition_point(|&s| (s as usize) <= *pos)
+                    .max(1);
             }
         }
         0
@@ -1240,9 +1248,9 @@ impl Expander {
         self.stack
             .iter()
             .map(|f| match f {
-                InputFrame::Source { bytes, pos, state } => {
-                    format!("Source({}B,pos={},state={:?})", bytes.len(), pos, state)
-                }
+                InputFrame::Source {
+                    bytes, pos, state, ..
+                } => format!("Source({}B,pos={},state={:?})", bytes.len(), pos, state),
                 InputFrame::Macro { body, pos, .. } => {
                     format!("Macro({}tok,pos={})", body.len(), pos)
                 }
@@ -1769,30 +1777,29 @@ impl Expander {
                 return Ok(None);
             };
             match frame {
-                InputFrame::Source { bytes, pos, state } => {
-                    match scan_token(bytes, pos, &self.catcodes, &mut self.intern, state) {
-                        Ok(Some(tok)) => return Ok(Some((tok, false))),
-                        Ok(None) => {
-                            self.stack.pop();
-                            continue;
-                        }
-                        // M1-13 错误恢复（TRIP L351）：cat 15 非法字符 → TeX
-                        // "Text line contains an invalid character." + 跳过该字符继续
-                        // （tex.web get_next invalid_char；scan_token 已消费该字节）。
-                        Err(Error::InvalidCharacter { .. }) => {
-                            let mut msg =
-                                "! Text line contains an invalid character.\n".to_string();
-                            if let Some((n, line)) = self.error_context() {
-                                msg.push_str(&format!("l.{n} {line}\n"));
-                            }
-                            msg.push_str("A funny symbol that I can't read has just been input.\n");
-                            msg.push_str("Continue, and I'll forget that it ever happened.\n");
-                            let _ = self.sink.write16(msg);
-                            continue;
-                        }
-                        Err(e) => return Err(e),
+                InputFrame::Source {
+                    bytes, pos, state, ..
+                } => match scan_token(bytes, pos, &self.catcodes, &mut self.intern, state) {
+                    Ok(Some(tok)) => return Ok(Some((tok, false))),
+                    Ok(None) => {
+                        self.stack.pop();
+                        continue;
                     }
-                }
+                    // M1-13 错误恢复（TRIP L351）：cat 15 非法字符 → TeX
+                    // "Text line contains an invalid character." + 跳过该字符继续
+                    // （tex.web get_next invalid_char；scan_token 已消费该字节）。
+                    Err(Error::InvalidCharacter { .. }) => {
+                        let mut msg = "! Text line contains an invalid character.\n".to_string();
+                        if let Some((n, line)) = self.error_context() {
+                            msg.push_str(&format!("l.{n} {line}\n"));
+                        }
+                        msg.push_str("A funny symbol that I can't read has just been input.\n");
+                        msg.push_str("Continue, and I'll forget that it ever happened.\n");
+                        let _ = self.sink.write16(msg);
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                },
                 InputFrame::Macro { body, pos, args } => {
                     if *pos >= body.len() {
                         self.stack.pop();

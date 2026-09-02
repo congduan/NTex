@@ -18,8 +18,10 @@ impl Expander {
         }
         match content {
             Some(bytes) => {
+                let bytes = Arc::from(bytes);
                 self.stack.push(InputFrame::Source {
-                    bytes: Arc::from(bytes),
+                    line_starts: Arc::from(crate::input::line_starts(&bytes)),
+                    bytes,
                     pos: 0,
                     state: ScanState::LineStart,
                 });

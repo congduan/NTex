@@ -58,6 +58,21 @@ fn decode_circumflex(bytes: &[u8], pos: &mut usize, catcodes: &CatcodeTable) -> 
     })
 }
 
+/// 预建行起始偏移表（第 k 项 = 第 k+1 行的字节偏移；恒含 0）。
+///
+/// `current_line_no` 等按 `pos` 二分求行号，替代原来每次从头线性数 `\n`
+/// （后者在每组事件/报错都触发时是 O(pos) 热点——组密集文档整体 O(n²)）。
+pub fn line_starts(bytes: &[u8]) -> Vec<u32> {
+    let mut v = Vec::with_capacity(bytes.len() / 16 + 1);
+    v.push(0);
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'\n' {
+            v.push((i + 1) as u32);
+        }
+    }
+    v
+}
+
 /// 扫描器行状态（tex.web `get_next` 的 `state`：new_line / mid_line / in_space）。
 ///
 /// 决定两个 TeX 行为：

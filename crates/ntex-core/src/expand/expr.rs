@@ -708,8 +708,10 @@ impl Expander {
             .iter()
             .filter_map(|t| t.charcode().and_then(|c| u8::try_from(c).ok()))
             .collect();
+        let bytes = Arc::from(bytes);
         self.stack.push(InputFrame::Source {
-            bytes: Arc::from(bytes),
+            line_starts: Arc::from(crate::input::line_starts(&bytes)),
+            bytes,
             pos: 0,
             state: ScanState::LineStart,
         });
