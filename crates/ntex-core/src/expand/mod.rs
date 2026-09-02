@@ -1940,6 +1940,15 @@ include!("macros.rs");
 // ---------- 方法分片：primitive.rs ----------
 include!("primitive.rs");
 
+// ---------- 方法分片：primitive_font.rs（字体家族：从 primitive.rs 拆出） ----------
+include!("primitive_font.rs");
+
+// ---------- 方法分片：primitive_assign.rs（寄存器算术：从 primitive.rs 拆出） ----------
+include!("primitive_assign.rs");
+
+// ---------- 方法分片：primitive_codes.rs（字符代码映射：从 primitive.rs 拆出） ----------
+include!("primitive_codes.rs");
+
 // ---------- 方法分片：io.rs ----------
 include!("io.rs");
 
