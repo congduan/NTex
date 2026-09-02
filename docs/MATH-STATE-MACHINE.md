@@ -41,9 +41,10 @@ l.286+ \parshape...                # 参考：数学已关（垂直）；我们�
 
 ## 5. 剩余已知缺口（未修）
 
-1. **`\scriptfont 0 undefined` 检查缺失**（trip l.260）：数学字符从未定义字体族应报
-   `!\scriptfont N is undefined (character ?).` 并**关闭当前数学**——缺失导致
-   `$\x` 数学残留（参考靠它正常关闭，我们靠 3a2cb63 的 $$ 分支兜底，多报 1 个 Missing $）
+1. **`\scriptfont 0 undefined` 检查缺失**（trip l.260；参考 7 处）：数学字符从未定义
+   字体族应报 `!\scriptfont N is undefined (character ?).`——**前置依赖：math_char_tok
+   的 fam 恒 0 简化**（真实 fam 按 \mathcode/\fam 解析——2026-09-02 尝试直接检查：
+   全量 127 次爆炸 vs 参考 7 次，已回退）。需先做 fam/mathcode 解析（C 类）再开检查
 2. **~~l.276 后数学状态丢~~ 已修（check_math_field_break 隐含组，未提交）**：Missing {
    inserted 恢复只清 pending 不开隐含组 → 后续 `}` 越界关外层组（l.272
    `\mathord\radical"161` 缺 {，l.278 的 }}} 第 3 个 `}` 关到 \begingroup）→

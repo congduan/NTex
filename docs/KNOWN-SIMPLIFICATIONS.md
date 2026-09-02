@@ -9,6 +9,7 @@
 | 位置 | 现状 | 影响 | 状态 |
 |---|---|---|---|
 | `expand/builtins.rs:296` | 数学原语批量"存在性测试" | 参数被吃掉，数学列表节点缺失 | ⚠️ 部分已修（mkern/mskip mu 上下文 3a2cb63；fraction 族 721646c；其余逐项排查） |
+| `typeset/math.rs:131` | math_char_tok 字符 fam 恒 0（\mathcode/\fam 未解析） | \scriptfont undefined 检查不可行（直接检查 127 次爆炸，已回退） | 待做（C 类：fam 解析前置） |
 | `expand/primitive.rs:753` | 数学原语"简化实现消费参数" | 同上 | 逐项排查中 |
 | `eqtb/primitive.rs:559` | 同 753 | 同上 | 同上 |
 | `expand/primitive.rs:780-800` | **fraction 原语族（\abovewithdelims/\above/\atopwithdelims/\overwithdelims）此前只扫参数不挂 sink.math_fraction** | 分子分母混收当前层，trip l.276 数学状态崩 | ✅ 已修（721646c；同层嵌套歧义改恢复式，参考 l.257 Ambiguous） |
