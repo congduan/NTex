@@ -2312,7 +2312,59 @@ ab5c}").unwrap();
         .unwrap();
         assert!(
             out4.contains("OK"),
-            "真实 toks 场景 \\stopinput 应已定义：out={out4:?}"
+            "真实 toks 场景 \\\\stopinput 应已定义：out={out4:?}"
+        );
+    }
+
+    // ---- 错误恢复链回归（fixtures/repro/ 归档；9b0bc69/3a2cb63）----
+
+    /// `\mkern-9mu`/`\mskip9mu`：tex.web mu 上下文（只认 mu 单位）——
+    /// 不得报 Illegal unit of measure（8d0a71c muskip 参数化后曾用 pt
+    /// 上下文扫描报错；3a2cb63 改 scan_dimen_mu/scan_glue_mu）。
+    #[test]
+    fn repro_mkern_mskip_mu_context() {
+        let mut e = Expander::new();
+        e.set_sink(Box::new(VecSink::default()));
+        e.run_source("$$\\mkern-9mu\\mskip9mu minus1fil\\mathord x$$").unwrap();
+        let mut sink = e.take_sink();
+        let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+        assert!(
+            !sink.transcript.contains("Illegal unit"),
+            "mu 上下文不得报 Illegal unit：{}",
+            sink.transcript
+        );
+    }
+
+    /// 内部整数参数单独出现（无 `=`）一律 no-op（TeX 主循环不读值）：
+    /// `$\splitdiscards` 数学模式不报 Missing number（9b0bc69；参考
+    /// showbox27 空数学证实不读值不产生原子）。
+    #[test]
+    fn repro_internal_int_no_value_noop() {
+        let mut e = Expander::new();
+        e.set_sink(Box::new(VecSink::default()));
+        e.run_source("$\\splitdiscards\\noindent$\\pagediscards}").unwrap();
+        let mut sink = e.take_sink();
+        let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+        assert!(
+            !sink.transcript.contains("Missing number"),
+            "内部量单独出现不应 Missing number：{}",
+            sink.transcript
+        );
+    }
+
+    /// `\right` 前缺 `\left`：恢复式 "Extra \right."（tex.web；参考 trip
+    /// L256 `$\right\relax` 双错误恢复）——不中断（9b0bc69，原硬错误）。
+    #[test]
+    fn repro_right_without_left_recovers() {
+        let mut e = Expander::new();
+        e.set_sink(Box::new(VecSink::default()));
+        let _ = e.run_source(r"$\right[A$");
+        let mut sink = e.take_sink();
+        let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+        assert!(
+            sink.transcript.contains("Extra \\right."),
+            "\\right 无 \\left 应报 Extra \\right：{}",
+            sink.transcript
         );
     }
 }
