@@ -504,7 +504,25 @@ impl Expander {
                         return Err(Error::invalid_input("替换文本中 # 后必须跟数字或 #"));
                     }
                 }
-                _ => out.push(tok),
+                _ => {
+                    // \outer 禁止出现在 \def/\edef 体（tex.web scan_toks
+                    // macro_def 的 forbidden 检查）——报 Forbidden + 跳过
+                    // （不收入体；TeX 为 Runaway definition + 插入 } 截断，
+                    // 简化先对齐主消息）。展开期不再重复报（体里无 outer）。
+                    if let Some(csid) = tok.csid() {
+                        if matches!(
+                            self.eqtb.slot(csid),
+                            EqSlot::Macro(m) if m.value.outer
+                        ) {
+                            let name = self.cs_display_name(csid);
+                            self.write_error(&format!(
+                                "Forbidden control sequence found while scanning definition of {name}."
+                            ));
+                            continue;
+                        }
+                    }
+                    out.push(tok);
+                }
             }
         }
         Ok(out)

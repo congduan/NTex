@@ -1466,6 +1466,26 @@ impl Expander {
                         self.sink.token(Token::char(Catcode::Other, code & 0xFF))
                     }
                     SlotAction::Macro(def) => {
+                        // \outer（tex.web scan_depth>0 禁止）：outer 宏在展开
+                        // 上下文（宏体/实参——栈含 Macro 帧）被读取 →
+                        // "Forbidden control sequence found while scanning
+                        // ..." + 跳过不展开。TokenList 回放（\the\toks0 /
+                        // \everymath 注入）不算（TeX scan_depth 不增）；
+                        // 顶层（仅 Source 帧）合法（plain 的 \bye 等）。
+                        // 简化：消息报 outer cs 自身（参考为调用方名；
+                        // Runaway/插入 } 恢复后续补——先对齐主消息）
+                        if def.outer
+                            && self
+                                .stack
+                                .iter()
+                                .any(|f| matches!(f, InputFrame::Macro { .. }))
+                        {
+                            let name = self.cs_display_name(csid);
+                            self.write_error(&format!(
+                                "Forbidden control sequence found while scanning use of {name}."
+                            ));
+                            return Ok(());
+                        }
                         // e-TeX（M4-5）：protected 宏在展开抑制上下文（\edef/\write 等）
                         // 不展开，原样输出。
                         if def.protected && self.suppress_expansion > 0 {

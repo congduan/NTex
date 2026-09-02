@@ -624,7 +624,7 @@ impl Expander {
             // 它入口自行 fetch 组开始 token，故先放回）
             if tok.catcode() == Some(Catcode::BeginGroup) {
                 self.unread(tok);
-                let val = self.scan_group_contents(Some("toks"))?;
+                let val = self.scan_group_contents(Some("tokens"))?;
                 return Ok(Arc::from(val));
             }
             // toks 寄存器内容复制
@@ -699,12 +699,12 @@ impl Expander {
                 if let Some(csid) = t.csid() {
                     if let EqSlot::Macro(m) = self.eqtb.slot(csid) {
                         if m.value.outer {
-                            let csname = self.intern.name(csid);
+                            let csname = self.cs_display_name(csid);
                             let _ = self.sink.write16(format!(
                                 "Runaway text?\n\
                                  ! Forbidden control sequence found while scanning text of \\{name}.\n\
                                  <inserted text>\n                }}\n\
-                                 <to be read again>\n                   \\{csname}\n"
+                                 <to be read again>\n                   {csname}\n"
                             ));
                             self.unread(t);
                             // TeX 语义：Forbidden 时报错并放弃整个赋值

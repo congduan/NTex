@@ -993,6 +993,31 @@ impl Expander {
         }
     }
 
+    /// cs 名完整显示（tex.web print_cs）：名字中控制字符 → `^^` 记法
+    /// （^^@=0、^^A=1…^^_=31、^^?=127、>127 十六进制 `^^XX`）——outer 报错
+    /// 消息（`\a^^@^^@a` 等 cat 12 特殊 cs 名）对齐参考。
+    fn cs_display_name(&self, csid: u32) -> String {
+        let name = self.intern.name(csid);
+        let mut body = String::new();
+        for &b in name.as_bytes() {
+            match b {
+                0..=31 => {
+                    body.push_str("^^");
+                    body.push(char::from(b'@' + b));
+                }
+                127 => body.push_str("^^?"),
+                128..=255 => body.push_str(&format!("^^{b:02X}")),
+                _ => body.push(b as char),
+            }
+        }
+        let b = name.as_bytes();
+        if b.len() == 1 && !b[0].is_ascii_alphabetic() {
+            body
+        } else {
+            format!("{}{}", self.escape_char_str(), body)
+        }
+    }
+
     /// token 列表 → 可见文本（tex.web `show_token_list(..., null, 32)`：
     /// 32 项截断后补 `\ETC.`；字符取字符、cs 带 escape、宏参数 `#n`）。
     fn show_toks(&self, toks: &[Token]) -> String {
