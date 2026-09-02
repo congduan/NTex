@@ -374,10 +374,22 @@ impl NodeBuilder {
                 match spacing_code(p, c, style) {
                     SpacingCode::None | SpacingCode::Tight => {}
                     code => {
-                        // mu 参数（\thinmuskip 等；1mu = quad/18 换算的 sp 已由
-                        // expander scan_glue_mu 完成——muskip_params 存的是 pt 值）
-                        let g = self.muskip_params[code_idx(code)];
-                        let (w, st, sh) = (g.width, g.stretch, g.shrink);
+                        // ETRIP P0 \muexpr 校准：muskip_params[i] 字段以 mu 数值存
+                        // （默认 thin=3mu 在 cmr10 → 实际 sp ≈ 1.6667pt；etrip 在
+                        //  smalltrip=5pt → 18mu 实际 sp = 5pt，对齐 etrip.log）。
+                        // math_to_hlist 按当前 style 的 family-2 em/18 缩放到 sp。
+                        let idx = code_idx(code);
+                        let g = self.muskip_params[idx];
+                        let (w, st, sh) = if self.muskip_is_mu[idx] {
+                            let em = self.math_em(style);
+                            (
+                                mu_to_sp(g.width, em),
+                                mu_to_sp(g.stretch, em),
+                                mu_to_sp(g.shrink, em),
+                            )
+                        } else {
+                            (g.width, g.stretch, g.shrink)
+                        };
                         out.push(Node::Glue {
                             // showbox 显示 \glue(\thinmuskip) 等（tex.web 来源名）
                             name: Some(match code {
@@ -634,6 +646,46 @@ impl NodeBuilder {
     fn script_drop(&self) -> i64 {
         0
     }
+
+    /// ETRIP P0 \muexpr 校准：取当前 style 的 1em（sp）—— tex.web §685 ÷18 即 1mu。
+    /// 顺序取 family 2 该 style 的字体 fontdimen 6（quad，TeXbook 附录 G）。
+    /// 回退链：family 2 字体 → current_font fontdimen 6 → 10pt（em=10pt 默认值，
+    /// 对照 plain TeX 隐含 cmr10 设计字号，与 etrip 期望 cmr10 × 小字体族差距可接受）。
+    fn math_em(&self, style: MathStyle) -> i64 {
+        let kind = match style {
+            MathStyle::Display | MathStyle::Text => 0,
+            MathStyle::Script => 1,
+            _ => 2,
+        };
+        let quad = if let Some(f) = self
+            .math_fonts
+            .get(2)
+            .and_then(|s| s.get(kind).copied().flatten())
+        {
+            self.fonts.font_param(f, 6)
+        } else {
+            self.fonts.font_param(self.current_font, 6)
+        };
+        if quad != 0 {
+            quad
+        } else {
+            // 无任何 fontdimen 6（如 fn 指针占位 + 当前字体未加载 TFM）：
+            // 退回 plain TeX 默认 10pt em，对齐真实 TeX 在 plain plain 下的隐含值。
+            10 * SP_PER_PT
+        }
+    }
+}
+
+/// ETRIP P0 \muexpr 校准：mu 数值 → sp（tex.web §685：1mu = em/18）。
+/// `mu_emu` 即 NTex 现有约定下 Glie 字段以 N×65536 存的"伪 mu"数值（N=1 ≈ 1pt）。
+/// 若 mu=0 直接返回 0（避免 fallback em 0 时空转）。
+fn mu_to_sp(mu_emu: i64, em_sp: i64) -> i64 {
+    if mu_emu == 0 || em_sp == 0 {
+        return mu_emu;
+    }
+    // 1mu = em / 18 sp；muskip_params[i].width 以 N×65536 形式存。
+    // =(N × 65536) × em_sp / (18 × 65536) = N × em_sp / 18。
+    mu_emu.saturating_mul(em_sp) / (18 * SP_PER_PT)
 }
 
 /// 数学间距（TeXbook 附录 G 规则 18；text/script 模式；display 对 op 修正）。

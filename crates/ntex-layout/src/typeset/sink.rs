@@ -1593,8 +1593,11 @@ impl TokenSink for NodeBuilder {
 
     fn muskip_param(&mut self, idx: usize, glue: ntex_core::Glue) -> Result<()> {
         // \thinmuskip/\medmuskip/\thickmuskip：存 mu 参数（math_to_hlist 读）
+        // 标位 muskip_is_mu[idx] 同时置 true——muskip_param 触发自 expander 端的
+        // `\thinmuskip=<mu glue>` 路径，width/stretch/shrink 始终以 mu 数值存。
         if idx < 3 {
             self.muskip_params[idx] = glue;
+            self.muskip_is_mu[idx] = true;
         }
         Ok(())
     }

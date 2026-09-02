@@ -245,8 +245,11 @@ impl Typesetter {
         // .fmt 导入的当前字体（防 pass2 字符全 nullfont + Missing 警告）
         builder.current_font = FontId(self.fmt_current_font);
         // pass2 NodeBuilder 重建：同步数学间距参数（\\thinmuskip 等 muskip 寄存器——
-        // pass1 赋值在 dump 前，pass2 不重跑赋值事件）
+//  pass1 赋值在 dump 前，pass2 不重跑赋值事件）。muskip_is_mu 同步为全 true：
+// muskip 寄存器 0/1/2（= thinmuskip/medmuskip/thickmuskip）的 width/stretch/shrink
+// 字段永为 mu 数值（expander 端 scan_glue_mu 路径按 1mu=65536 单位存）。
         builder.muskip_params = self.expander.muskip_registers();
+        builder.muskip_is_mu = [true; 3];
         self.expander.set_sink(Box::new(builder));
         if let Some(b) = self
             .expander

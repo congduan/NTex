@@ -261,6 +261,11 @@ pub trait TokenSink: std::fmt::Debug {
     fn report_error(&mut self, msg: &str) {
         let _ = self.write16(format!("! {msg}\n"));
     }
+    /// TeX `help1..6`：紧随 `! 消息` 一行的解释文本（无 `! ` 前缀）。
+    /// tex.web L8265-8268 mu_error：! Incompatible glue units. 后跟 help1 行。
+    fn report_help(&mut self, text: &str) {
+        let _ = self.write16(format!("{text}\n"));
+    }
     /// TeXXeT 方向节点（`\beginL`/`\endL`/`\beginR`/`\endR`；\TeXXeTstate=1 时）。
     fn direction_node(&mut self, _kind: DirectionKind) -> Result<()> {
         Ok(())

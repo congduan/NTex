@@ -2282,6 +2282,52 @@ ab5c}").unwrap();
             println!("[{name}] TRANSCRIPT={:?}", e.transcript());
         }
     }
+
+    /// ETRIP P0 \muexpr 校准（report_help + math_em）：expander 端两层回归。
+    /// ① Incompatible glue units. 后跟 help1 行 "I'm going to assume that
+    ///    1mu=1pt when they're mixed."（etrip.tex L900-960 段、参考 tex.web
+    ///    L8265-8268 mu_error）。
+    /// ② \thinmuskip=\<mu> 与 \the\thinmuskip 显示仍为 "X.0mu"——\muskip 寄存器
+    ///    以 mu 数值存，expander 显示不依赖 em（layout 端的 sp 缩放见
+    ///    math_em/mu_to_sp，ntex-layout tests 验）。
+    #[test]
+    fn muexpr_incompatible_help1_and_thinmuskip_display() {
+        // ① \skip=\muskip：mu→pt 上下文混用，报 Incompatible 后跟 help1 行。
+        let mut e = Expander::new();
+        e.set_sink(Box::new(VecSink::default()));
+        e.run_source("\\muskip1=5mu\\skip0=\\muskip1\\relax").unwrap();
+        let sink = e.take_sink();
+        let mut sink = sink;
+        let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+        assert!(
+            sink.transcript.contains("Incompatible glue units."),
+            "Incompatible 触发：{:?}",
+            sink.transcript
+        );
+        assert!(
+            sink.transcript.contains("I'm going to assume that 1mu=1pt when they're mixed."),
+            "help1 行未跟随：{:?}",
+            sink.transcript
+        );
+
+        // ② \thinmuskip=18mu \the\thinmuskip —— 仍显示 "18.0mu"。
+        assert_eq!(
+            expand("\\thinmuskip=18mu\\the\\thinmuskip").unwrap(),
+            "18.0mu",
+            "\\thinmuskip \\the 应按 mu 数值原样显示"
+        );
+        // 整数 mu 显式路径（muskip_params 通路之一）：与 etrip.tex L1018 一致。
+        assert_eq!(
+            expand("\\thinmuskip=27mu plus 9mu minus 18mu\\the\\thinmuskip").unwrap(),
+            "27.0mu plus 9.0mu minus 18.0mu"
+        );
+        // \muskip 寄存器：以 mu 数值原样存。
+        assert_eq!(
+            expand("\\muskip5=2.5mu plus 1mu\\the\\muskip5").unwrap(),
+            "2.5mu plus 1.0mu"
+        );
+    }
+
     #[test]
     fn ifcase_ifeof_fi_def_chain() {
         // trip.tex L419：\the\tokens\ifcase1\or\ifeof\fi\def\stopinput{\error\let\input\die}

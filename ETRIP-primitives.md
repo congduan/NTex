@@ -83,8 +83,12 @@ M4 数学 + e-TeX 验收时已实现的 e-TeX 原语：
 
 ### mu 表达式/互转
 - ❌ `\muexpr`（已注册，暂映射 Glueexpr——表达式算术已全通（i128 中间量、
-  四舍五入除法、`\ifnum#4=\muexpr...` 整数上下文），但 1mu=1pt 与 `\the` 显示
-  "5.0mu" 待校准；mu_error "! Incompatible glue units." 恢复消息未实现）
+  四舍五入除法、`\ifnum#4=\muexpr...` 整数上下文）；**2026-09-03 P0 部分校准**：
+  layout 端 muskip_params 字段以 mu 数值存，math_to_hlist 按当前 style
+  family-2 em/18 转 sp（NodeBuilder 加 `muskip_is_mu: [bool;3]` 标位 + math_em
+  链路：family 2 → current_font fontdimen 6 → fallback 10pt），并加 mu_error
+  help1 行 "I'm going to assume that 1mu=1pt when they're mixed."。仍待：expander
+  端 1mu=em/18 与 `\the` 显示 "5.0mu"——按 1mu=1pt 数值存不重构）
 - ✅ `\mutoglue`（2026-08-23 第三波：注册 + 扫描 mu 胶水转胶水，待联调）
 - ✅ `\gluetomu`（同上；胶水转 mu 胶水）
 
@@ -165,8 +169,11 @@ M4 数学 + e-TeX 验收时已实现的 e-TeX 原语：
 ## 收尾（❌ 未开始）
 
 - ❌ `etrip.log` 逐字节比对（消息格式/上下文行/dvitype 暂不纳入）。
-  已知差距（2026-08-23）：`\tracingassigns` 的 `{changing/into}` 行、
-  `\the\muexpr` 的 "5.0mu" 显示、错误消息上下文行（"l.N …"）、mu_error 恢复消息。
+  已知差距（2026-08-23 起逐项销账）：
+- ✅（2026-09-03）mu_error 恢复消息——help1 行已加
+- ❌ `\tracingassigns` 的 `{changing/into}` 行
+- ❌ `\the\muexpr` 的 "5.0mu" 显示（expander 端 1mu=em/18 待重构）
+- ❌ 错误消息上下文行（"l.N …"）
 
 ## 引擎基础设施（2026-08-23）
 

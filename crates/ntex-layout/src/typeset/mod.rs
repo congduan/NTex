@@ -558,7 +558,13 @@ struct NodeBuilder {
     /// ETRIP 冲刺：数学间距参数（\\thinmuskip/\\medmuskip/\\thickmuskip =
     /// muskip 寄存器 0/1/2 的 mu glue；`muskip_param` 事件更新，
     /// 默认 thin=3mu/med=4mu±2mu∓4mu/thick=5mu±5mu）。
+    /// 数学间距与排版事件 muskip_param 均属 mu 上下文路径；`width`/`stretch`/`shrink`
+    /// 字段以 mu 单位存（1mu=1pt 数值=N×65536），math_to_hlist 内部按当前 style em/18 转 sp。
     muskip_params: [ntex_core::Glue; 3],
+    /// 与 muskip_params 一一对应的 mu 单位标记：`\thinmuskip`/`\medmuskip`/`\thickmuskip`
+    /// 永远绑 muskip 寄存器 0/1/2，全部按 mu 数值存；保留 `[bool;3]` 而非硬编码 `[true;3]`
+    /// 是为未来承接 `\muskipdef` cs 绑到 muskip 时的同源同步。
+    muskip_is_mu: [bool; 3],
     /// ETRIP 冲刺：终端转录累积（`\message`/`\show`/`\write16`）。
     transcript: String,
     /// ETRIP 冲刺：e-TeX marks 族状态（断页轮转）。
@@ -684,11 +690,13 @@ impl NodeBuilder {
             display_short: false,
             after_display: false,
             // 默认数学间距（TeXbook p.170）：thin=3mu、med=4mu±2mu∓4mu、thick=5mu±5mu
+            // ——按 mu 数值存（1mu=1pt 数值=N×65536）；math_to_hlist 内部按当前 style em/18 转 sp。
             muskip_params: [
                 ntex_core::Glue::new(3 * SP_PER_PT, 0, 0),
                 ntex_core::Glue::new(4 * SP_PER_PT, 2 * SP_PER_PT, 4 * SP_PER_PT),
                 ntex_core::Glue::new(5 * SP_PER_PT, 5 * SP_PER_PT, 0),
             ],
+            muskip_is_mu: [true; 3],
             pending_leaders: None,
             leaders_box: None,
             nodes_appended: 0,

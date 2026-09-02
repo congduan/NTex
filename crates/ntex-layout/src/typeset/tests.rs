@@ -1392,6 +1392,53 @@ mod tests {
         assert!(matches!(rel[3], Node::Glue { .. }));
     }
 
+    /// ETRIP P0 \muexpr 校准：layout 端 muskip_params 按 mu 数值存，
+    /// math_to_hlist 内部按当前 style 的 family-2 em/18 转 sp。
+    /// 测试用 `with_metrics`（fn 指针模式，font_param 全 0 → math_em fallback
+    /// 10pt = 10 × 65536 sp），验证 `\thinmuskip=18mu` 触发 Bin 后 medmuskip 节点
+    /// width = 18mu × em/18 = 18 × 10/18 pt = 10pt = 10 × 65536 sp。
+    /// —— 与 etrip.tex L968 `\6\countdef` 同场景：触发面覆盖 Bin→medmuskip 路径。
+    #[test]
+    fn math_thinmuskip_em_scaled_in_layout() {
+        // \thinmuskip=18mu → muskip_params[0].width = 18 * 65536；
+        // 但 Bin 触发的是 medmuskip（idx=1）——为对照, 同时重设 medmuskip=18mu plus 3.6mu
+        // 这样 medmuskip 节点 width 与 stretch 都可验证。
+        let src = r"\thinmuskip=18mu\medmuskip=18mu plus 3.6mu$a\mathbin+b$";
+        let main = typeset(src).unwrap();
+        let line = as_box(&main[0]);
+        // 行盒 children：mathon, a, Gl_prespacing, mathbin_node, Gl_postspacing, b, mathoff, parfillskip
+        // 找 Bin 附近的两个 medmuskip Glue 节点
+        let mut inserts = 0;
+        let mut found_width = 0i64;
+        let mut found_stretch = 0i64;
+        for n in &line.children {
+            if let Node::Glue {
+                name: Some("medmuskip"),
+                width,
+                stretch,
+                stretch_order,
+                ..
+            } = n
+            {
+                assert_eq!(*stretch_order, 0, "medmuskip stretch 阶应为 0");
+                inserts += 1;
+                found_width = *width;
+                found_stretch = *stretch;
+            }
+        }
+        assert_eq!(inserts, 2, "Bin 两侧应插 medmuskip 各一：{line:?}");
+        // 18mu × em/18：em fallback 10pt → 18 × 10pt / 18 = 10pt = 10 × 65536 sp。
+        assert_eq!(
+            found_width, 10 * SP_PER_PT,
+            "medmuskip 实际 sp 应为 em 缩放:18mu × 10pt/18 = 10pt"
+        );
+        // 3.6mu plus:3.6 × 10 / 18 = 2pt = 2 × 65536 sp
+        assert_eq!(
+            found_stretch, 2 * SP_PER_PT,
+            "medmuskip stretch 应按 mu 数值 em/18 转 sp:3.6mu × 10/18 = 2pt"
+        );
+    }
+
     #[test]
     fn math_over_outside_math_rejected() {
         // TeX 报错并恢复：消息入转录，执行继续

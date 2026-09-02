@@ -1625,9 +1625,12 @@ impl Expander {
 
     /// "! Incompatible glue units."（tex.web mu_error，L8265-8268）：
     /// glue 与 mu 胶水混用（`\skip=\muskip`、`\muskip=\skip`、`\glueexpr` 嵌 `\muexpr` 等）。
-    /// 恢复：按 1mu=1pt 换算继续（数值不变，仅单位语义标记）。
+    /// ETRIP P0 校准：与参考 etrip.log 对齐——除 `!` 消息外追加 help1 行
+    /// "I'm going to assume that 1mu=1pt when they're mixed."。恢复：按 1mu=1pt 换算继续
+    /// （数值不变，仅单位语义标记——本任务不动此数值路径，后续若需按 em/18 修正时可单独立项）。
     fn report_incompatible_glue_units(&mut self) {
         self.report_error("Incompatible glue units.");
+        self.report_help("I'm going to assume that 1mu=1pt when they're mixed.");
     }
 
     /// 扫描胶水（非 mu 上下文）：`\hskip`/`\vskip`/`\skip<idx>=`/`\glueexpr` 项等。

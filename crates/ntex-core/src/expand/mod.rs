@@ -1039,6 +1039,13 @@ impl Expander {
         self.report_error_context();
     }
 
+    /// ETRIP P0 \muexpr 校准：错误帮助行（tex.web help1..help5）转发到 sink。
+    /// mu_error 等场合在 `! <msg>` 后追加一行提示（如 etrip.tex L906："I'm going to
+    /// assume that 1mu=1pt when they're mixed."），与参考 log 字面对齐。
+    fn report_help(&mut self, text: &str) {
+        self.sink.report_help(text);
+    }
+
     /// NTEX_SANITY_CHECK 设施：错误恢复后状态完整性校验。
     /// 在主循环每次迭代开始调用——若存在待校验快照（刚发生过错误恢复），
     /// 对比当前 (组级, 条件栈深) 与错误前：组级偏离 >1 或条件栈偏离 >1 视为
@@ -1344,7 +1351,7 @@ impl Expander {
                         self.eqtb.slot(tok.csid().expect("ControlSeq 必有 csid")),
                         EqSlot::Primitive(Primitive::Fi)
                     );
-                if self.params.misc[3] > 0 && self.trace_suppress == 0 && !(skipping && !is_fi) {
+                if self.params.misc[3] > 0 && self.trace_suppress == 0 && (!skipping || is_fi) {
                     self.trace_token_now(tok);
                 }
                 // noexpand（`\noexpand`/`\unexpanded` 输出）：临时不可展开，原样输出。
