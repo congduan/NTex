@@ -330,17 +330,33 @@ impl Expander {
                 };
                 self.assign_param(kind, ParamValue::Number(v))
             }
-            // ETRIP 冲刺：TeX/e-TeX 内部整数参数（misc 数组，按下标索引）
+            // ETRIP 冲刺：TeX/e-TeX 内部整数参数（misc 数组，按下标索引）。
+            // TeX 语义：内部整数可展开——主循环单独出现（无 `=`）= 读值输出
+            // （tex.web：`$\splitdiscards` 数学模式取 eqtb 值入列表，不扫描输入；
+            // 水平/垂直模式输出数字）。仅当 `=` 存在才是赋值（`\splitdiscards=1`）。
             p if int_param_index(p).is_some() => {
                 let idx = int_param_index(p).expect("已检查 is_some");
-                let v = self.scan_number()?;
-                // TRIP 语义：\prevgraf 只允许非负（trip L392 `\prevgraf=-1` 报
-                // "! Bad \prevgraf (-1)." 恢复为 0；参考 log 对齐）
-                if p == Primitive::PrevGraf && v < 0 {
-                    self.report_error(&format!("Bad \\\\prevgraf ({v})."));
-                    self.assign_param(ParamKind::MiscInt(idx), ParamValue::Number(0))
+                self.skip_spaces()?;
+                let Some((tok, _)) = self.fetch()? else {
+                    return Ok(());
+                };
+                if tok.charcode() == Some(b'=' as u32) {
+                    let v = self.scan_number()?;
+                    // TRIP 语义：\prevgraf 只允许非负（trip L392 `\prevgraf=-1` 报
+                    // "! Bad \prevgraf (-1)." 恢复为 0；参考 log 对齐）
+                    if p == Primitive::PrevGraf && v < 0 {
+                        self.report_error(&format!("Bad \\\\prevgraf ({v})."));
+                        self.assign_param(ParamKind::MiscInt(idx), ParamValue::Number(0))
+                    } else {
+                        self.assign_param(ParamKind::MiscInt(idx), ParamValue::Number(v))
+                    }
                 } else {
-                    self.assign_param(ParamKind::MiscInt(idx), ParamValue::Number(v))
+                    self.unread(tok);
+                    // 单独出现（无 `=`）：no-op——TeX 内部整数在主循环/数学模式
+                    // 均不读值（TRIP `{\tracingstats}` 追踪后无操作；ETRIP
+                    // `$\splitdiscards` 数学模式同样 no-op——参考 showbox27 空
+                    // 数学，l.1148 的 Missing $ inserted 由 `\noindent`/`}` 触发）
+                    Ok(())
                 }
             }
             // ETRIP 冲刺：交互模式命令（\batchmode/\nonstopmode/\scrollmode/\errorstopmode）
@@ -472,13 +488,18 @@ impl Expander {
             }
             Primitive::Right => {
                 let d = self.scan_delimiter()?;
-                // 配对 \left 存在才关组（\right 前缺 \left 由 layout 侧报错，
-                // 这里不动组栈，避免误关外层非数学组）
+                // 配对 \\left 存在才关组（\\right 前缺 \\left → TeX 报
+                // "! Extra \\right." 恢复并丢弃——trip L256 `$\\right\\relax`，
+                // 参考 log 双错误：Missing delimiter (. inserted) + Extra \\right.；
+                // 不报 Error 中断（引擎契约：畸形输入不 panic））。
                 if self.math_left_depth > 0 {
                     self.math_left_depth -= 1;
                     self.end_group()?;
+                    self.sink.math_right(d)
+                } else {
+                    self.write_error("Extra \\right.");
+                    Ok(())
                 }
-                self.sink.math_right(d)
             }
             // e-TeX（M4-5）：\middle<delimiter>（\left...\right 内分隔符）
             Primitive::Middle => {

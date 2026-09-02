@@ -153,9 +153,13 @@ impl TokenSink for NodeBuilder {
             .math
             .pop()
             .ok_or_else(|| Error::internal("\\right 无数学层"))?;
-        let left = level.left.take().ok_or_else(|| {
-            Error::invalid_input("\\right 前缺少 \\left（Missing \\left inserted）")
-        })?;
+        let Some(left) = level.left.take() else {
+            // TeX：\right 前缺 \left → 恢复式 "Extra \right."（不中断；expander
+            // 侧 math_left_depth 保护后 math_right 只接收有配对的情况，但直接
+            // typesetter 路径（测试）仍可达——参考 trip.log L256 双错误恢复）
+            self.write16("! Extra \\right.\n".to_string())?;
+            return Ok(());
+        };
         // 先收 \left(...\over...\right) 的分式，再包定界符
         Self::math_finish_fraction(&mut level);
         let parent = self
@@ -506,6 +510,10 @@ impl TokenSink for NodeBuilder {
             leaders,
             setbox,
             entered_line: line,
+            // 组打开时是否数学模式：`\hbox{A}` 数学字段（box 原子）在数学模式
+            // 打开、同模式关闭是合法流程；外层组（垂直打开）关闭时若仍处数学
+            // 模式才是缺 `$`（etrip L1148 `$\pagediscards}`）。
+            entered_math: matches!(self.mode(), Mode::Math | Mode::DisplayMath),
             level: (self.groups.len() + 1) as u32,
         });
         // \tracinggroups（misc 6）：组进入追踪（tex.web begin_group）
@@ -561,6 +569,28 @@ impl TokenSink for NodeBuilder {
             .groups
             .pop()
             .ok_or_else(|| Error::internal("group_end 无配对 group_begin"))?;
+        // 数学模式关**非数学模式打开的、非 box 的**组：TeX 报 Missing $ inserted
+        // 并先关数学再关组（tex.web：数学模式的组结束 → 插 $ 结束数学；etrip
+        // L1148 `$\pagediscards}` 的 `}`——恢复后 `}` 关外层 vbox 组）。
+        // **排除 MathLeft（16）**：`\right`/`\middle` 关闭 math left group 是
+        // 数学模式的正常流程（trip L256 `$\right...`），不是缺 $。
+        // **排除数学模式打开的组**（entered_math）：`\hbox{A}` 数学字段
+        // （box 原子）同模式关闭合法。
+        // **排除 box 组**（box_kind）：`\hbox{\special{...}}` 等 box 内容在
+        // 数学模式关闭是 box 原子场景（trip L288），不报缺 $——否则 close_math
+        // 提前清空数学层导致后续 Math 组 "无外层 math 层"（Engine error）。
+        if ctx.box_kind.is_none()
+            && !ctx.entered_math
+            && !matches!(ctx.kind, GroupKind::Math | GroupKind::MathLeft)
+            && matches!(self.mode(), Mode::Math | Mode::DisplayMath)
+        {
+            self.report_error("Missing $ inserted.");
+            let was_display = self.mode() == Mode::DisplayMath;
+            let _ = self.close_math();
+            if !was_display && self.mode() == Mode::Horizontal {
+                self.close_paragraph();
+            }
+        }
         // 垂直盒子内容结束时，开放段落先封装（\vbox{a} → vbox[hbox(a)]）。
         // **必须在参数恢复之前**（TeX 语义：段落折行用组内 \hsize——etrip
         // L193 `\vbox{\hsize=0pt...}` 折行用 0pt；恢复后折行会错用外层
@@ -767,8 +797,25 @@ impl TokenSink for NodeBuilder {
                 // 垂直模式 \noindent 立即开段（TeX new_graf(0)，缩进 0）——
                 // 不只设标志等字符触发：`\vbox{\noindent\hbox{...}}` 的 \hbox
                 // 必须在水平模式（否则盒被当 AdjustedHBox 进垂直列表、模式错乱）；
-                // 水平模式无操作。
-                if self.mode() == Mode::Vertical {
+                // 水平模式无操作；数学模式报 Missing $ inserted 并关数学恢复
+                // （tex.web：水平命令在数学模式 → 插 $ 结束数学，命令继续执行；
+                // etrip L1148 `\noindent$\splitdiscards\noindent$...` 第一处）。
+                if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+                    self.report_error("Missing $ inserted.");
+                    let was_display = self.mode() == Mode::DisplayMath;
+                    let _ = self.close_math();
+                    if !was_display && self.mode() == Mode::Horizontal {
+                        self.close_paragraph();
+                    }
+                    // 数学结束后 \noindent 在垂直模式开段（缩进 0）
+                    if self.mode() == Mode::Vertical {
+                        self.noindent_next = true;
+                        self.lists.push(Vec::new());
+                        self.list_modes.push(Mode::Horizontal);
+                        self.space_factor = 1000;
+                        self.insert_indent(); // noindent_next=true → 跳过缩进盒
+                    }
+                } else if self.mode() == Mode::Vertical {
                     self.noindent_next = true;
                     self.lists.push(Vec::new());
                     self.list_modes.push(Mode::Horizontal);

@@ -1163,9 +1163,10 @@ mod tests {
 
     #[test]
     fn math_left_right_message() {
-        // \right 前缺少 \left：Err（math_right 检查）；\left 未配对（$ 关数学时）：
-        // TeX "Extra } or forgotten \right." 恢复自动闭合（参考 trip.log L299 附近）
-        assert_math_error(r"$\right)$", "\\right 前缺少 \\left（Missing \\left inserted）");
+        // \\right 前缺少 \\left：恢复式错误 "Extra \\right."（TeX 语义，参考
+        // trip.log L256 `$\\right\\relax` 双错误恢复；不中断）；\\left 未配对
+        // （$ 关数学时）：TeX "Extra } or forgotten \\right." 恢复自动闭合
+        assert_math_transcript(r"$\right)$", "Extra \\right.");
         assert_math_transcript(r"$\left(x$", "Extra } or forgotten \\right.");
     }
 
@@ -1404,7 +1405,15 @@ mod tests {
 
     #[test]
     fn math_right_without_left_rejected() {
-        assert!(typeset(r"$x\right)$").is_err(), "\\right 前必须有 \\left");
+        // TeX 语义：\\right 前无 \\left → 恢复式 "Extra \\right."（不中断，
+        // 参考 trip.log L256；旧实现是硬错误，已按参考改为恢复）
+        let mut ts = Typesetter::with_metrics(metrics);
+        let _ = ts.typeset(r"$x\right)$");
+        let t = ts.take_transcript();
+        assert!(
+            t.contains("Extra \\right."),
+            "\\right 前无 \\left 应报 Extra \\right：{t}"
+        );
     }
 
     #[test]

@@ -295,6 +295,9 @@ struct GroupCtx {
     setbox: Option<usize>,
     /// 进入行号（etrip.tex 行；\tracinggroups 的 `entered at line L`）。
     entered_line: u32,
+    /// 组打开时是否数学模式（`\hbox{A}` 数学字段关闭是合法流程；外层组
+    /// 关闭时仍处数学模式才是缺 `$`）。
+    entered_math: bool,
     /// 组深度（1-based；\tracinggroups 的 `(level N)`）。
     level: u32,
 }
