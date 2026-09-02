@@ -261,3 +261,307 @@ fn detokenize_token(tok: Token, intern: &InternTable, out: &mut Vec<Token>) {
         TokenKind::EndGroup => out.push(Token::char(Catcode::Other, u32::from(b'}'))),
     }
 }
+/// 主题分类：原语是否属于"排版"主题（dispatch_box）。
+/// 含盒子/胶水/kern/penalty/rule/leaders/control space/inf glue/italic correction。
+fn is_box_prim(p: Primitive) -> bool {
+    matches!(
+        p,
+        Primitive::HBox
+            | Primitive::VBox
+            | Primitive::VTop
+            | Primitive::Par
+            | Primitive::HSkip
+            | Primitive::VSkip
+            | Primitive::Kern
+            | Primitive::Penalty
+            | Primitive::HRule
+            | Primitive::VRule
+            | Primitive::Leaders
+            | Primitive::Cleaders
+            | Primitive::XLeaders
+            | Primitive::Indent
+            | Primitive::NoIndent
+            | Primitive::ControlSpace
+            | Primitive::HFil
+            | Primitive::HFill
+            | Primitive::HSS
+            | Primitive::VFil
+            | Primitive::VFill
+            | Primitive::VSS
+            | Primitive::VFilNeg
+            | Primitive::HFilNeg
+            | Primitive::ItalicCorrection
+    )
+}
+
+/// 主题分类：原语是否属于"内部参数"主题（dispatch_param）。
+fn is_param_prim(p: Primitive) -> bool {
+    matches!(
+        p,
+        Primitive::ParIndent
+            | Primitive::LineSkipLimit
+            | Primitive::NullDelimiterSpace
+            | Primitive::ScriptSpace
+            | Primitive::OverfullRule
+            | Primitive::VOffset
+            | Primitive::HOffset
+            | Primitive::BaselineSkip
+            | Primitive::LineSkip
+            | Primitive::HSize
+            | Primitive::Tolerance
+            | Primitive::VSize
+            | Primitive::MaxDepth
+            | Primitive::TopSkip
+            | Primitive::ParSkip
+            | Primitive::ParFillSkip
+            | Primitive::XSpaceSkip
+            | Primitive::AboveDisplaySkip
+            | Primitive::BelowDisplaySkip
+            | Primitive::AboveDisplayShortSkip
+            | Primitive::BelowDisplayShortSkip
+            | Primitive::PreDisplayPenalty
+            | Primitive::PostDisplayPenalty
+            | Primitive::EndlineChar
+            | Primitive::NewlineChar
+            | Primitive::DefaultHyphenChar
+            | Primitive::DefaultSkewChar
+            | Primitive::Mag
+            | Primitive::LeftSkip
+            | Primitive::RightSkip
+            | Primitive::PrevDepth
+            | Primitive::HangIndent
+            | Primitive::SpaceSkip
+            | Primitive::TabSkip
+            | Primitive::LastSkip
+            | Primitive::SplitTopSkip
+            | Primitive::PageStretch
+            | Primitive::PageFilStretch
+            | Primitive::PageFillStretch
+            | Primitive::Hfuzz
+            | Primitive::Vfuzz
+            | Primitive::BoxMaxDepth
+            | Primitive::SplitMaxDepth
+            | Primitive::EmergencyStretch
+            | Primitive::DisplayIndent
+            | Primitive::DelimiterShortfall
+            | Primitive::MathSurround
+            | Primitive::LastKern
+            | Primitive::InterLinePenalty
+            | Primitive::ClubPenalty
+            | Primitive::WidowPenalty
+            | Primitive::DisplayWidowPenalty
+            | Primitive::InterLinePenalties
+            | Primitive::ClubPenalties
+            | Primitive::WidowPenalties
+            | Primitive::DisplayWidowPenalties
+    ) || int_param_index(p).is_some()
+        || interaction_mode_value(p).is_some()
+}
+
+/// 主题分类：原语是否属于"数学"主题（dispatch_math）。
+fn is_math_prim(p: Primitive) -> bool {
+    matches!(
+        p,
+        Primitive::DisplayStyle
+            | Primitive::TextStyle
+            | Primitive::ScriptStyle
+            | Primitive::ScriptScriptStyle
+            | Primitive::Over
+            | Primitive::Atop
+            | Primitive::Left
+            | Primitive::Right
+            | Primitive::Middle
+            | Primitive::Above
+            | Primitive::AboveWithDelims
+            | Primitive::AtopWithDelims
+            | Primitive::OverWithDelims
+            | Primitive::Underline
+            | Primitive::Overline
+            | Primitive::Raise
+            | Primitive::Lower
+            | Primitive::MoveLeft
+            | Primitive::MoveRight
+            | Primitive::Accent
+            | Primitive::Sqrt
+            | Primitive::VCenter
+            | Primitive::MathOrd
+            | Primitive::MathBin
+            | Primitive::MathOp
+            | Primitive::MathRel
+            | Primitive::MathOpen
+            | Primitive::MathClose
+            | Primitive::MathPunct
+            | Primitive::MathInner
+            | Primitive::Nonscript
+            | Primitive::Limits
+            | Primitive::NoLimits
+            | Primitive::DisplayLimits
+            | Primitive::NoBoundary
+            | Primitive::MSkip
+            | Primitive::MKern
+            | Primitive::MathAccent
+            | Primitive::MathChar
+            | Primitive::Delimiter
+            | Primitive::EqNo
+            | Primitive::LeqNo
+            | Primitive::Radical
+    )
+}
+
+/// 主题分类：原语是否属于"可展开"主题（dispatch_expandable）。
+fn is_expandable_prim(p: Primitive) -> bool {
+    matches!(
+        p,
+        Primitive::NumExpr
+            | Primitive::Dimexpr
+            | Primitive::Glueexpr
+            | Primitive::Muexpr
+            | Primitive::Number
+            | Primitive::ETeXVersion
+            | Primitive::ETeXRevision
+            | Primitive::String_
+            | Primitive::InputLineNo
+            | Primitive::CurrentGroupLevel
+            | Primitive::CurrentGroupType
+            | Primitive::LastNodeType
+            | Primitive::CurrentIfLevel
+            | Primitive::CurrentIfType
+            | Primitive::CurrentIfBranch
+            | Primitive::PageTotal
+            | Primitive::PageGoal
+            | Primitive::PreDisplaySize
+            | Primitive::InsertPenalties
+            | Primitive::GlueStretchOrder
+            | Primitive::GlueShrinkOrder
+            | Primitive::GlueStretch
+            | Primitive::GlueShrink
+            | Primitive::LastPenalty
+            | Primitive::MuToGlue
+            | Primitive::GlueToMu
+            | Primitive::Meaning
+            | Primitive::JobName
+            | Primitive::Csname
+            | Primitive::EndCsname
+            | Primitive::Protected
+            | Primitive::Unless
+            | Primitive::Scantokens
+            | Primitive::Detokenize
+            | Primitive::Unexpanded
+            | Primitive::ErrMessage
+    )
+}
+
+/// 主题分类：原语是否属于"对齐与特殊节点"主题（dispatch_align）。
+fn is_align_prim(p: Primitive) -> bool {
+    matches!(
+        p,
+        Primitive::Valign
+            | Primitive::Halign
+            | Primitive::NoAlign
+            | Primitive::Cr
+            | Primitive::CrCr
+            | Primitive::MathChoice
+            | Primitive::DiscMinus
+            | Primitive::Span
+            | Primitive::Omit
+            | Primitive::Special
+            | Primitive::Discretionary
+            | Primitive::Insert
+            | Primitive::VAdjust
+            | Primitive::Mark
+            | Primitive::Marks
+            | Primitive::TopMarks
+            | Primitive::FirstMarks
+            | Primitive::BotMarks
+            | Primitive::SplitFirstMarks
+            | Primitive::SplitTopMarks
+            | Primitive::SplitBotMarks
+            | Primitive::TopMark
+            | Primitive::FirstMark
+            | Primitive::BotMark
+            | Primitive::SplitFirstMark
+            | Primitive::SplitBotMark
+    )
+}
+
+/// 主题分类：原语是否属于"toks 参数 / 段落 / 方向 / 收尾 / 盒子尺寸"主题（dispatch_toks_state）。
+fn is_toks_state_prim(p: Primitive) -> bool {
+    matches!(
+        p,
+        Primitive::Chardef
+            | Primitive::Countdef
+            | Primitive::Dimendef
+            | Primitive::Skipdef
+            | Primitive::Muskipdef
+            | Primitive::Toksdef
+            | Primitive::MathCharDef
+            | Primitive::EveryDisplay
+            | Primitive::EveryMath
+            | Primitive::EveryPar
+            | Primitive::EveryHBox
+            | Primitive::EveryVBox
+            | Primitive::EveryCr
+            | Primitive::ErrHelp
+            | Primitive::EveryJob
+            | Primitive::SpaceFactor
+            | Primitive::Parshape
+            | Primitive::ParshapeLength
+            | Primitive::ParshapeIndent
+            | Primitive::ParshapeDimen
+            | Primitive::BeginL
+            | Primitive::EndL
+            | Primitive::BeginR
+            | Primitive::EndR
+            | Primitive::Dump
+            | Primitive::ReadLine
+            | Primitive::Wd
+            | Primitive::Ht
+            | Primitive::Dp
+    )
+}
+
+/// 主题分类：原语是否属于"IO / 输出 / 盒子操作 / 诊断"主题（dispatch_io）。
+fn is_io_prim(p: Primitive) -> bool {
+    matches!(
+        p,
+        Primitive::Input
+            | Primitive::OpenIn
+            | Primitive::CloseIn
+            | Primitive::NewRead
+            | Primitive::Read
+            | Primitive::NewWrite
+            | Primitive::OpenOut
+            | Primitive::CloseOut
+            | Primitive::Write
+            | Primitive::Immediate
+            | Primitive::ShipOut
+            | Primitive::Output
+            | Primitive::Box
+            | Primitive::SetBox
+            | Primitive::Copy
+            | Primitive::UnHBox
+            | Primitive::UnHCopy
+            | Primitive::UnVBox
+            | Primitive::UnVCopy
+            | Primitive::LastBox
+            | Primitive::UnSkip
+            | Primitive::UnPenalty
+            | Primitive::Unkern
+            | Primitive::VSplit
+            | Primitive::DisplayWidth
+            | Primitive::PageDepth
+            | Primitive::PageFillLStretch
+            | Primitive::PageShrink
+            | Primitive::NullFont
+            | Primitive::ShowBox
+            | Primitive::ShowGroups
+            | Primitive::ShowLists
+            | Primitive::Message
+            | Primitive::Show
+            | Primitive::ShowThe
+            | Primitive::ShowTokens
+            | Primitive::ShowIfs
+            | Primitive::Error
+            | Primitive::VarUnit
+    )
+}

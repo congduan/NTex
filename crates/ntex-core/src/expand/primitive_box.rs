@@ -1,0 +1,83 @@
+// 排版原语 dispatcher。
+//
+// 主题：盒子（HBox/VBox/VTop/Par）、胶水（HSkip/VSkip/HFil/HFill/HSS/VFil/VFill/VSS/
+// HFilNeg/VFilNeg）、kern、penalty、rule、leaders、control space、indent。
+//
+// 维护约定（与 expand/mod.rs 既有 include! 链一致）：
+// - 仅 `impl Expander { ... }` 块，无 use / 无模块声明；
+// - 入口 `dispatch_box(prim: Primitive)` 由 `primitive.rs` 主 match 委托；
+// - 函数 1:1 来自 `exec_primitive` 主 match，零行为变化。
+
+impl Expander {
+    /// 排版原语 dispatcher：盒子/胶水/kern/penalty/rule/leaders/control space/inf glue。
+    pub(super) fn dispatch_box(&mut self, prim: Primitive) -> Result<()> {
+        match prim {
+            // M3-2 排版原语
+            // 盒子：扫描可选 to/spread 规格，直通 sink（排版器解释）。
+            Primitive::HBox | Primitive::VBox | Primitive::VTop => {
+                let (to, spread) = self.scan_box_spec()?;
+                self.sink.box_spec(to, spread)?;
+                self.sink.primitive(prim)
+            }
+            Primitive::Par => {
+                // 传 \par 源码行号给排版器（折行警告 `at lines a--b`）
+                let ln = self.error_context().map(|(n, _)| n as i64).unwrap_or(0);
+                self.sink.paragraph_line(ln)?;
+                self.sink.primitive(prim)
+            }
+            // 带参数扫描的排版原语：扫描在 VM 侧完成，结果交给 sink
+            Primitive::HSkip | Primitive::VSkip => {
+                let g = self.scan_glue()?;
+                self.sink.glue(g)
+            }
+            Primitive::Kern => {
+                let w = self.scan_dimen()?;
+                self.sink.kern(w)
+            }
+            Primitive::Penalty => {
+                // 记录行号须在 scan_number 之前（数字扫描吞行尾换行 →
+                // current_line_no 已前进到下一行）
+                let line = self.current_line_no();
+                let p = self.scan_number()?;
+                // 强制断页（≤ -10000）触发 output 例程：例程组的 entering
+                // 行 = 断页行（tex.web：例程在断页 token 处注入）
+                if p <= -10_000 {
+                    self.output_trigger_line = line;
+                }
+                self.sink.penalty(p)
+            }
+            Primitive::HRule | Primitive::VRule => {
+                let [h, d, w] = self.scan_rule_specs(prim)?;
+                self.sink.rule(w, h, d)
+            }
+            // TRIP 冲刺：\leaders/\cleaders/\xleaders —— 后续盒子（\hbox/\vbox/\hrule/
+            // 盒子寄存器）由既有路径扫描，sink 侧挂起为引导符，等 \hskip/\vskip 胶水
+            // 组成 Leader 节点（tex.web scan_box(leader_flag+kind) + box_end）。
+            Primitive::Leaders | Primitive::Cleaders | Primitive::XLeaders => {
+                self.sink.primitive(prim)
+            }
+            // 段落缩进：直通 sink 由排版器解释
+            Primitive::Indent | Primitive::NoIndent => self.sink.primitive(prim),
+            // ETRIP 冲刺：\␣（control space）：输出空格 token（TeX control_space）
+            Primitive::ControlSpace => self
+                .sink
+                .token(Token::char(Catcode::Space, u32::from(b' '))),
+            // ETRIP 冲刺：无限阶胶水（\hfil/\hfill/\hss/\vfil/\vfill/\vss）
+            Primitive::HFil => self.sink.fill_glue(0),
+            Primitive::HFill => self.sink.fill_glue(1),
+            Primitive::HSS => self.sink.fill_glue(2),
+            Primitive::VFil => self.sink.fill_glue(3),
+            Primitive::VFill => self.sink.fill_glue(4),
+            Primitive::VSS => self.sink.fill_glue(5),
+            // TRIP 冲刺：\vfilneg（plain.tex：负 1fil vskip；走 fill_glue kind=6）
+            Primitive::VFilNeg => self.sink.fill_glue(6),
+            // TRIP 冲刺：\hfilneg（plain.tex：负 1fil hskip；走 fill_glue kind=7）
+            Primitive::HFilNeg => self.sink.fill_glue(7),
+            // TRIP 冲刺：\/（斜体校正，直通 sink）
+            Primitive::ItalicCorrection => self.sink.italic_correction(),
+            other => Err(Error::internal(format!(
+                "未接入 dispatch_box 的原语 {other:?}"
+            ))),
+        }
+    }
+}

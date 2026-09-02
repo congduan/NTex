@@ -1940,6 +1940,16 @@ include!("macros.rs");
 // ---------- 方法分片：primitive.rs ----------
 include!("primitive.rs");
 
+// ---------- 方法分片（PR-2b：exec_primitive 大 match 按主题拆分为 7 个 dispatcher，
+// 依 primitive.rs 主 match 守卫顺序 include） ----------
+include!("primitive_box.rs");
+include!("primitive_param.rs");
+include!("primitive_math.rs");
+include!("primitive_expand.rs");
+include!("primitive_align.rs");
+include!("primitive_toks_state.rs");
+include!("primitive_io.rs");
+
 // ---------- 方法分片：primitive_font.rs（字体家族：从 primitive.rs 拆出） ----------
 include!("primitive_font.rs");
 
