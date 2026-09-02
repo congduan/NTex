@@ -809,6 +809,7 @@ impl NodeBuilder {
         ship: bool,
         leaders: Option<LeadersKind>,
         setbox: Option<usize>,
+        boxmaxdepth: i64,
     ) {
         let children = self.lists.pop().expect("盒子列表");
         self.list_modes.pop();
@@ -831,7 +832,7 @@ impl NodeBuilder {
                     Some((_, Some(spread))) => natural.height + natural.depth + spread,
                     _ => natural.height + natural.depth,
                 };
-                Node::Box(vpack(children, target))
+                Node::Box(vpack(children, target, boxmaxdepth))
             }
             PendingBox::VTop => {
                 // tex.web L21083-21087 Readjust：\vtop 的高度取首项高度（首项为
@@ -842,7 +843,7 @@ impl NodeBuilder {
                     Some((_, Some(spread))) => natural.height + natural.depth + spread,
                     _ => natural.height + natural.depth,
                 };
-                let mut b = vpack(children, target);
+                let mut b = vpack(children, target, boxmaxdepth);
                 let first_h = match b.children.first() {
                     // type(p)<=rule_node：box/rule 节点取 height，其余（glue 等）为 0
                     Some(Node::Box(inner)) => inner.height,

@@ -639,6 +639,10 @@ impl TokenSink for NodeBuilder {
         if ctx.box_kind.is_some_and(PendingBox::is_vertical) && self.mode() == Mode::Horizontal {
             self.close_paragraph();
         }
+        // 盒组封装的 boxmaxdepth 用**组内**值（tex.web：vbox 封装在组恢复前——
+        // 与 L635-641 折行用组内 hsize 同理；trip L316 `\vbox to10pt{\boxmaxdepth
+        // =-1pt...}` → 恢复后取外层会丢 -1pt 钳制）
+        let inner_boxmaxdepth = self.params.boxmaxdepth;
         // 先恢复参数镜像（与 VM 的 save_stack 恢复对齐），随后的缩进/interline 用外层值
         if let Some(prev) = self.param_stack.pop() {
             self.params = prev;
@@ -744,6 +748,7 @@ impl TokenSink for NodeBuilder {
                         self.align_columns.push(Node::Box(crate::node::vpack(
                             content,
                             self.params.vsize,
+                            self.params.boxmaxdepth,
                         )));
                     }
                 }
@@ -753,7 +758,7 @@ impl TokenSink for NodeBuilder {
                 match dir {
                     Some(AlignDir::Halign) => {
                         // 行堆叠：vbox of 列盒（\halign 数据行 → vbox）
-                        let v = crate::node::vpack(columns, self.params.vsize);
+                        let v = crate::node::vpack(columns, self.params.vsize, self.params.boxmaxdepth);
                         if let Some(outer) = self.lists.last_mut() {
                             outer.push(Node::Box(v));
                         }
@@ -771,7 +776,7 @@ impl TokenSink for NodeBuilder {
             GroupKind::HBox | GroupKind::AdjustedHBox | GroupKind::VBox | GroupKind::VTop => {
                 if let Some(kind) = ctx.box_kind {
                     let leaders = ctx.leaders;
-                    self.package_box(kind, ctx.shipout, leaders, ctx.setbox);
+                    self.package_box(kind, ctx.shipout, leaders, ctx.setbox, inner_boxmaxdepth);
                 }
             }
             _ => {}
@@ -1533,7 +1538,7 @@ impl TokenSink for NodeBuilder {
         if content.is_empty() {
             return Ok(());
         }
-        let v = crate::node::vpack(content, self.params.vsize);
+        let v = crate::node::vpack(content, self.params.vsize, self.params.boxmaxdepth);
         self.align_columns.push(Node::Box(v));
         Ok(())
     }

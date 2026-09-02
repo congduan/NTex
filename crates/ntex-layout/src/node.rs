@@ -404,11 +404,14 @@ pub fn vbox_dimensions(children: &[Node]) -> BoxDimensions {
 }
 
 /// `vpack`（tex.web §661 "vpackage"）：把垂直列表打包为总高（height+depth）**恰好**
-/// `height` 的 vbox。
+/// `height` 的 vbox；`max_depth` 为深度上限（tex.web vpackage 第四参——\vbox 的
+/// boxmaxdepth；自然深度超限 → 深度钳到限制）。
 ///
-/// 占位度量阶段简化：差额直接调整维度（高度优先，超 `maxdepth` 语义未建模；
-/// 不逐节点烘焙 glue_set）。无差额时与 [`BoxNode::new_vbox`] 等价。
-pub fn vpack(children: Vec<Node>, height: i64) -> BoxNode {
+/// 占位度量阶段简化：差额直接调整维度（高度优先，超 `maxdepth` 语义部分建模——
+/// 只钳 depth 不动 height；exactly 目标下差额由高度吸收（TRIP L316
+/// `\vbox to10pt{\boxmaxdepth=-1pt\mark{vii}}` → (10.0+-1.0) 对齐参考））。
+/// 无差额时与 [`BoxNode::new_vbox`] 等价。
+pub fn vpack(children: Vec<Node>, height: i64, max_depth: i64) -> BoxNode {
     // tex.web vpack：删除前导 discardable 节点（glue/penalty/kern/mark/insert 等）——
     // 垂直列表开段的 \\parskip 前导 glue 在打包时被移除（参考 etrip vbox 无
     // 前导 \\parskip；\\vbox{\\hsize=0pt a} 的第一个 child 是行盒而非 glue）。
@@ -427,6 +430,11 @@ pub fn vpack(children: Vec<Node>, height: i64) -> BoxNode {
         b.height -= dh;
         let dd = (-diff - dh).min(b.depth);
         b.depth -= dd;
+    }
+    // tex.web vpackage：自然深度超 max_depth 限制 → 深度钳到限制（超出部分
+    // tex.web 转进高度差额 x，exactly 目标下被 glue set 吸收——简化只钳 depth）
+    if b.depth > max_depth {
+        b.depth = max_depth;
     }
     b
 }
@@ -453,7 +461,7 @@ pub fn split_vbox(b: BoxNode, height: i64) -> (BoxNode, BoxNode) {
     }
     let top = b.children[..split].to_vec();
     let rest = b.children[split..].to_vec();
-    (vpack(top, height), BoxNode::new_vbox(rest))
+    (vpack(top, height, i64::MAX), BoxNode::new_vbox(rest))
 }
 
 /// `hpack`（tex.web §656 "hpackage"）：把水平列表打包成**恰好** `width` 宽的 hbox。
