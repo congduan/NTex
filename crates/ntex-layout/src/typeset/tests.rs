@@ -515,6 +515,12 @@ mod tests {
         // 连字：f + i → 单字符 12（fi）；v + e → 字距 -18205sp 插入在 'e' 前
         let children = tfm_line_children(r"\font\cmr=cmr10\cmr \hbox{fi ve}");
         match &children[0] {
+            Node::Ligature {
+                charcode, components, ..
+            } => {
+                assert_eq!(*charcode, 12, "f+i 应连字为字符 12（fi）");
+                assert_eq!(components, b"fi", "连字组成应为 f+i");
+            }
             Node::Char { charcode, .. } => assert_eq!(*charcode, 12, "f+i 应连字为字符 12（fi）"),
             other => panic!("预期 Char，得到 {other:?}"),
         }
@@ -1500,7 +1506,13 @@ mod tests {
             .typeset(r"\font\tenrm=cmr10\font\twelve=cmr10 at 12pt\textfont0=\twelve\tenrm $x$")
             .unwrap();
         let line = as_box(&main[0]);
-        let x = &line.children[0];
+        // 行盒含 \mathon/\mathoff 边界节点（tex.web math_node）与行尾 \parfillskip：
+        // 过滤后 children[0] 即公式首原子（惯例同 math_line_children）
+        let x = line
+            .children
+            .iter()
+            .find(|n| matches!(n, Node::Char { charcode: c, .. } if *c == b'x' as u32))
+            .expect("公式内应有字符 x");
         let (w10, _, _) = fm.char_metrics(b'x' as u32);
         let w12 = xn_over_d(w10, 12 * SP_PER_PT, 10 * SP_PER_PT);
         assert_eq!(x.dimensions().width, w12, "族 0 字体应为 12pt cmr10");
