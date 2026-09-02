@@ -1085,14 +1085,43 @@ impl Expander {
     ///
     /// 该格式逐字对齐 web2c TRIP 参考输出（error_line=79 的 show_context 伪打印）。
     fn write_error(&mut self, msg: &str) {
+        self.write_error_impl(msg, true, None);
+    }
+
+    /// 报错 + help 一体输出（无 `<to be read again>`，TeX error() 语义：报错
+    /// 发生时无 back_input 待读 token——主循环"裸用内部量"类错误，如 etrip
+    /// gluestretchorder 段 l.932/l.933 的 4 个 "You can't use ..."）。help
+    /// 紧随 l.N 上下文行后、错误块尾空行由 write16 追加的 \n 产生（块结构：
+    /// ! 消息 / l.N 两行 / help 4 行 / 空行——与参考逐行一致）。扫描参数失败
+    /// 的报错才带 read-again（write_error，如 Missing number / Bad register
+    /// code）。
+    fn write_error_help_no_read_again(&mut self, msg: &str, help: &str) {
+        self.write_error_impl(msg, false, Some(help));
+    }
+
+    /// 报错 + help 一体输出（带 `<to be read again>`，扫描参数失败且报错后
+    /// 输入流仍有待处理 token 时——etrip sparse arrays 段 l.970-973 的
+    /// "Bad register code" 块即此类：read-again token 由 fetch() 取输入流
+    /// 下一 token（宏体 `#1\1=-1#1...` 场景恰为再次出现的 `\countdef` 等，
+    /// 与参考 `<to be read again>` 后的 token 一致）。块结构与
+    /// write_error_help_no_read_again 相同，只是 error 后先输出 read-again 段）。
+    fn write_error_help(&mut self, msg: &str, help: &str) {
+        self.write_error_impl(msg, true, Some(help));
+    }
+
+    /// write_error 实现：read_again=true 时先输出 `<to be read again>` 段
+    /// （TRIP 对齐：扫描参数失败时错误恢复后将被读取的 token）。
+    fn write_error_impl(&mut self, msg: &str, read_again: bool, help: Option<&str>) {
         let mut s = format!("! {msg}\n");
         // <to be read again>：错误恢复后将被读取的 token（peek 输入流下一个）；
         // 第二行 = 描述宽度（19：`<to be read again> `）空格 + token 直接显示。
-        if let Some((tok, _)) = self.fetch().ok().flatten() {
-            let desc = self.trace_tok_simple(tok);
-            s.push_str("<to be read again> \n");
-            s.push_str(&format!("{}{}\n", " ".repeat(19), desc));
-            self.unread(tok);
+        if read_again {
+            if let Some((tok, _)) = self.fetch().ok().flatten() {
+                let desc = self.trace_tok_simple(tok);
+                s.push_str("<to be read again> \n");
+                s.push_str(&format!("{}{}\n", " ".repeat(19), desc));
+                self.unread(tok);
+            }
         }
         // l.N 行上下文（两行：位置前内容 + n 空格 + 位置后字符）
         if let Some((n, line, pos)) = self.error_context_pos() {
@@ -1134,6 +1163,11 @@ impl Expander {
                 after,
                 suffix
             ));
+        }
+        // help1..6：紧随 l.N 上下文行（TeX error() 在上下文行后打印帮助文本，
+        // 无额外空行；块间空行由 write16 尾部追加的 \n 产生）
+        if let Some(h) = help {
+            s.push_str(h);
         }
         let _ = self.sink.write16(s);
     }

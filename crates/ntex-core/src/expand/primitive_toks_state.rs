@@ -40,8 +40,17 @@ impl Expander {
                 let idx = self.scan_number()?;
                 // TeX：\countdef\cs=-1 / 32768 → "! Bad register code (-1)."
                 // 恢复式（不定义、继续；ETRIP L970 稀疏数组测试的故意用例）。
+                // 报错块对齐参考 etrip.log（l.970-973）：! 消息 + <to be read
+                // again> + token + l.N 两行 + help 2 行。read-again token 经
+                // fetch() 取输入流下一 token——宏体 `#1\1=-1#1\1=32768...`
+                // 场景恰为再出现的 `\countdef` 等（与参考一致）；err_snapshot
+                // 由 write_error 路径建立，恢复到主循环前校验组/条件栈仍生效。
                 if idx < 0 || idx >= REGISTER_COUNT as i64 {
-                    self.report_error(&format!("Bad register code ({idx})."));
+                    self.write_error_help(
+                        &format!("Bad register code ({idx})."),
+                        "A register number must be between 0 and 32767.\n\
+                         I changed this one to zero.\n",
+                    );
                     return Ok(());
                 }
                 let idx = idx as usize;

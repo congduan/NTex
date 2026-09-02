@@ -4,7 +4,22 @@
 > 进展随冲刺迭代更新。本文件是 ETRIP 原语状态的**唯一状态源**（plan.md §6 引用）。
 > **不符规范项待办全集**（ETRIP + TRIP 硬差距 + D 组简化点 + A5，按 P0/P1/P2 优先级）见
 > **plan.md §6 待办清单**（2026-08-26 盘点）。
-> 最近更新：2026-08-26（不符规范项盘点入待办；`\long`/`\chardef`/`\box`/`\muskip` 确认已实现）；
+> 最近更新：2026-09-03 二轮（sparse arrays 段 8 个 "Bad register code" 错误块已对齐参考：
+> countdef 五连越界从 report_error 单行升级为 `write_error_help`（新增变体：read-again
+> 段 + help，read-again token 经 fetch() 取输入流下一 token，宏体 `#1\1=-1#1...` 场景恰为
+> 再出现的 `\countdef` 等原语名）；块含 ! 消息 / <to be read again> + token / l.N 两行光标 /
+> help 2 行，与参考逐行一致，l.N 由 l.963 错位自愈为 l.970；read-again 输出 7→17 处；
+> semantic diff -3104/+2293（合计 5407）→ -3063/+2326（合计 5389）。遗留：参考 read-again
+> token 与 l.N 间的独立 `...` 省略行（tex.web §show_context：输入栈自错误层向下跳过层数达
+> `\errorcontextlines` 时输出一次 `...`，本引擎未模拟多层上下文显示）——归入"read-again
+> 错误块格式统一"主题）；
+> 2026-09-03 一轮（实测：引擎已能跑完 etrip.tex 全程；修 gluestretchorder 段 4 个
+> 胶水查询原语裸用模式错误 "You can't use \cs in vertical mode."——primitive_expand 裸用
+> 分支 no-op 改报错；write_error 族重构出 `write_error_help_no_read_again`（无
+> `<to be read again>` + help 紧随 l.N 行，参考块逐行一致）；sparse arrays 段 8 个
+> "Bad register code" 全报且 l.N 行号对齐；\tracingassigns {changing/into}
+> 主体已实现（72/102 行））；
+> 2026-08-26（不符规范项盘点入待办；`\long`/`\chardef`/`\box`/`\muskip` 确认已实现）；
 > 2026-08-23（第二波：表达式 i128/胶水阶语义/未定义恢复/eTeX 32768 寄存器；
 > marks 族原语 6 项全实现；第三波：A/B 组剩余原语批量补全——盒子操作（\copy/\unhbox/
 > \unvbox/\unhcopy/\unvcopy/\lastbox）、盒子尺寸（\wd/\ht/\dp）、段落/断页参数（\leftskip/
@@ -166,14 +181,27 @@ M4 数学 + e-TeX 验收时已实现的 e-TeX 原语：
 - ✅ `\discretionary`、`\insert`、`\vadjust`、`\halign`、`\valign`、`\cr`、`\noalign`、`\mathchoice`
 - ✅ `\dump`、`\everyjob`
 
-## 收尾（❌ 未开始）
+## 收尾（✅ 已启动：引擎能跑完 etrip.tex 全程，逐段销账中）
 
 - ❌ `etrip.log` 逐字节比对（消息格式/上下文行/dvitype 暂不纳入）。
-  已知差距（2026-08-23 起逐项销账）：
+  已知差距（2026-08-23 起逐项销账；2026-09-03 实测 diff ≈ -3104/+2293）：
 - ✅（2026-09-03）mu_error 恢复消息——help1 行已加
-- ❌ `\tracingassigns` 的 `{changing/into}` 行
+- ✅（2026-09-03）`\tracingassigns` 的 `{changing/into}` 行——主体已实现
+  （引擎 72 行 vs 参考 102 行，尾部差异待查）
+- ✅（2026-09-03）gluestretchorder 段 4 个模式错误：`\gluestretchorder/\glueshrinkorder/
+  \gluestretch/\glueshrink` 裸用报 "You can't use \cs in vertical mode."（no-op 改报错，
+  参考块逐行一致）
+- ✅（2026-09-03 二轮）sparse arrays 段 8 个 "Bad register code" 错误块对齐参考：
+  `!` 消息 / `<to be read again>` + token（`\countdef` 等原语名）/ l.N 两行光标
+  （l.970 对齐）/ help 2 行，逐行一致；countdef 五连越界改走新增
+  `write_error_help`（read_again=true + help），语义 diff -3104/+2293 → -3063/+2326，
+  read-again 输出 7→17 处
+- ❌ read-again 错误块格式统一（剩余差项见上）；其中参考 read-again token 与 l.N 之间
+  的独立 `...` 省略行（tex.web §show_context：跳过层数达 `\errorcontextlines` 才打，
+  引擎未模拟多层上下文显示）为当前最大单点残余
 - ❌ `\the\muexpr` 的 "5.0mu" 显示（expander 端 1mu=em/18 待重构）
-- ❌ 错误消息上下文行（"l.N …"）
+- ❌ 错误消息上下文行（"l.N …"）两行光标显示未全覆盖；另有 \write 转录 cs 后空格、
+  79 列断行两处系统性格式差
 
 ## 引擎基础设施（2026-08-23）
 

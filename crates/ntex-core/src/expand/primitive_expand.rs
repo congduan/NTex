@@ -131,11 +131,32 @@ impl Expander {
             }
             // ETRIP 冲刺：\meaning<token>（可展开：token 含义文本）
             Primitive::Meaning => self.exec_meaning(),
-            // 胶水分量查询单独出现：no-op（\ifnum/\ifdim/\the 上下文由扫描函数读取）
+            // e-TeX 胶水分量查询原语裸用（\gluestretchorder/\glueshrinkorder/
+            // \gluestretch/\glueshrink）：TeX 报 "You can't use `\x' in <mode>
+            // mode." 并恢复、不扫参数——etrip gluestretchorder 段 l.932/l.933
+            // 各 2 个模式错（垂直模式裸用）。数值/\the/\ifnum 上下文由 scan.rs
+            // /save.rs 先行处理，不达此分支；报错无 `<to be read again>` 段。
             Primitive::GlueStretchOrder
             | Primitive::GlueShrinkOrder
             | Primitive::GlueStretch
-            | Primitive::GlueShrink => Ok(()),
+            | Primitive::GlueShrink => {
+                let name = match prim {
+                    Primitive::GlueStretchOrder => "gluestretchorder",
+                    Primitive::GlueShrinkOrder => "glueshrinkorder",
+                    Primitive::GlueStretch => "gluestretch",
+                    _ => "glueshrink",
+                };
+                self.write_error_help_no_read_again(
+                    &format!(
+                        "You can't use `\\{name}' in {}.", self.sink.mode_name()
+                    ),
+                    "Sorry, but I'm not programmed to handle this case;\n\
+                     I'll just pretend that you didn't ask for it.\n\
+                     If you're in the wrong mode, you might be able to\n\
+                     return to the right one by typing `I}' or `I$' or `I\\par'.\n",
+                );
+                Ok(())
+            }
             // ETRIP 第二波：\mutoglue/\gluetomu 单独出现（数字/尺寸上下文由扫描函数处理）。
             // 裸用按 TeX 报 "You can't use \mutoglue in vertical mode." 并恢复（简化：发胶水 token）。
             Primitive::MuToGlue => {

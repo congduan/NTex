@@ -1067,9 +1067,28 @@ mod tests {
         let sink = e.take_sink();
         let mut sink = sink;
         let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+        // read-again 错误块（对齐 etrip.log l.970 参考块）：! 消息 / <to be
+        // read again> + token（宏体 #1 再出现的 \countdef）/ l.N 两行光标 /
+        // help 2 行 / 空行。
         assert_eq!(
             sink.transcript,
-            "! Bad register code (-1).\n\nl.1 \\countdef\\1=-1 \\countdef\\1=32768 \\countdef\\1=0 \\countdef\\1=32767 \\relax\n\n! Bad register code (32768).\n\nl.1 \\countdef\\1=-1 \\countdef\\1=32768 \\countdef\\1=0 \\countdef\\1=32767 \\relax\n\n",
+            r#"! Bad register code (-1).
+<to be read again> 
+                   \countdef
+l.1 \countdef\1=-1 \countdef
+                            \1=32768 \countdef\1=0 \countdef\1=32767 \relax
+A register number must be between 0 and 32767.
+I changed this one to zero.
+
+! Bad register code (32768).
+<to be read again> 
+                   \countdef
+l.1 ...ountdef\1=32768 \countdef
+                                \1=0 \countdef\1=32767 \relax
+A register number must be between 0 and 32767.
+I changed this one to zero.
+
+"#,
             "转录：{:?}",
             sink.transcript
         );
