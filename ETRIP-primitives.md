@@ -4,7 +4,15 @@
 > 进展随冲刺迭代更新。本文件是 ETRIP 原语状态的**唯一状态源**（plan.md §6 引用）。
 > **不符规范项待办全集**（ETRIP + TRIP 硬差距 + D 组简化点 + A5，按 P0/P1/P2 优先级）见
 > **plan.md §6 待办清单**（2026-08-26 盘点）。
-> 最近更新：2026-09-03 二轮（sparse arrays 段 8 个 "Bad register code" 错误块已对齐参考：
+> 最近更新：2026-09-03 三轮（marks 段 2 个 "Bad register code" 整块缺失已修复：etrip.tex L208
+> `\marks-1{-1}\marks32768{32768}`——e-TeX marks class 走 register-code 语义，越界报
+> "! Bad register code (N)." + read-again token（数字后下一 token `{`）+ l.N 两行 + help 2 行，
+> 钳 0 后继续收集 general text；根因：primitive_align Marks 处理器此前只 scan_number 无范围
+> 检查 → 错误块静默缺失。现对齐 countdef 五连同款 write_error_help 块，参考块逐行一致（残留
+> 仅第二行尾部截断省略点计数 `....` vs `...a...`，归"行截断格式"主题）；单测
+> marks_bad_register_code_recovers 固化；semantic diff -3063/+2326（合计 5389）→
+> -3051/+2352（合计 5403））；
+> 2026-09-03 二轮（sparse arrays 段 8 个 "Bad register code" 错误块已对齐参考：
 > countdef 五连越界从 report_error 单行升级为 `write_error_help`（新增变体：read-again
 > 段 + help，read-again token 经 fetch() 取输入流下一 token，宏体 `#1\1=-1#1...` 场景恰为
 > 再出现的 `\countdef` 等原语名）；块含 ! 消息 / <to be read again> + token / l.N 两行光标 /
@@ -196,6 +204,12 @@ M4 数学 + e-TeX 验收时已实现的 e-TeX 原语：
   （l.970 对齐）/ help 2 行，逐行一致；countdef 五连越界改走新增
   `write_error_help`（read_again=true + help），语义 diff -3104/+2293 → -3063/+2326，
   read-again 输出 7→17 处
+- ✅（2026-09-03 三轮）marks 段 2 个 "Bad register code" 整块缺失：`\marks` class 号走
+  register-code 语义（etrip L208 `\marks-1{...}\marks32768{...}` 越界）——primitive_align
+  Marks 处理器加越界检查 + `write_error_help`（同 countdef 五连：! 消息 / read-again token
+  `{` / l.N 两行 / help 2 行），钳 0 继续收集 general text；参考块逐行一致（残留仅第二行
+  尾部省略点计数 `....` vs `...a...`，归"行截断格式"主题）；单测
+  `marks_bad_register_code_recovers` 固化；semantic diff -3063/+2326 → -3051/+2352
 - ❌ read-again 错误块格式统一（剩余差项见上）；其中参考 read-again token 与 l.N 之间
   的独立 `...` 省略行（tex.web §show_context：跳过层数达 `\errorcontextlines` 才打，
   引擎未模拟多层上下文显示）为当前最大单点残余
@@ -221,3 +235,8 @@ M4 数学 + e-TeX 验收时已实现的 e-TeX 原语：
 
 每次迭代前先 `cargo build -p ntex-trip` 确认全绿再跑（避免脏构建旧产物误报，如误报过的
 `\ifcase 序号不能为负`）；对照 etrip.log 参考逐段验证，不做整体 diff。
+
+> **收尾口径（2026-09-03，详见 plan.md §6 末尾决策）**：语义 bug（`\muexpr` 1mu 换算 /
+> `\the` 显示、glue order 值语义）与错误恢复通用机制（M1-13 `back_input`/`\errhelp`）
+> 必修；`etrip.log` 从逐字节比对降级为**语义 diff + 错误块抽查**（read-again `...` 省略行、
+> 79 列断行、光标细节等格式差放过），逐字节口径留待 M8 L2 阶段。

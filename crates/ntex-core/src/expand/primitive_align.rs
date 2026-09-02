@@ -99,7 +99,21 @@ impl Expander {
             // ETRIP 冲刺：\mark{<text>}（mark 节点）；e-TeX \marks<n>{<text>}
             Primitive::Mark | Primitive::Marks => {
                 let class = if prim == Primitive::Marks {
-                    Some(self.scan_number()?)
+                    let mut class = self.scan_number()?;
+                    // e-TeX：marks class 走 register-code 语义（etrip.tex L208
+                    // `\marks-1{-1}\marks32768{32768}`）：越界报 "! Bad register
+                    // code (N)." 并钳 0（同 countdef 五连——write_error_help 错误块：
+                    // ! 消息 / read-again token（数字后下一个 token `{`）/ l.N 两行 /
+                    // help 2 行，逐行对齐参考 etrip.log l.153-167）。
+                    if !(0..REGISTER_COUNT as i64).contains(&class) {
+                        self.write_error_help(
+                            &format!("Bad register code ({class})."),
+                            "A register number must be between 0 and 32767.\n\
+                             I changed this one to zero.\n",
+                        );
+                        class = 0;
+                    }
+                    Some(class)
                 } else {
                     None
                 };

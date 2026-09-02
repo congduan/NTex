@@ -11,10 +11,12 @@
 | M1 展开内核       | 🟡 核心完成：M1-1\~7、M1-9\~11 已实现（95 用例）+ **A2 空行→`\par` 行状态机 + A4 `\outer` 语义 + M1-13 错误上下文行 `l.N`**（2026-08-23 评审修复）；M1-13 错误恢复待补；**M1-14 TRIP 冲刺推进中**（2026-08-25 a00a4d9：`\mag`+pc/cc 单位、扫描恢复语义、^^ 十六进制输入、`\write` 流 -1、缺 cs/字体/数学/排版错误恢复；trip.tex 仍停于"组未闭合"等恢复点，未全绿）                                                                                                                                                                                                                              |
 | M2 字节码        | 🟡 双轨完成（100 用例等价）；**性能 P0 补课落地**（字节码 u64 原始字执行器 + release 调优，80022b4）；吞吐 ≥2x 待重测（ntex 驱动基准死循环，见 backlog P1）；M2-5 arena 未做 |                                                                                                                                                                                                                             |
 | M3 排版核心       | ✅ M3-1\~M3-4 完成（58+ 用例）；**M3-5 DVI 写出 +** **`\shipout`** **+ 断页 DP + lig/kern +** **`\sfcode`** **+** **`\output`** **例程/box255** 完成（dvipdfmx 验收 + 与 TeX 差分对照）；**RFC-3 VFS + 副作用模型落地**（10 原语走 `ntex-io` VFS，延迟写入 shipout 边界提交）；**`.fmt`** **v1 内存快照**（`ntex-format` 确定性编码 + roundtrip）                     |
-| M4 数学 + e-TeX | ✅ **全部完成**：数学模式状态机（`$`/`$$`、8 类原子、spacing 表、上下标、字阶）、分式/根式/定界符、样式原语、fontdimen 数学参数 + 数学字体族、显示数学细化、Liang 断字、错误模型、e-TeX 核心 + 扩展（`\protected`/`\ifdefined`/`\ifcsname`/`\unless`/`\numexpr`/`\detokenize`/`\unexpanded`/`\eTeXversion`/`\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens`）；**ETRIP 冲刺**：A 组 41/42（仅 `\muexpr` 待校准）、B 组 36/36、C 组全部已接线（2026-08-23），`etrip.log` 逐字节比对未开始 |
+| M4 数学 + e-TeX | ✅ **全部完成**：数学模式状态机（`$`/`$$`、8 类原子、spacing 表、上下标、字阶）、分式/根式/定界符、样式原语、fontdimen 数学参数 + 数学字体族、显示数学细化、Liang 断字、错误模型、e-TeX 核心 + 扩展（`\protected`/`\ifdefined`/`\ifcsname`/`\unless`/`\numexpr`/`\detokenize`/`\unexpanded`/`\eTeXversion`/`\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens`）；**ETRIP 冲刺**：A 组 41/42（仅 `\muexpr` 待校准）、B 组 36/36、C 组全部已接线（2026-08-23）；`etrip.log` 逐字节比照 2026-09-03 降级口径推进（语义 diff 归零 + 错误块抽查，逐字节留 M8 L2，见 §6 末尾） |
 | 输出端           | 🟢 正式 PDF 后端可用（`ntex-pdf`：DVI → PDF 直出 + Type1 嵌入，替换临时 Helvetica 切片；demo 两页与 dvipdfmx 渲染一致）                                                                                                                                                                                                                |
 
-**下一步**：按 **§6 不符规范原语待办**（P0 优先级）推进——**TRIP 冲刺**（M1-13 错误恢复机制 `back_input`/`\errhelp` 是 trip.tex 停于"组未闭合"恢复点的根因，先行攻克）+ **ETRIP 收尾**（`\muexpr` 1mu 校准 + sparse arrays 段越界恢复 + gluestretchorder 值语义 + `etrip.log` 逐字节比对）+ 性能 backlog **P1**（热路径消分配 / 修通 ntex 驱动基准补测吞吐）。
+**下一步**：按 **§6 不符规范原语待办**（P0 优先级）推进——**TRIP 冲刺**（M1-13 错误恢复机制 `back_input`/`\errhelp` 是 trip.tex 停于"组未闭合"恢复点的根因，先行攻克）+ **ETRIP 收尾**（`\muexpr` 1mu 校准 + sparse arrays 段越界恢复 + gluestretchorder 值语义 + `etrip.log` 逐字节比对）+ 性能 backlog **P1**（热路径消分配 / 修通 ntex 驱动基准补测吞吐）；TRIP/ETRIP 收尾按
+  §6 末尾 2026-09-03 降级策略：错误恢复机制 + 语义 bug 必修，`etrip.log` 逐字节比对
+  降级为语义 diff（逐字节留 M8 L2），收尾完成后转场 M5。
 
 ***
 
@@ -495,6 +497,35 @@ P2 —— 架构决策：
 
 **冲刺纪律**：每次迭代前先 `cargo build -p ntex-trip` 确认全绿再跑（避免脏构建旧产物
 误报，如误报过的 `\ifcase 序号不能为负`）；对照 etrip.log 参考逐段验证，不做整体 diff。
+
+### ETRIP/TRIP 冲刺收尾降级策略（2026-09-03 决策）
+
+> 依据：M3 已达成 DVI 与真实 TeX 逐字节一致、M4 功能全落地、引擎已能跑完 etrip.tex
+> 全程（semantic diff −3063/+2326，逐段销账中）——内核语义正确性已基本被证明；
+> TRIP/ETRIP 未全绿的残余项多为"教科书级错误用例 + log 逐字节格式"类边际收益递减
+> 工作。据此把收尾口径定为**内核正确性优先、log 字节对齐止损转场**，不为 L2 提前付利息。
+
+**必要项（做，P0 语义正确性）**：
+- **错误恢复通用机制**（M1-13 `back_input`/`\errhelp`，TRIP 卡点根因）：引擎契约级能力，
+  直接关联"任意畸形输入不 panic"契约（AGENTS.md §4），且是通用机制——不做则所有报错
+  原语缺"报错后继续"路径；
+- **真语义 bug 修复**：`\muexpr` 1mu=em/18 换算 + `\the\muexpr` "5.0mu" 显示 + mu_error
+  恢复（A 组 42 项中仅剩）；gluestretchorder/glueshrinkorder 值语义——均属 L1 语义层，
+  污染数学间距/胶水结果，须修复并锁定。
+
+**降级项（放过字节格式，逐字节口径留 M8 L2）**：
+- `etrip.log` **逐字节比对 → 语义 diff + 错误块抽查**（read-again 与 l.N 间独立 `...`
+  省略行、两行光标未全覆盖、`\write` 转录空格、79 列断行等格式差不再逐字节死磕）；
+- `\showbox`/`\showlists` 诊断输出格式逐字节对齐、TRIP log 格式项——近似可用即可，
+  L2（字节兼容）阶段再对齐（M8）。
+
+**收尾验收口径（调整后）**：
+- semantic diff 归零（语义层）+ 错误路径不崩溃 + fuzz 零 panic + M2 双轨等价全绿；
+- TRIP/ETRIP "逐字节全绿"不再作为 M1/M4 验收的唯一口径，改记 M8 L2 观测项；
+- 本决策为文档状态源，与 ETRIP-primitives.md 收尾口径保持一致。
+
+**转场**：上述收尾完成后，主线转 **M5 增量计算**（相对 cTeX 的胜负手）；性能 backlog
+**P1**（热路径消分配 / 修通 ntex 驱动基准补测吞吐）并行推进。
 
 ***
 

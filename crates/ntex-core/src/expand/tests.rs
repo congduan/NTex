@@ -1100,6 +1100,46 @@ I changed this one to zero.
     }
 
     #[test]
+    fn marks_bad_register_code_recovers() {
+        // ETRIP L208 `\marks-1{-1}\marks32768{32768}`：e-TeX marks class 走
+        // register-code 语义——越界报 "! Bad register code (N)."（read-again
+        // token 为数字后下一 token `{`）+ help 2 行，钳 0 后继续收集 general text
+        // （对齐参考 etrip.log l.153-167；此前整块缺失——处理器未做范围检查）。
+        let mut e = Expander::new();
+        e.set_sink(Box::new(VecSink::default()));
+        e.run_source("\\marks-1{-1}\\marks32768{32768}\\marks0{ok}\\marks32767{z} ")
+            .unwrap();
+        let sink = e.take_sink();
+        let mut sink = sink;
+        let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+        // 错误块含 ! 消息 / read-again { / l.N 两行 / help 2 行
+        assert!(
+            sink.transcript.contains(
+                "! Bad register code (-1).\n<to be read again> \n                   {\n"
+            ),
+            "转录：{:?}",
+            sink.transcript
+        );
+        assert!(
+            sink.transcript.contains("A register number must be between 0 and 32767.\nI changed this one to zero.\n"),
+            "转录：{:?}",
+            sink.transcript
+        );
+        assert!(
+            sink.transcript.contains("! Bad register code (32768)."),
+            "转录：{:?}",
+            sink.transcript
+        );
+        // 越界次数恰为 2（非法值钳 0，合法 0/32767 不报错），恢复后继续执行不 panic
+        assert_eq!(
+            sink.transcript.matches("! Bad register code").count(),
+            2,
+            "转录：{:?}",
+            sink.transcript
+        );
+    }
+
+    #[test]
     fn trip_full_standard_primitives_22() {
         // TRIP 补全批次：tex.web 标准原语 22 个的赋值/查询/展开
         // 日期时间（int 参数四件套）
