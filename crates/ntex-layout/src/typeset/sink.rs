@@ -1166,9 +1166,10 @@ impl TokenSink for NodeBuilder {
     }
 
     fn penalty(&mut self, penalty: i64) -> Result<()> {
-        // 数学模式 `\penalty`：M4-1 忽略（数学断行点后续补）。
+        // 数学模式 `\penalty`：数学列表断行点原子（M4-1——tex.web math list
+        // 的 penalty 节点；此前忽略导致公式内断行点缺失）
         if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-            return Ok(());
+            return self.math_push_atom(MathAtom::Penalty { penalty });
         }
         self.append(Node::Penalty { penalty });
         Ok(())
@@ -1181,9 +1182,10 @@ impl TokenSink for NodeBuilder {
             self.leaders_box = Some((kind, Node::Rule { width, height, depth }));
             return Ok(());
         }
-        // 数学模式 `\vrule`：M4-1 忽略（规则原子后续补）。
+        // 数学模式 `\vrule`：数学列表规则原子（M4-1——此前忽略）
         if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-            return Ok(());
+            let width = if width == ntex_core::NULL_FLAG { 0 } else { width };
+            return self.math_push_atom(MathAtom::Rule { width, height, depth });
         }
         // 非引导上下文：未定宽度（TeX 在 hpack/vpack 解析；NTex 简化落 0）。
         let width = if width == ntex_core::NULL_FLAG { 0 } else { width };

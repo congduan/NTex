@@ -351,7 +351,10 @@ impl NodeBuilder {
             MathAtom::Underline { .. } | MathAtom::Overline { .. } => Some(MathClass::Ord),
             MathAtom::Box(_) => Some(MathClass::Ord),
             MathAtom::Accent { .. } => Some(MathClass::Ord),
-            MathAtom::MSkip { .. } | MathAtom::Style(_) => None,
+            MathAtom::MSkip { .. }
+            | MathAtom::Style(_)
+            | MathAtom::Penalty { .. }
+            | MathAtom::Rule { .. } => None,
         }
     }
 
@@ -493,6 +496,12 @@ impl NodeBuilder {
                 }
             }
             MathAtom::Box(b) => vec![Node::Box(b.clone())],
+            MathAtom::Penalty { penalty } => vec![Node::Penalty { penalty: *penalty }],
+            MathAtom::Rule { width, height, depth } => vec![Node::Rule {
+                width: *width,
+                height: *height,
+                depth: *depth,
+            }],
             MathAtom::Style(_) => unreachable!("Style 原子在 math_to_hlist 循环中处理"),
         }
     }

@@ -1660,6 +1660,45 @@ mod tests {
     }
 
     #[test]
+    fn math_penalty_kept_in_formula() {
+        // tex.web：数学模式 \penalty 是断行点——必须出现在公式输出（M4-1；
+        // 此前 sink 数学模式直接忽略）。"2D = '-' 字符必须出现在渲染输出。此前 scan_number 即丢。
+        let main = typeset(r"\hbox{$\penalty-50 x$}").unwrap();
+        let mut has_penalty = false;
+        fn walk(ns: &[Node], found: &mut bool) {
+            for n in ns {
+                if matches!(n, Node::Penalty { penalty: -50 } if !*found) {
+                    *found = true;
+                }
+                if let Node::Box(b) = n {
+                    walk(&b.children, found);
+                }
+            }
+        }
+        walk(&main, &mut has_penalty);
+        assert!(has_penalty, "数学内 \\penalty-50 丢失：{main:?}");
+    }
+
+    #[test]
+    fn math_vrule_kept_in_formula() {
+        // tex.web：数学模式 \vrule 是规则原子（M4-1；此前忽略）
+        let main = typeset(r"\hbox{$\vrule width 5pt x$}").unwrap();
+        let mut has_rule = false;
+        fn walk2(ns: &[Node], found: &mut bool) {
+            for n in ns {
+                if matches!(n, Node::Rule { .. }) {
+                    *found = true;
+                }
+                if let Node::Box(b) = n {
+                    walk2(&b.children, found);
+                }
+            }
+        }
+        walk2(&main, &mut has_rule);
+        assert!(has_rule, "数学内 \\vrule 丢失：{main:?}");
+    }
+
+    #[test]
     fn mathchar_produces_char_node() {
         // tex.web：\mathchar"322D（数学 15-bit：class 3/fam 2/char "2D）在数学中
         // 是原子；"2D = '-' 字符必须出现在渲染输出。此前 scan_number 即丢。

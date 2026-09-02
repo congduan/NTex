@@ -147,6 +147,10 @@ enum MathAtom {
     },
     /// 样式切换（`\displaystyle`/`\textstyle`/`\scriptstyle`/`\scriptscriptstyle`）。
     Style(MathStyle),
+    /// 数学断行点（数学模式 `\penalty`；M4-1——tex.web math list 的 penalty 节点）。
+    Penalty { penalty: i64 },
+    /// 数学规则原子（数学模式 `\vrule`；M4-1）。
+    Rule { width: i64, height: i64, depth: i64 },
     /// 数学空格（`\mskip`/`\mkern` 结果；`nonscript`：`\nonscript` 后脚本模式丢弃）。
     MSkip {
         width: i64,
