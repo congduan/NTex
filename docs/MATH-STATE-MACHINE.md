@@ -49,6 +49,10 @@ l.286+ \parshape...                # 参考：数学已关（垂直）；我们�
 3. **数学模式 `\mskip9mu minus1fil` 的 fil 阶**：mu 上下文报 `(mu inserted)` 已对齐参考
    （合法），但报错后数学状态需复查
 4. `\eqno/\leqno` no-op：显示公式编号不落节点（KNOWN-SIMPLIFICATIONS §1）
+5. **l.412 `\everymath{\radical"3}` 的 mathord 报错（1 行）**：`\everymath` 内容
+   （\radical 字段扫描）在每次数学进入时执行——单独复现数学正常，全量上下文
+   报 "can't use \mathord in restricted horizontal mode"（math=2 层残留）——
+   与 `\radical` 字段/`\right\delimiter` 定界符扫描相关（2026-09-02，repro_everymath_radical.tex）
 
 ## 6. 修改守则（血泪教训）
 

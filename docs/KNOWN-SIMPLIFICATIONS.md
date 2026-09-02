@@ -8,16 +8,17 @@
 
 | 位置 | 现状 | 影响 | 状态 |
 |---|---|---|---|
-| `expand/builtins.rs:296` | 数学原语批量"存在性测试" | 参数被吃掉，数学列表节点缺失 | ⚠️ 部分已修（mkern/mskip 8d0a71c 后暴露） |
+| `expand/builtins.rs:296` | 数学原语批量"存在性测试" | 参数被吃掉，数学列表节点缺失 | ⚠️ 部分已修（mkern/mskip mu 上下文 3a2cb63；fraction 族 721646c；其余逐项排查） |
 | `expand/primitive.rs:753` | 数学原语"简化实现消费参数" | 同上 | 逐项排查中 |
 | `eqtb/primitive.rs:559` | 同 753 | 同上 | 同上 |
+| `expand/primitive.rs:780-800` | **fraction 原语族（\abovewithdelims/\above/\atopwithdelims/\overwithdelims）此前只扫参数不挂 sink.math_fraction** | 分子分母混收当前层，trip l.276 数学状态崩 | ✅ 已修（721646c；同层嵌套歧义改恢复式，参考 l.257 Ambiguous） |
 | `expand/primitive.rs:726` / `eqtb/primitive.rs:382` | `\vcenter` 简化按 vbox | d 组待做（收集不执行） | 待做 |
-| `expand/primitive.rs:775` | `\eqno/\leqno` no-op | 显示公式编号不落节点；trip L280 `\eqno` 数学残留风险 | 待做 |
+| `expand/primitive.rs:775` | `\eqno/\leqno` no-op | 显示公式编号不落节点 | 待做（参考为报错+pretend 恢复，与 no-op 等价） |
 | `typeset/sink.rs:1082` | 数学模式 `\penalty` 忽略 | 数学断行点缺失（M4-1） | 待做 |
 | `typeset/sink.rs:1097` | 数学模式 `\vrule` 忽略 | 规则原子缺失 | 待做 |
 | `typeset/math.rs:495` | 分式节点 M4-2 简化（垂直堆叠） | 分式线/字号精化未做（M4-3 fontdimen） | 待做 |
 | `typeset/math.rs:540` | 根式节点 M4-2 简化（横线） | cmex10 根号未换（M4-3） | 待做 |
-| `typeset/sink.rs:668` | `\radical` 定界符号不参与渲染 | `\radical"161` 等只出 radicand | 待做 |
+| `typeset/sink.rs:668` | `\radical` 定界符号不参与渲染 | `\radical"161` 等只出 radicand | 待做（l.412 `\everymath{\radical"3}` 的 mathord 报错 1 行与此相关） |
 | `typeset/sink.rs:99` | 非数学模式样式错误"简化忽略" | TeX 报错缺失 | 待做 |
 
 ## 2. 数学状态机（本轮 l.260-285 暴露；见 MATH-STATE-MACHINE.md）
@@ -74,3 +75,5 @@
 
 - 2026-09-02：建清单（58 处标记扫描归档）；数学内 `$$`、`\mkern/\mskip` mu 上下文已修（3a2cb63）
 - 2026-09-02：内部量 no-op 统一、`\right` 缺配对恢复、数学模式组结束 Missing $（9b0bc69）
+- 2026-09-02：fraction 原语族挂载 + Ambiguous 恢复式（721646c）；\tracingcommands2 可选 `=` 赋值开启追踪（6cc16f0）；mode_name internal vertical（483b640）；\if 求值 {true}/{false}（3a5ec1e）
+- **收尾纪律提醒**：后续每轮修复后同步更新本清单（已修项标 ✅ + commit；维护记录追加）
