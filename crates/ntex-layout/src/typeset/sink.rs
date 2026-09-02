@@ -996,6 +996,18 @@ impl TokenSink for NodeBuilder {
     /// 当前模式名（`\tracingcommands` 追踪；tex.web print_mode 语义）。
     fn mode_name(&self) -> String {
         match self.mode() {
+            // tex.web shown_mode：\vbox/\vtop 内容为 internal vertical mode
+            // （顶层垂直列表才是 vertical mode）——\tracingcommands 追踪对齐
+            Mode::Vertical
+                if self.groups.iter().any(|g| {
+                    matches!(
+                        g.box_kind,
+                        Some(crate::typeset::PendingBox::VBox | crate::typeset::PendingBox::VTop)
+                    )
+                }) =>
+            {
+                "internal vertical mode".to_string()
+            }
             Mode::Vertical => "vertical mode".to_string(),
             Mode::Horizontal => "horizontal mode".to_string(),
             Mode::RestrictedHorizontal => "restricted horizontal mode".to_string(),
