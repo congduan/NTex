@@ -351,12 +351,36 @@ impl Expander {
                         self.assign_param(ParamKind::MiscInt(idx), ParamValue::Number(v))
                     }
                 } else {
-                    self.unread(tok);
-                    // 单独出现（无 `=`）：no-op——TeX 内部整数在主循环/数学模式
-                    // 均不读值（TRIP `{\tracingstats}` 追踪后无操作；ETRIP
-                    // `$\splitdiscards` 数学模式同样 no-op——参考 showbox27 空
-                    // 数学，l.1148 的 Missing $ inserted 由 `\noindent`/`}` 触发）
-                    Ok(())
+                    // 无 `=`：TeX 可选 `=` 语义——后跟 <integer> 仍是赋值
+                    // （`\tracingcommands2`；9b0bc69 曾把数字也当"单独出现"
+                    // no-op 丢弃，导致 TRIP 的 \tracingcommands 永不开启）；
+                    // 后跟非数字才是单独出现 no-op（`$\splitdiscards\noindent`）。
+                    if matches!(tok.catcode(), Some(Catcode::Other))
+                        && matches!(
+                            tok.charcode(),
+                            Some(c)
+                                if (b'0' as u32..=b'9' as u32).contains(&c)
+                                    || c == b'+' as u32
+                                    || c == b'-' as u32
+                        )
+                    {
+                        self.unread(tok);
+                        let v = self.scan_number()?;
+                        if p == Primitive::PrevGraf && v < 0 {
+                            self.report_error(&format!("Bad \\\\\\\\prevgraf ({v})."));
+                            self.assign_param(ParamKind::MiscInt(idx), ParamValue::Number(0))
+                        } else {
+                            self.assign_param(ParamKind::MiscInt(idx), ParamValue::Number(v))
+                        }
+                    } else {
+                        self.unread(tok);
+                        // 单独出现（无 `=`）：no-op——TeX 内部整数在主循环/数学
+                        // 模式均不读值（TRIP `{\tracingstats}` 追踪后无操作；
+                        // ETRIP `$\splitdiscards` 数学模式同样 no-op——参考
+                        // showbox27 空数学，l.1148 的 Missing $ inserted 由
+                        // `\noindent`/`}` 触发）
+                        Ok(())
+                    }
                 }
             }
             // ETRIP 冲刺：交互模式命令（\batchmode/\nonstopmode/\scrollmode/\errorstopmode）
