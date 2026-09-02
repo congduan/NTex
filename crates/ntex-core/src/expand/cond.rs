@@ -169,6 +169,13 @@ saved_if_type: saved_type,
                     truth = !truth;
                 }
                 self.cur_if_branch = if truth { 1 } else { -1 };
+                // tex.web：\if 求值后打印 {true}/{false}（tracing_commands>0；
+                // 跳过区的 \if 惰性分支不评估不打印——上方 return 已处理）
+                if self.params.misc[3] > 0 && self.trace_suppress == 0 {
+                    let _ = self
+                        .sink
+                        .write16(if truth { "{true}".into() } else { "{false}".into() });
+                }
                 if truth {
                     self.cond_stack.push(CondFrame {
                         is_case: false,
