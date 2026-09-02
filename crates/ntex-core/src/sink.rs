@@ -101,6 +101,18 @@ pub trait TokenSink: std::fmt::Debug {
     fn math_accent(&mut self, _plain: bool) -> Result<()> {
         Ok(())
     }
+    /// `\underline`：等待字段组（tex.web math_ac——内容收为 Underline 原子）。
+    fn math_underline(&mut self) -> Result<()> {
+        Ok(())
+    }
+    /// `\mathchar<15-bit>`：完整数学字符原子（tex.web math_char——类/族/码）。
+    fn math_char_full(&mut self, _n: u32) -> Result<()> {
+        Ok(())
+    }
+    /// `\overline`：等待字段组（内容收为 Overline 原子）。
+    fn math_overline(&mut self) -> Result<()> {
+        Ok(())
+    }
     /// 数学字体族分配（M4-3）：`\textfont<fam>=<fontcs>` 等。
     /// `kind`：0=text、1=script、2=scriptscript；`fam` 0-15。
     fn math_font(&mut self, _kind: u8, _fam: u8, _font: u32) -> Result<()> {

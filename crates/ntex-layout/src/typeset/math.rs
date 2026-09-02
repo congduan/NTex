@@ -348,6 +348,7 @@ impl NodeBuilder {
             MathAtom::Delimited { .. } => Some(MathClass::Inner),
             MathAtom::Middle(_) => Some(MathClass::Inner),
             MathAtom::Radical { .. } => Some(MathClass::Ord),
+            MathAtom::Underline { .. } | MathAtom::Overline { .. } => Some(MathClass::Ord),
             MathAtom::Box(_) => Some(MathClass::Ord),
             MathAtom::Accent { .. } => Some(MathClass::Ord),
             MathAtom::MSkip { .. } | MathAtom::Style(_) => None,
@@ -437,6 +438,10 @@ impl NodeBuilder {
                 thickness,
             } => self.fraction_nodes(num, den, *thickness, style),
             MathAtom::Radical { base } => self.radical_nodes(base, style),
+            // \underline/\overline：M4-2 简化——内容直接输出（底线/顶线渲染 M4-3）
+            MathAtom::Underline { base } | MathAtom::Overline { base } => {
+                self.math_to_hlist(base, style)
+            }
             MathAtom::Delimited { left, body, right } => {
                 let mut inner = Vec::new();
                 if let Some(d) = left {

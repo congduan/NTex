@@ -792,7 +792,14 @@ impl Expander {
                 self.sink.math_accent(false)?;
                 Ok(())
             }
-            Primitive::MathChar | Primitive::Delimiter => {
+            // tex.web math_char：\mathchar<15-bit> 是完整数学字符原子（数学中
+            // 直接产出 Char——此前 scan_number 即丢）；\delimiter<27-bit> 为
+            // 定界符（Delimited 场景经 \left/\right 扫描；裸用暂简化）
+            Primitive::MathChar => {
+                let n = self.scan_number()? as u32;
+                self.sink.math_char_full(n)
+            }
+            Primitive::Delimiter => {
                 let _ = self.scan_number()?;
                 Ok(())
             }
@@ -857,10 +864,11 @@ impl Expander {
                 let _ = self.scan_delimiter()?;
                 self.sink.math_fraction(None)
             }
-            Primitive::Underline | Primitive::Overline => {
-                let _ = self.scan_group_contents(None)?;
-                Ok(())
-            }
+            // tex.web math_ac：\underline/\overline 是数学前缀——字段经主循环组
+            // 机制收集（sink pending → 组开 field → 组关原子）；此前 scan_group_contents
+            // 收集即丢（KNOWN-SIMPLIFICATIONS §1——内容不进数学列表）
+            Primitive::Underline => self.sink.math_underline(),
+            Primitive::Overline => self.sink.math_overline(),
             // \crcr（对齐行结束）与 \-（断字断点）：简化 no-op
             Primitive::CrCr | Primitive::DiscMinus => Ok(()),
 

@@ -268,6 +268,22 @@ impl TokenSink for NodeBuilder {
         Ok(())
     }
 
+    /// `\mathchar<15-bit>`：完整数学字符原子（tex.web math_char）——
+    /// 数学模式直接产出 Char 原子（class=n>>12&7、fam=n>>8&15、charcode=n&255）；
+    /// 文本模式同 `\char` 输出低 8 位字符。此前 scan_number 即丢。
+    fn math_char_full(&mut self, n: u32) -> Result<()> {
+        if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            return self.token(ntex_core::Token::char(
+                ntex_core::Catcode::Other,
+                n & 0xFF,
+            ));
+        }
+        let class = Self::class_of(((n >> 12) & 7) as u8);
+        let fam = ((n >> 8) & 0xF) as u8;
+        let charcode = n & 0xFF;
+        self.math_push_atom(MathAtom::Char(MathChar { class, fam, charcode }))
+    }
+
     /// `\mathord` 等：给下一个字段定类。
     fn math_class(&mut self, class: u8) -> Result<()> {
         if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
@@ -276,16 +292,8 @@ impl TokenSink for NodeBuilder {
         // \mathord 等不是合法字段开头（tex.web scan_math othercases；连续
         // `\mathord\mathord x` 第二个在此报 Missing { inserted）
         self.check_math_field_break()?;
-        self.class_pending = Some(match class {
-            0 => MathClass::Ord,
-            1 => MathClass::Bin,
-            2 => MathClass::Op,
-            3 => MathClass::Rel,
-            4 => MathClass::Open,
-            5 => MathClass::Close,
-            6 => MathClass::Punct,
-            _ => MathClass::Inner,
-        });
+        self.class_pending = Some(Self::class_of(class));
+
         Ok(())
     }
 
@@ -301,6 +309,20 @@ impl TokenSink for NodeBuilder {
             )?;
         }
         self.accent_pending = matches!(self.mode(), Mode::Math | Mode::DisplayMath);
+        Ok(())
+    }
+
+    /// `\underline`：等待字段组（数学模式；组开收为 Underline 原子）。
+    fn math_underline(&mut self) -> Result<()> {
+        self.check_math_field_break()?;
+        self.underline_pending = matches!(self.mode(), Mode::Math | Mode::DisplayMath);
+        Ok(())
+    }
+
+    /// `\overline`：等待字段组（数学模式；组开收为 Overline 原子）。
+    fn math_overline(&mut self) -> Result<()> {
+        self.check_math_field_break()?;
+        self.overline_pending = matches!(self.mode(), Mode::Math | Mode::DisplayMath);
         Ok(())
     }
 
@@ -579,6 +601,12 @@ impl TokenSink for NodeBuilder {
             } else if self.accent_pending {
                 self.accent_pending = false;
                 Some(MathFieldKind::Accent)
+            } else if self.underline_pending {
+                self.underline_pending = false;
+                Some(MathFieldKind::Underline)
+            } else if self.overline_pending {
+                self.overline_pending = false;
+                Some(MathFieldKind::Overline)
             } else {
                 self.class_pending.take().map(MathFieldKind::Class)
             };
@@ -689,6 +717,24 @@ impl TokenSink for NodeBuilder {
                     let mut lv = level;
                     Self::math_finish_fraction(&mut lv);
                     parent.atoms.push(MathAtom::Radical { base: lv.atoms });
+                    return Ok(());
+                }
+                Some(MathFieldKind::Underline) => {
+                    // `\underline{...}`：组内容收为 Underline 原子（tex.web math_ac）
+                    let mut lv = level;
+                    Self::math_finish_fraction(&mut lv);
+                    parent
+                        .atoms
+                        .push(MathAtom::Underline { base: lv.atoms });
+                    return Ok(());
+                }
+                Some(MathFieldKind::Overline) => {
+                    // `\overline{...}`：组内容收为 Overline 原子
+                    let mut lv = level;
+                    Self::math_finish_fraction(&mut lv);
+                    parent
+                        .atoms
+                        .push(MathAtom::Overline { base: lv.atoms });
                     return Ok(());
                 }
                 Some(MathFieldKind::Radical(delim)) => {

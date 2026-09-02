@@ -122,6 +122,10 @@ enum MathAtom {
     },
     /// 根式（`\sqrt`）：radicand 子列表。
     Radical { base: Vec<MathAtom> },
+    /// `\underline`：内容子列表（底线渲染）。
+    Underline { base: Vec<MathAtom> },
+    /// `\overline`：内容子列表（顶线渲染）。
+    Overline { base: Vec<MathAtom> },
     /// `\left<delim>...\right<delim>`：定界符为 None 表示空（`.`）。
     Delimited {
         left: Option<u32>,
@@ -167,6 +171,10 @@ enum MathFieldKind {
     Class(MathClass),
     /// `\accent`/`\mathaccent` 后的组：内容为 nucleus（被重音）字段。
     Accent,
+    /// `\underline` 后的组：内容为底线字段。
+    Underline,
+    /// `\overline` 后的组：内容为顶线字段。
+    Overline,
 }
 
 /// 数学列表层级：原子列表 + 是否为特殊字段组。
@@ -519,6 +527,10 @@ struct NodeBuilder {
     class_pending: Option<MathClass>,
     /// `\accent`/`\mathaccent`：重音符字段的 <15-bit number> 已扫描，等待 nucleus 字段。
     pub(super) accent_pending: bool,
+    /// `\underline`：等待字段（组开收为 Underline 原子）。
+    pub(super) underline_pending: bool,
+    /// `\overline`：等待字段（组开收为 Overline 原子）。
+    pub(super) overline_pending: bool,
     /// `\nonscript`：下一个数学空格在脚本模式丢弃。
     nonscript_pending: bool,
     /// 数学字体族表（M4-3）：16 族 × 3 阶（text/script/scriptscript）。
@@ -656,6 +668,8 @@ impl NodeBuilder {
             radical_pending: None,
             class_pending: None,
             accent_pending: false,
+            underline_pending: false,
+            overline_pending: false,
             nonscript_pending: false,
             math_fonts: vec![[None; 3]; 16],
             patterns: PatternTrie::default(),
@@ -787,6 +801,20 @@ impl NodeBuilder {
             if let Some(t) = self.page.take_trace() {
                 let _ = self.write16(t);
             }
+        }
+    }
+
+    /// u8（0-7）→ 数学类别（tex.web math_char/scan_math 的类编号）。
+    fn class_of(class: u8) -> MathClass {
+        match class {
+            0 => MathClass::Ord,
+            1 => MathClass::Bin,
+            2 => MathClass::Op,
+            3 => MathClass::Rel,
+            4 => MathClass::Open,
+            5 => MathClass::Close,
+            6 => MathClass::Punct,
+            _ => MathClass::Inner,
         }
     }
 

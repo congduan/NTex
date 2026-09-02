@@ -1621,4 +1621,54 @@ mod tests {
         assert_eq!(b.splittopmarks(0), "");
         assert_eq!(b.splitbotmarks(0), "");
     }
+
+    /// 递归收集所有字符节点（数学内容保留断言用）。
+    fn collect_chars(nodes: &[Node], out: &mut Vec<u32>) {
+        for n in nodes {
+            match n {
+                Node::Char { charcode, .. } => out.push(*charcode),
+                Node::Box(b) => collect_chars(&b.children, out),
+                _ => {}
+            }
+        }
+    }
+
+    // ---- 数学原语内容保留（KNOWN-SIMPLIFICATIONS §1 存在性测试）----
+
+    #[test]
+    fn math_underline_keeps_content() {
+        // tex.web math_ac：\underline 是 Under 原子——内容必须保留在数学列表。
+        // 此前 scan_group_contents(None) 收集即丢（primitive.rs:860）。
+        let main = typeset(r"\hbox{$\underline{A}$}").unwrap();
+        let mut chars = Vec::new();
+        collect_chars(&main, &mut chars);
+        assert!(
+            chars.contains(&(b'A' as u32)),
+            "underline 内容 A 丢失: {chars:?}"
+        );
+    }
+
+    #[test]
+    fn math_overline_keeps_content() {
+        let main = typeset(r"\hbox{$\overline{B}$}").unwrap();
+        let mut chars = Vec::new();
+        collect_chars(&main, &mut chars);
+        assert!(
+            chars.contains(&(b'B' as u32)),
+            "overline 内容 B 丢失: {chars:?}"
+        );
+    }
+
+    #[test]
+    fn mathchar_produces_char_node() {
+        // tex.web：\mathchar"322D（数学 15-bit：class 3/fam 2/char "2D）在数学中
+        // 是原子；"2D = '-' 字符必须出现在渲染输出。此前 scan_number 即丢。
+        let main = typeset(r#"\hbox{$\mathchar"322D$}"#).unwrap();
+        let mut chars = Vec::new();
+        collect_chars(&main, &mut chars);
+        assert!(
+            chars.contains(&0x2D),
+            "mathchar 字符 - 丢失: {chars:?}"
+        );
+    }
 }
