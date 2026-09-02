@@ -9,7 +9,7 @@ mod measure;
 
 use std::process::ExitCode;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::Parser;
 use ntex_test_support::build_driver;
 
@@ -34,11 +34,22 @@ struct Args {
     /// 计时取样次数。
     #[arg(long, default_value_t = 5)]
     iterations: usize,
+
+    /// 外部 .tex 样张（覆盖基准内嵌样张；与历史 baseline 对照时使用）。
+    #[arg(long, value_name = "FILE")]
+    tex_file: Option<std::path::PathBuf>,
 }
 
 fn main() -> Result<ExitCode> {
     let args = Args::parse();
     let driver = build_driver(&args.driver)?;
+
+    let tex_override: Option<String> = match args.tex_file.as_ref() {
+        Some(p) => Some(
+            std::fs::read_to_string(p).map_err(|e| anyhow!("读取 {} 失败：{e}", p.display()))?,
+        ),
+        None => None,
+    };
 
     let selected: Vec<&'static dyn benchmarks::Benchmark> = if args.bench == "all" {
         ALL.to_vec()
@@ -59,6 +70,7 @@ fn main() -> Result<ExitCode> {
     let opts = BenchOptions {
         warmup: args.warmup,
         iterations: args.iterations,
+        tex_override: tex_override.clone(),
     };
     let cpus = std::thread::available_parallelism()
         .map(|n| n.get())

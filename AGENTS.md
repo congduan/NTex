@@ -38,7 +38,8 @@ make test       # cargo test --workspace
 make trip       # TRIP 管路（stub 驱动冒烟）
 make diff       # 差分管路（stub vs stub）
 make bench      # 基准管路（stub 驱动冒烟）
-make fixtures   # 获取 TRIP/ETRIP fixtures（kpsewhich 优先，失败则下载）
+make fixtures       # 获取 TRIP/ETRIP fixtures（kpsewhich 优先，失败则下载）
+make fixture-extras  # 获取补充对照 fixtures（pdftex expanded.{tex,txt} 等，详见 fixtures/README.md）
 
 # 端到端演示
 cargo run -p ntex-dvi -- demo.tex   # → demo.dvi
@@ -104,8 +105,11 @@ cargo run -p ntex-pdf -- demo.dvi   # → demo.pdf
 
 ## 6. 文档与状态同步（重要）
 
-- [ETRIP-primitives.md](ETRIP-primitives.md) = ETRIP 原语状态**唯一状态源**（2026-08-23 更新：
-  A 组 41/42、B 组 36/36、C 组全部已接线、收尾 etrip.log 逐字节比对未开始；`\muexpr` 待校准）；
+- [ETRIP-primitives.md](ETRIP-primitives.md) = ETRIP 原语状态**唯一状态源**
+  （2026-08-23 更新：A 组 41/42、B 组 36/36、C 组全部已接线、收尾 etrip.log 逐字节比对未开始；`\muexpr` 待校准）；
+- [fixtures/README.md](fixtures/README.md) = 补充对照 fixtures 状态表与抓取约定；
+  当前入库：`pdftex/expanded.{tex,txt}`（David Carlisle/Bruno Le Floch 2018, Public Domain，
+  pdftex `\expanded` 原语 12 个端到端 + 36 行期望基线）；抓取：`make fixture-extras`；
 - [plan.md](plan.md) = 里程碑进度 + 性能 backlog（P0 已提交 80022b4；P1 热路径消分配/
   panic 审计 + fuzz；P2 CI 门禁）——完成事项后同步勾选；
 - [REVIEW-2026-08-23.md](REVIEW-2026-08-23.md) = 最近一次代码审查（A 正确性 / B 性能 /

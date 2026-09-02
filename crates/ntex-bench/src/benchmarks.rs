@@ -9,10 +9,12 @@ use crate::measure::{measure, Stats};
 use ntex_test_support::{DriverStatus, EngineDriver, InteractionMode, OutputFormat, RunRequest};
 
 /// 基准参数（由 CLI 注入）。
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct BenchOptions {
     pub warmup: usize,
     pub iterations: usize,
+    /// 外部样张覆盖（CLI `--tex-file`；`None` = 使用基准内嵌样张）。
+    pub tex_override: Option<String>,
 }
 
 /// 基准结果。
@@ -210,6 +212,8 @@ fn run_measured(
 ) -> Result<BenchResult> {
     let dir = tempfile::tempdir().map_err(|e| anyhow::anyhow!("创建临时目录失败：{e}"))?;
     let source = dir.path().join("bench.tex");
+    // CLI `--tex-file` 覆盖基准内嵌样张（对照外部样张吞吐用）。
+    let tex = opts.tex_override.as_deref().unwrap_or(tex);
     std::fs::write(&source, tex).map_err(|e| anyhow::anyhow!("写 {tag} 样张失败：{e}"))?;
 
     let request = RunRequest {

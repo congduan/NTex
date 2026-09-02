@@ -1,0 +1,23 @@
+# fixtures/pdftex/ — NOTICE
+
+来源与版权声明。
+
+---
+
+## expanded.tex / expanded.txt
+
+```
+% $Id$
+% Public domain.
+% Originally written 2018 by David Carlisle, Bruno Le Floch.
+```
+
+- **作者**：David Carlisle（CTAN 维护者，LaTeX team）；Bruno Le Floch（expl3 / pdftex team）
+- **版权**：Public Domain（文件头第一行明示 `% Public domain.`）
+- **来源仓库**：`TeX-Live/texlive-source@trunk/texk/web2c/pdftexdir/tests/`
+- **NTex 使用方式**：直接喂入 ntex-dvi 运行后与 `expanded.txt` 36 行基线对照。
+
+---
+
+这些 fixture 由 NTex 项目通过 `scripts/fetch-extras-fixtures.sh` 抓取；
+若上游文件位置变更，仅需修改脚本里的 URL 链即可重新拉取。

@@ -1,7 +1,7 @@
 # NTex 开发常用命令。
 # 质量门禁：`make check` = fmt + lint + test 三件套全绿。
 
-.PHONY: fmt lint test check fixtures trip diff bench
+.PHONY: fmt lint test check fixtures fixture-extras trip diff bench
 
 fmt:
 	cargo fmt --all -- --check
@@ -17,6 +17,10 @@ check: fmt lint test
 # 获取 TRIP 测试 fixtures（优先 kpsewhich，失败则从 CTAN/GitHub 下载）
 fixtures:
 	./scripts/fetch-trip-fixtures.sh
+
+# 获取补充对照 fixtures（pdftex expanded.{tex,txt} 等，详见 fixtures/README.md）
+fixture-extras:
+	./scripts/fetch-extras-fixtures.sh
 
 # TRIP 框架（stub 驱动用于验证管路；接入真实引擎后作为一致性门禁）
 trip:
