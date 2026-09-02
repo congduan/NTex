@@ -796,8 +796,41 @@ impl Expander {
                 let _ = self.scan_number()?;
                 Ok(())
             }
-            // \eqno/\leqno：显示公式编号分隔符——no-op（后续数学内容照常处理）
-            Primitive::EqNo | Primitive::LeqNo => Ok(()),
+            // \eqno/\leqno：显示数学内是公式编号分隔符 no-op；非数学模式 TeX
+            // 报错 + pretend 恢复（trip l.254 `\eqno` horizontal 报错对齐参考）
+            Primitive::EqNo | Primitive::LeqNo => {
+                let mode = self.sink.mode_code();
+                if matches!(mode, 3 | 6) {
+                    Ok(())
+                } else {
+                    // tex.web print_mode：\halign 行 mode=hmode（正）报
+                    // "horizontal mode"（trip l.254 参考）；\hbox 内容
+                    // mode=-hmode 才报 "restricted horizontal mode"
+                    let what = if self.align_depth > 0
+                        && matches!(self.sink.mode_code(), 2 | 5)
+                    {
+                        "horizontal mode".to_string()
+                    } else {
+                        self.sink.mode_name()
+                    };
+                    self.write_error(&format!(
+                        "You can't use \\{} in {what}.",
+                        if matches!(prim, Primitive::EqNo) {
+                            "eqno"
+                        } else {
+                            "leqno"
+                        }
+                    ));
+                    let _ = self.sink.write16(
+                        "Sorry, but I'm not programmed to handle this case;\n\
+                         I'll just pretend that you didn't ask for it.\n\
+                         If you're in the wrong mode, you might be able to\n\
+                         return to the right one by typing `I}' or `I$' or `I\\par'.\n"
+                            .to_string(),
+                    );
+                    Ok(())
+                }
+            }
             // tex.web math_fraction：\abovewithdelims<delim1><delim2><dimen>——
             // 先扫两个定界符再扫厚度（TRIP l.257 漏报修复；原顺序 dimen 在前
             // 导致参数错位）。**必须调 sink.math_fraction**（\over/\atop 已有；

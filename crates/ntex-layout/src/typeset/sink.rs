@@ -96,7 +96,15 @@ impl TokenSink for NodeBuilder {
     /// 数学样式原语：数学模式内 push 样式原子（影响后续字阶与 spacing）。
     fn math_style(&mut self, style: u8) -> Result<()> {
         if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-            return Ok(()); // TeX 报错，简化忽略（非数学模式样式无意义）
+            // tex.web math_style：非数学模式报错恢复（样式忽略）——
+            // 与 math_class 同族（原为"简化忽略"，报错缺失已补）
+            let name = match style {
+                0 => "displaystyle",
+                1 => "textstyle",
+                2 => "scriptstyle",
+                _ => "scriptscriptstyle",
+            };
+            return self.math_mode_error(name);
         }
         let s = match style {
             0 => MathStyle::Display,

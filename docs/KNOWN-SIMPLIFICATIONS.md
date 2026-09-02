@@ -13,13 +13,13 @@
 | `eqtb/primitive.rs:559` | 同 753 | 同上 | 同上 |
 | `expand/primitive.rs:780-800` | **fraction 原语族（\abovewithdelims/\above/\atopwithdelims/\overwithdelims）此前只扫参数不挂 sink.math_fraction** | 分子分母混收当前层，trip l.276 数学状态崩 | ✅ 已修（721646c；同层嵌套歧义改恢复式，参考 l.257 Ambiguous） |
 | `expand/primitive.rs:726` / `eqtb/primitive.rs:382` | `\vcenter` 简化按 vbox | d 组待做（收集不执行） | 待做 |
-| `expand/primitive.rs:775` | `\eqno/\leqno` no-op | 显示公式编号不落节点 | 待做（参考为报错+pretend 恢复，与 no-op 等价） |
+| `expand/primitive.rs:799` | `\eqno/\leqno` no-op（数学内）；非数学模式报错+pretend 恢复已补 | 显示公式编号不落节点 | ⚠️ 报错已补（未提交）；多报暴露数学状态（l.280/298 数学丢，C 类） |
 | `typeset/sink.rs:1082` | 数学模式 `\penalty` 忽略 | 数学断行点缺失（M4-1） | 待做 |
 | `typeset/sink.rs:1097` | 数学模式 `\vrule` 忽略 | 规则原子缺失 | 待做 |
 | `typeset/math.rs:495` | 分式节点 M4-2 简化（垂直堆叠） | 分式线/字号精化未做（M4-3 fontdimen） | 待做 |
 | `typeset/math.rs:540` | 根式节点 M4-2 简化（横线） | cmex10 根号未换（M4-3） | 待做 |
 | `typeset/sink.rs:668` | `\radical` 定界符号不参与渲染 | `\radical"161` 等只出 radicand | 待做（l.412 `\everymath{\radical"3}` 的 mathord 报错 1 行与此相关） |
-| `typeset/sink.rs:99` | 非数学模式样式错误"简化忽略" | TeX 报错缺失 | 待做 |
+| `typeset/sink.rs:98` | 非数学模式样式错误（原"简化忽略"） | TeX 报错缺失 | ✅ 已修（math_mode_error，未提交；TRIP/ETRIP 未触发） |
 
 ## 2. 数学状态机（本轮 l.260-285 暴露；见 MATH-STATE-MACHINE.md）
 
@@ -50,7 +50,7 @@
 | 位置 | 现状 | 状态 |
 |---|---|---|
 | `ntex-font/tfm.rs:191` | 保留左/右字符的连字（罕见）暂不支持 | 待做 |
-| `expand/primitive.rs:867` | `\varunit` 字体单位 no-op | 待做 |
+| `expand/primitive.rs:893` | `\varunit` 字体单位 no-op | ✅ 无单独场景（TRIP 仅 dimen 上下文 `20\varunit`） |
 | `expand/save.rs:656` | `\the\font` 简化（expander 无排版状态） | 待做 |
 | `hyphen.rs:10,47` | 词界限制 `.` 暂不参与断点过滤 | 待做 |
 | `expand/primitive.rs:1492` | 断字表单语言全局（sink 不分语言；无 lccode 二次比较） | 待做 |
@@ -60,11 +60,11 @@
 | 位置 | 现状 | 状态 |
 |---|---|---|
 | `expand/primitive.rs:80` | `\outer` 前缀仅消费，限制语义后续补 | 待做 |
-| `expand/io.rs:304` | `\write18` shell 转义暂不支持（Error） | 待做 |
+| `expand/io.rs:304` | `\write18` shell 转义拒绝（Error） | ✅ 设计如此（RFC-3 副作用隔离；TRIP/ETRIP 不触发） |
 | `typeset/sink.rs:1519,1525` / `mod.rs:841` | `\moveleft/\moveright` 位移不落节点（取走即清） | 待做 |
 | `typeset/sink.rs:1101` | 非引导上下文未定宽度简化落 0 | 待做 |
 | `typeset/sink.rs:1439` | `\showlists` 简化转录（诊断用） | 待做 |
-| `expand/primitive.rs:2658` | `\showifs` 简化格式 | 待做 |
+| `expand/primitive.rs:2684` | `\showifs` 简化格式 | ✅ 诊断原语（ETRIP l.651 被错误交互打断，无直接比对场景） |
 | `ntex-trip/harness.rs:8` | ETRIP 终端输出经 dvitype 比对暂不纳入 | 待做 |
 | `expand/macros.rs:844` | 宏不复制宏体（M1 简化） | 待做 |
 | `expand/scan.rs:32` | 十进制扫描 M1 简化版 | 待做 |
