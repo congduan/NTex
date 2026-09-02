@@ -240,3 +240,23 @@ M4 数学 + e-TeX 验收时已实现的 e-TeX 原语：
 > `\the` 显示、glue order 值语义）与错误恢复通用机制（M1-13 `back_input`/`\errhelp`）
 > 必修；`etrip.log` 从逐字节比对降级为**语义 diff + 错误块抽查**（read-again `...` 省略行、
 > 79 列断行、光标细节等格式差放过），逐字节口径留待 M8 L2 阶段。
+
+> **实测 diff 构成（2026-09-03，`cargo run -q -p ntex-trip -- --driver ntex --test etrip`）**：
+> semantic diff **-3051/+2364（合计 5415）**（较三轮头部记录的 -3051/+2352 微差 +12，属
+> 复现漂移）。对 render diff 差异行（5585 行）按特征分类：
+
+| 差异类别 | 行数 | 性质 |
+|---|---|---|
+| `!` 错误消息行 | ~176 | 错误输出格式 |
+| read-again 上下文（`<to be read again>` 等） | ~24 | 错误恢复块格式 |
+| `l.N` 光标/上下文行 | ~295 | 错误上下文显示（两行光标、`...` 省略行） |
+| `{changing/into/restoring` 等（tracingassigns） | ~568 | 诊断转录 |
+| `.` 开头 showlists/showbox 盒子树行 | ~3000 | `\showlists`/`\showbox` 树形诊断格式 |
+| Overfull/内存统计等 | ~90 | 诊断 |
+| 真语义项（`\muexpr`/glue order/`5.0mu`） | 极少（几十行内） | **唯一必修** |
+
+> **结论**：~95% 差异是"错误消息文本 + 诊断转录（showlists/tracing/missing char/光标）"
+> 的**字节格式差**，属 L2 范畴（M8 再对齐）；排版语义差异极少（M3 DVI 逐字节一致佐证）。
+> 按"语义 diff 归零"口径收尾，实际需修的是错误恢复块格式统一（read-again `...` 等）+
+> `\muexpr`/glue order 语义项，工作量远小于 5415 行数字的表象。此数据作为上条收尾
+> 口径（降级决策）的数字依据。
