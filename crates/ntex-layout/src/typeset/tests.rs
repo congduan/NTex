@@ -1172,7 +1172,15 @@ mod tests {
 
     #[test]
     fn math_over_ambiguous_message() {
-        assert_math_error(r"$a\over b\over c$", "\\over 歧义（Ambiguous; you need another { and }）");
+        // TeX 恢复式（参考 trip l.257 同层嵌套 fraction 报 Ambiguous 后继续）：
+        // 消息入转录，不中断
+        let mut ts = Typesetter::with_metrics(metrics);
+        let _ = ts.typeset(r"$a\over b\over c$");
+        let t = ts.take_transcript();
+        assert!(
+            t.contains("Ambiguous; you need another { and }"),
+            "转录应含 Ambiguous：{t}"
+        );
     }
 
     #[test]
@@ -1395,7 +1403,15 @@ mod tests {
 
     #[test]
     fn math_over_ambiguous_rejected() {
-        assert!(typeset(r"$a\over b\over c$").is_err(), "连续 \\over 应歧义报错");
+        // TeX 恢复式（参考 trip l.257）：连续 \over 报 Ambiguous 后继续，
+        // 不中断（原实现硬错误 Err，已按参考改为恢复）
+        let mut ts = Typesetter::with_metrics(metrics);
+        let _ = ts.typeset(r"$a\over b\over c$");
+        let t = ts.take_transcript();
+        assert!(
+            t.contains("Ambiguous; you need another { and }"),
+            "转录应含 Ambiguous：{t}"
+        );
     }
 
     #[test]

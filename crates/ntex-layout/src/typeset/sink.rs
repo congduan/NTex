@@ -117,9 +117,11 @@ impl TokenSink for NodeBuilder {
             .last_mut()
             .ok_or_else(|| Error::internal("\\over 无数学层"))?;
         if level.fraction.is_some() {
-            return Err(Error::invalid_input(
-                "\\over 歧义（Ambiguous; you need another { and }）",
-            ));
+            // TeX 恢复式（参考 trip l.257 `\left.A\over A\abovewithdelims.?\right(`：
+            // 同层已有 fraction 时报 Ambiguous 并**丢弃新 fraction 命令**，
+            // 保持原 fraction——不中断）。
+            self.write16("! Ambiguous; you need another { and }.\n".to_string())?;
+            return Ok(());
         }
         if self.pending_script.is_some() {
             return Err(Error::invalid_input("\\over 前不能有未挂脚本（Missing { inserted）"));

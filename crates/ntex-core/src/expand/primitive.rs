@@ -776,27 +776,29 @@ impl Expander {
             Primitive::EqNo | Primitive::LeqNo => Ok(()),
             // tex.web math_fraction：\abovewithdelims<delim1><delim2><dimen>——
             // 先扫两个定界符再扫厚度（TRIP l.257 漏报修复；原顺序 dimen 在前
-            // 导致参数错位）。
+            // 导致参数错位）。**必须调 sink.math_fraction**（\over/\atop 已有；
+            // 此前 4 个 withdelims/above 只扫参数不挂 fraction → 分子分母被
+            // 混收当前层，l.276 \abovewithdelims(.2pt 后数学状态崩）。
             Primitive::AboveWithDelims => {
                 let _ = self.scan_delimiter()?;
                 let _ = self.scan_delimiter()?;
-                let _ = self.scan_dimen()?;
-                Ok(())
+                let thickness = self.scan_dimen()?;
+                self.sink.math_fraction(Some(thickness))
             }
             // TRIP 冲刺：\above<dimen>（分数）与 \atopwithdelims<delim><delim>（带定界分数）
             Primitive::Above => {
-                let _ = self.scan_dimen()?;
-                Ok(())
+                let thickness = self.scan_dimen()?;
+                self.sink.math_fraction(Some(thickness))
             }
             Primitive::AtopWithDelims => {
                 let _ = self.scan_delimiter()?;
                 let _ = self.scan_delimiter()?;
-                Ok(())
+                self.sink.math_fraction(Some(0))
             }
             Primitive::OverWithDelims => {
                 let _ = self.scan_delimiter()?;
                 let _ = self.scan_delimiter()?;
-                Ok(())
+                self.sink.math_fraction(None)
             }
             Primitive::Underline | Primitive::Overline => {
                 let _ = self.scan_group_contents(None)?;

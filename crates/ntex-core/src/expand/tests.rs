@@ -2367,4 +2367,34 @@ ab5c}").unwrap();
             sink.transcript
         );
     }
+
+    /// fraction 原语族（\abovewithdelims/\above/\atopwithdelims/\overwithdelims）
+    /// 必须挂 sink.math_fraction（tex.web math_fraction；此前只扫参数不挂 →
+    /// 分子分母混收当前层，trip l.276 数学状态崩；2026-09-02 修）。
+    #[test]
+    fn repro_fraction_primitives_hang_fraction() {
+        let mut e = Expander::new();
+        e.set_sink(Box::new(VecSink::default()));
+        let _ = e.run_source(r"$a\abovewithdelims(.2pt b$");
+        let mut sink = e.take_sink();
+        let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+        assert!(
+            !sink.transcript.contains("Ambiguous"),
+            "\\abovewithdelims 单 fraction 不应歧义：{}",
+            sink.transcript
+        );
+    }
+
+    /// 同层嵌套 fraction（\over 后 \abovewithdelims，trip l.257）：TeX 恢复式
+    /// Ambiguous（丢弃新 fraction 保持原 fraction）——不得 Engine error 中断。
+    #[test]
+    fn repro_nested_fraction_ambiguous_recovers() {
+        let mut e = Expander::new();
+        e.set_sink(Box::new(VecSink::default()));
+        let r = e.run_source(r"$\left.A\over A\abovewithdelims.?\right($");
+        assert!(
+            r.is_ok(),
+            "嵌套 fraction 歧义应恢复式（不中断）：{r:?}"
+        );
+    }
 }
