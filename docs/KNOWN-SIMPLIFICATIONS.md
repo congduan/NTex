@@ -13,12 +13,12 @@
 | `eqtb/primitive.rs:559` | 同 753 | 同上 | 同上 |
 | `expand/primitive.rs:780-800` | **fraction 原语族（\abovewithdelims/\above/\atopwithdelims/\overwithdelims）此前只扫参数不挂 sink.math_fraction** | 分子分母混收当前层，trip l.276 数学状态崩 | ✅ 已修（721646c；同层嵌套歧义改恢复式，参考 l.257 Ambiguous） |
 | `expand/primitive.rs:726` / `eqtb/primitive.rs:382` | `\vcenter` 简化按 vbox | d 组待做（收集不执行） | 待做 |
-| `expand/primitive.rs:799` | `\eqno/\leqno` no-op（数学内）；非数学模式报错+pretend 恢复已补 | 显示公式编号不落节点 | ⚠️ 报错已补（未提交）；多报暴露数学状态（l.280/298 数学丢，C 类） |
+| `expand/primitive.rs:799` | `\eqno/\leqno` 数学内 no-op；非数学报错+pretend 已补（942346e） | 显示公式编号不落节点 | ⚠️ 数学内 no-op 属功能未做；多报已随隐含组修复消除（未提交） |
 | `typeset/sink.rs:1082` | 数学模式 `\penalty` 忽略 | 数学断行点缺失（M4-1） | 待做 |
 | `typeset/sink.rs:1097` | 数学模式 `\vrule` 忽略 | 规则原子缺失 | 待做 |
 | `typeset/math.rs:495` | 分式节点 M4-2 简化（垂直堆叠） | 分式线/字号精化未做（M4-3 fontdimen） | 待做 |
 | `typeset/math.rs:540` | 根式节点 M4-2 简化（横线） | cmex10 根号未换（M4-3） | 待做 |
-| `typeset/sink.rs:668` | `\radical` 定界符号不参与渲染 | `\radical"161` 等只出 radicand | 待做（l.412 `\everymath{\radical"3}` 的 mathord 报错 1 行与此相关） |
+| `typeset/sink.rs:668` | `\radical` 定界符号不参与渲染 | `\radical"161` 等只出 radicand | 待做（l.412 mathord 报错已随隐含组修复消除——未提交） |
 | `typeset/sink.rs:98` | 非数学模式样式错误（原"简化忽略"） | TeX 报错缺失 | ✅ 已修（math_mode_error，未提交；TRIP/ETRIP 未触发） |
 
 ## 2. 数学状态机（本轮 l.260-285 暴露；见 MATH-STATE-MACHINE.md）

@@ -479,8 +479,7 @@ impl TokenSink for NodeBuilder {
 
     fn group_begin(&mut self, line: u32) -> Result<()> {
         // 显式组种类（\begingroup/\valign/\noalign）优先；否则盒子种类；再否则普通组
-        let explicit = self.pending_kind.take();
-        let kind = explicit.or_else(|| {
+        let explicit = self.pending_kind.take();        let kind = explicit.or_else(|| {
             self.pending_box.take().map(|pb| match pb {
                 // 垂直/内部垂直模式中的 \hbox 是 adjusted hbox group（TeX begin_box 语义）
                 PendingBox::HBox => {

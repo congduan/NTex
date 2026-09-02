@@ -576,13 +576,17 @@ impl NodeBuilder {
                 || self.pending_script.is_some())
         {
             self.report_error("Missing { inserted.");
-            // scan_left_brace 隐含 `{` 空字段：待定字段全部清空（tex.web 报错后
-            // cur_tok={ 开 math_group，字段为空；后续原语在组外继续正常执行）
+            // scan_left_brace 隐含 `{`：TeX 报错后 cur_tok={ 开 math_group
+            // （隐含空字段组）——**必须真的开组**，否则后续 `}` 越界关外层组
+            // → Missing $ + close_math（TRIP l.272 `\mathord\radical"161` 缺 {，
+            //    l.278 的 }}} 第 3 个 `}` 靠它配对；l.280 eqno 数学丢根因）。
+            // 待定字段清空后开隐含组（Math 组：push math 层，由后续 `}` pop）。
             self.class_pending = None;
             self.accent_pending = false;
             self.radical_pending = None;
             self.sqrt_pending = false;
             self.pending_script = None;
+            self.group_begin(0)?;
         }
         Ok(())
     }

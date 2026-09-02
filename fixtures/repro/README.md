@@ -24,7 +24,7 @@
 | repro_math_in_dd.tex | 数学内 `$$` 丢失第二个 `$`（显示数学未开） | 3a2cb63 |
 | repro_right_noleft.tex | `\right` 无 `\left` 硬错误中断（应恢复式 Extra \right） | 9b0bc69 |
 | repro_expaf.tex | `$\expandafter$` 数学残留（参考 $\x 靠 \scriptfont 报错关闭） | 部分（3a2cb63 兜底；\scriptfont 检查未修） |
-| repro_everymath_radical.tex | `\everymath{\radical"3}` 的 mathord 报错（l.412；\radical 字段扫描上下文敏感） | 未修（记 MATH-STATE-MACHINE §5） |
+| repro_everymath_radical.tex | `\everymath{\radical"3}` 的 mathord 报错（l.412；\radical 字段扫描上下文敏感） | 已修（隐含组修复连带，未提交） |
 
 ## 注意
 

@@ -44,15 +44,17 @@ l.286+ \parshape...                # 参考：数学已关（垂直）；我们�
 1. **`\scriptfont 0 undefined` 检查缺失**（trip l.260）：数学字符从未定义字体族应报
    `!\scriptfont N is undefined (character ?).` 并**关闭当前数学**——缺失导致
    `$\x` 数学残留（参考靠它正常关闭，我们靠 3a2cb63 的 $$ 分支兜底，多报 1 个 Missing $）
-2. **l.276 后 Missing $ + `\mathord restricted`**：`\abovewithdelims(.2pt\displaylimits}^z`
-   的 fraction 与 `\discretionary`/`\right` 交互处数学状态仍丢（2026-09-02 二分停在 l.276）
+2. **~~l.276 后数学状态丢~~ 已修（check_math_field_break 隐含组，未提交）**：Missing {
+   inserted 恢复只清 pending 不开隐含组 → 后续 `}` 越界关外层组（l.272
+   `\mathord\radical"161` 缺 {，l.278 的 }}} 第 3 个 `}` 关到 \begingroup）→
+   Missing $ + close_math → 数学丢。修：报错后 group_begin 开隐含 Math 组
+   （tex.web scan_left_brace cur_tok={ 语义）。连带消除：eqno 多报（l.280/298）、
+   l.412 mathord 报错（2026-09-02）
 3. **数学模式 `\mskip9mu minus1fil` 的 fil 阶**：mu 上下文报 `(mu inserted)` 已对齐参考
    （合法），但报错后数学状态需复查
-4. `\eqno/\leqno` no-op：显示公式编号不落节点（KNOWN-SIMPLIFICATIONS §1）
-5. **l.412 `\everymath{\radical"3}` 的 mathord 报错（1 行）**：`\everymath` 内容
-   （\radical 字段扫描）在每次数学进入时执行——单独复现数学正常，全量上下文
-   报 "can't use \mathord in restricted horizontal mode"（math=2 层残留）——
-   与 `\radical` 字段/`\right\delimiter` 定界符扫描相关（2026-09-02，repro_everymath_radical.tex）
+4. `\eqno/\leqno`：非数学报错已补（942346e）；显示数学内公式编号不落节点
+   （KNOWN-SIMPLIFICATIONS §1——功能未做）
+5. **~~l.412 mathord 报错~~ 已修（隐含组修复连带）**
 
 ## 6. 修改守则（血泪教训）
 
