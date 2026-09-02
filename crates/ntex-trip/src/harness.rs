@@ -79,6 +79,13 @@ pub fn run_test(driver: &dyn EngineDriver, fixtures: &TestFixtures) -> Result<Tr
                         typ_diff = d;
                     } else {
                         log_diff = d;
+                        // 语义差距统计（滤空行/横幅伪影后）——追加在 diff 尾部，
+                        // 供进度追踪：原始 LCS 计数含 ~10% 空行错位伪影
+                        let (del, ins) = diff::semantic_diff_count(&expected, &actual);
+                        log_diff.push_str(&format!(
+                            "\n===== semantic diff =====\n-:{del}  +:{ins}  合计:{}\n",
+                            del + ins
+                        ));
                     }
                 }
             }

@@ -1165,7 +1165,9 @@ impl Expander {
                 self.trace_suppress += 1;
                 self.pending_box_arg = true;
                 self.pending_box_arg_mode = self.sink.mode_code();
-                self.sink.setbox(idx)
+                let global = self.global_pending;
+                self.global_pending = false;
+                self.sink.setbox(idx, global)
             }
             // ETRIP 冲刺：\␣（control space）：输出空格 token（TeX control_space）
             Primitive::ControlSpace => self

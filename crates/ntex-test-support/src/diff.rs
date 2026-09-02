@@ -71,6 +71,34 @@ pub fn bytes_differ(a: &[u8], b: &[u8]) -> bool {
     a != b
 }
 
+/// 语义差距统计：滤除伪影行（空行/横幅/环境头/产物统计）后重算 diff，
+/// 供进度追踪（LCS 原始计数含 ~10% 伪影——空行错位把整块拆成 -/+）。
+pub fn semantic_diff_count(expected: &str, actual: &str) -> (usize, usize) {
+    let strip = |l: &str| {
+        let s = l.trim();
+        s.is_empty()
+            || s.starts_with("<ENGINE BANNER>")
+            || s.starts_with("<OUTPUT STATS>")
+            || s.starts_with("<TRANSCRIPT>")
+            || s.starts_with("** &")
+            || s.starts_with("(input:")
+    };
+    let e: Vec<&str> = expected.lines().filter(|l| !strip(l)).collect();
+    let a: Vec<&str> = actual.lines().filter(|l| !strip(l)).collect();
+    let e_joined = e.to_vec().join("\n");
+    let a_joined = a.to_vec().join("\n");
+    let d = TextDiff::from_lines(&e_joined, &a_joined);
+    let (mut del, mut ins) = (0usize, 0usize);
+    for c in d.iter_all_changes() {
+        match c.tag() {
+            ChangeTag::Delete => del += 1,
+            ChangeTag::Insert => ins += 1,
+            ChangeTag::Equal => {}
+        }
+    }
+    (del, ins)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

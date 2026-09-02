@@ -118,7 +118,7 @@ pub trait TokenSink: std::fmt::Debug {
         Ok(())
     }
     /// `\setbox<n>=<box>`（ETRIP）：下一个封装的盒子存入寄存器 n（sink 侧实现）。
-    fn setbox(&mut self, _idx: usize) -> Result<()> {
+    fn setbox(&mut self, _idx: usize, _global: bool) -> Result<()> {
         Ok(())
     }
     /// `\hbox to/spread <dimen>`（ETRIP）：记录当前盒子规格（to = 精确目标宽/高，

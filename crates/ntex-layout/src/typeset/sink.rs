@@ -325,8 +325,9 @@ impl TokenSink for NodeBuilder {
     }
 
     /// `\setbox<n>=<box>`（ETRIP）：记录目标寄存器；后续封装的盒子存入该槽。
-    fn setbox(&mut self, idx: usize) -> Result<()> {
+    fn setbox(&mut self, idx: usize, global: bool) -> Result<()> {
         self.setbox_target = Some(idx);
+        self.setbox_global = global;
         Ok(())
     }
 
@@ -351,9 +352,9 @@ impl TokenSink for NodeBuilder {
             _ => natural,
         };
         let (result, remainder) = split_vbox(b, target);
-        self.boxes[idx] = Some(remainder);
+        self.store_box(idx, Some(remainder));
         if let Some(t) = self.setbox_target.take() {
-            self.boxes[t] = Some(result);
+            self.store_box(t, Some(result));
         } else {
             self.append(Node::Box(result));
         }
@@ -596,6 +597,19 @@ impl TokenSink for NodeBuilder {
             .groups
             .pop()
             .ok_or_else(|| Error::internal("group_end 无配对 group_begin"))?;
+        // \setbox 组作用域：回滚本组（及更深组）内设置的盒子寄存器
+        // （TeX 寄存器组级保存——trip L317 组内 \setbox22 → restoring \box22=void）
+        let cur_level = self.groups.len();
+        while self
+            .box_saves
+            .last()
+            .is_some_and(|(lvl, _, _)| *lvl > cur_level)
+        {
+            let (_, idx, old) = self.box_saves.pop().expect("last 已检查");
+            if let Some(slot) = self.boxes.get_mut(idx) {
+                *slot = old;
+            }
+        }
         // 数学模式关**非数学模式打开的、非 box 的**组：TeX 报 Missing $ inserted
         // 并先关数学再关组（tex.web：数学模式的组结束 → 插 $ 结束数学；etrip
         // L1148 `$\pagediscards}` 的 `}`——恢复后 `}` 关外层 vbox 组）。
@@ -952,8 +966,8 @@ impl TokenSink for NodeBuilder {
             let b = self
                 .lastbox_hold
                 .take()
-                .or_else(|| self.boxes.get_mut(idx).and_then(|s| s.take()));
-            self.boxes[target] = b;
+                .or_else(|| self.store_box(idx, None));
+            self.store_box(target, b);
             return Ok(());
         }
         // `\box0` 紧跟在 `\lastbox` 后：取摘下的盒子（TeX 语义）
@@ -964,7 +978,8 @@ impl TokenSink for NodeBuilder {
                 if idx == 255 {
                     self.pending_pages.pop_front()
                 } else {
-                    self.boxes.get_mut(idx).and_then(|s| s.take())
+                    // 取走（\box 用后清空）也是组级改动——组内记日志供回滚
+                    self.store_box(idx, None)
                 }
             });
         let Some(b) = b else {
@@ -1319,7 +1334,7 @@ impl TokenSink for NodeBuilder {
         // cur_box → set_box 赋值语义）；裸 \lastbox 留给后续 \box 消费。
         if let Some(t) = self.setbox_target.take() {
             if let Some(b) = self.lastbox_hold.take() {
-                self.boxes[t] = Some(b);
+                self.store_box(t, Some(b));
             }
         }
         Ok(())
@@ -1371,7 +1386,7 @@ impl TokenSink for NodeBuilder {
         };
         // `\setbox<n>=\copy<m>`：复制结果存入目标寄存器（\copy 不消耗原盒）
         if let Some(target) = self.setbox_target.take() {
-            self.boxes[target] = Some(b);
+            self.store_box(target, Some(b));
             return Ok(());
         }
         self.append(Node::Box(b));

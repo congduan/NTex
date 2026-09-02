@@ -493,6 +493,10 @@ struct NodeBuilder {
     /// 盒子寄存器（M3-5-3）：`\box<n>` 读写（box255 为待输出例程页面队列，见
     /// [`Self::pending_pages`]，不占此表）。
     boxes: Vec<Option<BoxNode>>,
+    /// `\setbox` 组作用域变更日志（TeX 寄存器组级保存）：(组级, 下标, 旧值)。
+    /// 组结束回滚本组及更深组内的盒子设置（trip L317 组内 `\setbox22=\lastbox`
+    /// → L318 `}` 后参考 `restoring \box22=void`）。
+    box_saves: Vec<(usize, usize, Option<BoxNode>)>,
     /// `\output` 例程是否已定义（true：fire_up 改道 box255 + 待执行）。
     output_defined: bool,
     /// 待输出例程处理的页面队列（M3-5-3）：`\output` 定义时 fire_up 产出的页面
@@ -527,6 +531,8 @@ struct NodeBuilder {
     hyph_exceptions: Vec<(Vec<u8>, Vec<usize>)>,
     /// ETRIP 冲刺：`\setbox<n>=<box>` 目标寄存器（下一个封装盒子存入该槽）。
     setbox_target: Option<usize>,
+    /// `\setbox` 的 `\global` 前缀（\global\setbox 不随组回滚——tex.web 语义）。
+    setbox_global: bool,
     /// ETRIP 冲刺：盒子规格（`\hbox to/spread <dimen>`）：(to, spread)，随下一个盒子组生效。
     pending_box_spec: Option<(Option<i64>, Option<i64>)>,
     /// M4-4 显示数学：本次公式用短间距（前一段末行短于 `\displaywidth`）。
@@ -639,6 +645,7 @@ impl NodeBuilder {
             pagination,
             page: PageBuilder::new(),
             boxes: vec![None; REGISTER_COUNT],
+            box_saves: Vec::new(),
             output_defined: false,
             pending_pages: VecDeque::new(),
             write_flush_pending: false,
@@ -654,6 +661,7 @@ impl NodeBuilder {
             patterns: PatternTrie::default(),
             hyph_exceptions: Vec::new(),
             setbox_target: None,
+            setbox_global: false,
             pending_box_spec: None,
             display_short: false,
             after_display: false,
@@ -782,8 +790,19 @@ impl NodeBuilder {
         }
     }
 
-    /// 接收一个已产出的页面（M3-5-3）：定义了输出例程 → 进入待处理队列
-    /// （`\box255` 逐页取出）；否则直接进 shipped（与 M3-5-2 默认行为一致）。
+    /// 存入盒子寄存器（TeX 寄存器组级保存）：组内记录旧值，组结束回滚。
+    /// 返回旧值（`\box` 取走语义：读旧值 + 清空由调用方按返回值使用）。
+    fn store_box(&mut self, idx: usize, value: Option<BoxNode>) -> Option<BoxNode> {
+        let old = self.boxes.get(idx).cloned().flatten();
+        if !self.groups.is_empty() && !self.setbox_global {
+            self.box_saves.push((self.groups.len(), idx, old.clone()));
+        }
+        if let Some(slot) = self.boxes.get_mut(idx) {
+            *slot = value;
+        }
+        old
+    }
+
     fn package_box(
         &mut self,
         kind: PendingBox,
@@ -849,7 +868,7 @@ impl NodeBuilder {
         // （`\setbox0=\vbox{\hbox{...}}` 的 \hbox）不消费。
         if let Some(idx) = setbox {
             if let Node::Box(b) = node {
-                self.boxes[idx] = Some(b);
+                self.store_box(idx, Some(b));
             }
             return;
         }
