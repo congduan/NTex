@@ -1699,6 +1699,33 @@ mod tests {
     }
 
     #[test]
+    fn paragraph_lines_include_left_right_skip() {
+        // tex.web：折行每行行首 \leftskip、行尾 \rightskip（参考行结构
+        // `.\glue(\leftskip) 3.0 ... .\glue(\rightskip) 0.0`——此前行盒
+        // 只有内容，- 侧 125+ 行 glue(leftskip/rightskip) 缺失）
+        let main = typeset(r"\leftskip 3pt a\par b").unwrap();
+        assert!(main.len() >= 2, "两行：{main:?}");
+        let l1 = as_box(&main[0]);
+        let has_ls = matches!(
+            l1.children.first(),
+            Some(Node::Glue { width, .. }) if *width == 3 * SP_PER_PT
+        );
+        assert!(has_ls, "行 1 行首缺 \\leftskip 3pt glue：{:?}", l1.children.first());
+        let has_rs = matches!(
+            l1.children.last(),
+            Some(Node::Glue { .. })
+        );
+        assert!(has_rs, "行 1 行尾缺 \\rightskip glue：{:?}", l1.children.last());
+        // 行 2 同
+        let l2 = as_box(&main[2]);
+        let has_ls2 = matches!(
+            l2.children.first(),
+            Some(Node::Glue { width, .. }) if *width == 3 * SP_PER_PT
+        );
+        assert!(has_ls2, "行 2 行首缺 \\leftskip glue");
+    }
+
+    #[test]
     fn mathchar_produces_char_node() {
         // tex.web：\mathchar"322D（数学 15-bit：class 3/fam 2/char "2D）在数学中
         // 是原子；"2D = '-' 字符必须出现在渲染输出。此前 scan_number 即丢。

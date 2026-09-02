@@ -54,6 +54,19 @@ impl NodeBuilder {
             // 断点胶水已在折行时排除；末行保留 \parfillskip（fil 拉伸填满行宽）。
             // discretionary 物化：行首补前一断点的 post、行内用 replace、行尾断点补 pre
             let mut line: Vec<Node> = Vec::new();
+            // 行首 `\leftskip`（tex.web：每行行首 leftskip glue——参考行结构
+            // `.\glue(\leftskip) 3.0 ...`；此前行盒只有内容缺左右 skip）
+            let ls = self.params.leftskip;
+            if ls.width != 0 || ls.stretch != 0 || ls.shrink != 0 {
+                line.push(Node::Glue {
+                    name: Some("leftskip"),
+                    width: ls.width,
+                    stretch: ls.stretch,
+                    shrink: ls.shrink,
+                    stretch_order: 0,
+                    shrink_order: 0,
+                });
+            }
             if s > 0 {
                 if let Node::Discretionary { post, .. } = &children[s - 1] {
                     line.extend(post.iter().cloned());
@@ -67,6 +80,19 @@ impl NodeBuilder {
             }
             if let Some(Node::Discretionary { pre, .. }) = children.get(e) {
                 line.extend(pre.iter().cloned());
+            }
+            // 行尾 `\rightskip`（tex.web：每行行尾 rightskip glue——末行的
+            // \parfillskip 在 children 内、rightskip 在其后；参考 `.\\glue(\\rightskip) 0.0`）
+            let rs = self.params.rightskip;
+            if rs.width != 0 || rs.stretch != 0 || rs.shrink != 0 {
+                line.push(Node::Glue {
+                    name: Some("rightskip"),
+                    width: rs.width,
+                    stretch: rs.stretch,
+                    shrink: rs.shrink,
+                    stretch_order: 0,
+                    shrink_order: 0,
+                });
             }
             last_natural = Some(hbox_dimensions(&line).width);
             // 折行警告（tex.web §922-930）：行自然宽超 \\hsize → Overfull
