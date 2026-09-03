@@ -514,7 +514,12 @@ struct NodeBuilder {
     page: PageBuilder,
     /// 盒子寄存器（M3-5-3）：`\box<n>` 读写（box255 为待输出例程页面队列，见
     /// [`Self::pending_pages`]，不占此表）。
-    boxes: Vec<Option<BoxNode>>,
+    ///
+    /// `Rc`（M5 阶段五）：寄存器文件 32768 槽整份克隆是段级增量热路径的大头
+    /// （边界检查点克隆 / 副作用字段对齐每段一次）——`Rc` 共享 + 写时复制
+    /// （[`Self::boxes_mut`]）让克隆与比较退化为引用计数 / 指针相等，语义不变
+    /// （共享期间无人可写）。
+    boxes: std::rc::Rc<Vec<Option<BoxNode>>>,
     /// `\setbox` 组作用域变更日志（TeX 寄存器组级保存）：(组级, 下标, 旧值)。
     /// 组结束回滚本组及更深组内的盒子设置（trip L317 组内 `\setbox22=\lastbox`
     /// → L318 `}` 后参考 `restoring \box22=void`）。
@@ -682,7 +687,7 @@ impl NodeBuilder {
             ship_seq: 0,
             pagination,
             page: PageBuilder::new(),
-            boxes: vec![None; REGISTER_COUNT],
+            boxes: std::rc::Rc::new(vec![None; REGISTER_COUNT]),
             box_saves: Vec::new(),
             output_defined: false,
             pending_pages: VecDeque::new(),
@@ -777,7 +782,7 @@ impl NodeBuilder {
                 .cloned()
                 .ok_or_else(|| Error::invalid_input(format!("盒子 {idx} 为空（void）")))
         } else {
-            self.boxes
+            self.boxes_mut()
                 .get_mut(idx)
                 .and_then(|s| s.take())
                 .ok_or_else(|| Error::invalid_input(format!("盒子 {idx} 为空（void）")))
@@ -848,6 +853,135 @@ impl NodeBuilder {
         }
     }
 
+    /// 盒子寄存器可写视图（写时复制：`Rc` 共享时先拆出独享副本——段级增量
+    /// 的边界检查点/副作用对齐克隆与活 builder 共享同一份寄存器文件，写入
+    /// 前必须解共享，语义与整份深克隆一致）。
+    fn boxes_mut(&mut self) -> &mut Vec<Option<BoxNode>> {
+        std::rc::Rc::make_mut(&mut self.boxes)
+    }
+
+    /// 排版副作用字段快照（M5 阶段五，`typeset::incremental` 的复用判定用）：
+    /// 只拷贝随执行演化、不进节点流/页面产出的小字段（盒子寄存器文件 `Rc`
+    /// 共享，克隆是引用计数）——整份 [`Self::clone`] 含页面构建器的当前页节点，
+    /// 只留给段边界回滚点。
+    ///
+    /// **字段清单与 [`Self::restore_side_effects`] 必须一致，新增字段两处同步。**
+    fn side_effects(&self) -> SideEffects {
+        SideEffects {
+            pending_box: self.pending_box,
+            pending_kind: self.pending_kind,
+            pending_shift: self.pending_shift,
+            pending_hshift: self.pending_hshift,
+            pending_leaders: self.pending_leaders,
+            leaders_box: self.leaders_box.clone(),
+            params: self.params,
+            penalty_arrays: self.penalty_arrays.clone(),
+            param_stack: self.param_stack.clone(),
+            sfcodes: self.sfcodes,
+            font_stack: self.font_stack.clone(),
+            space_factor: self.space_factor,
+            noindent_next: self.noindent_next,
+            align_dir: self.align_dir,
+            align_columns: self.align_columns.clone(),
+            last_par_line: self.last_par_line,
+            font_cs_names: self.font_cs_names.clone(),
+            current_font: self.current_font,
+            shipout_next: self.shipout_next,
+            ship_seq: self.ship_seq,
+            boxes: BoxFile(std::rc::Rc::clone(&self.boxes)),
+            box_saves: self.box_saves.clone(),
+            output_defined: self.output_defined,
+            pending_pages: self.pending_pages.clone(),
+            write_flush_pending: self.write_flush_pending,
+            math_style: self.math_style,
+            pending_script: self.pending_script,
+            sqrt_pending: self.sqrt_pending,
+            radical_pending: self.radical_pending,
+            class_pending: self.class_pending,
+            accent_pending: self.accent_pending,
+            underline_pending: self.underline_pending,
+            overline_pending: self.overline_pending,
+            nonscript_pending: self.nonscript_pending,
+            math_fonts: self.math_fonts.clone(),
+            patterns: self.patterns.clone(),
+            hyph_exceptions: self.hyph_exceptions.clone(),
+            setbox_target: self.setbox_target,
+            setbox_global: self.setbox_global,
+            pending_box_spec: self.pending_box_spec,
+            display_short: self.display_short,
+            after_display: self.after_display,
+            muskip_params: self.muskip_params,
+            muskip_is_mu: self.muskip_is_mu,
+            marks_top: self.marks_top.clone(),
+            marks_first: self.marks_first.clone(),
+            marks_bot: self.marks_bot.clone(),
+            marks_split_top: self.marks_split_top.clone(),
+            marks_split_first: self.marks_split_first.clone(),
+            marks_split_bot: self.marks_split_bot.clone(),
+            lastbox_hold: self.lastbox_hold.clone(),
+        }
+    }
+
+    /// 排版副作用字段推进（缓存段复用时）：该段未执行，其排版副作用（盒子寄存器、
+    /// marks、参数镜像、当前字体、断字表等）不会发生——对齐到快照里的"执行后"
+    /// 样子；主列表 / 页面构建器 / shipped 保留注入重算的结果（页面断点随编辑
+    /// 后移，这正是增量要的效果）。
+    ///
+    /// **字段清单与 [`Self::side_effects`] 必须一致，新增字段两处同步。**
+    fn restore_side_effects(&mut self, s: &SideEffects) {
+        self.pending_box = s.pending_box;
+        self.pending_kind = s.pending_kind;
+        self.pending_shift = s.pending_shift;
+        self.pending_hshift = s.pending_hshift;
+        self.pending_leaders = s.pending_leaders;
+        self.leaders_box = s.leaders_box.clone();
+        self.params = s.params;
+        self.penalty_arrays = s.penalty_arrays.clone();
+        self.param_stack = s.param_stack.clone();
+        self.sfcodes = s.sfcodes;
+        self.font_stack = s.font_stack.clone();
+        self.space_factor = s.space_factor;
+        self.noindent_next = s.noindent_next;
+        self.align_dir = s.align_dir;
+        self.align_columns = s.align_columns.clone();
+        self.last_par_line = s.last_par_line;
+        self.font_cs_names = s.font_cs_names.clone();
+        self.current_font = s.current_font;
+        self.shipout_next = s.shipout_next;
+        self.ship_seq = s.ship_seq;
+        self.boxes = std::rc::Rc::clone(&s.boxes.0);
+        self.box_saves = s.box_saves.clone();
+        self.output_defined = s.output_defined;
+        self.pending_pages = s.pending_pages.clone();
+        self.write_flush_pending = s.write_flush_pending;
+        self.math_style = s.math_style;
+        self.pending_script = s.pending_script;
+        self.sqrt_pending = s.sqrt_pending;
+        self.radical_pending = s.radical_pending;
+        self.class_pending = s.class_pending;
+        self.accent_pending = s.accent_pending;
+        self.underline_pending = s.underline_pending;
+        self.overline_pending = s.overline_pending;
+        self.nonscript_pending = s.nonscript_pending;
+        self.math_fonts = s.math_fonts.clone();
+        self.patterns = s.patterns.clone();
+        self.hyph_exceptions = s.hyph_exceptions.clone();
+        self.setbox_target = s.setbox_target;
+        self.setbox_global = s.setbox_global;
+        self.pending_box_spec = s.pending_box_spec;
+        self.display_short = s.display_short;
+        self.after_display = s.after_display;
+        self.muskip_params = s.muskip_params;
+        self.muskip_is_mu = s.muskip_is_mu;
+        self.marks_top = s.marks_top.clone();
+        self.marks_first = s.marks_first.clone();
+        self.marks_bot = s.marks_bot.clone();
+        self.marks_split_top = s.marks_split_top.clone();
+        self.marks_split_first = s.marks_split_first.clone();
+        self.marks_split_bot = s.marks_split_bot.clone();
+        self.lastbox_hold = s.lastbox_hold.clone();
+    }
+
     /// 存入盒子寄存器（TeX 寄存器组级保存）：组内记录旧值，组结束回滚。
     /// 返回旧值（`\box` 取走语义：读旧值 + 清空由调用方按返回值使用）。
     fn store_box(&mut self, idx: usize, value: Option<BoxNode>) -> Option<BoxNode> {
@@ -855,7 +989,7 @@ impl NodeBuilder {
         if !self.groups.is_empty() && !self.setbox_global {
             self.box_saves.push((self.groups.len(), idx, old.clone()));
         }
-        if let Some(slot) = self.boxes.get_mut(idx) {
+        if let Some(slot) = self.boxes_mut().get_mut(idx) {
             *slot = value;
         }
         old

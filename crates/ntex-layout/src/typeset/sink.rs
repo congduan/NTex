@@ -363,7 +363,7 @@ impl TokenSink for NodeBuilder {
     /// 寄存器 n 保留余量；结果按 `\setbox` 目标路由，否则追加。
     fn vsplit(&mut self, idx: usize, to: Option<i64>, spread: Option<i64>) -> Result<()> {
         let b = self
-            .boxes
+            .boxes_mut()
             .get_mut(idx)
             .and_then(|s| s.take())
             .ok_or_else(|| Error::invalid_input("\\vsplit 盒子为空（void）"))?;
@@ -634,7 +634,7 @@ impl TokenSink for NodeBuilder {
             .is_some_and(|(lvl, _, _)| *lvl > cur_level)
         {
             let (_, idx, old) = self.box_saves.pop().expect("last 已检查");
-            if let Some(slot) = self.boxes.get_mut(idx) {
+            if let Some(slot) = self.boxes_mut().get_mut(idx) {
                 *slot = old;
             }
         }
@@ -1504,7 +1504,7 @@ impl TokenSink for NodeBuilder {
 
     /// `\wd/\ht/\dp<n>=<dimen>`：设置盒子寄存器维度。
     fn set_box_dim(&mut self, idx: usize, dim: u8, value: i64) -> Result<()> {
-        let Some(b) = self.boxes.get_mut(idx).and_then(|s| s.as_mut()) else {
+        let Some(b) = self.boxes_mut().get_mut(idx).and_then(|s| s.as_mut()) else {
             // void 盒子无维度可设：忽略（TeX 恢复语义，TRIP halign 模板场景）
             return Ok(());
         };

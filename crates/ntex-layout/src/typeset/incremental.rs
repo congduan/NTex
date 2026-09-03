@@ -56,20 +56,46 @@
 //   新值（宏体编辑 + 连续编辑的逐位一致测试锁定此点）。
 // - 判定留痕 [`IncrementalTypesetter::last_rejects`]（expand 层 `last_rejects` 惯例）。
 //
+// ## 阶段五：复用判定开销削减（增量墙钟翻正）
+//
+// 阶段四正确性完备但墙钟为负（release、120 段文档：改正文 0.3x / 改宏体 0.2x
+// ——增量比全量慢）。逐项剖析（`Instant` 插桩，各环节占总耗时）定位出与直觉
+// 相反的分布：逐段 `ChainDelta::capture` 只占 ~2%（30µs/段），大头是**每段
+// 整份状态拷贝**——32768 槽盒子寄存器文件随边界克隆/副作用对齐/闸比较每段
+// 复制三份（~1.5ms/段）。本阶段三件事：
+//
+// 1. **盒子寄存器文件 `Rc` 共享 + 写时复制**（[`NodeBuilder::boxes_mut`]）：
+//    克隆/对齐退化为引用计数，闸比较走指针相等（[`BoxFile`]）。语义不变——
+//    共享期间无人可写，写入前 `Rc::make_mut` 拆出独享副本。
+// 2. **链偏差跨段携带**（expand 层 `SegmentEngine::replay` 同款）：偏差只在
+//    **执行段之后**重算一次（参照 = 该段**旧** `record_post`，与下一段旧
+//    `record_exp` 同源），复用段不执行故偏差不变（同步态归零 / 偏差态段状态
+//    中性）；逐段判定的全量状态扫描免掉，各缓存段只查"偏差集 ∩ 依赖"。
+//    同步态复用非中性段才还原旧 `post`（中性段短路——整份检查点克隆 +
+//    还原是纯开销，expand 层同款）。
+// 3. **段边界两档化**（[`DocBoundary`]）：每段必capture的只剩排版副作用字段
+//    快照（[`SideEffects`]，复用判定的对齐源 + 闸比较面，~1µs）；expand 检查点
+//    + builder 整份克隆（回滚点，~65µs）按 [`ROLLBACK_EVERY`] 间隔稀疏化，
+//    后续 `edit` 回滚到最近回滚点、中间段随重放补齐（有界代价）。
+//
+// 实测（同一基准，release / 2GB VM / 2026-09-03）：改正文 **4.3x**（13.6ms vs
+// 58.4ms，复用 111/169）、改宏体 **1.1x**（30.3ms vs 34.8ms，复用 60/121）。
+//
 // ## 仍存边界（离 M5 目标还差什么）
 //
-// - **偏差全量扫描**：每个缓存段判定一次"活状态 vs 录制段前快照"（值指纹 +
-//   eqtb 全槽）。expand 层靠"一次扫描 + 链偏差集随重放推进"免掉逐段扫描；排版
-//   层各段录制快照互不相同（节点流按各自段前状态烘焙），要免扫描须先把偏差集
-//   增量维护起来——复用路径当前的主要增量开销。
+// - **执行段成本 ≈ 全量段成本**：被编辑段及其引用段照常执行，每段多付两次
+//   expand 检查点捕获 + 词法依赖提取（~55µs/段）——改宏体场景执行段占多数时
+//   加速比被压在 ~1.1x。要再上台阶须把检查点捕获做成增量维护（ntex-core 引擎
+//   侧，非本阶段范围）。
 // - **副作用边界**：`\output` 例程（页面改道 box255+例程产出，注入路径不执行
 //   例程——观测到即禁用复用，保守全量重排）、`\write` 流内容、`\input`（本
 //   管线未注入 VFS）不在逐位一致口径内；字体表随管线单调增长（编辑删除
 //   `\font` 定义可能改变字体编号，与全新全量编译不逐位一致——本阶段测试
 //   不做此类编辑）。marks 族（`\topmark` 等）在断页轮转、随副作用字段整体
 //   对齐旧值——读 marks 的段不在本阶段逐位一致口径内（与阶段三同口径）。
-// - **内存**：每段边界存 expand 检查点 + NodeBuilder 克隆 + 主列表节点流，
-//   O(文档) 量级（页面构建器 ≤1 页/段、节点流 ≈ 文档节点总数）。
+// - **内存**：每段边界存副作用字段快照（回滚点再带 expand 检查点 + builder
+//   克隆，按 1/8 密度）+ 主列表节点流，O(文档) 量级（页面构建器 ≤1 页/段、
+//   节点流 ≈ 文档节点总数）。
 
 // 说明：本文件由 typeset/mod.rs `include!` 进 `typeset` 模块，与其共享 `use`
 // 导入（Error/Result/Expander/FontMetrics/Node/BoxNode 等）与私有项
@@ -117,7 +143,100 @@ fn main_above_depth(b: &NodeBuilder) -> Option<i64> {
     }
 }
 
-/// 段边界排版检查点：NodeBuilder 整体克隆 + 已 shipout 页数。
+/// 排版副作用字段快照（M5 阶段五）：复用判定的排版半边——既是"段前上下文"闸的
+/// 比较面，也是"缓存段复用后副作用字段推进"的对齐源。
+///
+/// 字段清单 = [`NodeBuilder`] 上随执行演化、但不进节点流/页面产出的状态。不进
+/// 快照：`lists`/`list_modes`（主列表）、`page`（页面构建器）、`shipped`（页面
+/// 产出）、`transcript`（转录不参与逐位一致口径）、`nodes_appended`/
+/// `last_appended`（诊断）、`pagination`/`fonts`/`record_main`（配置与共享设施）。
+/// **新增 builder 字段时同步 [`NodeBuilder::side_effects`] /
+/// [`NodeBuilder::restore_side_effects`] 两处。**
+///
+/// 独立成结构（阶段五）：整份 [`NodeBuilder`] 克隆（含页面构建器的当前页节点）
+/// 每段一次是增量热路径大头；本快照只拷贝这批小字段（盒子寄存器文件已 `Rc`
+/// 共享），每段 ~1µs，使"回滚点整份克隆"得以按间隔稀疏化（见 [`DocBoundary`]）。
+#[derive(Debug, Clone, PartialEq)]
+struct SideEffects {
+    pending_box: Option<PendingBox>,
+    pending_kind: Option<GroupKind>,
+    pending_shift: Option<i64>,
+    pending_hshift: Option<i64>,
+    pending_leaders: Option<LeadersKind>,
+    leaders_box: Option<(LeadersKind, Node)>,
+    params: Params,
+    penalty_arrays: [Vec<i64>; 4],
+    param_stack: Vec<Params>,
+    sfcodes: [u32; 256],
+    font_stack: Vec<FontId>,
+    space_factor: i64,
+    noindent_next: bool,
+    align_dir: Option<AlignDir>,
+    align_columns: Vec<Node>,
+    last_par_line: i64,
+    font_cs_names: Vec<Option<String>>,
+    current_font: FontId,
+    shipout_next: bool,
+    ship_seq: u32,
+    boxes: BoxFile,
+    box_saves: Vec<(usize, usize, Option<BoxNode>)>,
+    output_defined: bool,
+    pending_pages: std::collections::VecDeque<BoxNode>,
+    write_flush_pending: bool,
+    math_style: MathStyle,
+    pending_script: Option<bool>,
+    sqrt_pending: bool,
+    radical_pending: Option<u32>,
+    class_pending: Option<MathClass>,
+    accent_pending: bool,
+    underline_pending: bool,
+    overline_pending: bool,
+    nonscript_pending: bool,
+    math_fonts: Vec<[Option<FontId>; 3]>,
+    patterns: PatternTrie,
+    hyph_exceptions: Vec<(Vec<u8>, Vec<usize>)>,
+    setbox_target: Option<usize>,
+    setbox_global: bool,
+    pending_box_spec: Option<(Option<i64>, Option<i64>)>,
+    display_short: bool,
+    after_display: bool,
+    muskip_params: [ntex_core::Glue; 3],
+    muskip_is_mu: [bool; 3],
+    marks_top: std::collections::HashMap<i64, String>,
+    marks_first: std::collections::HashMap<i64, String>,
+    marks_bot: std::collections::HashMap<i64, String>,
+    marks_split_top: std::collections::HashMap<i64, String>,
+    marks_split_first: std::collections::HashMap<i64, String>,
+    marks_split_bot: std::collections::HashMap<i64, String>,
+    lastbox_hold: Option<BoxNode>,
+}
+
+/// 盒子寄存器文件的共享句柄（M5 阶段五）。
+///
+/// 相等比较**先走指针相等**：复用路径里边界快照与活 builder 共享同一份寄存器
+/// 文件（克隆 = 引用计数），派生 `PartialEq` 会退化成 32768 槽逐槽比较
+/// （~100µs/段，复用判定的最大单项开销）；不共享时才退回逐槽语义比较。
+#[derive(Debug, Clone)]
+struct BoxFile(std::rc::Rc<Vec<Option<BoxNode>>>);
+
+impl PartialEq for BoxFile {
+    fn eq(&self, other: &Self) -> bool {
+        std::rc::Rc::ptr_eq(&self.0, &other.0) || self.0 == other.0
+    }
+}
+
+impl SideEffects {
+    /// 复用判定的排版半边闸：活 builder 的副作用字段是否与本快照一致。
+    ///
+    /// `groups`/`math` 不进快照（恒为空是干净段边界的不变式——带缓存的段其段前
+    /// 边界必干净，有缓存 ⇒ 该段执行进入时 `builder_shaped` 成立）；活侧非空即
+    /// 判不匹配（与阶段四行为一致）。
+    fn matches(&self, b: &NodeBuilder) -> bool {
+        b.groups.is_empty() && b.math.is_empty() && b.side_effects() == *self
+    }
+}
+
+/// 段边界排版检查点：NodeBuilder 整体克隆 + 已 shipout 页数（回滚点用）。
 ///
 /// 克隆时先把 `shipped` 摘走（页面不随检查点复制，只记数量）——整体还原时
 /// 按 [`Self::shipped_count`] 截断现有页面列表（编辑点之前的页面由前缀不变式
@@ -150,144 +269,32 @@ impl LayoutBoundary {
         pages.truncate(self.shipped_count);
         b.shipped = pages;
     }
-
-    /// 副作用字段推进（缓存段复用时）：该段未执行，其排版副作用（盒子寄存器、
-    /// marks、参数镜像、当前字体、断字表等）不会发生——对齐到边界快照里的
-    /// "执行后"样子；主列表 / 页面构建器 / shipped 保留注入重算的结果（页面
-    /// 断点随编辑后移，这正是增量要的效果）。
-    ///
-    /// 不还原：`lists`/`list_modes`（主列表）、`page`（页面构建器）、`shipped`
-    /// （页面产出）、`transcript`（转录不参与逐位一致口径）、
-    /// `nodes_appended`/`last_appended`（诊断）、`pagination`/`fonts`/
-    /// `record_main`（配置与共享设施）。新增字段时同步这里。
-    fn restore_side_effects(&self, b: &mut NodeBuilder) {
-        let s = &self.builder;
-        b.groups = s.groups.clone();
-        b.pending_box = s.pending_box;
-        b.pending_kind = s.pending_kind;
-        b.pending_shift = s.pending_shift;
-        b.pending_hshift = s.pending_hshift;
-        b.pending_leaders = s.pending_leaders;
-        b.leaders_box = s.leaders_box.clone();
-        b.params = s.params;
-        b.penalty_arrays = s.penalty_arrays.clone();
-        b.param_stack = s.param_stack.clone();
-        b.sfcodes = s.sfcodes;
-        b.font_stack = s.font_stack.clone();
-        b.space_factor = s.space_factor;
-        b.noindent_next = s.noindent_next;
-        b.align_dir = s.align_dir;
-        b.align_columns = s.align_columns.clone();
-        b.last_par_line = s.last_par_line;
-        b.font_cs_names = s.font_cs_names.clone();
-        b.current_font = s.current_font;
-        b.shipout_next = s.shipout_next;
-        b.ship_seq = s.ship_seq;
-        b.boxes = s.boxes.clone();
-        b.box_saves = s.box_saves.clone();
-        b.output_defined = s.output_defined;
-        b.pending_pages = s.pending_pages.clone();
-        b.write_flush_pending = s.write_flush_pending;
-        b.math = s.math.clone();
-        b.math_style = s.math_style;
-        b.pending_script = s.pending_script;
-        b.sqrt_pending = s.sqrt_pending;
-        b.radical_pending = s.radical_pending;
-        b.class_pending = s.class_pending;
-        b.accent_pending = s.accent_pending;
-        b.underline_pending = s.underline_pending;
-        b.overline_pending = s.overline_pending;
-        b.nonscript_pending = s.nonscript_pending;
-        b.math_fonts = s.math_fonts.clone();
-        b.patterns = s.patterns.clone();
-        b.hyph_exceptions = s.hyph_exceptions.clone();
-        b.setbox_target = s.setbox_target;
-        b.setbox_global = s.setbox_global;
-        b.pending_box_spec = s.pending_box_spec;
-        b.display_short = s.display_short;
-        b.after_display = s.after_display;
-        b.muskip_params = s.muskip_params;
-        b.muskip_is_mu = s.muskip_is_mu;
-        b.marks_top = s.marks_top.clone();
-        b.marks_first = s.marks_first.clone();
-        b.marks_bot = s.marks_bot.clone();
-        b.marks_split_top = s.marks_split_top.clone();
-        b.marks_split_first = s.marks_split_first.clone();
-        b.marks_split_bot = s.marks_split_bot.clone();
-        b.lastbox_hold = s.lastbox_hold.clone();
-    }
 }
 
-/// 排版副作用字段是否一致（复用判定的排版半边闸）。
+/// 段边界：排版半边快照（每段都有）+ 回滚点（按间隔稀疏化）。
 ///
-/// 与 [`LayoutBoundary::restore_side_effects`] **同一字段清单**（新增字段时两处
-/// 同步）：闸判定要求"活 builder 的这些字段 == 该段执行前边界里的字段"，此后
-/// 缓存节点流按旧上下文烘焙仍然成立、且"执行后副作用字段 == 旧 post"（副作用
-/// 演化是 (段前字段, token 流, 引擎读值) 的确定函数）——复用路径的字段对齐与
-/// 执行等价。`groups`/`math`/`pending_box`/`pending_kind`/`shipout_next` 不在
-/// 清单：带缓存的段其段前边界必是干净段边界（有缓存 ⇒ 该段执行进入时
-/// `builder_shaped` 成立），进行中构造两侧恒为空，此处仅作不变式断言。
-fn side_effects_match(a: &NodeBuilder, b: &NodeBuilder) -> bool {
-    a.groups.is_empty()
-        && b.groups.is_empty()
-        && a.math.is_empty()
-        && b.math.is_empty()
-        && a.pending_leaders == b.pending_leaders
-        && a.leaders_box == b.leaders_box
-        && a.pending_shift == b.pending_shift
-        && a.pending_hshift == b.pending_hshift
-        && a.params == b.params
-        && a.penalty_arrays == b.penalty_arrays
-        && a.param_stack == b.param_stack
-        && a.sfcodes == b.sfcodes
-        && a.font_stack == b.font_stack
-        && a.space_factor == b.space_factor
-        && a.noindent_next == b.noindent_next
-        && a.align_dir == b.align_dir
-        && a.align_columns == b.align_columns
-        && a.last_par_line == b.last_par_line
-        && a.font_cs_names == b.font_cs_names
-        && a.current_font == b.current_font
-        && a.ship_seq == b.ship_seq
-        && a.boxes == b.boxes
-        && a.box_saves == b.box_saves
-        && a.output_defined == b.output_defined
-        && a.pending_pages == b.pending_pages
-        && a.write_flush_pending == b.write_flush_pending
-        && a.math_style == b.math_style
-        && a.pending_script == b.pending_script
-        && a.sqrt_pending == b.sqrt_pending
-        && a.radical_pending == b.radical_pending
-        && a.class_pending == b.class_pending
-        && a.accent_pending == b.accent_pending
-        && a.underline_pending == b.underline_pending
-        && a.overline_pending == b.overline_pending
-        && a.nonscript_pending == b.nonscript_pending
-        && a.math_fonts == b.math_fonts
-        && a.patterns == b.patterns
-        && a.hyph_exceptions == b.hyph_exceptions
-        && a.setbox_target == b.setbox_target
-        && a.setbox_global == b.setbox_global
-        && a.pending_box_spec == b.pending_box_spec
-        && a.display_short == b.display_short
-        && a.after_display == b.after_display
-        && a.muskip_params == b.muskip_params
-        && a.muskip_is_mu == b.muskip_is_mu
-        && a.marks_top == b.marks_top
-        && a.marks_first == b.marks_first
-        && a.marks_bot == b.marks_bot
-        && a.marks_split_top == b.marks_split_top
-        && a.marks_split_first == b.marks_split_first
-        && a.marks_split_bot == b.marks_split_bot
-        && a.lastbox_hold == b.lastbox_hold
-}
-
-/// 段边界完整检查点：expand 半边 + 排版半边。
+/// 阶段五把"每段边界"拆成两档：
+/// - **排版半边 [`SideEffects`]**：每段必捕获——复用判定（段前上下文闸）与
+///   复用后副作用字段推进都以它为准，是链数据，便宜（~1µs）；
+/// - **回滚点**（expand 检查点 + builder 整份克隆，~65µs）：只按
+///   [`ROLLBACK_EVERY`] 间隔 + 末段刷新。后续 `edit` 回滚到**最近的回滚点**、
+///   中间段随重放补齐（复用段重注入 / 执行段重算）——多回滚的段重放是
+///   有界代价（≤ [`ROLLBACK_EVERY`] 段），换掉的是每段一次的整份克隆。
 #[derive(Debug, Clone)]
 struct DocBoundary {
+    side: SideEffects,
+    rollback: Option<RollbackPoint>,
+}
+
+/// 回滚点：expand 半边 + 排版半边整份克隆。
+#[derive(Debug, Clone)]
+struct RollbackPoint {
     exp: StateSnapshot,
     layout: LayoutBoundary,
 }
+
+/// 回滚点稀疏化间隔：每这么多段刷新一个回滚点（末段必刷）。
+const ROLLBACK_EVERY: usize = 8;
 
 /// 缓存的段贡献：该段进入主列表的节点流（增量重放免执行）。
 ///
@@ -419,16 +426,24 @@ impl IncrementalTypesetter {
         self.rejects = vec![None; n];
         self.stats = IncrementalStats::default();
         self.install_builder();
-        self.bounds[0] = Some(self.capture_boundary());
+        self.capture_boundary(0, true);
         for j in 0..n {
-            self.execute_segment(j)?;
+            if let Err(e) = self.execute_segment(j) {
+                // 段执行出错：本轮止于此段，其后各段边界不再反映当前文档状态
+                // ——撤销它们的回滚点（后续 `edit` 退到更早的回滚点重放）。
+                self.invalidate_rollback_after(j);
+                return Err(e);
+            }
         }
         self.finish_doc()
     }
 
     /// 编辑第 `index` 段并增量重生（单路径：回滚到段前 → 重放）。
     ///
-    /// 回滚点之前的段缓存原样保留（页面由前缀不变式保证逐位一致，不重排）；
+    /// 回滚点：编辑段之前**最近的回滚点**边界（复用段只按 [`ROLLBACK_EVERY`]
+    /// 间隔留回滚点，见 [`DocBoundary`]）——回滚点之前的段缓存原样保留（页面
+    /// 由前缀不变式保证逐位一致，不重排）；回滚点与编辑段之间的段随重放补齐
+    /// （可复用的重注入，其余重算，代价 ≤ [`ROLLBACK_EVERY`] 段）。
     /// 被编辑段必算；其后各段按 [`Self::reuse_verdict`] 判定复用缓存节点流
     /// （页面装配重跑）或照常执行。
     pub fn edit(&mut self, index: usize, new_text: &str) -> Result<CompileOutput> {
@@ -438,21 +453,40 @@ impl IncrementalTypesetter {
                 "段下标 {index} 越界：当前文档共 {n} 段"
             )));
         }
-        if self.bounds[index].is_none() {
-            return Err(Error::invalid_input("无段边界检查点：请先 compile() 全文编译"));
-        }
+        let start = (0..=index)
+            .rev()
+            .find(|&i| {
+                self.bounds[i]
+                    .as_ref()
+                    .is_some_and(|b| b.rollback.is_some())
+            })
+            .ok_or_else(|| {
+                Error::invalid_input("无段边界检查点：请先 compile() 全文编译")
+            })?;
         self.stats = IncrementalStats::default();
         self.rejects = vec![None; n];
-        // 1) 回滚到段 index 前（expand 检查点整体还原 + 排版状态整体还原 +
+        // 1) 回滚到段 start 前（expand 检查点整体还原 + 排版状态整体还原 +
         //    shipped 截断——之后页面的逐位一致由重放重新装配保证）。
         {
-            let bnd = self.bounds[index].as_ref().expect("上方已检查");
-            bnd.exp.restore_to(&mut self.expander);
-            bnd.layout.restore_full(sink_builder(&mut self.expander));
+            let rp = self.bounds[start]
+                .as_ref()
+                .and_then(|b| b.rollback.as_ref())
+                .expect("上方已筛选回滚点");
+            rp.exp.restore_to(&mut self.expander);
+            rp.layout.restore_full(sink_builder(&mut self.expander));
         }
         self.segments[index] = new_text.to_owned();
-        // 2) 从 index 起重放。
-        for j in index..n {
+        // 2) 从 start 起重放。链偏差随重放推进（expand 层 SegmentEngine 同款，
+        //    阶段五）：入口回滚后活状态即旧链上"段 start 前"的状态，先对
+        //    `record_exp(start)` 捕获一次；此后**只在执行段之后**重算——
+        //    复用段不执行（同步态归零 / 偏差态段状态中性不变），逐段判定的
+        //    全量状态扫描由此免掉，各缓存段只查"偏差集 ∩ 依赖"。
+        //    参照取该段**旧** post（覆盖缓存前取）：它与下一段旧 `record_exp`
+        //    同源（段背靠背执行，两快照同状态），正是下一段缓存成立的准绳。
+        let mut delta = self.cache[start]
+            .as_ref()
+            .map(|c| ChainDelta::capture(&self.expander, &c.record_exp));
+        for j in start..n {
             // 判定：被编辑段 / 观测到输出例程 / 无缓存 → 必算；其余按复用判定。
             let outcome: std::result::Result<ReuseVerdict, &'static str> = if j == index {
                 Err("被编辑段（必算）")
@@ -461,13 +495,34 @@ impl IncrementalTypesetter {
             } else if self.cache[j].is_none() {
                 Err("无缓存（合并段 / 前轮执行止于此段之前）")
             } else {
-                self.reuse_verdict(j)
+                match delta.as_ref() {
+                    Some(d) => self.reuse_verdict(j, d),
+                    None => Err("无链偏差基准（此前各段无旧缓存，保守重算）"),
+                }
             };
             let verdict = match outcome {
                 Ok(v) => v,
                 Err(reason) => {
                     self.rejects[j] = Some(reason);
-                    self.execute_segment(j)?;
+                    let reference = self.cache[j]
+                        .as_ref()
+                        .map(|c| c.record_post.clone())
+                        .or_else(|| {
+                            self.cache
+                                .get(j + 1)
+                                .and_then(|c| c.as_ref())
+                                .map(|c| c.record_exp.clone())
+                        });
+                    if let Err(e) = self.execute_segment(j) {
+                        // 段执行出错：本轮重放止于此段，其后各段边界不再反映
+                        // 当前文档状态——撤销它们的回滚点，后续 `edit` 退到更早
+                        // 的回滚点重放（不会用到过期状态）。
+                        self.invalidate_rollback_after(j);
+                        return Err(e);
+                    }
+                    delta = reference
+                        .as_ref()
+                        .map(|r| ChainDelta::capture(&self.expander, r));
                     continue;
                 }
             };
@@ -481,27 +536,40 @@ impl IncrementalTypesetter {
                 }
                 // 排版副作用字段对齐到该段执行后的样子（主列表/页面构建器/
                 // shipped 保留注入重算的结果）。
-                let side = &self.bounds[j + 1].as_ref().expect("段后边界检查点").layout;
-                side.restore_side_effects(b);
+                let side = &self
+                    .bounds
+                    .get(j + 1)
+                    .and_then(|b| b.as_ref())
+                    .ok_or_else(|| Error::invalid_input("无段后排版边界检查点"))?
+                    .side;
+                b.restore_side_effects(side);
                 if verdict == ReuseVerdict::Synced {
                     // 同步态：活状态与录制时段前状态精确一致 → 执行必然复现，推进
-                    // 到**录制时**的段后状态（非中性段须显式推进，中性段还原
-                    // no-op）。
-                    let post = self.cache[j]
-                        .as_ref()
-                        .expect("已判可复用")
-                        .record_post
-                        .clone();
-                    post.restore_to(&mut self.expander);
+                    // 到**录制时**的段后状态。段状态中性（pre ≈ post，执行本不改
+                    // 状态）时活状态已是对的状态，整体还原是纯开销——expand 层
+                    // 同款短路。链偏差随之归零（活状态 == 旧链下一段的段前状态）。
+                    let (neutral, post) = {
+                        let c = self.cache[j].as_ref().expect("已判可复用");
+                        (c.state_neutral, &c.record_post)
+                    };
+                    if !neutral {
+                        post.clone().restore_to(&mut self.expander);
+                    }
+                    // `ChainDelta::empty` 是 ntex-core 的 crate 内构造器；这里按
+                    // 公开字段直接构造零偏差（值状态一致 + 无变化槽）。
+                    delta = Some(ChainDelta {
+                        value_differs: false,
+                        slots: std::collections::HashSet::new(),
+                    });
                 }
                 // 偏差路径（依赖判定通过）：段状态中性（判定已闸）→ 执行本不改
-                // expand 状态，活状态即该段执行后的正确状态；**不能**还原旧 post
-                // ——会把偏差槽（被改宏体）的新值冲掉。
+                // expand 状态，活状态即该段执行后的正确状态，**链偏差不变**；
+                // **不能**还原旧 post——会把偏差槽（被改宏体）的新值冲掉。
             }
             // 段后边界刷新为活状态：排版半边断页点已变；偏差路径下 expand 半边
             // 也随活状态走——旧链快照不再是当前文档状态，后续 `edit` 回滚到它
-            // 会丢掉偏差槽新值。
-            self.bounds[j + 1] = Some(self.capture_boundary());
+            // 会丢掉偏差槽新值（回滚点按间隔稀疏化，见 [`DocBoundary`]）。
+            self.capture_boundary(j + 1, false);
             self.stats.reused += 1;
         }
         self.finish_doc()
@@ -548,10 +616,11 @@ impl IncrementalTypesetter {
     ///
     /// 1. **段边界干净**（expand 无悬挂构造 + 排版器垂直模式、无进行中段落/盒/
     ///    数学/组）；
-    /// 2. **活 expand 状态 vs 录制时段前状态的偏差**——对照缓存的 `record_exp`
-    ///    而非 `bounds[j]`：重放执行前一段后 `bounds[j]` 已刷新成当前文档的新状态
-    ///    （改 `\hsize` 等参数的编辑会漏检），录制状态才是该缓存成立的准绳。
-    ///    偏差为空 → 同步态（[`ReuseVerdict::Synced`]，执行必然复现同一输出）；
+    /// 2. **活 expand 状态相对旧链的偏差**（重放循环携带的 `delta`，参照 =
+    ///    该段**录制时**的段前状态）——不能对照 `bounds[j]`：重放执行前一段后
+    ///    `bounds[j]` 已刷新成当前文档的新状态（改 `\hsize` 等参数的编辑会漏检），
+    ///    录制状态才是该缓存成立的准绳。偏差为空 → 同步态
+    ///    （[`ReuseVerdict::Synced`]，执行必然复现同一输出）；
     /// 3. 偏差非空 → **依赖四闸**（expand 层 `cache_reject_reason_inner` 同款）：
     ///    值状态偏差（寄存器/参数/catcode/编码表/流，未做槽级归因）全局失效；
     ///    段含 `\csname`（动态 cs 名）保守失效；读依赖闭包触及变化槽（该段引用
@@ -571,7 +640,14 @@ impl IncrementalTypesetter {
     ///
     /// 任一不成立 → 该段照常执行（重算行盒/胶水，缓存与边界快照随之刷新，后续段
     /// 仍可复用）。
-    fn reuse_verdict(&mut self, j: usize) -> std::result::Result<ReuseVerdict, &'static str> {
+    ///
+    /// 阶段五：链偏差 `delta` 由重放循环携带（执行段后重算一次），此处只查表，
+    /// 不再做"活状态 vs 录制段前快照"的全量扫描。
+    fn reuse_verdict(
+        &mut self,
+        j: usize,
+        delta: &ChainDelta,
+    ) -> std::result::Result<ReuseVerdict, &'static str> {
         if !self.expander.boundary_is_clean() {
             return Err("expand 段边界不干净（跨段构造：未闭合组/条件/数学）");
         }
@@ -579,7 +655,6 @@ impl IncrementalTypesetter {
             return Err("排版器非干净段边界（进行中段落/盒子/数学/组）");
         }
         let cache = self.cache[j].as_ref().expect("调用方已判 Some");
-        let delta = ChainDelta::capture(&self.expander, &cache.record_exp);
         if delta.is_empty() {
             self.entry_ctx_verdict(j)?;
             return Ok(ReuseVerdict::Synced);
@@ -610,9 +685,8 @@ impl IncrementalTypesetter {
                 .get(j)
                 .and_then(|b| b.as_ref())
                 .ok_or("无段前排版边界")?
-                .layout
-                .builder;
-            if !side_effects_match(sink_builder(&mut self.expander), pre) {
+                .side;
+            if !pre.matches(sink_builder(&mut self.expander)) {
                 return Err("排版副作用字段偏离段前边界（字体/参数/marks/盒子/断字表）");
             }
         }
@@ -631,11 +705,27 @@ impl IncrementalTypesetter {
         }
     }
 
-    /// 捕获段边界检查点（expand + 排版）。
-    fn capture_boundary(&mut self) -> DocBoundary {
-        DocBoundary {
-            exp: StateSnapshot::capture(&self.expander),
-            layout: LayoutBoundary::capture(self.builder_mut()),
+    /// 捕获段边界（段 `j` 执行/复用后 → 写入 `bounds[j+1]`）。
+    ///
+    /// 排版半边快照每段必capture（复用判定的对齐源/闸比较面）；回滚点按
+    /// [`ROLLBACK_EVERY`] 间隔 + 末段刷新（`force` 用于段 0 与需要精确回滚点的
+    /// 场景）。
+    fn capture_boundary(&mut self, at: usize, force: bool) {
+        let side = sink_builder(&mut self.expander).side_effects();
+        let rollback = if force || at % ROLLBACK_EVERY == 0 || at == self.segments.len() {
+            let exp = StateSnapshot::capture(&self.expander);
+            let layout = LayoutBoundary::capture(self.builder_mut());
+            Some(RollbackPoint { exp, layout })
+        } else {
+            None
+        };
+        self.bounds[at] = Some(DocBoundary { side, rollback });
+    }
+
+    /// 撤销段 `j` 之后各边界的回滚点（本轮重放未经过它们，内容已过期）。
+    fn invalidate_rollback_after(&mut self, j: usize) {
+        for b in self.bounds[j + 1..].iter_mut().flatten() {
+            b.rollback = None;
         }
     }
 
@@ -664,7 +754,6 @@ impl IncrementalTypesetter {
         // 独立于 `bounds[j+1]`——边界会被偏差路径复用刷新成当轮活状态）。
         let record_post = StateSnapshot::capture(&self.expander);
         let dirty_exit = !self.builder_shaped();
-        self.bounds[j + 1] = Some(self.capture_boundary());
         // 状态中性 = 执行前后 expand 状态语义一致（捕获时算一次，判定只查布尔；
         // 有链偏差时它是"跳过执行且不还原旧 post"的健全前提）。
         let state_neutral = snapshot_states_equal(&record_exp, &record_post);
@@ -680,7 +769,7 @@ impl IncrementalTypesetter {
                 state_neutral,
             })
         };
-        self.bounds[j + 1] = Some(self.capture_boundary());
+        self.capture_boundary(j + 1, false);
         if self.builder_mut().output_defined {
             self.output_routine = true;
         }
