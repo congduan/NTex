@@ -3,7 +3,7 @@
 > 依据：[idea.md](file:///Users/congduan/Desktop/code/_vibe_coding_/NTex/idea.md) 架构 + 性能决策（字节码预编译 / 深 .fmt / CJK 整形捷径 / 并行 / 增量）
 > 原则：**正确性优先、性能架构前置、基准先行**
 
-## 当前进度（2026-08）
+## 当前进度（2026-09-03）
 
 | 里程碑           | 状态                                                                                                                                                                                                                                                                                                         |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -12,11 +12,10 @@
 | M2 字节码        | 🟡 双轨完成（100 用例等价）；**性能 P0 补课落地**（字节码 u64 原始字执行器 + release 调优，80022b4）；**吞吐重测 2026-09-03：比值 1.01x，≥2x 未达（结构性——RFC-4 零解包 IR 与解释器 TokenArray 同构，见 §4 M2-6 根因）**；P1 热路径消分配落地（含 `error_context` O(n²) 修复，展开吞吐 +61%）；M2-5 arena 未做 |                                                                                                                                                                                                                             |
 | M3 排版核心       | ✅ M3-1\~M3-4 完成（58+ 用例）；**M3-5 DVI 写出 +** **`\shipout`** **+ 断页 DP + lig/kern +** **`\sfcode`** **+** **`\output`** **例程/box255** 完成（dvipdfmx 验收 + 与 TeX 差分对照）；**RFC-3 VFS + 副作用模型落地**（10 原语走 `ntex-io` VFS，延迟写入 shipout 边界提交）；**`.fmt`** **v1 内存快照**（`ntex-format` 确定性编码 + roundtrip）                     |
 | M4 数学 + e-TeX | ✅ **全部完成**：数学模式状态机（`$`/`$$`、8 类原子、spacing 表、上下标、字阶）、分式/根式/定界符、样式原语、fontdimen 数学参数 + 数学字体族、显示数学细化、Liang 断字、错误模型、e-TeX 核心 + 扩展（`\protected`/`\ifdefined`/`\ifcsname`/`\unless`/`\numexpr`/`\detokenize`/`\unexpanded`/`\eTeXversion`/`\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens`）；**ETRIP 冲刺**：A 组 42/42 ✅（2026-09-03 `\muexpr` 销账）、B 组 36/36、C 组全部已接线；`etrip.log` 逐字节比照 2026-09-03 降级口径推进（语义 diff 归零 + 错误块抽查，逐字节留 M8 L2，见 §6 末尾） |
-| 输出端           | 🟢 正式 PDF 后端可用（`ntex-pdf`：DVI → PDF 直出 + Type1 嵌入，替换临时 Helvetica 切片；demo 两页与 dvipdfmx 渲染一致）                                                                                                                                                                                                                |
+| M5 增量计算 | 🟡 阶段一\~五完成（2026-09-03：0099b1f→7601d1d→c2a2418→b585864→55bcb09→14f7bc7）：段级增量重算（POC）→ 可回滚段快照 · edit 单路径化 → 端到端增量排版（连续编辑逐位一致）→ 排版层依赖判定（宏体编辑省重排）→ 复用判定开销削减（**增量墙钟翻正**：release 120 段文档改正文 4.3x / 改宏体 1.1x，增量 < 全量）；**仍存边界** + **阶段六待办**见 §7 |
+| 输出端           | 🟢 正式 PDF 后端可用（`ntex-pdf`：DVI → PDF 直出 + Type1 嵌入，替换临时 Helvetica 切片；demo 两页与 dvipdfmx 渲染一致；023ff2a 修 DVI 字体选择按字体号 k 归位——demo.dvi → PDF 不再报"未定义字体"）                                                                                                                                                                                                                |
 
-**下一步**：按 **§6 不符规范原语待办**（P0 优先级）推进——**TRIP 冲刺**（M1-13 错误恢复机制 `back_input`/`\errhelp` 是 trip.tex 停于"组未闭合"恢复点的根因，先行攻克）+ **ETRIP 收尾**（`\muexpr` 1mu 校准 + sparse arrays 段越界恢复 + gluestretchorder 值语义 + `etrip.log` 逐字节比对）+ 性能 backlog **P1**（热路径消分配 / 修通 ntex 驱动基准补测吞吐）；TRIP/ETRIP 收尾按
-  §6 末尾 2026-09-03 降级策略：错误恢复机制 + 语义 bug 必修，`etrip.log` 逐字节比对
-  降级为语义 diff（逐字节留 M8 L2），收尾完成后转场 M5。
+**下一步**：主线已按 §6 末尾 2026-09-03 转场决策**转入 M5**（阶段一\~五完成），当前双线并行：**M5 阶段六**（§7：执行段成本削减/检查点增量维护、副作用边界 `\output`·`\write`·`\input`·marks、`Expand(source, snapshot)` 纯函数化、槽级归因、随机编辑模糊测试）+ **TRIP/ETRIP 收尾**——P0 必修剩 **M1-13 错误恢复通用机制**（`back_input`/`\errhelp`，trip.tex 恢复路径卡点根因，契约级，见 §6 收尾决策项 ③）；TRIP/ETRIP 语义 diff 归零 + 错误块抽查，`etrip.log`/TRIP log 逐字节口径留 M8 L2。性能 backlog **P1** 消分配已落地（展开吞吐 +61%），`expand-throughput`（release）469ms / 42.6 万调用/s 已入库。
 
 ***
 
@@ -31,8 +30,8 @@
 
 - [x] 工作区 `[profile.release]`：`lto = "thin"`、`codegen-units = 1`、
   `panic = "abort"`（已确认全库无 `catch_unwind`/无 `unsafe`，可直接上）
-- 验证：~~每千 token 吞吐提升入档~~ 吞吐量化受阻（ntex 驱动基准死循环，见 P1），
-  待修通后补测
+- 验证：~~每千 token 吞吐提升入档~~ —— ✅ 已入档（2026-09-03 重测，见 §4 M2-6 记录：
+  469ms / 42.6 万调用/s；ntex 驱动基准死循环已于 2026-08-23 修复）
 
 ### P0 M2-6 补课：字节码执行器走 u64 原始字（RFC-4 设计落地）—— ✅ 已提交 80022b4
 
@@ -161,7 +160,9 @@
 - [x] 差分测试工具：同一 .tex 分别跑 pdfTeX/XeTeX 与本引擎，diff DVI/log
 - [x] **设计文档（RFC）先行**，评审通过再编码：
   - RFC-1 Token 表示与内存布局 —— **已定稿**（8B token / TokenArray / InternTable / eqtb 版本化）
-  - RFC-2 不可变状态模型与版本化（CoW 结构选型）—— 未开始
+  - RFC-2 不可变状态模型与版本化（CoW 结构选型）—— **已由 M5 实际落地**：可回滚检查点
+    捕获/写回（expand/checkpoint.rs，§7 阶段二）+ 盒子寄存器 Rc 共享·写时复制（§7 阶段五）；
+    独立 RFC 文档仍待补
   - RFC-3 副作用模型（VFS + 输出边界提交）—— **已定稿**（M3 收尾落地；见 [RFC-3-side-effects.md](RFC-3-side-effects.md)）
   - RFC-4 字节码 IR 草案 —— **已定稿**（M2 直接落地为定长 u64 指令）
 
@@ -272,7 +273,9 @@
 - [x] 四种交互模式（`\batchmode`/`\nonstopmode`/`\scrollmode`/`\errorstopmode` + `\interactionmode` 参数，默认 batchmode）——✅（free.rs 已接线，评审补查）
 - [x] 错误上下文行（"! ..." + `l.N <行内容>`）——✅ 2026-08-23（A3：`error_context`/`report_error_context`；Undefined cs 消息附 `l.N`，宏内未定义回退调用行）
 - [ ] 出错后继续排版（TeX 逐错误特化恢复：`back_input`/插入恢复 token）+ `\errhelp`——待补
-  （与 ETRIP 错误段联动；**TRIP 卡点根因**——trip.tex 停于"非法输入：组未闭合"等恢复点）
+  （与 ETRIP 错误段联动；历史上是 trip.tex 卡在"非法输入：组未闭合"等恢复点的根因；
+  3401038 后 trip.tex 已可**全程跑完不 panic**，缺恢复路径转为影响各报错原语的
+  "报错后继续"路径与错误块对齐——§6 收尾决策 P0 必修项 ③）
 - 验证：构造错误用例，输出与 pdfTeX 逐字符一致（待恢复机制后）
 
 **M1-14 TRIP 冲刺**
@@ -291,13 +294,20 @@
   多余 } 恢复、cat 15 非法字符跳过（a00a4d9）
 - [x] `\mag` 整数参数（默认 1000）+ pc/cc 单位 + `\the\catcode`/`\the\output`（a00a4d9）
 - [x] 测试基建：WorkDirVfs（`\input` 相对路径）+ tripos.tex 复制（a00a4d9）
-- [ ] 涉及排版/字体的部分用 `\hbox` 兜底占位（硬口径：语义 bug 绝不带进 M2）——未完成
-  （2026-08-26 核查：M3 已真实实现排版，TRIP 排版段走真实路径，此占位实际已被 M3 取代）
-- [ ] `\muskip`/`\muskipdef`：1mu=1pt 硬映射（真实 TeX 1mu = em/18，随数学字体族变化）——
-      mu→sp 换算上下文与 pdfTeX 不符（与 ETRIP `\muexpr` 同源，见 §6 待办）
-- [ ] `\showbox`/`\showlists` 等诊断输出格式逐字节对齐（TRIP log diff 重灾区）
-- [ ] **TRIP 全绿**（输出 diff 可读化脚本已在 M0 就绪）——trip.tex 当前停于
-  "非法输入：组未闭合" 等恢复点，根因 = M1-13 错误恢复机制未实现（back_input/插入恢复 token）
+- [x] 涉及排版/字体的部分用 `\hbox` 兜底占位（硬口径：语义 bug 绝不带进 M2）——
+  ~~未完成~~ 2026-08-26 核查：M3 已真实实现排版，TRIP 排版段走真实路径，占位已被 M3 取代
+- [x] `\muskip`/`\muskipdef`：~~1mu=1pt 硬映射待改~~——2026-09-03 与 `\muexpr` 同源销账
+  （tex.web 证据链：muskip 寄存器 mu 数值刻度与 pt 相同即 TeX 本义（scan_dimen
+  attach_fraction），em/18 换算仅在 layout 排版（70a8492 已做）；`\the\muskip` "X.0mu"
+  显示由 `muskip_params_assign_and_the`/`muskip_register_and_muskipdef` 等单测锁定）；
+  残留仅为 etrip/trip 段联调，非结构待办
+- [ ] `\showbox`/`\showlists` 等诊断输出格式逐字节对齐（TRIP log diff 重灾区）——
+  **按 §6 收尾决策降级**：近似可用即可，逐字节对齐放 M8 L2
+- [ ] **TRIP 语义 diff 归零**（输出 diff 可读化脚本已在 M0 就绪）——2026-09-03 起
+  trip.tex 已可**全程跑完不 panic**（3401038：finish 收尾冲页后清理输出例程残留列表，
+  修复前停于"非法输入：组未闭合"等恢复点）；semantic diff 基线 -5619/+1412（合计
+  7031）收尾中（e7db595；4cbca63 已补 `\tracingoutput` shipout 转录大块缺口）；
+  缺 M1-13 错误恢复路径使报错后继续路径未全对齐；**逐字节口径按 §6 降级策略放 M8 L2**
 - 文档同步（2026-08-26）：`\long`（M1-8）/`\chardef`（M1-3）/`\box`/`\muskip`（M1-10）
   代码均已实现，旧标注"待补/未实现"是文档滞后，勿再按旧标注排期
 - 验证：`\input trip` 输出与参考文件一致
@@ -308,7 +318,7 @@
 
 **验收**：TRIP 通过（硬口径）；错误行为与 pdfTeX 一致。
 **风险**：TRIP 是"实现后才知道哪错"的黑盒 → 提前做好 TRIP 输出 diff 的可读化。
-**现状**：M1 核心（1\~7、9\~11）已实现；M1-13 错误上下文行 `l.N` + 交互模式已做（2026-08-23 A3）、错误恢复待补；**M1-14 TRIP 冲刺推进中**（2026-08-25 a00a4d9：扫描/字体/数学/排版错误恢复 + `\mag` 等，见 §M1-14）——TRIP 未全绿前 M1 验收项保持未勾选。
+**现状**：M1 核心（1\~7、9\~11）已实现；M1-13 错误上下文行 `l.N` + 交互模式已做（2026-08-23 A3）、错误恢复（`back_input`/`\errhelp`）待补（§6 收尾决策 P0 必修项 ③）；**M1-14 TRIP 冲刺**（a00a4d9 起扫描/字体/数学/排版错误恢复 + `\mag` 等；3401038 起 trip.tex **全程跑完不 panic**；semantic diff -5619/+1412 收尾中）——TRIP 语义 diff 归零前 M1 验收项保持未勾选（逐字节全绿已按 §6 降级策略解绑，改记 M8 L2 观测项）。
 
 ***
 
@@ -458,20 +468,23 @@
   8 个用例锁消息；完整上下文行（"l.N …"）留 M1-13
 
 **验收**：**ETRIP 全绿**；含数学的文档差分一致。
-**进度**：**M4 全部完成**——M4-1/2/3/4/5（13 + 16 + 20 + 14 + 6 用例）、M4-6 Liang 断字、M4-7 错误模型、e-TeX 扩展（`\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens`，+6 用例）。下一步：**ETRIP 冲刺**（管线已通：fixtures + harness 泛化 + 引擎驱动；原语接线完成后主线转 **TRIP 冲刺**，见 §3 M1-14）。
+**进度**：**M4 全部完成**——M4-1/2/3/4/5（13 + 16 + 20 + 14 + 6 用例）、M4-6 Liang 断字、M4-7 错误模型、e-TeX 扩展（`\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens`，+6 用例）。ETRIP 冲刺已于 **2026-09-03 收尾转场**（A 组 42/42 ✅、B 组 36/36 ✅、C 组已全部接线，见 ETRIP-primitives.md；收尾降级口径见 §6），主线转 **M5 增量计算**（见 §7）；TRIP 收尾见 §3 M1-14。
 
-### ETRIP 冲刺（2026-08 进行中，原语接线基本完成）
+### ETRIP 冲刺（2026-08\~09，2026-09-03 已收尾转场；原语接线全部完成）
 
-**当前状态**：管线已跑通（fixtures + harness 泛化 + ntex 驱动）；**pass1 全流程已走通**
-（e-IniTeX → `\dump`）；pass2（重载 `.fmt` 再运行）逐段推进中，**已通过
-`\numexpr/\dimexpr/\glueexpr/\muexpr` 全段**（括号、溢出块、"Expr quotient rounding
+**当前状态（2026-09-03）**：管线已跑通（fixtures + harness 泛化 + ntex 驱动）；
+**pass1 全流程已走通**（e-IniTeX → `\dump`）；pass2（重载 `.fmt` 再运行）逐段推进，
+`\numexpr/\dimexpr/\glueexpr/\muexpr` 全段（括号、溢出块、"Expr quotient rounding
 1-8"、"Expr fraction rounding 1-3"、运算符优先级、胶水引用计数）+ `\mutoglue/\gluetomu`
-段 + (mu)glue identity 段。当前卡点（2026-08-25 实测）：gluestretchorder 段仍有
-"wrong glue stretch/shrink order" 报错（已恢复继续）；**sparse arrays 段**
-（etrip.tex L970 `\2\countdef` 越界寄存器测试）报 "! Bad register code" 后未恢复，
-中止于 "非法输入：寄存器下标越界"——越界钳制/恢复路径待补。
-`etrip.log` 逐字节比对待 pass2 走通后开始（已知差距：`\tracingassigns` 的
-`{changing/into}` 行、`\the\muexpr` 的 "5.0mu" 显示、错误消息上下文行）。
+段 + (mu)glue identity 段均已通过。2026-08-25 三处卡点已逐一销账/降级：
+- gluestretchorder 段 "wrong glue stretch/shrink order" → **值语义销账**（
+  `glue_order_value_semantics` 5 组用例，见 §6 P0 待办）；
+- sparse arrays 段（etrip.tex L970 `\2\countdef`）越界 → **恢复路径已对齐**（countdef
+  五连 + marks class 越界，! 消息 / read-again token / l.N / help 行逐行一致）；
+- `\tracingassigns` `{changing/into}` → 主体已实现；`\the\muexpr` "5.0mu" → 实测已对。
+
+收尾口径：`etrip.log` **逐字节比对 → 语义 diff + 错误块抽查**（基线 −3063/+2326
+逐段销账中；逐字节留 M8 L2，见 §6 收尾降级策略）。
 
 **本轮（2026-08-23）已完成**：
 - 原语族：`\iffontchar`/`\fontcharwd/ht/dp/ic`（char_metric + 条件码 20）、
@@ -498,24 +511,31 @@
   + `.fmt` codec 同步
 
 **不符规范原语待办**（2026-08-26 盘点，按优先级；完整分组清单 + 每原语进展标记见
-**[ETRIP-primitives.md](ETRIP-primitives.md)** 唯一状态源。总览：A 组 ✅ 41/42 ·
-B 组 ✅ 36/36 · C 组 ✅ 全部已接线 · 收尾 ⏳）。
+**[ETRIP-primitives.md](ETRIP-primitives.md)** 唯一状态源。总览：A 组 ✅ 42/42 ·
+B 组 ✅ 36/36 · C 组 ✅ 全部已接线 · 收尾 ⏳（语义 diff + 错误块抽查，见 §6 降级策略））。
 
-P0 —— ETRIP 收尾硬差距：
-- [ ] `\muexpr`：① 1mu=1pt 硬映射 → 改按 `\scriptfont` 字阶换算（1mu = em/18）；
-      ② `\the\muexpr` "5.0mu" 显示校准；③ mu_error "! Incompatible glue units." 恢复消息
-- [ ] sparse arrays 段：寄存器越界报 "! Bad register code" 后无恢复路径
-      （etrip.tex L970 `\2\countdef` 处中止）——钳制/恢复待补
-- [ ] gluestretchorder 段：仍报 "wrong glue stretch/shrink order"（2026-08-25 实测）——
-      `\gluestretchorder/\glueshrinkorder` 值语义逐段核对
-- [ ] `\tracingassigns`：补 `{changing/into}` 输出行
-- [ ] `etrip.log` 逐字节比对（消息格式/上下文行；dvitype 暂不纳入）
+P0 —— ETRIP 收尾硬差距（2026-09-03 全面销账/降级，详见 §6 末尾收尾决策 + ETRIP-primitives.md）：
+- [x] `\muexpr`（销账：tex.web 证据链——expander 端 mu 数值刻度 = pt 是 TeX 本义，em/18
+      换算仅在 layout（70a8492 已做）；`\the\muexpr` "X.0mu" 显示已对；mu_error help1 已加）
+- [x] sparse arrays 段寄存器越界恢复（2026-09-03 二轮：countdef 五连越界改走
+      `write_error_help`，! 消息 / read-again token / l.N 两行 / help 2 行与参考逐行一致、
+      l.970 对齐；read-again 输出 7→17 处；三轮补 marks class 越界 2 块同款）
+- [x] gluestretchorder 段值语义（销账：0 分量带阶 / 负分量+阶 / 表达式·转换链 / 负号前缀，
+      `glue_order_value_semantics` 5 组单测锁定）
+- [x] `\tracingassigns` `{changing/into}` 行（主体已实现；引擎 72 行 vs 参考 102 行，
+      尾部差异归入语义 diff 抽查）
+- [ ] `etrip.log` **语义 diff 归零 + 错误块抽查**（口径从"逐字节比对"降级，见 §6 末尾
+      收尾决策；逐字节留 M8 L2）
 
-P0 —— TRIP 硬差距（M1-13 联动，trip.tex 停于"非法输入：组未闭合"恢复点的根因）：
+P0 —— TRIP 硬差距（M1-13 联动；3401038 起 trip.tex 已全程跑完不 panic，semantic diff
+-5619/+1412 收尾中，逐字节口径已按 §6 末尾降级策略放 M8 L2）：
 - [ ] 错误恢复通用机制：`back_input`/插入恢复 token + `\errhelp`——
-      影响**所有报错原语**的"报错后继续路径"（扫描/模式/宏错误消息已对齐，继续跑缺）
-- [ ] `\muskip`/`\muskipdef`：1mu=1pt 硬映射（与 `\muexpr` 同源）——mu→sp 换算上下文不符
-- [ ] `\showbox`/`\showlists` 等诊断输出格式与 trip.log 参考逐字节对齐
+      影响**所有报错原语**的"报错后继续路径"（扫描/模式/宏错误消息已对齐，继续跑缺）；
+      **2026-09-03 降级后 P0 唯一剩余必修项**（§6 末尾收尾决策项 ③）
+- [x] `\muskip`/`\muskipdef`（2026-09-03 与 `\muexpr` 同源销账：mu 数值刻度 = pt 是 TeX
+      本义，em/18 换算仅在 layout（70a8492）；`\the\muskip` "X.0mu" 显示单测锁定）
+- [ ] `\showbox`/`\showlists` 等诊断输出格式与 trip.log 参考逐字节对齐——
+      **降级**：近似可用即可（~3000 行树形诊断差属 L2），M8 再对齐
 
 P1 —— D 组语义简化点（REVIEW-2026-08-23，偏离规范但可接受）：
 - [ ] `\insert` 只收集不排版（脚注不可用）
@@ -563,14 +583,16 @@ P2 —— 架构决策：
 - TRIP/ETRIP "逐字节全绿"不再作为 M1/M4 验收的唯一口径，改记 M8 L2 观测项；
 - 本决策为文档状态源，与 ETRIP-primitives.md 收尾口径保持一致。
 
-**转场**：上述收尾完成后，主线转 **M5 增量计算**（相对 cTeX 的胜负手）；性能 backlog
-**P1**（热路径消分配 / 修通 ntex 驱动基准补测吞吐）并行推进。
+**转场**：~~上述收尾完成后主线转 M5~~ —— ✅ 已转场（2026-09-03，见下"转场执行决策"：
+必修 ①② 清除后同日转入 **M5 增量计算**，阶段一\~五落地，见 §7）；性能 backlog **P1**
+（热路径消分配 +61% / expand-throughput 469ms 入库）已并行落地。
 
 **转场执行决策（2026-09-03 补充，冲刺排序）**：
 
 > 现状盘点：M1/M4 验收已与 TRIP/ETRIP"逐字节全绿"解绑（改记 M8 L2 观测项，见上）——
-> 验收口径上转场 M5 **已无硬卡点**。剩余必修项不依赖 M5/M6/M7，但 M5 增量（缓存/失效
-> 判定）依赖它们的语义正确性 → **先清必修项再转场**（量小，约一轮冲刺）。
+> 验收口径上转场 M5 已无硬卡点。**转场已执行（2026-09-03 同日）**：必修 ①② 清除后即
+> 转 M5，阶段一\~五落地（段级增量重算 → 可回滚快照·edit 单路径化 → 排版层端到端 → 依赖
+> 判定 → 复用开销削减·墙钟翻正，见 §7）；③ 错误恢复通用机制与 M5 阶段六并行推进。
 
 - **必修项执行顺序**（P0 语义正确性；①/② 已于 2026-09-03 清除，剩 ③）：
   1. ✅ `\muexpr`（2026-09-03 销账：tex.web 证据链——expander 端 mu 数值刻度与 pt
@@ -582,18 +604,23 @@ P2 —— 架构决策：
      glue_order_value_semantics 5 组锁）；
   3. M1-13 错误恢复通用机制（`back_input`/`\errhelp`，TRIP 卡点根因）——较大，
      契约级（AGENTS.md §4 任意畸形输入不 panic），所有"报错后继续"原语共用路径。
-- **并行先行项**（不依赖收尾）：性能 backlog **P1**（修通 ntex 驱动基准死循环 + 补测
-  吞吐，M2 ≥2x 验收量化）；M5 求值图 `Expand(source, snapshot)` 纯函数化 + 依赖追踪的
-  **架构设计**先行。
+- **并行先行项**（不依赖收尾，2026-09-03 更新）：性能 backlog **P1**——消分配已落地
+  （`buf_stack` 去分配，展开吞吐 +61%），`expand-throughput`（release）469ms /
+  42.6 万调用/s 已入库（33732bd），吞吐量化见 §4 M2-6；**M5 架构设计 → 直接落地**：
+  求值图纯函数化 `Expand(source, snapshot)` + 依赖追踪已随 M5 阶段一\~五实际落地（§7），
+  纯函数化收尾列为 §7 阶段六待办。
 - **暂缓项**：**M7** .fmt v2（等吞吐量化——纪律：先量化再冲，不在 1.12x 基线上做增量
   吞吐，M2 ≥2x 验收量化——2026-09-03 已量化 1.01x 且属结构性，见 §4 M2-6）；**M6**
   并行（等 M5 副作用隔离成果落地）。
 
 ```
-清必修项 ①\muexpr → ②glue order → ③back_input/\errhelp
-        ├─ 并行：P1 性能基线 / M5 架构设计
-        └─ 暂缓：M6 / M7
-收尾记账（semantic diff 归零 + fuzz 零 panic + M2 双轨等价全绿）→ 主线转 M5 增量计算
+✅ 必修 ①\muexpr ②glue order 销账（2026-09-03）→ 主线已转 M5（同日，阶段一~五落地，§7）
+   ③back_input/\errhelp（P0 唯一剩余必修）与 M5 阶段六并行推进
+        ├─ 并行：P1（消分配 +61%，expand-throughput 469ms/42.6 万调用/s 入库）
+        │        / TRIP·ETRIP semantic diff 收尾（基线 -5619/+1412 与 −3063/+2326 归零中）
+        └─ 暂缓：M6（等 M5 副作用边界成果）/ M7（.fmt v2，M2 已量化 1.01x 结构性，见 §4 M2-6）
+收尾记账：semantic diff 归零 + 错误路径不崩溃 + fuzz 零 panic + M2 双轨等价全绿
+        └─ 逐字节口径（TRIP/ETRIP log · \showbox）记 M8 L2
 ```
 
 ***
@@ -603,24 +630,72 @@ P2 —— 架构决策：
 **目标**：编辑体验级的增量重算。
 
 - [ ] 求值图：`Expand(source, snapshot) → (tokens, snapshot')` 纯函数化
-- [ ] 依赖追踪：记录每个结果依赖的 catcode/宏定义/计数器/上游段
-- [ ] 失效传播：编辑定位 → 只重算失效子图 → Box 级缓存复用
+      —— 部分落地（可回滚检查点捕获/写回，阶段二）；纯函数化收尾在阶段六
+- [x] 依赖追踪：记录每个结果依赖的 catcode/宏定义/计数器/上游段
+      —— ✅ 落地（词法读/写依赖 SegmentDeps，阶段一/四）
+- [x] 失效传播：编辑定位 → 只重算失效子图 → Box 级缓存复用
+      —— ✅ 落地（段缓存复用 + 行盒免重排；页面装配按需重跑，阶段三/四）
 - [ ] 副作用边界：`\write` 延迟到 `\shipout`；aux/toc 增量更新与去重合并
+      —— `\write` shipout 边界 M3/RFC-3 已落地；aux/toc 增量在阶段六
 - [ ] `\the\count` 等全局读 → 数据依赖登记（防缓存失效错误）
-- [ ] `.aux`/`.toc` 增量；两次编译收敛语义不变
+      —— 词法/寄存器读依赖已登记（阶段二/四）；随槽级归因（阶段六）再校口径
+- [ ] `.aux`/`.toc` 增量；两次编译收敛语义不变 —— 阶段六
 - [ ] **基准**：改 1 字 → 重算耗时 vs 全量重编（目标：差 ≥ 100x）
+      —— 2026-09-03 实测 120 段文档改正文 4.3x / 改宏体 1.1x（release，阶段五）
 
 **验收**：增量结果与全量重编逐位一致（随机编辑模糊测试）。
 **风险**：副作用漏追踪 → 缓存错 → 必须用"增量 vs 全量 diff"作 CI 常驻检查。
 
-**阶段一 POC（2026-09-03，`ntex-core/src/incremental/`）**：段级重算骨架已通——
-文本级切段（空行/行首 `\par`，拼接恒等）+ 段边界轻量快照（eqtb 逐槽语义比较 +
-寄存器 `Registers::dirty` 影子表 + 其余状态指纹）+ 词法读/写依赖与闭包 + `edit`
-廉价路径（活状态仍等于 `pre(k)` 时前缀缓存原样保留）/保底路径（无回滚 → 全新引擎
-重建状态链）+ 状态中性段跳过执行。增量与全量逐位一致有单测锁定；基准 501 段
-改 1 段 6.2x（廉价）/2.3x（保底）。**阶段二待办**：可回滚完整状态快照（脏区
-追踪/COW）以支持"编辑有状态副作用的段后仍复用前缀"、`Expand(source, snapshot)`
-纯函数化、副作用（`\write`/流位置）边界、寄存器/参数槽级归因、随机编辑模糊测试。
+**实施进度（2026-09-03，主线已转入 M5 并推进至阶段五）**：`ntex-core/src/incremental/`
+（expand 层）+ `ntex-layout` `IncrementalTypesetter`（排版层）逐段推进，铁律
+「增量结果与全量重跑**逐位一致**」全程由测试锁死。提交序列 0099b1f → 7601d1d →
+c2a2418 → b585864 → 55bcb09 → 14f7bc7：
+
+- **阶段一 POC**（0099b1f，expand 层）：文本级切段（空行/行首 `\par`，注释与转义
+  感知，拼接恒等不变式）+ 段边界轻量快照（eqtb 逐槽**语义**比较 + 寄存器
+  `Registers::dirty` 影子表 + 其余状态指纹）+ 词法读/写依赖与闭包 + `edit` 双路径
+  + 状态中性段跳过；增量与全量逐位一致单测锁定；基准 501 段改 1 段 6.2x（廉价）/
+  2.3x（保底）
+- **阶段二**（c2a2418；前置 7601d1d 修 `\foo@bar` 类非字母宏名词法依赖漏记 → 缓存
+  错用）：**可回滚完整检查点**（expand/checkpoint.rs：eqtb 槽/ValueState/ValueExtras
+  /ControlState 四部分，纯捕获/写回分片、零语义分支）→ `edit` **单路径化**（引擎
+  整体回滚到段前快照 + 从该段起重放，保底路径整体删除）；判定改「执行段后一次链
+  偏差全量扫描（ChainDelta）+ 各缓存段查偏差集 ∩ 依赖」，加宏槽 `Arc::ptr_eq`
+  快路径与捕获期预计算状态中性；501 段基准场景 A 改正文 ~56x / B 改宏体 ~26x
+- **阶段三**（b585864）：段级增量延伸至**排版层端到端**（IncrementalTypesetter）——
+  段边界排版检查点（NodeBuilder 克隆 + shipped 计数 + expand StateSnapshot）+
+  主列表**节点流录制**（缓存段重新注入、行盒免重排、页面装配重跑——编辑造成的
+  页面后移自然传播到其后各页）；增量与全量 typeset_dvi 逐位一致（多页真实文档
+  首/中/末段、公式/列表段、连续多次编辑三重口径）；回归修复 paging.rs
+  `eject_one_page` 无限冲页（残留 [空盒,vfill,惩罚] 三元组自持循环，千万空页
+  OOM）等 2 处
+- **阶段四**（55bcb09）：**排版层依赖判定（宏体编辑省重排）**——录制词法读/写
+  依赖（SegmentDeps）+ 状态中性；复用判定两级化：偏差为空 → 同步态直接复用；
+  偏差非空 → 四闸（值状态/`\csname`/读闭包/写集 + 状态中性，同 expand 层
+  `cache_reject_reason_inner`）+ 排版半边闸（`side_effects_match`）——改宏体后
+  未引用段缓存复用，仅读闭包触及被改宏槽的段重排；`record_post` 与回滚边界解耦
+  （修偏差路径把上轮状态冲进活状态的连续编辑不一致隐患）；端到端基准入库
+- **阶段五**（14f7bc7）：**复用判定开销削减（增量墙钟翻正）**——盒子寄存器文件
+  `Rc` 共享 + 写时复制（克隆/对齐退化为引用计数，闸比较走指针相等 BoxFile）；
+  链偏差跨段携带（复用段不重扫全量状态，只查"偏差集 ∩ 依赖"）；段边界两档化
+  `DocBoundary{side, rollback}`（每段只捕获排版副作用字段快照 ~1µs，expand
+  检查点 + builder 整份克隆按 `ROLLBACK_EVERY=8` 稀疏化，段出错撤销其后回滚点）；
+  **实测（release / 120 段文档）：改正文 4.3x（13.4ms vs 58ms，复用 111/169）/
+  改宏体 1.1x（30.1ms vs 33ms，复用 60/121）——增量墙钟首次 < 全量**；
+  incremental 14 项 + workspace 全测试、make check 全绿
+
+**仍存边界**（离 M5 目标还差什么，incremental.rs 模块文档同步）：**执行段成本 ≈
+全量段成本**（执行段每段多付两次 expand 检查点捕获 + 词法依赖提取 ~55µs——改宏体
+场景执行段占多数时加速比被压 ~1.1x，要再上台阶须把检查点捕获做成**增量维护**，
+ntex-core 引擎侧）；**副作用边界**（`\output` 例程回放、`\write` 流内容、`\input`
+VFS 注入不在逐位一致口径——注入路径观测到即禁用复用保守全量重排；字体表随管线
+单调增长、marks 族读取段亦不在口径内）；**内存** O(文档) 量级。
+
+**阶段六待办**：检查点捕获增量维护（执行段成本削减）；副作用边界（`\output` 例程
+/`\write` 流内容/`\input` VFS 注入/marks 语义）；`Expand(source, snapshot)` 纯
+函数化；寄存器/参数**槽级归因**（消除偏差全局失效）；**随机编辑模糊测试**（增量
+vs 全量 diff 作 CI 常驻检查，闭环 §7 风险项）；`.aux`/`.toc` 增量；基准冲 100x
+（现改正文 4.3x / 改宏体 1.1x，2026-09-03 release 口径）。
 
 ***
 
@@ -707,7 +782,7 @@ P2 —— 架构决策：
 | `ntex-pdf`               | **正式 DVI → PDF 后端**：DVI 解析 + PDF 1.4 写出 + Type1(PFB) 嵌入；替换临时切片                                                            | ✅ 已建（M8）                                              |
 | `ntex-font`              | TFM/OFM、ttf-parser、HarfBuzz 整形、整形缓存                                                                                       | ✅ 已建（M3-4：TFM 解析 + `\font` 加载 + 缩放；ttf/HarfBuzz 待 M9） |
 | `ntex-format`            | .fmt 序列化/反序列化（v1 快照已完成；v2 mmap 零拷贝 + 字节码固化 + 部分求值）                                                                        | ✅ 已建（M3 收尾：v1 内存快照；v2 待 M7）                           |
-| `ntex-incremental`       | 求值图、依赖追踪、失效传播                                                                                                             | 未建（M5）                                                |
+| `ntex-incremental`（不单建）| 增量计算：段级重算 / 可回滚检查点 / 依赖追踪 / 失效传播——落在 `ntex-core/src/incremental/`（expand 层）+ `ntex-layout` `IncrementalTypesetter`（排版层），同 RFC-4 字节码入 core 先例 | ✅ 已落地（M5 阶段一\~五，见 §7）                            |
 | `ntex-io`                | VFS、aux 增量                                                                                                                | ✅ 已建（RFC-3：Vfs trait + LocalVfs/MemVfs + 读写原语）        |
 | `ntex-backend`           | PDF/Skia/WebGPU 后端 trait + 实现                                                                                             | 未建（M8）                                                |
 | `ntex-cli` / `ntex-wasm` | 命令行 / WASM 前端                                                                                                             | 未建（M9）                                                |
