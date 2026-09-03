@@ -411,7 +411,27 @@ impl Typesetter {
             }
             self.expander.run_pending_output()?;
         }
-        // 4) 取走 sink，收集主列表/页面/字体表
+        // 4) 最终列表清理（tex.web final_end：冲页循环内 \output 例程可能重新
+        //    打开水平列表（trip.tex `\output{\unvbox255\end\rb}` 等——例程体在
+        //    错误恢复后未闭合），此时再收段 + 丢弃残留层，仅留主垂直列表。
+        //    TRIP 崩溃根因（2026-09-03）：ended-clean 在冲页前执行，冲页后
+        //    残留层未清 → finish 断言 lists.len()==1 违约（畸形输入 panic）。
+        {
+            let builder = self
+                .expander
+                .sink_mut()
+                .as_any_mut()
+                .downcast_mut::<NodeBuilder>()
+                .ok_or_else(|| Error::internal("typesetter 安装了 NodeBuilder"))?;
+            if builder.mode() == Mode::Horizontal {
+                builder.close_paragraph();
+            }
+            while builder.lists.len() > 1 {
+                builder.lists.pop();
+                builder.list_modes.pop();
+            }
+        }
+        // 5) 取走 sink，收集主列表/页面/字体表
         let mut sink = self.expander.take_sink();
         let builder = sink
             .as_any_mut()
