@@ -7,6 +7,7 @@
 //! right/down（含 w/x/y/z 寄存器）、fnt_num/fnt_def、xxx（忽略）、
 //! bop/eop/pre/post/post_post。
 
+use std::collections::HashMap;
 use std::io::{self, ErrorKind};
 
 use ntex_font::{parse_tfm, FontMetrics};
@@ -82,6 +83,7 @@ pub fn parse(bytes: &[u8]) -> io::Result<Dvi> {
         i: 0,
         fonts: Vec::new(),
         font_names: Vec::new(),
+        font_ids: HashMap::new(),
     };
     p.run()
 }
@@ -109,6 +111,8 @@ struct Parser<'a> {
     i: usize,
     fonts: Vec<FontMetrics>,
     font_names: Vec<String>,
+    /// DVI 字体号 k → [`Parser::fonts`] 下标（`fnt_def` 登记、`fnt_num` 查询）。
+    font_ids: HashMap<u32, u32>,
 }
 
 impl<'a> Parser<'a> {
@@ -278,11 +282,12 @@ impl<'a> Parser<'a> {
                     v += moves.z;
                 }
                 // fnt_num_0..63
-                171..=234 => font = (op - 171) as u32,
+                171..=234 => font = self.font_id((op - 171) as u32)?,
                 // fnt1..fnt4
                 235..=238 => {
                     let n = (op - 234) as usize;
-                    font = read_uint(self.b, &mut self.i, n)?;
+                    let k = read_uint(self.b, &mut self.i, n)?;
+                    font = self.font_id(k)?;
                 }
                 // xxx1..4：跳过
                 239..=242 => {
@@ -306,7 +311,7 @@ impl<'a> Parser<'a> {
         Ok(Page { ops })
     }
 
-    /// `fnt_def n`：k(1) c(4) s(4) d(4) a(1) l(1) name → 注册字体表 + 当前字体。
+    /// `fnt_def n`：k(1) c(4) s(4) d(4) a(1) l(1) name → 登记字体号 k 并选为当前字体。
     fn fnt_def(&mut self, n: usize, font: &mut u32) -> io::Result<()> {
         let k = read_uint(self.b, &mut self.i, n)?;
         let _checksum = read_i32(self.b, &mut self.i)?;
@@ -319,20 +324,32 @@ impl<'a> Parser<'a> {
         let name = String::from_utf8_lossy(&self.b[self.i..self.i + l]).into_owned();
         self.i += l;
 
-        let fm = load_tfm(&name, scale, design)?;
-        // 与同名字体复用（DVI 可能多次 fnt_def 同字体）
-        if let Some(pos) = self.font_names.iter().position(|n| *n == name) {
-            *font = pos as u32;
-        } else {
-            let id = u32::try_from(self.fonts.len())
-                .map_err(|_| io::Error::new(ErrorKind::InvalidData, "字体过多"))?;
-            self.font_names.push(name);
-            self.fonts.push(fm);
-            *font = id;
-        }
-        // k 与位置可能不同（k 是 DVI 字体号，我们按位置索引）；强制按 k 建立映射
-        let _ = k;
+        // DVI 规范：k 是本定义的字体号，`fnt_num k` 按它选择——以 k 为键归位，
+        // 不按注册顺序（k 可跳号、可重复定义同名；引擎 0 号字体未被使用时首个
+        // 发出的 fnt_def 即 k≠0）。每个 k 一条度量（同名不同字号是不同字体），
+        // 同名字体的 PDF 对象去重由写出端按名完成。
+        let id = match self.font_ids.get(&k) {
+            Some(&id) => id,
+            None => {
+                let fm = load_tfm(&name, scale, design)?;
+                let id = u32::try_from(self.fonts.len())
+                    .map_err(|_| io::Error::new(ErrorKind::InvalidData, "字体过多"))?;
+                self.font_names.push(name);
+                self.fonts.push(fm);
+                self.font_ids.insert(k, id);
+                id
+            }
+        };
+        *font = id;
         Ok(())
+    }
+
+    /// DVI 字体号 k → 字体表下标（未定义即报错）。
+    fn font_id(&self, k: u32) -> io::Result<u32> {
+        self.font_ids
+            .get(&k)
+            .copied()
+            .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, format!("未定义字体号 {k}")))
     }
 
     /// 字符宽度（sp）：按当前缩放后的 TFM 度量。
@@ -399,6 +416,41 @@ mod tests {
         d
     }
 
+    /// 追加 `fnt_def1`：k、名字，scale/design 均 10pt。
+    fn push_fnt_def(d: &mut Vec<u8>, k: u8, name: &[u8]) {
+        d.push(243);
+        d.push(k);
+        d.extend(0i32.to_be_bytes()); // c
+        d.extend(655_360i32.to_be_bytes()); // s
+        d.extend(655_360i32.to_be_bytes()); // d
+        d.push(0);
+        d.push(name.len() as u8);
+        d.extend_from_slice(name);
+    }
+
+    /// 追加一页骨架：bop（11 计数）→ 指令 → eop。
+    fn push_page(d: &mut Vec<u8>, body: &[u8]) {
+        d.push(139); // bop
+        for _ in 0..11 {
+            d.extend(0i32.to_be_bytes());
+        }
+        d.extend_from_slice(body);
+        d.push(140); // eop
+    }
+
+    /// 最小 pre 头（含注释 "ntx"）。
+    fn pre_header() -> Vec<u8> {
+        let mut d = Vec::new();
+        d.push(247); // pre
+        d.push(2);
+        d.extend(254_000_000i32.to_be_bytes()); // num
+        d.extend(473_628_672i32.to_be_bytes()); // den
+        d.extend(1000i32.to_be_bytes()); // mag
+        d.push(3);
+        d.extend(b"ntx");
+        d
+    }
+
     #[test]
     fn parses_single_page() {
         let Some(_) = ntex_font::find_tfm("cmr10") else {
@@ -442,5 +494,66 @@ mod tests {
             (327_680..=327_700).contains(&w),
             "cmr10 'a' 宽约 327680，实际 {w}"
         );
+    }
+
+    /// 字体号 k 与注册位置错位：k=1 起步（引擎 0 号字体未用）、同名重复定义到
+    /// 更小的 k=3。选择必须按 k 而非注册顺序（demo.tex 的实际形态，曾报
+    /// "未定义字体"）。
+    #[test]
+    fn font_selection_follows_k_not_registration_order() {
+        let Some(_) = ntex_font::find_tfm("cmr10") else {
+            eprintln!("未找到 cmr10.tfm，跳过");
+            return;
+        };
+        let mut body = Vec::new();
+        push_fnt_def(&mut body, 1, b"cmr10");
+        body.push(172); // fnt_num_1
+        body.push(b'a');
+        push_fnt_def(&mut body, 3, b"cmr10"); // 同名重复定义，k 回跳
+        body.push(174); // fnt_num_3
+        body.push(b'b');
+
+        let mut d = pre_header();
+        push_page(&mut d, &body);
+        d.push(248); // post
+        d.push(0);
+
+        let dvi = parse(&d).unwrap();
+        let ops = &dvi.pages[0].ops;
+        assert_eq!(ops.len(), 2, "{ops:?}");
+        // 每个 k 一条度量：k=1 → 下标 0，k=3 → 下标 1（同名各占一条）
+        assert_eq!(dvi.font_names, vec!["cmr10".to_owned(), "cmr10".to_owned()]);
+        for (op, expect_font) in ops.iter().zip([0u32, 1]) {
+            match op {
+                DrawOp::Char { font, code, .. } => {
+                    assert_eq!(*font, expect_font, "code {code}");
+                    assert_eq!(*code, if expect_font == 0 { b'a' } else { b'b' });
+                }
+                other => panic!("预期 Char，得到 {other:?}"),
+            }
+        }
+        // 字符宽经 k 解析到度量：'b' 的参考点 = 'a' 的 TFM 宽
+        let (w, _, _) = dvi.fonts[0].char_metrics(b'a' as u32);
+        match &ops[1] {
+            DrawOp::Char { h, .. } => assert_eq!(*h, w, "'a' 推进宽 {w}"),
+            other => panic!("预期 Char，得到 {other:?}"),
+        }
+    }
+
+    /// 未定义字体号：fnt_num 指向没有 fnt_def 过的 k → 报错而非取错字体。
+    #[test]
+    fn rejects_undefined_font_number() {
+        let mut body = Vec::new();
+        push_fnt_def(&mut body, 1, b"cmr10");
+        body.push(171); // fnt_num_0：k=0 从未定义
+        body.push(b'a');
+
+        let mut d = pre_header();
+        push_page(&mut d, &body);
+        d.push(248); // post
+        d.push(0);
+
+        let err = parse(&d).unwrap_err();
+        assert!(err.to_string().contains("未定义字体号 0"), "{err}");
     }
 }
