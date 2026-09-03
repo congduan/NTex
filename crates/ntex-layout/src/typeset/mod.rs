@@ -256,6 +256,42 @@ enum AlignDir {
     Valign,
 }
 
+/// M4-5 对齐排版上下文（tex.web alignment 数据；两遍法——数据行以原始
+/// 单元列表攒入 `stream`，对齐组结束时统一列宽再封装，tex.web §784-823）。
+#[derive(Debug, Clone, PartialEq)]
+struct AlignCtx {
+    /// 列边界 tabskip 快照（preamble_end 给出；len = 列数 + 1）。
+    tabskips: Vec<ntex_core::Glue>,
+    /// 顺序流：数据行（\halign）/数据列（\valign）或 \noalign 材料。
+    stream: Vec<AlignItem>,
+    /// 当前行/列的单元（align_cell_end 攒入，align_row_end 收行）。
+    cur_cells: Vec<AlignCellBox>,
+    /// 当前行下一单元的起始列（span 累计）。
+    cur_col: usize,
+    /// `to <dimen>` 目标宽/高（fin_align 摊派）；None = 自然。
+    to: Option<i64>,
+}
+
+/// 对齐流项（行/列与 \noalign 材料的顺序记录）。
+#[derive(Debug, Clone, PartialEq)]
+enum AlignItem {
+    /// 数据行/列（单元按序）。
+    Row(Vec<AlignCellBox>),
+    /// \noalign 材料（垂直列表节点，原样入流）。
+    Material(Vec<Node>),
+}
+
+/// 一个对齐单元（可跨列）的原始内容（封装延迟到 fin_align）。
+#[derive(Debug, Clone, PartialEq)]
+struct AlignCellBox {
+    /// 起始列。
+    start_col: usize,
+    /// 跨列数（\span 合并单元）。
+    span_len: u16,
+    /// 单元原始列表（\halign = 水平；\valign = 垂直）。
+    nodes: Vec<Node>,
+}
+
 impl GroupKind {
     fn code(self) -> i64 {
         match self {
@@ -488,10 +524,9 @@ struct NodeBuilder {
     space_factor: i64,
     /// `\noindent`：下一个段落不缩进。
     noindent_next: bool,
-    /// 对齐组方向（\halign：行堆叠 vbox；\valign：列并排 hbox）。None = 非对齐组。
-    align_dir: Option<AlignDir>,
-    /// 对齐组已封装的列/行盒（\cr 分隔）。
-    align_columns: Vec<Node>,
+    /// M4-5 对齐排版栈（嵌套对齐：\noalign 组或单元内的 \halign/\valign）。
+    /// 每项 = (方向, 两遍法上下文；见 [`AlignCtx`])。
+    align_stack: Vec<(AlignDir, AlignCtx)>,
     /// 最近一次 \par 的源码行号（折行警告 `at lines a--b` 的结束行）。
     last_par_line: i64,
     /// 字体度量来源（M3-4：fn 指针占位或 TFM 字体表）。
@@ -678,8 +713,7 @@ impl NodeBuilder {
             space_factor: 1000,
             noindent_next: false,
             font_cs_names: Vec::new(),
-            align_dir: None,
-            align_columns: Vec::new(),
+            align_stack: Vec::new(),
             last_par_line: 0,
             current_font: FontId(0),
             shipout_next: false,
@@ -881,8 +915,7 @@ impl NodeBuilder {
             font_stack: self.font_stack.clone(),
             space_factor: self.space_factor,
             noindent_next: self.noindent_next,
-            align_dir: self.align_dir,
-            align_columns: self.align_columns.clone(),
+            align_stack: self.align_stack.clone(),
             last_par_line: self.last_par_line,
             font_cs_names: self.font_cs_names.clone(),
             current_font: self.current_font,
@@ -942,8 +975,7 @@ impl NodeBuilder {
         self.font_stack = s.font_stack.clone();
         self.space_factor = s.space_factor;
         self.noindent_next = s.noindent_next;
-        self.align_dir = s.align_dir;
-        self.align_columns = s.align_columns.clone();
+        self.align_stack = s.align_stack.clone();
         self.last_par_line = s.last_par_line;
         self.font_cs_names = s.font_cs_names.clone();
         self.current_font = s.current_font;

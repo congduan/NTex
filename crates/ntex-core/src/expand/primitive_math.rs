@@ -195,7 +195,7 @@ impl Expander {
                     // tex.web print_mode：\halign 行 mode=hmode（正）报
                     // "horizontal mode"（trip l.254 参考）；\hbox 内容
                     // mode=-hmode 才报 "restricted horizontal mode"
-                    let what = if self.align_depth > 0
+                    let what = if !self.align_frames.is_empty()
                         && matches!(self.sink.mode_code(), 2 | 5)
                     {
                         "horizontal mode".to_string()

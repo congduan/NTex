@@ -10,6 +10,10 @@ rust-version.workspace = true
 name = "ntex-diff"
 path = "src/main.rs"
 
+[[bin]]
+name = "dvi-diff"
+path = "src/bin/dvi_diff.rs"
+
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true

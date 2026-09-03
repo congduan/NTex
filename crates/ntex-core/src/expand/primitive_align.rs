@@ -13,44 +13,54 @@ impl Expander {
     /// 对齐与特殊节点原语 dispatcher。
     pub(super) fn dispatch_align(&mut self, prim: Primitive) -> Result<()> {
         match prim {
-            // ETRIP 冲刺：\valign/ \halign：下一个组为对齐组（组种类 6）。
-            // TeX 语义：`\halign` 的 `{` 由 scan_left_brace 消费，alignment 内容中
-            // 的 `{`/`}` 由对齐状态机管理（不建普通组）——VM 侧用 align_depth 模拟。
+            // M4-5 对齐：\halign/\valign（tex.web init_align + scan_spec）。
+            // scan_box_spec 取 `to`/`spread`；`{` 由 scan_left_brace 消费并开
+            // 对齐帧（preamble 扫描；见 align.rs）。sink 侧 align_begin 设
+            // pending_kind=Align，随 `{`…… 实际由 align_start 静默开组、
+            // 组关闭走 end_group（layout 在 group_end(Align) 做 fin_align）。
             Primitive::Valign | Primitive::Halign => {
                 // 可选 `to <dimen>`/`spread <dimen>` 规格（同 \hbox 的 scan_box_spec；
                 // TRIP L332 `\halign to 0pt{...}`、L407 `\halign to 1truemm...`）
                 let (to, spread) = self.scan_box_spec()?;
                 self.sink.box_spec(to, spread)?;
-                self.sink.align_begin(prim == Primitive::Halign)?;
-                let fetched = self.fetch()?;
-                if let Some((tok, _)) = fetched {
-                    if tok.catcode() == Some(Catcode::BeginGroup) {
-                        self.begin_group()?;
-                        self.align_depth = 1;
-                        // 模板（preamble）阶段：`{` 后到首个 `\cr`/`\crcr` 之间收集不执行
-                        self.align_preamble = true;
-                        self.align_preamble_depth = self.align_depth;
-                        Ok(())
-                    } else {
-                        self.unread(tok);
-                        self.align_depth = 0;
-                        Ok(())
-                    }
-                } else {
-                    Ok(())
-                }
+                let is_h = prim == Primitive::Halign;
+                self.sink.align_begin(is_h)?;
+                // `{`（tex.web scan_spec 的 scan_left_brace：缺失报
+                // "Missing { inserted"）
+                self.align_scan_left_brace()?;
+                self.align_start(is_h)
             }
-            // ETRIP 冲刺：\noalign{...}：下一个组为无对齐组（组种类 7）。
-            // 对齐体内的 `{`/`}` 只调整 align_depth 不建组——`\noalign` 的 `{`
-            // 例外（主流层据此建真实组，见 process_token 的组定界符分支）。
+            // M4-5：\noalign 到达 dispatcher = 非行边界（合法位由
+            // align_peek_next 消费；tex.web no_align case 的错误路径）
             Primitive::NoAlign => {
-                if self.align_depth > 0 {
-                    self.align_noalign_pending = true;
-                }
-                self.sink.noalign_begin()
+                self.write_error_help(
+                    "Misplaced \\noalign.",
+                    "\\noalign only allowed right between rows of an alignment.\n",
+                );
+                Ok(())
             }
-            // ETRIP 冲刺：\cr（对齐行结束）：无操作（简化；对齐组按盒子处理）
-            Primitive::Cr => self.sink.align_row_end(),
+            // M4-5：\cr 到达 dispatcher = 模板注入阶段或非对齐上下文
+            // （raw 扫描的 \cr 由 align_on_token 拦截做 Insert v_j）
+            Primitive::Cr => {
+                self.write_error_help(
+                    "Misplaced \\cr.",
+                    "I'm guessing that you meant to end an alignment.\n\
+                     Sorry... The \\cr that I just found was not preceded by\n\
+                     an appropriate \\halign or \\valign.\n",
+                );
+                Ok(())
+            }
+            // M4-5：\span 到达 dispatcher = 模板注入阶段或非对齐上下文
+            // （raw 扫描的 \span 由 align_on_token 拦截）
+            Primitive::Span => {
+                self.write_error_help(
+                    "Misplaced \\span.",
+                    "I'm guessing that you meant to end an alignment.\n\
+                     Sorry... The \\span that I just found was not in an\n\
+                     appropriate \\halign or \\valign.\n",
+                );
+                Ok(())
+            }
             // ETRIP 冲刺：\mathchoice{D}{T}{S}{SS}：收集四个分支（内容不执行）。
             // TeX 语义（tex.web scan_left_brace + build_choices）：每个分支强制以
             // `{` 开头，非 `{`（含 `}`/单 token）报 "Missing { inserted." 并把
@@ -62,8 +72,6 @@ impl Expander {
                 }
                 Ok(())
             }
-            // ETRIP 冲刺：\span（对齐模板列合并）：无操作（简化）
-            Primitive::Span => Ok(()),
             // ETRIP 冲刺：\special{<general text>}：whatsit 节点（内容只收集不排版）
             Primitive::Special => {
                 let toks = self.scan_group_contents(None)?;
@@ -92,10 +100,30 @@ impl Expander {
                 let toks = self.scan_group_contents(None)?;
                 self.sink.vadjust(toks)
             }
-            // \crcr（对齐行结束）与 \-（断字断点）：简化 no-op
-            Primitive::CrCr | Primitive::DiscMinus => Ok(()),
-            // ETRIP 第二波：\omit（对齐模板跳过；简化为 no-op，由对齐组后续实现语义）
-            Primitive::Omit => Ok(()),
+            // M4-5：\crcr 到达 dispatcher = Misplaced（raw 的 \crcr 由
+            // align_on_token 拦截；行边界冗余 \crcr 由 align_peek_next 忽略）
+            Primitive::CrCr => {
+                self.write_error_help(
+                    "Misplaced \\crcr.",
+                    "I'm guessing that you meant to end an alignment.\n\
+                     Sorry... The \\crcr that I just found was not preceded by\n\
+                     an appropriate \\halign or \\valign.\n",
+                );
+                Ok(())
+            }
+            // \-（断字断点）：简化 no-op
+            Primitive::DiscMinus => Ok(()),
+            // M4-5：\omit 到达 dispatcher = 非列首（合法位由 align_init_col
+            // 的 peek 消费；tex.web omit case）
+            Primitive::Omit => {
+                self.write_error_help(
+                    "Misplaced \\omit.",
+                    "I expect to see \\omit only after tab marks or the\n\
+                     cr of an alignment. Presumably, I just found one\n\
+                     somewhere else.\n",
+                );
+                Ok(())
+            }
             // ETRIP 冲刺：\mark{<text>}（mark 节点）；e-TeX \marks<n>{<text>}
             Primitive::Mark | Primitive::Marks => {
                 let class = if prim == Primitive::Marks {

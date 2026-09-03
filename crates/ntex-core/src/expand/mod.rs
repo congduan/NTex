@@ -33,7 +33,7 @@ use crate::register::{
     add_glue, format_count, format_dimen, format_glue, format_mu_glue, unit_to_sp, Glue, RegKind,
     RegisterState, RegisterValue, Registers, MAX_DIMEN, MAX_INT, REGISTER_COUNT, SP_PER_PT,
 };
-use crate::sink::{TokenSink, VecSink};
+use crate::sink::{AlignCellEnd, TokenSink, VecSink};
 use crate::token::{meaning, Token, TokenKind};
 use ntex_io::{LocalVfs, Vfs};
 
@@ -85,6 +85,12 @@ pub(crate) enum InputFrame {
         items: Arc<[(Token, bool)]>,
         pos: usize,
     },
+    /// M4-5 对齐 u 模板帧（tex.web u_template token list）：耗尽时
+    /// align_state←0（单元 raw 扫描开始；end_token_list 的 u_template 分支）。
+    AlignU { items: TokenArray, pos: usize },
+    /// M4-5 对齐 v 模板帧（tex.web v_template）：耗尽即 \endtemplate（endv）
+    /// → fin_col。空帧 = `\omit` 单元的 omit_template。
+    AlignV { items: TokenArray, pos: usize },
 }
 
 /// 条件分支状态。
@@ -118,17 +124,6 @@ pub(crate) struct CondFrame {
     if_type: i32,
     /// 开条件时的源码行号（Incomplete 消息 "after line N"；tex.web final_cleanup）。
     line: usize,
-}
-
-/// 对齐模板（preamble）阶段的 token 处置（TeX get_preamble_token 语义）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PreambleAction {
-    /// 模板结束（首个到达模板起始深度的 `\cr`/`\crcr`）：交给正常处理。
-    End,
-    /// 收集不执行（`\dp`/`\wd`/`\tabskip` 等模板原语、字符、组定界副作用已处理）。
-    Collect,
-    /// 可展开项（宏/可展开原语/条件）：正常展开求值（展开产物回流后仍按模板收集）。
-    Process,
 }
 
 /// 条件操作（process_one 拦截的 token）。
@@ -475,23 +470,12 @@ pub struct Expander {
     /// `\right`/`\middle` 不触发 end_group（避免关掉外层非数学组；TeX 语义
     /// `\right` 前必须有 `\left`，缺配对由 layout 侧报错恢复）。
     math_left_depth: usize,
-    /// 对齐组深度（`\halign`/`\valign` 组内 `{`/`}` 不建普通组，TeX alignment 状态机语义）。
-    align_depth: i32,
-    /// 对齐模板（preamble）阶段：`\halign{` 后到第一个 `\cr`/`\crcr` 之间是模板
-    /// 定义（tex.web get_preamble_token），内容**收集不执行**（`\dp`/`\wd`/`\tabskip`
-    /// 等作为模板 token 原样保留；TRIP L332-333 的 `\dp3\A`/`\wd4\d#\d` 不得当命令执行）。
-    align_preamble: bool,
-    /// 模板开始时的对齐深度：只有对齐深度回到该深度时的 `\cr`/`\crcr` 才结束模板
-    /// （外层模板可含嵌套 `\vbox{\halign{...\crcr}}`——内层 `\crcr` 是模板 token，
-    /// 不结束外层模板；TRIP L331-333 外层 `\halign` 模板跨行含内层 `\halign`）。
-    align_preamble_depth: i32,
-    /// `\noalign` 已执行（对齐体内）：下一个 `{` 建立真实组（tex.web noalign，
-    /// 组种类 7——`\currentgrouptype` 在其内部报 no align group）。
-    align_noalign_pending: bool,
-    /// 已建立的 `\noalign` 组各自的对齐深度栈（嵌套 `\noalign` 逐层配对）：
-    /// 对齐体内 `{`/`}` 通常只调整 [`Self::align_depth`] 不建组，`\noalign`
-    /// 例外——配对 `}` 把深度减回记录值时 pop 对应组。
-    align_noalign_depths: Vec<i32>,
+    /// M4-5 对齐帧栈（`\halign`/`\valign`；嵌套对齐 = 栈式多帧）。
+    /// preamble 解析、u/v 模板注入、align_state 平衡计数（见 align.rs）。
+    align_frames: Vec<AlignFrame>,
+    /// M4-5 最外层对齐的 align_state（tex.web 全局 align_state；嵌套时各帧
+    /// 自带，此字段只在帧栈空/栈底时有效——tex.web pop_alignment 恢复点）。
+    align_state: i64,
     /// 组开始时的条件栈深度（组结束必须回到该深度）。
     group_cond_depth: Vec<usize>,
     /// 赋值保存栈：组结束时按层回滚（朴素快照回滚）。
@@ -647,11 +631,8 @@ impl Expander {
             err_snapshot: None,
             group_level: 0,
             math_left_depth: 0,
-            align_depth: 0,
-            align_preamble: false,
-            align_preamble_depth: 0,
-            align_noalign_pending: false,
-            align_noalign_depths: Vec::new(),
+            align_frames: Vec::new(),
+            align_state: 0,
             group_cond_depth: Vec::new(),
             save_stack: Vec::new(),
             global_pending: false,
@@ -819,11 +800,8 @@ impl Expander {
         self.read_floor = 0;
         self.cond_stack.clear();
         self.group_level = 0;
-        self.align_depth = 0;
-        self.align_preamble = false;
-        self.align_preamble_depth = 0;
-        self.align_noalign_pending = false;
-        self.align_noalign_depths.clear();
+        self.align_frames.clear();
+        self.align_state = 0;
         self.group_cond_depth.clear();
         self.save_stack.clear();
         self.global_pending = false;
@@ -1350,6 +1328,12 @@ impl Expander {
                 InputFrame::OutputRoutine { items, pos } => {
                     format!("OutputRoutine({}tok,pos={})", items.len(), pos)
                 }
+                InputFrame::AlignU { items, pos } => {
+                    format!("AlignU({}tok,pos={})", items.len(), pos)
+                }
+                InputFrame::AlignV { items, pos } => {
+                    format!("AlignV({}tok,pos={})", items.len(), pos)
+                }
             })
             .collect::<Vec<_>>()
             .join(" | ")
@@ -1423,21 +1407,11 @@ impl Expander {
                     Some(csid) => format!("\\{}", self.intern.name(csid)),
                     None => format!("{tok:?}"),
                 });
-                // 对齐模板（preamble）阶段：`\halign{` 后到对齐深度回到模板起始层的
-                // `\cr`/`\crcr` 之间，模板 token 只收集不执行（tex.web get_preamble_token）。
-                // - 可展开项（宏/可展开原语/条件）**照常展开**（TeX get_x_token 语义，
-                //   `\iftrue`/`\d` 在模板中求值；tracingcommands=2 时展开也追踪）；
-                // - 不可展开原语（`\dp`/`\wd`/`\tabskip`）与字符等原样收集，**不追踪**；
-                // - 首个到达模板起始深度的 `\cr`/`\crcr` 结束模板，交给下方正常处理。
-                if self.align_preamble && !noexpand {
-                    match self.preamble_classify(&tok)? {
-                        // 模板 \cr：已消费（不落正常处理——避免 align_row_end 把
-                        // 模板行内容（读取时执行的 \noindent\copy2 等）封装为列盒，
-                        // 破坏段落状态导致 @firstpass 丢失）
-                        PreambleAction::End => return Ok(true),
-                        PreambleAction::Collect => return Ok(true),
-                        PreambleAction::Process => { /* 落到正常处理（展开/条件） */ }
-                    }
+                // M4-5 对齐状态机拦截（tex.web §749-823；详见 align.rs）：
+                // preamble 阶段分类收集模板 token；body raw 阶段拦 `&`/`\span`/
+                // `\cr`/`\crcr`（Insert v_j）与 `}` 平衡（对齐组闭括号）。
+                if !noexpand && self.align_on_token(tok)? {
+                    return Ok(true);
                 }
                 // \tracingcommands（misc 下标 3）：每命令一行 `{模式: 描述}`；
                 // 模式只在变化时打印（tex.web show_cur_cmd_chr 的 shown_mode 语义）；
@@ -1663,38 +1637,10 @@ impl Expander {
                     return self.sink.math_shift(display);
                 }
                 // 组定界符（cat 1/2）在主流层建立/结束组（M1-11）。
-                // alignment 组内（`\halign`/`\valign`）：`{`/`}` 只调整对齐深度，
-                // 不建立普通组（TeX alignment 状态机语义，`\cr`/`&` 由布局层消费）。
-                // 例外：`\noalign{`（tex.web noalign）建立组种类 7 的真实组——
-                // `\currentgrouptype` 在其内部必须报 no align group。
+                // 对齐上下文（`\halign`/`\valign`）的 `{`/`}` 平衡计数、
+                // `\noalign` 组与对齐组配对已在 align_on_token（align_body_step）
+                // 处理；此处只建立/结束普通组。
                 match tok.catcode() {
-                    Some(Catcode::BeginGroup) if self.align_depth > 0 => {
-                        if self.align_noalign_pending {
-                            // `\noalign` 的 `{`：真实组（sink 消费显式组种类 7）。
-                            // 记递增**前**的深度——配对 `}` 减到该值时 pop 本组。
-                            self.align_noalign_pending = false;
-                            self.align_noalign_depths.push(self.align_depth);
-                            self.align_depth += 1;
-                            self.begin_group()
-                        } else {
-                            self.align_depth += 1;
-                            Ok(())
-                        }
-                    }
-                    Some(Catcode::EndGroup) if self.align_depth > 0 => {
-                        self.align_depth -= 1;
-                        if self.align_noalign_depths.last() == Some(&self.align_depth) {
-                            // `\noalign` 组配对 `}`：pop 该组（嵌套 \noalign 用栈配对）
-                            self.align_noalign_depths.pop();
-                            self.end_group()
-                        } else if self.align_depth == 0 {
-                            // 对齐自身收尾：栈内无残余（残余 = 输入括号失衡）
-                            self.align_noalign_depths.clear();
-                            self.end_group()
-                        } else {
-                            Ok(())
-                        }
-                    }
                     Some(Catcode::BeginGroup) => self.begin_group(),
                     Some(Catcode::EndGroup) => self.end_group(),
                     _ => self.sink.token(tok),
@@ -1775,69 +1721,6 @@ impl Expander {
     }
 
     // ---------- 输入获取 ----------
-
-    /// 对齐模板（preamble）阶段的 token 分类：决定收集不执行 / 正常展开 / 结束模板。
-    fn preamble_classify(&mut self, tok: &Token) -> Result<PreambleAction> {
-        // \setbox/\moveleft 的 box 参数（\vbox{}/\box255 等）在模板中正常执行
-        // （不 Collect）——否则 setbox target 永不消费 → 后续盒子全被吞 →
-        // 空列表 + 空页输出例程死循环（watchdog 空 hbox 无限）
-        if self.pending_box_arg {
-            return Ok(PreambleAction::Process);
-        }
-        match tok.kind() {
-            TokenKind::ControlSeq => {
-                let csid = tok.csid().expect("ControlSeq 必有 csid");
-                let slot = self.eqtb.slot(csid).clone();
-                // 模板起始深度的 `\cr`/`\crcr` 结束模板（更内层的嵌套 `\halign` 模板
-                // 内 `\crcr` 是外层模板 token）
-                if matches!(slot, EqSlot::Primitive(Primitive::Cr | Primitive::CrCr))
-                    && self.align_depth == self.align_preamble_depth
-                {
-                    self.align_preamble = false;
-                    self.align_preamble_depth = 0;
-                    return Ok(PreambleAction::End);
-                }
-                // 条件 token：照常求值（TeX get_x_token 嵌套条件；TRIP L331 `\iftrue`）
-                if self.cond_op(*tok).is_some() {
-                    return Ok(PreambleAction::Process);
-                }
-                // 可展开 cs（宏/可展开原语）：照常展开，产物回流后仍按模板收集
-                // 模板行内容（赋值/排版/杂项）一律执行（tex.web get_preamble_token
-                // + 列模板 u_part 语义；TRIP L172-178 的赋值与 \noindent\copy2 均执行）
-                match &slot {
-                    EqSlot::Macro(m) => {
-                        if !(m.value.protected && self.suppress_expansion > 0) {
-                            return Ok(PreambleAction::Process);
-                        }
-                    }
-                    _ => return Ok(PreambleAction::Process),
-                }
-                Ok(PreambleAction::Collect)
-            }
-            TokenKind::Char => match tok.catcode() {
-                Some(Catcode::BeginGroup) => {
-                    self.align_depth += 1;
-                    // 模板中的组（列模板内容）正常执行（tex.web 列模板 u_part
-                    // 执行语义；TRIP L176 `\noindent\copy2\hskip2pt...` 开段执行）
-                    Ok(PreambleAction::Process)
-                }
-                Some(Catcode::EndGroup) => {
-                    self.align_depth -= 1;
-                    if self.align_depth == 0 {
-                        // 模板未遇 `\cr` 就闭合（空模板/畸形）：退出模板阶段并关组
-                        self.align_preamble = false;
-                        self.align_preamble_depth = 0;
-                        self.end_group()?;
-                    }
-                    Ok(PreambleAction::Process)
-                }
-                // `#`（列位置标记，tex.web param）：不执行，收集
-                Some(Catcode::Parameter) => Ok(PreambleAction::Collect),
-                _ => Ok(PreambleAction::Process),
-            },
-            _ => Ok(PreambleAction::Collect),
-        }
-    }
 
     /// 探测下一个 token 是否为数学移位（`$$` 检测）：
     /// 是 → 消费该 `$`（连续 `$$` 由 sink 一并处理，不放回）；
@@ -1981,6 +1864,27 @@ impl Expander {
                     let item = items[*pos];
                     *pos += 1;
                     return Ok(Some(item));
+                }
+                // M4-5 对齐模板帧耗尽 hook（tex.web end_token_list 的 u/v 分支）
+                InputFrame::AlignU { items, pos } => {
+                    if *pos >= items.len() {
+                        self.stack.pop();
+                        self.align_u_exhausted();
+                        continue;
+                    }
+                    let tok = items[*pos];
+                    *pos += 1;
+                    return Ok(Some((tok, false)));
+                }
+                InputFrame::AlignV { items, pos } => {
+                    if *pos >= items.len() {
+                        self.stack.pop();
+                        self.align_fin_col()?;
+                        continue;
+                    }
+                    let tok = items[*pos];
+                    *pos += 1;
+                    return Ok(Some((tok, false)));
                 }
             }
         }
@@ -2144,9 +2048,7 @@ impl Expander {
             && self.group_level == 0
             && self.cond_stack.is_empty()
             && self.math_left_depth == 0
-            && self.align_depth == 0
-            && !self.align_preamble
-            && self.align_noalign_depths.is_empty()
+            && self.align_frames.is_empty()
             && self.group_cond_depth.is_empty()
             && self.save_stack.is_empty()
             && self.aftergroup.is_empty()
@@ -2296,6 +2198,8 @@ include!("primitive_param.rs");
 include!("primitive_math.rs");
 include!("primitive_expand.rs");
 include!("primitive_align.rs");
+// M4-5 对齐机制状态机（\halign/\valign preamble + 模板注入；tex.web §749-823）
+include!("align.rs");
 include!("primitive_toks_state.rs");
 include!("primitive_io.rs");
 

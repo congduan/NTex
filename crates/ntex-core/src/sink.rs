@@ -29,6 +29,16 @@ pub enum DirectionKind {
     EndR,
 }
 
+/// 对齐单元结束方式（tex.web `extra_info` 存的 `cur_chr`）。
+/// `\span` 结束的单元不产生独立 cell_end（与后续单元合并为跨列单元）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlignCellEnd {
+    /// `&`（cat-4 字符）结束：普通换列。
+    Tab,
+    /// `\cr`/`\crcr` 结束：行末（随后 `align_row_end`）。
+    Cr,
+}
+
 /// VM 排版事件消费者。
 ///
 /// 要求 `Debug`（`Expander` 派生 Debug）。`\edef` 区域需要取回临时收集的
@@ -425,8 +435,25 @@ pub trait TokenSink: std::fmt::Debug {
     fn output_routine_begin(&mut self) -> Result<()> {
         Ok(())
     }
-    /// `\cr`（对齐行结束）：无操作（ETRIP 简化）。
+    /// `\cr`（对齐行结束）：排版器封装当前行（tex.web fin_row）。
     fn align_row_end(&mut self) -> Result<()> {
+        Ok(())
+    }
+    /// 对齐 preamble 结束（preamble 尾部 `\cr` 后）：给出各列边界的
+    /// `\tabskip` 胶水快照（`tabskips.len() == 列数 + 1`，含首尾）。
+    /// tex.web：preamble 列表结构为 [glue, alignrecord, glue, ... , glue]。
+    fn align_preamble_end(&mut self, _tabskips: Vec<Glue>) -> Result<()> {
+        Ok(())
+    }
+    /// 对齐单元开始（u 模板注入前；tex.web init_col/init_span：push_nest）。
+    /// 排版器压入单元内容列表（\halign → 受限水平；\valign → 内部垂直）。
+    fn align_cell_begin(&mut self) -> Result<()> {
+        Ok(())
+    }
+    /// 对齐单元结束（v 模板执行完，tex.web fin_col 的单元封装时机）。
+    /// `end`：`&`（Tab）或 `\cr`（Cr，随后必有 align_row_end）；
+    /// `span_len`：本单元跨列数（`\span` 合并单元 ≥1，tex.web cur_span 机制）。
+    fn align_cell_end(&mut self, _end: AlignCellEnd, _span_len: u16) -> Result<()> {
         Ok(())
     }
     /// `\thinmuskip/\medmuskip/\thickmuskip`（muskip 寄存器 0/1/2）赋值：

@@ -516,12 +516,14 @@ impl TokenSink for NodeBuilder {
                 PendingBox::VTop => GroupKind::VTop,
             })
         });
-        // 盒子/对齐组：复用盒子路径（对齐组按 vbox 打包）。`\noalign` 组只补
-        // 组类型（7）不另开列表——其材料沿用对齐组列表（此前行为，ETRIP 简化：
-        // 不并入外层垂直列表），避免组栈变化影响排版结果。
+        // 盒子/对齐组：复用盒子路径（对齐组按 vbox 打包）。`\noalign` 组也
+        // 开垂直列表（M4-5：材料在组结束时原样入对齐流，tex.web no_align
+        // 材料直接进对齐 vlist——见 group_end 的 NoAlign 分支）。
         let box_kind = match kind {
             Some(GroupKind::HBox | GroupKind::AdjustedHBox) => Some(PendingBox::HBox),
-            Some(GroupKind::VBox | GroupKind::Align) => Some(PendingBox::VBox),
+            Some(GroupKind::VBox | GroupKind::Align | GroupKind::NoAlign) => {
+                Some(PendingBox::VBox)
+            }
             Some(GroupKind::VTop) => Some(PendingBox::VTop),
             _ => None,
         };
@@ -780,43 +782,26 @@ impl TokenSink for NodeBuilder {
             return Ok(());
         }
         match ctx.kind {
-            // noalign 组：只补组类型（\currentgrouptype=7），材料留在对齐组列表
-            // （group_begin 未为其开新列表，见上）
-            GroupKind::NoAlign => {}
-            // 对齐组（tex.web alignment）：列/行盒（\cr 分隔）按方向组装——
-            // \halign = vbox of hbox 行（行堆叠）；\valign = hbox of vbox 列（列并排）。
-            GroupKind::Align => {
-                let dir = self.align_dir.take();
-                // 最后一段（未 \cr 的尾部内容）也封装为一列
-                if let Some(list) = self.lists.last_mut() {
-                    let content = std::mem::take(list);
-                    if !content.is_empty() {
-                        self.align_columns.push(Node::Box(crate::node::vpack(
-                            content,
-                            self.params.vsize,
-                            self.params.boxmaxdepth,
-                        )));
-                    }
+            // M4-5 noalign 组：材料原样入对齐流（组列表在 group_begin 开启，
+            // tex.web no_align 材料直接进对齐 vlist；不封装盒）
+            GroupKind::NoAlign => {
+                let nodes = self.lists.pop().unwrap_or_default();
+                self.list_modes.pop();
+                if let Some((_, ctx)) = self.align_stack.last_mut() {
+                    ctx.stream.push(AlignItem::Material(nodes));
                 }
-                let columns = std::mem::take(&mut self.align_columns);
+            }
+            // M4-5 对齐组（tex.web fin_align）：两遍法统一列宽 + 封装
+            GroupKind::Align => {
+                let nodes = match self.align_stack.pop() {
+                    Some((dir, ctx)) => align_fin(self.params.boxmaxdepth, dir, ctx),
+                    None => Vec::new(),
+                };
+                // 对齐组列表（group_begin 的 VBox 路径）弹出——行/材料已走 ctx 流
                 self.lists.pop();
                 self.list_modes.pop();
-                match dir {
-                    Some(AlignDir::Halign) => {
-                        // 行堆叠：vbox of 列盒（\halign 数据行 → vbox）
-                        let v = crate::node::vpack(columns, self.params.vsize, self.params.boxmaxdepth);
-                        if let Some(outer) = self.lists.last_mut() {
-                            outer.push(Node::Box(v));
-                        }
-                    }
-                    Some(AlignDir::Valign) => {
-                        // 列并排：hbox of 列盒（\valign 数据列 → hbox）
-                        let h = crate::node::hpack(&columns, self.params.hsize);
-                        if let Some(outer) = self.lists.last_mut() {
-                            outer.push(Node::Box(h));
-                        }
-                    }
-                    None => {}
+                if let Some(outer) = self.lists.last_mut() {
+                    outer.extend(nodes);
                 }
             }
             GroupKind::HBox | GroupKind::AdjustedHBox | GroupKind::VBox | GroupKind::VTop => {
@@ -1551,9 +1536,22 @@ impl TokenSink for NodeBuilder {
         Ok(())
     }
 
-    /// `\valign{`/`\halign{`：下一个组为对齐组（6）。
+    /// `\valign{`/`\halign{`：下一个组为对齐组（6）。M4-5：建排版上下文
+    /// （两遍法；`to`/`spread` 规格取 box_spec 槽——spread 简化为自然宽
+    /// 基准不摊派）。
     fn align_begin(&mut self, is_halign: bool) -> Result<()> {
-        self.align_dir = Some(if is_halign { AlignDir::Halign } else { AlignDir::Valign });
+        let dir = if is_halign { AlignDir::Halign } else { AlignDir::Valign };
+        let (to, _spread) = self.pending_box_spec.take().unwrap_or((None, None));
+        self.align_stack.push((
+            dir,
+            AlignCtx {
+                tabskips: Vec::new(),
+                stream: Vec::new(),
+                cur_cells: Vec::new(),
+                cur_col: 0,
+                to,
+            },
+        ));
         self.pending_kind = Some(GroupKind::Align);
         Ok(())
     }
@@ -1570,26 +1568,60 @@ impl TokenSink for NodeBuilder {
         Ok(())
     }
 
-    /// `\cr`：对齐行/列结束——当前列表内容封装为列盒（tex.web alignment
-    /// 数据行边界；此前简化 no-op 导致列内容混在 vbox）。
-    fn align_row_end(&mut self) -> Result<()> {
-        if self.align_dir.is_none() {
-            return Ok(());
+    /// M4-5 对齐 preamble 结束：记录列边界 tabskip 快照（len = 列数 + 1）。
+    fn align_preamble_end(&mut self, tabskips: Vec<ntex_core::Glue>) -> Result<()> {
+        if let Some((_, ctx)) = self.align_stack.last_mut() {
+            ctx.tabskips = tabskips;
         }
-        // 数据列内开放的段落先封装（\noindent 开段的列内容——tex.web 列处理
-        // 每列一个段落；不 close 则段落悬空、tracingparagraphs 输出丢失）
+        Ok(())
+    }
+
+    /// M4-5 对齐单元开始（tex.web init_span 的 push_nest）：压入单元内容
+    /// 列表——\halign 受限水平（v 模板通常以 \hfil 收尾）；\valign 垂直。
+    fn align_cell_begin(&mut self) -> Result<()> {
+        self.lists.push(Vec::new());
+        let mode = match self.align_stack.last() {
+            Some((AlignDir::Valign, _)) => Mode::Vertical,
+            _ => Mode::RestrictedHorizontal,
+        };
+        self.list_modes.push(mode);
+        Ok(())
+    }
+
+    /// M4-5 对齐单元结束（tex.web fin_col 的单元封装时机）：单元列表出栈，
+    /// 原始节点攒入当前行（封装延迟到 fin_align 统一列宽）。`&`（Tab）推进
+    /// 列指针（跨列单元按 span_len 累计）；`\cr`（Cr）的行收集由
+    /// [`Self::align_row_end`] 完成。
+    fn align_cell_end(&mut self, end: ntex_core::sink::AlignCellEnd, span_len: u16) -> Result<()> {
+        // \valign 单元（垂直列表）内开段时先收段
         if self.mode() == Mode::Horizontal {
             self.close_paragraph();
         }
-        let Some(list) = self.lists.last_mut() else {
+        let nodes = self.lists.pop().unwrap_or_default();
+        self.list_modes.pop();
+        let Some((_, ctx)) = &mut self.align_stack.last_mut() else {
             return Ok(());
         };
-        let content = std::mem::take(list);
-        if content.is_empty() {
+        let start = ctx.cur_col;
+        ctx.cur_cells.push(AlignCellBox { start_col: start, span_len, nodes });
+        if matches!(end, ntex_core::sink::AlignCellEnd::Tab) {
+            ctx.cur_col += span_len as usize;
+        }
+        Ok(())
+    }
+
+    /// M4-5 `\cr`（对齐行/列结束，tex.web fin_row）：当前行单元入流
+    /// （原始列表，fin_align 统一封装；空行跳过——tex.web 空行盒高 0）。
+    fn align_row_end(&mut self) -> Result<()> {
+        let Some((_, ctx)) = &mut self.align_stack.last_mut() else {
+            return Ok(());
+        };
+        let cells = std::mem::take(&mut ctx.cur_cells);
+        ctx.cur_col = 0;
+        if cells.is_empty() {
             return Ok(());
         }
-        let v = crate::node::vpack(content, self.params.vsize, self.params.boxmaxdepth);
-        self.align_columns.push(Node::Box(v));
+        ctx.stream.push(AlignItem::Row(cells));
         Ok(())
     }
 
@@ -1675,6 +1707,147 @@ impl TokenSink for NodeBuilder {
 
     fn as_any_ref(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+/// M4-5 fin_align（tex.web §784-823 简化数学）：两遍法——
+/// 1) 列宽 w_c = max(单列 span 单元自然宽)；跨列单元按跨度升序，
+///    需求超区间和时差额均摊（span_widths 精神）；
+/// 2) `to <dimen>` 摊派：自然总宽不足目标 → 差额均摊各列；
+/// 3) 单元 hpack 到跨度宽（区间列宽和 + 中间 tabskip 自然宽），
+///    行 = hpack([g_0, cell_0, g_1, ..., g_n]) 自然宽；
+/// 4) \halign → vbox of 行盒；\valign → 简化列并排（hbox of 列盒，
+///    不做行高数学——valign 用例罕见，后续校准）。
+///
+/// 自由函数（非 TokenSink 事件）：由 `group_end` 的 Align 分支在对齐组
+/// 结束时调用，`bmd` = \boxmaxdepth。
+fn align_fin(bmd: i64, dir: AlignDir, mut ctx: AlignCtx) -> Vec<Node> {
+    // 尾行未 \cr（对齐组 `}` 前隐含收行）
+    if !ctx.cur_cells.is_empty() {
+        let cells = std::mem::take(&mut ctx.cur_cells);
+        ctx.stream.push(AlignItem::Row(cells));
+    }
+    let n = ctx.tabskips.len().saturating_sub(1);
+    let glue_w = |i: usize| ctx.tabskips.get(i).map(|g| g.width).unwrap_or(0);
+    match dir {
+        AlignDir::Valign => {
+            // 简化：数据列（\cr 分隔）各自 vbox 自然高并排；noalign 材料
+            // 为水平材料原样混入
+            let mut cols: Vec<Node> = Vec::new();
+            for item in ctx.stream {
+                match item {
+                    AlignItem::Row(cells) => {
+                        let mut col: Vec<Node> = Vec::new();
+                        for c in cells {
+                            let nat = crate::node::vbox_dimensions(&c.nodes);
+                            col.push(Node::Box(crate::node::vpack(
+                                c.nodes,
+                                nat.height + nat.depth,
+                                bmd,
+                            )));
+                        }
+                        let nat = crate::node::hbox_dimensions(&col).width;
+                        cols.push(Node::Box(crate::node::hpack(&col, nat)));
+                    }
+                    AlignItem::Material(ns) => cols.extend(ns),
+                }
+            }
+            let nat = crate::node::hbox_dimensions(&cols).width;
+            vec![Node::Box(crate::node::hpack(&cols, nat))]
+        }
+        AlignDir::Halign => {
+            // 列宽（第一遍）
+            let mut w = vec![0i64; n];
+            let mut spans: Vec<(usize, usize, i64)> = Vec::new();
+            for item in &ctx.stream {
+                if let AlignItem::Row(cells) = item {
+                    for c in cells {
+                        let nat = crate::node::hbox_dimensions(&c.nodes).width;
+                        if c.span_len == 1 && c.start_col < n {
+                            w[c.start_col] = w[c.start_col].max(nat);
+                        } else if c.span_len > 1 {
+                            spans.push((c.start_col, c.span_len as usize, nat));
+                        }
+                    }
+                }
+            }
+            // 跨列需求按跨度升序摊派（tex.web span_widths 精神）
+            spans.sort_by_key(|(_, sp, _)| *sp);
+            for (s, sp, need) in spans {
+                if s + sp > n {
+                    continue;
+                }
+                let have: i64 = (s..s + sp).map(|i| w[i]).sum::<i64>()
+                    + ((s + 1)..s + sp).map(glue_w).sum::<i64>();
+                if need > have {
+                    let diff = need - have;
+                    let each = diff / sp as i64;
+                    let mut rem = diff % sp as i64;
+                    for wi in w.iter_mut().take(s + sp).skip(s) {
+                        let extra = if rem > 0 { rem -= 1; 1 } else { 0 };
+                        *wi += each + extra;
+                    }
+                }
+            }
+            // `to <dimen>` 摊派（自然总宽不足目标 → 差额均摊各列）
+            if let Some(t) = ctx.to {
+                let total: i64 = w.iter().sum::<i64>() + (0..=n).map(glue_w).sum::<i64>();
+                if total < t && n > 0 {
+                    let diff = t - total;
+                    let each = diff / n as i64;
+                    let mut rem = diff % n as i64;
+                    for wi in w.iter_mut() {
+                        let extra = if rem > 0 { rem -= 1; 1 } else { 0 };
+                        *wi += each + extra;
+                    }
+                }
+            }
+            // 行封装（第二遍）
+            let mut rows: Vec<Node> = Vec::new();
+            for item in ctx.stream {
+                match item {
+                    AlignItem::Row(cells) => {
+                        let mut nodes: Vec<Node> =
+                            vec![align_tabskip_node(ctx.tabskips.first())];
+                        for c in cells {
+                            let end = (c.start_col + c.span_len as usize).min(n);
+                            let span_w: i64 = (c.start_col..end).map(|i| w[i]).sum::<i64>()
+                                + ((c.start_col + 1)..end).map(glue_w).sum::<i64>();
+                            nodes.push(Node::Box(crate::node::hpack(&c.nodes, span_w)));
+                            nodes.push(align_tabskip_node(ctx.tabskips.get(end)));
+                        }
+                        let nat = crate::node::hbox_dimensions(&nodes).width;
+                        rows.push(Node::Box(crate::node::hpack(&nodes, nat)));
+                    }
+                    AlignItem::Material(ns) => rows.extend(ns),
+                }
+            }
+            let nat = crate::node::vbox_dimensions(&rows);
+            vec![Node::Box(crate::node::vpack(rows, nat.height + nat.depth, bmd))]
+        }
+    }
+}
+
+/// M4-5：`\tabskip` 胶水快照 → 水平列表胶水节点（None = 对齐已无 preamble，
+/// 兜底零胶水）。
+fn align_tabskip_node(g: Option<&ntex_core::Glue>) -> Node {
+    match g {
+        Some(g) => Node::Glue {
+            name: None,
+            width: g.width,
+            stretch: g.stretch,
+            shrink: g.shrink,
+            stretch_order: g.stretch_order,
+            shrink_order: g.shrink_order,
+        },
+        None => Node::Glue {
+            name: None,
+            width: 0,
+            stretch: 0,
+            shrink: 0,
+            stretch_order: 0,
+            shrink_order: 0,
+        },
     }
 }
 

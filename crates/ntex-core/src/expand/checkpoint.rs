@@ -106,11 +106,7 @@ pub(crate) struct ControlState {
     pub(crate) cond_stack: Vec<CondFrame>,
     pub(crate) group_level: u32,
     pub(crate) math_left_depth: usize,
-    pub(crate) align_depth: i32,
-    pub(crate) align_preamble: bool,
-    pub(crate) align_preamble_depth: i32,
-    pub(crate) align_noalign_pending: bool,
-    pub(crate) align_noalign_depths: Vec<i32>,
+    pub(crate) align_frames: Vec<AlignFrame>,
     pub(crate) group_cond_depth: Vec<usize>,
     /// 赋值保存栈（组结束恢复用；悬挂项随段还原）。
     pub(crate) save_stack: Vec<(u32, SavedValue)>,
@@ -183,11 +179,7 @@ impl Expander {
                 cond_stack: self.cond_stack.clone(),
                 group_level: self.group_level,
                 math_left_depth: self.math_left_depth,
-                align_depth: self.align_depth,
-                align_preamble: self.align_preamble,
-                align_preamble_depth: self.align_preamble_depth,
-                align_noalign_pending: self.align_noalign_pending,
-                align_noalign_depths: self.align_noalign_depths.clone(),
+                align_frames: self.align_frames.clone(),
                 group_cond_depth: self.group_cond_depth.clone(),
                 save_stack: self.save_stack.clone(),
                 global_pending: self.global_pending,
@@ -263,11 +255,7 @@ impl Expander {
         self.cond_stack = c.cond_stack.clone();
         self.group_level = c.group_level;
         self.math_left_depth = c.math_left_depth;
-        self.align_depth = c.align_depth;
-        self.align_preamble = c.align_preamble;
-        self.align_preamble_depth = c.align_preamble_depth;
-        self.align_noalign_pending = c.align_noalign_pending;
-        self.align_noalign_depths = c.align_noalign_depths.clone();
+        self.align_frames = c.align_frames.clone();
         self.group_cond_depth = c.group_cond_depth.clone();
         self.save_stack = c.save_stack.clone();
         self.global_pending = c.global_pending;
