@@ -105,13 +105,12 @@ M4 数学 + e-TeX 验收时已实现的 e-TeX 原语：
   length<n>=值[2n]、dimen<n>=值[n]；n≤0→0；越界钳制/奇偶回退）
 
 ### mu 表达式/互转
-- ❌ `\muexpr`（已注册，暂映射 Glueexpr——表达式算术已全通（i128 中间量、
-  四舍五入除法、`\ifnum#4=\muexpr...` 整数上下文）；**2026-09-03 P0 部分校准**：
-  layout 端 muskip_params 字段以 mu 数值存，math_to_hlist 按当前 style
-  family-2 em/18 转 sp（NodeBuilder 加 `muskip_is_mu: [bool;3]` 标位 + math_em
-  链路：family 2 → current_font fontdimen 6 → fallback 10pt），并加 mu_error
-  help1 行 "I'm going to assume that 1mu=1pt when they're mixed."。仍待：expander
-  端 1mu=em/18 与 `\the` 显示 "5.0mu"——按 1mu=1pt 数值存不重构）
+- ✅ `\muexpr`（**2026-09-03 收尾销账**：tex.web 证据链确认 expander 端
+  "1mu=1pt 数值存储 + `\the` 显示 X.0mu" 即 TeX 本义——mu 单位在 scan_dimen
+  走 attach_fraction（数值刻度与 pt 相同，1mu=65536sp），em/18 换算只发生在
+  layout 排版（70a8492 已做）；mu_error help1 行已加。原"expander 端
+  1mu=em/18 待重构"为误标。附随修复：胶水前导符号取负作用于整个胶水
+  （8a8d065，etrip L906-915 赋值链 stretch/shrink/阶全保留））
 - ✅ `\mutoglue`（2026-08-23 第三波：注册 + 扫描 mu 胶水转胶水，待联调）
 - ✅ `\gluetomu`（同上；胶水转 mu 胶水）
 
@@ -213,7 +212,8 @@ M4 数学 + e-TeX 验收时已实现的 e-TeX 原语：
 - ❌ read-again 错误块格式统一（剩余差项见上）；其中参考 read-again token 与 l.N 之间
   的独立 `...` 省略行（tex.web §show_context：跳过层数达 `\errorcontextlines` 才打，
   引擎未模拟多层上下文显示）为当前最大单点残余
-- ❌ `\the\muexpr` 的 "5.0mu" 显示（expander 端 1mu=em/18 待重构）
+- ✅ `\the\muexpr` 的 "5.0mu" 显示（2026-09-03 销账：见 §A mu 表达式/互转，
+  mu 数值刻度与 pt 相同是 TeX 本义，显示已按 "X.0mu" 输出）
 - ❌ 错误消息上下文行（"l.N …"）两行光标显示未全覆盖；另有 \write 转录 cs 后空格、
   79 列断行两处系统性格式差
 
