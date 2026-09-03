@@ -11,7 +11,7 @@
 | M1 展开内核       | 🟡 核心完成：M1-1\~7、M1-9\~11 已实现（95 用例）+ **A2 空行→`\par` 行状态机 + A4 `\outer` 语义 + M1-13 错误上下文行 `l.N`**（2026-08-23 评审修复）；M1-13 错误恢复待补；**M1-14 TRIP 冲刺推进中**（2026-08-25 a00a4d9：`\mag`+pc/cc 单位、扫描恢复语义、^^ 十六进制输入、`\write` 流 -1、缺 cs/字体/数学/排版错误恢复；trip.tex 仍停于"组未闭合"等恢复点，未全绿）                                                                                                                                                                                                                              |
 | M2 字节码        | 🟡 双轨完成（100 用例等价）；**性能 P0 补课落地**（字节码 u64 原始字执行器 + release 调优，80022b4）；吞吐 ≥2x 待重测（ntex 驱动基准死循环，见 backlog P1）；M2-5 arena 未做 |                                                                                                                                                                                                                             |
 | M3 排版核心       | ✅ M3-1\~M3-4 完成（58+ 用例）；**M3-5 DVI 写出 +** **`\shipout`** **+ 断页 DP + lig/kern +** **`\sfcode`** **+** **`\output`** **例程/box255** 完成（dvipdfmx 验收 + 与 TeX 差分对照）；**RFC-3 VFS + 副作用模型落地**（10 原语走 `ntex-io` VFS，延迟写入 shipout 边界提交）；**`.fmt`** **v1 内存快照**（`ntex-format` 确定性编码 + roundtrip）                     |
-| M4 数学 + e-TeX | ✅ **全部完成**：数学模式状态机（`$`/`$$`、8 类原子、spacing 表、上下标、字阶）、分式/根式/定界符、样式原语、fontdimen 数学参数 + 数学字体族、显示数学细化、Liang 断字、错误模型、e-TeX 核心 + 扩展（`\protected`/`\ifdefined`/`\ifcsname`/`\unless`/`\numexpr`/`\detokenize`/`\unexpanded`/`\eTeXversion`/`\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens`）；**ETRIP 冲刺**：A 组 41/42（仅 `\muexpr` 待校准）、B 组 36/36、C 组全部已接线（2026-08-23）；`etrip.log` 逐字节比照 2026-09-03 降级口径推进（语义 diff 归零 + 错误块抽查，逐字节留 M8 L2，见 §6 末尾） |
+| M4 数学 + e-TeX | ✅ **全部完成**：数学模式状态机（`$`/`$$`、8 类原子、spacing 表、上下标、字阶）、分式/根式/定界符、样式原语、fontdimen 数学参数 + 数学字体族、显示数学细化、Liang 断字、错误模型、e-TeX 核心 + 扩展（`\protected`/`\ifdefined`/`\ifcsname`/`\unless`/`\numexpr`/`\detokenize`/`\unexpanded`/`\eTeXversion`/`\dimexpr`/`\glueexpr`/`\ifprimitive`/`\scantokens`）；**ETRIP 冲刺**：A 组 42/42 ✅（2026-09-03 `\muexpr` 销账）、B 组 36/36、C 组全部已接线；`etrip.log` 逐字节比照 2026-09-03 降级口径推进（语义 diff 归零 + 错误块抽查，逐字节留 M8 L2，见 §6 末尾） |
 | 输出端           | 🟢 正式 PDF 后端可用（`ntex-pdf`：DVI → PDF 直出 + Type1 嵌入，替换临时 Helvetica 切片；demo 两页与 dvipdfmx 渲染一致）                                                                                                                                                                                                                |
 
 **下一步**：按 **§6 不符规范原语待办**（P0 优先级）推进——**TRIP 冲刺**（M1-13 错误恢复机制 `back_input`/`\errhelp` 是 trip.tex 停于"组未闭合"恢复点的根因，先行攻克）+ **ETRIP 收尾**（`\muexpr` 1mu 校准 + sparse arrays 段越界恢复 + gluestretchorder 值语义 + `etrip.log` 逐字节比对）+ 性能 backlog **P1**（热路径消分配 / 修通 ntex 驱动基准补测吞吐）；TRIP/ETRIP 收尾按
@@ -509,9 +509,12 @@ P2 —— 架构决策：
 - **错误恢复通用机制**（M1-13 `back_input`/`\errhelp`，TRIP 卡点根因）：引擎契约级能力，
   直接关联"任意畸形输入不 panic"契约（AGENTS.md §4），且是通用机制——不做则所有报错
   原语缺"报错后继续"路径；
-- **真语义 bug 修复**：`\muexpr` 1mu=em/18 换算 + `\the\muexpr` "5.0mu" 显示 + mu_error
-  恢复（A 组 42 项中仅剩）；gluestretchorder/glueshrinkorder 值语义——均属 L1 语义层，
-  污染数学间距/胶水结果，须修复并锁定。
+- ~~**真语义 bug 修复**：`\muexpr` 1mu=em/18 换算 + `\the\muexpr` "5.0mu" 显示 + mu_error
+  恢复；gluestretchorder/glueshrinkorder 值语义~~ —— ✅ 2026-09-03 全部清除：
+  `\muexpr` 经 tex.web 证据链销账（mu 刻度=pt 是 TeX 本义，em/18 换算仅在 layout，
+  70a8492 已做；`\the\muexpr` "X.0mu" 显示实测已对）；胶水阶值语义经
+  `glue_order_value_semantics` 5 组用例锁定（0 分量带阶、负分量+阶、表达式/转换链、
+  负号前缀）。剩余错误恢复通用机制见上条。
 
 **降级项（放过字节格式，逐字节口径留 M8 L2）**：
 - `etrip.log` **逐字节比对 → 语义 diff + 错误块抽查**（read-again 与 l.N 间独立 `...`
@@ -533,10 +536,14 @@ P2 —— 架构决策：
 > 验收口径上转场 M5 **已无硬卡点**。剩余必修项不依赖 M5/M6/M7，但 M5 增量（缓存/失效
 > 判定）依赖它们的语义正确性 → **先清必修项再转场**（量小，约一轮冲刺）。
 
-- **必修项执行顺序**（P0 语义正确性，量由小到大）：
-  1. `\muexpr` 1mu=em/18 换算 + `\the\muexpr` "5.0mu" 显示 + mu_error 恢复（A 组 42 项
-     仅剩；layout 端已做 commit 70a8492，剩 expander 端重构）——小量；
-  2. gluestretchorder/glueshrinkorder 值语义（胶水阶语义残余）——小量；
+- **必修项执行顺序**（P0 语义正确性；①/② 已于 2026-09-03 清除，剩 ③）：
+  1. ✅ `\muexpr`（2026-09-03 销账：tex.web 证据链——expander 端 mu 数值刻度与 pt
+     相同即 TeX 本义（scan_dimen attach_fraction），em/18 换算仅在 layout（70a8492 已
+     做）；mu_error help1 行已加；原"expander 1mu=em/18 重构"为误标，见
+     ETRIP-primitives.md §A）；
+  2. ✅ gluestretchorder/glueshrinkorder 值语义（2026-09-03 销账：0 分量带阶保留、
+     负分量+阶、表达式/\mutoglue 链、负号前缀均与参考 etrip.log 一致，单测
+     glue_order_value_semantics 5 组锁）；
   3. M1-13 错误恢复通用机制（`back_input`/`\errhelp`，TRIP 卡点根因）——较大，
      契约级（AGENTS.md §4 任意畸形输入不 panic），所有"报错后继续"原语共用路径。
 - **并行先行项**（不依赖收尾）：性能 backlog **P1**（修通 ntex 驱动基准死循环 + 补测

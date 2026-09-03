@@ -1290,6 +1290,57 @@ I changed this one to zero.
     }
 
     #[test]
+    fn glue_order_value_semantics() {
+        // 必修项② 销账锁（2026-09-03）：\gluestretchorder/\glueshrinkorder 值语义。
+        // ① 无阶胶水 → 0；\gluestretch/\glueshrink 返回分量 sp 值（\ifdim 尺寸上下文）
+        let src = r"\skip7=2pt plus 3pt minus 4pt\relax";
+        assert_eq!(expand(&format!("{src}\\number\\gluestretchorder\\skip7")).unwrap(), "0");
+        assert_eq!(expand(&format!("{src}\\number\\glueshrinkorder\\skip7")).unwrap(), "0");
+        assert_eq!(
+            expand(&format!("{src}\\ifdim\\gluestretch\\skip7=3pt T\\else F\\fi")).unwrap(),
+            "T"
+        );
+        assert_eq!(
+            expand(&format!("{src}\\ifdim\\glueshrink\\skip7=4pt T\\else F\\fi")).unwrap(),
+            "T"
+        );
+        // ② 阶：fil=1 fill=2 filll=3；0 分量带阶保留（TeX：阶与分量独立存储）
+        let src = r"\skip7=1pt plus 0fill minus 0filll\relax";
+        assert_eq!(expand(&format!("{src}\\number\\gluestretchorder\\skip7")).unwrap(), "2");
+        assert_eq!(expand(&format!("{src}\\number\\glueshrinkorder\\skip7")).unwrap(), "3");
+        assert_eq!(
+            expand(&format!("{src}\\ifdim\\gluestretch\\skip7=0pt T\\else F\\fi")).unwrap(),
+            "T"
+        );
+        // ③ 负分量 + 阶：minus -3fil → shrink=-3 且阶 fil（参考 etrip.log
+        // {into \muskip1=1.0mu plus -2.0mu minus -3.0fil} 同构）
+        let src = r"\skip7=1pt plus -2pt minus -3fil\relax";
+        assert_eq!(expand(&format!("{src}\\number\\gluestretchorder\\skip7")).unwrap(), "0");
+        assert_eq!(expand(&format!("{src}\\number\\glueshrinkorder\\skip7")).unwrap(), "1");
+        assert_eq!(
+            expand(&format!("{src}\\ifdim\\gluestretch\\skip7=-2pt T\\else F\\fi")).unwrap(),
+            "T"
+        );
+        // ④ 前导量表达式/寄存器链（\1 宏 etrip L937 场景的等价最小式）
+        let src = r"\skip5=1ptminus0fil\muskip5=\gluetomu\skip5\relax";
+        assert_eq!(
+            expand(&format!("{src}\\number\\glueshrinkorder\\mutoglue\\muskip5")).unwrap(),
+            "1"
+        );
+        assert_eq!(
+            expand(&format!("{src}\\ifdim\\glueshrink\\mutoglue\\muskip5=0pt T\\else F\\fi"))
+                .unwrap(),
+            "T"
+        );
+        // ⑤ 负号前缀：-\gluestretchorder 对阶取负（int 上下文 negate）
+        let src = r"\skip7=1pt plus 2fill\relax";
+        assert_eq!(
+            expand(&format!("{src}\\number-\\gluestretchorder\\skip7")).unwrap(),
+            "-2"
+        );
+    }
+
+    #[test]
     fn ifdim_with_units() {
         assert_eq!(expand("\\ifdim1pt<2pt yes\\else no\\fi").unwrap(), "yes");
         // pdfTeX 实测：1in=4736286sp；72.27pt 四舍五入后 = 4736287sp ≠ 1in，
