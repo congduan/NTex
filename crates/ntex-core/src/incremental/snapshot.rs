@@ -25,13 +25,13 @@ use crate::intern::InternTable;
 /// 控制状态，`edit` 借此把引擎整体回滚到段前（不再重建引擎）；比较口径不变
 /// （[`ValueState::PartialEq`] + eqtb 逐槽语义相等）。
 #[derive(Debug, Clone)]
-pub(crate) struct StateSnapshot {
+pub struct StateSnapshot {
     /// 完整检查点（eqtb 槽 + 值状态 + 指纹字段真值 + 控制状态）。
     pub(crate) cp: EngineCheckpoint,
 }
 
 impl StateSnapshot {
-    pub(crate) fn capture(e: &Expander) -> Self {
+    pub fn capture(e: &Expander) -> Self {
         Self {
             cp: e.capture_checkpoint(),
         }
@@ -46,13 +46,21 @@ impl StateSnapshot {
     pub(crate) fn eqtb(&self) -> &[EqSlot] {
         &self.cp.eqtb
     }
+
+    /// 整体还原检查点（M5 阶段三排版层管线的跨 crate 回滚入口——检查点字段
+    /// 对外不可见，还原必须经此方法）。
+    pub fn restore_to(&self, e: &mut Expander) {
+        e.restore_checkpoint(&self.cp);
+    }
 }
 
 /// 当前状态是否与快照语义一致（值状态精确相等 + eqtb 逐槽语义相等）。
 ///
-/// 只用于 `edit` 回滚后的完整性校验（防御检查点字段遗漏）——重放中的失效
-/// 判定走 [`ChainDelta`]（一次全量扫描 + 各段依赖检查），不再逐段全状态比较。
-pub(crate) fn state_matches(value: &ValueState, eqtb: &[EqSlot], snap: &StateSnapshot) -> bool {
+/// 阶段二 `edit` 用它做回滚后的完整性校验（防御检查点字段遗漏）；阶段三
+/// 排版层管线（ntex-layout）用它做"缓存段可否免执行"的边界判定——排版层
+/// 没有词法依赖可用，同步态（活状态与段前快照精确一致）是它唯一可判的口径。
+/// 阶段二重放中的失效判定仍走 [`ChainDelta`]（一次全量扫描 + 各段依赖检查）。
+pub fn state_matches(value: &ValueState, eqtb: &[EqSlot], snap: &StateSnapshot) -> bool {
     value == snap.value() && slots_semantically_equal(eqtb, snap.eqtb())
 }
 

@@ -6,7 +6,12 @@ mod tests {
     use ntex_core::TokenSink;
 
     /// TRIP 冲刺调试（临时）：trip.tex 前段逐行二分。
+    /// 无断言（只打 DBG 行）。`#[ignore]`：它把进程级 `NTEX_TFM_DIR` 改成
+    /// fixtures/trip（无 cmr10），与并行跑的其他真实字体测试（增量排版段测试）
+    /// 竞争——先跑到的测试读到被改的 env → 字体加载失败退化 nullfont → 文档
+    /// 塌成 1 页（M5 阶段三全量回归实测复现）。调试需要时 `--ignored` 单独跑。
     #[test]
+    #[ignore]
     fn dbg_trip_lines() {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/trip");
         std::env::set_var("NTEX_TFM_DIR", dir);

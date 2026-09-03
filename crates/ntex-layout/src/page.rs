@@ -30,7 +30,9 @@ const DEPLORABLE: i64 = 100_000;
 pub const IGNORE_DEPTH: i64 = -65_536_000;
 
 /// 页面构建器状态（tex.web `page_so_far` 的 Rust 表达）。
-#[derive(Debug)]
+/// `Clone`（M5 阶段三）：排版层段边界检查点克隆页面构建器
+/// （当前页内容 + page_so_far 测量 + 最佳断点），回滚/复用推进共用。
+#[derive(Debug, Clone)]
 pub struct PageBuilder {
     /// 当前页节点（已接收的贡献；`fire_up` 时按最佳断点切片）。
     page: Vec<Node>,

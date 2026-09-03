@@ -30,4 +30,4 @@ pub use node::{
     hbox_dimensions, hpack, vbox_dimensions, BoxDimensions, BoxKind, BoxNode, FontId, GlueOrder,
     LeadersKind, Node, GLUE_ORDER_FIL,
 };
-pub use typeset::{MetricsFn, SpaceFn, Typesetter};
+pub use typeset::{IncrementalStats, IncrementalTypesetter, MetricsFn, SpaceFn, Typesetter};

@@ -35,8 +35,12 @@
 // （HashMap/Arc/EqSlot/ValueState/Token/Params 等已在 mod.rs 顶部导入）。
 
 /// 段边界完整状态检查点：还原 = 把全部可变运行时字段写回捕获值。
+///
+/// 对外是不透明句柄（字段 `pub(crate)`）：M5 阶段三排版层增量管线
+/// （ntex-layout）借它做段边界回滚，与阶段二 `SegmentEngine` 同一套
+/// 捕获/还原通道；构造与字段访问仍留在本 crate 内。
 #[derive(Debug, Clone)]
-pub(crate) struct EngineCheckpoint {
+pub struct EngineCheckpoint {
     /// eqtb 全部槽（比较 + 还原；宏体 `Arc` 共享，克隆廉价）。
     ///
     /// 还原用整体替换：段执行期间新驻留的 cs 槽被截掉——它们在段前确实未定义；
@@ -139,8 +143,8 @@ pub(crate) struct ControlState {
 }
 
 impl Expander {
-    /// 捕获完整状态检查点（只读；M5 阶段二段级回滚用）。
-    pub(crate) fn capture_checkpoint(&self) -> EngineCheckpoint {
+    /// 捕获完整状态检查点（只读；M5 阶段二段级回滚 / 阶段三排版层管线用）。
+    pub fn capture_checkpoint(&self) -> EngineCheckpoint {
         EngineCheckpoint {
             eqtb: self.eqtb.slots().to_vec(),
             value: self.value_state(),
@@ -219,7 +223,7 @@ impl Expander {
     ///
     /// 逐字段赋值，与 [`Self::capture_checkpoint`] 镜像；不触碰的字段见文件头
     /// 注释（intern 追加型、sink 每段各自换新、vfs/字体加载器为配置）。
-    pub(crate) fn restore_checkpoint(&mut self, cp: &EngineCheckpoint) {
+    pub fn restore_checkpoint(&mut self, cp: &EngineCheckpoint) {
         self.eqtb.replace_slots(cp.eqtb.clone());
         self.catcodes = cp.value.catcodes.clone();
         self.sfcodes = cp.value.sfcodes;

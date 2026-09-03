@@ -182,7 +182,8 @@ enum MathFieldKind {
 }
 
 /// 数学列表层级：原子列表 + 是否为特殊字段组。
-#[derive(Debug, Default)]
+/// `Clone`（M5 阶段三）：NodeBuilder 整体克隆（段边界检查点）需要。
+#[derive(Debug, Default, Clone)]
 struct MathLevel {
     atoms: Vec<MathAtom>,
     /// 本组字段类别（`^`/`_`、`\sqrt`、`\mathbin` 后的 `{...}`）；None = 普通组。
@@ -194,7 +195,8 @@ struct MathLevel {
 }
 
 /// `\over`/`\atop` 中间态：numerator 已收集，当前数学层 atoms 继续收集 denominator。
-#[derive(Debug)]
+/// `Clone`（M5 阶段三）：NodeBuilder 整体克隆（段边界检查点）需要。
+#[derive(Debug, Clone)]
 struct FractionPending {
     thickness: Option<i64>,
     num: Vec<MathAtom>,
@@ -290,7 +292,8 @@ impl GroupKind {
 }
 
 /// 组上下文（group_begin 压栈，group_end 弹出）。
-#[derive(Debug)]
+/// `Clone`（M5 阶段三）：NodeBuilder 整体克隆（段边界检查点）需要。
+#[derive(Debug, Clone)]
 struct GroupCtx {
     /// 组种类（`\currentgrouptype` 查询用）。
     kind: GroupKind,
@@ -437,7 +440,11 @@ impl Fonts {
 const MISC_TRACING_LOSTCHARS: usize = 1;
 
 /// 节点构建 sink：把 VM 排版事件转成节点列表。
-#[derive(Debug)]
+///
+/// `Clone`（M5 阶段三）：排版层段边界检查点整体克隆 builder 状态
+/// （[`crate::typeset::IncrementalTypesetter`]）；`shipped` 页面在捕获时由
+/// 捕获方先摘走（页面不随检查点复制，只记数量），故克隆不含已 shipout 页面。
+#[derive(Debug, Clone)]
 struct NodeBuilder {
     /// 列表栈（栈顶 = 当前列表；栈底 = 主垂直列表）。
     /// 栈内元素按入栈顺序：盒子内容、段落。`[list_modes]` 与之并行，
@@ -583,6 +590,11 @@ struct NodeBuilder {
     marks_split_bot: std::collections::HashMap<i64, String>,
     /// ETRIP 第二波：`\lastbox` 摘下的盒子（TeX 语义：供下一个 `\box`/`\copy` 使用）。
     lastbox_hold: Option<BoxNode>,
+    /// M5 阶段三：主列表录制（增量段贡献缓存）。`Some` 时把进入**主列表**
+    /// （`lists.len() == 1`）的节点原样录下——编辑段后的增量重放把缓存节点流
+    /// 重新注入主列表，行盒免重排、页面装配（断页）照常重跑。
+    /// 只追加、不参与任何语义分支；`append`/`push_node` 两个入列路径挂钩。
+    record_main: Option<Vec<Node>>,
 }
 
 /// 断字候选字符：ASCII 字母（catcode 11 的近似；ligature/非字母不参与断字 run）。
@@ -714,6 +726,7 @@ impl NodeBuilder {
             marks_split_first: std::collections::HashMap::new(),
             marks_split_bot: std::collections::HashMap::new(),
             lastbox_hold: None,
+            record_main: None,
         }
     }
 
@@ -803,6 +816,7 @@ impl NodeBuilder {
                 b.shift = v;
             }
         }
+        self.record_main_node(&node);
         self.lists.last_mut().expect("列表栈非空").push(node);
         // M3-5-2：顶层垂直模式追加后运行页面构建器（TeX build_page 的触发点）。
         // 增量（feed_one）：每产出一页即暂停——若定义了输出例程，让引擎在 token
@@ -948,7 +962,18 @@ impl NodeBuilder {
     fn push_node(&mut self, node: Node) {
         self.nodes_appended += 1;
         self.last_appended = format!("{node:?}");
+        self.record_main_node(&node);
         self.lists.last_mut().expect("列表栈非空").push(node);
+    }
+
+    /// M5 阶段三录制钩子（[`Self::record_main`]）：只读/追加型，无语义分支。
+    /// `push_node`（close_paragraph 的行间惩罚）不经过 `append`，两处都挂。
+    fn record_main_node(&mut self, node: &Node) {
+        if self.lists.len() == 1 {
+            if let Some(rec) = &mut self.record_main {
+                rec.push(node.clone());
+            }
+        }
     }
 
     fn push_box(&mut self, node: Node) {
@@ -1243,5 +1268,10 @@ include!("sink.rs");
 
 // \showbox 格式化（自由函数，迁自 sink.rs；依赖 mod.rs 已 use 的类型）
 include!("sink_showbox.rs");
+
+// M5 阶段三：端到端增量排版（段贡献缓存 + 页面装配重跑；layout 层段边界检查点）
+include!("incremental.rs");
+
+include!("incremental_tests.rs");
 
 include!("tests.rs");

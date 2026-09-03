@@ -55,21 +55,30 @@ impl NodeBuilder {
             if self.page.is_empty() && self.lists[0].is_empty() {
                 return Ok(false);
             }
-            let hsize = self.params.hsize;
-            let mut empty_box = BoxNode::new_hbox(Vec::new());
-            empty_box.width = hsize; // \hbox to \hsize{}
-            self.lists[0].push(Node::Box(empty_box));
-            self.lists[0].push(Node::Glue {
-            name: None,                width: 0,
-                stretch: 1,
-                shrink: 0,
-                stretch_order: GLUE_ORDER_FIL,
-                shrink_order: 0,
-            });
-            self.lists[0].push(Node::Penalty {
-                penalty: -(1 << 30), // \penalty-'10000000000
-            });
-            // 产出一页则返回；材料全部入页但未触发断页 → 补充 eject 节点再试
+            // 只在贡献列表已空（全部材料已进页构建器、需要强制断出这最后一页）时
+            // 才追加 eject 材料（空盒 + vfill + 强制惩罚）。若贡献列表非空，先让
+            // feed_one 消化既有材料——它们往往已以强制惩罚收尾（上一次 fire_up
+            // 在胶水处断页时把 [空盒, vfill, 惩罚] 留在贡献前端），再补一组会让
+            // 残留三元组与新增材料自持循环（每次断出"空盒+胶水"页后仍剩三元组，
+            // 无限冲页 OOM——M5 阶段三 consecutive 编辑后页面状态实测复现）。
+            if self.lists[0].is_empty() {
+                let hsize = self.params.hsize;
+                let mut empty_box = BoxNode::new_hbox(Vec::new());
+                empty_box.width = hsize; // \hbox to \hsize{}
+                self.lists[0].push(Node::Box(empty_box));
+                self.lists[0].push(Node::Glue {
+                name: None,                width: 0,
+                    stretch: 1,
+                    shrink: 0,
+                    stretch_order: GLUE_ORDER_FIL,
+                    shrink_order: 0,
+                });
+                self.lists[0].push(Node::Penalty {
+                    penalty: -(1 << 30), // \penalty-'10000000000
+                });
+            }
+            // 产出一页则返回；材料全部入页但未触发断页 → 循环（贡献已空时补 eject
+            // 节点再试，贡献非空时继续消化既有材料）。
             if let Some(p) = self.page.feed_one(&mut self.lists[0], &self.params) {
                 self.accept_page(p);
                 // ETRIP 冲刺：断页 marks 轮转（top = 旧 bot，first 清空，bot 保留继承）
