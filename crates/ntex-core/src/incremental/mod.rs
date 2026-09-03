@@ -30,7 +30,9 @@ pub mod snapshot;
 
 pub use engine::{render_tokens, SegmentEngine, SegmentResult, SegmentStats};
 pub use segment::segmentize;
-pub use snapshot::SegmentDeps;
+pub use snapshot::{
+    lex_deps, reads_touch_slots, snapshot_states_equal, writes_touch_slots, ChainDelta, SegmentDeps,
+};
 
 #[cfg(test)]
 mod tests;

@@ -64,18 +64,28 @@ pub fn state_matches(value: &ValueState, eqtb: &[EqSlot], snap: &StateSnapshot) 
     value == snap.value() && slots_semantically_equal(eqtb, snap.eqtb())
 }
 
-/// 活状态相对旧缓存链的偏差（一次全量扫描的产物，供后续各段廉价判定）。
+/// 两份快照的状态是否语义一致（口径同 [`state_matches`]：值状态精确相等 +
+/// eqtb 逐槽语义相等）。
 ///
-/// 编辑重算只改链上一个点：重放首个执行段之后，"活状态 vs 旧链"的偏差就固定
-/// 为一个小集合（通常 = 被编辑宏所在槽）。以它做各段失效判定，免去阶段一
-/// "每段一次全状态比较"（值指纹 + eqtb 全槽深比较——500 段基准的主要开销）。
-/// 偏差为空 = 活状态与旧链精确一致（同步态，缓存段免判定）。
+/// 排版层管线（ntex-layout）用它做**段状态中性**判定：段执行前/后快照一致 ⇒
+/// 跳过该段的执行不动状态——有链偏差时这是"免执行且不还原旧 post"的健全前提
+/// （旧 post 会把偏差槽的新值冲掉，不能整体还原）。
+pub fn snapshot_states_equal(a: &StateSnapshot, b: &StateSnapshot) -> bool {
+    a.value() == b.value() && slots_semantically_equal(a.eqtb(), b.eqtb())
+}
+
+/// 活状态相对参照快照的偏差（一次全量扫描的产物，供各段廉价判定）。
+///
+/// 阶段二 expand 层引擎（`engine`）以"旧缓存链上当前位置"为参照、每次执行段后
+/// 重算一次；阶段四排版层管线（ntex-layout）以**各段录制时的段前快照**为参照、
+/// 逐段判定（缓存段免执行的依据 = 偏差集不触及该段依赖，见 `reads_touch_slots`）。
+/// 偏差为空 = 活状态与参照精确一致（同步态，缓存段免判定）。
 #[derive(Debug, Clone)]
-pub(crate) struct ChainDelta {
+pub struct ChainDelta {
     /// 值状态有偏差（寄存器/参数/catcode/编码表/流——不做槽级归因，全局失效）。
-    pub(crate) value_differs: bool,
+    pub value_differs: bool,
     /// 语义有偏差的 eqtb 槽（含槽规模变化时多出的尾部槽）。
-    pub(crate) slots: HashSet<u32>,
+    pub slots: HashSet<u32>,
 }
 
 impl ChainDelta {
@@ -91,7 +101,7 @@ impl ChainDelta {
     ///
     /// 槽规模不一致（段间新驻留 cs / 回滚截断）时，超出共同前缀的槽一律视为
     /// 变化——"未驻留"即 `Undefined`，与已有槽不等。
-    pub(crate) fn capture(e: &Expander, reference: &StateSnapshot) -> Self {
+    pub fn capture(e: &Expander, reference: &StateSnapshot) -> Self {
         let value_differs = e.value_state() != *reference.value();
         let cur = e.eqtb().slots();
         let snap = reference.eqtb();
@@ -112,7 +122,7 @@ impl ChainDelta {
     }
 
     /// 是否无偏差（值状态一致 + 无变化槽）。
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         !self.value_differs && self.slots.is_empty()
     }
 }
@@ -154,7 +164,7 @@ const DEFINING_CS: &[&str] = &[
 ];
 
 /// 词法提取段内控制序列的读/写依赖（不展开、不看引擎）。
-pub(crate) fn lex_deps(source: &str) -> SegmentDeps {
+pub fn lex_deps(source: &str) -> SegmentDeps {
     let mut deps = SegmentDeps::default();
     let bytes = source.as_bytes();
     // pending_def：刚见过定义类命令 → 下一个 cs 名是写目标
@@ -240,11 +250,7 @@ pub(crate) fn lex_deps(source: &str) -> SegmentDeps {
 
 impl SegmentDeps {
     /// 解析读依赖的宏槽版本（`Expander::eqtb` 的版本化槽，RFC-1 §5）。
-    pub(crate) fn attach_versions(
-        mut self,
-        intern: &InternTable,
-        eqtb: &crate::eqtb::Eqtb,
-    ) -> Self {
+    pub fn attach_versions(mut self, intern: &InternTable, eqtb: &crate::eqtb::Eqtb) -> Self {
         for name in &self.read_cs {
             let v = intern
                 .lookup(name)
@@ -284,7 +290,7 @@ pub(crate) fn slots_semantically_equal(a: &[EqSlot], b: &[EqSlot]) -> bool {
 ///
 /// 段要写的槽若已被动过，跳过该段执行会让"本应重写的值"停留在被改后的值，
 /// 后续读它的段就会拿到错值（见 `engine` 失效判定分支 2）。
-pub(crate) fn writes_touch_slots(
+pub fn writes_touch_slots(
     intern: &InternTable,
     names: &BTreeSet<String>,
     slots: &HashSet<u32>,
@@ -300,7 +306,7 @@ pub(crate) fn writes_touch_slots(
 /// 闭包 = 段内词法引用的 cs → 其宏体内引用的 cs（逐层展开）→ `\let` 别名指向
 /// 的 cs。沿**当前**宏体遍历保证健全：闭包里某个宏的槽在偏差集里，访问到它
 /// 时立即返回；不在偏差集里则其宏体与缓存时一致，继续遍历不漏。
-pub(crate) fn reads_touch_slots(
+pub fn reads_touch_slots(
     intern: &InternTable,
     eqtb: &[EqSlot],
     deps: &SegmentDeps,

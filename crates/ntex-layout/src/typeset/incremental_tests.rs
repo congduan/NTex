@@ -167,6 +167,18 @@ mod incremental_tests {
         out
     }
 
+    /// 按段下标**降序**在原文上替换多段（先换靠后的段不动靠前段的偏移；管线
+    /// 段列表保持固定切分，故以原文段界为基准的降序替换即参考文档）。
+    fn replace_segments(doc: &str, segments: &[String], edits: &[(usize, String)]) -> String {
+        let mut ordered: Vec<(usize, &String)> = edits.iter().map(|(k, t)| (*k, t)).collect();
+        ordered.sort_by_key(|a| std::cmp::Reverse(a.0));
+        let mut current = doc.to_string();
+        for (k, t) in ordered {
+            current = replace_segment(&current, segments, k, t);
+        }
+        current
+    }
+
     /// 编辑第 `k` 段（改正文措辞，状态中性）：三重口径逐位一致 + 复用发生。
     fn assert_edit_matches_full(n_para: usize, k: usize) {
         let doc = build_doc(n_para);
@@ -361,62 +373,323 @@ mod incremental_tests {
         }
     }
 
-    /// M5 阶段三基准（#[ignore]：release 下运行）——
+    /// M5 阶段四基准（#[ignore]：release 下运行）——
     /// `cargo test --release -p ntex-layout --lib bench_edit_paragraph_vs_full -- --ignored --nocapture`
     ///
-    /// 多页真实排版文档（正文 + 行内/显示公式 + 列表），改中段 1 段：
-    /// 增量 vs 全量耗时与加速比；复用段数与剩余开销一并打印。
+    /// 多页真实排版文档，两类编辑各测一轮（增量 vs 全量耗时与加速比、复用段数）：
+    /// - 场景 A（改正文 1 段）：状态中性路径，阶段三已覆盖，作对照；
+    /// - 场景 B（改宏体段）：阶段三在状态偏差下其后各段**整体重排**（复用 0、
+    ///   耗时 ≈ 全量），阶段四依赖判定后仅引用该宏的段重排——提升即本次交付。
+    ///
+    /// 实测（release，120 段文档 / 2GB VM，2026-09-03）：
+    /// - A：全量 56 ms / 增量 201 ms，复用 107/169（执行 2）；
+    /// - B：全量 33 ms / 增量 164 ms，复用 60/121（执行 61 = 1 编辑段 + 60 引用段）；
+    ///   阶段三同场景复用 0 / 执行 120——执行段减半、未引用正文段全数复用。
+    ///
+    /// 加速比 <1x 由阶段三固有开销支配（每段边界快照整体克隆 O(文档)×段数 +
+    /// 页面装配自编辑段起重跑）；墙钟收益待偏差集增量维护 + 边界快照结构共享。
     #[test]
     #[ignore]
     fn bench_edit_paragraph_vs_full() {
         let n_para = 120;
-        let doc = build_doc(n_para);
-        let mid = n_para / 2;
-        // 编辑后参考文档（与增量路径同一替换口径）
-        let (probe, _) = pipeline_compile(&doc);
-        let segments = probe.segments().to_vec();
-        let new_text = format!("{}\n", body(mid, true));
-        let doc_edited = replace_segment(&doc, &segments, mid, &new_text);
 
-        // 基线：编辑后文档全新排版（现有全量路径）
-        let t = Instant::now();
-        let (pages_full, fonts_full) = {
-            let mut ts = Typesetter::with_tfm_paginated();
-            ts.typeset_dvi(&doc_edited).expect("全量排版")
-        };
-        let full_elapsed = t.elapsed();
-        let reference = (pages_full, fonts_full);
+        // ---- 场景 A：改正文 1 段（状态中性） --------------------------------
+        {
+            let doc = build_doc(n_para);
+            let mid = n_para / 2;
+            let (probe, _) = pipeline_compile(&doc);
+            let segments = probe.segments().to_vec();
+            let new_text = format!("{}\n", body(mid, true));
+            let doc_edited = replace_segment(&doc, &segments, mid, &new_text);
+            // 基线：编辑后文档全新排版（现有全量路径）
+            let t = Instant::now();
+            let reference = {
+                let mut ts = Typesetter::with_tfm_paginated();
+                let (pages, fonts) = ts.typeset_dvi(&doc_edited).expect("全量排版");
+                (pages, fonts)
+            };
+            let full = t.elapsed();
+            // 增量：编译基线文档 → 编辑中段 → 增量重生
+            let (mut it, _) = pipeline_compile(&doc);
+            let seg_count = it.segments().len();
+            let t = Instant::now();
+            let out = it.edit(mid, &new_text).expect("增量编辑");
+            let inc = t.elapsed();
+            assert_eq!(&out.pages, &reference.0, "基准口径 A：增量 != 全量（页面）");
+            assert_eq!(&out.fonts, &reference.1, "基准口径 A：增量 != 全量（字体表）");
+            let n_pages = out.pages.len();
+            let ratio = full.as_secs_f64() / inc.as_secs_f64().max(1e-9);
+            println!("── 场景 A 改正文 1 段（{seg_count} 段 / {n_pages} 页）───────────────");
+            println!("全量：{:>9.2} ms", full.as_secs_f64() * 1e3);
+            println!(
+                "增量：{:>9.2} ms  加速 {:>6.1}x  复用 {}/{}（执行 {}）",
+                inc.as_secs_f64() * 1e3,
+                ratio,
+                it.stats().reused,
+                seg_count,
+                it.stats().executed
+            );
+        }
 
-        // 增量：编译基线文档 → 编辑中段 → 增量重生
-        let (mut it, _) = pipeline_compile(&doc);
-        let seg_count = it.segments().len();
-        let t = Instant::now();
-        let out = it.edit(mid, &new_text).expect("增量编辑");
-        let inc_elapsed = t.elapsed();
-        assert_eq!(&out.pages, &reference.0, "基准口径：增量 != 全量（页面）");
-        assert_eq!(&out.fonts, &reference.1, "基准口径：增量 != 全量（字体表）");
-
-        let n_pages = out.pages.len();
-        let ratio = full_elapsed.as_secs_f64() / inc_elapsed.as_secs_f64().max(1e-9);
-        println!("── M5 阶段三基准（端到端增量 vs 全量，{seg_count} 段 / {n_pages} 页）──────");
-        println!(
-            "全量（编辑后文档全新排版）      : {:>9.2} ms",
-            full_elapsed.as_secs_f64() * 1e3
-        );
-        println!(
-            "增量（编辑中段 1 段）          : {:>9.2} ms  加速 {:>6.1}x  复用 {}/{}",
-            inc_elapsed.as_secs_f64() * 1e3,
-            ratio,
-            it.stats().reused,
-            seg_count
-        );
-        println!(
-            "剩余开销：复用判定逐段全状态比较（值指纹 + eqtb 全槽）、每段一次边界快照克隆、\
-             页面装配自编辑段起重跑；宏体编辑（状态偏差）其后各段整体重排。"
-        );
+        // ---- 场景 B：改宏体段（依赖判定：仅引用段重排） ----------------------
+        {
+            let macro_doc = build_macro_doc(n_para);
+            let (probe, _) = pipeline_compile(&macro_doc);
+            let segments = probe.segments().to_vec();
+            let new_preamble = segments[0].replace(GREET_VARIANTS[0], GREET_VARIANTS[1]);
+            assert_ne!(new_preamble, segments[0], "导言应含 \\greet 宏体待改");
+            let doc_edited = replace_segment(&macro_doc, &segments, 0, &new_preamble);
+            let t = Instant::now();
+            let reference = {
+                let mut ts = Typesetter::with_tfm_paginated();
+                let (pages, fonts) = ts.typeset_dvi(&doc_edited).expect("全量排版");
+                (pages, fonts)
+            };
+            let full = t.elapsed();
+            let (mut it, _) = pipeline_compile(&macro_doc);
+            let seg_count = it.segments().len();
+            let t = Instant::now();
+            let out = it.edit(0, &new_preamble).expect("增量编辑宏体段");
+            let inc = t.elapsed();
+            assert_eq!(&out.pages, &reference.0, "基准口径 B：增量 != 全量（页面）");
+            assert_eq!(&out.fonts, &reference.1, "基准口径 B：增量 != 全量（字体表）");
+            let n_pages = out.pages.len();
+            let ratio = full.as_secs_f64() / inc.as_secs_f64().max(1e-9);
+            let rejected = it.last_rejects().iter().filter(|r| r.is_some()).count();
+            println!("── 场景 B 改宏体段（{seg_count} 段 / {n_pages} 页）─────────────────");
+            println!("全量：{:>9.2} ms", full.as_secs_f64() * 1e3);
+            println!(
+                "增量：{:>9.2} ms  加速 {:>6.1}x  复用 {}/{}（执行 {}，其中依赖失效重排 {}）",
+                inc.as_secs_f64() * 1e3,
+                ratio,
+                it.stats().reused,
+                seg_count,
+                it.stats().executed,
+                rejected
+            );
+            println!(
+                "阶段三对照：改宏体 = 状态偏差 → 其后各段整体重排（复用 0 / 执行 {}、耗时 ≈ 全量 \
+                 {:.2} ms）；阶段四依赖判定后仅读闭包触及被改宏槽的段重排（{} 段）。",
+                seg_count - 1,
+                full.as_secs_f64() * 1e3,
+                rejected
+            );
+            println!(
+                "剩余开销（阶段三固有，本阶段未动）：每段边界快照整体克隆（含主列表，O(文档)×段数）、\
+                 页面装配自编辑段起重跑、逐段偏差判定（值指纹 + eqtb 全槽 vs 录制段前快照）。"
+            );
+        }
         println!("──────────────────────────────────────────────────");
     }
 
+
+    // ---------- M5 阶段四：排版层依赖判定（宏体编辑省重排） ----------
+
+    /// `\greet` 宏体的两个版本（等长：改宏体尽量不动段内折行形状，把重排归因
+    /// 收敛到依赖判定本身）。
+    const GREET_VARIANTS: [&str; 2] = [
+        "Hello world from the greet macro.",
+        "Greetings from the revised macro.",
+    ];
+    /// `\outer` 宏体的两个版本（宏引宏：`\outer` 体内引用 `\greet`）。
+    const OUTER_VARIANTS: [&str; 2] = ["outer wraps it", "outer winds it"];
+
+    /// 宏体编辑场景文档：导言（宏定义段）+ 引用段（`\greet` / `\outer`）+
+    /// 纯正文段，多页真实排版。改宏体 = eqtb 宏槽偏差（阶段三收益归零的场景），
+    /// 是依赖判定的目标场景。
+    fn build_macro_doc(n_para: usize) -> String {
+        let mut s = String::new();
+        s.push_str("\\hsize 300pt\n\\vsize 320pt\n\\parindent 20pt\n");
+        s.push_str(&font_preamble());
+        s.push_str(&format!("\\def\\greet{{{}}}\n", GREET_VARIANTS[0]));
+        s.push_str(&format!(
+            "\\def\\outer{{\\greet\\ {}\\ \\greet}}\n",
+            OUTER_VARIANTS[0]
+        ));
+        s.push('\n');
+        for i in 0..n_para {
+            match i % 4 {
+                0 => s.push_str("\\greet\\ This paragraph uses the greet macro.\n\n"),
+                1 => s.push_str("\\outer\\ This paragraph uses the outer macro.\n\n"),
+                _ => {
+                    s.push_str(&body(i, false));
+                    s.push_str("\n\n");
+                }
+            }
+        }
+        s
+    }
+
+    /// 改宏体段（状态偏差）：引用该宏的段**必**被判依赖失效重排；未引用的纯
+    /// 正文段复用缓存节点流；三重口径逐位一致。
+    #[test]
+    fn edit_macro_body_retypesets_only_referencing_segments() {
+        let doc = build_macro_doc(24);
+        let (mut it, dvi0) = pipeline_compile(&doc);
+        assert_eq!(dvi0, full_path(&doc), "口径 3：管线全量 != 引擎全量");
+        let segments = it.segments().to_vec();
+        let pre = segments[0].clone();
+        let new_preamble = pre.replace(GREET_VARIANTS[0], GREET_VARIANTS[1]);
+        assert_ne!(new_preamble, pre, "导言应含 \\greet 宏体待改");
+        let out = it.edit(0, &new_preamble).expect("编辑宏体段");
+        let doc_edited = replace_segment(&doc, &segments, 0, &new_preamble);
+        assert_doc_eq(
+            &out,
+            &full_path(&doc_edited),
+            "口径 1：增量 != 全量（改 \\greet 宏体）".to_string(),
+        );
+        let (_, dvi_full) = pipeline_compile(&doc_edited);
+        assert_doc_eq(
+            &out,
+            &dvi_full,
+            "口径 2：增量 != 管线全量（改 \\greet 宏体）".to_string(),
+        );
+
+        // 双口径：引用段依赖失效（读闭包触及被改宏槽，判定必拒）；未引用正文段
+        // 至少一个复用（stats + last_rejects 两口径互证）。
+        let rejects = it.last_rejects();
+        let mut cited = 0;
+        let mut body_reused = 0;
+        for (k, seg) in segments.iter().enumerate() {
+            if seg.contains("\\def") {
+                continue;
+            }
+            if seg.contains("\\greet") {
+                cited += 1;
+                assert!(
+                    rejects[k].is_some(),
+                    "引用 \\greet 的段 {k} 应被判重排（实际 {:?}）",
+                    rejects[k]
+                );
+            } else if !seg.contains("\\outer") && rejects[k].is_none() {
+                body_reused += 1;
+            }
+        }
+        assert!(cited >= 2, "引用 \\greet 的段样本不足（{cited}）");
+        assert!(body_reused > 0, "未引用正文段应复用缓存（reused={}）", it.stats().reused);
+    }
+
+    /// 嵌套宏（宏引宏）依赖闭包：改 `\outer` 宏体 → 闭包含 `\outer` 的段重排；
+    /// 只引用 `\greet` 的段**不得**因 `\outer` 变化被判依赖失效（允许因排版
+    /// 上下文漂移自愈重排——拒绝原因只能是上下文类，不许误报依赖）。
+    #[test]
+    fn edit_nested_macro_invalidates_only_closure_dependents() {
+        let doc = build_macro_doc(24);
+        let (mut it, _) = pipeline_compile(&doc);
+        let segments = it.segments().to_vec();
+        let pre = segments[0].clone();
+        let new_preamble = pre.replace(OUTER_VARIANTS[0], OUTER_VARIANTS[1]);
+        assert_ne!(new_preamble, pre, "导言应含 \\outer 宏体待改");
+        let out = it.edit(0, &new_preamble).expect("编辑嵌套宏体段");
+        let doc_edited = replace_segment(&doc, &segments, 0, &new_preamble);
+        assert_doc_eq(
+            &out,
+            &full_path(&doc_edited),
+            "嵌套宏体编辑：增量 != 全量".to_string(),
+        );
+        let rejects = it.last_rejects();
+        let mut outer_users = 0;
+        let mut greet_only = 0;
+        for (k, seg) in segments.iter().enumerate() {
+            if seg.contains("\\def") {
+                continue;
+            }
+            if seg.contains("\\outer") {
+                outer_users += 1;
+                assert!(
+                    rejects[k].is_some(),
+                    "引用 \\outer 的段 {k} 应被判重排（实际 {:?}）",
+                    rejects[k]
+                );
+            } else if seg.contains("\\greet") {
+                greet_only += 1;
+                if let Some(r) = rejects[k] {
+                    assert!(
+                        !r.contains("读依赖闭包"),
+                        "只引用 \\greet 的段 {k} 不得因 \\outer 变化被判依赖失效（{r}）"
+                    );
+                }
+            }
+        }
+        assert!(outer_users >= 2 && greet_only >= 2, "样本不足（{outer_users}/{greet_only}）");
+    }
+
+    /// 宏体编辑 + 连续编辑（含编辑"被复用过的正文段"）：偏差路径复用后段边界
+    /// 已刷成活状态，后续 `edit` 的回滚点必须是新状态——否则回滚丢掉宏体新值、
+    /// 文档退回旧宏输出（阶段四回归锁定）。
+    #[test]
+    fn macro_edit_then_edit_reused_segment_matches_full() {
+        let doc = build_macro_doc(24);
+        let (mut it, dvi0) = pipeline_compile(&doc);
+        assert_eq!(dvi0, full_path(&doc), "口径 3：管线全量 != 引擎全量");
+        let segments = it.segments().to_vec();
+        let preamble = segments[0].clone();
+        let greet_new = preamble.replace(GREET_VARIANTS[0], GREET_VARIANTS[1]);
+        // ① 改 \greet 宏体（偏差路径；其后正文段走依赖判定复用）
+        let out1 = it.edit(0, &greet_new).expect("编辑宏体段");
+        let doc1 = replace_segment(&doc, &segments, 0, &greet_new);
+        assert_doc_eq(&out1, &full_path(&doc1), "① 改宏体：增量 != 全量".to_string());
+        // ② 编辑一个被复用过的纯正文段（回滚点 = 偏差路径刷新过的边界）
+        let k = segments
+            .iter()
+            .position(|s| {
+                !s.contains("\\def") && !s.contains("\\greet") && !s.contains("\\outer")
+            })
+            .expect("存在纯正文段");
+        let new_text = format!("{}\n", body(k, true));
+        let out2 = it.edit(k, &new_text).expect("编辑被复用过的正文段");
+        let doc2 =
+            replace_segments(&doc, &segments, &[(0, greet_new.clone()), (k, new_text.clone())]);
+        assert_doc_eq(
+            &out2,
+            &full_path(&doc2),
+            "② 再编辑正文段：增量 != 全量（宏体新值须保留）".to_string(),
+        );
+        // ③ 还原宏体：应回到"基线 + ② 的正文编辑"
+        let out3 = it.edit(0, &preamble).expect("还原宏体段");
+        let doc3 = replace_segments(&doc, &segments, &[(0, preamble.clone()), (k, new_text)]);
+        assert_doc_eq(&out3, &full_path(&doc3), "③ 还原宏体：增量 != 全量".to_string());
+    }
+
+    /// 连续宏体编辑：改 `\greet` → 改 `\outer` → 还原，每步与全量逐位一致
+    /// （偏差通道与同步通道在同一管线上交替使用）。
+    #[test]
+    fn consecutive_macro_edits_match_full() {
+        let doc = build_macro_doc(20);
+        let (mut it, _) = pipeline_compile(&doc);
+        let segments = it.segments().to_vec();
+        let preamble = segments[0].clone();
+        let edits: Vec<(usize, String)> = vec![
+            (
+                0,
+                preamble.replace(GREET_VARIANTS[0], GREET_VARIANTS[1]),
+            ),
+            (
+                0,
+                preamble.replace(OUTER_VARIANTS[0], OUTER_VARIANTS[1]),
+            ),
+            (
+                0,
+                preamble
+                    .replace(GREET_VARIANTS[0], GREET_VARIANTS[1])
+                    .replace(OUTER_VARIANTS[0], OUTER_VARIANTS[1]),
+            ),
+        ];
+        let mut applied: Vec<(usize, String)> = Vec::new();
+        for (round, (k, text)) in edits.into_iter().enumerate() {
+            let out = it.edit(k, &text).expect("连续宏体编辑");
+            applied.push((k, text));
+            let current = replace_segments(&doc, &segments, &applied);
+            assert_doc_eq(
+                &out,
+                &full_path(&current),
+                format!("连续宏体编辑第 {round} 步：增量 != 全量"),
+            );
+        }
+        // 还原全部 → 基线
+        let out = it.edit(0, &preamble).expect("还原宏体段");
+        assert_doc_eq(&out, &full_path(&doc), "还原后应回到基线".to_string());
+    }
 
     #[test]
     fn dbg_first_diff() {

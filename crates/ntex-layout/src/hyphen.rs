@@ -12,7 +12,8 @@
 use std::collections::HashMap;
 
 /// 模式 trie 节点：字母 → 子节点。
-#[derive(Debug, Default, Clone)]
+/// `PartialEq`（M5 阶段四）：排版副作用字段比较（缓存复用判定 Gate）需要。
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct TrieNode {
     next: HashMap<u8, TrieNode>,
     /// 该字母**前**的 gap 数字（作用于该字母下标位置）。
@@ -24,7 +25,8 @@ pub struct TrieNode {
 }
 
 /// Liang 模式表（`\patterns` 解析结果）。
-#[derive(Debug, Clone, Default)]
+/// `PartialEq`（M5 阶段四）：排版副作用字段比较（缓存复用判定 Gate）需要。
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct PatternTrie {
     root: TrieNode,
     /// 模式总数（诊断用）。
