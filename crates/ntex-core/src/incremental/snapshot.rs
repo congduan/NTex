@@ -107,23 +107,62 @@ pub(crate) fn lex_deps(source: &str) -> SegmentDeps {
         } else {
             start + 1 // 控制符 cs（单字节名字）
         };
+        // cs 名可含非字母字符（catcode 11 的 @/数字等，如 `\foo@bar`）——文本层
+        // 无法知 catcode，保守**延伸到定界符**（空白/组括号/反斜杠/换行）取整段名；
+        // 同时保留字母前缀（真名可能就是前缀：@ 非 letter 时 `\def\foo@bar` 定义
+        // 的是 \foo）。双记只多不少（超近似）；漏记会缓存错（tmp 测试实证：
+        // 编辑 \foo@bar 定义后引用段错误复用旧输出）。
+        let mut end2 = end;
+        while end2 < bytes.len()
+            && !matches!(
+                bytes[end2],
+                b' ' | b'\t' | b'\r' | b'\n' | b'{' | b'}' | b'\\' | b'%' | b'\0'
+            )
+        {
+            end2 += 1;
+        }
+        // 候选名集合：字母前缀（`\foo@bar` 的真名可能是 foo）+ 整段扩展名
+        // （可能是 foo@bar）——文本层不知 catcode，双记只多不少（超近似）。
         let name = std::str::from_utf8(&bytes[start..end]).unwrap_or_default();
-        if !name.is_empty() {
-            if name == "csname" {
-                deps.dynamic_cs = true;
+        let full = if end2 > end {
+            std::str::from_utf8(&bytes[start..end2]).unwrap_or_default()
+        } else {
+            ""
+        };
+        // 处理顺序：
+        // ① 定义目标（pending_def）：候选名全部记**写**，清位；
+        // ② 定义类命令自身（读 + 置 pending_def，其后的 cs 才是写目标）；
+        // ③ 其余（含 \csname）记**读**。
+        let mut targets: Vec<&str> = Vec::new();
+        if !full.is_empty() {
+            targets.push(full);
+            if full != name && !name.is_empty() {
+                targets.push(name);
             }
-            if pending_def {
-                deps.write_cs.insert(name.to_owned());
-                pending_def = false;
-            } else if DEFINING_CS.contains(&name) {
-                // 定义类命令自身也要读（必须是定义），其后的 cs 才是写目标
-                deps.read_cs.insert(name.to_owned());
-                pending_def = true;
-            } else {
-                deps.read_cs.insert(name.to_owned());
+        } else if !name.is_empty() {
+            targets.push(name);
+        }
+        if pending_def {
+            for t in &targets {
+                deps.write_cs.insert(t.to_string());
+            }
+            pending_def = false;
+        } else if targets.iter().any(|t| DEFINING_CS.contains(t)) {
+            for t in &targets {
+                deps.read_cs.insert(t.to_string());
+            }
+            pending_def = true;
+        } else {
+            for t in &targets {
+                if *t == "csname" {
+                    deps.dynamic_cs = true;
+                } else {
+                    deps.read_cs.insert(t.to_string());
+                }
             }
         }
-        i = end;
+        // 指针推进到整段名末尾（扩展名存在时其字符是宏名的一部分，不再作文本扫）
+        i = end2;
     }
     deps
 }

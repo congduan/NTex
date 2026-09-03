@@ -517,3 +517,37 @@ fn bench_edit_one_segment_vs_full() {
     assert!(reused_a >= n_seg - 2, "场景 A 应几乎全部复用：{reused_a}");
     assert!(reused_b >= n_seg - 2, "场景 B 应几乎全部复用：{reused_b}");
 }
+
+#[test]
+fn non_letter_macro_name_invalidation() {
+    // 词法依赖对非字母宏名（\foo@bar，@ 经 \catcode 11 为 letter）必须**超近似**：
+    // 文本层无法知 catcode——字母前缀 \foo 与整段名 \foo@bar 双记，只多不少。
+    // 回归：修复前 lex_deps 只收字母前缀 \foo，编辑 \foo@bar 定义后引用段
+    // 错误复用缓存输出 old（增量 != 全量，违反逐位一致铁律）；tmp 测试实证后
+    // lex_deps 保守延伸定界符修复（2026-09-03 验收）。
+    let mut eng = SegmentEngine::new();
+    let doc = r"\catcode`@=11\relax
+\def\foo@bar{old}
+
+\foo@bar
+";
+    eng.run(doc);
+    assert_eq!(
+        eng.text().trim(),
+        "old",
+        "基线输出应为 old,实际 {:?}",
+        eng.text()
+    );
+    eng.edit(
+        0,
+        r"\catcode`@=11\relax
+\def\foo@bar{new}",
+    )
+    .unwrap();
+    let after = eng.text();
+    assert_eq!(
+        after.trim(),
+        "new",
+        "编辑宏体后末段应失效重算输出 new(若输出 old = 词法漏记 foo@bar 依赖)"
+    );
+}
