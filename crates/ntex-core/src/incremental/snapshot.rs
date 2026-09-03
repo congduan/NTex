@@ -1,49 +1,112 @@
-//! 段边界状态快照 + 段级依赖记录（M5 阶段一，plan.md §7"依赖追踪"）。
+//! 段边界状态快照 + 段级依赖记录（M5 阶段二，plan.md §7"依赖追踪"）。
 //!
-//! 失效判定的两层信息都在这里：
-//! - [`StateSnapshot`]：段执行前/后的引擎状态（值状态精确比较 + eqtb 槽级比较）；
+//! 失效判定的三层信息都在这里：
+//! - [`StateSnapshot`]：段执行前/后的引擎状态——可还原的完整检查点
+//!   （值状态精确比较 + eqtb 槽级比较 + 回滚用真值/控制状态）；
+//! - [`ChainDelta`]：活状态相对旧缓存链的偏差（一次全量扫描，各段判定只查
+//!   偏差集 ∩ 依赖，免每段全状态比较）；
 //! - [`SegmentDeps`]：该段**读过**哪些 cs（词法超近似）与**写过**哪些 cs，
 //!   以及缓存时各读依赖的宏槽版本。
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::sync::Arc;
 
 use crate::eqtb::EqSlot;
-use crate::expand::{Expander, ValueState};
+use crate::expand::{EngineCheckpoint, Expander, ValueState};
 use crate::intern::InternTable;
 
 /// 段边界引擎状态快照（缓存失效判定的基准）。
 ///
 /// **轻量**是硬约束：寄存器文件 32768×5 槽整份克隆 ~3MB，逐段存完整快照不可行，
 /// 故寄存器只带 [`crate::register::Registers::dirty`] 影子表（已写槽的精确值，
-/// 未写槽恒为零值）、其余 `.fmt` 未覆盖字段走指纹。代价是快照**不可回滚**
-/// （阶段二做脏区追踪/COW 后才能跳过"有状态副作用"的段），见 `engine` 模块
-/// 失效判定说明。
+/// 未写槽恒为零值）、其余 `.fmt` 未覆盖字段走指纹（比较）+ 真值（还原）。
+///
+/// 阶段二起快照**可还原**：`EngineCheckpoint` 额外携带指纹覆盖字段的真实值与
+/// 控制状态，`edit` 借此把引擎整体回滚到段前（不再重建引擎）；比较口径不变
+/// （[`ValueState::PartialEq`] + eqtb 逐槽语义相等）。
 #[derive(Debug, Clone)]
 pub(crate) struct StateSnapshot {
-    /// 值状态：catcode/sfcode 表、`\output` 例程、寄存器影子表、其余运行时指纹。
-    /// `PartialEq` 精确比较（阶段一：这些变化按"全局失效"处理，未到槽级）。
-    pub(crate) value: ValueState,
-    /// eqtb 全部槽（浅拷贝：宏体 `Arc` 共享；槽级比较支持"只失效受影响段"）。
-    pub(crate) eqtb: Vec<EqSlot>,
+    /// 完整检查点（eqtb 槽 + 值状态 + 指纹字段真值 + 控制状态）。
+    pub(crate) cp: EngineCheckpoint,
 }
 
 impl StateSnapshot {
     pub(crate) fn capture(e: &Expander) -> Self {
         Self {
-            value: e.value_state(),
-            eqtb: e.eqtb().slots().to_vec(),
+            cp: e.capture_checkpoint(),
         }
+    }
+
+    /// 值状态（比较口径；[`ValueState::PartialEq`] 含运行时指纹）。
+    pub(crate) fn value(&self) -> &ValueState {
+        &self.cp.value
+    }
+
+    /// eqtb 全部槽（浅拷贝：宏体 `Arc` 共享；槽级比较支持"只失效受影响段"）。
+    pub(crate) fn eqtb(&self) -> &[EqSlot] {
+        &self.cp.eqtb
     }
 }
 
 /// 当前状态是否与快照语义一致（值状态精确相等 + eqtb 逐槽语义相等）。
+///
+/// 只用于 `edit` 回滚后的完整性校验（防御检查点字段遗漏）——重放中的失效
+/// 判定走 [`ChainDelta`]（一次全量扫描 + 各段依赖检查），不再逐段全状态比较。
 pub(crate) fn state_matches(value: &ValueState, eqtb: &[EqSlot], snap: &StateSnapshot) -> bool {
-    value == &snap.value && slots_semantically_equal(eqtb, &snap.eqtb)
+    value == snap.value() && slots_semantically_equal(eqtb, snap.eqtb())
 }
 
-/// 两份快照是否语义一致（用于"段是否状态中性"：执行前后状态不变）。
-pub(crate) fn snapshot_semantically_equal(a: &StateSnapshot, b: &StateSnapshot) -> bool {
-    a.value == b.value && slots_semantically_equal(&a.eqtb, &b.eqtb)
+/// 活状态相对旧缓存链的偏差（一次全量扫描的产物，供后续各段廉价判定）。
+///
+/// 编辑重算只改链上一个点：重放首个执行段之后，"活状态 vs 旧链"的偏差就固定
+/// 为一个小集合（通常 = 被编辑宏所在槽）。以它做各段失效判定，免去阶段一
+/// "每段一次全状态比较"（值指纹 + eqtb 全槽深比较——500 段基准的主要开销）。
+/// 偏差为空 = 活状态与旧链精确一致（同步态，缓存段免判定）。
+#[derive(Debug, Clone)]
+pub(crate) struct ChainDelta {
+    /// 值状态有偏差（寄存器/参数/catcode/编码表/流——不做槽级归因，全局失效）。
+    pub(crate) value_differs: bool,
+    /// 语义有偏差的 eqtb 槽（含槽规模变化时多出的尾部槽）。
+    pub(crate) slots: HashSet<u32>,
+}
+
+impl ChainDelta {
+    /// 空偏差（同步态：活状态与参照状态精确一致）。
+    pub(crate) fn empty() -> Self {
+        Self {
+            value_differs: false,
+            slots: HashSet::new(),
+        }
+    }
+
+    /// 活引擎状态相对 `reference`（旧链上"下一段执行前"的状态）的偏差。
+    ///
+    /// 槽规模不一致（段间新驻留 cs / 回滚截断）时，超出共同前缀的槽一律视为
+    /// 变化——"未驻留"即 `Undefined`，与已有槽不等。
+    pub(crate) fn capture(e: &Expander, reference: &StateSnapshot) -> Self {
+        let value_differs = e.value_state() != *reference.value();
+        let cur = e.eqtb().slots();
+        let snap = reference.eqtb();
+        let common = cur.len().min(snap.len());
+        let mut slots: HashSet<u32> = HashSet::new();
+        for (csid, (a, b)) in cur[..common].iter().zip(&snap[..common]).enumerate() {
+            if !slot_semantically_equal(a, b) {
+                slots.insert(csid as u32);
+            }
+        }
+        for csid in common..cur.len().max(snap.len()) {
+            slots.insert(csid as u32);
+        }
+        Self {
+            value_differs,
+            slots,
+        }
+    }
+
+    /// 是否无偏差（值状态一致 + 无变化槽）。
+    pub(crate) fn is_empty(&self) -> bool {
+        !self.value_differs && self.slots.is_empty()
+    }
 }
 
 /// 段级依赖记录。
@@ -191,9 +254,15 @@ impl SegmentDeps {
 /// 内容不变则后续任何段的输出都不可能变化，依赖判定必须按内容比，才能把
 /// 这种空转重定义识别为"未失效"（`MacroDef::PartialEq` 本就只比参数规格与
 /// 宏体、不比字节码，即语义相等）。
+///
+/// 快路径：两份快照/活状态里的宏体多为同一 `Arc`（快照浅拷贝共享），指针相等
+/// 即内容相等——免去逐 token 深比较。这是每次失效判定的主要开销来源（500 段
+/// 文档一轮判定 = 500 × 全槽扫描），`Arc` 的 `PartialEq` 会退化为解引用深比较。
 pub(crate) fn slot_semantically_equal(a: &EqSlot, b: &EqSlot) -> bool {
     match (a, b) {
-        (EqSlot::Macro(x), EqSlot::Macro(y)) => x.value == y.value,
+        (EqSlot::Macro(x), EqSlot::Macro(y)) => {
+            Arc::ptr_eq(&x.value, &y.value) || x.value == y.value
+        }
         _ => a == b,
     }
 }
@@ -203,34 +272,31 @@ pub(crate) fn slots_semantically_equal(a: &[EqSlot], b: &[EqSlot]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| slot_semantically_equal(x, y))
 }
 
-/// 槽集合（按名字给定）中是否有与快照不一致的。
+/// **写集**是否触及偏差槽。
 ///
-/// 用于**写集**判定：段要写的槽若已被动过，跳过该段执行会让"本应重写的值"
-/// 停留在被改后的值，后续读它的段就会拿到错值（见 `engine` 失效判定分支 2）。
-pub(crate) fn names_changed_slot(
+/// 段要写的槽若已被动过，跳过该段执行会让"本应重写的值"停留在被改后的值，
+/// 后续读它的段就会拿到错值（见 `engine` 失效判定分支 2）。
+pub(crate) fn writes_touch_slots(
     intern: &InternTable,
-    cur_eqtb: &[EqSlot],
-    snap_eqtb: &[EqSlot],
     names: &BTreeSet<String>,
+    slots: &HashSet<u32>,
 ) -> bool {
-    names.iter().filter_map(|n| intern.lookup(n)).any(|csid| {
-        match (cur_eqtb.get(csid as usize), snap_eqtb.get(csid as usize)) {
-            (Some(x), Some(y)) => !slot_semantically_equal(x, y),
-            (x, y) => x != y,
-        }
-    })
+    names
+        .iter()
+        .filter_map(|n| intern.lookup(n))
+        .any(|csid| slots.contains(&csid))
 }
 
-/// 读依赖闭包是否触及某个**发生变化的槽**。
+/// 读依赖闭包是否触及**偏差槽**。
 ///
-/// 闭包 = 段内词法引用的 cs → 其当前宏体内引用的 cs（逐层展开）→ `\let` 别名
-/// 指向的 cs。逐个访问到的槽都与缓存时比较：任一不等即"读依赖被动过"。
-/// 沿用**当前**宏体遍历保证健全：宏体变了，该槽本身就会先被判不等而返回。
-pub(crate) fn reads_changed_slot(
+/// 闭包 = 段内词法引用的 cs → 其宏体内引用的 cs（逐层展开）→ `\let` 别名指向
+/// 的 cs。沿**当前**宏体遍历保证健全：闭包里某个宏的槽在偏差集里，访问到它
+/// 时立即返回；不在偏差集里则其宏体与缓存时一致，继续遍历不漏。
+pub(crate) fn reads_touch_slots(
     intern: &InternTable,
-    cur_eqtb: &[EqSlot],
-    snap_eqtb: &[EqSlot],
+    eqtb: &[EqSlot],
     deps: &SegmentDeps,
+    slots: &HashSet<u32>,
 ) -> bool {
     let csname_csid = intern.lookup("csname");
     let mut visited: HashSet<u32> = HashSet::new();
@@ -243,15 +309,10 @@ pub(crate) fn reads_changed_slot(
         if !visited.insert(csid) {
             continue;
         }
-        let cur = cur_eqtb.get(csid as usize);
-        let changed = match (cur, snap_eqtb.get(csid as usize)) {
-            (Some(x), Some(y)) => !slot_semantically_equal(x, y),
-            (x, y) => x != y,
-        };
-        if changed {
+        if slots.contains(&csid) {
             return true;
         }
-        match cur {
+        match eqtb.get(csid as usize) {
             Some(EqSlot::Macro(v)) => {
                 // `\csname` 可在运行期构造任意 cs 名 → 保守失效
                 if let Some(csn) = csname_csid {

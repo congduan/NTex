@@ -417,15 +417,19 @@ fn malformed_input_across_segments_no_panic() {
     }
 }
 
-// ─── 基准雏形（M5 阶段一留数字，不达标）───────────────────────────────────
-// 场景 A（改正文中段，廉价路径）与场景 B（改宏体，保底重建状态链）各测一次。
-// 实测（501 段，2 核受限 VM，dev profile，2026-09-03）：全量 241.5ms；
-// 场景 A 39.1ms（6.2x，复用 500/501）；场景 B 105.0ms（2.3x，复用 499/501）。
-// 离 100x 的差距 = 失效判定逐段重算指纹 + 每段一次 run()（看门狗线程）+ 保底
-// 路径重建状态链；阶段二以可回滚快照 + 判定增量维护收敛。路径语义见 `engine` 模块头注释。
+// ─── 基准（M5 阶段二：可回滚段快照 + 单路径 edit）─────────────────────────
+// 场景 A（改正文中段，状态中性）与场景 B（改宏体，引入状态偏差）各测一次。
+// 实测（501 段，2 核受限 VM，dev profile，多次取值 4.9~5.3 / 10.6~11.2ms）：
+//   阶段一（0099b1f，两条路径 + 全状态逐段判定）：全量 294.1ms；场景 A 39.0ms
+//   （7.6x）；场景 B 107.2ms（2.7x，保底路径重建状态链）。
+//   阶段二（回滚到段前 + 链偏差判定）：全量 ~275-295ms（持平）；场景 A ~5ms
+//   （~56x）；场景 B ~11ms（~26x）；restarts = 0（不再重建引擎）。
+// 剩余开销：每次执行段后一次链偏差全量扫描（value_state 指纹 + eqtb 全槽比较）、
+// 每段一次 run()（含看门狗线程）、每段边界两份完整检查点的捕获。离 100x 还差：
+// 偏差集的增量维护（免全量扫描）、副作用边界（RFC-3）、值状态槽级归因。
 
 #[test]
-#[ignore = "基准（M5 阶段一留数字）：cargo test -p ntex-core --lib incremental -- --ignored --nocapture"]
+#[ignore = "基准（M5 阶段二）：cargo test -p ntex-core --lib incremental -- --ignored --nocapture"]
 fn bench_edit_one_segment_vs_full() {
     let n_body = 500usize;
     let defs = (0..n_body)
@@ -444,7 +448,7 @@ fn bench_edit_one_segment_vs_full() {
     let full_elapsed = t.elapsed();
     assert_eq!(results.len(), n_seg);
 
-    // 场景 A：改正文中段的措辞（状态中性 → 廉价路径，前缀缓存原样保留）
+    // 场景 A：改正文中段的措辞（状态中性 → 重放后零偏差，其后各段免判定复用）
     let mid = n_body / 2;
     let para_a = format!(
         "Paragraph {mid} mentions \\w{} (revised).\n\n",
@@ -469,7 +473,8 @@ fn bench_edit_one_segment_vs_full() {
     refull_a.run(&doc_a);
     assert_eq!(full.text(), refull_a.text(), "场景 A：增量 != 全量");
 
-    // 场景 B：改宏定义段里的一个宏体（编辑段有状态副作用 → 保底路径重建状态链）
+    // 场景 B：改宏定义段里的一个宏体（编辑引入状态偏差 → 回滚到段 0 前重放，
+    // 后续段按链偏差依赖判定复用）
     let defs_b = (0..n_body)
         .map(|i| match i == mid {
             true => format!("\\def\\w{}{{word-{mid}-REVISED}}", cs_suffix(i)),
@@ -495,27 +500,29 @@ fn bench_edit_one_segment_vs_full() {
     let ratio = |a: std::time::Duration, b: std::time::Duration| {
         b.as_secs_f64().max(1e-9) / a.as_secs_f64().max(1e-9)
     };
-    println!("── M5 阶段一基准（段级增量 vs 全量，{n_seg} 段）─────────────");
+    println!("── M5 阶段二基准（段级增量 vs 全量，{n_seg} 段）─────────────");
     println!(
         "全量（全新引擎逐段执行）      : {:>9.2} ms",
         full_elapsed.as_secs_f64() * 1e3
     );
     println!(
-        "场景 A 改正文 1 段（廉价路径） : {:>9.2} ms  加速 {:>6.1}x  复用 {reused_a}/{n_seg}",
+        "场景 A 改正文 1 段（零偏差复用）: {:>9.2} ms  加速 {:>6.1}x  复用 {reused_a}/{n_seg}",
         elapsed_a.as_secs_f64() * 1e3,
         ratio(elapsed_a, full_elapsed)
     );
     println!(
-        "场景 B 改宏体（保底重建状态链）: {:>9.2} ms  加速 {:>6.1}x  复用 {reused_b}/{n_seg}",
+        "场景 B 改宏体（回滚+依赖判定） : {:>9.2} ms  加速 {:>6.1}x  复用 {reused_b}/{n_seg}",
         elapsed_b.as_secs_f64() * 1e3,
         ratio(elapsed_b, full_elapsed)
     );
     println!("引擎统计                      : {:?}", full.stats());
-    println!("剩余开销：每次失效判定 = value_state 指纹 + eqtb 槽比较 + 边界检查；");
-    println!("每段一次 run()（含看门狗线程创建）。阶段二：可回滚快照 + 判定增量维护。");
+    println!("剩余开销：每次执行段后一次链偏差全量扫描（指纹 + eqtb 全槽）、每段一次 run()；");
+    println!("离 100x：偏差集增量维护、副作用边界（RFC-3）、值状态槽级归因。");
     println!("────────────────────────────────────────────────────────────");
     assert!(reused_a >= n_seg - 2, "场景 A 应几乎全部复用：{reused_a}");
     assert!(reused_b >= n_seg - 2, "场景 B 应几乎全部复用：{reused_b}");
+    // 单路径：基准里的两类编辑都不再重建引擎（阶段一场景 B 走保底路径 restarts=1）
+    assert_eq!(full.stats().restarts, 0, "编辑不得重建引擎");
 }
 
 #[test]
@@ -549,5 +556,296 @@ fn non_letter_macro_name_invalidation() {
         after.trim(),
         "new",
         "编辑宏体后末段应失效重算输出 new(若输出 old = 词法漏记 foo@bar 依赖)"
+    );
+}
+
+// ─── M5 阶段二：检查点回滚 ─────────────────────────────────────────────────
+//
+// 阶段二把 `edit` 从"两条路径"（活状态未推进 → 前缀复用；已推进 → 全新引擎
+// 重建）改为**一条路径**：引擎整体回滚到段前快照，再从该段起重放。回滚的
+// 正确性 = 检查点字段完整 + 还原逐位复原，以下测试分别锁：
+
+/// 编辑序列的逐位一致校验：每次编辑后，增量输出 == "累积编辑后的文档全量重跑"。
+///
+/// 参考文档 = 各段源码（含替换后的）按序拼接——与 `edit` 替换单段源码的口径
+/// 一致（段数不变）。
+fn assert_edits_match_full(doc: &str, edits: &[(usize, &str)]) {
+    let mut eng = SegmentEngine::new();
+    eng.run(doc);
+    let mut segs = segmentize(doc);
+    for &(idx, src) in edits {
+        assert!(
+            idx < segs.len(),
+            "段下标 {idx} 越界（共 {} 段）",
+            segs.len()
+        );
+        segs[idx] = src.to_owned();
+        eng.edit(idx, src).expect("段下标合法");
+        let reference = segs.concat();
+        let mut full = SegmentEngine::new();
+        full.run(&reference);
+        assert_eq!(
+            eng.text(),
+            full.text(),
+            "编辑段 {idx} 后 增量 != 全量（编辑序列 {edits:?}）"
+        );
+        assert_eq!(
+            eng.segments().concat(),
+            reference,
+            "段列表拼接必须与参考文档一致"
+        );
+    }
+}
+
+#[test]
+fn checkpoint_roundtrip_restores_value_state() {
+    // 检查点完整性（回滚健全性的根）：对每类状态改动做
+    // 捕获 → 用"泥沙"改动污染全部状态类别 → 还原 → value_state/eqtb 必须逐位
+    // 复原。`value_state` 的 `runtime_digest` 覆盖 catcode/sfcode/寄存器以外的
+    // 全部指纹字段——检查点漏掉任何一个字段，还原后指纹就对不上。
+    use crate::expand::Expander;
+    let snippets = [
+        "\\count0=7 \\dimen1=9pt \\skip2=3pt plus 1fil \\toks4={toks body}",
+        "\\catcode`\\@=11 \\sfcode`\\.=3000",
+        "\\lccode`\\a=`\\b \\uccode`\\x=`\\Y \\mathcode`\\+=1234 \\delcode`\\|=5678",
+        "\\everypar{[p]} \\everymath{[m]} \\everyhbox{[h]} \\everyvbox{[v]}",
+        "\\everycr{[c]} \\everydisplay{[d]} \\errhelp{[e]}",
+        "\\hsize=100pt \\tolerance=99 \\parindent=1pt \\vsize=500pt \\topskip=12pt",
+        "\\parshape 2 0pt 10pt 1pt 9pt \\interlinepenalties 2 10 20",
+        "\\thinmuskip=3mu \\output{\\relax}",
+    ];
+    // 泥沙：把每个状态类别都改成"捕获值以外的值"（与 snippets 中的值均不同）
+    let mud = "\\count0=1 \\dimen1=2pt \\skip2=4pt \\toks4={m} \\catcode`\\@=12 \
+               \\sfcode`\\.=2000 \\lccode`\\a=`\\z \\uccode`\\x=`\\W \\mathcode`\\+=999 \
+               \\delcode`\\|=111 \\everypar{Q} \\everymath{Q} \\everyhbox{Q} \\everyvbox{Q} \
+               \\everycr{Q} \\everydisplay{Q} \\errhelp{Q} \\hsize=1pt \\tolerance=1 \
+               \\parindent=2pt \\vsize=3pt \\topskip=4pt \\parshape 1 2pt 3pt \
+               \\interlinepenalties 1 7 \\thinmuskip=5mu \\output{}";
+    for src in snippets {
+        let mut e = Expander::new();
+        let _ = e.run_source(src);
+        let value = e.value_state();
+        let eqtb = e.eqtb().slots().to_vec();
+        let cp = e.capture_checkpoint();
+        let _ = e.run_source(mud);
+        e.restore_checkpoint(&cp);
+        assert_eq!(
+            e.value_state(),
+            value,
+            "检查点还原不完整（值状态/指纹不符）：{src}"
+        );
+        assert!(e.eqtb().slots() == eqtb, "检查点还原不完整（eqtb）：{src}");
+    }
+}
+
+#[test]
+fn edit_stateful_segment_rollback_matches_full() {
+    // 编辑带状态副作用的段（寄存器赋值）：回滚到段前后重放，后续段必须读到
+    // 新值。阶段一这条路径要重建整个引擎（501 段文档全量重放）。
+    assert_edits_match_full(
+        "\\def\\pre{P}\n\n\\count0=1 \\pre\n\nthe count is \\the\\count0.\n\n",
+        &[(1, "\\count0=42 \\pre\n\n")],
+    );
+    // 寄存器赋值段不动、只改它前面的正文：段 1 的副作用必须原样重现
+    assert_edits_match_full(
+        "hello\n\n\\count0=3\n\nvalue is \\the\\count0.\n\n",
+        &[(0, "hello world\n\n")],
+    );
+}
+
+#[test]
+fn sync_reuse_of_stateful_segment_restores_its_effect() {
+    // 同步态复用有状态副作用的段：跳过执行必须把它写的值"补上"（还原其 post
+    // 检查点），否则后续段读到旧值。阶段一无状态回滚，只能把非中性段整体拒算。
+    let doc = "hello\n\n\\count0=3\n\nvalue is \\the\\count0.\n\n";
+    let mut eng = SegmentEngine::new();
+    eng.run(doc);
+    let results = eng.edit(0, "hello world\n\n").expect("段下标合法");
+    // 正文编辑不引入状态偏差 → 段 1、2 同步复用（含有副作用的段 1）
+    assert!(results[1].from_cache, "零偏差时有副作用段也可复用");
+    assert!(results[2].from_cache);
+    assert_eq!(eng.stats().reused, 2);
+    assert!(
+        eng.text().contains("value is 3."),
+        "复用段的状态副作用必须生效：{:?}",
+        eng.text()
+    );
+}
+
+#[test]
+fn edit_catcode_rollback_matches_full() {
+    // \catcode 属值状态：编辑改动 catcode 的段，回滚必须把它还原，后续段的
+    // token 化才能复现全量结果。
+    assert_edits_match_full(
+        "\\catcode`\\@=11 \\def\\my@macro{PRIVATE}\n\n\\my@macro\n\n",
+        &[(0, "\\catcode`\\@=11 \\def\\my@macro{CHANGED}\n\n")],
+    );
+    assert_edits_match_full(
+        "\\catcode`\\@=11 \\def\\my@macro{PRIVATE}\n\n\\my@macro\n\n",
+        &[(1, "\\my@macro plus \\my@macro\n\n")],
+    );
+}
+
+#[test]
+fn edit_rollback_then_earlier_edit_matches_full() {
+    // 连续多次编辑，且后一次编辑的段在更前面（k 之后又 j<k）：每次都要回滚到
+    // 对应段执行前，任何一次状态没回滚干净都会在结果里留痕。
+    assert_edits_match_full(
+        "\\def\\a{1}\n\n\\def\\b{\\a}\n\n\\count0=5 \\b\n\nvalue \\the\\count0.\n\n",
+        &[
+            (3, "\\count0=7 \\b\n\n"),
+            (1, "\\def\\b{\\a TWO}\n\n"),
+            (0, "\\def\\a{ONE}\n\n"),
+            (2, "\\count0=8 \\b \\count1=9\n\n"),
+        ],
+    );
+}
+
+#[test]
+fn edits_never_restart_engine() {
+    // 单路径化：改正文/改宏体/改 catcode/改寄存器都不再重建引擎（restarts 恒 0）。
+    let doc = "\\def\\a{A}\n\n\\count0=1\n\n\\catcode`\\@=11\n\nuse \\a \\the\\count0.\n\n";
+    let mut eng = SegmentEngine::new();
+    eng.run(doc);
+    for (idx, src) in [
+        (3usize, "use \\a \\the\\count0 again.\n\n"),
+        (0, "\\def\\a{B}\n\n"),
+        (1, "\\count0=2\n\n"),
+        (2, "\\catcode`\\@=12\n\n"),
+    ] {
+        eng.edit(idx, src).expect("段下标合法");
+        assert_eq!(eng.stats().restarts, 0, "编辑段 {idx} 走了重建路径");
+    }
+}
+
+#[test]
+fn edit_keeps_injected_vfs() {
+    // 单路径化的另一面：编辑不再 new 一个引擎，用户注入的环境（自定义 VFS、
+    // 预载 `.fmt`）在编辑后仍然有效。阶段一保底路径会把它们一起丢掉。
+    let mut vfs = ntex_io::MemVfs::new();
+    vfs.insert("chap.tex", "chapter body");
+    let mut eng = SegmentEngine::new();
+    eng.expander_mut().set_vfs(Box::new(vfs));
+    let doc = "\\def\\part{ONE}\n\n\\input{chap}\n\n\\part\n\n";
+    eng.run(doc);
+    assert!(eng.text().contains("chapter body"), "{:?}", eng.text());
+    eng.edit(0, "\\def\\part{TWO}\n\n").expect("段下标合法");
+    assert!(
+        eng.text().contains("chapter body"),
+        "编辑后 VFS 失效 = 引擎被重建：{:?}",
+        eng.text()
+    );
+    // 引擎对象未被替换（仍是注入 MemVfs 的那个）
+    let mut taken = eng.expander_mut().take_vfs();
+    let vfs = taken
+        .as_any_mut()
+        .downcast_mut::<ntex_io::MemVfs>()
+        .expect("VFS 变回默认 LocalVfs = 走了重建路径");
+    assert!(vfs.get("chap.tex").is_some());
+}
+
+#[test]
+fn edit_inside_unclosed_group_rolls_back_control_state() {
+    // 跨段构造（悬挂的数学模式 `$`）：段 1 进入数学态未退出，段 2 在悬挂态下
+    // 执行。编辑段 2 → 回滚必须把悬挂的控制状态一并还原（控制状态进检查点），
+    // 重放语义才与全量一致。未闭合 `{` 同理，只是它同时改变切段深度（后段并入）。
+    let doc = "\\def\\v{V}\n\n$\\v\n\ninside \\v.\n\n";
+    let mut eng = SegmentEngine::new();
+    eng.run(doc);
+    assert_eq!(eng.segments().len(), 3, "{:?}", eng.segments());
+    assert!(
+        !eng.expander().boundary_is_clean(),
+        "悬挂 $ → 脏边界（前置条件）"
+    );
+    eng.edit(2, "inside EDITED \\v.\n\n").expect("段下标合法");
+    let mut segs = segmentize(doc);
+    segs[2] = "inside EDITED \\v.\n\n".to_owned();
+    let mut full = SegmentEngine::new();
+    full.run(&segs.concat());
+    assert_eq!(eng.text(), full.text(), "悬挂态内的段编辑后 增量 != 全量");
+
+    // 未闭合 `{`：悬挂组与其后内容并入同段，编辑该段 = 回滚到干净边界后重算
+    let doc2 = "\\def\\v{V}\n\n{\\v\n\ninside \\v.\n\n";
+    let mut eng2 = SegmentEngine::new();
+    eng2.run(doc2);
+    assert!(!eng2.expander().boundary_is_clean());
+    eng2.edit(1, "{\\v DEEPER\n\ninside EDITED \\v.\n\n")
+        .expect("段下标合法");
+    let mut segs2 = segmentize(doc2);
+    segs2[1] = "{\\v DEEPER\n\ninside EDITED \\v.\n\n".to_owned();
+    let mut full2 = SegmentEngine::new();
+    full2.run(&segs2.concat());
+    assert_eq!(eng2.text(), full2.text(), "悬挂组内编辑后 增量 != 全量");
+}
+
+#[test]
+fn edit_sweep_all_segments_matches_full() {
+    // 系统化抽测：对文档每个段 × 每类编辑（正文/宏体/寄存器赋值/catcode/\everypar）
+    // 各做一次单段编辑，增量必须与"编辑后文档全量重跑"逐位一致，且都不走重建。
+    let base = [
+        "\\def\\w{one}",
+        "\\count0=5",
+        "\\catcode`\\@=11",
+        "plain text \\w",
+        "count is \\the\\count0",
+        "\\def\\w{two} \\w",
+    ];
+    let variants = [
+        "\\def\\w{EDITED}",
+        "\\count0=9",
+        "\\catcode`\\@=12",
+        "EDITED text",
+        "x",
+        "\\everypar{[p]}",
+    ];
+    for idx in 0..base.len() {
+        for variant in variants {
+            // 段体各带一个空行边界，保证切段结果 = base 的每行一段
+            let mut segs = base.iter().map(|s| format!("{s}\n\n")).collect::<Vec<_>>();
+            segs[idx] = format!("{variant}\n\n");
+            let doc = base.iter().map(|s| format!("{s}\n\n")).collect::<String>();
+            let mut eng = SegmentEngine::new();
+            eng.run(&doc);
+            assert_eq!(eng.segments().len(), base.len(), "前置条件：切段数");
+            eng.edit(idx, &segs[idx]).expect("段下标合法");
+            let mut full = SegmentEngine::new();
+            full.run(&segs.concat());
+            assert_eq!(
+                eng.text(),
+                full.text(),
+                "段 {idx} 编辑为 {variant:?} 后 增量 != 全量"
+            );
+            assert_eq!(eng.stats().restarts, 0, "段 {idx} 走了重建路径");
+        }
+    }
+}
+
+#[test]
+fn edit_segments_never_run_before_is_error_free() {
+    // 编辑从未执行到的段（前一轮在更早的段出错终止）：回滚目标退到最近的更早
+    // 缓存段；错误段本身未修复时缓存错误原样复现，修复后后续段能正常跑完。
+    let doc = "\\def\\ok{fine}\n\n\\input{no-such-file}\n\ntail \\ok.\n\n";
+    let mut eng = SegmentEngine::new();
+    let results = eng.run(doc);
+    assert_eq!(results.len(), 2, "出错段之后的段不产出");
+    assert!(results[1].error.is_some(), "前置条件：段 1 出错");
+    assert!(!eng.is_cached(2), "段 2 从未执行 → 无缓存");
+    // 编辑其后从未跑过的段：重放须从回滚目标起补跑中间段（输出不得缺段）
+    let results = eng.edit(2, "tail EDITED \\ok.\n\n").expect("编辑未跑段");
+    assert_eq!(results.len(), 2, "出错段仍终止后续段");
+    let mut segs = segmentize(doc);
+    segs[2] = "tail EDITED \\ok.\n\n".to_owned();
+    let mut full = SegmentEngine::new();
+    let reference = full.run(&segs.concat());
+    assert_eq!(reference.len(), 2, "全量同样停在出错段");
+    assert_eq!(eng.text(), full.text(), "编辑未跑段后 增量 != 全量");
+    // 修复出错段：其后从未跑过的段随重放执行
+    let results = eng
+        .edit(1, "\\def\\fixed{fixed} \\fixed\n\n")
+        .expect("编辑失败段");
+    assert_eq!(results.len(), 3, "错误修复后后续段应产出");
+    assert_eq!(
+        eng.text(),
+        full_text("\\def\\ok{fine}\n\n\\def\\fixed{fixed} \\fixed\n\ntail EDITED \\ok.\n\n"),
     );
 }

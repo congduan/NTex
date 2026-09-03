@@ -41,8 +41,11 @@ use ntex_io::{LocalVfs, Vfs};
 type FontLoad = (String, Option<i64>, Option<i64>);
 
 /// 输入帧：token 来源栈（LIFO，栈顶为当前帧）。
-#[derive(Debug)]
-enum InputFrame {
+///
+/// `Clone`（M5 阶段二）：段级回滚还原 [`ControlState::stack`]，需要克隆悬挂
+/// 的输入帧（内容均为 `Arc`/`Copy`，克隆廉价）。
+#[derive(Debug, Clone)]
+pub(crate) enum InputFrame {
     /// 源码帧：字节流 + 扫描位置 + 行状态（空行 → `\par` 判定）。
     Source {
         bytes: Arc<[u8]>,
@@ -88,7 +91,7 @@ enum CondState {
 
 /// 条件栈帧（M1-9）。
 #[derive(Debug, Clone)]
-struct CondFrame {
+pub(crate) struct CondFrame {
     /// 是否为 `\ifcase` 帧。
     is_case: bool,
     state: CondState,
@@ -194,8 +197,11 @@ enum Relation {
 }
 
 /// 组作用域保存项（M1-11 朴素快照回滚）。
-#[derive(Debug)]
-enum SavedValue {
+///
+/// `Clone`（M5 阶段二）：段级回滚把 [`ControlState::save_stack`] 整体还原到
+/// 段前状态，需要克隆悬挂的保存项。
+#[derive(Debug, Clone)]
+pub(crate) enum SavedValue {
     Eqtb {
         csid: u32,
         prev: EqSlot,
@@ -317,8 +323,11 @@ enum SlotAction {
 }
 
 /// 读流（RFC-3）：`\openin` 时读入内存，`\read` 逐行消费。
-#[derive(Debug)]
-struct ReadStream {
+///
+/// `Clone`（M5 阶段二）：段级回滚还原读流表；`data` 在 `\openin` 后只读
+/// （`\read` 只推进 `pos`），克隆即完整状态。
+#[derive(Debug, Clone)]
+pub(crate) struct ReadStream {
     /// 目标路径（错误信息用）。
     _path: String,
     /// 文件内容。
@@ -328,8 +337,10 @@ struct ReadStream {
 }
 
 /// 写流（RFC-3）：`\openout` 登记路径，`\write` 入队，flush 边界落盘。
-#[derive(Debug)]
-struct WriteStream {
+///
+/// `Clone`（M5 阶段二）：段级回滚还原写流表（待写内容 token 列表 `Arc` 共享）。
+#[derive(Debug, Clone)]
+pub(crate) struct WriteStream {
     /// 目标路径；None = 未 `\openout`（`\write` 到该流报错）。
     path: Option<String>,
     /// 延迟待写 token 列表（`\write` 入队；flush 时展开落盘）。
@@ -2225,6 +2236,9 @@ include!("io.rs");
 
 // ---------- 方法分片：save.rs ----------
 include!("save.rs");
+
+// ---------- 方法分片：checkpoint.rs（M5 阶段二：段边界完整状态检查点） ----------
+include!("checkpoint.rs");
 
 // ---------- 方法分片：scan.rs ----------
 include!("scan.rs");

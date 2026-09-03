@@ -231,6 +231,26 @@ impl Registers {
         self.toks[idx] = Arc::clone(&v);
         self.dirty.insert((4, idx), RegisterValue::Toks(v));
     }
+
+    /// 从影子表还原（M5 阶段二段级回滚）：未写槽归零、已写槽按影子表重放。
+    ///
+    /// 寄存器文件 32768×5 槽整份入快照 ~3MB 不可行，快照只携带 [`Self::dirty`]；
+    /// 未写入槽恒为零值（`ValueState` 比较口径的前提），故还原 = 整份复位后按
+    /// 影子表重放，结果与"从未写过这些槽再逐个赋值"精确一致。类别号与上方
+    /// `set_*` 的 insert 键一致（0=count/1=dimen/2=skip/3=muskip/4=toks）。
+    pub fn restore_dirty(&mut self, dirty: &BTreeMap<(u8, usize), RegisterValue>) {
+        *self = Self::new();
+        for (&(kind, idx), value) in dirty {
+            match (kind, value) {
+                (0, RegisterValue::Int(v)) => self.set_count(idx, *v),
+                (1, RegisterValue::Int(v)) => self.set_dimen(idx, *v),
+                (2, RegisterValue::Glue(v)) => self.set_skip(idx, *v),
+                (3, RegisterValue::Glue(v)) => self.set_muskip(idx, *v),
+                (4, RegisterValue::Toks(v)) => self.set_toks(idx, v.clone()),
+                _ => {} // 类别号与影子表同源产生，不可达
+            }
+        }
+    }
 }
 
 /// 寄存器状态快照（`.fmt` v1 序列化载体）。
