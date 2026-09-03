@@ -1341,6 +1341,29 @@ I changed this one to zero.
     }
 
     #[test]
+    fn misc_int_param_expands_macro_in_value() {
+        // trip.tex L103 `\tracingoutput\on`：内部整数参数赋值后跟**宏**值——
+        // TeX scan_int/get_x_token 展开后赋值。2026-09-03 前 \on 未展开直接
+        // 当"单独出现 no-op"，\tracingoutput 永不开启（TRIP shipout 转录缺失
+        // 根因之一）。同族：\tracingcommands2 直接数字早已可用。
+        assert_eq!(
+            expand(r"\def\on{1}\tracingoutput\on\the\tracingoutput").unwrap(),
+            "1"
+        );
+        assert_eq!(
+            expand(r"\def\two{2}\tracingcommands\two\the\tracingcommands").unwrap(),
+            "2"
+        );
+        // 不可展开 cs 后跟 = 仍正常赋值
+        assert_eq!(
+            expand(r"\def\x{3}\tracingstats=\x\the\tracingstats").unwrap(),
+            "3"
+        );
+        // 单独出现（无值）仍 no-op 不吞后续（ETRIP $\splitdiscards\noindent 语义）
+        assert_eq!(expand(r"\tracingstats A").unwrap(), "A");
+    }
+
+    #[test]
     fn ifdim_with_units() {
         assert_eq!(expand("\\ifdim1pt<2pt yes\\else no\\fi").unwrap(), "yes");
         // pdfTeX 实测：1in=4736286sp；72.27pt 四舍五入后 = 4736287sp ≠ 1in，

@@ -140,53 +140,74 @@ impl Expander {
             // 水平/垂直模式输出数字）。仅当 `=` 存在才是赋值（`\splitdiscards=1`）。
             p if int_param_index(p).is_some() => {
                 let idx = int_param_index(p).expect("已检查 is_some");
+                // TeX 赋值语义：`=`(可选) 后跟 <integer>；<integer> 可经宏/可展开
+                // 原语产生（trip.tex L103 `\tracingoutput\on`——\on 是宏=1；
+                // 2026-09-03 前 \on 未展开直接当"单独出现 no-op"，tracingoutput
+                // 永不开启 → TRIP shipout 转录缺失）。展开后重新判定；非数字
+                // 且不可展开才是单独出现 no-op（`$\splitdiscards\noindent`）。
                 self.skip_spaces()?;
-                let Some((tok, _)) = self.fetch()? else {
-                    return Ok(());
-                };
-                if tok.charcode() == Some(b'=' as u32) {
-                    let v = self.scan_number()?;
-                    // TRIP 语义：\prevgraf 只允许非负（trip L392 `\prevgraf=-1` 报
-                    // "! Bad \prevgraf (-1)." 恢复为 0；参考 log 对齐）
-                    if p == Primitive::PrevGraf && v < 0 {
-                        self.report_error(&format!("Bad \\\\prevgraf ({v})."));
-                        self.assign_param(ParamKind::MiscInt(idx), ParamValue::Number(0))
-                    } else {
-                        self.assign_param(ParamKind::MiscInt(idx), ParamValue::Number(v))
+                loop {
+                    let Some((tok, _)) = self.fetch()? else {
+                        return Ok(()); // EOF：单独出现 no-op
+                    };
+                    if tok.charcode() == Some(b'=' as u32) {
+                        break;
                     }
-                } else {
-                    // 无 `=`：TeX 可选 `=` 语义——后跟 <integer> 仍是赋值
-                    // （`\tracingcommands2`；9b0bc69 曾把数字也当"单独出现"
-                    // no-op 丢弃，导致 TRIP 的 \tracingcommands 永不开启）；
-                    // 后跟非数字才是单独出现 no-op（`$\splitdiscards\noindent`）。
-                    if matches!(tok.catcode(), Some(Catcode::Other))
+                    let is_digit = matches!(tok.catcode(), Some(Catcode::Other))
                         && matches!(
                             tok.charcode(),
                             Some(c)
                                 if (b'0' as u32..=b'9' as u32).contains(&c)
                                     || c == b'+' as u32
                                     || c == b'-' as u32
-                        )
-                    {
+                        );
+                    if is_digit {
                         self.unread(tok);
-                        let v = self.scan_number()?;
-                        if p == Primitive::PrevGraf && v < 0 {
-                            self.report_error(&format!("Bad \\\\\\\\prevgraf ({v})."));
-                            self.assign_param(ParamKind::MiscInt(idx), ParamValue::Number(0))
-                        } else {
-                            self.assign_param(ParamKind::MiscInt(idx), ParamValue::Number(v))
-                        }
-                    } else {
-                        self.unread(tok);
-                        // 单独出现（无 `=`）：no-op——TeX 内部整数在主循环/数学
-                        // 模式均不读值（TRIP `{\tracingstats}` 追踪后无操作；
-                        // ETRIP `$\splitdiscards` 数学模式同样 no-op——参考
-                        // showbox27 空数学，l.1148 的 Missing $ inserted 由
-                        // `\noindent`/`}` 触发）
-                        Ok(())
+                        break;
                     }
+                    // cs：可展开（宏/展开原语）→ 展开压栈后重判（TeX get_x_token）
+                    if let Some(csid) = tok.csid() {
+                        let slot = self.eqtb.slot(csid).clone();
+                        let expandable = match &slot {
+                            EqSlot::Macro(m) => {
+                                !(m.value.protected && self.suppress_expansion > 0)
+                            }
+                            EqSlot::Primitive(p) => p.is_expandable(),
+                            _ => false,
+                        };
+                        if expandable {
+                            let mut expansion = Vec::new();
+                            self.expand_once((tok, false), &mut expansion)?;
+                            if !expansion.is_empty() {
+                                let items: Vec<(Token, bool)> = expansion.into_iter().collect();
+                                self.stack.push(InputFrame::TokenList {
+                                    items: Arc::from(items),
+                                    pos: 0,
+                                });
+                            }
+                            continue;
+                        }
+                    }
+                    self.unread(tok);
+                    // 单独出现（无 `=` 非数字）：no-op——TeX 内部整数在主循环/数学
+                    // 模式均不读值（TRIP `{\tracingstats}` 追踪后无操作；
+                    // ETRIP `$\splitdiscards` 数学模式同样 no-op——参考
+                    // showbox27 空数学，l.1148 的 Missing $ inserted 由
+                    // `\noindent`/`}` 触发）
+                    return Ok(());
                 }
+                let v = self.scan_number()?;
+                // TRIP 语义：\prevgraf 只允许非负（trip L392 `\prevgraf=-1` 报
+                // "! Bad \prevgraf (-1)." 恢复为 0；参考 log 对齐）
+                if p == Primitive::PrevGraf && v < 0 {
+                    self.report_error(&format!("Bad \\prevgraf ({v})."));
+                    self.assign_param(ParamKind::MiscInt(idx), ParamValue::Number(0))?;
+                } else {
+                    self.assign_param(ParamKind::MiscInt(idx), ParamValue::Number(v))?;
+                }
+                Ok(())
             }
+
             // ETRIP 冲刺：交互模式命令（\batchmode/\nonstopmode/\scrollmode/\errorstopmode）
             p if interaction_mode_value(p).is_some() => {
                 let v = interaction_mode_value(p).expect("已检查 is_some");

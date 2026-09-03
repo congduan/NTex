@@ -1,8 +1,25 @@
 impl NodeBuilder {
+    /// `\tracingoutput` 转录：shipout 时输出 "Completed box being shipped out [页号]"
+    /// 后接完整盒树（tex.web ship_out L12687-12691：tracing_output>0 时 print_nl
+    /// 标题；树用 show_box 同款格式——TRIP L42 起参考转录；TRIP 语义 diff 大头
+    /// 之一）。页号 = count0..最高非零 count（tex.web L12694-12699），暂 0 占位。
+    fn trace_shipout(&mut self, b: &BoxNode) {
+        if self.params.misc[27] <= 0 {
+            return;
+        }
+        self.ship_seq += 1;
+        let mut out =
+            format!("Completed box being shipped out [0.0.0.0.{}]\n", self.ship_seq);
+        showbox_format_box(b, 0, &self.fonts, &self.font_cs_names, &mut out);
+        out.push('\n');
+        let _ = self.write16(out);
+    }
+
     fn accept_page(&mut self, p: BoxNode) {
         if self.output_defined {
             self.pending_pages.push_back(p);
         } else {
+            self.trace_shipout(&p);
             self.shipped.push(p);
             self.write_flush_pending = true;
         }

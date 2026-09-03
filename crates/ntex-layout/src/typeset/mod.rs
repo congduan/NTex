@@ -496,8 +496,11 @@ struct NodeBuilder {
     current_font: FontId,
     /// `\shipout`：下一个封装盒子作为页面（DVI shipout，M3-5）。
     shipout_next: bool,
-    /// 已 \shipout 的页面（按顺序）。
+    /// 已 \\shipout 的页面（按顺序）。
     shipped: Vec<BoxNode>,
+    /// `\\tracingoutput` 转录计数（tex.web ship_out 页号末段：每次 shipout +1；
+    /// count0-9 首段精确值待 count 快照接线，暂 0 占位）。
+    ship_seq: u32,
     /// M3-5-2 断页：启用自动分页（`typeset_dvi` 打开；旧 `typeset` 保持切片行为）。
     pagination: bool,
     /// 页面构建器（`pagination` 时把顶层垂直列表拆成页面）。
@@ -664,6 +667,7 @@ impl NodeBuilder {
             current_font: FontId(0),
             shipout_next: false,
             shipped: Vec::new(),
+            ship_seq: 0,
             pagination,
             page: PageBuilder::new(),
             boxes: vec![None; REGISTER_COUNT],
@@ -915,6 +919,7 @@ impl NodeBuilder {
         }
         if ship {
             if let Node::Box(b) = node {
+                self.trace_shipout(&b);
                 self.shipped.push(b);
                 self.write_flush_pending = true;
             }

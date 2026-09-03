@@ -662,6 +662,33 @@ mod tests {
     }
 
     #[test]
+    fn tracingoutput_transcribes_shipped_box_tree() {
+        // \tracingoutput=1（trip.tex L103 语义，值可经宏：\tracingoutput\on）：
+        // 每次 shipout 转录 "Completed box being shipped out [页号]" + showbox 树
+        // （tex.web ship_out L12687-12691）。2026-09-03 实现——TRIP 语义 diff
+        // 大块转录缺失的修复。
+        let mut ts = Typesetter::with_metrics(metrics);
+        let _ = ts.typeset_dvi(r"\def\on{1}\tracingoutput\on\shipout\hbox{aa}\end");
+        let t = ts.take_transcript();
+        assert!(
+            t.contains("Completed box being shipped out"),
+            "tracingoutput 应转录 shipout 标题：{t:?}"
+        );
+        assert!(
+            t.contains(r"\hbox"),
+            "转录应含 showbox 同款盒树：{t:?}"
+        );
+        // tracingoutput=0（默认）不转录
+        let mut ts2 = Typesetter::with_metrics(metrics);
+        let _ = ts2.typeset_dvi(r"\shipout\hbox{aa}\end");
+        let t2 = ts2.take_transcript();
+        assert!(
+            !t2.contains("Completed box being shipped out"),
+            "tracingoutput=0 不应转录：{t2:?}"
+        );
+    }
+
+    #[test]
     fn output_routine_shipout_box255_equals_default() {
         let src = fill_words();
         let default = paginated(&src).unwrap();

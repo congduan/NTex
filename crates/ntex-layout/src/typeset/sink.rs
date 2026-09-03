@@ -1040,6 +1040,7 @@ impl TokenSink for NodeBuilder {
         };
         if self.shipout_next {
             self.shipout_next = false;
+            self.trace_shipout(&b);
             self.shipped.push(b);
             self.write_flush_pending = true;
         } else {
@@ -1107,6 +1108,7 @@ impl TokenSink for NodeBuilder {
         Ok(())
     }
 
+    /// `\showbox<n>`：把盒子寄存器内容格式化到转录（TeX show_box 风格）。
     fn write16(&mut self, text: String) -> Result<()> {
         self.transcript.push_str(&text);
         self.transcript.push('\n');
