@@ -1226,6 +1226,70 @@ I changed this one to zero.
     }
 
     #[test]
+    fn mutoglue_negative_chain_keeps_all_components() {
+        // etrip.tex L906-915（mutoglue/gluetomu 段）语义锁：负号链取负**整个胶水**、
+        // 嵌套 \mutoglue/\gluetomu 各自处理参数符号、stretch/shrink 及 fil 阶保留。
+        // 2026-09-03 修复前：负号只作用于宽度（stretch/shrink/阶全丢，
+        // `\skip3=-\mutoglue\muskip1` 输出 "-1.0pt" 而非 "-1.0pt plus 2.0pt minus 3.0fil"）。
+        // 参考：fixtures/etrip/etrip.log L2721-2774（{into ...} 行逐值一致）。
+        let pre = r"\skip1=-\mutoglue-\gluetomu9pt\relax";
+        assert_eq!(expand(&format!("{pre}\\the\\skip1")).unwrap(), "9.0pt");
+        let pre = r"\muskip1=-\gluetomu-\mutoglue9mu\relax";
+        assert_eq!(expand(&format!("{pre}\\the\\muskip1")).unwrap(), "9.0mu");
+        // L910-915 赋值链 + 负号引用寄存器（三分量取负、阶保留）
+        let src = r"\muskip1=\gluetomu1ptplus-2ptminus-3fil\relax\skip3=-\mutoglue\muskip1\relax\the\skip3";
+        assert_eq!(
+            expand(src).unwrap(),
+            "-1.0pt plus 2.0pt minus 3.0fil",
+            "\\skip3=-\\mutoglue\\muskip1：负号应作用于整个胶水"
+        );
+        let src = r"\skip1=\mutoglue1muplus-2muminus-3fil\relax\muskip3=-\gluetomu\skip1\relax\the\muskip3";
+        assert_eq!(
+            expand(src).unwrap(),
+            "-1.0mu plus 2.0mu minus 3.0fil",
+            "\\muskip3=-\\gluetomu\\skip1 对称链"
+        );
+        // 负号在前导量后（\mutoglue-\muskip2）：-\muskip2 取负后 mutoglue 1:1
+        let src = r"\muskip2=-4mu plus 5fill minus 6filll\relax\skip4=\mutoglue-\muskip2\relax\the\skip4";
+        assert_eq!(
+            expand(src).unwrap(),
+            "4.0pt plus -5.0fill minus -6.0filll",
+            "\\skip4=\\mutoglue-\\muskip2：内层负号由参数扫描处理"
+        );
+    }
+
+    #[test]
+    fn mutoglue_bare_use_reports_mode_error_without_swallowing_input() {
+        // etrip.tex L905：裸 \mutoglue \gluetomu（垂直模式）→ 报 "You can't use..."
+        // 且**不扫描参数**（2026-09-03 修复前直接 scan_glue_mu 吞掉后续输入，
+        // 污染下一行 `\skip1=-\mutoglue-\gluetomu9pt`，使其结果 0.0pt）。
+        let mut e = Expander::new();
+        e.set_sink(Box::new(VecSink::default()));
+        e.run_source(
+            r"\mutoglue \gluetomu\skip1=-\mutoglue-\gluetomu9pt\relax\the\skip1",
+        )
+        .unwrap();
+        let mut sink = e.take_sink();
+        let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+        // 独立 Expander 无排版模式（mode 名为 "no mode"）——只断言消息前缀与恢复语义
+        let t = sink.transcript.clone();
+        assert!(
+            t.contains("You can't use `\\mutoglue' in ")
+                && t.contains("You can't use `\\gluetomu' in "),
+            "裸用应报两个模式错：{t:?}"
+        );
+        let out: String = sink
+            .tokens
+            .iter()
+            .filter_map(|t| t.charcode().and_then(char::from_u32))
+            .collect();
+        assert_eq!(
+            out, "9.0pt",
+            "报错后后续赋值应正常执行（不被吞参）而非输出垃圾"
+        );
+    }
+
+    #[test]
     fn ifdim_with_units() {
         assert_eq!(expand("\\ifdim1pt<2pt yes\\else no\\fi").unwrap(), "yes");
         // pdfTeX 实测：1in=4736286sp；72.27pt 四舍五入后 = 4736287sp ≠ 1in，

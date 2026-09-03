@@ -70,6 +70,18 @@ impl Glue {
             shrink_order: 0,
         }
     }
+
+    /// 三分量取负（tex.web scan_something_internal 的 negative 对 glue 级量语义：
+    /// `\skip=-\muskip1` 等负号作用于整个胶水；无穷阶不变——分量负值 + 原阶
+    /// 由显示层输出 `plus -2.0fil` 形态，与参考 etrip.log 一致）。
+    pub fn negated(self) -> Glue {
+        Glue {
+            width: -self.width,
+            stretch: -self.stretch,
+            shrink: -self.shrink,
+            ..self
+        }
+    }
 }
 
 /// 胶水加法（TeX `\advance` 语义）：宽度直接相加；拉伸/收缩取阶更高者的值，

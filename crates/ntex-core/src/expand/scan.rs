@@ -1648,8 +1648,28 @@ impl Expander {
     /// skipdef/muskipdef cs/`\mutoglue`/`\gluetomu`）或 width + 可选 `plus/minus <dimen>[fil]`。
     /// 前导量单位与目标 mu 标志不匹配时报 "Incompatible glue units"（按 1:1 继续）。
     fn scan_glue_inner(&mut self, mu: bool) -> Result<Glue> {
-        // M4-5 e-TeX：\glueexpr/\muexpr 可在任意胶水上下文求值
+        // tex.web scan_glue：胶水层先处理前导符号（@<Get the next non-blank
+        // non-sign token>）——负号作用于**整个胶水**（内部量前导三分量取负；
+        // 裸尺寸仅宽度，见下）。不能交给 scan_dimen：否则 `-\muskip1` /
+        // `-\mutoglue-\gluetomu9pt`（etrip L906-911）的 stretch/shrink/阶丢失。
+        // 递归层（\mutoglue/\gluetomu 参数）各自处理参数的符号。
         self.skip_spaces()?;
+        let mut neg = false;
+        loop {
+            self.skip_spaces()?;
+            let Some((tok, _)) = self.fetch()? else {
+                break;
+            };
+            match tok.charcode() {
+                Some(v) if v == b'-' as u32 => neg = !neg,
+                Some(v) if v == b'+' as u32 => {}
+                _ => {
+                    self.unread(tok);
+                    break;
+                }
+            }
+        }
+        // M4-5 e-TeX：\glueexpr/\muexpr 可在任意胶水上下文求值
         if let Some(csid) = self.peek_csid()? {
             match self.eqtb.slot(csid).clone() {
                 EqSlot::Primitive(Primitive::Glueexpr) => {
@@ -1659,7 +1679,7 @@ impl Expander {
                         // \muskip=\glueexpr：glueexpr 输出 pt 胶水 → 目标 mu → Incompatible
                         self.report_incompatible_glue_units();
                     }
-                    return Ok(g);
+                    return Ok(if neg { g.negated() } else { g });
                 }
                 EqSlot::Primitive(Primitive::Muexpr) => {
                     self.fetch()?; // 消费 \muexpr
@@ -1668,7 +1688,7 @@ impl Expander {
                         // \skip=\muexpr：muexpr 输出 mu 胶水 → 目标 pt → Incompatible
                         self.report_incompatible_glue_units();
                     }
-                    return Ok(g);
+                    return Ok(if neg { g.negated() } else { g });
                 }
                 // ETRIP：`\hskip\skip5` 等 —— 前导胶水寄存器整体引用
                 EqSlot::Primitive(Primitive::Skip) => {
@@ -1678,7 +1698,7 @@ impl Expander {
                     if mu {
                         self.report_incompatible_glue_units();
                     }
-                    return Ok(g);
+                    return Ok(if neg { g.negated() } else { g });
                 }
                 EqSlot::Primitive(Primitive::Muskip) => {
                     self.fetch()?;
@@ -1687,7 +1707,7 @@ impl Expander {
                     if !mu {
                         self.report_incompatible_glue_units();
                     }
-                    return Ok(g);
+                    return Ok(if neg { g.negated() } else { g });
                 }
                 // ETRIP 第二波：\mutoglue<mu 胶水> → pt 胶水、\gluetomu<胶水> → mu 胶水
                 // （1mu = 1pt = 65536sp，数值不变；仅单位语义转换）
@@ -1697,7 +1717,7 @@ impl Expander {
                     if mu {
                         self.report_incompatible_glue_units(); // 输出 pt
                     }
-                    return Ok(g);
+                    return Ok(if neg { g.negated() } else { g });
                 }
                 EqSlot::Primitive(Primitive::GlueToMu) => {
                     self.fetch()?; // 消费 \gluetomu
@@ -1705,7 +1725,7 @@ impl Expander {
                     if !mu {
                         self.report_incompatible_glue_units(); // 输出 mu
                     }
-                    return Ok(g);
+                    return Ok(if neg { g.negated() } else { g });
                 }
                 EqSlot::Register(kind, idx) => {
                     // skipdef/muskipdef 绑定的寄存器 cs
@@ -1722,17 +1742,20 @@ impl Expander {
                     if mu != matches!(kind, RegKind::Muskip) {
                         self.report_incompatible_glue_units();
                     }
-                    return Ok(g);
+                    return Ok(if neg { g.negated() } else { g });
                 }
                 _ => {}
             }
         }
-        // width：mu 上下文只认 "mu" 单位（scan_dimen_mu）
+        // width：mu 上下文只认 "mu" 单位（scan_dimen_mu）。
+        // 裸尺寸路径的负号只作用于宽度（tex.web scan_glue 非内部量分支：
+        // scan_dimen 后 `if negative then negate(cur_val)`；plus/minus 不受影响）
         let width = if mu {
             self.scan_dimen_mu()?
         } else {
             self.scan_dimen()?
         };
+        let width = if neg { -width } else { width };
         let mut stretch = 0i64;
         let mut shrink = 0i64;
         let mut stretch_order = 0u8;

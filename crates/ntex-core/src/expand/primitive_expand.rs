@@ -157,15 +157,28 @@ impl Expander {
                 );
                 Ok(())
             }
-            // ETRIP 第二波：\mutoglue/\gluetomu 单独出现（数字/尺寸上下文由扫描函数处理）。
-            // 裸用按 TeX 报 "You can't use \mutoglue in vertical mode." 并恢复（简化：发胶水 token）。
-            Primitive::MuToGlue => {
-                let g = self.scan_glue_mu()?;
-                self.emit_tokens(emit_glue(g))
-            }
-            Primitive::GlueToMu => {
-                let g = self.scan_glue()?;
-                self.emit_tokens(emit_mu_glue(g))
+            // ETRIP 第二波：\mutoglue/\gluetomu 裸用（非胶水/数字上下文）——
+            // TeX 报 "You can't use `\mutoglue' in vertical mode." 并恢复
+            // （etrip L905：不扫参数；此前简化实现直接 scan 参数会吞掉后续
+            // 输入，污染下一行 \skip1= 等赋值）。胶水上下文由 scan_glue_inner
+            // 前导量分支先行处理，不达此分支。
+            Primitive::MuToGlue | Primitive::GlueToMu => {
+                let name = if matches!(prim, Primitive::MuToGlue) {
+                    "mutoglue"
+                } else {
+                    "gluetomu"
+                };
+                self.write_error_help_no_read_again(
+                    &format!(
+                        "You can't use `\\{name}' in {}.",
+                        self.sink.mode_name()
+                    ),
+                    "Sorry, but I'm not programmed to handle this case;\n\
+                     I'll just pretend that you didn't ask for it.\n\
+                     If you're in the wrong mode, you might be able to\n\
+                     return to the right one by typing `I}' or `I$' or `I\\par'.\n",
+                );
+                Ok(())
             }
             // ETRIP 第二波：\lastpenalty 单独出现：no-op（数字上下文由 scan_number 读取）
             Primitive::LastPenalty => Ok(()),
