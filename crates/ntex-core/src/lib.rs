@@ -13,6 +13,7 @@
 //! - [`input`]：字节 → token 扫描器
 //! - [`register`]：寄存器文件（\count/\dimen/\skip/\toks）与内部量格式化
 //! - [`expand`]：展开引擎主循环（M1-6 ~ M1-11）
+//! - [`incremental`]：M5 段级增量重算 + 依赖追踪（阶段一 POC）
 
 #![deny(unsafe_code)]
 
@@ -22,6 +23,7 @@ pub mod eqtb;
 pub mod error;
 pub mod expand;
 pub mod font;
+pub mod incremental;
 pub mod input;
 pub mod intern;
 pub mod macrodef;

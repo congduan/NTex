@@ -10,6 +10,7 @@
 //! 精确逐位一致性留待 M3（TRIP）验证。
 
 use crate::macrodef::TokenArray;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// 寄存器个数（eTeX 扩展：0..=32767；经典 TeX 为 0..=255）。
@@ -145,6 +146,22 @@ pub struct Registers {
     skips: Box<[Glue]>,
     muskip: Box<[Glue]>,
     toks: Box<[TokenArray]>,
+    /// 已写入槽位的影子表（M5 增量，plan.md §7）。寄存器文件 32768×5 槽，
+    /// 全量克隆/比较每段 ~3MB 不可行；只记录被 `set_*` 写过的槽，增量快照
+    /// 携带此表即可**精确**比较——未写入槽恒为零值，无需逐槽比对。
+    /// 键 = (RegKind 编号, 槽下标)，BTreeMap 保证快照顺序确定（可相等比较）。
+    dirty: BTreeMap<(u8, usize), RegisterValue>,
+}
+
+/// 寄存器槽的值（M5 增量影子表用；与槽类型一一对应）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RegisterValue {
+    /// count / dimen（整数，sp）。
+    Int(i64),
+    /// skip / muskip（胶）。
+    Glue(Glue),
+    /// toks（token 列表）。
+    Toks(TokenArray),
 }
 
 impl Default for Registers {
@@ -161,7 +178,13 @@ impl Registers {
             skips: vec![Glue::ZERO; REGISTER_COUNT].into_boxed_slice(),
             muskip: vec![Glue::ZERO; REGISTER_COUNT].into_boxed_slice(),
             toks: vec![Arc::from([]); REGISTER_COUNT].into_boxed_slice(),
+            dirty: BTreeMap::new(),
         }
+    }
+
+    /// 已写入槽位的影子表（M5 增量：失效判定精确比较用）。
+    pub fn dirty(&self) -> &BTreeMap<(u8, usize), RegisterValue> {
+        &self.dirty
     }
 
     pub fn count(&self, idx: usize) -> i64 {
@@ -170,6 +193,7 @@ impl Registers {
 
     pub fn set_count(&mut self, idx: usize, v: i64) {
         self.counts[idx] = v;
+        self.dirty.insert((0, idx), RegisterValue::Int(v));
     }
 
     pub fn dimen(&self, idx: usize) -> i64 {
@@ -178,6 +202,7 @@ impl Registers {
 
     pub fn set_dimen(&mut self, idx: usize, v: i64) {
         self.dimens[idx] = v;
+        self.dirty.insert((1, idx), RegisterValue::Int(v));
     }
 
     pub fn skip(&self, idx: usize) -> Glue {
@@ -186,6 +211,7 @@ impl Registers {
 
     pub fn set_skip(&mut self, idx: usize, v: Glue) {
         self.skips[idx] = v;
+        self.dirty.insert((2, idx), RegisterValue::Glue(v));
     }
 
     pub fn muskip(&self, idx: usize) -> Glue {
@@ -194,6 +220,7 @@ impl Registers {
 
     pub fn set_muskip(&mut self, idx: usize, v: Glue) {
         self.muskip[idx] = v;
+        self.dirty.insert((3, idx), RegisterValue::Glue(v));
     }
 
     pub fn toks(&self, idx: usize) -> TokenArray {
@@ -201,7 +228,8 @@ impl Registers {
     }
 
     pub fn set_toks(&mut self, idx: usize, v: TokenArray) {
-        self.toks[idx] = v;
+        self.toks[idx] = Arc::clone(&v);
+        self.dirty.insert((4, idx), RegisterValue::Toks(v));
     }
 }
 

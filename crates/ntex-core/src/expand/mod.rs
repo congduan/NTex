@@ -16,7 +16,7 @@
 //! - M1-11 组作用域（朴素快照回滚 + `\global`）已实现；
 //! - 空行 → `\par` 已实现（`scan_token` 行状态机，A2）。
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -31,7 +31,7 @@ use crate::macrodef::{MacroDef, ParamSpec, TokenArray};
 use crate::param::{ParamKind, ParamValue, Params};
 use crate::register::{
     add_glue, format_count, format_dimen, format_glue, format_mu_glue, unit_to_sp, Glue, RegKind,
-    RegisterState, Registers, MAX_DIMEN, MAX_INT, REGISTER_COUNT, SP_PER_PT,
+    RegisterState, RegisterValue, Registers, MAX_DIMEN, MAX_INT, REGISTER_COUNT, SP_PER_PT,
 };
 use crate::sink::{TokenSink, VecSink};
 use crate::token::{meaning, Token, TokenKind};
@@ -1907,6 +1907,68 @@ impl Expander {
     }
 }
 
+/// 段边界的"值状态"镜像（M5 增量，plan.md §7；`incremental::snapshot` 用）。
+///
+/// `.fmt` 快照（[`FmtState`]）覆盖宏定义/寄存器/参数主干，但**不含**若干运行时
+/// 字段（`\everypar` 等 token 列表、`\mathcode`/`\lccode` 等编码表、`\parshape`、
+/// e-TeX 惩罚数组、字体参数覆盖、读写流）。段级缓存的失效判定必须看到**全部**
+/// 影响输出的状态，否则会把"缓存仍有效"判错（M5 风险项：副作用漏追踪 → 缓存错）。
+///
+/// 组成：可精确比较的部分（catcode/sfcode 表、`\output` 例程、寄存器版本戳）
+/// + `runtime_digest` 指纹（其余状态；HashMap 逐项哈希后累加，与迭代顺序无关）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ValueState {
+    /// catcode 表（`\catcode` 可改；影响后续所有 token 化）。
+    pub catcodes: CatcodeTable,
+    /// `\sfcode` 表。
+    pub sfcodes: [u32; 256],
+    /// `\output` 例程 token 列表（None = 未定义）。
+    pub output_toks: Option<TokenArray>,
+    /// 已写入寄存器槽的影子表（`Registers::dirty`；未写槽恒为零值 →
+    /// 只比较此表即**精确**等于整份寄存器文件，且与引擎实例无关、可跨重建比较）。
+    pub registers: BTreeMap<(u8, usize), RegisterValue>,
+    /// 其余运行时状态指纹（`Expander::runtime_digest`）。
+    pub runtime_digest: u64,
+}
+
+/// FNV-1a：混入单字节。
+fn digest_byte(h: &mut u64, b: u8) {
+    *h = (*h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);
+}
+
+/// FNV-1a：混入字节序列。
+fn digest_bytes(h: &mut u64, bytes: &[u8]) {
+    for &b in bytes {
+        digest_byte(h, b);
+    }
+}
+
+/// FNV-1a：混入一个 u64（小端逐字节）。
+fn digest_u64(h: &mut u64, v: u64) {
+    digest_bytes(h, &v.to_le_bytes());
+}
+
+/// HashMap 的顺序无关指纹：逐项哈希后按加法累加——加法交换律使结果与迭代
+/// 顺序无关（`std` HashMap 遍历顺序不稳定，不能直接按序混入）。
+fn digest_pairs(h: &mut u64, pairs: impl Iterator<Item = (u64, u64)>) {
+    let mut acc = 0u64;
+    for (k, v) in pairs {
+        let mut e = 0x9e37_79b9_7f4a_7c15;
+        digest_u64(&mut e, k);
+        digest_u64(&mut e, v);
+        acc = acc.wrapping_add(e);
+    }
+    digest_u64(h, acc);
+}
+
+/// token 列表 → 指纹（长度 + 逐 token 原始 8 字节）。
+fn digest_toks(h: &mut u64, toks: &[Token]) {
+    digest_u64(h, toks.len() as u64);
+    for t in toks {
+        digest_u64(h, t.raw());
+    }
+}
+
 impl Expander {
     // ---------- 只读访问（测试/上层用） ----------
 
@@ -1965,6 +2027,164 @@ impl Expander {
     /// 只读访问内部参数（`.fmt` 加载后排版器镜像同步用）。
     pub fn params_ref(&self) -> &Params {
         &self.params
+    }
+
+    // ---------- M5 增量计算：只读状态探针（plan.md §7；incremental 模块用） ----------
+    //
+    // 两个方法都只读、零语义改动：`value_state` 精确镜像 `.fmt` 未覆盖的值状态，
+    // `boundary_is_clean` 判定段边界是否被"跨段构造"污染。缓存失效判定必须同时
+    // 看这两个信号——只看其中一个会把"缓存仍有效"判错。
+
+    /// 段边界值状态镜像（[`ValueState`]；含其余运行时状态的指纹）。
+    pub fn value_state(&self) -> ValueState {
+        ValueState {
+            catcodes: self.catcodes.clone(),
+            sfcodes: self.sfcodes,
+            output_toks: self.output_toks.clone(),
+            registers: self.registers.dirty().clone(),
+            runtime_digest: self.runtime_digest(),
+        }
+    }
+
+    /// 段边界是否干净：输入栈空、无未闭合组/条件/数学/对齐模板、无悬挂前缀。
+    ///
+    /// 不干净 = 有构造跨越段边界（未闭合 `{`、未闭合 `\if`、悬空 `$`、未写完的
+    /// box 参数……）。此时该段之后**禁止复用缓存**（跨段构造的语义无法由
+    /// "段前状态 + 段源码"还原，增量与全量本就不再可比）。
+    pub fn boundary_is_clean(&self) -> bool {
+        self.stack.is_empty()
+            && self.group_level == 0
+            && self.cond_stack.is_empty()
+            && self.math_left_depth == 0
+            && self.align_depth == 0
+            && !self.align_preamble
+            && self.align_noalign_depths.is_empty()
+            && self.group_cond_depth.is_empty()
+            && self.save_stack.is_empty()
+            && self.aftergroup.is_empty()
+            && self.afterassignment.is_none()
+            && !self.global_pending
+            && !self.immediate_pending
+            && !self.protected_pending
+            && !self.outer_pending
+            && !self.long_pending
+            && !self.unless_pending
+            && !self.pending_box_arg
+            && self.read_floor == 0
+            && self.suppress_expansion == 0
+            && !self.expand_only
+            && self.query_sink.is_none()
+            && !self.output_active
+            && !self.in_math
+    }
+
+    /// 其余运行时状态的 FNV-1a 指纹（64 位）。
+    ///
+    /// 覆盖 `.fmt` 快照未含、但影响后续输出的字段：`\everypar` 等 token 列表、
+    /// `\mathcode`/`\delcode`/`\lccode`/`\uccode`、`\parshape`、e-TeX 惩罚数组、
+    /// `\fontdimen`/`\hyphenchar`/`\skewchar` 覆盖、字体名表、读写流位置、
+    /// `\dump`/数学模式标志、内部参数（Debug 串字段级覆盖）。
+    /// **不含**诊断性状态（`last_tok`/`error_anchor`/`output_trigger_line` 等
+    /// 只影响错误消息位置，不影响输出 token）。
+    fn runtime_digest(&self) -> u64 {
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        for toks in [
+            &self.everypar_toks,
+            &self.everymath,
+            &self.everyhbox_toks,
+            &self.everyvbox_toks,
+            &self.everycr_toks,
+            &self.everydisplay_toks,
+            &self.errhelp_toks,
+        ] {
+            digest_toks(&mut h, toks);
+        }
+        // catcode/sfcode 表与 `\output` 例程**不**入指纹：`ValueState` 已对它们做
+        // 精确比较，这里重复混入只会加倍每段判定的开销。
+        for v in self.lccodes {
+            digest_u64(&mut h, v as u64);
+        }
+        for v in self.uccodes {
+            digest_u64(&mut h, v as u64);
+        }
+        digest_pairs(
+            &mut h,
+            self.mathcodes
+                .iter()
+                .map(|(k, v)| (u64::from(*k), u64::from(*v))),
+        );
+        digest_pairs(
+            &mut h,
+            self.delcodes
+                .iter()
+                .map(|(k, v)| (u64::from(*k), u64::from(*v))),
+        );
+        digest_pairs(
+            &mut h,
+            self.fontdimens
+                .iter()
+                .map(|(k, v)| ((u64::from(k.0) << 32) | u64::from(k.1), *v as u64)),
+        );
+        digest_pairs(
+            &mut h,
+            self.hyphenchars
+                .iter()
+                .map(|(k, v)| (u64::from(*k), *v as u64)),
+        );
+        digest_pairs(
+            &mut h,
+            self.skewchars
+                .iter()
+                .map(|(k, v)| (u64::from(*k), *v as u64)),
+        );
+        // 字体表与数学字体族
+        digest_bytes(&mut h, format!("{:?}", self.font_loads).as_bytes());
+        for names in [&self.font_names, &self.font_cs_names] {
+            digest_u64(&mut h, names.len() as u64);
+            for n in names.iter() {
+                match n {
+                    Some(s) => digest_bytes(&mut h, s.as_bytes()),
+                    None => digest_u64(&mut h, u64::MAX),
+                }
+            }
+        }
+        for row in &self.math_fonts {
+            for v in row {
+                digest_u64(&mut h, u64::from(*v));
+            }
+        }
+        // 段落形状 / e-TeX 惩罚数组
+        for (i, w) in &self.parshape {
+            digest_u64(&mut h, *i as u64);
+            digest_u64(&mut h, *w as u64);
+        }
+        for arr in &self.penalty_arrays {
+            digest_u64(&mut h, arr.len() as u64);
+            for v in arr {
+                digest_u64(&mut h, *v as u64);
+            }
+        }
+        // 读写流（路径/位置/待写内容的规模摘要；内容级追踪是 M5 阶段二副作用边界）
+        digest_u64(&mut h, self.read_streams.len() as u64);
+        for s in self.read_streams.iter().flatten() {
+            digest_u64(&mut h, s.data.len() as u64);
+            digest_u64(&mut h, s.pos as u64);
+        }
+        digest_u64(&mut h, self.write_streams.len() as u64);
+        for s in self.write_streams.iter().flatten() {
+            digest_u64(&mut h, s.pending.len() as u64);
+        }
+        digest_u64(&mut h, self.log_write_pending.len() as u64);
+        // 布尔标志
+        digest_u64(
+            &mut h,
+            u64::from(self.dumped)
+                | u64::from(self.in_math) << 1
+                | u64::from(self.output_active) << 2,
+        );
+        // 内部参数（Debug 串覆盖全部字段；新增字段自动进入指纹）
+        digest_bytes(&mut h, format!("{:?}", self.params).as_bytes());
+        h
     }
 }
 
