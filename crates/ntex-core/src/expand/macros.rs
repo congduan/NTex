@@ -117,7 +117,7 @@ impl Expander {
         long: bool,
         name: &str,
     ) -> Result<TokenArray> {
-        if std::env::var("NTEX_COND_TRACE").is_ok() {
+        if diag_enabled("NTEX_COND_TRACE") {
             let d: String = delim
                 .iter()
                 .filter_map(|t| t.charcode())

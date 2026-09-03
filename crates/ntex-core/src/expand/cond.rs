@@ -18,7 +18,7 @@ impl Expander {
 
     /// 条件状态机单步推进。
     fn step_conditional(&mut self, op: CondOp) -> Result<()> {
-        if std::env::var("NTEX_COND_TRACE").is_ok() {
+        if diag_enabled("NTEX_COND_TRACE") {
             let frames: Vec<String> = self
                 .cond_stack
                 .iter()
@@ -156,7 +156,7 @@ impl Expander {
 saved_if_type: saved_type,
                         saved_if_branch: saved_branch,
                         if_type: code,
-                        line: self.error_context().map(|(n, _)| n).unwrap_or(0),
+                        line: self.error_line_no(),
                     });
                     return Ok(());
                 }
@@ -187,7 +187,7 @@ saved_if_type: saved_type,
 saved_if_type: saved_type,
                         saved_if_branch: saved_branch,
                         if_type: code,
-                        line: self.error_context().map(|(n, _)| n).unwrap_or(0),
+                        line: self.error_line_no(),
                     });
                 } else {
                     // TeX：false 条件不压帧，立即 `skip_ahead` 到匹配的
@@ -217,7 +217,7 @@ saved_if_type: saved_type,
 saved_if_type: saved_type,
                         saved_if_branch: saved_branch,
                         if_type: code,
-                        line: self.error_context().map(|(n, _)| n).unwrap_or(0),
+                        line: self.error_line_no(),
                     });
                     return Ok(());
                 }
@@ -239,7 +239,7 @@ saved_if_type: saved_type,
 saved_if_type: saved_type,
                     saved_if_branch: saved_branch,
                     if_type: code,
-                    line: self.error_context().map(|(n, _)| n).unwrap_or(0),
+                    line: self.error_line_no(),
                 });
                 Ok(())
             }
@@ -269,7 +269,7 @@ saved_if_type: saved_type,
                     if let EqSlot::Macro(m) = self.eqtb.slot(csid) {
                         if m.value.outer {
                             let name = self.intern.name(csid).to_owned();
-                            let ln = self.error_context().map(|(n, _)| n).unwrap_or(0);
+                            let ln = self.error_line_no();
                             let _ = self.sink.write16(format!(
                                 "! Incomplete \\if; all text was ignored after line {ln}.\n\
                                  <inserted text>\n                \\fi \n\
@@ -319,7 +319,7 @@ saved_if_type: saved_type,
 saved_if_type: self.cur_if_type,
                         saved_if_branch: self.cur_if_branch,
                         if_type: Self::if_type_code(op),
-                        line: self.error_context().map(|(n, _)| n).unwrap_or(0),
+                        line: self.error_line_no(),
                     });
                 }
             }
@@ -347,7 +347,7 @@ saved_if_type: self.cur_if_type,
                     saved_if_type: saved_type,
                     saved_if_branch: saved_branch,
                     if_type: saved_type,
-                    line: self.error_context().map(|(n, _)| n).unwrap_or(0),
+                    line: self.error_line_no(),
                 });
                 Ok(())
             }
@@ -366,7 +366,7 @@ saved_if_type: self.cur_if_type,
                     saved_if_type: saved_type,
                     saved_if_branch: saved_branch,
                     if_type: saved_type,
-                    line: self.error_context().map(|(n, _)| n).unwrap_or(0),
+                    line: self.error_line_no(),
                 });
                 Ok(())
             }
@@ -478,7 +478,7 @@ saved_if_type: self.cur_if_type,
                 let a = self.scan_number()?;
                 let rel = self.scan_relation("ifnum")?;
                 let b = self.scan_number()?;
-                if std::env::var("NTEX_IFNUM_TRACE").is_ok() {
+                if diag_enabled("NTEX_IFNUM_TRACE") {
                     eprintln!("[trace-ifnum] {a} {rel:?} {b}");
                 }
                 Ok(compare(a, b, rel))
@@ -487,7 +487,7 @@ saved_if_type: self.cur_if_type,
                 let a = self.scan_dimen()?;
                 let rel = self.scan_relation("ifdim")?;
                 let b = self.scan_dimen()?;
-                if std::env::var("NTEX_IFNUM_TRACE").is_ok() {
+                if diag_enabled("NTEX_IFNUM_TRACE") {
                     eprintln!("[trace-ifdim] {a} {rel:?} {b}");
                 }
                 Ok(compare(a, b, rel))

@@ -19,7 +19,7 @@ impl Expander {
             if matches!(op, CondOp::Fi | CondOp::Else | CondOp::Or) {
                 return Ok(false);
             }
-            if std::env::var("NTEX_COND_TRACE").is_ok() {
+            if diag_enabled("NTEX_COND_TRACE") {
                 eprintln!("[trace-maybe] 求值条件 {op:?}");
             }
             self.step_conditional(op)?;

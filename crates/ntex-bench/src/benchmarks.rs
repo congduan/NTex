@@ -1,4 +1,4 @@
-//! 基准集合：plan.md M0 基准集的四个基准。
+//! 基准集合：plan.md M0 基准集的基准（M2-6 补入双轨展开吞吐对照）。
 //!
 //! 每个基准面向 [`EngineDriver`] 编写：驱动未实现时返回 `Skipped`（不算失败），
 //! 引擎本体就绪后无需改动基准定义即可接入。
@@ -134,7 +134,102 @@ impl Benchmark for ExpandThroughput {
     }
 }
 
-// ---------- 4. 增量场景：改 1 字 ----------
+// ---------- 4. 双轨展开吞吐对照（M2-6 验收） ----------
+
+/// 字节码执行器 vs 纯解释器：同一宏密集样张分别跑 [`ntex_core::expand::Expander`]
+/// 的两条轨道（`with_bytecode(true/false)`），M2-6 验收"展开吞吐 ≥ 解释器 2x"。
+///
+/// 与 `expand-throughput`（全管线，排版/字体成本稀释比值）不同，本基准直接驱动
+/// 展开层，隔离出执行器本身的差异；两轨输出逐 token 断言一致（双轨等价的运行期
+/// 抽查）。语张沿用 1.12x 历史测量（`bytecode_vs_interpreter_throughput`）的形态
+/// （带参宏调用 + 常量条件），但按真实 TeX 行长断行、样本放大到 20 万次调用、
+/// 预热 ≥2 次 + 计时 ≥5 次取中位数。
+pub struct ExpandDualTrack;
+
+impl Benchmark for ExpandDualTrack {
+    fn name(&self) -> &'static str {
+        "expand-dual"
+    }
+    fn description(&self) -> &'static str {
+        "双轨展开吞吐（字节码 vs 解释器，M2-6 验收）"
+    }
+    fn run(&self, _driver: &dyn EngineDriver, opts: &BenchOptions) -> Result<BenchResult> {
+        use ntex_core::expand::Expander;
+
+        const CALLS: usize = 200_000;
+        // 每行 4 次调用（2 次带参宏 + 2 次常量条件），行长 ≈ 24 字符（真实 TeX 行长量级）
+        let built_in = || {
+            let mut tex = String::from("\\def\\foo#1{#1X}\\def\\bar{\\iftrue Y\\else N\\fi}\n");
+            for _ in 0..CALLS / 4 {
+                tex.push_str("\\foo{a}\\bar\\foo{b}\\bar\n");
+            }
+            (tex, Some(CALLS))
+        };
+        // CLI `--tex-file` 覆盖（main.rs 已读为内容）：外部样张只报 token/s 与比值
+        let (tex, calls) = match &opts.tex_override {
+            Some(body) => (body.clone(), None),
+            None => built_in(),
+        };
+
+        let run_once = |use_bytecode: bool| -> Result<Vec<ntex_core::token::Token>> {
+            let mut e = if use_bytecode {
+                Expander::new()
+            } else {
+                Expander::new_interpreter()
+            };
+            e.run_source(&tex)?;
+            Ok(e.output().to_vec())
+        };
+
+        // 双轨等价抽查：同一样张输出必须逐 token 一致
+        let bc_out = run_once(true)?;
+        let ip_out = run_once(false)?;
+        if bc_out != ip_out {
+            bail!(
+                "expand-dual：双轨输出不一致（字节码 {} token / 解释器 {} token）",
+                bc_out.len(),
+                ip_out.len()
+            );
+        }
+
+        let warmup = opts.warmup.max(2);
+        let iterations = opts.iterations.max(5);
+        let stats_of = |use_bytecode: bool| -> Result<Stats> {
+            measure(warmup, iterations, || run_once(use_bytecode).map(|_| ()))
+        };
+        let bc = stats_of(true)?;
+        let ip = stats_of(false)?;
+
+        let ms = |s: &Stats| s.median_ns() as f64 / 1e6;
+        let per_s = |s: &Stats| calls.unwrap_or(0) as f64 / (s.median_ns() as f64 / 1e9);
+        let tok_per_s = |s: &Stats| bc_out.len() as f64 / (s.median_ns() as f64 / 1e9);
+        // 比值按耗时反算（≥1 表示字节码更快）；调用计数缺失（外部样张）时用 token 吞吐
+        let ratio = match calls {
+            Some(_) => ms(&ip) / ms(&bc),
+            None => tok_per_s(&bc) / tok_per_s(&ip),
+        };
+        let calls_txt = match calls {
+            Some(n) => format!(
+                "{n} 次调用（{:.0} 调用/s vs {:.0} 调用/s）",
+                per_s(&bc),
+                per_s(&ip)
+            ),
+            None => "外部样张".to_owned(),
+        };
+        let note = format!(
+            "{calls_txt} / {} token 输出；字节码 {:.1}ms（{:.0} token/s）vs 解释器 {:.1}ms \
+             （{:.0} token/s）；比值 {ratio:.2}x（验收 ≥2x）",
+            bc_out.len(),
+            ms(&bc),
+            tok_per_s(&bc),
+            ms(&ip),
+            tok_per_s(&ip),
+        );
+        Ok(BenchResult::Measured { stats: bc, note })
+    }
+}
+
+// ---------- 5. 增量场景：改 1 字 ----------
 
 /// 全量重编 vs 单字编辑后的重编（引擎实现增量前，两者应几乎相同）。
 pub struct IncrementalEdit;
@@ -192,7 +287,13 @@ impl Benchmark for IncrementalEdit {
 }
 
 /// 全量基准列表。
-pub const ALL: &[&dyn Benchmark] = &[&LatexFmtLoad, &Doc300, &ExpandThroughput, &IncrementalEdit];
+pub const ALL: &[&dyn Benchmark] = &[
+    &LatexFmtLoad,
+    &Doc300,
+    &ExpandThroughput,
+    &ExpandDualTrack,
+    &IncrementalEdit,
+];
 
 /// 按名称查找基准。
 pub fn find(name: &str) -> Option<&'static dyn Benchmark> {

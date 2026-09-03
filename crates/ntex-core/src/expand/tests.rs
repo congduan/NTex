@@ -1813,6 +1813,55 @@ I changed this one to zero.
         // 不设硬断言（CI 波动大），仅报告数字
     }
 
+    /// `locate_line`（line_starts 二分）与逐字节扫描的等价性（P1 补课的性能路径
+    /// 承载 TRIP `l.N` 上下文行与 `Incomplete \ifxxx after line N` 语义，必须
+    /// 与原 O(pos) 线性实现逐位一致）。
+    #[test]
+    fn locate_line_matches_linear_scan() {
+        // 确定性伪随机字节流：含行首/行尾/连续换行/无换行长行
+        let mut x = 0x2545F4914F6CDD1Du64;
+        let mut next = move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        let mut bytes = Vec::new();
+        for _ in 0..4000 {
+            let r = next() % 8;
+            if r == 0 {
+                bytes.push(b'\n');
+            } else {
+                bytes.push(b'a' + (next() % 26) as u8);
+            }
+        }
+        let line_starts = crate::input::line_starts(&bytes);
+        for &end in bytes
+            .iter()
+            .enumerate()
+            .map(|(i, _)| i)
+            .chain(std::iter::once(bytes.len()))
+            .collect::<Vec<_>>()
+            .iter()
+        {
+            // 原 error_context/error_context_pos 的线性实现（参照实现）
+            let lin_no = bytes[..end].iter().filter(|&&b| b == b'\n').count() + 1;
+            let lin_start = bytes[..end]
+                .iter()
+                .rposition(|&b| b == b'\n')
+                .map(|i| i + 1)
+                .unwrap_or(0);
+            let lin_end = bytes[lin_start..]
+                .iter()
+                .position(|&b| b == b'\n')
+                .map(|i| lin_start + i)
+                .unwrap_or(bytes.len());
+
+            let (no, start, end_) = Expander::locate_line(&bytes, &line_starts, end);
+            assert_eq!((no, start, end_), (lin_no, lin_start, lin_end), "end={end}");
+        }
+    }
+
     // ---------- M3-2-2 内部参数 ----------
 
     #[test]

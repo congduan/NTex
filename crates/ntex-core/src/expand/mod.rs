@@ -18,7 +18,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::bytecode::{compile, Bytecode};
 use crate::catcode::{Catcode, CatcodeTable};
@@ -71,6 +71,13 @@ pub(crate) enum InputFrame {
         items: Arc<[(Token, bool)]>,
         pos: usize,
     },
+    /// 实参帧（P1 热路径消分配）：宏实参 token 列表。
+    ///
+    /// `#n`/`EmitArg` 展开直接复用收集期的 `Arc<[Token]>`（引用计数 +1）——
+    /// 此前重包装为 `Vec<(Token, bool)>` 再 `Arc::from`，每次实参展开多一次
+    /// 堆分配 + 逐 token 拷贝。实参 token 无 noexpand 语义（TeX 宏替换后照常
+    /// 展开），故帧级不设标记；与 [`InputFrame::TokenList`] 的读取行为一致。
+    MacroArg { items: TokenArray, pos: usize },
     /// 单 token 回推槽（B1：`unread`/`$$` 探测/`\noexpand` 回推用，免 Arc 包装）。
     One { tok: Token, noexpand: bool },
     /// 输出例程帧（M3-5-3）：同 TokenList，但耗尽时复位输出例程激活标志。
@@ -403,6 +410,34 @@ fn now_millis() -> u64 {
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
 }
+
+/// 诊断环境开关（TRIP/ETRIP 冲刺期的挂死定位设施），进程级缓存。
+///
+/// `NTEX_COND_TRACE`/`NTEX_TRACE_EXEC`/`NTEX_IFNUM_TRACE`/`NTEX_SANITY_CHECK`
+/// 位于每条件/每原语执行的热路径上——原实现每次 `std::env::var`（getenv +
+/// String 分配，实测占展开吞吐 1~3%）。进程内环境不变，缓存首次读取结果，
+/// 语义不变（含"设为空串也算开启"）。
+pub(crate) fn diag_enabled(key: &'static str) -> bool {
+    static CACHE: OnceLock<HashMap<&'static str, bool>> = OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            DIAG_KEYS
+                .iter()
+                .map(|&k| (k, std::env::var(k).is_ok()))
+                .collect()
+        })
+        .get(key)
+        .copied()
+        .unwrap_or(false)
+}
+
+/// [`diag_enabled`] 认识的全部诊断开关。
+const DIAG_KEYS: &[&str] = &[
+    "NTEX_COND_TRACE",
+    "NTEX_IFNUM_TRACE",
+    "NTEX_TRACE_EXEC",
+    "NTEX_SANITY_CHECK",
+];
 
 /// 展开引擎。
 #[derive(Debug)]
@@ -835,6 +870,8 @@ impl Expander {
         // 或 layout 侧死循环时仍能打印最后状态（TRIP L338 挂死定位）。
         let wd = Arc::new(WatchdogShared::default());
         self.watchdog = Some(wd.clone());
+        // 起始心跳：心跳改每 64 步刷新后，首轮慢启动（64 步内）不算挂死
+        wd.heartbeat_ms.store(now_millis(), Ordering::Relaxed);
         {
             let wd = wd.clone();
             std::thread::spawn(move || loop {
@@ -862,10 +899,14 @@ impl Expander {
         loop {
             // 看门狗：防死循环（ETRIP 诊断用；正常作业远低于此）
             steps += 1;
-            // 心跳 + last_tok（每步）+ 状态快照（每 5000 步，卡死时保留最后状态）
-            wd.heartbeat_ms.store(now_millis(), Ordering::Relaxed);
-            *wd.last_tok.lock().unwrap_or_else(|p| p.into_inner()) =
-                self.last_tok.clone().unwrap_or_default();
+            // 心跳 + last_tok（每 64 步）+ 状态快照（每 5000 步，卡死时保留最后状态）。
+            // 看门狗线程 2s 轮询 + 10s 阈值，心跳 16Hz 绰绰有余；每步 clock_gettime +
+            // mutex 写是纯诊断税（P1 实测占展开吞吐 ~10%），长文档上白付。
+            if steps & 63 == 0 {
+                wd.heartbeat_ms.store(now_millis(), Ordering::Relaxed);
+                *wd.last_tok.lock().unwrap_or_else(|p| p.into_inner()) =
+                    self.last_tok.clone().unwrap_or_default();
+            }
             if steps % 5000 == 0 {
                 let state = format!(
                     "steps={steps} last_tok={:?} stack={}",
@@ -893,7 +934,8 @@ impl Expander {
             }
             // 诊断：单步耗时看门狗——检查放 step **之前**（卡在单步内部时永远到不了
             // step 之后的检查点）。超时 dump 当前状态（TRIP L338 `\halign` 内挂死）。
-            if step_start.elapsed().as_secs() >= 5 {
+            // 与心跳同频检查（每次循环省一次 clock_gettime；检测粒度 64 步）。
+            if steps & 63 == 0 && step_start.elapsed().as_secs() >= 5 {
                 eprintln!(
                     "[watchdog] 单步超时 5s steps={steps} last_tok={:?} stack={}",
                     self.last_tok,
@@ -985,26 +1027,39 @@ impl Expander {
         0
     }
 
+    /// 行定位（`line_starts` 二分）：返回 (行号, 行起始偏移, 行结束偏移)。
+    ///
+    /// 行结束偏移不含行尾 `\n`（与逐字节扫描一致）。替代原 `error_context`/
+    /// `error_context_pos` 的两次 O(pos) 全文扫描——条件帧入栈（\if 高频）也取
+    /// 行号，长文档上线性扫描整体 O(n²)（0b2fc9b 对 `current_line_no` 同类修复
+    /// 的补全）。
+    fn locate_line(bytes: &[u8], line_starts: &[u32], end: usize) -> (usize, usize, usize) {
+        let line_no = line_starts.partition_point(|&s| (s as usize) <= end).max(1);
+        let line_start = line_starts[line_no - 1] as usize;
+        // 下一行起始 = 本行行尾 `\n` 下标 + 1（末行无下一行 → 全文长度）
+        let line_end = match line_starts.get(line_no) {
+            Some(&s) => (s as usize).saturating_sub(1).min(bytes.len()),
+            None => bytes.len(),
+        };
+        (line_no, line_start, line_end)
+    }
+
     /// 由扫描位置反推 (行号, 行内容)。宏展开中的错误回退到最近的源文件行
     /// （TeX `l.N` 上下文行语义）。
     fn error_context(&self) -> Option<(usize, String)> {
         for frame in self.stack.iter().rev() {
-            if let InputFrame::Source { bytes, pos, .. } = frame {
+            if let InputFrame::Source {
+                bytes,
+                line_starts,
+                pos,
+                ..
+            } = frame
+            {
                 let bytes: &[u8] = bytes;
                 // 报错锚点（clamp_dimen 值扫描报错）：pos 已推进到报错后的行，
                 // 用值扫描起始位置回溯（tex.web l.N 上下文停在值所在行）
                 let end = self.error_anchor.unwrap_or(*pos).min(bytes.len());
-                let line_no = bytes[..end].iter().filter(|&&b| b == b'\n').count() + 1;
-                let line_start = bytes[..end]
-                    .iter()
-                    .rposition(|&b| b == b'\n')
-                    .map(|i| i + 1)
-                    .unwrap_or(0);
-                let line_end = bytes[line_start..]
-                    .iter()
-                    .position(|&b| b == b'\n')
-                    .map(|i| line_start + i)
-                    .unwrap_or(bytes.len());
+                let (line_no, line_start, line_end) = Self::locate_line(bytes, line_starts, end);
                 let line = String::from_utf8_lossy(&bytes[line_start..line_end]).into_owned();
                 return Some((line_no, line));
             }
@@ -1022,23 +1077,42 @@ impl Expander {
         self.error_anchor = None;
     }
 
+    /// 仅取错误上下文行号（不构建行内容字符串）。
+    ///
+    /// 条件帧入栈（每次 `\if*`）只记行号供 `! Incomplete \ifxxx ... after line N`
+    /// 用——此前走 [`Self::error_context`] 会把**整行**做 UTF-8 转换（长行样张上
+    /// 每 `\if` 一次百 KB 级拷贝）。行号计算与 `error_context` 完全一致（同一
+    /// `error_anchor` 回溯语义），逐位等价。
+    fn error_line_no(&self) -> usize {
+        for frame in self.stack.iter().rev() {
+            if let InputFrame::Source {
+                bytes,
+                line_starts,
+                pos,
+                ..
+            } = frame
+            {
+                let end = self.error_anchor.unwrap_or(*pos).min(bytes.len());
+                let (line_no, _, _) = Self::locate_line(bytes, line_starts, end);
+                return line_no;
+            }
+        }
+        0
+    }
+
     /// 错误上下文带行内错误位置（Source 帧 pos 相对行首的偏移）。
     fn error_context_pos(&self) -> Option<(usize, String, usize)> {
         for frame in self.stack.iter().rev() {
-            if let InputFrame::Source { bytes, pos, .. } = frame {
+            if let InputFrame::Source {
+                bytes,
+                line_starts,
+                pos,
+                ..
+            } = frame
+            {
                 let bytes: &[u8] = bytes;
                 let end = (*pos).min(bytes.len());
-                let line_no = bytes[..end].iter().filter(|&&b| b == b'\n').count() + 1;
-                let line_start = bytes[..end]
-                    .iter()
-                    .rposition(|&b| b == b'\n')
-                    .map(|i| i + 1)
-                    .unwrap_or(0);
-                let line_end = bytes[line_start..]
-                    .iter()
-                    .position(|&b| b == b'\n')
-                    .map(|i| line_start + i)
-                    .unwrap_or(bytes.len());
+                let (line_no, line_start, line_end) = Self::locate_line(bytes, line_starts, end);
                 let line = String::from_utf8_lossy(&bytes[line_start..line_end]).into_owned();
                 let pos = end.saturating_sub(line_start).min(line.len());
                 return Some((line_no, line, pos));
@@ -1076,7 +1150,7 @@ impl Expander {
         };
         let dg = self.group_level.abs_diff(g0);
         let dc = (self.cond_stack.len() as i64 - c0 as i64).abs();
-        if std::env::var("NTEX_SANITY_CHECK").is_ok() && (dg > 1 || dc > 1) {
+        if diag_enabled("NTEX_SANITY_CHECK") && (dg > 1 || dc > 1) {
             eprintln!(
                 "[sanity] 错误恢复后状态偏离：组级 {g0}->{} (Δ{dg})，条件栈 {c0}->{} (Δ{dc}) last_tok={:?}",
                 self.group_level,
@@ -1268,6 +1342,9 @@ impl Expander {
                 InputFrame::Bytecode { pc, .. } => format!("Bytecode(pc={})", pc),
                 InputFrame::TokenList { items, pos } => {
                     format!("TokenList({}tok,pos={})", items.len(), pos)
+                }
+                InputFrame::MacroArg { items, pos } => {
+                    format!("MacroArg({}tok,pos={})", items.len(), pos)
                 }
                 InputFrame::One { tok, .. } => format!("One({tok:?})"),
                 InputFrame::OutputRoutine { items, pos } => {
@@ -1557,7 +1634,7 @@ impl Expander {
                     SlotAction::Font(font) => self.sink.font_selected(font),
                     SlotAction::Primitive(p) => {
                         // 诊断（NTEX_TRACE_EXEC=1）：打印每个执行的原语，定位挂死点
-                        if std::env::var("NTEX_TRACE_EXEC").is_ok() {
+                        if diag_enabled("NTEX_TRACE_EXEC") {
                             eprintln!("[trace-exec] {p:?}");
                         }
                         self.exec_primitive(p)
@@ -1827,11 +1904,7 @@ impl Expander {
                         if arg.is_empty() {
                             continue;
                         }
-                        let items: Vec<(Token, bool)> = arg.iter().map(|&t| (t, false)).collect();
-                        self.stack.push(InputFrame::TokenList {
-                            items: Arc::from(items),
-                            pos: 0,
-                        });
+                        self.stack.push(InputFrame::MacroArg { items: arg, pos: 0 });
                         continue;
                     }
                     return Ok(Some((tok, false)));
@@ -1859,12 +1932,7 @@ impl Expander {
                             if arg.is_empty() {
                                 continue;
                             }
-                            let items: Vec<(Token, bool)> =
-                                arg.iter().map(|&t| (t, false)).collect();
-                            self.stack.push(InputFrame::TokenList {
-                                items: Arc::from(items),
-                                pos: 0,
-                            });
+                            self.stack.push(InputFrame::MacroArg { items: arg, pos: 0 });
                             continue;
                         }
                         _ => {
@@ -1882,6 +1950,15 @@ impl Expander {
                     let item = items[*pos];
                     *pos += 1;
                     return Ok(Some(item));
+                }
+                InputFrame::MacroArg { items, pos } => {
+                    if *pos >= items.len() {
+                        self.stack.pop();
+                        continue;
+                    }
+                    let tok = items[*pos];
+                    *pos += 1;
+                    return Ok(Some((tok, false)));
                 }
                 InputFrame::One { tok, noexpand } => {
                     // 先拷贝（结束字段借用）再弹帧（&mut stack）
