@@ -1,0 +1,18 @@
+[package]
+name = "ntex-backend"
+description = "NTex 渲染后端（M8）：Backend trait + 软光栅位图实现 + PNG 导出"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ntex-layout.workspace = true
+ntex-font.workspace = true
+
+[dev-dependencies]
+ntex-dvi.workspace = true
+ntex-pdf = { path = "../ntex-pdf", version = "0.1.0" }
+
+[lints]
+workspace = true
