@@ -705,6 +705,11 @@ impl Expander {
                 }
                 // TRIP 补全批次：\\the\\everydisplay：显示数学注入 token 列表
                 Primitive::EveryDisplay => Ok(self.everydisplay_toks.clone()),
+                // \the\everyjob：toks 参数读回（latex.ltx L727
+                // `\everyjob\expandafter{\the\everyjob\the\LaTeXReleaseInfo}` 在
+                // scan_left_brace 的 filler 语义下展开时即需读值；NTex 的
+                // \everyjob 赋值暂映射 toks 寄存器 0，读回同源）
+                Primitive::EveryJob => Ok(self.registers.toks(0).to_vec()),
                 // TRIP 补全批次：页面只读内部量（无排版状态返回 0）
                 Primitive::DisplayWidth
                 | Primitive::PageDepth

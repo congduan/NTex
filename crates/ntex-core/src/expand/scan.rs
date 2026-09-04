@@ -606,35 +606,28 @@ impl Expander {
     /// 无 `=` 经 `scan_optional_equals`）——此时**内容复制**；空源寄存器 →
     /// 空 token 列表（TeX 定义为 undefined_cs/null，`\the` 输出空，等价）。
     fn scan_toks_rhs(&mut self) -> Result<TokenArray> {
-        loop {
-            self.skip_spaces()?;
-            let fetched = self.fetch()?;
-            let Some((tok, _)) = fetched else {
-                // 输入耗尽：TeX 报 "Missing { inserted" 后以空 token list 收尾
-                return Ok(Arc::from(Vec::<Token>::new()));
-            };
-            // TeX `@<Get the next non-blank non-relax non-call token@>`：
-            // `\relax` 分隔跳过（`\hyphenation\relax{...}` 既有处理同款）。
-            if let Some(csid) = tok.csid() {
-                if matches!(self.eqtb.slot(csid), EqSlot::Primitive(Primitive::Relax)) {
-                    continue;
-                }
-            }
-            // 组开始 → scan_toks 收集（本实现用 scan_group_contents，
-            // 它入口自行 fetch 组开始 token，故先放回）
-            if tok.catcode() == Some(Catcode::BeginGroup) {
-                self.unread(tok);
-                let val = self.scan_group_contents(Some("tokens"))?;
-                return Ok(Arc::from(val));
-            }
-            // toks 寄存器内容复制
-            if let Some(idx) = self.toks_rhs_index(tok)? {
-                return Ok(self.registers.toks(idx));
-            }
-            return Err(Error::invalid_input(
-                "\\toks 赋值 RHS 需为 {token list} 或 toks 寄存器",
-            ));
+        // tex.web assign_toks（L22951）：scan_optional_equals 后同款 filler
+        // `@<Get the next non-blank non-relax non-call token@>`（get_x_token：
+        // 可展开 filler 展开、跳 spacer/\relax）。filler 处理已内聚到
+        // fetch_non_filler，此处单遍即可（clippy：no never_loop）。
+        let Some(tok) = self.fetch_non_filler()? else {
+            // 输入耗尽：TeX 报 "Missing { inserted" 后以空 token list 收尾
+            return Ok(Arc::from(Vec::<Token>::new()));
+        };
+        // 组开始 → scan_toks 收集（本实现用 scan_group_contents，
+        // 它入口自行 fetch 组开始 token，故先放回）
+        if tok.catcode() == Some(Catcode::BeginGroup) {
+            self.unread(tok);
+            let val = self.scan_group_contents(Some("tokens"))?;
+            return Ok(Arc::from(val));
         }
+        // toks 寄存器内容复制
+        if let Some(idx) = self.toks_rhs_index(tok)? {
+            return Ok(self.registers.toks(idx));
+        }
+        Err(Error::invalid_input(
+            "\\toks 赋值 RHS 需为 {token list} 或 toks 寄存器",
+        ))
     }
 
     /// 判断 RHS token 是否为 toks 寄存器（`\toks<n>` 或 `\toksdef` cs），
@@ -654,27 +647,96 @@ impl Expander {
         }
     }
 
-    /// 扫描平衡花括号内的 token 列表（`\toks0={...}` 用）。
+    /// tex.web `@<Get the next non-blank non-relax non-call token@>`
+    /// （tex.web L8208-8210）：`repeat get_x_token until (cur_cmd<>spacer)
+    /// and (cur_cmd<>relax)`——filler 位置的取 token 循环。
     ///
-    /// TeX `scan_toks(macro, xpand)` 恢复语义：
-    /// - **输入耗尽未配平** → 转录报告 "Runaway text?" 并以隐含 `}` 收尾返回已收集
-    ///   tokens（可恢复，不报错；TeX runaway）；
-    /// - `forbidden` 为 `Some(cs 名)` 时（`\toks`/`\output`/`\every...` 赋值上下文），
-    ///   实参中出现的 **outer 宏** → forbidden：报 "Runaway text?" + "! Forbidden
-    ///   control sequence found while scanning text of \X."，插入 `}` 结束扫描、
-    ///   offending cs 放回输入流（TRIP L354 `\tokens{\a^^@^^@a\par!`）。
-    fn scan_group_contents(&mut self, forbidden: Option<&str>) -> Result<Vec<Token>> {
-        self.skip_spaces()?; // TeX scan_general_text：跳过 = 后的空格再读组（etrip L1178 \output = {）
-        let fetched = self
-            .fetch()?
-            .ok_or_else(|| Error::invalid_input("扫描到输入末尾"))?
-            .0;
-        let open = self.resolve_group_char(fetched);
-        if open.catcode() != Some(Catcode::BeginGroup) {
-            // TeX scan_left_brace（tex.web L692-696）：非 { → 报
-            // "Missing { inserted."（token 放回、隐含 `{` 恢复继续），
-            // 不再硬错误（trip.tex L396 `\accent\x\vfill` 等 20 处依赖此恢复）
-            self.unread(open);
+    /// - 可展开 token（`\expandafter`/宏/`\the`/`\csname`/...）先展开再重判
+    ///   （get_x_token 语义；`\everyjob\expandafter{...}` 的 `{` 由
+    ///   `\expandafter` 压回）；
+    /// - spacer（cat 10）与 `\relax`（含 `\let` 链上的别名）跳过；
+    /// - 被 `\noexpand` 冻结的 token（fetch 返回 `ne=true`）：本轮**不展开**
+    ///   （tex.web \noexpand 一次性闩锁——get_x_token 直接返回它；否则
+    ///   expand_once 会把冻结 token 原样压回造成无限重取），但仍做
+    ///   spacer/\relax 判定；
+    /// - `\let\bgroup={` 类组定界别名经 [`Self::resolve_group_char`] 归一；
+    /// - 返回值**已被消费**，调用方按需放回。
+    ///
+    /// 偏差（记录）：tex.web get_x_token 对条件原语（`\ifnum` 等）同样展开；
+    /// 本引擎 `is_expandable()` 白名单不含条件原语（`maybe_eval_cond` 是数字
+    /// 扫描的专用臂），此处条件 token 走"不可展开 → Missing {"恢复路径。
+    fn fetch_non_filler(&mut self) -> Result<Option<Token>> {
+        loop {
+            let Some((tok, ne)) = self.fetch()? else {
+                return Ok(None);
+            };
+            let t = self.resolve_group_char(tok);
+            if t.catcode() == Some(Catcode::Space) {
+                continue; // spacer：filler 循环跳过
+            }
+            if let Some(csid) = t.csid() {
+                // 别名链解引用（tex.web get_x_token 直接取 eq_type/eq_value，
+                // 别名无独立语义）；带环保护（上限 100，同
+                // scan_group_contents_expanding）。
+                let mut id = csid;
+                let mut hops = 0usize;
+                while let EqSlot::Alias(next) = self.eqtb.slot(id) {
+                    id = *next;
+                    hops += 1;
+                    if hops > 100 {
+                        return Err(Error::invalid_input("\\let 别名环"));
+                    }
+                }
+                match self.eqtb.slot(id).clone() {
+                    // \relax：filler 循环明确跳过（tex.web L8210）；\noexpand\relax
+                    // 同样跳过（cur_cmd 仍是 relax）
+                    EqSlot::Primitive(Primitive::Relax) => continue,
+                    // 被 \noexpand 冻结：不展开，直接作为 filler 结果返回
+                    // （TeX get_x_token 的 noexpand 分支）
+                    _ if ne => {}
+                    // protected 宏在展开抑制上下文（\edef/\write）不展开 → 视为不可展开
+                    EqSlot::Macro(m) if !(m.value.protected && self.suppress_expansion > 0) => {
+                        self.push_expansion(t, ne)?;
+                        continue;
+                    }
+                    EqSlot::Primitive(p) if p.is_expandable() => {
+                        self.push_expansion(t, ne)?;
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+            return Ok(Some(t));
+        }
+    }
+
+    /// 把展开结果压回输入栈（filler 循环用；与既有展开点同构）。
+    fn push_expansion(&mut self, tok: Token, noexpand: bool) -> Result<()> {
+        let mut expansion = Vec::new();
+        self.expand_once((tok, noexpand), &mut expansion)?;
+        let items: Vec<(Token, bool)> = expansion.into_iter().collect();
+        self.stack.push(InputFrame::TokenList {
+            items: Arc::from(items),
+            pos: 0,
+        });
+        Ok(())
+    }
+
+    /// tex.web `scan_left_brace`（L8194-8206）：一切"必选 `{`"值扫描的入口——
+    /// `scan_toks` 的非宏定义臂（toks 寄存器 / `\every*` / `\output` /
+    /// `\message` / `\mark`）、`\insert`/`\discretionary`/`\mathchoice`/
+    /// `\noalign`/`\hyphenation`/`\patterns`。取 token 用 filler 语义
+    /// （[`Self::fetch_non_filler`]）；非 `{` → "! Missing { inserted" +
+    /// back_error（token 放回）+ 隐含插入 `{`（tex.web `incr(align_state)`，
+    /// 本引擎组配平由收集循环的 depth 承担）。
+    fn scan_left_brace(&mut self) -> Result<()> {
+        let Some(t) = self.fetch_non_filler()? else {
+            // 输入耗尽：与既有入口同款硬错误（tex.web EOF 处 cur_cmd=0
+            // ≠ left_brace，同样报 Missing { 但恢复继续）
+            return Err(Error::invalid_input("扫描到输入末尾"));
+        };
+        if t.catcode() != Some(Catcode::BeginGroup) {
+            self.unread(t);
             let _ = self.sink.write16(
                 "! Missing { inserted.\n\
                  A left brace was mandatory here, so I've put one in.\n\
@@ -685,6 +747,24 @@ impl Expander {
             );
             self.report_error_context();
         }
+        Ok(())
+    }
+
+    /// 扫描平衡花括号内的 token 列表（`\toks0={...}` 用）。
+    ///
+    /// TeX `scan_toks(macro, xpand)` 恢复语义：
+    /// - **输入耗尽未配平** → 转录报告 "Runaway text?" 并以隐含 `}` 收尾返回已收集
+    ///   tokens（可恢复，不报错；TeX runaway）；
+    /// - `forbidden` 为 `Some(cs 名)` 时（`\toks`/`\output`/`\every...` 赋值上下文），
+    ///   实参中出现的 **outer 宏** → forbidden：报 "Runaway text?" + "! Forbidden
+    ///   control sequence found while scanning text of \X."，插入 `}` 结束扫描、
+    ///   offending cs 放回输入流（TRIP L354 `\tokens{\a^^@^^@a\par!`）。
+    fn scan_group_contents(&mut self, forbidden: Option<&str>) -> Result<Vec<Token>> {
+        // TeX scan_toks 非宏定义臂入口 = scan_left_brace（tex.web L9329）：
+        // filler 语义（get_x_token 展开至 `{`，跳 spacer/\relax），非 { →
+        // "Missing { inserted."（token 放回、隐含 `{` 恢复继续），不再硬错误
+        // （trip.tex L396 `\accent\x\vfill` 等 20 处依赖此恢复）
+        self.scan_left_brace()?;
         let mut tokens = Vec::new();
         let mut depth = 0usize;
         loop {
@@ -740,51 +820,14 @@ impl Expander {
     /// `\mathchoice{}a}{A|{}}{\mathchoice}` → 分支 `{}`/`a`/`A|{}`/`\mathchoice`）。
     /// 返回收集到的分支 token（内容不执行）。
     fn scan_mathchoice_branch(&mut self) -> Result<Vec<Token>> {
-        self.skip_spaces()?;
-        let fetched = self
-            .fetch()?
-            .ok_or_else(|| Error::invalid_input("\\mathchoice 分支扫描到输入末尾"))?
-            .0;
-        let t = self.resolve_group_char(fetched);
-        if t.catcode() == Some(Catcode::BeginGroup) {
-            self.unread(t);
-            return self.scan_group_contents(None);
-        }
-        // 非 `{`：TeX scan_left_brace 报 "Missing { inserted."，token 放回、隐含 `{`
-        self.unread(t);
-        let _ = self.sink.write16(
-            "! Missing { inserted.\n\
-             A left brace was mandatory here, so I've put one in.\n\
-             You might want to delete and/or insert some corrections\n\
-             so that I will find a matching right brace soon.\n\
-             (If you're confused by all this, try typing `I}' now.)\n"
-                .to_string(),
-        );
-        self.report_error_context();
-        // 隐含 `{` 后按平衡组收集到下一个 `}`（`}` 消费）
-        let mut tokens = Vec::new();
-        let mut depth = 0usize;
-        loop {
-            let Some((fetched, _)) = self.fetch()? else {
-                let _ = self.sink.write16("Runaway text?\n".to_owned());
-                return Ok(tokens);
-            };
-            let tt = self.resolve_group_char(fetched);
-            match tt.catcode() {
-                Some(Catcode::BeginGroup) => {
-                    depth += 1;
-                    tokens.push(tt);
-                }
-                Some(Catcode::EndGroup) => {
-                    if depth == 0 {
-                        return Ok(tokens);
-                    }
-                    depth -= 1;
-                    tokens.push(tt);
-                }
-                _ => tokens.push(tt),
-            }
-        }
+        // tex.web math_choice（L22152/22171）：push_math(math_choice_group) 后
+        // scan_left_brace——入口与一般值扫描共用（filler 语义）；非 `{` 的
+        // 错误恢复（token 放回、隐含 `{`、收集到下一个 `}`）同 scan_toks 臂
+        // （TRIP L438 `\mathchoice{}a}{A|{}}{\mathchoice}` 分支 `a`/`A|{}`/
+        // `\mathchoice`）。scan_group_contents 入口已含 scan_left_brace，
+        // 勿在此再调（否则空分支 `{}` 的 `}` 被当作开组 token 多报一次
+        // "Missing { inserted."）。
+        self.scan_group_contents(None)
     }
 
     /// `\let\bgroup={`/`\let\egroup=}` 别名解析：绑定为组定界符字符的 cs → 底层字符 token。

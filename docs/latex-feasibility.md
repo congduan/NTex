@@ -520,3 +520,74 @@ latex.ltx L12804/L13103/L13168 的 `\globaldefs\@ne` 后续需要它。
   数学组残留（TRIP pass1 `group_end 无配对 group_begin`、ETRIP pass2
   `l.356` math left group 区），无新增 diff——本刀未跑 HEAD 逐字节对比
   （禁 stash），以"残留签名一致 + 全量测试绿"为门禁依据。
+
+## 12. 2026-09-04 第六轮进展（`scan_left_brace` filler 语义——L727 区越过）
+
+> 本刀按 §11.2 的"下一刀首选"执行：给 toks/寄存器/`\every*` 等值扫描补
+> tex.web `scan_left_brace` 的 filler 语义（`get_x_token` 可展开 filler 展开、
+> 跳 spacer/`\relax`）。只影响**值扫描路径**；宏定界参数扫描零改动。
+
+### 12.1 scan_left_brace filler 语义 —— 已修复
+
+- tex.web `scan_left_brace`（L8194-8206）实为 `@<Get the next non-blank
+  non-relax non-call token@>`（L8208-8210）：`repeat get_x_token until
+  (cur_cmd<>spacer) and (cur_cmd<>relax)`。引擎此前 toks 值扫描要求**字面 `{`**
+  （`skip_spaces` + fetch + catcode 检查），latex.ltx L727
+  `\everyjob\expandafter{\the\everyjob\the\LaTeXReleaseInfo}` 的 `\expandafter`
+  在 filler 位置不被展开 → `Missing { inserted`；恢复插入的 `{` 使组嵌套偏移 1，
+  是 §11.2 记录的 L16789 `Too many }'s` + L16792+ 数千条 undefined 的上游。
+- 修复（scan.rs 重构）：
+  - 新增 `fetch_non_filler`：filler 循环。spacer（cat 10）与 `\relax`（含
+    `\let` 链别名）跳过；可展开 token（`\expandafter`/宏/`\the`/`\csname`…）经
+    `expand_once` 展开后压回输入栈顶重判（`\expandafter` 把 `{` 压回的语义）；
+    `\let\bgroup={` 类组定界别名经 `resolve_group_char` 归一；被 `\noexpand`
+    冻结的 token（fetch 返回 `ne=true`）本轮**不展开**但照做 spacer/`\relax`
+    判定——TeX 一次性闩锁，否则 `expand_once` 会把冻结 token 原样压回造成
+    无限重取（挂死类缺陷）。
+  - 新增 `scan_left_brace`：`fetch_non_filler` 取 token，非 `{` → "Missing {
+    inserted." 恢复（token 放回 + 隐含 `{`，tex.web `incr(align_state)`）；
+    `scan_group_contents` 入口改调它，`\toks`/`\every*`/`\output`/`\message`/
+    `\mark`/`\insert`/`\discretionary`/`\special`/`\mathchoice`/`\patterns` 等
+    既有"必选 `{`"值扫描一次收敛。
+  - `scan_toks_rhs`（toks 寄存器 RHS）与 `\everydisplay`/`\everypar` 等
+    （primitive_toks_state.rs）RHS 取 token 改走 `fetch_non_filler`；
+    `\the\everyjob` 读回补上（save.rs，映射 toks 0，与既有赋值映射同源）。
+- **宏定界参数扫描零改动**：macros.rs 的 `collect_delimited_arg`/
+  `collect_undelimited_arg`/`scan_balanced_text` 不经过上述函数（grep 核实），
+  TRIP/ETRIP 零回归。
+- 修正中间态两个 bug（先审查后收尾发现）：
+  1. `scan_mathchoice_branch` 先 `scan_left_brace()`、又经 `scan_group_contents`
+     入口再调一次 → 双重消费：空分支 `{}` 的 `}` 被当开组 token → 伪报一次
+     "Missing { inserted."（TRIP L438 回归面）——删显式调用，只留
+     `scan_group_contents`。
+  2. clippy `never_loop`：relax-skip 移入 `fetch_non_filler` 后 `scan_toks_rhs`
+     的 `loop` 已无 `continue`，去包装（单遍）。
+
+### 12.2 阻塞点刷新（第六轮）
+
+| # | 状态 | 说明 |
+|---|---|---|
+| L727 区 | **已越过** | `\everyjob\expandafter{\the\everyjob\the\LaTeXReleaseInfo}` 正常赋值；后续 `\LaTeXReleaseInfo =\toks 10`（寄存器 wlog）与 L733 `\write16` 的 `LaTeX2e <2026-06-01>` 照常出现。L727 插入 `{` 的组偏移级联（L16789 `Too many }'s`、L16792+ undefined、L17474 `\@inmatherr` 2492 条）**全部消失**。错误总数 2561 → **4**，load 提前终止于 L1113-1117 区（见下），`dumped=false` |
+| **新（next）** | **L1113 ltexpl.dtx expl3 门闩：`\expandafter\ifx\csname tex\string _let:D\endcsname\relax`** | 判别"expl3 原语是否已存在"。tex.web：`\csname` 对未定义名 `eq_define(cur_cs,relax,256)`（L7754，注释明言 "will now match `\.{\relax}'"），原语 `\relax` 同为 `primitive("relax",relax,256)`（L5728）——二者在 `\ifx` 下相等，门闩走"未定义 → 加载 expl3"分支。引擎把 `\csname`-未定义与直接-未定义都归 `EqSlot::Undefined`，`ifx_equal` 判 `Undefined≠Primitive(Relax)` → 门闩误判"expl3 已存在"→ 走 `\else` 执行 `\GenericInfo{}{Skipping…}`（其定义在 L8841，未达 → 报 undefined）再 `\expandafter\endinput` → **load 在 L1117 早退**，`\dump` 未达。修法：`\csname` 对未定义名创建为 `EqSlot::Primitive(Relax)`（对齐 `eq_define(cs,relax,256)`），或 `ifx_equal` 特判 Undefined≡Relax；属 `\ifx`/`\csname` 语义刀 |
+| L728 嵌套条件 | 偏差（报错但恢复正确） | `\ifnum0\ifnum\patch@level=0\ifx…1\fi\fi>0`：外层 `\ifnum` 操作数读到 `0` 后遇嵌套 `\ifnum` 不展开（`scan_number_inner` 十进制数字循环缺 `maybe_eval_cond` 臂——基数分支同款已有，cond 值读进数字）→ 报 "Missing = inserted for \ifnum"，但恢复后**仍走对分支**（L733 写流正确）。小修（数字循环补条件臂）可与上式同刀或后刀 |
+| 下游症状 | 归因收敛 | 转录余 4 错：L301/302 `\string^^J` → `\`+undefined（LF=5 行模型，§9.3 已知）、L728 嵌套条件（上）、`\GenericInfo` undefined（L1113 门闩下游，非独立阻塞点）。错误锚点 l.547 陈旧（§11.2 已知偏差） |
+| 终态 | 未动 | pass1 OK、`dumped=false`（L1117 `\endinput` 早退，**非**输入栈超限——首度未触 5000 帧防挂保护）；待 expl3 门闩修复后重测 |
+
+### 12.3 本轮改动清单
+
+- `crates/ntex-core/src/expand/scan.rs`：`fetch_non_filler`/`scan_left_brace`/
+  `push_expansion` 新增；`scan_group_contents`/`scan_toks_rhs`/
+  `scan_mathchoice_branch` 入口改走 `scan_left_brace`（含 mathchoice 双重消费
+  修正、scan_toks_rhs 去 `loop`）。注释含 tex.web 行号对照与两处记录偏差
+  （条件原语不在 `is_expandable()` 白名单、`\noexpand` 一次性闩锁）。
+- `crates/ntex-core/src/expand/primitive_toks_state.rs`：`\everydisplay`/
+  `\everypar` 等 toks RHS 取 token 改 `fetch_non_filler`（tex.web assign_toks
+  L22951 对照）。
+- `crates/ntex-core/src/expand/save.rs`：`\the\everyjob` 读回臂（映射 toks 0，
+  与既有赋值映射同源）。
+- `crates/ntex-core/src/expand/tests.rs`：新增 `scan_left_brace_expandable_filler`
+  （5 例：`\expandafter` filler / `\bgroup` 别名组定界 / spacer 与 `\relax` 跳过 /
+  toks 寄存器 RHS 复制不受影响 / 非 `{` 报 "Missing { inserted." 恢复）。
+- 回归：`make check`（fmt/clippy/test，全套件含 277 lib 单测）全绿；TRIP/ETRIP
+  driver 停在 HEAD 已知数学组残留（未跑逐字节对比，禁 stash），以"残留签名
+  一致 + 全量测试绿"为门禁依据。

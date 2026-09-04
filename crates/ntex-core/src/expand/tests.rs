@@ -403,6 +403,46 @@ mod tests {
     }
 
     #[test]
+    fn scan_left_brace_expandable_filler() {
+        // tex.web scan_left_brace（L8194-8206）：toks 值扫描的 `{` 入口是
+        // get_x_token（可展开 filler）——latex.ltx L727
+        // `\everyjob\expandafter{\the\everyjob\the\LaTeXReleaseInfo}` 的最小复现
+        // （`\expandafter` 展开把 `{` 压回，`\string` 随之展开成字符 token）
+        assert_eq!(
+            expand("\\everyjob\\expandafter{\\string x}\\the\\toks0").unwrap(),
+            "x"
+        );
+        // 宏 filler + `\let\bgroup={` 别名作组定界（tex.web scan_left_brace
+        // 只认 cur_cmd=left_brace；本引擎经 resolve_group_char 归一）
+        assert_eq!(
+            expand(
+                "\\let\\bgroup={\\let\\egroup=}\
+                 \\def\\f{\\bgroup y\\egroup}\\everyjob\\f\\the\\toks0"
+            )
+            .unwrap(),
+            "y"
+        );
+        // spacer 与 \relax 跳过（tex.web L8210 `until (cur_cmd<>spacer)
+        // and (cur_cmd<>relax)`）
+        assert_eq!(expand("\\toks1=\\relax  {z}\\the\\toks1").unwrap(), "z");
+        // toks 寄存器 RHS 复制（tex.web <If the right-hand side is a token
+        // parameter or token register>）不受 filler 语义影响
+        assert_eq!(
+            expand("\\toks1={a}\\toks2=\\toks1\\the\\toks2").unwrap(),
+            "a"
+        );
+        // 非 `{`：报 "Missing { inserted." 后 token 放回照常收集（TeX 恢复语义，
+        // TRIP L438 `\mathchoice{}a}{...}` 同路径）
+        let mut e = Expander::new();
+        e.run_source("\\everyjob q").unwrap();
+        assert!(
+            e.transcript().contains("! Missing { inserted."),
+            "{}",
+            e.transcript()
+        );
+    }
+
+    #[test]
     fn lccode_assign_and_read() {
         // etrip.tex 88 行：\lccode`A=`a；数字上下文读回
         assert_eq!(

@@ -69,9 +69,10 @@ impl Expander {
             // TRIP 冲刺：\everydisplay={<tokens>}（显示数学进入时注入）
             Primitive::EveryDisplay => {
                 self.expect_equals()?;
-                self.skip_spaces()?;
-                let (tok, _) = self
-                    .fetch()?
+                // tex.web assign_toks L22951：RHS 取 token 用 filler 语义
+                // （get_x_token：可展开 filler 展开、跳 spacer/\relax）
+                let tok = self
+                    .fetch_non_filler()?
                     .ok_or_else(|| Error::invalid_input("everydisplay 缺少 RHS"))?;
                 if tok.catcode() == Some(Catcode::BeginGroup) {
                     self.unread(tok);
@@ -110,9 +111,10 @@ impl Expander {
             | Primitive::EveryCr
             | Primitive::ErrHelp => {
                 self.expect_equals()?;
-                self.skip_spaces()?;
-                let (tok, _) = self
-                    .fetch()?
+                // tex.web assign_toks L22951：RHS 取 token 用 filler 语义
+                // （get_x_token：可展开 filler 展开、跳 spacer/\relax）
+                let tok = self
+                    .fetch_non_filler()?
                     .ok_or_else(|| Error::invalid_input("toks 参数缺少 RHS"))?;
                 let toks = if tok.catcode() == Some(Catcode::BeginGroup) {
                     self.unread(tok);
