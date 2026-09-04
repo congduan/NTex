@@ -917,11 +917,9 @@ mod tests {
         );
 
         // etrip.tex L1020-1050 段复现（box 寄存器测试：\setbox32101 + \11 调用）
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../fixtures/etrip/etrip.tex"
-        );
-        let full = std::fs::read_to_string(path).unwrap();
+        let Some(full) = read_fixture("fixtures/etrip/etrip.tex") else {
+            return;
+        };
         let lines: Vec<&str> = full.lines().collect();
         let pre = r"\def\typeout{\immediate\write15 }
 \def\error#1{\immediate\write15{Bug in your e-TeX implementation!}\immediate\write15 }";
@@ -1144,8 +1142,9 @@ mod tests {
         // etrip L866-891 组合段：前置表达式段（\skip44/\muskip44/\dimen44 赋值）
         // + 运算符优先级段（\def\1 + \1\ifnum\numexpr{1+}{2*3} 等）。
         // 全量上下文 l.880 报 "Missing = inserted for \ifnum"（孤立段复现通过）。
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/etrip/etrip.tex");
-        let src = std::fs::read_to_string(path).unwrap();
+        let Some(src) = read_fixture("fixtures/etrip/etrip.tex") else {
+            return;
+        };
         let lines: Vec<&str> = src.lines().collect();
         // 前置：\typeout/\error/\empty/\space 宏定义（etrip 顶部）
         let pre = r"\def\empty{} \def\space{ }
@@ -1299,8 +1298,9 @@ I changed this one to zero.
     fn etrip_full_gluestretchorder_section() {
         // 复现 etrip.tex mutoglue 段（L902-963）+ gluestretchorder 段：
         // 前段复杂表达式（\\2=--\\gluetomu--\\glueexpr(...)）可能污染后续 \\ifnum 扫描
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/etrip/etrip.tex");
-        let src = std::fs::read_to_string(path).unwrap();
+        let Some(src) = read_fixture("fixtures/etrip/etrip.tex") else {
+            return;
+        };
         let lines: Vec<&str> = src.lines().collect();
         // 二分：gluestretchorder 段逐行扩展，定位产生 wrong glue 的 \1 调用
         let end = std::env::var("GSO_END").ok().and_then(|s| s.parse::<usize>().ok()).unwrap_or(963);
@@ -2072,41 +2072,61 @@ I changed this one to zero.
 
     // ---------- LaTeX 兼容第十六刀：\if 操作数位的嵌套条件真实求值（报告 §22） ----------
 
+    /// tex.web `conditional`（§L9716）：`expand` 遇 `if_test` **递归真实求值**——
+    /// 帧照常建立；假支由 `pass_text` 跳到本帧 `\else`（else 支文本留流）或
+    /// `\fi`（帧直接出栈、`\fi` 被消费）；真支文本原样留流。操作数位的 `\if*`
+    /// 因此不是哨兵：get_x_token 继续读分支文本首 token 作操作数。
+    /// 下列期望值均为真实 TeX ground truth（tex -interaction=nonstopmode，
+    /// TeXLive 2024，2026-09-05 变体实验 V1-V4 复核）。
     #[test]
     fn if_operand_evaluates_nested_conditional_not_sentinel() {
-        // tex.web get_x_token（\if 操作数取数，@<Test if two characters match@>）：
-        // 操作数位的 `\if*` 交 expand 的 if_test 分支**真实求值**——帧照常建立、
-        // 选中分支首 token 即操作数；不得按"不可展开 cs → 非字符哨兵"吞掉，否则
-        // 操作数取到被拒/无关分支文本，分支判反。expl3 变体生成循环
-        // `\if:w #4 \__cs_generate_variant_loop_base:N #2 \else:`（expl3-code
-        // L2896）的右操作数展开体含 9 层嵌套 `\if:w`
-        // （`\__cs_generate_variant_loop_base:N`），首个
-        // `\cs_generate_variant:Nn` 调用即变体串分析全错（报告 §21.3/§22.1）。
-        //
-        // basea 模拟 loop_base：逐字比对、兜底 `q`；其展开残留的 `\else:/\fi:`
-        // 由调用侧 `\fi: \fi:` 收口（expl3 `\__cs_generate_variant_loop_invalid`
-        // 体首 `\fi: \fi: \fi:` 同款 idiom）。
-        // `\basea o` → `n`（第二层比对命中）；`\basea q` → 兜底 `q`。
+        // V1：嵌套假（c vs 空格，见 V3 注）→ 跳到 \else，else 支首 token `n`
+        // 即外层操作数（n vs n 真）；嵌套帧的 \fi 由主循环收口 → 输出 "X T"
+        assert_eq!(expand(r"\if n\if c o N\else n\fi X T\else F\fi").unwrap(), "X T");
+        // V2：同 V1 但 else 支首 token=m → n vs m 假 → F
+        assert_eq!(expand(r"\if n\if c o N\else m\fi X T\else F\fi").unwrap(), "F");
+        // V3：嵌套真（c=c）→ 真支留流，但操作数取到的是 `N` 前的 cat-10
+        // **空格**（"字符"含 spacer）→ n vs 空格 假 → F
+        assert_eq!(expand(r"\if n\if c c N\else m\fi n T\else F\fi").unwrap(), "F");
+        // V4：嵌套假且无 \else → pass_text 直达 \fi，嵌套帧彻底出栈 →
+        // 操作数 = 后续 `X` → n vs X 假 → F
+        assert_eq!(expand(r"\if n\if c o N\fi X T\else F\fi").unwrap(), "F");
+    }
+
+    /// 第十六刀原始构造（模拟 expl3 `\__cs_generate_variant_loop_base:N`
+    /// idiom，expl3-code L2820-2834）的 ground truth 回归锁。`\loopa` 体内
+    /// 第二个 `\fi:` 是多余收口，且嵌套真支 `n` 前的空格才是外层操作数——
+    /// 真实 TeX 由此报 3 个可恢复错误（`! Extra \fi` → `! Extra \else` →
+    /// `! Extra \fi`）并输出 SAMEDIFF；引擎须与之逐点一致（此前测试臆想的
+    /// SAME 期望值即本文件 CI 失败的根因）。
+    #[test]
+    fn if_operand_nested_conditional_degenerate_matches_real_tex() {
         let src = concat!(
             "\\catcode`\\:=11 \\catcode`\\_=11 ",
             "\\let\\if:w\\if \\let\\else:\\else \\let\\fi:\\fi ",
             "\\long\\def\\basea#1{\\if:w c #1 N \\else: \\if:w o #1 n \\else: q\\fi: \\fi:} ",
             "\\long\\def\\loopa#1#2{\\if:w #1 \\basea #2 \\fi: \\fi: SAME\\else: DIFF\\fi:} "
         );
-        // 操作数 = 真分支文本 n（basea 对 o），外层 n vs n 真 → SAME
-        assert_eq!(expand(&format!("{src}\\loopa n o")).unwrap().trim(), "SAME");
-        // 操作数 = 兜底分支文本 q，外层 q vs q 真 → SAME（走的是 else 分支取数）
-        assert_eq!(expand(&format!("{src}\\loopa q q")).unwrap().trim(), "SAME");
-        // 操作数 = n，外层 q vs n 假 → DIFF；且先行的两帧必须配平（否则后续
-        // 构造的分支选择被扰动）
+        let (r, t) = run_transcript(&format!("{src}\\loopa n o"));
+        assert!(r.is_ok(), "多余收口应可恢复继续：{t}");
+        assert!(t.contains("Extra \\fi"), "应报 Extra \\fi：{t}");
+        assert!(t.contains("Extra \\else"), "应报 Extra \\else：{t}");
+        assert_eq!(expand(&format!("{src}\\loopa n o")).unwrap().trim(), "SAMEDIFF");
+        assert_eq!(expand(&format!("{src}\\loopa q q")).unwrap().trim(), "SAMEDIFF");
         assert_eq!(
             expand(&format!("{src}\\loopa n o\\loopa q o"))
                 .unwrap()
                 .trim(),
-            "SAMEDIFF"
+            "SAMEDIFFSAMEDIFF"
         );
     }
 
+    /// 第十六刀原始构造（模拟 expl3 `\__cs_generate_variant_loop_base:N`
+    /// idiom，expl3-code L2820-2834）的 ground truth 回归锁。`\loopa` 体内
+    /// 第二个 `\fi:` 是多余收口，且嵌套真支 `n` 前的空格才是外层操作数——
+    /// 真实 TeX 由此报 3 个可恢复错误（`! Extra \fi` → `! Extra \else` →
+    /// `! Extra \fi`）并输出 SAMEDIFF；引擎须与之逐点一致（此前测试臆想的
+    /// SAME 期望值即本文件 CI 失败的根因）。
     // ---------- LaTeX 兼容第十四刀：参数文本 `#{` hash_brace 语义（报告 §20） ----------
 
     #[test]
@@ -2292,6 +2312,20 @@ I changed this one to zero.
 
     // ---------- A3：错误上下文行（l.N） ----------
 
+    /// 读取仓库根下 fixture 文件；缺失时跳过测试（CI 未跑 `make fixtures`
+    /// 的环境不可 panic——与 ntex-font `parses_real_cmr10` 同款约定：
+    /// eprintln 提示 + None，调用方 `let Some(..) = .. else { return }`）。
+    fn read_fixture(rel: &str) -> Option<String> {
+        let path = format!("{}/../../{}", env!("CARGO_MANIFEST_DIR"), rel);
+        match std::fs::read_to_string(&path) {
+            Ok(s) => Some(s),
+            Err(_) => {
+                eprintln!("fixture {rel} 不存在（先 make fixtures），跳过该测试");
+                None
+            }
+        }
+    }
+
     /// 运行源码并返回转录（错误时返回 Err + 已累积转录）。
     fn run_transcript(src: &str) -> (Result<()>, String) {
         let mut e = Expander::new();
@@ -2307,8 +2341,9 @@ I changed this one to zero.
     /// TRIP 冲刺调试（临时）。
     #[test]
     fn dbg_trip_l26_mathchardef() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/trip/trip.tex");
-        let full = std::fs::read_to_string(path).unwrap();
+        let Some(full) = read_fixture("fixtures/trip/trip.tex") else {
+            return;
+        };
         let lines: Vec<&str> = full.lines().collect();
         // 逐行扩展：找第一个失败行（L2 起；"条件未闭合"是 \ifx 未到 \fi 的干扰）
         for end in [24, 28, 29, 30] {

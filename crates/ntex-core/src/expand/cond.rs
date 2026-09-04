@@ -17,7 +17,16 @@ impl Expander {
     }
 
     /// 条件状态机单步推进。
-    fn step_conditional(&mut self, op: CondOp) -> Result<()> {
+    ///
+    /// `tok` 为当前条件 token 本身：tex.web @<Terminate the current conditional
+    /// and skip to \fi@> 在 `if_limit=if_code`（本 `\if` 参数扫描中，对应本引擎
+    /// 栈顶 `CondState::Evaluating`）时执行 `insert_relax`——**回退该 token 并
+    /// 在其前插入 frozen `\relax`**（`cur_tok:=…cur_cs; back_input; cur_tok:=
+    /// …frozen_relax; back_input`），token 不消费、条件机不推进；否则 `\fi`/
+    /// `\else`/`\or` 在操作数位会被当 "Extra" 吞掉，本 `\if` 的跳过区扫描
+    /// 便失去闭合边界（TRIP L313 `\if\the\badness\fi\message{…}` 曾因此
+    /// `\if 缺少 \fi` 致命）。
+    fn step_conditional(&mut self, op: CondOp, tok: Token) -> Result<()> {
         if diag_enabled("NTEX_COND_TRACE") {
             let frames: Vec<String> = self
                 .cond_stack
@@ -29,6 +38,7 @@ impl Expander {
                         match f.state {
                             CondState::Processing => "P",
                             CondState::Skipping => "S",
+                            CondState::Evaluating => "V",
                         },
                         if f.else_seen { "e" } else { "-" }
                     )
@@ -41,6 +51,23 @@ impl Expander {
                 self.group_level,
                 frames.join(" ")
             );
+        }
+        // tex.web insert_relax 门：`if cur_chr>if_limit then if if_limit=if_code
+        // then insert_relax`（\or/\else/\fi 码均 > if_code）。
+        if matches!(op, CondOp::Fi | CondOp::Else | CondOp::Or)
+            && self
+                .cond_stack
+                .last()
+                .is_some_and(|f| f.state == CondState::Evaluating)
+        {
+            let Some(relax_csid) = self.intern.lookup("relax") else {
+                // builtins 恒注册 relax；不可达防御（引擎契约：不 panic）
+                self.report_error("Extra \\fi.");
+                return Ok(());
+            };
+            self.unread(tok);
+            self.unread(Token::control_sequence(relax_csid));
+            return Ok(());
         }
         match op {
             CondOp::Fi => {
@@ -82,6 +109,9 @@ impl Expander {
                         top.state = CondState::Skipping;
                         top.owns_skip = false;
                     }
+                    // Evaluating（求值中）已被上方 insert_relax 门拦截，此处
+                    // 不可达；防御性不推进状态。
+                    CondState::Evaluating => {}
                 }
                 Ok(())
             }
@@ -113,6 +143,8 @@ impl Expander {
                         top.owns_skip = false;
                         self.cur_if_branch = -1;
                     }
+                    // 同 Else 臂：Evaluating 已被 insert_relax 门拦截，不可达。
+                    CondState::Evaluating => {}
                 }
                 Ok(())
             }
@@ -160,13 +192,45 @@ saved_if_type: saved_type,
                     });
                     return Ok(());
                 }
+                // tex.web conditional（§L9725）：**先压条件栈、再求值**——
+                // 操作数扫描（get_x_token）遇嵌套 `\if*` 会递归建帧，父帧必须
+                // 已在栈上，后续 `\fi`/`\else` 的归属（弹最内层帧）才与 tex.web
+                // 一致。此前"求值后才压帧"使操作数扫描建的嵌套帧排到父帧
+                // **之下**，`\fi` 误弹父帧 → `\else` 落到嵌套帧上报 Extra
+                // \else、假支文本泄漏输出（`\if n\if c o N\else n\fi X T\else
+                // F\fi` 应输出 "X T" 而非 "X TF"，2026-09-05 对照真实 TeX）。
+                // 第十七刀：初始状态用 Evaluating（tex.web if_limit=if_code），
+                // 求值中操作数位遇 `\or`/`\else`/`\fi` 走 insert_relax 门而非
+                // 弹帧/报 Extra（TRIP L313 `\if\the\badness\fi`）；truth 后转
+                // Processing（if_limit=else_code）。
+                self.cond_stack.push(CondFrame {
+                    is_case: false,
+                    state: CondState::Evaluating,
+                    owns_skip: false,
+                    ors_left: None,
+                    else_seen: false,
+                    case_selected: false,
+                    saved_if_type: saved_type,
+                    saved_if_branch: saved_branch,
+                    if_type: code,
+                    line: self.error_line_no(),
+                });
+                let target = self.cond_stack.len();
                 // TeX 错误恢复：条件求值失败（Arithmetic overflow / Missing number
-                // 等）后按 false 继续——条件帧照常建立（truth=false 走 skip_ahead），
+                // 等）后按 false 继续——条件帧照常保留（truth=false 走 skip_ahead），
                 // 否则后续 \else/\fi 找不到帧全部错乱（etrip L805-873 \1 体
                 // \ifnum 的 overflow 连锁 → l.880 Extra \else + Missing =）。
                 let mut truth = self.evaluate_if(op).unwrap_or_default();
                 if neg {
                     truth = !truth;
+                }
+                if truth {
+                    // 求值完成：if_limit=else_code（Processing，\else 合法、
+                    // \or 报 Extra）。按 target-1 下标本帧转换——求值期间嵌套
+                    // 帧可能压在本帧之上，last_mut() 会转错帧（V1 死循环根因）。
+                    if let Some(top) = self.cond_stack.get_mut(target - 1) {
+                        top.state = CondState::Processing;
+                    }
                 }
                 self.cur_if_branch = if truth { 1 } else { -1 };
                 // tex.web：\if 求值后打印 {true}/{false}（tracing_commands>0；
@@ -176,26 +240,16 @@ saved_if_type: saved_type,
                         .sink
                         .write16(if truth { "{true}".into() } else { "{false}".into() });
                 }
-                if truth {
-                    self.cond_stack.push(CondFrame {
-                        is_case: false,
-                        state: CondState::Processing,
-                        owns_skip: false,
-                        ors_left: None,
-                        else_seen: false,
-                        case_selected: false,
-saved_if_type: saved_type,
-                        saved_if_branch: saved_branch,
-                        if_type: code,
-                        line: self.error_line_no(),
-                    });
-                } else {
-                    // TeX：false 条件不压帧，立即 `skip_ahead` 到匹配的
-                    // \else/\or/\fi（tex.web P27）。若等外层主循环跳过，扫描
-                    // 内部的条件（TRIP L82 `\scriptspace...\ifnum'\ifnum10=10 12="\fi`）
-                    // 已错位——\fi 必须闭合栈顶的内层帧（内层 \ifnum），
-                    // 而本条件的跳过恰好消费该 \fi 结束。
-                    self.skip_ahead(saved_type, saved_branch)?;
+                if !truth {
+                    // tex.web：false → conditional 内部 pass_text 跳到本帧的
+                    // `\else`（帧转 Processing 留栈等 \fi）或 `\fi`（帧直接弹
+                    // 出闭合）。target 在压帧后、求值前取得——求值期间操作数
+                    // 扫描建的嵌套帧在本帧之上，不得计入本条件的收口深度。
+                    // 若等外层主循环跳过，扫描内部的条件（TRIP L82
+                    // `\scriptspace...\ifnum'\ifnum10=10 12="\fi`）已错位——
+                    // \fi 必须闭合栈顶的内层帧（内层 \ifnum），而本条件的跳过
+                    // 恰好消费该 \fi 结束。
+                    self.skip_ahead(target, saved_type, saved_branch)?;
                 }
                 Ok(())
             }
@@ -221,42 +275,65 @@ saved_if_type: saved_type,
                     });
                     return Ok(());
                 }
-                let n = self.scan_number()?;
-                // TeX：n<0 时跳过所有 \or 直到 \else（\ifcase-1 → else 分支）
-                self.cur_if_branch = if n == 0 { 1 } else { -1 };
+                // 同 If 臂：先压 Evaluating 帧再 scan_number——数字扫描
+                // （tex.web scan_int 的 get_x_token 对 if_test 同样 expand）期间
+                // 嵌套条件建的帧必须排到本帧之上；`\else`/`\fi` 在数字位同样走
+                // insert_relax 门（if_limit=if_code）。
                 self.cond_stack.push(CondFrame {
                     is_case: true,
-                    state: if n == 0 {
-                        CondState::Processing
-                    } else {
-                        CondState::Skipping
-                    },
-                    owns_skip: n > 0,
-                    ors_left: (n > 0).then_some(n as usize),
+                    state: CondState::Evaluating,
+                    owns_skip: false,
+                    ors_left: None,
                     else_seen: false,
                     // n==0：case 0 直接选中（遇多余 \or/\else 保持跳过）
-                    case_selected: n == 0,
-saved_if_type: saved_type,
+                    case_selected: false,
+                    saved_if_type: saved_type,
                     saved_if_branch: saved_branch,
                     if_type: code,
                     line: self.error_line_no(),
                 });
+                let target = self.cond_stack.len();
+                let n = self.scan_number()?;
+                // TeX：n<0 时跳过所有 \or 直到 \else（\ifcase-1 → else 分支）
+                self.cur_if_branch = if n == 0 { 1 } else { -1 };
+                // 同 If 臂：按 target-1 下标本帧设置（scan_number 期间嵌套
+                // 条件帧可能压在本帧之上，last_mut() 会设错帧）。
+                let Some(frame) = self.cond_stack.get_mut(target - 1) else {
+                    return Ok(());
+                };
+                frame.state = if n == 0 {
+                    CondState::Processing
+                } else {
+                    CondState::Skipping
+                };
+                frame.owns_skip = n > 0;
+                frame.ors_left = (n > 0).then_some(n as usize);
+                frame.case_selected = n == 0;
                 Ok(())
             }
         }
     }
 
     /// TeX `skip_ahead`：false 条件求值后立即跳到匹配的 `\else`/`\or`/`\fi`。
-    /// 本条件不压帧（TeX 语义），期间：
+    /// `target` = **本条件帧的下标 + 1**，必须在压本帧后、求值前确定——求值
+    /// 期间操作数扫描可能在**本帧之上**再建嵌套条件帧（tex.web 先压栈再求
+    /// 值），进入本函数时 `cond_stack.len()` 已被嵌套帧抬高，快照会把嵌套
+    /// 帧的 `\fi` 误判为本条件的收口（V2：`\if n\if c o N\else m\fi X T\else
+    /// F\fi` 应 F 而非输入栈爆栈）。期间：
     /// - 普通 token 丢弃（不展开）；
     /// - 嵌套 `\if*` 惰性计数（压 Skipping 帧，`\fi` 时弹出）；
     /// - 嵌套的 `\else`/`\or` 不计数（TeX skip_ahead 同样忽略）；
-    /// - 到达本层级的 `\fi` → 结束（本条件直接闭合，无帧）；
-    /// - 到达本层级的 `\else` → 进入 else 分支（压 Processing 帧）。
-    fn skip_ahead(&mut self, saved_type: i32, saved_branch: i32) -> Result<()> {
-        let target = self.cond_stack.len();
+    /// - 到达本层级的 `\fi` → 弹出本帧，本条件直接闭合；
+    /// - 到达本层级的 `\else`/`\or` → 本帧转 Processing（等价 tex.web
+    ///   common_ending：else 后 if_limit=fi_code 留栈等 \fi）。
+    fn skip_ahead(&mut self, target: usize, saved_type: i32, saved_branch: i32) -> Result<()> {
         loop {
             let Some((tok, _ne)) = self.fetch()? else {
+                // 输入耗尽：连本帧在内的所有嵌套帧弹出（tex.web 由
+                // final_cleanup 收口，帧语义上未闭合的 \else/\fi 永远不会到来）
+                while self.cond_stack.len() >= target {
+                    self.cond_stack.pop();
+                }
                 return Err(Error::invalid_input("\\if 缺少 \\fi"));
             };
             let Some(op) = self.cond_op(tok) else {
@@ -279,7 +356,8 @@ saved_if_type: saved_type,
                                  the matching `\\fi'. I've inserted a `\\fi'; this might work.\n"
                             ));
                             self.unread(tok);
-                            while self.cond_stack.len() > target {
+                            // 连本帧在内全部弹出（插入的 \fi 已隐含闭合本条件）
+                            while self.cond_stack.len() >= target {
                                 self.cond_stack.pop();
                             }
                             self.cur_if_type = saved_type;
@@ -293,7 +371,8 @@ saved_if_type: saved_type,
             match op {
                 CondOp::Fi => {
                     if self.cond_stack.len() == target {
-                        // 本条件的 \fi：直接闭合，无帧，恢复外层类型
+                        // 本条件的 \fi：弹出本帧直接闭合，恢复外层类型
+                        self.cond_stack.pop();
                         self.cur_if_type = saved_type;
                         self.cur_if_branch = saved_branch;
                         return Ok(());
@@ -360,13 +439,17 @@ saved_if_type: self.cur_if_type,
                 continue;
             }
             if let Some(op) = self.cond_op(tok) {
-                self.step_conditional(op)?;
+                self.step_conditional(op, tok)?;
             }
         }
         Ok(())
     }
 
     /// 跳过结束于本条件的 `\else`/`\or` 时进入该分支。
+    ///
+    /// 本条件的帧已在栈顶（调用方 skip_ahead 的 target 处）：tex.web
+    /// common_ending 遇 `\else` → `if_limit:=fi_code` **留栈等 \fi**——本函数
+    /// 转换该帧（Processing + else_seen），不压新帧。
     fn enter_skipped_branch(
         &mut self,
         op: CondOp,
@@ -375,42 +458,29 @@ saved_if_type: self.cur_if_type,
     ) -> Result<()> {
         match op {
             CondOp::Else => {
-                // 进入 else 分支：压 Processing 帧（等价于 \else 状态机转换）
+                // 进入 else 分支：本帧转 Processing（等价 \else 状态机转换）
                 self.cur_if_branch = -1;
-                self.cond_stack.push(CondFrame {
-                    is_case: false,
-                    state: CondState::Processing,
-                    owns_skip: false,
-                    ors_left: None,
-                    else_seen: true,
-                    case_selected: false,
-                    saved_if_type: saved_type,
-                    saved_if_branch: saved_branch,
-                    if_type: saved_type,
-                    line: self.error_line_no(),
-                });
+                if let Some(top) = self.cond_stack.last_mut() {
+                    top.state = CondState::Processing;
+                    top.else_seen = true;
+                }
                 Ok(())
             }
             CondOp::Or => {
                 // 非 case 条件的 \or 是错误（TeX：! Extra \or.），保守恢复：
-                // 压 Processing 帧让后续 \fi 正常闭合。
+                // 本帧转 Processing 让后续 \fi 正常闭合。
                 self.report_error("Extra \\\\or.");
                 self.cur_if_branch = -1;
-                self.cond_stack.push(CondFrame {
-                    is_case: false,
-                    state: CondState::Processing,
-                    owns_skip: false,
-                    ors_left: None,
-                    else_seen: true,
-                    case_selected: false,
-                    saved_if_type: saved_type,
-                    saved_if_branch: saved_branch,
-                    if_type: saved_type,
-                    line: self.error_line_no(),
-                });
+                if let Some(top) = self.cond_stack.last_mut() {
+                    top.state = CondState::Processing;
+                    top.else_seen = true;
+                }
                 Ok(())
             }
-            _ => Ok(()),
+            _ => {
+                let _ = (saved_type, saved_branch);
+                Ok(())
+            }
         }
     }
 
@@ -682,14 +752,14 @@ saved_if_type: self.cur_if_type,
                 )));
             };
             if diag_enabled("NTEX_COND_TRACE") {
-                let frames: Vec<String> = self.cond_stack.iter().map(|f| format!("{}{}", if f.is_case {"C"} else {"I"}, match f.state { CondState::Processing => "P", CondState::Skipping => "S" })).collect();
-                eprintln!("[op-fetch] tok={tok:?} ne={noexpand} skip={} stack=[{}]", self.is_skipping(), frames.join(" "));
+                let frames: Vec<String> = self.cond_stack.iter().map(|f| format!("{}{}", if f.is_case {"C"} else {"I"}, match f.state { CondState::Processing => "P", CondState::Skipping => "S", CondState::Evaluating => "V" })).collect();
+                eprintln!("[op-fetch] line={} tok={tok:?} ne={noexpand} skip={} stack=[{}]", self.current_line_no(), self.is_skipping(), frames.join(" "));
             }
             // 跳过区惰性消费（同 scan_relation）：操作数位置的内层条件被拒分支
             // （`\ifx…\else x\fi`）由本循环吞掉，不得当操作数
             if self.is_skipping() {
                 if let Some(op) = self.cond_op(tok) {
-                    self.step_conditional(op)?;
+                    self.step_conditional(op, tok)?;
                 }
                 continue;
             }
@@ -748,7 +818,7 @@ saved_if_type: self.cur_if_type,
                         // 的配平由调用侧体首 i: 收（expl3 loop_invalid 的
                         // i:i:i: idiom）。不得 drain（吞被拒分支会越过
                         // 调用侧边界）。
-                        self.step_conditional(op)?;
+                        self.step_conditional(op, tok)?;
                         continue;
                     }
                 }
@@ -799,7 +869,7 @@ saved_if_type: self.cur_if_type,
             // "Missing ="、`\fi` 被右操作数数字循环吞掉（b 取 0 而非 1）。
             if self.is_skipping() {
                 if let Some(op) = self.cond_op(tok) {
-                    self.step_conditional(op)?;
+                    self.step_conditional(op, tok)?;
                 }
                 continue;
             }
@@ -839,7 +909,7 @@ saved_if_type: self.cur_if_type,
             // 关系符位是展开位置、语义就是 get_x_token 本身。
             if let Some(op) = self.cond_op(tok) {
                 let before = self.cond_stack.len();
-                self.step_conditional(op)?;
+                self.step_conditional(op, tok)?;
                 if !matches!(op, CondOp::Fi) {
                     let depth = if matches!(op, CondOp::Else | CondOp::Or) {
                         before.saturating_sub(1)

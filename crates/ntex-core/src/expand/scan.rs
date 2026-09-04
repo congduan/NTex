@@ -22,7 +22,7 @@ impl Expander {
             if diag_enabled("NTEX_COND_TRACE") {
                 eprintln!("[trace-maybe] 求值条件 {op:?}");
             }
-            self.step_conditional(op)?;
+            self.step_conditional(op, tok)?;
             Ok(true)
         } else {
             Ok(false)
@@ -437,7 +437,7 @@ impl Expander {
             // 推进（`\fi` 弹帧后回到累计）。
             if self.is_skipping() {
                 if let Some(op) = self.cond_op(tok) {
-                    self.step_conditional(op)?;
+                    self.step_conditional(op, tok)?;
                 }
                 continue;
             }
@@ -471,7 +471,7 @@ impl Expander {
                             self.unread(tok);
                             break;
                         }
-                        self.step_conditional(op)?;
+                        self.step_conditional(op, tok)?;
                         continue;
                     }
                     // get_x_token 展开语义的**窄子集**：仅当数字中途的

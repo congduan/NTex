@@ -32,7 +32,7 @@ impl Expander {
             // （\e@alloc 的 `\global\ifnum…\expandafter\chardef\else…\fi`），
             // 故展开上下文里必须急切消费（见 drain_open_skip）。
             let before = self.cond_stack.len();
-            self.step_conditional(op)?;
+            self.step_conditional(op, t2.0)?;
             if !matches!(op, CondOp::Fi) {
                 let depth = if matches!(op, CondOp::Else | CondOp::Or) {
                     before.saturating_sub(1)
@@ -96,7 +96,7 @@ impl Expander {
                     // 开着的跳过区同样就地消费（见 exec_expandafter 的说明）
                     if let Some(op) = self.cond_op(b.0) {
                         let before = self.cond_stack.len();
-                        self.step_conditional(op)?;
+                        self.step_conditional(op, b.0)?;
                         if !matches!(op, CondOp::Fi) {
                             let depth = if matches!(op, CondOp::Else | CondOp::Or) {
                                 before.saturating_sub(1)

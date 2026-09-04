@@ -612,7 +612,7 @@ impl Expander {
             }
             // 条件原语：即时求值（优先级与 process_one 相同）
             if let Some(op) = self.cond_op(tok) {
-                self.step_conditional(op)?;
+                self.step_conditional(op, tok)?;
                 continue;
             }
             if self.is_skipping() {

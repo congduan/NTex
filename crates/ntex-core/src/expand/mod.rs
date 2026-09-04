@@ -107,6 +107,9 @@ enum CondState {
     Processing,
     /// 跳过直到本帧的 `\else`/`\fi`。
     Skipping,
+    /// 参数扫描中（tex.web `if_limit=if_code`：帧已压、`\if` 求值未完成——
+    /// 此时遇 `\or`/`\else`/`\fi` 走 `insert_relax` 而非弹帧/报 Extra）。
+    Evaluating,
 }
 
 /// 条件栈帧（M1-9）。
@@ -1489,7 +1492,7 @@ impl Expander {
                 }
                 // 条件 token（\if*/\\else/\\fi/\\or）优先由条件机处理（无论是否跳过）
                 if let Some(op) = self.cond_op(tok) {
-                    self.step_conditional(op)?;
+                    self.step_conditional(op, tok)?;
                     return Ok(true);
                 }
                 if self.is_skipping() {
@@ -1691,7 +1694,7 @@ impl Expander {
         // 此前原样保留导致 \6 含未求值条件、\typeout 展开时再遇 expand_only
         // 仍不执行 → 输出空（ETRIP L351 `last node type (l.351): ` 缺 empty）。
         if let Some(op) = self.cond_op(tok) {
-            return self.step_conditional(op);
+            return self.step_conditional(op, tok);
         }
         // 条件跳过区（\\ifcase-1 的 \\or 段等）：token 丢弃不收集
         // （TeX expand 的 pass_text 语义；主循环 process_one 同样先查 is_skipping）
