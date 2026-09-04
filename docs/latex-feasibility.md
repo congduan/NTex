@@ -1387,3 +1387,16 @@ bootstrap 版消息处理器的固定模板——`Arguments '' and ''` 空实参
 - 最小复现：0 参数定界串（`\def\prg:Ftrue:w\fi:\use:none:n{…}`）与 `\if` 操作数
   展开各一组，修复前 `Extra \else`/cs vs cs 判假，修复后与真实 TeX 一致。
 - TRIP/ETRIP：停 HEAD 已知数学组残留（同 §19.5），无新增触发。
+
+### 21.4 字体面备料（2026-09-04，主控）
+
+LaTeX 全家 TFM 已从 TL tlnet 备齐（/tmp/latexsurvey/，勿重下）：
+
+- `fonts/tfm/public/cm/`（75）：cmr/cmsy/cmex/cmmi/cmss/cmtt/cmbx 全系——
+  preload.cfg/fonttext.cfg 预载区 + \documentclass 默认字体需求；
+- `fonts/tfm/public/latex-fonts/`（23）：lasy*/lcircle*/icm* 等 LaTeX 专属；
+- `fonts/tfm/public/amsfonts/`（52）：msam/msbm/eu*——AMS 符号面。
+
+引擎现有 ~/.ntex-fonts/ 仅 cmr10 单个。后续刀到达字体阻塞点时：
+TFM 按 NTEX_TFM_DIR 查找路径拷贝所需子集；DVI→PDF 的字体嵌入（Type1/PFB）
+按 ntex-pdf 既有机制（cmr10.pfb 已验证）按需扩展。
