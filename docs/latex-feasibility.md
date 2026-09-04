@@ -1400,3 +1400,13 @@ LaTeX 全家 TFM 已从 TL tlnet 备齐（/tmp/latexsurvey/，勿重下）：
 引擎现有 ~/.ntex-fonts/ 仅 cmr10 单个。后续刀到达字体阻塞点时：
 TFM 按 NTEX_TFM_DIR 查找路径拷贝所需子集；DVI→PDF 的字体嵌入（Type1/PFB）
 按 ntex-pdf 既有机制（cmr10.pfb 已验证）按需扩展。
+
+### 21.5 宏包与中文备料（2026-09-04，主控，与十六刀并行）
+
+TL tlnet 宏包已备齐（/tmp/latexsurvey/tex/latex/，勿重下）：
+
+- 战役后续关：`tools`（latex.ltx 尾部 \@ifpackageloaded 类依赖）、`graphics`、
+  `amsmath`、`geometry`、`oberdiek`、`hyperref`+`url`（\documentclass 常用面）；
+- M9 中文战役：`ctex`（ctexart.cls 等）、`xecjk`、`fandol` 字体
+  （fonts/opentype/public/fandol/ 12 个 OTF：宋/黑/楷/仿宋 + Braille）——
+  plan.md §11.0 阶段 B 的"中文 TTF 备料"缺口已消。
