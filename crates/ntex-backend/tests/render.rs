@@ -156,7 +156,7 @@ fn matches_dvi_rule_geometry() {
         ],
     };
     let fonts: Vec<FontMetrics> = Vec::new();
-    let dvi = ntex_dvi::write_dvi(&[page.clone()], &fonts);
+    let dvi = ntex_dvi::write_dvi(std::slice::from_ref(&page), &fonts);
     let parsed = ntex_pdf::parse_dvi(&dvi).expect("DVI 解析不应失败");
     let rules: Vec<_> = parsed.pages[0]
         .ops
@@ -208,7 +208,7 @@ fn end_to_end_typeset_source_to_png() {
     let mut ts = ntex_layout::typeset::Typesetter::with_tfm_paginated();
     let source = "\\hsize 200pt\\vsize 100pt\\font\\cmr=cmr10\\cmr Hello NTex rendering.\\par\\cmr Second page line.\\end";
     let (pages, fonts) = ts.typeset_dvi(source).expect("排版不应失败");
-    assert!(pages.len() >= 1);
+    assert!(!pages.is_empty());
     let pngs = TinySkiaBackend
         .render_pngs(&pages, &fonts, &RenderOptions::default())
         .expect("渲染不应失败");

@@ -114,7 +114,7 @@ mod tests {
     fn fill_rect_clips_and_marks() {
         let mut pm = Pixmap::new(10, 10);
         pm.fill(255, 255, 255);
-        pm.fill_rect(-3.0, -3.0, 6.0, 6.0, 0, 0, 0);
+        pm.fill_rect(-3.0, -3.0, 6.0, 6.0, (0, 0, 0));
         assert!(pm.pixel_nonwhite(0, 0));
         assert!(!pm.pixel_nonwhite(3, 0));
     }

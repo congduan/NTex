@@ -166,20 +166,16 @@ fn draw_hlist(pm: &mut Pixmap, bx: &BoxNode, rx: f64, ry: f64, dpi: f64) {
                     top,
                     w,
                     bot - top,
-                    CHAR_BG_GRAY,
-                    CHAR_BG_GRAY,
-                    CHAR_BG_GRAY,
+                    (CHAR_BG_GRAY, CHAR_BG_GRAY, CHAR_BG_GRAY),
                 );
                 pm.fill_rect(
                     x,
                     top,
                     w,
                     sp_to_px(*height, dpi),
-                    CHAR_GRAY,
-                    CHAR_GRAY,
-                    CHAR_GRAY,
+                    (CHAR_GRAY, CHAR_GRAY, CHAR_GRAY),
                 );
-                pm.fill_hline(ry, x, x + w, CHAR_GRAY, CHAR_GRAY, CHAR_GRAY);
+                pm.fill_hline(ry, x, x + w, (CHAR_GRAY, CHAR_GRAY, CHAR_GRAY));
                 cur_h += width;
             }
             Node::Rule {
@@ -194,9 +190,7 @@ fn draw_hlist(pm: &mut Pixmap, bx: &BoxNode, rx: f64, ry: f64, dpi: f64) {
                     top,
                     sp_to_px(*width, dpi),
                     sp_to_px(height + depth, dpi),
-                    0,
-                    0,
-                    0,
+                    (0, 0, 0),
                 );
                 cur_h += width;
             }
@@ -243,9 +237,7 @@ fn draw_vlist(pm: &mut Pixmap, bx: &BoxNode, rx: f64, ry: f64, dpi: f64) {
                     top,
                     sp_to_px(*width, dpi),
                     sp_to_px(height + depth, dpi),
-                    0,
-                    0,
-                    0,
+                    (0, 0, 0),
                 );
                 cur_v += height + depth;
             }
