@@ -2070,6 +2070,43 @@ I changed this one to zero.
         assert_eq!(expand(r"\if aa T\else F\fi").unwrap().trim(), "T");
     }
 
+    // ---------- LaTeX 兼容第十六刀：\if 操作数位的嵌套条件真实求值（报告 §22） ----------
+
+    #[test]
+    fn if_operand_evaluates_nested_conditional_not_sentinel() {
+        // tex.web get_x_token（\if 操作数取数，@<Test if two characters match@>）：
+        // 操作数位的 `\if*` 交 expand 的 if_test 分支**真实求值**——帧照常建立、
+        // 选中分支首 token 即操作数；不得按"不可展开 cs → 非字符哨兵"吞掉，否则
+        // 操作数取到被拒/无关分支文本，分支判反。expl3 变体生成循环
+        // `\if:w #4 \__cs_generate_variant_loop_base:N #2 \else:`（expl3-code
+        // L2896）的右操作数展开体含 9 层嵌套 `\if:w`
+        // （`\__cs_generate_variant_loop_base:N`），首个
+        // `\cs_generate_variant:Nn` 调用即变体串分析全错（报告 §21.3/§22.1）。
+        //
+        // basea 模拟 loop_base：逐字比对、兜底 `q`；其展开残留的 `\else:/\fi:`
+        // 由调用侧 `\fi: \fi:` 收口（expl3 `\__cs_generate_variant_loop_invalid`
+        // 体首 `\fi: \fi: \fi:` 同款 idiom）。
+        // `\basea o` → `n`（第二层比对命中）；`\basea q` → 兜底 `q`。
+        let src = concat!(
+            "\\catcode`\\:=11 \\catcode`\\_=11 ",
+            "\\let\\if:w\\if \\let\\else:\\else \\let\\fi:\\fi ",
+            "\\long\\def\\basea#1{\\if:w c #1 N \\else: \\if:w o #1 n \\else: q\\fi: \\fi:} ",
+            "\\long\\def\\loopa#1#2{\\if:w #1 \\basea #2 \\fi: \\fi: SAME\\else: DIFF\\fi:} "
+        );
+        // 操作数 = 真分支文本 n（basea 对 o），外层 n vs n 真 → SAME
+        assert_eq!(expand(&format!("{src}\\loopa n o")).unwrap().trim(), "SAME");
+        // 操作数 = 兜底分支文本 q，外层 q vs q 真 → SAME（走的是 else 分支取数）
+        assert_eq!(expand(&format!("{src}\\loopa q q")).unwrap().trim(), "SAME");
+        // 操作数 = n，外层 q vs n 假 → DIFF；且先行的两帧必须配平（否则后续
+        // 构造的分支选择被扰动）
+        assert_eq!(
+            expand(&format!("{src}\\loopa n o\\loopa q o"))
+                .unwrap()
+                .trim(),
+            "SAMEDIFF"
+        );
+    }
+
     // ---------- LaTeX 兼容第十四刀：参数文本 `#{` hash_brace 语义（报告 §20） ----------
 
     #[test]

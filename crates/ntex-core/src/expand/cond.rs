@@ -681,6 +681,10 @@ saved_if_type: self.cur_if_type,
                     "\\.if 操作数扫描到输入末尾（\\{cond}）"
                 )));
             };
+            if diag_enabled("NTEX_COND_TRACE") {
+                let frames: Vec<String> = self.cond_stack.iter().map(|f| format!("{}{}", if f.is_case {"C"} else {"I"}, match f.state { CondState::Processing => "P", CondState::Skipping => "S" })).collect();
+                eprintln!("[op-fetch] tok={tok:?} ne={noexpand} skip={} stack=[{}]", self.is_skipping(), frames.join(" "));
+            }
             // 跳过区惰性消费（同 scan_relation）：操作数位置的内层条件被拒分支
             // （`\ifx…\else x\fi`）由本循环吞掉，不得当操作数
             if self.is_skipping() {
@@ -713,6 +717,40 @@ saved_if_type: self.cur_if_type,
                         });
                     }
                     continue;
+                }
+                // LaTeX 兼容第十六刀：条件原语在操作数位同样走 get_x_token →
+                // expand 的 if_test/fi_or_else 分支——**真实求值**并推进条件机，
+                // 而非落"不可展开 cs → 非字符哨兵"。此前嵌套条件不建帧，其
+                // `\else:`/`\fi:` 之后再打到主条件机 → 帧失衡（Extra \else/Extra
+                // \fi）。expl3 变体生成循环
+                // `\if:w #4 \__cs_generate_variant_loop_base:N #2 \else:`
+                // （expl3-code.tex l.2896）的右操作数展开体含 9 层嵌套 `\if:w`
+                // （`\__cs_generate_variant_loop_base:N`），首调用
+                // `\cs_generate_variant:Nn` 即触发 `Extra \else` 级联
+                // （expl3 l.3245-3324，见报告 §22.1）。与 scan_relation 臂同款：
+                // step_conditional + drain_open_skip（展开位置须急切消费跳过区，
+                // 见 expr.rs \expandafter 臂说明）。`\noexpand` 冻结的条件 token
+                // 仍是数据（tex.web get_x_token 的 frozen_dont_expand 不展开）。
+                // 别名链（expl3 的 `\if:w` = `\tex_let:D \if:w \if`）须解到原语——
+                // cond_op 只认 Primitive 槽，不解析 Alias。
+                if !noexpand {
+                    let mut walk = csid;
+                    let op = loop {
+                        match self.eqtb.slot(walk) {
+                            EqSlot::Primitive(p) => break CondOp::from_prim(*p),
+                            EqSlot::Alias(t) => walk = *t,
+                            _ => break None,
+                        }
+                    };
+                    if let Some(op) = op {
+                        // tex.web get_x_token：操作数位的条件**真实求值但帧保留**
+                        // ——被拒分支文本留在输入流由帧机制自然跳过，\else:/i:
+                        // 的配平由调用侧体首 i: 收（expl3 loop_invalid 的
+                        // i:i:i: idiom）。不得 drain（吞被拒分支会越过
+                        // 调用侧边界）。
+                        self.step_conditional(op)?;
+                        continue;
+                    }
                 }
                 if noexpand {
                     // \noexpand 冻结 cs → active char（cat 13），码取 cs 哨兵
