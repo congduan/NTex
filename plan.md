@@ -749,6 +749,51 @@ vs 全量 diff 作 CI 常驻检查，闭环 §7 风险项）；`.aux`/`.toc` 增
 
 **目标**：中文生态落地。
 
+### 11.0 中文支持依赖链与分阶段规划（2026-09-04 立项细化）
+
+> 背景：LaTeX 兼容战役（latex.ltx/expl3 载入，docs/latex-feasibility.md）进行中。
+> 中文支持是**独立战役**，不混入当前验证口径（战役以 latex.ltx/英文文档为准）；
+> 本节固化依赖链、缺口清单与分阶段验收，防止 M9 展开时才发现前置缺口。
+
+**依赖链**（严格顺序，不可跳）：
+
+```
+LaTeX 兼容战役（进行中）
+  → ① \documentclass{article} + hello world 排版通（英文全链：加载→排版→DVI→PDF）
+  → ② 字体子系统升级（ntex-font M9 部分：TTF/OTF 解析 + HarfBuzz 整形，
+      替代 TFM-only 度量——中文每字都是 Unicode char，8-bit TFM 装不下）
+  → ③ 输入层 UTF-8（REVIEW 表 A5，未修——中文文档前提）
+  → ④ CJK 原语面（对齐 XeTeX/LuaTeX，非 pdfTeX）：
+     \XeTeXlinebreaklocale 类断行钩子、CJK 字距/标点挤压、Unicode 编码向量
+  → ⑤ ctex/xeCJK 宏兼容（本节其余条目）
+  → ⑥ 中文文档端到端验收（300 页中文冷编基准，§11 验收）
+```
+
+**缺口清单**（每项 = 未来一刀/一 PR 粒度）：
+
+| 缺口 | 现状 | 前置 |
+|---|---|---|
+| TTF/OTF 字体解析 | 无（TFM-only，cmr10 单字体） | ② |
+| HarfBuzz 整形/整形缓存 | 无（M6 铺路条目已列） | ② |
+| 输入层 UTF-8 | REVIEW A5 未修 | ③ |
+| CJK 断行规则（linebreak locale） | 无 | ④ |
+| 中文标点挤压/字距 | 无 | ④ |
+| ctex 宏包兼容 | 无（xeCJK 最小子集起步） | ⑤ |
+| 中文 TTF 字体备料 | 无（Fandol/Noto CJK 待取） | ② |
+
+**分阶段验收标准**：
+
+- **阶段 A（英文 LaTeX 全链通）**= LaTeX 兼容战役出口：`\documentclass{article}`
+  文档 `\input`→排版→DVI→PDF 与真实 TeX 输出对照可接受（阻塞点清零）。
+  **此前一切中文工作不开始**（避免双线作战）。
+- **阶段 B（中文冒烟）**：`\documentclass{ctexart}` 或 xeCJK 最小集，一行中文
+  排版出 PDF（字形正确、无 missing glyph）——字体子系统 + UTF-8 + 最小 CJK 原语。
+- **阶段 C（ctex 常用面）**：ctex 文档类常用命令（\section/\ctexset/中文目录名）、
+  标点挤压、中英混排断行；300 页中文冷编基准达标（§11 验收）。
+
+**备料约定**（对齐 LaTeX 兼容战役 §21.4 模式）：中文 TTF（Fandol/思源/Noto CJK）
+从 CTAN tlnet archive 按需取，入库路径与 license 记录同步 plan/报告。
+
 - [ ] ctex/xeCJK 宏兼容（这本身是巨型工作量，从 xeCJK 最小子集开始）
 - [ ] OpenType 字体：fontspec 兼容路径 + HarfBuzz 复杂整形
 - [ ] **CJK 整形捷径**：无复杂特性时跳过 HarfBuzz，直接读 hmtx（目标 5\~10x）
