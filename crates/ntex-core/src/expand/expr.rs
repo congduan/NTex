@@ -158,13 +158,15 @@ impl Expander {
                     out.extend(toks.into_iter().map(|t| (t, false)));
                 }
                 EqSlot::Primitive(Primitive::String_) => {
-                    // \string<token>：token 转文本（字符序列）
+                    // \string<token>：token 转文本（字符序列）。用 string_token
+                    // （tex.web sprint_cs 语义：控制词后**不**补空格——\detokenize
+                    // 才补。expl3 cs_split/cs_to_str 依赖无空格签名）。
                     let t = self
                         .fetch()?
                         .ok_or_else(|| Error::invalid_input("\\string 后无 token"))?
                         .0;
                     let mut buf = Vec::new();
-                    detokenize_token(t, &self.intern, &mut buf);
+                    string_token(t, &self.intern, &mut buf);
                     out.extend(buf.into_iter().map(|t| (t, false)));
                 }
                 EqSlot::Primitive(Primitive::Meaning) => {

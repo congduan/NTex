@@ -1253,3 +1253,52 @@ l3basics~l3prg 前缀，无法再降。本刀禁改模式/数学机语义，留�
 - TRIP/ETRIP driver（`ntex-trip --driver ntex`）仍停 HEAD 已知数学组残留
   （`group_end 无配对 group_begin`，模式机未完成区），无新增触发；门禁以
   "残留签名一致 + 全量测试绿"为准。
+
+---
+
+## 20. 2026-09-04 第十四刀进展（\\string sprint_cs 语义 + 参数文本 `#{` hash_brace——p 型签名绑定归位）
+
+### 20.1 根因与修复落点
+
+§19.3 阻塞点（`\\cs_if_exist:N` 条件生成 p/T/F/TF 失败：`\\__prg_generate_conditional_parm:NNNpnn`
+L1691 `#1#2#3#4#` 的 p 实参只吞 `#`、数字 `1` 与 `{p,T,F,TF}` 错位）归位为两处机制偏差：
+
+1. **`\\string` 控制序列后误补尾随空格**（`expr.rs`/`primitive_expand.rs`/`free.rs`）：
+   原 `detokenize_token` 是 e-TeX `\\detokenize` 语义（控制词后补空格），而 `\\string` 用 tex.web
+   `sprint_cs`（"never prints a space after the control sequence"，L5622-5627）。expl3
+   `\\cs_to_str:N`/`\\cs_split_function:N` 依赖无空格签名：`\\string\\cs_if_exist:N` 若带空格，
+   csname 分派构造 `\\cs_if_exist:N TF`（含空格）→ 全部 Undefined。新增 `string_token`（无尾随
+   空格版），`\\detokenize` 仍走 `detokenize_token`。
+2. **参数文本 `#{` 收尾的 hash_brace 语义缺失**（`macros.rs`）：
+   tex.web `scan_toks`（macro_def）`#{` 分支——`#` 丢弃（非定界符），该 `{` **计入末参定界符**
+   （末参 = 分隔实参，定界符末 token 即此 `{`），且宏体末尾须另补同一枚 `{`（hash_brace），调用时
+   与源 `{...}` 组 `}` 配对、组内容整体作 p 实参。expl3 p 型签名（`NNNpnn` 的 `#1#2#3#4#`）即
+   "p 实参 = 到下一个 `{` 组为止的用户参数文本"。同刀修正实参收集的定界符判定顺序：depth==0 输入
+   `{` 若构成完整定界符后缀 → 作定界符消费（不开组），否则整组贡献（第十三刀 w 尾参语义保留）。
+
+### 20.2 实测（latex_probe --initex，口径同 §16.2）
+
+- 基线（9ff4f9f，第十三刀后）：转录 241 行、**22 undefined-cs**，终态 expl3
+  `command-already-defined` + "Incomplete \\if"（§19.3 级联）。
+- 改动后：转录 1085 B（~35 行）、**2 undefined-cs**（l.301-302 `\\edef\\reserved@a{...\\string^^J\\@@}`
+  区，错误恢复继续），§19.3 的 csname 生成错误风暴**清零**（p 型签名绑定归位）。
+- 终态新阻塞：`\\__kernel_primitive:NN \\ifeof \\tex_ifeof:D`（l.398 标注，error_anchor 残留
+  见 §18.8）报 `command-already-defined`（Argh bail out，dumped=false）——expl3 kernel 原语
+  重命名机制：引擎疑似只注册原语短名（`\\ifeof`）缺 `\\tex_ifeof:D` 等 `\\tex_` 前缀别名，
+  或 `\\__kernel_primitive:NN` 对"短名已定义"的接受语义与 pdfTeX 不一致（pdfTeX 中短名与
+  `\\tex_` 名并存，expl3 先检测 `\\tex_` 名存在）。**下一刀靶子**。
+
+### 20.3 改动清单
+
+- `expr.rs`/`primitive_expand.rs`：`\\string` 用 `string_token`（sprint_cs，无尾随空格）。
+- `free.rs`：新增 `string_token`（Char→Other/空格 cat 映射同 detokenize；ControlSeq 名不补空格；
+  MacroParam/EndGroup 同 detokenize）。
+- `macros.rs`：`scan_parameter_text` 返回第三元组 `hash_brace`（`#{` 收尾时该 `{` 入末参定界符
+  文本 + 体尾补 token）；宏定义体尾追加 hash_brace（tex.web scan_toks hash_brace）；实参收集
+  depth==0 时定界符后缀优先于整组贡献。
+- `tests.rs`：修正 `\\string` 断言（去尾随空格，4 处）+ 新增 hash_brace/`#{` 定界符用例。
+
+### 20.4 验证
+
+- `cargo test -p ntex-core`：310 通过（含新增）；fmt + clippy（-D warnings）全绿。
+- TRIP/ETRIP：停 HEAD 已知数学组残留（同 §19.5），无新增触发。

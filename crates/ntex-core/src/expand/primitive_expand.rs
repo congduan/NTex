@@ -149,14 +149,16 @@ impl Expander {
                 };
                 self.emit_tokens(emit_count(r))
             }
-            // \string<token>：token 转文本（字符序列；TeX 可展开原语）
+            // \string<token>：token 转文本（字符序列；TeX 可展开原语）。
+            // 用 string_token（tex.web sprint_cs：控制词后**不**补空格；
+            // \detokenize 才补——expl3 cs_to_str/cs_split 依赖无空格签名）。
             Primitive::String_ => {
                 let t = self
                     .fetch()?
                     .ok_or_else(|| Error::invalid_input("\\string 后无 token"))?
                     .0;
                 let mut buf = Vec::new();
-                detokenize_token(t, &self.intern, &mut buf);
+                string_token(t, &self.intern, &mut buf);
                 self.emit_tokens(buf)
             }
             // \inputlineno 单独出现：no-op（恒 0；数字上下文由 scan_number 处理）

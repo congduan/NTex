@@ -1875,7 +1875,9 @@ I changed this one to zero.
         // 无分隔实参：`\else`/`\fi`/`\or` 收进 #1，不交条件机（不报 Extra）
         assert_eq!(
             expand("\\def\\f#1{[\\string#1]}\\edef\\a{\\f\\else\\f\\fi\\f\\or}\\a").unwrap(),
-            "[\\else ][\\fi ][\\or ]"   // \string 对控制序列补尾随空格
+            // tex.web \string 用 sprint_cs（控制序列名后**不**补空格；
+            // 补空格是 \detokenize 的 e-TeX 语义）。expl3 cs_to_str 依赖此。
+            "[\\else][\\fi][\\or]"
         );
         // 实参扫描不在跳过区里运行：`\f` 的 #1=`\fi` 数据展开后由主循环闭合
         // 外层 \iftrue 帧（`\fi` 在宏体里被消费，`[]x` 全部排出）
@@ -1886,7 +1888,7 @@ I changed this one to zero.
         // `\if*` 作实参数据（既有行为不回归）：#1=`\iftrue`
         assert_eq!(
             expand("\\def\\f#1{[\\string#1]}\\edef\\a{\\f\\iftrue}\\a").unwrap(),
-            "[\\iftrue ]"
+            "[\\iftrue]"
         );
     }
 
@@ -1895,7 +1897,7 @@ I changed this one to zero.
         // 分隔实参：`\else`/`\fi`/`\or` 是数据（不因 arg_cond==0 交条件机）
         assert_eq!(
             expand("\\def\\f#1!{[\\string#1]}\\edef\\a{\\f\\else!\\f\\fi!\\f\\or!}\\a").unwrap(),
-            "[\\else ][\\fi ][\\or ]"
+            "[\\else][\\fi][\\or]"
         );
         // e-TeX 条件全集（旧白名单缺的 9 个）同样作数据收进实参
         assert_eq!(
@@ -1905,7 +1907,7 @@ I changed this one to zero.
                 "\\f\\ifvmode!\\f\\ifhmode!\\f\\ifmmode!\\f\\iffontchar!}\\a"
             ))
             .unwrap(),
-            "[\\ifeof ][\\ifvoid ][\\ifhbox ][\\ifvbox ][\\ifinner ][\\ifvmode ][\\ifhmode ][\\ifmmode ][\\iffontchar ]"
+            "[\\ifeof][\\ifvoid][\\ifhbox][\\ifvbox][\\ifinner][\\ifvmode][\\ifhmode][\\ifmmode][\\iffontchar]"
         );
     }
 
@@ -2007,6 +2009,40 @@ I changed this one to zero.
             .unwrap(),
             "\\relax {mid}"   // \relax 与 \smarkX 含义同为 relax，但不作定界符
         );
+    }
+
+    // ---------- LaTeX 兼容第十四刀：参数文本 `#{` hash_brace 语义（报告 §20） ----------
+
+    #[test]
+    fn hash_brace_makes_last_param_brace_delimited() {
+        // expl3 p 型签名 `#1#2#3#4#`：参数文本以 `#` 紧接 body `{` 收尾 → 末参
+        // #4 是**分隔实参**、定界符 = 字面 `{`（tex.web scan_toks hash_brace）。
+        // 调用 `... #1 {rest}`：p-arg #4 = `# 1` 两 token（`{` 作定界符被消费、
+        // 不开组），而非旧实现的"无分隔单 token #4 = 单个 `#`"。
+        assert_eq!(
+            expand(concat!(
+                "\\def\\parm:NNNpnn #1#2#3#4#{X\\detokenize{#4}Y}",
+                "\\parm:NNNpnn ABC#1{rest}"   // A B C 三个无分隔单 token；无空格（plain
+                                              // catcode 下空格是 token，expl3 里是 cat 9）
+            ))
+            .unwrap(),
+            "X#1Yrest"   // #4=`#1`（`{` 作定界符消费）；体尾 hash_brace `{` 与源 `}` 配成组，rest 在组内
+        );
+    }
+
+    #[test]
+    fn hash_brace_keeps_trailing_space_out_of_string() {
+        // tex.web `\string` 用 sprint_cs（控制序列名后**不**补空格）；补空格是
+        // e-TeX `\detokenize` 语义。expl3 `\cs_to_str:N`/`\cs_split_function:N`
+        // 依赖无空格签名——否则条件生成器的 csname 变成含空格的
+        // `\cs_if_exist:NTF `（expl3-code L1907 p-arg 生成即坏）。
+        assert_eq!(expand("\\edef\\x{\\string\\foo}\\x").unwrap(), "\\foo");
+        assert_eq!(
+            expand("\\edef\\x{\\detokenize{\\foo}}\\x").unwrap(),
+            "\\foo "
+        );
+        // 对照（字符不受影响）：\string 与 \detokenize 对普通字符输出一致
+        assert_eq!(expand("\\edef\\x{\\string a}\\x").unwrap(), "a");
     }
 
     // ---------- LaTeX 兼容第十二刀：l.398 阻塞点根因链（报告 §18） ----------

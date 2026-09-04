@@ -154,12 +154,18 @@ impl Expander {
             self.check_not_outer(tok)?;
             match tok.catcode() {
                 Some(Catcode::BeginGroup) => {
-                    // tex.web macro_call "Contribute an entire group"：`{` 起的
-                    // 平衡组整体作为实参数据贡献。组内 token 只做配对，不匹配
-                    // 定界符（expl3 w 尾参 `\tl_if_empty:nF {#8} {…}` 的组内容
-                    // 是数据，其内部定界符不终止参数——l3prg 条件生成器阻塞）。
-                    depth += 1;
+                    // TeX macro_call：定界符匹配**优先于**组贡献（`cur_tok=info(r)`
+                    // 先于 "Contribute an entire group"）。`#{` 型参数文本把末位 `{`
+                    // 存为定界符（scan_parameter_text hash_brace，expl3 p 型签名）：
+                    // depth==0 的输入 `{` 若构成完整定界符后缀 → 作定界符消费（不开
+                    // 组），否则按 tex.web "Contribute an entire group" 整组贡献——
+                    // 组内 token 只配对、不匹配定界符（l3prg w 尾参整组贡献依赖）。
                     buf.push(tok);
+                    if depth == 0 && self.suffix_matches_delim(&buf, delim) {
+                        buf.truncate(buf.len() - delim.len());
+                        break;
+                    }
+                    depth += 1;
                     continue;
                 }
                 Some(Catcode::EndGroup) if depth > 0 => {
@@ -370,7 +376,7 @@ impl Expander {
             Ok(self.intern.intern("\u{0}inaccessible"))
         })?;
 
-        let (num_params, param_text) = self.scan_parameter_text()?;
+        let (num_params, param_text, hash_brace) = self.scan_parameter_text()?;
         // 取错误消息本体再补定义上下文，避免 "非法输入：非法输入：" 双前缀
         let cs_name = self.intern.name(csid).to_owned();
         let ctx = |e: Error| {
@@ -380,17 +386,27 @@ impl Expander {
             };
             Error::invalid_input(format!("{msg}（定义 \\{cs_name} 的替换文本时）"))
         };
-        let body: TokenArray = if expand_body {
+        let mut body_toks: Vec<Token> = if expand_body {
             // e-TeX（ETRIP）：\edef/\xdef 体 = TeX scan_toks(macro_def, xpand)——
             // 扫描时即展开可展开项、组深含 \begingroup/\endgroup、条件即时求值；
             // 输入耗尽未配平 → "Runaway definition" 转录报告并以 } 收尾（可恢复）。
             self.suppress_expansion += 1;
             let scanned = self.scan_edef_body().map_err(ctx);
             self.suppress_expansion -= 1;
-            Arc::from(scanned?)
+            scanned?
         } else {
-            Arc::from(self.scan_balanced_text().map_err(ctx)?)
+            self.scan_balanced_text().map_err(ctx)?
         };
+        // TeX scan_toks（macro_def）hash_brace：参数文本以 `#{` 收尾时，`{` 被存为
+        // 末参定界符，同时把同一 `{` 追加到宏体 token 列**末尾**。调用时该定界符
+        // `{` 从输入消费作定界（不开组），源 `{...}` 组的 `}` 改由这枚体尾 `{`
+        // 配对——expl3 p 型签名（`#1#2#3#4#`，p 实参 = 到下一组为止的参数文本）即
+        // 依赖此语义；TRIP L161 `\t120100101001001{\relax}` 的 `{\relax}` 组同样由
+        // 它重开（trip.log 实测 `#1<-01001010` 后接 begin-group）。
+        if let Some(hb) = hash_brace {
+            body_toks.push(hb);
+        }
+        let body: TokenArray = Arc::from(body_toks);
 
         // e-TeX（M4-5）：`\protected` 前缀标记宏（`\edef`/`\write` 等上下文不展开）；
         // `\outer` 前缀标记宏（禁止出现在实参/展开上下文/general text/`\read` 中）；
@@ -417,12 +433,15 @@ impl Expander {
         Ok(())
     }
 
-    /// 扫描参数文本直到 `{`，返回 (参数个数, 参数文本 token 数组)。
+    /// 扫描参数文本直到 `{`，返回 (参数个数, 参数文本 token 数组, hash_brace)。
     /// 参数文本含 `#n` 参数 token 与定界符 token（M1-8 实参收集按此分段匹配）；
-    /// `##` → 字面 `#`（跳过一个 #，文本中保留一个）。
-    fn scan_parameter_text(&mut self) -> Result<(u8, TokenArray)> {
+    /// `##` → 字面 `#`（跳过一个 #，文本中保留一个）。第三元组项 = 参数文本以
+    /// `#{` 收尾时需追加到宏体末尾的 `{` token（tex.web scan_toks hash_brace，
+    /// 无则 `None`）。
+    fn scan_parameter_text(&mut self) -> Result<(u8, TokenArray, Option<Token>)> {
         let mut num = 0u8;
         let mut text = Vec::new();
+        let mut hash_brace: Option<Token> = None;
         loop {
             let tok = self
                 .fetch()?
@@ -463,9 +482,18 @@ impl Expander {
                         // ## → 字面 #：文本中保留一个 #
                         text.push(tok);
                     } else if next.catcode() == Some(Catcode::BeginGroup) {
-                        // TeX：`#{` → 丢弃 `#`，`{` 作参数文本终止符被消费（**不**计入
-                        // 定界符——pdfTeX 实测 `\t120100101001001{\relax}` 参数
-                        // = `01001010`、剩余 `{\relax }` 含 `{`，TRIP L159/L161）。
+                        // TeX scan_toks macro_def hash_brace（tex.web `#{` 分支）：
+                        // 参数文本以 `#` 紧接 body 的 `{` 收尾 → `#` 丢弃（非定界符），
+                        // 该 `{` **计入**末参定界符（末参 = 分隔实参，定界符末 token
+                        // 即此 `{`）；宏体末尾须另补一枚同一 `{`（hash_brace），调用时
+                        // 与源组 `}` 配对。expl3 p 型签名（`NNNpnn` 的 `#1#2#3#4#`）
+                        // 的 p 实参即"到下一个 `{` 组为止"——p-arg = 用户参数文本
+                        // `#1`，表单清单 `{p,T,F,TF}` 的 `{` 是定界符而非组开。
+                        // TRIP L159 `\def\t12#101001#{-.#1pt}` 同此：末参定界符 =
+                        // `01001{`，调用 `\t120100101001001{\relax}` 实参 `01001010`
+                        // （trip.log L1043-1044，含定界符消费、体尾 `{` 重开组）。
+                        text.push(next);
+                        hash_brace = Some(next);
                         break;
                     } else {
                         return Err(Error::invalid_input("参数文本中 # 后必须跟数字或 #"));
@@ -474,7 +502,7 @@ impl Expander {
                 _ => text.push(tok),
             }
         }
-        Ok((num, Arc::from(text)))
+        Ok((num, Arc::from(text), hash_brace))
     }
 
     /// 扫描平衡花括号内的替换文本；`#n` → 参数槽 token，`##` → 字面 `#`。

@@ -323,6 +323,40 @@ fn detokenize_token(tok: Token, intern: &InternTable, out: &mut Vec<Token>) {
         TokenKind::EndGroup => out.push(Token::char(Catcode::Other, u32::from(b'}'))),
     }
 }
+
+/// `\string` 单 token 转换：与 [`detokenize_token`] 同一转换，但控制序列名后
+/// **不**补尾随空格——tex.web `convert` 的 `string_code` 用 `sprint_cs`
+/// （"never prints a space after the control sequence"，L5622-5627），只有
+/// e-TeX `\detokenize` 才补空格。expl3 `\cs_to_str:N` 依赖此：`\string\cs_if_exist:N`
+/// = `\cs_if_exist:N`（无空格），cs_split 的签名组才是干净 `{N}`；若误带空格，
+/// p 型条件生成器的 csname `\cs_if_exist:NTF` 会变成含空格的 `\cs_if_exist:N TF`，
+/// 后续 `\cs_if_exist:NTF` 全部 Undefined control sequence。
+fn string_token(tok: Token, intern: &InternTable, out: &mut Vec<Token>) {
+    match tok.kind() {
+        TokenKind::Char => {
+            let ch = tok.charcode().expect("Char 必有 charcode");
+            let cat = if ch == b' ' as u32 {
+                Catcode::Space
+            } else {
+                Catcode::Other
+            };
+            out.push(Token::char(cat, ch));
+        }
+        TokenKind::ControlSeq => {
+            let name = intern.name(tok.csid().expect("ControlSeq 必有 csid"));
+            out.push(Token::char(Catcode::Other, u32::from(b'\\')));
+            for b in name.bytes() {
+                out.push(Token::char(Catcode::Other, u32::from(b)));
+            }
+        }
+        TokenKind::MacroParam => {
+            let n = tok.param_number().unwrap_or(0);
+            out.push(Token::char(Catcode::Other, u32::from(b'#')));
+            out.push(Token::char(Catcode::Other, u32::from(b'0' + n)));
+        }
+        TokenKind::EndGroup => out.push(Token::char(Catcode::Other, u32::from(b'}'))),
+    }
+}
 /// 主题分类：原语是否属于"排版"主题（dispatch_box）。
 /// 含盒子/胶水/kern/penalty/rule/leaders/control space/inf glue/italic correction。
 fn is_box_prim(p: Primitive) -> bool {
