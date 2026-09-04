@@ -737,7 +737,7 @@ vs 全量 diff 作 CI 常驻检查，闭环 §7 风险项）；`.aux`/`.toc` 增
   （同 dvipdfmx），词距用调整量表达——pdftotext 提取干净、渲染与 dvipdfmx 像素级一致
   （demo.tex 两页对比墨水比 1.02\~1.04，均为字体提示/抗锯齿差异）。
 - [ ] L2 字节兼容：简单文档对照 pdfTeX 逐字节 diff（关闭时间戳/元数据随机性）
-- [ ] Skia 渲染后端（桌面/服务端）
+- [x] **渲染后端**（2026-09-05 选型由 Skia 改为 vello：纯 Rust/wgpu 栈、WASM 同构、免 C++ 绑定，见 §13）：`crates/ntex-backend` 落地 `Backend` trait + 双实现——软光栅（离线环境自研位图/PNG）+ **vello 0.10 GPU 路径**（wgpu 29 无头渲染 Rgba8Unorm 纹理回读，area 亚像素 AA）。两后端共享「盒树 → 矩形指令」prims 遍历，demo 差分：墨区面积差 0.15%、几何完全重合（差异仅亚像素边缘表现）；GPU 不可用报错回落软光栅。CLI：`cargo run -p ntex-backend -- demo.tex out 144 --vello`。字符暂为占位方框（TFM 无轮廓，M9 字形在同一 prims 层扩展曲线指令，两后端同步受益）
 - [ ] WASM 前端：wasm-bindgen + Canvas2D/WebGL 实时预览（接 M5 增量，毫秒级刷新）
 - [ ] SyncTeX 源码映射（IDE 点击跳转）
 
@@ -829,7 +829,7 @@ LaTeX 兼容战役（进行中）
 | `ntex-format`            | .fmt 序列化/反序列化（v1 快照已完成；v2 mmap 零拷贝 + 字节码固化 + 部分求值）                                                                        | ✅ 已建（M3 收尾：v1 内存快照；v2 待 M7）                           |
 | `ntex-incremental`（不单建）| 增量计算：段级重算 / 可回滚检查点 / 依赖追踪 / 失效传播——落在 `ntex-core/src/incremental/`（expand 层）+ `ntex-layout` `IncrementalTypesetter`（排版层），同 RFC-4 字节码入 core 先例 | ✅ 已落地（M5 阶段一\~五，见 §7）                            |
 | `ntex-io`                | VFS、aux 增量                                                                                                                | ✅ 已建（RFC-3：Vfs trait + LocalVfs/MemVfs + 读写原语）        |
-| `ntex-backend`           | PDF/Skia/WebGPU 后端 trait + 实现                                                                                             | 未建（M8）                                                |
+| `ntex-backend`           | 渲染后端：`Backend` trait + 软光栅 + vello GPU（wgpu 无头纹理回读，M8）+ PNG 导出；与软光栅共享 prims 遍历可差分                          | ✅ 已建（2026-09-05，M8）                                  |
 | `ntex-cli` / `ntex-wasm` | 命令行 / WASM 前端                                                                                                             | 未建（M9）                                                |
 | `ntex-mcp`              | **MCP server（stdio JSON-RPC）**：tex→PDF / 宏展开诊断 / 增量会话（M9 生态，复用 ntex-cli 库化接口 + ntex-io MemVfs）                       | 未建（M9）                                                |
 

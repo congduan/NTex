@@ -24,6 +24,20 @@ impl Pixmap {
         }
     }
 
+    /// 从紧凑 RGBA8 字节构造（行主序、无 padding；长度必须恰为 w×h×4）。
+    ///
+    /// 供 GPU 回读路径使用（vello 后端）；长度不符返回 `None`，不 panic。
+    pub fn from_rgba(width: u32, height: u32, data: Vec<u8>) -> Option<Self> {
+        if width == 0 || height == 0 || data.len() != width as usize * height as usize * 4 {
+            return None;
+        }
+        Some(Self {
+            width,
+            height,
+            data,
+        })
+    }
+
     /// 宽（px）。
     pub fn width(&self) -> u32 {
         self.width

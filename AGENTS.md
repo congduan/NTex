@@ -44,6 +44,7 @@ make fixture-extras  # 获取补充对照 fixtures（pdftex expanded.{tex,txt} �
 # 端到端演示
 cargo run -p ntex-dvi -- demo.tex   # → demo.dvi
 cargo run -p ntex-pdf -- demo.dvi   # → demo.pdf
+cargo run -p ntex-backend -- demo.tex demo 144 --vello  # → demo-01.png…（vello GPU；去掉 --vello 走软光栅）
 ```
 
 **重要限制**：`[profile.release]` 开了 `panic = "abort"` + `lto` + `codegen-units = 1`，
@@ -64,6 +65,7 @@ cargo run -p ntex-pdf -- demo.dvi   # → demo.pdf
 | `ntex-trip` | TRIP/ETRIP 一致性测试框架（`--test trip|etrip|both`，ntex in-process 驱动） |
 | `ntex-diff` | 差分测试工具（参考引擎 vs 本引擎） |
 | `ntex-bench` | 基准框架 |
+| `ntex-backend` | 渲染后端（M8）：`Backend` trait + 软光栅 + vello 0.10 GPU 实现（wgpu 29 无头纹理回读、area 亚像素 AA；与软光栅共享 prims 矩形遍历，位图可差分）+ 自研 PNG 导出 |
 
 常用源文件布局：
 - `crates/ntex-core/src/expand/`：展开引擎拆分目录——`builtins.rs`（原语注册）、`primitive.rs`

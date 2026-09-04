@@ -1,28 +1,34 @@
 //! demo 驱动：读 .tex → `Typesetter::typeset_dvi` 排版 → 逐页渲染 PNG。
 //!
-//! 用法：`ntex-backend <input.tex> [output_prefix] [dpi]`
+//! 用法：`ntex-backend <input.tex> [output_prefix] [dpi] [--vello]`
 //! 输出：`<prefix>-<页码,01 起>.png`（默认前缀 = 输入文件名去扩展名）。
+//! `--vello` 走 GPU 后端（vello/wgpu，无头纹理回读）；缺省软光栅。
 
 use std::path::Path;
 use std::process::ExitCode;
 
-use ntex_backend::{Backend, RenderOptions, TinySkiaBackend};
+use ntex_backend::{Backend, RenderOptions, TinySkiaBackend, VelloBackend};
 use ntex_layout::typeset::Typesetter;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 || args.len() > 4 {
-        eprintln!("用法：ntex-backend <input.tex> [output_prefix] [dpi]");
+    if args.len() < 2 || args.len() > 5 {
+        eprintln!("用法：ntex-backend <input.tex> [output_prefix] [dpi] [--vello]");
         return ExitCode::from(2);
     }
-    let tex_path = Path::new(&args[1]);
-    let prefix = args.get(2).map(|s| s.to_owned()).unwrap_or_else(|| {
+    let use_vello = args.iter().skip(1).any(|a| a == "--vello");
+    let positional: Vec<&String> = args[1..].iter().filter(|a| !a.starts_with('-')).collect();
+    let tex_path = Path::new(positional[0]);
+    let prefix = positional.get(1).map(|s| s.to_string()).unwrap_or_else(|| {
         tex_path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "demo".to_owned())
     });
-    let dpi: f64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(144.0);
+    let dpi: f64 = positional
+        .get(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(144.0);
 
     let source = match std::fs::read_to_string(tex_path) {
         Ok(src) => src,
@@ -42,10 +48,16 @@ fn main() -> ExitCode {
         dpi,
         ..RenderOptions::default()
     };
-    let pngs = match TinySkiaBackend.render_pngs(&pages, &fonts, &opts) {
+    let backend_name = if use_vello { "vello(gpu)" } else { "软光栅" };
+    let pngs = if use_vello {
+        VelloBackend::new().render_pngs(&pages, &fonts, &opts)
+    } else {
+        TinySkiaBackend.render_pngs(&pages, &fonts, &opts)
+    };
+    let pngs = match pngs {
         Ok(pngs) => pngs,
         Err(err) => {
-            eprintln!("渲染失败：{}", err);
+            eprintln!("渲染失败（{backend_name}）：{}", err);
             return ExitCode::from(1);
         }
     };
@@ -56,10 +68,13 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
         println!(
-            "{} → {}（{} 字节）",
+            "{} → {}（{} 字节，{}，{} 页之 {}）",
             tex_path.display(),
             out_path,
-            png.len()
+            png.len(),
+            backend_name,
+            pngs.len(),
+            idx + 1
         );
     }
     if pngs.is_empty() {

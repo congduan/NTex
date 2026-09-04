@@ -1,14 +1,18 @@
 [package]
 name = "ntex-backend"
-description = "NTex 渲染后端（M8）：Backend trait + 软光栅位图实现 + PNG 导出"
+description = "NTex 渲染后端（M8）：Backend trait + 软光栅 + vello GPU 实现 + PNG 导出"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-rust-version.workspace = true
+# vello 0.10 / wgpu 29 上游 MSRV 为 1.88，本 crate 覆盖 workspace 的 1.80；
+# 核心 crate（引擎/布局/DVI/PDF）仍承诺 1.80。
+rust-version = "1.88"
 
 [dependencies]
 ntex-layout.workspace = true
 ntex-font.workspace = true
+vello = "0.10"
+pollster = "1.0.1"
 
 [dev-dependencies]
 ntex-dvi.workspace = true
