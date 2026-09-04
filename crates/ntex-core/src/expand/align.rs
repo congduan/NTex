@@ -125,8 +125,14 @@ impl Expander {
                 span_pending: false,
             },
         });
-        // 对齐 eqtb 组（tex.web scan_spec 的 new_save_level；静默——sink 侧
-        // 组由 align_begin 事件开启，不发 group_begin）。
+        // 对齐 eqtb 组（tex.web scan_spec 的 new_save_level）。VM 侧静默开组，
+        // sink 侧此时消费 align_begin 留下的 pending_kind=Align **立即开组**
+        // ——对齐的 `{` 已被 align_scan_left_brace 消费，不会再有主循环的
+        // group_begin 事件来认领；若不发，无内层 `{}` 的对齐（`\halign{#\cr}`）
+        // 在 align_finish→end_group 时 group_end 无配对，有内层 `{}` 时首个
+        // 内层组还会错认领 Align 种类（TRIP 回归 001e0bc 的根因）。
+        let line = self.current_line_no() as u32;
+        self.sink.group_begin(line)?;
         self.begin_silent_group();
         Ok(())
     }
