@@ -46,3 +46,7 @@ tmp_pngcmp.py
 /mt2.pdf
 /mu1*.pdf
 /revision-test.dvi
+
+# 备料字体暂存（环境只读主目录；正式入库字体经 make fixtures 流程）
+/.local-fonts/
+/demo-multi.*

@@ -6,6 +6,8 @@
 //! - 规则用 `re f` 填充矩形；
 //! - 字体：Type1 嵌入（PFB 流，见 [`crate::type1`]），`/Encoding` 不指定——
 //!   查看器用字体程序内建编码（cmr10 的 TeX 编码 = DVI 字符码，天然一致）；
+//!   多字体去重按 `fnt_def` 外部名（同字体多页复用同一组对象）；页面资源字典
+//!   只列本页实际引用的字体（`page_fonts`），跨页互不泄漏（M8 多字体验证）。
 //! - 坐标转换：DVI 原点在页左上、y 向下（sp）；PDF 原点在左下、y 向上（pt），
 //!   字符参考点为基线（DVI 的 v 即基线）。
 
@@ -141,6 +143,8 @@ fn escape_byte(b: u8) -> String {
 /// 每个唯一字体 (Font dict, FontDescriptor, FontFile 流) 三对象。
 fn build_document(dvi: &Dvi, contents: &[Vec<u8>], opts: &PdfOptions) -> io::Result<Vec<u8>> {
     // 字体去重：name → (FontName, PFA)。找不到 PFA 时退化为不嵌入的空字典。
+    // PDF 名字对象统一大写（Adobe Type1 惯例，如 CMBX10）——/BaseFont、
+    // /FontDescriptor /FontName 及不嵌入时的兜底名走同一命名口径。
     let mut uniq: Vec<(&str, (String, Vec<u8>))> = Vec::new();
     for name in &dvi.font_names {
         if uniq.iter().any(|(n, _)| *n == name.as_str()) {
@@ -199,13 +203,17 @@ fn build_document(dvi: &Dvi, contents: &[Vec<u8>], opts: &PdfOptions) -> io::Res
         format!("2 0 obj << /Type /Pages /Kids [{kids}] /Count {n_pages} >> endobj").as_bytes(),
     );
 
-    // 页面 + 内容流
+    // 页面 + 内容流（资源字典只列本页用到的字体，避免跨页资源冲突/膨胀：
+    // 例如 A 页 cmr10、B 页 cmtt10 时，双方 /Font 互不可见）。
     for (i, c) in contents.iter().enumerate() {
         let page_obj = 3 + 2 * i;
         let content_obj = 4 + 2 * i;
+        let mut used = page_fonts(i, dvi);
+        used.sort_unstable();
+        used.dedup();
         let mut res = String::new();
-        for (idx, fobj) in font_obj.iter().enumerate() {
-            res.push_str(&format!("/F{} {fobj} 0 R ", idx + 1));
+        for f in used {
+            res.push_str(&format!("/F{} {} 0 R ", f + 1, font_obj[f as usize]));
         }
         obj(
             &mut buf,
@@ -283,10 +291,23 @@ fn build_document(dvi: &Dvi, contents: &[Vec<u8>], opts: &PdfOptions) -> io::Res
     Ok(buf)
 }
 
+/// 一页实际引用的 DVI 字体号集合（`DrawOp::Char` 的 font 字段）。
+fn page_fonts(page: usize, dvi: &Dvi) -> Vec<u32> {
+    dvi.pages[page]
+        .ops
+        .iter()
+        .filter_map(|op| match op {
+            DrawOp::Char { font, .. } => Some(*font),
+            DrawOp::Rule { .. } => None,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::dvi::Page;
+    use crate::type1;
     use ntex_font::parse_tfm;
 
     #[test]
@@ -384,5 +405,77 @@ mod tests {
         // 第二行基线 = 页高 - v = 20 - 10 = 10pt
         assert!(s.contains("Tm [("), "{s}");
         let _ = w_t;
+    }
+
+    /// 多字体（M8）：两页两字体（cmr10/cmtt10，缺任一度量则跳过）。
+    /// 验证：/FontFile 逐字节等于本地 PFB；/BaseFont 为 PFB /FontName（大写）；
+    /// 每页 /Resources /Font 只列本页实际引用的字体，跨页复用同一字典对象。
+    #[test]
+    fn write_pdf_embeds_multi_font_family_and_pages_use_own_fonts() {
+        let mut fonts = Vec::new();
+        let mut names = Vec::new();
+        for name in ["cmr10", "cmtt10"] {
+            let Some(path) = ntex_font::find_tfm(name) else {
+                eprintln!("未找到 {name}.tfm，跳过");
+                return;
+            };
+            let Ok(bytes) = std::fs::read(&path) else {
+                eprintln!("读取 {name}.tfm 失败，跳过");
+                return;
+            };
+            let Ok(mut fm) = parse_tfm(&bytes) else {
+                eprintln!("解析 {name}.tfm 失败，跳过");
+                return;
+            };
+            fm.name = name.to_owned();
+            fm.design_size_sp = 655_360;
+            fm.scale = 1 << 20;
+            fonts.push(fm);
+            names.push(name.to_owned());
+        }
+        // 页 1 用字体 0（cmr10）、页 2 用字体 1（cmtt10）——互不引用对方。
+        let page = |font: u32| Page {
+            ops: vec![DrawOp::Char {
+                font,
+                code: b'T',
+                h: 0,
+                v: 0,
+            }],
+        };
+        let dvi = Dvi {
+            pages: vec![page(0), page(1)],
+            fonts,
+            font_names: names,
+        };
+        let pdf = write_pdf(&dvi, &PdfOptions::default()).unwrap();
+        let s = String::from_utf8_lossy(&pdf);
+
+        // /BaseFont 来自 PFB /FontName（Type1 惯例大写）
+        assert!(s.contains("/BaseFont /CMR10 "), "{s}");
+        assert!(s.contains("/BaseFont /CMTT10 "), "{s}");
+        // 两组 FontDescriptor + /FontFile（6 字体同机制，此处抽查 2 族）
+        assert_eq!(s.matches("/FontFile ").count(), 2, "{s}");
+
+        // /FontFile 流内容逐字节等于本地 PFB（原样嵌入，不重组）
+        for (idx, name) in ["cmr10", "cmtt10"].iter().enumerate() {
+            let pfb = type1::load_pfb(name).unwrap().pfb;
+            let dict_obj = 7 + 3 * idx; // 2 页时 font_base = 7
+            let file_obj = dict_obj + 2;
+            let marker = format!("{file_obj} 0 obj << /Length {} >>\nstream\n", pfb.len());
+            let pos = pdf
+                .windows(marker.len())
+                .position(|w| w == marker.as_bytes())
+                .unwrap();
+            let start = pos + marker.len();
+            assert_eq!(
+                &pdf[start..start + pfb.len()],
+                &pfb[..],
+                "{name} 应原样嵌入"
+            );
+        }
+
+        // 页面资源字典：页 1 只有 /F1（cmr10 字典对象 7）、页 2 只有 /F2（对象 10）
+        assert!(s.contains("/Resources << /Font << /F1 7 0 R >> >>"), "{s}");
+        assert!(s.contains("/Resources << /Font << /F2 10 0 R >> >>"), "{s}");
     }
 }
