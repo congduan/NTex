@@ -1932,6 +1932,83 @@ I changed this one to zero.
         );
     }
 
+    // ─── 分隔实参的整组贡献（LaTeX 兼容第十三刀：l3prg w 尾参）─────────────
+    // tex.web macro_call：定界参数内的 `{…}` 平衡组**整体**作实参数据贡献，
+    // 组内 token 只配对、不匹配定界符、`}` 不触发 "extra }"——expl3 的 w 尾参
+    // `\tl_if_empty:nF {#8} {…}`（l3prg `\__prg_generate_conditional:NNnnnnNw`
+    // 体）即此形。旧实现扁平扫描把组内首个 `}` 当深度 0 的额外 `}` → 报错截断
+    // → 尾参被就地执行（undefined-cs 级联 + 栈超限，报告 §19）。
+
+    #[test]
+    fn delimited_arg_braced_group_is_data() {
+        // 定界实参内容含平衡组：`#1` = A{B}C（组是数据，不报 extra }）
+        assert_eq!(
+            expand("\\def\\foo#1!{\\detokenize{#1}}\\foo A{B}C!").unwrap(),
+            "A{B}C"
+        );
+        // 组内定界符不终止参数（tex.web 整组贡献）：`#1` 吞到组外 `!`
+        assert_eq!(
+            expand("\\def\\foo#1!{\\detokenize{#1}}\\foo X{A!B}Y!").unwrap(),
+            "X{A!B}Y"
+        );
+    }
+
+    #[test]
+    fn delimited_arg_nested_groups_do_not_error() {
+        // 组套组：内层 `}` 依次配对，全部是数据
+        assert_eq!(
+            expand("\\def\\foo#1;{\\detokenize{#1}}\\foo {A{B{C}}D};").unwrap(),
+            "{A{B{C}}D}"
+        );
+    }
+
+    #[test]
+    fn delimited_arg_unknown_cs_in_content_is_data_not_executed() {
+        // 尾参数据含"可展开但未定义"的宏（l3prg 场景的 `\tl_if_empty:nF`）：
+        // 定界扫描不得就地执行它——undefined-cs 报错即扫描把数据当执行位的表征
+        let (r, t) = run_transcript(concat!(
+            "\\def\\smark{\\relax}",
+            "\\def\\gen#1\\smark{\\detokenize{#1}}",
+            "\\gen\\tl_if_empty:nF {p} {oops} \\smark"
+        ));
+        assert!(r.is_ok(), "应可恢复运行");
+        assert!(
+            !t.contains("Undefined control sequence"),
+            "尾参数据不应被就地执行：{t}"
+        );
+        assert!(
+            !t.contains("has an extra"),
+            "组内右花括号不应触发 extra 右花括号 报错：{t}"
+        );
+    }
+
+    #[test]
+    fn delimited_arg_undefined_delimiter_matches_by_token_not_meaning() {
+        // 定界符与尾参首 token **都未定义**（expl3 `\s__prg_stop` 定界 +
+        // l3tl 未载入时的 `\tl_if_empty:nF` 数据）：定界符按 token 同一匹配，
+        // 未定义的 `\tl_if_empty:nF` 不得因"同为未定义"被误作定界符提前终止
+        //（tex.web `cur_tok=info(r)` 是 token 相等，非 \ifx 含义相等）。
+        assert_eq!(
+            expand(concat!(
+                "\\def\\gen#1\\smark{\\detokenize{#1}}",
+                "\\gen\\notdefinedcs {p} {oops}\\smark"
+            ))
+            .unwrap(),
+            "\\notdefinedcs {p} {oops}"
+        );
+        // 对照：`\string` 只能看单 token；这里用另一个**已定义**的 cs 开头，
+        // 确认定界符仍只认同名 token 出现时才终止
+        assert_eq!(
+            expand(concat!(
+                "\\let\\smarkX\\relax",
+                "\\def\\gen#1\\smarkX{\\detokenize{#1}}",
+                "\\gen\\relax {mid}\\smarkX"
+            ))
+            .unwrap(),
+            "\\relax {mid}"   // \relax 与 \smarkX 含义同为 relax，但不作定界符
+        );
+    }
+
     // ---------- LaTeX 兼容第十二刀：l.398 阻塞点根因链（报告 §18） ----------
 
     #[test]

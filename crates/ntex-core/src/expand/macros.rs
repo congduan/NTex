@@ -98,14 +98,16 @@ impl Expander {
         Ok(())
     }
 
-    /// 定界符 token 等价比较：字符按 (catcode, char)；控制序列按含义（\ifx 语义）。
+    /// 定界符 token 等价比较：字符按 (catcode, char)；控制序列按 **token 同一**
+    /// （cs 名，tex.web macro_call `cur_tok=info(r)` 的 token 相等）。**不按含义**
+    /// ——expl3 的定界/quark token 常留未定义（`\s__prg_stop`/`\q__prg_recursion_
+    /// tail` 全篇无定义），而尾参数据里同是未定义的 `\tl_if_empty:nF`（l3tl 未
+    /// 载入）若按含义比较会**误作定界符**提前终止 → 尾参泄出被就地执行。真实 TeX
+    /// 两个不同名的未定义 cs 是不同 token，不定界。
     fn delim_token_eq(&self, a: Token, b: Token) -> bool {
         match (a.kind(), b.kind()) {
             (TokenKind::Char, TokenKind::Char) => a == b,
-            (TokenKind::ControlSeq, TokenKind::ControlSeq) => {
-                self.meaning_key(a.csid().expect("ControlSeq 必有 csid"))
-                    == self.meaning_key(b.csid().expect("ControlSeq 必有 csid"))
-            }
+            (TokenKind::ControlSeq, TokenKind::ControlSeq) => a.csid() == b.csid(),
             _ => false,
         }
     }
@@ -126,6 +128,7 @@ impl Expander {
             eprintln!("[trace-arg] 定界符 {:?} n={}", d, delim.len());
         }
         let mut buf: Vec<Token> = Vec::new();
+        let mut depth = 0usize; // 平衡组深度：`{…}` 组整组贡献，组内 token 不定界
         loop {
             let tok = match self.fetch()? {
                 Some(t) => t.0,
@@ -149,17 +152,39 @@ impl Expander {
             //
             // TeX：分隔实参内的 outer 宏 → forbidden
             self.check_not_outer(tok)?;
+            match tok.catcode() {
+                Some(Catcode::BeginGroup) => {
+                    // tex.web macro_call "Contribute an entire group"：`{` 起的
+                    // 平衡组整体作为实参数据贡献。组内 token 只做配对，不匹配
+                    // 定界符（expl3 w 尾参 `\tl_if_empty:nF {#8} {…}` 的组内容
+                    // 是数据，其内部定界符不终止参数——l3prg 条件生成器阻塞）。
+                    depth += 1;
+                    buf.push(tok);
+                    continue;
+                }
+                Some(Catcode::EndGroup) if depth > 0 => {
+                    depth -= 1;
+                    buf.push(tok);
+                    continue;
+                }
+                _ => {}
+            }
+            // 至此 depth == 0 的 token（组内非定界符 token 也落此，但 depth>0，
+            // 下面各检查对组内 token 只看 non-long `\par`——tex.web 整组贡献
+            // 的循环同样禁止 non-long 参数内任意深度 `\par`）。
             buf.push(tok);
             // 分隔符匹配优先：`\par` 作为定界符时合法（TRIP L354 `\a#1\par#2` 调
             // `\a\par!` → `#1` 空、`#2`=`!`；non-long 参数扫描的 Paragraph ended
-            // 检查须在分隔符匹配之后，否则定界符 `\par` 被误报）。
-            if self.suffix_matches_delim(&buf, delim) {
+            // 检查须在分隔符匹配之后，否则定界符 `\par` 被误报）。只在 depth==0
+            // 匹配——组内的同形 token 是数据。
+            if depth == 0 && self.suffix_matches_delim(&buf, delim) {
                 buf.truncate(buf.len() - delim.len());
                 break;
             }
             // TeX scan_macro_arg：定界参数扫描遇 `}`（end_group，非定界符）→
             // "! Argument of \X has an extra }." 恢复（trip.log L6541）：long 宏
             // 参数补 `\par` 终止并放回 `}`；non-long 宏同 "Paragraph ended"。
+            // depth>0 的 `}` 已在上方配对，到这里的只可能是 depth==0 的额外 `}`。
             if tok.catcode() == Some(Catcode::EndGroup) {
                 buf.pop();
                 let _ = self.sink.write16(format!(
@@ -179,7 +204,7 @@ impl Expander {
                 self.recover_par_in_argument(name, tok)?;
                 return Ok(Arc::from(buf));
             }
-            // non-long 参数中 `\par`（非定界符位置）→ "Paragraph ended"
+            // non-long 参数中 `\par`（非定界符位置）→ "Paragraph ended"（含组内）
             if !long && self.is_par_token(tok) {
                 buf.pop();
                 self.recover_par_in_argument(name, tok)?;

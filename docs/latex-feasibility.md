@@ -1174,3 +1174,82 @@ l3tl 未载入、未定义）→ undefined-cs + Missing endcsname 级联，最�
 
 - `cargo test -p ntex-core --lib`：304 通过（含新增 6 测）；全 workspace `make check`
   （fmt + clippy -D warnings + cargo test 含 TRIP/ETRIP）全绿。
+
+## 19. 2026-09-04 第十三刀进展（分隔实参整组贡献 + 定界符按 token 同一——l3prg w 尾参阻塞）
+
+### 19.1 §18.8 阻塞点的两处根因（都已修，tex.web macro_call 语义归位）
+
+l3basics 条件生成器 `\__prg_generate_conditional:NNnnnnNw`（L1759-1775）的
+w 尾参 `\tl_if_empty:nF {#8} {…}` 被就地执行，根因不在"该不该展开"，而在引擎的
+**分隔实参扫描器**与 tex.web `macro_call` 有两处偏差：
+
+1. **定界实参内的平衡组被扁平扫描**：`{…}` 组内的 `}` 被当成深度 0 的"额外 `}`"
+   报错截断，组内定界符也参与匹配。tex.web macro_call 的
+   "Contribute an entire group" 把 `{` 起的平衡组**整体**作为实参数据贡献——组内
+   token 只配对、不匹配定界符、`}` 不触发 extra-}。expl3 的 w 尾参
+   `\tl_if_empty:nF {p} {…} \use_none:nnnnnnnn`（p_form 的 `#1 \s__prg_stop` 定界
+   实参）正是此形 → 组内首个 `}` 处报错截断 → `\tl_if_empty:nF` 泄出被就地执行
+   （l3tl 未载入 = undefined-cs 级联 + 递归栈超限）。
+2. **定界符匹配按含义而非 token 同一**：`delim_token_eq` 对控制序列用
+   `meaning_key`（\ifx 语义）。expl3 的定界/quark token 常**通篇无定义**
+   （`\s__prg_stop`/`\q__prg_recursion_tail` 全文件只有使用无定义），而 w 尾参
+   首 token `\tl_if_empty:nF`（l3tl 未载入）同样未定义——两个**不同名**的未定义
+   cs 按含义比较相等 → `\tl_if_empty:nF` 被误作 `\s__prg_stop` 定界符提前终止。
+   tex.web `macro_call` 的 `cur_tok=info(r)` 是 token 相等（cs 名同一），两个不同
+   名的未定义 cs 是不同 token，不定界。
+
+修复（`crates/ntex-core/src/expand/macros.rs`）：
+- `collect_delimited_arg` 加组深度跟踪：`{` 计入深度，组内 token 只配对不匹配
+  定界符、`}` 在 depth>0 时配对弹出；分隔符后缀匹配只在 depth==0 做；depth==0 的
+  额外 `}` 走原 "Argument of \X has an extra }." 恢复（TRIP 格式不变）。non-long
+  的 `\par` 检查保持"任意深度禁止"（tex.web 整组贡献循环同款）。
+- `delim_token_eq` 控制序列改按 `csid` 同一（token 相等，tex.web 语义）；字符仍按
+  (catcode,char)。记录偏差消除：此前含义比较会让 `\let` 同义或同未定义的不同 cs
+  误作定界符。
+
+### 19.2 实测（latex_probe --initex，口径同 §16.2）
+
+- 改动前（e992ea8）：`\__prg_generate_conditional:NNnnnnNw` 的 recursion 在 l.1907
+  无界自递归，转录 119779 行（9989 undefined-cs / 4984 extra-} 的重复块），终态
+  输入栈超限。`\cs_if_exist:NTF` 等条件从未生成。
+- 改动后：**recursion 干净终止**——每 `\prg_gset_conditional` 恰 2 次
+  `NNnnnnNw`（首 form + recursion-tail 终止），`Argument of
+  \__prg_generate_conditional:NNnnnnNw has an extra }` **0 条**（4984→0），转录
+  241 行、22 undefined-cs。`\cs_if_exist:NTF` 仍未生成（见 §19.3），级联到
+  expl3 L2089 `\cs_set_nopar:cpe` 的 "command-already-defined" 内部错误 +
+  "Incomplete \if" 终态。
+
+### 19.3 下一真实阻塞点（精确，本刀未修）
+
+`\cs_if_exist:N` 的条件生成**仍未产出** p/T/F/TF：csname 分派构造出的是
+`\__prg_generate_1_form:wNNnnnnN`（形为 `1`），而非 `p`。NTEX_COND_TRACE 证据链：
+`\__prg_generate_conditional:nnNNNnnn`（L1733）实参绑定
+`#6="#"`、`#7="1"`、`#8="p,T,F,TF"`——`{p,T,F,TF}` 表单清单落在 `#8`，而
+`\tl_to_str:n {#7}`（L1750）对 `#7`（=`1`）取串 → NNnnnnNw 的 w 实参（表单分派
+位）= `1` → `__prg_generate_1_form:wNNnnnnN` 未定义 → `\csname` 制造为 relax →
+尾参 `\tl_if_empty:nF {1} {…}` 走"表单未知"分支被就地执行。
+
+疑点：`#6`/`#7` 与表单清单的错位源于 `\__prg_generate_conditional_parm:NNNpnn`
+（L1691 `#1#2#3#4#`，引擎按 4 个无分隔参数定义）的 p 实参只吞了 `#1` 的 `#`
+（`#4="#"`），数字 `1` 与 `{p,T,F,TF}` 留在输入流被 nnNNNnnn 续吞为 `#7`/`#8`。
+属 expl3 p 型签名/参数文本编排的更深层语义（非 w 定界扫描），且混入
+`\cs_split_function:N` e 展开的 `\c_true_bool` 标记移位；最小复现需整段
+l3basics~l3prg 前缀，无法再降。本刀禁改模式/数学机语义，留给下一刀。
+
+另：错误上下文前几条误标 `l.398` 的 error_anchor 残留问题（§18.8）仍在，纯报错
+表象。
+
+### 19.4 改动清单
+
+- `crates/ntex-core/src/expand/macros.rs`：`collect_delimited_arg` 平衡组整组贡献
+  （depth 跟踪，定界符仅 depth==0 匹配）；`delim_token_eq` 控制序列改 csid 同一。
+- `crates/ntex-core/src/expand/tests.rs`：新增 4 测（§19.1 各根因最小复现 + §19.3
+  未定义定界符/未定义尾参数据对照，双轨自动覆盖）。
+
+### 19.5 验证
+
+- `cargo test -p ntex-core --lib`：308 通过（含新增 4 测）；全 workspace
+  `make check`（fmt + clippy -D warnings + cargo test，26 套件）全绿。
+- TRIP/ETRIP driver（`ntex-trip --driver ntex`）仍停 HEAD 已知数学组残留
+  （`group_end 无配对 group_begin`，模式机未完成区），无新增触发；门禁以
+  "残留签名一致 + 全量测试绿"为准。
