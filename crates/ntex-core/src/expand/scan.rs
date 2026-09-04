@@ -1069,6 +1069,16 @@ impl Expander {
                 let v = self.registers.muskip(idx).width;
                 return Ok((if neg { -v } else { v }, 0));
             }
+            // tex.web `<internal dimen>`（scan_dimen 开头 `cur_cmd∈[min_internal,max_internal]`
+            // → `scan_something_internal(dimen_val)`，`cur_val_level=dimen_val` → `goto
+            // attach_sign`）：dimendef'd cs 的值**就是**尺寸，无需单位；值可负（与前置
+            // `-` 号合成，tex.web 由 `if cur_val<0` 翻转 negative 等价实现）。
+            // latex.ltx L532 `\boxmaxdepth=\maxdimen`（\maxdimen=\dimendef'd）依赖此臂。
+            if let EqSlot::Register(RegKind::Dimen, idx) = self.eqtb.slot(csid).clone() {
+                self.fetch()?; // 消费 dimendef'd cs
+                let v = self.registers.dimen(idx);
+                return Ok((if neg { -v } else { v }, 0));
+            }
             if let EqSlot::Register(RegKind::Skip, idx) = self.eqtb.slot(csid).clone() {
                 self.fetch()?; // 消费 skipdef'd cs
                 let v = self.registers.skip(idx).width;

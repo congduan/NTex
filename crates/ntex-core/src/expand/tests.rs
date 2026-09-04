@@ -383,6 +383,26 @@ mod tests {
     }
 
     #[test]
+    fn dimendef_cs_as_dimen_value() {
+        // tex.web scan_dimen `<internal dimen>`：dimendef'd cs 作尺寸值，无需单位
+        // （latex.ltx L532 `\boxmaxdepth=\maxdimen` 的最小复现）
+        assert_eq!(
+            expand("\\dimendef\\m=10 \\m=100pt \\hsize=\\m\\the\\hsize").unwrap(),
+            "100.0pt"
+        );
+        // 值可负；前置 `-` 号与负值合成（tex.web `if cur_val<0` 翻转 negative）
+        assert_eq!(
+            expand("\\dimendef\\m=10 \\m=-3pt \\dimen20=-\\m\\the\\dimen20").unwrap(),
+            "3.0pt"
+        );
+        // `<factor><internal dimen>`（乘子臂）不受影响：11×5pt
+        assert_eq!(
+            expand("\\dimendef\\m=10 \\m=5pt \\dimen21=11\\m \\the\\dimen21").unwrap(),
+            "55.0pt"
+        );
+    }
+
+    #[test]
     fn lccode_assign_and_read() {
         // etrip.tex 88 行：\lccode`A=`a；数字上下文读回
         assert_eq!(

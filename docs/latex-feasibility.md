@@ -474,3 +474,49 @@ latex.ltx L12804/L13103/L13168 的 `\globaldefs\@ne` 后续需要它。
   ntex`（trip + etrip 两路）在 HEAD 与本刀下输出**逐字节一致**（仅 systemd unit
   名/临时目录名/耗时内存行不同），仍停在 HEAD 已知的数学组错误
   （`group_end 无配对 group_begin`）。
+
+## 11. 2026-09-04 第五轮进展（`<internal dimen>` 补臂——L532 区越过）
+
+> 本刀按 §10.3 的"下一刀首选"执行：`scan_dimen_inner` 补 dimendef'd cs 作尺寸值的臂。
+> 约束：与既有 Skip/Muskip 臂同构，只动 `scan_dimen` 的 cs 值分支。
+
+### 11.1 scan_dimen 补 `<internal dimen>` 臂 —— 已修复
+
+- tex.web `scan_dimen` 开头：`cur_cmd∈[min_internal,max_internal]` →
+  `scan_something_internal(dimen_val,false)`；返回 `cur_val_level=dimen_val` 时
+  `goto attach_sign`——值**就是**尺寸、不再扫单位；前置 `-` 号与负寄存器值由
+  `if cur_val<0 → negative:=not negative; negate(cur_val)` 与 `attach_sign` 合成。
+- NTex 此前**值位置**只认 `\dimen<n>`/`\skip<n>` 原语与 skipdef/muskipdef'd cs；
+  dimendef'd cs 落到数字扫描 → `Missing number`。factor 位置的
+  `<factor><internal dimen>` 臂（`11\mydimen`）此前已有，未动。
+- 修复：`scan_dimen_inner` 值链补 `EqSlot::Register(RegKind::Dimen, idx)` 臂
+  （scan.rs，位于 Skip 臂前、三个 RegKind 臂按枚举序排列），与既有臂同构：
+  消费 cs → 读 `registers.dimen(idx)` → 前置 `-` 取负 → 直接返回（无单位）。
+- **顺带复核**：Skip/Muskip 臂完整——胶水寄存器取 `.width` 分量，即 tex.web
+  `<Coerce glue to a dimension>`（`cur_val_level≥glue_val → v:=width(cur_val)`），
+  无需改动。
+- 最小复现通过：`\dimendef\m=10 \m=100pt \hsize=\m` → 100.0pt（新单测
+  `dimendef_cs_as_dimen_value` 三例：直接作值 / 负值+前置 `-` 合成 / factor 臂回归）。
+
+### 11.2 阻塞点刷新（第五轮）
+
+| # | 状态 | 说明 |
+|---|---|---|
+| L532 分配区 | **已越过** | `\maxdimen =\dimen 10`、`\hideskip =\skip 10`、`\p@ =\dimen 11`、`\z@ =\dimen 12`、`\z@skip =\skip 11` 照常 `\wlog`；**L532–L547 连锁 6 条 `Missing number` + 1 条 `Missing {` 全部消失**，L532–L726 区间零错误。错误总数 2564 → 2561 |
+| **新（next）** | **L727 `\everyjob\expandafter{\the\everyjob\the\LaTeXReleaseInfo}`** | toks 参数赋值要求**字面 `{`**：引擎 `\everyjob` 走 `expect_equals()` + `scan_group_contents()`（`\everyjob` 等 toks 参数的值扫描不展开 filler）；tex.web `scan_left_brace`（L8194–8201）用 **`get_x_token`**（可展开 filler）并跳 `spacer`/`\relax`——`\expandafter` 在 filler 位置被展开、`{` 由它压回。孤立复现：`\everyjob\expandafter{\the\everyjob\the\toks0}` → `! Missing { inserted.`（l.3 报行正确）。**同病因子集**：凡 `scan_left_brace` 语义处（toks 参数、`\setbox`…）。修法：值扫描前用 x-token 语义找 `{`（跳 spacer/\relax、可展开 token 展开），属"必选 `{`"通用助手，非 `\everyjob` 专属 |
+| 错误行号偏差 | 记录 | latex.ltx 中该错误报 `l.547`（陈旧行号；孤立复现报行正确）——错误锚点在多帧输入下取到旧 source pos，独立小问题，本刀未动 |
+| 下游症状 | 归因收敛 | L16789 `! Too many }'s.` **未消失**，但其唯一上游已收敛为 L727 的 `Missing { inserted`：按语义插入左括号（`incr(align_state)`）+ 收组越过源行 → 组嵌套自此偏移 1。L16792+ `\@namedef`/`\newif`/`\setlength`/`\NewHookWithArguments` undefined、L17048/17051/17338 `Missing font identifier`（`\fontdimen8\tenln`）、`\bezier`/`\@bezier` 20 条、L17474 `\@inmatherr` 2492 条——**待下一刀修 scan_left_brace 后重测**，判断是否随之消失 |
+| `^^J` / `\today` | 复核仍在 | L301/L302 `\string^^J` → `\` + undefined（LF=5 行模型，§9.3）；转录头 `BAD: old file …` 双空格。均非致命，本刀未处理 |
+| 终态 | 未动 | pass1 终止于输入栈超限（5001>5000 防挂保护）、`dumped=false`，与第二/三轮记录一致（L17474 区） |
+
+### 11.3 本轮改动清单
+
+- `crates/ntex-core/src/expand/scan.rs`：`scan_dimen_inner` 值链补
+  `RegKind::Dimen` 臂（`<internal dimen>`，注释含 tex.web 对照）。
+- `crates/ntex-core/src/expand/tests.rs`：新增 `dimendef_cs_as_dimen_value`
+  （3 例：latex.ltx L532 复现 / 负值合成 / factor 臂回归）。
+- 回归：`make check`（fmt/clippy/test，26 个套件）全绿；TRIP/ETRIP driver
+  （`cargo run -p ntex-trip -- --driver ntex`）两路均停在 **HEAD 已知**的
+  数学组残留（TRIP pass1 `group_end 无配对 group_begin`、ETRIP pass2
+  `l.356` math left group 区），无新增 diff——本刀未跑 HEAD 逐字节对比
+  （禁 stash），以"残留签名一致 + 全量测试绿"为门禁依据。
