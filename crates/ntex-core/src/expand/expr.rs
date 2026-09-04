@@ -189,6 +189,8 @@ impl Expander {
                     // \csname...\endcsname：名字扫描 → 控制序列 token（TeX expand() 语义）
                     let name = self.scan_csname()?;
                     let csid = self.intern.intern(&name);
+                    // TeX eq_define(cs,relax,256)：未定义名先变 \relax 同义再放回
+                    self.csname_define_relax(csid);
                     out.push((Token::control_sequence(csid), false));
                 }
                 // ETRIP 冲刺：e-TeX marks 族查询（可展开，返回字符 token 文本）
@@ -747,12 +749,50 @@ impl Expander {
     fn exec_csname(&mut self) -> Result<()> {
         let name = self.scan_csname()?;
         let csid = self.intern.intern(&name);
+        // TeX eq_define(cs,relax,256)：未定义名先变 \relax 同义再放回
+        self.csname_define_relax(csid);
         let tok = Token::control_sequence(csid);
         self.stack.push(InputFrame::One {
             tok,
             noexpand: false,
         });
         Ok(())
+    }
+
+    /// `\csname` 对**未定义名**的制造语义（tex.web L7753-7754）：
+    /// `eq_define(cur_cs,relax,256)`——该 cs 变为与 `\relax` 原语同义
+    /// （`\ifx\csname x\endcsname\relax` 为真、执行 no-op、`\ifdefined` 为真、
+    /// `\meaning` 不再显示 undefined）。只作用于"制造时槽为 Undefined"的名字；
+    /// 已定义（宏/原语/\let）不重定义。
+    ///
+    /// 组作用域：TeX 2.9 起该定义为**局部**（tex.web 版本注记 "Version 2.9
+    /// made \csname\endcsname's relax local"）——组内制造在组末恢复未定义
+    /// （与 \def 同走 save_stack）。制造发生在 expand() 中、**非赋值命令**：
+    /// 不消费 `\global` 前缀、不触发 `\afterassignment`、不受 \globaldefs
+    /// 影响，故不走 `set_slot_scoped`（其 is_global 会错吞 \global）。
+    ///
+    /// 记录偏差：
+    /// 1. 引擎存为 `EqSlot::Primitive(Relax)`（与 `\relax` 原语同槽）。\ifx/
+    ///    执行/\ifdefined 与 TeX 一致；唯 e-TeX `\ifprimitive` 对制造出的
+    ///    relax 会误判为真（TeX 中它是 eq_define 产物、非原语）。
+    /// 2. \meaning 对 Primitive 槽按**当前 cs 名**显示 `\名`（primitive.rs
+    ///    meaning_text 既有约定）——\csname 制造出的 relax 显示 `\nope`，
+    ///    而 TeX 按含义输出 "relax"。非本刀引入（\relax 原语因名恰为 relax
+    ///    故表面一致）；留待 \meaning 语义刀。
+    fn csname_define_relax(&mut self, csid: u32) {
+        if !matches!(self.eqtb.slot(csid), EqSlot::Undefined) {
+            return;
+        }
+        if self.group_level > 0 {
+            self.save_stack.push((
+                self.group_level,
+                SavedValue::Eqtb {
+                    csid,
+                    prev: EqSlot::Undefined,
+                },
+            ));
+        }
+        *self.eqtb.slot_mut(csid) = EqSlot::Primitive(Primitive::Relax);
     }
 
     /// `\csname` 名字扫描（`\csname`/`\ifcsname` 用）：收集直到 `\endcsname` 的名字字符。

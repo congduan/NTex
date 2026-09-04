@@ -591,3 +591,92 @@ latex.ltx L12804/L13103/L13168 的 `\globaldefs\@ne` 后续需要它。
 - 回归：`make check`（fmt/clippy/test，全套件含 277 lib 单测）全绿；TRIP/ETRIP
   driver 停在 HEAD 已知数学组残留（未跑逐字节对比，禁 stash），以"残留签名
   一致 + 全量测试绿"为门禁依据。
+
+## 13. 2026-09-04 第七轮进展（`\csname` 未定义名 = `\relax` 语义——越过 L1113 expl3 门闩）
+
+> 本刀按 §12.2 的"下一刀首选"执行：给 `\csname` 对**未定义名**的制造语义补
+> tex.web `eq_define(cur_cs,relax,256)`（L7753-7754）——未定义名经 `\csname`
+> 制造后与 `\relax` 原语同义，`\ifx` 相等。这是 eqtb 槽模型的核心语义
+> （动态名构造），latex.ltx L1113 expl3 门闩正依赖它。
+
+### 13.1 `\csname` 未定义名 → relax —— 已修复
+
+- tex.web `@<Manufacture a control...@>`（L7744-7757）：`\csname<name>\endcsname`
+  名字查表后 `if eq_type(cur_cs)=undefined_cs then eq_define(cur_cs,relax,256)`
+  （N.B. save_stack 可能变——即局部定义，TeX 2.9 版本注记 "made ... relax
+  local"）。原语 `\relax` 同是 relax/256（L5728），故制造产物与 `\relax` 可
+  `\ifx` 相等。
+- 引擎此前把 `\csname`-未定义与直接-未定义都归 `EqSlot::Undefined`，`ifx_equal`
+  判 `Undefined ≠ Primitive(Relax)` → L1113 门闩误走 `\else`（`\GenericInfo`
+  undefined + `\expandafter\endinput` L1117 早退）。
+- 修复（expr.rs）：新增 `csname_define_relax(csid)`，在**两个制造点**调用——
+  ① `exec_csname`（主循环可展开分发路径，dispatch_expandable→exec_csname）；
+  ② `expand_once` 的 `Csname` 分支（`\edef`/`\write`/`\expandafter` 展开上下文，
+  expr.rs:188）。`scan_csname` 本身不加（`\ifcsname` 与它共享，e-TeX 语义
+  `\ifcsname` 不得制造定义）。
+  - 只在槽为 `Undefined` 时制造（已定义——宏/原语/`\let`——不重定义，TeX 同）；
+  - 组内局部：`group_level>0` 时 push `save_stack`（prev=Undefined），组末恢复
+    未定义（TeX 2.9 "relax local"，与 `\def` 同走 save_stack）；
+  - **不**走 `set_slot_scoped`：csname 制造发生在 expand() 中、非赋值命令，
+    不消费 `\global` 前缀、不触发 `\afterassignment`、不受 `\globaldefs` 影响。
+- 记录偏差（注释内已记）：
+  1. 引擎存 `EqSlot::Primitive(Relax)`（与 `\relax` 原语同槽）。`\ifx`/执行/
+     `\ifdefined` 与 TeX 一致；唯 e-TeX `\ifprimitive` 对制造产物误判为真
+     （TeX 中它是 eq_define 产物、非原语）。
+  2. `\meaning` 对 Primitive 槽按**当前 cs 名**显示 `\名`（meaning_text 既有
+     约定，primitive.rs:415）——制造出的 relax 显示 `\nope` 而非 TeX 的
+     "relax"；`\relax` 原语因名恰为 relax 表面一致。非本刀引入，留 \meaning 刀。
+- **不动**直接使用未定义 cs 的路径：`\undefinedcs` 主循环仍报 "Undefined
+  control sequence." 并当 relax 继续（TeX 错误恢复一致）；`\ifx\undefined\relax`
+  仍为假（TeX：undefined_cs ≠ relax 的 eq_type）。只改 `\csname` 制造产物。
+
+### 13.2 验证（单测 + make check）
+
+- 新单测 `csname_undefined_becomes_relax`（tests.rs，6 断言）：
+  1. `\expandafter\ifx\csname nope\endcsname\relax T\else F\fi` → T（L1113 门闩
+     最小形态；注意需 `\expandafter`——`\ifx` 操作数不展开，裸 `\ifx\csname…`
+     比较的是 `\csname` 原语自身，TeX/引擎同）；
+  2. `\csname nopecs\endcsname\ifdefined\nopecs yes\else no\fi` → yes（制造持久、
+     执行 no-op 不报错；名须全字母——`\nope2` 在正文切 `\nope`+`2`）；
+  3. `\csname nope2\endcsname` 带数字名只能经 `\csname` 再引用 → T（TeX 同）；
+  4. `\edef\a{\csname qqq\endcsname}\expandafter\ifx\a\relax T\else F\fi` → T
+     （expand_once 路径同样制造）；
+  5. `{\csname grpname\endcsname}\ifdefined\grpname` → no（TeX 2.9 局部：组末恢复）；
+  6. 制造后 `\meaning` 不再含 "undefined"；直接未定义 `\ifdefined\direct…` → no。
+- `make check` 全绿（fmt / clippy -D warnings / `cargo test --workspace`，含 278
+  lib 单测）。TRIP/ETRIP driver 停在 HEAD 已知数学组残留（未逐字节对比），以
+  "残留签名一致 + 全量测试绿"为门禁依据。
+
+### 13.3 latex.ltx --initex 实测（L1113 门闩越过，进入 expl3 加载区）
+
+- **门闩越过**：转录不再出现 `\GenericInfo … Skipping` + L1117 `\endinput` 早退；
+  加载推进到 L1146-1148 `\IfFileExists{expl3.ltx}` 区。
+- 无 expl3.ltx（survey 目录原状）→ `\IfFileExists` 假分支 `\errmessage{LaTeX
+  requires expl3}` → `\batchmode\read -1`（终端读）→ 引擎 `\read` 流未打开硬错，
+  pass1 **ERROR**（此前 L1117 早退是 OK+dumped=false——早退≠推进）。
+- 取 l3kernel（tlnet `l3kernel.tar.xz` → expl3.ltx/expl3-code.tex/…，拷入
+  survey base 目录）后：**expl3.ltx 真正载入** → `\input expl3-code.tex` →
+  expl3 kernel bootstrap 区，最终以 `非法输入：\advance 目标必须是寄存器或内部
+  参数` 硬错终止（dumped=false）。
+
+### 13.4 阻塞点刷新（第七轮）
+
+| # | 状态 | 说明 |
+|---|---|---|
+| L1113 区 | **已越过** | expl3 门闩 `\expandafter\ifx\csname tex_let:D\endcsname\relax` 走对分支；`\csname`-未定义=relax 语义落地（§13.1） |
+| L1146-1148 | **已越过** | `\IfFileExists{expl3.ltx}` 真分支 + `{\input expl3.ltx }` 执行 |
+| **新（next）** | **L1147 engine-check `\ifnum0\ifdefined\pdffilesize 1\fi\ifdefined…>0`** | 即 §12.2 记录的 L728 嵌套条件偏差族（scan_number_inner 十进制数字循环缺 maybe_eval_cond 臂，条件在 `\ifnum` 数字内不被展开求值）→ 报 "Missing = inserted for \ifnum" + 恢复吞 token；latex.ltx L1147 与 expl3-code.tex 早期（l.192 等）反复出现。expl3 全篇用 `\ifnum0\ifdefined…\fi…=11`/`>0` 惯用法，此偏差从"报错但走对分支"升级为 expl3 加载的首个真实阻塞。**修法：数字扫描循环补条件臂（基数分支同款已有）** |
+| expl3 bootstrap | 级联症状 | `\__kernel_primitive:NN` 原语别名层（expl3-code.tex l.276 起：`\let\tex_global:D\global`… + 数百行 `\__kernel_primitive:NN \ifeof \tex_ifeof:D`）在条件栈/组平衡被 13.4 上项污染后报 "Extra \else/\fi、Argument of \__kernel_primitive:NN has an extra }、Too many }'s、\tex_…:D undefined" 并级联，终以 `\advance` 硬错终止——多数是上项恢复污染的次生症状，待上项修复后重测归因 |
+| pdfTeX 引擎墙 | 语义事实（非本轮修） | latex.ltx L1147 engine-check 测 `\pdffilesize`/`\filesize`/`\luatexversion`/`\kanjiskip`——真实 TeX 语义下 NTex（无这些原语）会被 `\errmessage{LaTeX requires the e-TeX primitives…pdfTeX/XeTeX/LuaTeX/e-upTeX…}` 拒绝；本轮因 13.4 嵌套条件误判**碰巧放行**进到 expl3。要合法构建 latex.fmt，需决定"伪装 pdftex（实现探测原语）"或另设引擎开关 |
+| 终态 | 未动 | pass1 ERROR（`\advance` 硬错）、dumped=false、无栈超限；下刀首选 = scan_number_inner 条件臂（§13.4 新 next） |
+
+### 13.5 本轮改动清单
+
+- `crates/ntex-core/src/expand/expr.rs`：`csname_define_relax` 新增；
+  `exec_csname` 与 `expand_once` 的 Csname 分支制造前调用。注释含 tex.web
+  行号对照与两处记录偏差（\ifprimitive / \meaning）。
+- `crates/ntex-core/src/expand/tests.rs`：新增 `csname_undefined_becomes_relax`
+  （6 断言，见 §13.2）。
+- 回归：`make check` 全绿；TRIP/ETRIP 门禁以残留签名一致 + 全量测试绿为依据。
+- 环境（不入库）：/tmp/latexsurvey 增 l3kernel 文件（expl3.ltx/expl3-code.tex
+  等 29 个拷入 base 目录），供后续 expl3 加载实测。

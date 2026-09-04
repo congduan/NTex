@@ -2578,6 +2578,54 @@ ab5c}").unwrap();
     }
 
     #[test]
+    fn csname_undefined_becomes_relax() {
+        // latex.ltx L1113 expl3 门闩语义（tex.web L7753-7754）：\csname 对未定义名
+        // eq_define(cs,relax,256)——与 \relax 原语同义，\ifx 相等。
+        // 注意需 \expandafter：\ifx 操作数不展开（TeX 语义），裸 \ifx\csname… 比较的
+        // 是 \csname 原语自身。
+        assert_eq!(
+            expand(r"\expandafter\ifx\csname nope\endcsname\relax T\else F\fi").unwrap(),
+            "T"
+        );
+        // 制造后定义持久：\csname 产物被执行是 no-op（不报 Undefined），且 \ifdefined 为真
+        // （名字须全字母——`\nope2` 在正文会切成 `\nope`+`2`；带数字名只能用 \csname 再取）
+        assert_eq!(
+            expand(r"\csname nopecs\endcsname\ifdefined\nopecs yes\else no\fi").unwrap(),
+            "yes"
+        );
+        // 数字等非字母字符可入名，但只能经 \csname 再引用（TeX 语义同）
+        assert_eq!(
+            expand(r"\csname nope2\endcsname\ifdefined\nope no\else\expandafter\ifx\csname nope2\endcsname\relax T\else F\fi\fi").unwrap(),
+            "T"
+        );
+        // \edef 上下文（expand_once 路径）同样制造 relax：\a 展开为 \qqq（relax 同义）
+        assert_eq!(
+            expand(r"\edef\a{\csname qqq\endcsname}\expandafter\ifx\a\relax T\else F\fi")
+                .unwrap(),
+            "T"
+        );
+        // TeX 2.9 "relax local"：组内制造 → 组末恢复未定义（\ifdefined 假）
+        assert_eq!(
+            expand(r"{\csname grpname\endcsname}\ifdefined\grpname yes\else no\fi").unwrap(),
+            "no"
+        );
+        // \meaning：制造出的 relax 不再显示 "undefined"（引擎对 Primitive 槽显示
+        // `\名`——记录偏差：TeX 对 \meaning\nope 输出 "relax"（按含义），引擎按
+        // 当前 cs 名显示 `\nope`；\relax 原语因名恰为 relax 故二者仅此处有差）
+        assert!(
+            !expand(r"\expandafter\meaning\csname nope\endcsname")
+                .unwrap()
+                .contains("undefined"),
+            r"制造后 \meaning 不应显示 undefined"
+        );
+        // 直接使用真正未定义 cs 仍是报错恢复（不经 \csname 制造不产生定义）
+        assert_eq!(
+            expand(r"\ifdefined\directundefinedzzz yes\else no\fi").unwrap(),
+            "no"
+        );
+    }
+
+    #[test]
     fn unless_reverses_condition() {
         assert_eq!(expand(r"\unless\iftrue yes\else no\fi").unwrap(), "no");
         assert_eq!(expand(r"\unless\iffalse yes\else no\fi").unwrap(), "yes");
