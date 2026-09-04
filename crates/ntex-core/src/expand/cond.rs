@@ -571,6 +571,15 @@ saved_if_type: self.cur_if_type,
                     .fetch()?
                     .ok_or_else(|| Error::invalid_input("\\ifx 缺操作数"))?
                     .0;
+                if diag_enabled("NTEX_IFX_TRACE") {
+                    let n = |t: Token| match t.csid() {
+                        Some(id) => {
+                            format!("csid={} {} ({:?})", id, self.intern.name(id), self.eqtb.slot(id))
+                        }
+                        None => format!("{t:?}"),
+                    };
+                    eprintln!("[trace-ifx] {} vs {}", n(t1), n(t2));
+                }
                 Ok(self.ifx_equal(t1, t2))
             }
             CondOp::IfNum => {
@@ -601,7 +610,17 @@ saved_if_type: self.cur_if_type,
                 match tok.kind() {
                     TokenKind::ControlSeq => {
                         let csid = tok.csid().expect("ControlSeq 必有 csid");
-                        Ok(!matches!(self.eqtb.slot(csid), EqSlot::Undefined))
+                        let hit = !matches!(self.eqtb.slot(csid), EqSlot::Undefined);
+                        if diag_enabled("NTEX_IFX_TRACE") {
+                            eprintln!(
+                                "[trace-ifdefined] csid={} {} -> {} ({:?})",
+                                csid,
+                                self.intern.name(csid),
+                                hit,
+                                self.eqtb.slot(csid)
+                            );
+                        }
+                        Ok(hit)
                     }
                     _ => Ok(false),
                 }
@@ -661,6 +680,9 @@ saved_if_type: self.cur_if_type,
             }
             CondOp::IfCsname => {
                 let name = self.scan_csname()?;
+                if diag_enabled("NTEX_IFX_TRACE") {
+                    eprintln!("[trace-ifcsname] 探测: {name}");
+                }
                 Ok(matches!(
                     self.intern.lookup(&name),
                     Some(id) if !matches!(self.eqtb.slot(id), EqSlot::Undefined)

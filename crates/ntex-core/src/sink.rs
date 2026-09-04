@@ -54,6 +54,13 @@ pub trait TokenSink: std::fmt::Debug {
     fn math_shift(&mut self, _display: bool) -> Result<()> {
         Ok(())
     }
+    /// `$$` 是否允许进**显示**数学（tex.web init_math 的 `mode>0` 判定：
+    /// 垂直/普通水平为 true；受限水平（\hbox/\halign 模板）为 false——
+    /// 此时第二个 `$` 由 VM back_input，`$$` 退化为两次独立的一进一出）。
+    /// 默认 true（纯展开轨道无模式概念，不影响既有行为）。
+    fn math_display_allowed(&self) -> bool {
+        true
+    }
     /// 数学样式原语（`\displaystyle`=0/`\textstyle`=1/`\scriptstyle`=2/`\scriptscriptstyle`=3；M4-2）。
     fn math_style(&mut self, _style: u8) -> Result<()> {
         Ok(())

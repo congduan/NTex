@@ -447,6 +447,15 @@ impl Expander {
             protected,
             outer,
         };
+        if diag_enabled("NTEX_IFX_TRACE") && cs_name.contains("cs_replacement_spec") {
+            let body_dbg: Vec<String> = def.body.iter().map(|t| format!("{t:?}")).collect();
+            eprintln!(
+                "[trace-def] line={} \\{} params={num_params} body={}",
+                self.current_line_no(),
+                cs_name,
+                body_dbg.join(",")
+            );
+        }
         // M2：编译期预编译字节码，解释器轨道不编译
         if self.use_bytecode {
             def.code = Some(Arc::new(compile(&def.body)));
@@ -829,6 +838,16 @@ impl Expander {
         };
 
         let global = self.is_global();
+        if diag_enabled("NTEX_IFX_TRACE") {
+            let n = |t: Token| match t.csid() {
+                Some(id) => self.intern.name(id).to_owned(),
+                None => format!("{t:?}"),
+            };
+            let nm = self.intern.name(csid);
+            if nm.contains("replacement_spec") {
+                eprintln!("[trace-let] line={} \\{} = {}", self.current_line_no(), nm, n(rhs));
+            }
+        }
         // e-TeX \tracingassigns（misc 5）：\let 赋值追踪（changing/into/reassigning）
         let prev_trace = if self.params.misc[5] > 0 {
             Some(self.eqtb.slot(csid).clone())

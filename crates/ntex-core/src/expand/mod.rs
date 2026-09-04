@@ -445,9 +445,11 @@ pub(crate) fn diag_enabled(key: &'static str) -> bool {
 const DIAG_KEYS: &[&str] = &[
     "NTEX_COND_TRACE",
     "NTEX_IFNUM_TRACE",
+    "NTEX_IFX_TRACE",
     "NTEX_TRACE_EXEC",
     "NTEX_TRACE_STACK",
     "NTEX_SANITY_CHECK",
+    "NTEX_ALIGN_TRACE",
 ];
 
 /// 展开引擎。
@@ -1651,8 +1653,18 @@ impl Expander {
                 // 数学移位（$，cat 3）：peek 下一个 token 判定 `$$`（显示数学），
                 // 交给 sink 按自身模式决定进出（M4-1）。
                 if tok.catcode() == Some(Catcode::MathShift) {
-                    let display = self.next_is_math_shift()?;
                     let entering = !self.in_math;
+                    // tex.web init_math：`$$` 进显示数学要求 `mode>0`（垂直/
+                    // 普通水平）；受限水平（\hbox/\halign 模板，mode<0）下
+                    // peek 到的第二个 `$` 必须 back_input——本 `$` 单独进普通
+                    // 数学，第二个 `$` 随后在数学模式下作为独立 token 一记
+                    // 闭合（TRIP L210 `\hbox{$$}$`、L340 单元内 `$$`：参考日志
+                    // 两行 `{math mode: math shift character $}` + restoring，
+                    // 且数学必须关上——否则对齐/数学组悬挂到文档尾致命）。
+                    // 数学内（entering=false）保持既有约定：peek 到即消费，
+                    // sink Math 臂按 display 连续切换（trip L261 `$\x` 残留场景）。
+                    let display =
+                        self.next_is_math_shift(entering && self.sink.math_display_allowed())?;
                     self.in_math = !self.in_math;
                     // TRIP 冲刺：进入数学模式时注入 `\everymath`（TeX `$` 处理语义）
                     if entering && !self.everymath.is_empty() {
@@ -1769,18 +1781,22 @@ impl Expander {
     // ---------- 输入获取 ----------
 
     /// 探测下一个 token 是否为数学移位（`$$` 检测）：
-    /// 是 → 消费该 `$`（连续 `$$` 由 sink 一并处理，不放回）；
-    /// 否 → 放回（不消费）。输入耗尽返回 false。
+    /// `consume_for_display`（tex.web `mode>0`，由调用方按 sink 模式判定）为
+    /// true 时——是 → 消费该 `$`（显示数学成立）；否则（含受限水平下 peek
+    /// 到 `$`）→ 放回（tex.web init_math `back_input`），返回 false。
+    /// 非 `$` 一律放回。输入耗尽返回 false。
     ///
-    fn next_is_math_shift(&mut self) -> Result<bool> {
+    fn next_is_math_shift(&mut self, consume_for_display: bool) -> Result<bool> {
         let Some((tok, ne)) = self.fetch()? else {
             return Ok(false);
         };
         let is = tok.catcode() == Some(Catcode::MathShift);
-        if !is {
+        if is && consume_for_display {
+            Ok(true)
+        } else {
             self.stack.push(InputFrame::One { tok, noexpand: ne });
+            Ok(false)
         }
-        Ok(is)
     }
 
     /// 取下一个 token；返回 `(token, noexpand)`。输入耗尽或越过读取下限返回 None。

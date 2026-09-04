@@ -197,6 +197,9 @@ impl Expander {
                     // \csname...\endcsname：名字扫描 → 控制序列 token（TeX expand() 语义）
                     let name = self.scan_csname()?;
                     let csid = self.intern.intern(&name);
+                    if diag_enabled("NTEX_IFX_TRACE") {
+                        eprintln!("[trace-csname-the] line={} 制造: {name}", self.current_line_no());
+                    }
                     // TeX eq_define(cs,relax,256)：未定义名先变 \relax 同义再放回
                     self.csname_define_relax(csid);
                     out.push((Token::control_sequence(csid), false));
@@ -840,6 +843,9 @@ impl Expander {
     /// （TeX expand() 语义：结果是可执行 token，主循环继续处理）。
     fn exec_csname(&mut self) -> Result<()> {
         let name = self.scan_csname()?;
+        if diag_enabled("NTEX_IFX_TRACE") {
+            eprintln!("[trace-csname] 制造: {name}");
+        }
         let csid = self.intern.intern(&name);
         // TeX eq_define(cs,relax,256)：未定义名先变 \relax 同义再放回
         self.csname_define_relax(csid);

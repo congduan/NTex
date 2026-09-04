@@ -694,14 +694,21 @@ impl TokenSink for NodeBuilder {
         // 仅 `{` 数学组（GroupKind::Math）push/pop math 层；`\begingroup`（SemiSimple）
         // 等显式组不新建数学列表（tex.web math_group 语义，TRIP L438 \begingroup）。
         if ctx.kind == GroupKind::Math {
-            let level = self
-                .math
-                .pop()
-                .ok_or_else(|| Error::internal("数学组结束无配对 math 层"))?;
-            let parent = self
-                .math
-                .last_mut()
-                .ok_or_else(|| Error::internal("数学组结束无外层 math 层"))?;
+            // tex.web 组与数学层在 save_stack 上同构（math_group 弹出时其数学
+            // 层必在栈顶）；本引擎双栈（groups/math）在"强制收数学"恢复
+            // （\par 的 Missing $ inserted 等）后会残留迟到的数学组——TRIP
+            // L281 `{\above9pt{...` 悬挂组到 L291 `}` 才关闭，此时 math 层
+            // 已被收走/只剩一层。真实 TeX 在该处组已平衡，`}` 会被拒为
+            // "Extra }, or forgotten \endgroup." 并删除——此处降级对齐：报
+            // 同款错误、只收组不并原子，绝不内部致命（任意畸形输入可恢复）。
+            let Some(level) = self.math.pop() else {
+                self.report_error("Extra }, or forgotten \\endgroup.");
+                return Ok(());
+            };
+            let Some(parent) = self.math.last_mut() else {
+                self.report_error("Extra }, or forgotten \\endgroup.");
+                return Ok(());
+            };
             let field_atoms = match level.field {
                 Some(MathFieldKind::Script(is_sup)) => {
                     // `x^{...}`：先收组内分式（`x^{a\over b}`），再作为脚本字段挂载
@@ -1050,6 +1057,13 @@ impl TokenSink for NodeBuilder {
 
     fn current_font(&self) -> u32 {
         self.current_font.0
+    }
+
+    /// tex.web init_math `mode>0`：`$$` 进显示数学仅限垂直/普通水平模式；
+    /// 受限水平（\hbox/\halign 模板）下第二个 `$` 由 VM back_input，`$$`
+    /// 退化为两次独立进出（TRIP L210/L340）。
+    fn math_display_allowed(&self) -> bool {
+        matches!(self.mode(), Mode::Vertical | Mode::Horizontal)
     }
 
     /// 当前模式名（`\tracingcommands` 追踪；tex.web print_mode 语义）。

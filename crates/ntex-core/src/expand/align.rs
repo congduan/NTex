@@ -198,6 +198,21 @@ impl Expander {
         let Some(frame) = self.align_frames.last_mut() else {
             return Ok(false);
         };
+        if diag_enabled("NTEX_ALIGN_TRACE") {
+            let ph = match &frame.phase {
+                AlignPhase::Preamble {
+                    brace_depth,
+                    seen_hash,
+                    ..
+                } => format!("pre d={} h={}", brace_depth, seen_hash),
+                AlignPhase::Body { cur_col, .. } => format!("body col={}", cur_col),
+            };
+            let name = tok
+                .csid()
+                .map(|csid| self.intern.name(csid).to_string())
+                .unwrap_or_default();
+            eprintln!("[trace-align] tok={:?} \\{} {}", tok, name, ph);
+        }
         match &mut frame.phase {
             AlignPhase::Preamble { .. } => self.align_preamble_step(tok),
             AlignPhase::Body { .. } => self.align_body_step(tok),

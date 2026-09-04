@@ -700,9 +700,15 @@ impl Expander {
         if let Some(csid) = t.csid() {
             match self.eqtb.slot(csid) {
                 EqSlot::Register(k, idx) if *k == kind => Ok(*idx),
-                _ => Err(Error::invalid_input(
-                    "寄存器未分配（先 \\newcount 等分配）",
-                )),
+                _ => {
+                    // tex.web do_register_command：寄存器号走 scan_eight_bit_int
+                    // （eTeX 扩到 15 位）= 完整 scan_int 的**值**语义——
+                    // `\count\count1`（TRIP L336 \xx 体 `\global\count\count1=`）
+                    // 以 count1 的当前值 2 为下标；内部整数/可展开 token 皆可，
+                    // 非数字 cs 报 Missing number 恢复而非致命错误。
+                    self.unread(t);
+                    self.scan_register_index()
+                }
             }
         } else {
             self.unread(t);
