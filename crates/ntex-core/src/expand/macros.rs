@@ -10,6 +10,28 @@ impl Expander {
     fn collect_args(&mut self, csid: u32, def: &MacroDef) -> Result<Vec<TokenArray>> {
         let n = def.params.num_params as usize;
         if n == 0 {
+            // tex.web macro_call（L7971）：`if info(r)<>end_match_token then
+            // @<Scan the parameters...@>`——参数文本非空时**即使 0 参数**也须在
+            // 调用点匹配定界串（"@<Scan a parameter...@> 中 |s=null| 的
+            // "simply scan the delimiter string" 分支），匹配失败报
+            // "Use of \X doesn't match its definition." 并忽略该调用。
+            // `\def\X\fi:\use:n{...}`（tex.web 0 参数宏的参数文本 = 纯定界串，
+            // expl3 条件生成器 fast form 的 `\__prg_F_true:w`/`\__prg_TF_true:w`
+            // /`\__prg_p_true:w` 即此形态）依赖它吞掉 `\fi: \use:n` 并由体首
+            // `\fi:` 闭合所在条件。旧实现直接返回空实参，`\use:n` 泄出被执行：
+            // `\cs_if_free:N` 对未定义 cs 误判"已定义" → expl3 kernel
+            // `command-already-defined` bail out（expl3-code.tex l.2056
+            // `\__kernel_chk_if_free_cs:N`，latex.ltx --initex l.398 终态）。
+            if !def.params.text.is_empty()
+                && self.match_input_delim(&def.params.text).is_err()
+            {
+                let _ = self.sink.write16(
+                    "! Use of macro doesn't match its definition.\n\
+                     The macro here has not been followed by the required stuff,\n\
+                     so I'm ignoring it.\n"
+                        .to_string(),
+                );
+            }
             return Ok(Vec::new());
         }
         let name = self.intern.name(csid).to_owned();

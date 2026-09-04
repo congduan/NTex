@@ -480,28 +480,17 @@ saved_if_type: self.cur_if_type,
             CondOp::IfTrue => Ok(true),
             CondOp::IfFalse => Ok(false),
             CondOp::If => {
-                let t1 = self
-                    .fetch()?
-                    .ok_or_else(|| Error::invalid_input("\\if 缺操作数"))?
-                    .0;
-                let t2 = self
-                    .fetch()?
-                    .ok_or_else(|| Error::invalid_input("\\if 缺操作数"))?
-                    .0;
-                Ok(matches!(t1.kind(), TokenKind::Char)
-                    && matches!(t2.kind(), TokenKind::Char)
-                    && t1 == t2)
+                let (c1, _) = self.get_x_char_operand("\\if")?;
+                let (c2, _) = self.get_x_char_operand("\\if")?;
+                // tex.web：非字符操作数 cur_chr:=256 哨兵——cs vs cs 恒真、
+                // 字符 vs cs 恒假
+                Ok(c1 == c2)
             }
             CondOp::IfCat => {
-                let t1 = self
-                    .fetch()?
-                    .ok_or_else(|| Error::invalid_input("\\ifcat 缺操作数"))?
-                    .0;
-                let t2 = self
-                    .fetch()?
-                    .ok_or_else(|| Error::invalid_input("\\ifcat 缺操作数"))?
-                    .0;
-                Ok(t1.catcode() == t2.catcode())
+                let (_, k1) = self.get_x_char_operand("\\ifcat")?;
+                let (_, k2) = self.get_x_char_operand("\\ifcat")?;
+                // tex.web：非字符操作数 cur_cmd:=relax 哨兵——cs vs cs 恒真
+                Ok(k1 == k2)
             }
             CondOp::IfX => {
                 let t1 = self
@@ -666,6 +655,73 @@ saved_if_type: self.cur_if_type,
             EqSlot::Register(k, n) => MeaningKey::Register(k, n),
             EqSlot::Stream(k, n) => MeaningKey::Stream(k, n),
             EqSlot::MathChar(code) => MeaningKey::MathChar(code),
+        }
+    }
+
+    /// `\if`/`\ifcat` 操作数取 token（tex.web `get_x_token_or_active_char`，
+    /// @<Test if two characters match@> 的取数臂）。
+    ///
+    /// - **get_x_token 展开语义**：宏（非 protected）/可展开原语展开一次后重取；
+    ///   未定义 cs 报 "! Undefined control sequence." 当 `\relax`（非字符）返回；
+    ///   条件原语推进条件机（step + drain，同 [`Self::scan_relation`] 的臂）。
+    /// - `\noexpand` 冻结的 cs 按 tex.web 当 **active char**（cat 13），字符码取
+    ///   cs 编号哨兵（256+csid，与真实字符码 0..=255 不相交）。
+    /// - 返回 `(字符码, 类码)`；**非字符操作数两者均为 `None`**——tex.web
+    ///   cur_cmd:=relax / cur_chr:=256 哨兵：cs vs cs 恒真、字符 vs cs 恒假。
+    ///
+    /// LaTeX 兼容第十五刀：此前 `\if` 直接取字面 token 且要求两侧都是字符 token、
+    /// `\ifcat` 取字面 token——`\if:w #4 \__cs_generate_variant_loop_base:N #2`
+    /// （expl3-code.tex l.2861 变体生成循环）右操作数是宏调用，未展开时按
+    /// "非字符"判假 → 变体串分析全错 → `invalid-variant`/`Extra \fi` 级联
+    /// （expl3 l.3245-3324，见报告 §21.3）。
+    fn get_x_char_operand(&mut self, cond: &str) -> Result<(Option<u32>, Option<Catcode>)> {
+        loop {
+            let Some((tok, noexpand)) = self.fetch()? else {
+                return Err(Error::invalid_input(format!(
+                    "\\.if 操作数扫描到输入末尾（\\{cond}）"
+                )));
+            };
+            // 跳过区惰性消费（同 scan_relation）：操作数位置的内层条件被拒分支
+            // （`\ifx…\else x\fi`）由本循环吞掉，不得当操作数
+            if self.is_skipping() {
+                if let Some(op) = self.cond_op(tok) {
+                    self.step_conditional(op)?;
+                }
+                continue;
+            }
+            if let Some(csid) = tok.csid() {
+                let expandable = match self.eqtb.slot(csid).clone() {
+                    EqSlot::Undefined => {
+                        let _ = self.sink.write16(format!(
+                            "! Undefined control sequence.\n\\{}\n",
+                            self.intern.name(csid)
+                        ));
+                        // tex.web get_x_token 错误恢复：当 \relax → 非字符
+                        return Ok((None, None));
+                    }
+                    EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
+                    EqSlot::Primitive(p) if p.is_expandable() => true,
+                    _ => false,
+                };
+                if expandable && !noexpand {
+                    let mut expansion = Vec::new();
+                    self.expand_once((tok, false), &mut expansion)?;
+                    if !expansion.is_empty() {
+                        self.stack.push(InputFrame::TokenList {
+                            items: Arc::from(expansion),
+                            pos: 0,
+                        });
+                    }
+                    continue;
+                }
+                if noexpand {
+                    // \noexpand 冻结 cs → active char（cat 13），码取 cs 哨兵
+                    return Ok((Some(256 + csid), Some(Catcode::Active)));
+                }
+                // 不可展开 cs（\relax、\hbox、字符型 cs …）→ 非字符
+                return Ok((None, None));
+            }
+            return Ok((tok.charcode(), tok.catcode()));
         }
     }
 

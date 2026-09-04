@@ -1740,11 +1740,10 @@ impl Expander {
                 "输入栈超限（{MAX_INPUT_STACK} 帧）——宏 \\{name} 递归展开疑似无终止条件"
             )));
         }
-        let args = if def.params.num_params > 0 {
-            self.collect_args(csid, &def)?
-        } else {
-            Vec::new()
-        };
+        // 0 参数宏也走 collect_args：参数文本可能是**纯定界串**（`\def\X\fi:\use:n{...}`），
+        // 调用点须匹配并吞掉（tex.web macro_call `if info(r)<>end_match_token`）——
+        // 见 collect_args n==0 臂注释。
+        let args = self.collect_args(csid, &def)?;
         // M2 双轨：字节码优先（未编译则回退解释器轨道）
         if self.use_bytecode {
             if let Some(code) = &def.code {

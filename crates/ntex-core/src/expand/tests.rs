@@ -2011,6 +2011,65 @@ I changed this one to zero.
         );
     }
 
+    // ---------- LaTeX 兼容第十五刀：0 参数宏定界串匹配 + \if 操作数展开（报告 §21） ----------
+
+    #[test]
+    fn zero_param_macro_delimiter_text_is_matched() {
+        // tex.web macro_call（L7971 `if info(r)<>end_match_token`）：参数文本
+        // 非空的 **0 参数宏**在调用点匹配纯定界串（"simply scan the delimiter
+        // string"）。expl3 条件生成器 fast form `\__prg_F_true:w\fi:\use:n`
+        // （expl3-code L1793）依赖它吞掉 `\fi: \use:n` 并由体首 `\fi:` 闭合所在
+        // 条件——旧实现直接返回空实参，`\use:n` 泄出被执行，`\cs_if_free:N`
+        // 对未定义 cs 误判"已定义" → kernel command-already-defined bail out。
+        assert_eq!(
+            expand(concat!(
+                "\\catcode`\\:=11 \\catcode`\\_=11 ",
+                "\\long\\def\\use:none:n#1{} ",
+                "\\long\\def\\use:n#1{#1} ",
+                "\\def\\prg:Ftrue:w\\fi:\\use:none:n{\\fi:\\use:none:n} ",
+                "\\iftrue\\prg:Ftrue:w\\fi:\\use:none:n{LEAK}\\fi OK"
+            ))
+            .unwrap()
+            .trim(),
+            "OK"
+        );
+    }
+
+    #[test]
+    fn zero_param_macro_delimiter_mismatch_ignores_call() {
+        // 定界串失配 → "Use of macro doesn't match its definition."、调用被忽略，
+        // 后续 token 不被吞（tex.web macro_call abort 分支）。
+        let (r, t) = run_transcript(concat!(
+            "\\def\\delim:X\\fi:\\use:none:n{ body } ",
+            "\\delim:X\\relax LEAK"
+        ));
+        assert!(r.is_ok(), "失配是可恢复错误：{t}");
+        assert!(t.contains("doesn't match its definition"), "{t}");
+    }
+
+    #[test]
+    fn if_operand_uses_get_x_token_expansion() {
+        // tex.web @<Test if two characters match@>：操作数 get_x_token——宏/可展开
+        // 原语先展开一次再比；非字符操作数 cur_chr:=256 哨兵（cs vs cs 恒真、
+        // 字符 vs cs 恒假）。expl3 变体生成循环
+        // `\if:w #4 \__cs_generate_variant_loop_base:N #2`（expl3-code L2861）的
+        // 右操作数是宏调用，未展开时恒假 → 变体串分析全错（报告 §21）。
+        // （分支首 token 前的空格属真/假分支文本，比较用 trim）
+        assert_eq!(expand(r"\def\A{x}\if x\A T\else F\fi").unwrap().trim(), "T");
+        assert_eq!(expand(r"\def\A{x}\if\A x T\else F\fi").unwrap().trim(), "T");
+        assert_eq!(expand(r"\def\A{y}\if\A x T\else F\fi").unwrap().trim(), "F");
+        assert_eq!(expand(r"\if\relax\relax T\else F\fi").unwrap().trim(), "T");
+        assert_eq!(expand(r"\if x\relax T\else F\fi").unwrap().trim(), "F");
+        assert_eq!(expand(r"\ifcat\relax\hbox T\else F\fi").unwrap().trim(), "T");
+        assert_eq!(
+            // 展开为字母 a：letter vs letter 同类
+            expand(r"\def\A{a}\ifcat\A b T\else F\fi").unwrap().trim(),
+            "T"
+        );
+        assert_eq!(expand(r"\if ab T\else F\fi").unwrap().trim(), "F");
+        assert_eq!(expand(r"\if aa T\else F\fi").unwrap().trim(), "T");
+    }
+
     // ---------- LaTeX 兼容第十四刀：参数文本 `#{` hash_brace 语义（报告 §20） ----------
 
     #[test]

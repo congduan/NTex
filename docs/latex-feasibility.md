@@ -1302,3 +1302,88 @@ L1691 `#1#2#3#4#` 的 p 实参只吞 `#`、数字 `1` 与 `{p,T,F,TF}` 错位）
 
 - `cargo test -p ntex-core`：310 通过（含新增）；fmt + clippy（-D warnings）全绿。
 - TRIP/ETRIP：停 HEAD 已知数学组残留（同 §19.5），无新增触发。
+
+## 21. 2026-09-04 第十五刀进展（0 参数宏定界串匹配 + `\if` 操作数展开——expl3 kernel 原语重命名区越过）
+
+### 21.1 §20.2 阻塞点的根因（两处引擎层机制偏差，均已修）
+
+`\__kernel_primitive:NN \ifeof \tex_ifeof:D`（expl3-code l.398）报
+`command-already-defined` 的假设（"引擎缺 `\tex_` 前缀别名 / 重命名语义偏差"）**证伪**：
+l3names 表的 `\__kernel_primitive:NN #1#2` = `\global\let #2 #1`（expl3-code l.279），
+引擎注册的短名原语经 `\let` 即建立 `\tex_…:D` 别名，无需原生注册；报错真身是
+`\__kernel_chk_if_free_cs:N`（l.2056，`\cs_if_free:NF` + `\msg_error:nnee`，Argh 是
+bootstrap 版消息处理器的固定模板——`Arguments '' and ''` 空实参是引擎 `\errmessage`
+按字符过滤丢弃 cs token 所致，非 `\string`/`\meaning` 失效）。`\cs_if_free:N` 对
+**未定义** cs 误判"已定义"，归位为两处机制偏差：
+
+1. **0 参数宏的参数文本（纯定界串）在调用点不匹配**（`macros.rs` `collect_args` +
+   `mod.rs` `call_macro`）：tex.web macro_call（L7971）`if info(r)<>end_match_token
+   then @<Scan the parameters…@>`——参数文本非空时**即使 0 参数**也须在调用点匹配
+   定界串（`|s=null|` 的 "simply scan the delimiter string" 分支）。expl3 条件生成器
+   fast form（`\__prg_F_true:w`/`\__prg_TF_true:w`/`\__prg_p_true:w`，参数文本
+   `\fi: \use:n` 等）依赖它吞掉 `\fi: <use-宏>` 并由体首 `\fi:` 闭合所在条件；旧实现
+   直接返回空实参，`\use:n` 泄出被执行，`\cs_if_free:N`（fast form
+   `\if_cs_exist:N #1 \else: \use_none:nnnn \fi: \if_meaning:w #1 \scan_stop:
+   \__prg_F_true:w \fi: \use:n`）的 `\if_meaning:w` 被 4 参 gobble 误吞 → 判假。
+   探测器（`\meaning` 转录）实测生成体与真实 expl3 fast form **逐 token 一致**，
+   偏差只在调用点定界匹配。
+2. **`\if`/`\ifcat` 操作数不走 get_x_token 展开**（`cond.rs` `evaluate_if` +
+   新增 `get_x_char_operand`）：tex.web `@<Test if two characters match@>` 取操作数
+   用 `get_x_token_or_active_char`——宏/可展开原语先展开一次，非字符操作数置
+   `cur_cmd:=relax`/`cur_chr:=256` 哨兵（**cs vs cs 恒真、字符 vs cs 恒假**）；旧实现
+   取字面 token 且要求两侧都是字符 token（cs vs cs 判假）。expl3 变体生成循环
+   `\if:w #4 \__cs_generate_variant_loop_base:N #2`（l.2861）右操作数是宏调用。
+
+### 21.2 实测（latex_probe --initex，口径同 §16.2）
+
+- 基线（ba0e15d，第十四刀后）：转录 1085 B、2 undefined-cs（l.301-302），终态
+  expl3 l.398 `command-already-defined` bail out、dumped=false。
+- 修根因一后：载入推至 expl3-code **l.3324**（l3names 重命名表、l3bootstrap、
+  l3basics、l3quark 入口全过），`\__kernel_primitive:NN` 区（l.398-1360）整体越过。
+- 修根因二后（终态）：转录 4914 B（205 行），错误构成 `Extra \fi`×18 +
+  undefined-cs×14 + `Extra \else`×12；终态 l.3324
+  `\prg_generate_conditional_variant:Nnn \quark_if_no_value:N {c}{p,T,F,TF}` 报
+  `conditional-base-undefined`（`\quark_if_no_value_p:N` 不存在）+ "Incomplete \if"
+  （残留未闭合条件），dumped=false。
+
+### 21.3 下一真实阻塞点（精确，本刀未修）
+
+**`\cs_generate_variant:Nn` 机器的加载期条件失衡**（证据：`\write16` 标记插桩 +
+截断 l.3250 复现）：
+
+- 现场一（加载期）：`\exp_last_unbraced:NNNNo` 展开式定义的
+  `\__cs_generate_variant:ww`/`:wwNw`（l.2837/2841，参数文本内嵌 `\tl_to_str:n{ma}`/
+  `{pr}` 定界与 `\s__cs_mark`/`\s__cs_stop`）引入未闭合条件（`! Extra \fi.`，锚点
+  陈旧报 l.398），使后续定义区落入条件丢弃分支**未定义**——l.2890
+  `\__cs_generate_variant_chk:nnTF`、l.2895 `\__cs_generate_variant_loop:nNwN`、
+  l.2941/2949 `_loop_end`/`_loop_long`、l.2999 `\__cs_generate_variant:wwNN`。
+- 现场二（调用期，级联）：6 处 `\cs_generate_variant:Nn`（l.3245-3248、3293-3294）
+  每处 `Extra \else`/`Extra \fi` + `\msg_error:nneeee` Undefined ×2
+  （`invalid-variant`/`deprecated-variant` 报错路径被误执行——`\msg_error:nneeee`
+  本体 l.11400 区才定义）；终态 `conditional-base-undefined` 是 p 形未生成的下游症状。
+- 已排除：`\ifnum 0 \ifdefined…\fi … = 0` 惯用法（l.1406 同型）本就正确；`\ifdefined`
+  /`\ifcsname` 对未定义 cs 判定正确（Q1-Q4 实测）；`\cs_if_free:N` 生成体正确。
+- 下一刀靶子：`\exp_last_unbraced:NNNNo`（= 4×`\expandafter` + 第 5 参一次展开，
+  l.2758）在"参数文本含 `\tl_to_str:n{…}` 定界"定义下的行为，及其与 `\s__cs_mark`
+  （= `\scan_stop:`）定界匹配的交互；最小复现需 l3basics 前缀 + 插桩定位失衡点。
+
+### 21.4 改动清单
+
+- `expand/macros.rs`：`collect_args` n==0 臂——参数文本非空时调用点匹配定界串
+  （tex.web macro_call），失配报 "Use of macro doesn't match its definition." 并忽略
+  该调用（与 n>0 臂同恢复）。
+- `expand/mod.rs`：`call_macro` 恒走 `collect_args`（0 参数宏不再短路）。
+- `expand/cond.rs`：新增 `get_x_char_operand`（get_x_token_or_active_char 语义：
+  展开/未定义 cs 报错当 relax/`\noexpand`→active char/条件机推进，同
+  `scan_relation` 臂结构）；`\if`/`\ifcat` 按 tex.web 哨兵语义比较（非字符 →
+  `None`，cs vs cs 恒真）。
+- `expand/tests.rs`：新增 3 测（0 参数定界串匹配、失配忽略、`\if`/`\ifcat` 操作数
+  展开与哨兵）。
+
+### 21.5 验证
+
+- `make check`（fmt + clippy -D warnings + test）：全绿，`ntex-core` 313 测通过
+  （含新增 3 测）。
+- 最小复现：0 参数定界串（`\def\prg:Ftrue:w\fi:\use:none:n{…}`）与 `\if` 操作数
+  展开各一组，修复前 `Extra \else`/cs vs cs 判假，修复后与真实 TeX 一致。
+- TRIP/ETRIP：停 HEAD 已知数学组残留（同 §19.5），无新增触发。
