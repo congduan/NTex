@@ -979,3 +979,86 @@ undefined 三连。
 模式产物；`--initex` 模式初始 catcode 表不同（`\ifnum\catcode`\{=1` 假 → 不触发
 "LaTeX must be made using an initex" 误报），两模式错误行数 24/23。后续轮次对比
 须锁定同一模式。
+
+## 17. 2026-09-04 第十一刀进展（宏实参扫描的 \else/\fi/\or 一律是数据——expl3 别名表 \else/\fi 项越过）
+
+### 17.1 根因与修复落点
+
+§16.4 定位的 expl3 `\__kernel_primitive:NN` 别名表项
+（`expl3-code.tex` L341 `\else`、L364 `\fi`）按 tex.web 语义修齐：
+
+**TeX 宏实参扫描（tex.web `macro_call` 的 `@<Scan a parameter…@>`，7951-8130）取
+token 一律用 `get_token`**——它只做 get_next + 词法包装，既不展开、也不推进条件机。
+`\else`/`\fi`/`\or` 被条件机消费的唯一位点是 `expand`（get_x_token 的
+`fi_or_else` 分支，7663-7691），而实参扫描不属展开位置。故实参位置的条件终结符
+**恒为数据**，不存在"闭合本次扫描前已开启的帧"的情况——该帧的 `\else`/`\fi` 若在
+实参里，要等实参经宏体重新入流、由主循环 get_x_token 才消费；§16.4"归属判定须带帧
+归属"的设想实际退化为"一律当数据"。组实参（`@<Contribute an entire group…@>`，
+8129-8143）同为 get_token，无例外。
+
+修法（`crates/ntex-core/src/expand/macros.rs`）：
+
+- `collect_undelimited_arg`：删去对 Else/Fi/Or 的 `step_conditional` + recurse。
+  旧实现产生两类偏差：① 外层无帧时误报 `! Extra \else.`/`! Extra \fi.`
+  （l.341/l.364 实签）；② 有帧时翻转/弹出外层帧并丢弃 token → 实参错位一格
+  （#1 吃到 `#2` 内容，expl3 别名表连锁错位）。旧注释引的 `\expandafter\2\fi`
+  惯用法实际不经实参扫描——`\fi` 由 `\expandafter` 的展开位置（expr.rs 的
+  fi_or_else 臂）在 `\2` 实参扫描开始前已消费。
+- `collect_delimited_arg`：删去 `arg_cond` 计数逻辑（含 If\* 白名单）——所有
+  条件 token（含 §16.4 缺的 IfEof/IfVoid/IfHBox/IfVBox/IfInner/IfVMode/IfHMode/
+  IfMMode/IfFontChar）在实参位置一律是数据。§16.4 的"白名单补齐"子问题被
+  更强规则整体吸收，无需逐项补。
+- 惰性跳过模型不变量：实参扫描不会在条件跳过区里运行（`process_one` 对跳过区非
+  条件 token 直接丢弃、不派发宏调用；各扫描循环自带 `is_skipping` 臂只推进条件机
+  不展开），故实参扫描无需 `is_skipping` 臂（与 scan.rs 数字循环/scan_relation
+  不同——那些是展开位置）。
+
+### 17.2 实测（latex_probe，--initex；基线同 §16.2 口径）
+
+| 模式 | 第十轮 | 本轮 | 变化 |
+|---|---|---|---|
+| `--initex` | 23 错误行 | **21** | 恰去 2 行（l.341 `Extra \else.` + l.364 `Extra \fi.`，签名比对确认） |
+
+去掉的 2 行全部来自别名表的 `\else`/`\fi` 两项；其余错误签名逐一相同
+（含 l.398/l.819/\advance 终态）→ **零连带变化、零回归**。
+
+### 17.3 单测（`crates/ntex-core/src/expand/tests.rs` 新增 3 测，双轨自动覆盖）
+
+`arg_cond_terminators_are_data_undelimited` / `arg_cond_terminators_are_data_delimited`
+（`\else`/`\fi`/`\or` 及 e-TeX If\* 全集作实参数据收进 #1，无 Extra 报错；
+`\iftrue\f\fi x` 的 #1=`\fi` 数据在宏体里被主循环闭合外层帧 → `[]x`）/
+`arg_cond_terminators_build_primitive_alias_expl3`（`\kp\else\myelse…` 建原语别名后
+在 `\ifcase` 当终结符用 → `y`；`\expandafter\2\fi` 惯用法由展开位置消费 `\fi`）。
+
+### 17.4 阻塞点刷新（第十一刀，下一刀）——§16.4 假设的"级联"证伪
+
+**§16.4 预期 l.398/`\/`/`\over`/`\accent`/l.819 是 \else/\fi 错位级联——证伪。**
+修复后这些错误**原签名保留**（21 = 23 − 2，恰好只去 \else/\fi 两行），且：
+
+- l.398 `\ifeof` 项的实参扫描路径本就把 IfEof 当数据（新旧同），修复**不触及**该
+  路径 → l.398 是独立阻塞点；
+- 最小复现（l3names 同款 catcode 归位 + `\let\tex_global:D\global`/
+  `\let\tex_let:D\let` + 表头 + `\else`/`\fi`/`\if`/`\ifcase`/`\ifeof` 五项别名）
+  在 --initex 下**全绿**（`AFTER-TABLE` 达、零错误）→ 别名机制本身正确。
+
+**下一真实阻塞点（精确）**：expl3-code.tex L190-220 的"引擎门闩/中止"控制流
+（L196 `\ifnum0%…=0` 判断引擎过旧 → 走 `\next` = `\PackageError{expl3}…\endgroup
+\endinput` 中止路径）。实测签名：expl3 载入推进到 l3names 表 l.398 `\ifeof` 项时，
+一个宏体（Bytecode 帧，实参为 `\input expl3-code.tex ` 的载入包装）内冒出
+字面 `\def` + Parameter `#`（`! Missing control sequence inserted.`，随后
+`! Too many }'s.`），错误恢复吞掉该项 #2（`\tex_ifeof:D` 丢失）→ 表后续仍继续
+（l.399+ 正常），但 l.819 次表区（`\tex_long:D \tex_def:D \use_ii:nn…` + 守卫版
+`\__kernel_primitive:NN`，其体含 `\tex_ifdefined:D #1 … \tex_fi:D` 条件惯用法）
+在 l.826+ pdfTeX-only 项上报 `! Argument of \__kernel_primitive:NN has an extra }.`
+级联 → 终态 pass1 ERROR `\advance 目标必须是寄存器或内部参数`（dumped=false）。
+次选同前：`\PackageError` 早启 fallback（l.205-215，`\lowercase` + 空格命名 cs 的
+`\def\PackageError`）未生效 → l.220 undefined 三连（该三连在 l.398 恢复后出现，
+疑为恢复吞行所致，非独立首因）。
+
+### 17.5 本轮改动清单
+
+- `crates/ntex-core/src/expand/macros.rs`：`collect_undelimited_arg`/
+  `collect_delimited_arg` 实参位置条件 token 一律当数据（删 Else/Fi/Or
+  step_conditional 与 `arg_cond` 计数），注释载 tex.web macro_call/scan_toks
+  行号对照、偏差记录与惰性跳过不变量。
+- `crates/ntex-core/src/expand/tests.rs`：新增 3 测（§17.3）。

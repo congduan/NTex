@@ -1865,6 +1865,73 @@ I changed this one to zero.
         );
     }
 
+    // ─── 实参位置的条件终结符是数据（LaTeX 兼容第十一刀）─────────────────
+    // tex.web 宏实参扫描（scan_toks macro=true）用 get_token：不展开、不推进
+    // 条件机。`\else`/`\fi`/`\or`/`\if*` 在实参位置一律是数据 token——expl3 的
+    // `\__kernel_primitive:NN \else \tex_else:D` 别名表依赖此语义。
+
+    #[test]
+    fn arg_cond_terminators_are_data_undelimited() {
+        // 无分隔实参：`\else`/`\fi`/`\or` 收进 #1，不交条件机（不报 Extra）
+        assert_eq!(
+            expand("\\def\\f#1{[\\string#1]}\\edef\\a{\\f\\else\\f\\fi\\f\\or}\\a").unwrap(),
+            "[\\else ][\\fi ][\\or ]"   // \string 对控制序列补尾随空格
+        );
+        // 实参扫描不在跳过区里运行：`\f` 的 #1=`\fi` 数据展开后由主循环闭合
+        // 外层 \iftrue 帧（`\fi` 在宏体里被消费，`[]x` 全部排出）
+        assert_eq!(
+            expand("\\def\\f#1{[#1]}\\iftrue\\f\\fi x").unwrap(),
+            "[]x"
+        );
+        // `\if*` 作实参数据（既有行为不回归）：#1=`\iftrue`
+        assert_eq!(
+            expand("\\def\\f#1{[\\string#1]}\\edef\\a{\\f\\iftrue}\\a").unwrap(),
+            "[\\iftrue ]"
+        );
+    }
+
+    #[test]
+    fn arg_cond_terminators_are_data_delimited() {
+        // 分隔实参：`\else`/`\fi`/`\or` 是数据（不因 arg_cond==0 交条件机）
+        assert_eq!(
+            expand("\\def\\f#1!{[\\string#1]}\\edef\\a{\\f\\else!\\f\\fi!\\f\\or!}\\a").unwrap(),
+            "[\\else ][\\fi ][\\or ]"
+        );
+        // e-TeX 条件全集（旧白名单缺的 9 个）同样作数据收进实参
+        assert_eq!(
+            expand(concat!(
+                "\\def\\f#1!{[\\string#1]}\\edef\\a{",
+                "\\f\\ifeof!\\f\\ifvoid!\\f\\ifhbox!\\f\\ifvbox!\\f\\ifinner!",
+                "\\f\\ifvmode!\\f\\ifhmode!\\f\\ifmmode!\\f\\iffontchar!}\\a"
+            ))
+            .unwrap(),
+            "[\\ifeof ][\\ifvoid ][\\ifhbox ][\\ifvbox ][\\ifinner ][\\ifvmode ][\\ifhmode ][\\ifmmode ][\\iffontchar ]"
+        );
+    }
+
+    #[test]
+    fn arg_cond_terminators_build_primitive_alias_expl3() {
+        // expl3 `\__kernel_primitive:NN` 语义：`\else` 作 #1 数据被 `\let` 消费，
+        // 建立原语别名——别名随后在条件结构里当终结符使用。
+        assert_eq!(
+            expand(concat!(
+                "\\long\\def\\kp#1#2{\\global\\let#2#1}",
+                "\\kp\\else\\myelse\\kp\\fi\\myfi\\kp\\or\\myor",
+                "\\edef\\n{\\ifcase3\\myor a\\myelse y\\myfi}\\n"
+            ))
+            .unwrap(),
+            "y"
+        );
+        // 旧注释引用的 `\expandafter\2\fi` 惯用法不经实参扫描：`\fi` 由
+        // \expandafter 的展开位置消费，`\2` 的实参从其后取
+        assert_eq!(
+            expand("\\def\\tw#1{[#1]}\\edef\\a{\\iftrue\\expandafter\\tw\\fi\\iftrue b\\else c\\fi}\\a")
+                .unwrap(),
+            // #1=\iftrue（数据），在 \edef 的展开位置被重新求值（帧 F2 开启）
+            "[]b"
+        );
+    }
+
     #[test]
     fn globaldefs_param_adjusts_assignment_scope() {
         // tex.web prefixed_command：\globaldefs>0 → 所有赋值隐式全局；<0 →

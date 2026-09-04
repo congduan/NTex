@@ -126,8 +126,6 @@ impl Expander {
             eprintln!("[trace-arg] 定界符 {:?} n={}", d, delim.len());
         }
         let mut buf: Vec<Token> = Vec::new();
-        // 参数内未闭合 `\if*` 数：TeX scan_toks 跟踪实参内条件配对
-        let mut arg_cond = 0usize;
         loop {
             let tok = match self.fetch()? {
                 Some(t) => t.0,
@@ -146,35 +144,9 @@ impl Expander {
                     return Ok(Arc::from(buf));
                 }
             };
-            // 实参内条件：开 `\if*` 作数据并计数；闭合 token 先匹配参数内条件，
-            // 无匹配（arg_cond==0）时是**外层**条件的 `\else/\fi/\or` → 交条件机，
-            // 不作为实参（同无分隔实参的修复）。
-            if let Some(op) = self.cond_op(tok) {
-                if matches!(
-                    op,
-                    CondOp::If
-                        | CondOp::IfCat
-                        | CondOp::IfNum
-                        | CondOp::IfDim
-                        | CondOp::IfX
-                        | CondOp::IfOdd
-                        | CondOp::IfCase
-                        | CondOp::IfTrue
-                        | CondOp::IfFalse
-                        | CondOp::IfDefined
-                        | CondOp::IfCsname
-                        | CondOp::IfPrimitive
-                ) {
-                    arg_cond += 1;
-                } else if arg_cond > 0 {
-                    if op == CondOp::Fi {
-                        arg_cond -= 1;
-                    }
-                } else {
-                    self.step_conditional(op)?;
-                    continue;
-                }
-            }
+            // 实参位置的条件 token（`\if*`/`\else`/`\fi`/`\or`）一律是**数据**
+            //（见 collect_undelimited_arg 的归属说明）。
+            //
             // TeX：分隔实参内的 outer 宏 → forbidden
             self.check_not_outer(tok)?;
             buf.push(tok);
@@ -247,20 +219,30 @@ impl Expander {
             .fetch()?
             .ok_or_else(|| Error::invalid_input("实参扫描到输入末尾"))?
             .0;
-        // TeX scan_args：实参扫描遇**外层**条件 token（\else/\fi/\or，非实参内
-        // 嵌套条件）时先由条件机处理，不作为实参（`\expandafter\2\fi` 惯用法：
-        // \fi 闭合外层 \ifx 后，\2 的实参是 \fi 之后的 token）。若将 \fi 当作
-        // 实参，条件帧永不弹出 → 递归宏无限循环。
-        if let Some(op) = self.cond_op(tok) {
-            match op {
-                CondOp::Else | CondOp::Fi | CondOp::Or => {
-                    self.step_conditional(op)?;
-                    // 继续扫描实参（\fi 已消费）
-                    return self.collect_undelimited_arg(long, name);
-                }
-                _ => {} // \if*：实参数据（TeX 参数内开条件作数据）
-            }
-        }
+        // 归属判定（LaTeX 兼容第十一刀）：实参位置的条件终结符
+        // `\else`/`\fi`/`\or` **一律是数据**，不交条件机。tex.web 的宏实参扫描
+        // （scan_toks(macro=true)，383-389）取 token 用的是 `get_token`——它只做
+        // get_next + 词法包装，**既不展开、也不推进条件机**；`\else`/`\fi` 在
+        // tex.web 里被条件机消费的唯一位点是 `expand`（get_x_token）的
+        // fi_or_else 分支（@<Terminate the current conditional…@>），而实参扫描
+        // 不属展开位置。故"它闭合的是不是扫描前已开的帧"这个问题在真实 TeX 里
+        // 答案恒为否——该帧的 `\else`/`\fi` 在输入流的更后面，等宏展开完由主循环
+        // （tex.web main_control → get_next）消费。explore3 的别名表
+        // `\__kernel_primitive:NN \else \tex_else:D` 即依赖此语义：`\else` 作为
+        // `#1` 数据被 `\tex_let:D #2 #1` 消费，建立原语别名。
+        //
+        // 旧实现在此 step_conditional，产生两类偏差：① 外层无帧时误报
+        // `! Extra \else.`/`! Extra \fi.`；② 有帧时翻转/弹出外层帧并把该 token
+        // 丢掉，实参错位一格（#1 吃到 `#2` 位置的内容，expl3 别名表连锁错位）。
+        // 旧注释引的 `\expandafter\2\fi` 惯用法实际不经实参扫描——`\expandafter`
+        // 对第二 token 走 expand（expr.rs 的 fi_or_else 臂：step_conditional +
+        // drain_open_skip），`\fi` 在 `\2` 的实参扫描开始前就已被消费。
+        //
+        // 不变量（惰性跳过模型）：实参扫描不会在条件跳过区里运行——
+        // `process_one` 对跳过区的非条件 token 直接丢弃（不派发宏调用），
+        // skip_ahead/drain_open_skip/扫描循环的 is_skipping 臂同样只推进条件机
+        // 不展开。故此处无需 is_skipping 臂（与 scan.rs 数字循环、scan_relation
+        // 不同：那些是展开位置）。
         match tok.catcode() {
             Some(Catcode::BeginGroup) => {
                 let mut tokens = Vec::new();
