@@ -680,3 +680,95 @@ latex.ltx L12804/L13103/L13168 的 `\globaldefs\@ne` 后续需要它。
 - 回归：`make check` 全绿；TRIP/ETRIP 门禁以残留签名一致 + 全量测试绿为依据。
 - 环境（不入库）：/tmp/latexsurvey 增 l3kernel 文件（expl3.ltx/expl3-code.tex
   等 29 个拷入 base 目录），供后续 expl3 加载实测。
+
+## 14. 2026-09-04 第八轮进展（scan_number 内嵌套条件 + 注释行状态——engine-check 按真实语义求值）
+
+> 本刀按 §13.4"下一刀首选"执行：给 `scan_number_inner` 十进制数字循环补条件臂
+> （tex.web scan_int 的 get_x_token 对 if_test 与 fi_or_else 一律 expand 的就地
+> 求值语义）。修完单测后发现 latex.ltx L1122 仍报 "Missing = inserted"——根因
+> 不在 scan_number 而在**注释行后行首状态**（`\ifnum0%` 后换行缩进的空格被当行中
+> 空格产出 token、提前终止 `0`），补 input.rs 注释吞行状态重置后方按真实 TeX
+> 语义求值。
+
+### 14.1 `scan_number_inner` 十进制数字循环条件臂 —— 已修复
+
+- 数字循环 `None` 臂补条件处理：遇条件 token 一律步进条件机（`step_conditional`）。
+  - If\* 开始原语（`\ifdefined`/`\ifnum`/`\ifx`/…）就地求值：真 → 产 1 继续累计
+    （expl3 `\ifnum0\ifdefined X 1\fi...` 聚合）、假 → `skip_ahead` 跳过（无贡献）；
+  - `\fi`/`\else`/`\or` 闭合**本数字扫描期间**开启的条件帧（`\ifdefined` 真分支的
+    `1\fi`），必须步进后继续——放回会让外层 `scan_relation` 误报 "Missing = inserted
+    for \ifnum"（第七轮 L1122/expl3 级联偏差的根因）；
+  - 无帧可闭的游离 `\fi`/`\else`/`\or`（cond_stack 空）维持原放回语义
+    （"Missing number" 恢复，行为不变）；
+  - 真条件的 `\else` 死分支：`step_conditional` 把最内层帧翻 Skipping 后，循环顶部
+    丢弃非条件 token（与主循环惰性跳过同款），`\fi` 弹帧后回到累计。
+- **偏差注释**（与符号/基数循环不同）：符号/基数循环里 `\fi` 等属外层求值的未决
+  终结符须放回（TRIP L82 `\ifnum'\ifnum10=10 12="\fi` 的 \fi 在 hex 循环里由外层
+  skip_ahead 闭合）；十进制循环聚合语义要求继续。TRIP L82 走基数路径，不受扰。
+- 语义确认（与真实 TeX 对齐的副作用）：`\count0=1\ifnum\count0=1`（无空格）在
+  RHS 数字扫描中即就地求值 → 读到旧值 0 → **F**（真实 TeX 的知名陷阱：数字后须
+  空格/`\relax` 分隔，赋值完成才轮到 `\ifnum`）；`\count0=1 \ifnum...`（有空格）
+  → T。既有单测 `muskip_order_repro` 首条 src 原为无空格 raw 形式（编码旧延迟
+  语义），按真实语义补空格修正（§14.4）。
+
+### 14.2 input.rs 注释吞行后行首状态重置 —— 已修复（L1122 实际根因）
+
+- latex.ltx L1122 `\ifnum0%` 后换行缩进再 `\ifdefined` 探针：引擎扫描器注释
+  （cat 14）吞行后**状态不重置**，下一行行首缩进空格被当"行中空格"产出 token，
+  数字循环在 `0` 后遇空格即终止 → 探针落空 → 恒报 "Missing = inserted"。单测
+  证明 `\ifnum0%\n  \ifdefined\relax 1\fi...>0`（缩进形态）此前输出 F。
+- tex.web get_next：行尾（注释 `@<Finish line,|goto switch|@>` 后 `loc>limit`）
+  → `state:=new_line`（L7277），下一行**行首**空格在 new_line 状态被忽略
+  （`new_line+spacer` 属"被忽略字符"，L7310）。修复：注释吞行（含行尾）后
+  `*state = ScanState::LineStart`。
+- 该修是本刀"越过 L1122"的**实际使能者**：重置后探针直接续接数字聚合。
+
+### 14.3 验证（单测 + make check）
+
+- 新单测 `nested_cond_in_number_scan`（10 断言）：`\ifnum0\ifdefined\relax 1\fi>0`
+  真假两向、多探针聚合（两真 011=11、`=11` 精确比较）、`\else` 变体
+  （`1\else 0\fi` 真假）、嵌套多层（真分支再套 \ifdefined）。
+- 新单测 `nested_cond_in_number_scan_with_newline_indent`（2 断言）：latex.ltx
+  L1122 实际缩进形态真/假两向。
+- input.rs 新单测 `comment_resets_to_line_start_ignoring_next_indent`（2 断言）：
+  `a%c\n   b` → 缩进空格不产出 token；注释行后空行仍 `\par`。
+- 既有 `muskip_order_repro` 首条 src 补空格（见 §14.1 语义确认注释）。
+- `make check` 全绿（fmt / clippy -D warnings / `cargo test --workspace`，ntex-core
+  lib 281 单测）。TRIP/ETRIP driver 残留签名一致（6 条 wrong group/node 数学组
+  生命周期 P0 残留，未逐字节对比），以"残留签名一致 + 全量测试绿"为门禁依据。
+
+### 14.4 latex.ltx --initex 实测（engine-check 按真实语义求值 → pdfTeX 引擎墙）
+
+- **L1122 engine-check 修正求值**：转录 "Missing = inserted for \ifnum" 从反复出现
+  → **0 次**；错误总数从 round7 expl3 bootstrap 级联（~10+ 条）→ **4 条**
+  （l.301/302 `\string^^J` LF=5 已知残留 2 条 + LaTeX 自身 `\errmessage` 1 条 +
+  `\read -1` 的 "Bad number (-1)" 1 条）。
+- 加载按真实 TeX 语义停在 **L1122 `\ifnum0\ifdefined\pdffilesize...` 引擎检查的
+  \else 分支**：4 个探测原语（\pdffilesize/\filesize/\luatexversion/\kanjiskip）
+  NTex 全未定义 → 聚合 0 >0 假 → `\errmessage{LaTeX requires the e-TeX
+  primitives...pdfTeX/XeTeX/LuaTeX/e-(u)pTeX...}` + `\batchmode\read -1` → 引擎
+  `\read` 流未打开硬错（pass1 ERROR、dumped=false）。**不再**误入 expl3 bootstrap。
+
+### 14.5 阻塞点刷新（第八轮）
+
+| # | 状态 | 说明 |
+|---|---|---|
+| L728/§12.2 嵌套条件偏差 | **已越过** | 十进制数字循环补条件臂（§14.1）；"Missing = inserted for \ifnum" 消除，expl3 `\ifnum0\ifdefined…1\fi` 聚合惯用法成立 |
+| L1122 engine-check 嵌套条件误判 | **已越过** | 注释行状态重置使 `\ifnum0%`+缩进探针按真实 TeX 语义聚合（§14.2）；engine-check **如实求值** |
+| **pdfTeX 引擎墙** | **新（next）** | latex.ltx L1122 engine-check 按真实语义现判 **FALSE** → LaTeX 自身 `\errmessage` 拒载（NTex 无 \pdffilesize/\filesize/\luatexversion/\kanjiskip 探测原语）。要合法构建 latex.fmt 须决定**伪装 pdftex**（实现探测原语使 \ifdefined 为真；expl3 加载后这些原语后续还会被调用——\pdffilesize 需真实现文件尺寸语义或至少 \relax 占位）或**另设引擎开关**。此决策从 round7 的"误判碰巧放行"变为本轮"正确拒载"后的**必经决策点** |
+| 终态 | 未动 | pass1 ERROR（`\read` 流未打开——engine-check \else 分支的 `\batchmode\read -1`）、dumped=false、无栈超限；下刀首选 = pdfTeX 引擎墙决策（伪装 pdftex 探测原语） |
+
+### 14.6 本轮改动清单
+
+- `crates/ntex-core/src/expand/scan.rs`：`scan_number_inner` 十进制数字循环
+  `None` 臂补条件步进 + 循环顶部 `is_skipping` 死分支丢弃。注释含 tex.web
+  scan_int get_x_token 语义对照与三处记录偏差（\fi/\else/\or 无帧放回、与符号/
+  基数循环差异、数字后无空格条件的真实 TeX 陷阱）。
+- `crates/ntex-core/src/input.rs`：`Catcode::Comment` 吞行（含行尾）后
+  `*state = ScanState::LineStart`（tex.web L7277/L7310 对照）。
+- `crates/ntex-core/src/expand/tests.rs`：新增 `nested_cond_in_number_scan` /
+  `nested_cond_in_number_scan_with_newline_indent`；`muskip_order_repro` 首条
+  src 补空格。
+- `crates/ntex-core/src/input.rs` tests：新增
+  `comment_resets_to_line_start_ignoring_next_indent`。
+- 回归：`make check` 全绿；TRIP/ETRIP 门禁以残留签名一致 + 全量测试绿为依据。

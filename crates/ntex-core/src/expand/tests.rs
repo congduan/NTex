@@ -1279,7 +1279,11 @@ I changed this one to zero.
     #[test]
     fn muskip_order_repro() {
         // etrip.tex L947-948：\muskip5=\gluetomu\skip5 后 \mutoglue\muskip5 应保留胶水阶
-        let src = "\\skip5=1ptminus0fil\\muskip5=\\gluetomu\\skip5\\ifnum\\glueshrinkorder\\mutoglue\\muskip5=1 T\\else F\\fi";
+        // 注意 \skip5 后必须有空格：无空格时 \ifnum 在 \skip5 寄存器下标扫描中即被
+        // 就地求值（tex.web scan_int 的 get_x_token 展开条件；本刀补的十进制循环
+        // 条件臂同款）——此刻 \muskip5 尚未赋值（默认 0）→ 恒取 F 分支，非本测试
+        // 意图。空格终止数字扫描、赋值完成后主循环才处理 \ifnum（同 etrip 真宏场景）。
+        let src = "\\skip5=1ptminus0fil\\muskip5=\\gluetomu\\skip5 \\ifnum\\glueshrinkorder\\mutoglue\\muskip5=1 T\\else F\\fi";
         assert_eq!(expand(src).unwrap(), "T");
         // etrip.tex L948 完整宏场景：\100pt10pt\mutoglue\muskip5
         let src3 = "\\def\\1#1#2pt#3#4pt#5 {\\ifnum\\glueshrinkorder#5=#3 T\\else F\\fi}\\skip5=1ptminus0fil\\muskip5=\\gluetomu\\skip5\\100pt10pt\\mutoglue\\muskip5 ";
@@ -2566,6 +2570,68 @@ ab5c}").unwrap();
     }
 
     #[test]
+    fn nested_cond_in_number_scan() {
+        // expl3/latex.ltx L1122 惯用法 `\ifnum0\ifdefined X 1\fi...>0`：数字扫描中
+        // 嵌套条件就地求值（tex.web scan_int 的 get_x_token 对 if_test 展开）。
+        // 第七刀修复前：十进制数字循环缺条件臂 → \ifdefined 不展开 → "Missing =
+        // inserted for \ifnum" 恢复，>0 残留成正文输出。
+        // \ifdefined 真 → 贡献数字 1 → 操作数 01=1 >0 真
+        assert_eq!(
+            expand(r"\ifnum0\ifdefined\relax 1\fi>0 T\else F\fi").unwrap(),
+            "T"
+        );
+        // \ifdefined 假 → 无贡献 → 操作数 0 >0 假
+        assert_eq!(
+            expand(r"\ifnum0\ifdefined\zzneverdefined 1\fi>0 T\else F\fi").unwrap(),
+            "F"
+        );
+        // 多探针聚合（latex.ltx L1122 引擎检查原形）：两个都真 → 011=11 >0 真
+        assert_eq!(
+            expand(r"\ifnum0\ifdefined\relax 1\fi\ifdefined\eTeXversion 1\fi>0 T\else F\fi")
+                .unwrap(),
+            "T"
+        );
+        // 一真一假 → 01=1 >0 真；全假 → 0 >0 假
+        assert_eq!(
+            expand(r"\ifnum0\ifdefined\relax 1\fi\ifdefined\qqneverdefined 1\fi>0 T\else F\fi")
+                .unwrap(),
+            "T"
+        );
+        assert_eq!(
+            expand(r"\ifnum0\ifdefined\qqneverdefined 1\fi\ifdefined\zzneverdefined 1\fi>0 T\else F\fi")
+                .unwrap(),
+            "F"
+        );
+        // \else 分支（expl3 变体 `\ifdefined X 1\else 0\fi`）：真条件贡献 1 后 \else
+        // 死分支被跳过、\fi 弹帧，数字继续累计
+        assert_eq!(
+            expand(r"\ifnum0\ifdefined\relax 1\else 0\fi>0 T\else F\fi").unwrap(),
+            "T"
+        );
+        assert_eq!(
+            expand(r"\ifnum0\ifdefined\qqneverdefined 1\else 0\fi>0 T\else F\fi").unwrap(),
+            "F"
+        );
+        // 嵌套多层：\ifdefined 真分支里再套一层 \ifdefined（latex.ltx L1125
+        // `\ifdefined\luatexversion\ifnum...>94 1\fi\fi` 同构）
+        assert_eq!(
+            expand(r"\ifnum0\ifdefined\relax\ifdefined\relax 1\fi\fi>0 T\else F\fi").unwrap(),
+            "T"
+        );
+        assert_eq!(
+            expand(r"\ifnum0\ifdefined\relax\ifdefined\qqneverdefined 1\fi\fi>0 T\else F\fi")
+                .unwrap(),
+            "F"
+        );
+        // 真值聚合精确比较（=11 惯用法）：两探针都真 → 11
+        assert_eq!(
+            expand(r"\ifnum0\ifdefined\relax 1\fi\ifdefined\eTeXversion 1\fi=11 T\else F\fi")
+                .unwrap(),
+            "T"
+        );
+    }
+
+    #[test]
     fn ifcsname_true_and_false() {
         assert_eq!(
             expand(r"\ifcsname relax\endcsname yes\else no\fi").unwrap(),
@@ -2997,5 +3063,18 @@ ab5c}").unwrap();
             r.is_ok(),
             "嵌套 fraction 歧义应恢复式（不中断）：{r:?}"
         );
+    }
+
+    #[test]
+    fn nested_cond_in_number_scan_with_newline_indent() {
+        // latex.ltx L1122 实际形态：`\ifnum0%` 后换行缩进再接 \ifdefined 探针。
+        // 两个修复的协同：① 注释吞行后扫描器状态须回 LineStart（input.rs——TeX
+        // new_line 状态忽略行首空格），否则缩进空格产出 token 提前终止 `0`；
+        // ② 十进制数字循环条件臂让探针就地求值聚合。两探针都真 → 011=11 >0 真。
+        let src = "\\ifnum0%\n  \\ifdefined\\relax 1\\fi\n  \\ifdefined\\eTeXversion 1\\fi\n  >0 T\\else F\\fi";
+        assert_eq!(expand(src).unwrap(), "T");
+        // 全假 → 0 >0 假
+        let src2 = "\\ifnum0%\n  \\ifdefined\\qqneverdefined 1\\fi\n  \\ifdefined\\zzneverdefined 1\\fi\n  >0 T\\else F\\fi";
+        assert_eq!(expand(src2).unwrap(), "F");
     }
 }

@@ -404,6 +404,15 @@ impl Expander {
         let mut val: i64 = 0;
         let mut any = false;
         while let Some((tok, _)) = self.fetch()? {
+            // 真条件的 `\else` 死分支（step_conditional 已把最内层帧翻到 Skipping）：
+            // 分支内 token 丢弃不累计（主循环惰性跳过同款），仅条件 token 仍走状态机
+            // 推进（`\fi` 弹帧后回到累计）。
+            if self.is_skipping() {
+                if let Some(op) = self.cond_op(tok) {
+                    self.step_conditional(op)?;
+                }
+                continue;
+            }
             // eTeX 表达式分组（{1+}{2*3} 的 {1+}）只属于 \numexpr 表达式因子层
             // （expr.rs expr_factor），scan_int 遇组字符 { 应报 Missing number
             // （tex.web scan_int 无分组分支；TRIP l.106 \number{ 漏报修复）。
@@ -416,6 +425,27 @@ impl Expander {
                     any = true;
                 }
                 None => {
+                    // expl3 惯用法 `\ifnum0\ifdefined X 1\fi...>0`（latex.ltx L1122、
+                    // expl3 全篇）：十进制数字循环遇条件 token 一律步进条件机（tex.web
+                    // scan_int 的 get_x_token 对 if_test 与 fi_or_else 都 expand：
+                    // If* 就地求值真则产 1 继续累计、假则 skip_ahead 跳过；`\fi`/
+                    // `\else`/`\or` 闭合的是**本数字扫描期间**开启的条件帧——如
+                    // `\ifdefined` 真分支的 `1\fi`，放回会让外层 scan_relation 误报
+                    // "Missing = inserted for \ifnum"（第七轮 L1122 偏差即此）。
+                    // 与符号/基数循环不同：那里 \fi 等属外层求值的未决终结符须放回
+                    // （TRIP L82 `\ifnum'\ifnum10=10 12="\fi` 的 \fi 在 hex 循环里
+                    // 由外层 skip_ahead 闭合）。无帧可闭的游离终结符维持原放回语义
+                    // （"Missing number" 恢复，行为不变）。
+                    if let Some(op) = self.cond_op(tok) {
+                        if matches!(op, CondOp::Fi | CondOp::Else | CondOp::Or)
+                            && self.cond_stack.is_empty()
+                        {
+                            self.unread(tok);
+                            break;
+                        }
+                        self.step_conditional(op)?;
+                        continue;
+                    }
                     self.unread(tok);
                     break;
                 }

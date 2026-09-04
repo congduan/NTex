@@ -108,12 +108,20 @@ pub fn scan_token(
         let cat = catcodes.get(b);
         match cat {
             Catcode::Comment => {
-                // 注释吞掉整行（**含**行尾字符）：不产生 token，状态不变
+                // 注释吞掉整行（**含**行尾字符）：不产生 token
                 // （tex.web：注释行不触发空行判定，如 `a%c\nb` → "ab"）。
                 while *pos < bytes.len() && !catcodes.get(bytes[*pos]).is_end_of_line() {
                     *pos += 1;
                 }
                 *pos += 1; // 越过行尾字符（若存在）
+                           // tex.web get_next：行尾（注释 `@<Finish line,|goto switch|@>` 后
+                           // `loc>limit`）→ `state:=new_line`（L7277）——下一行**行首**空格在
+                           // new_line 状态被忽略（`new_line+spacer` 属"被忽略字符"，L7310）。
+                           // 此前状态不重置：`\ifnum0%` 后换行缩进的空格被当作行中空格产出
+                           // token，终止外层数字扫描（latex.ltx L1122 引擎检查 `\ifnum0%` +
+                           // 缩进 `\ifdefined` 探针恒报 "Missing = inserted" 的根因）。重置为
+                           // LineStart 后行首空格忽略、探针直接续接数字。
+                *state = ScanState::LineStart;
                 continue;
             }
             Catcode::Ignored => {
@@ -415,6 +423,25 @@ mod tests {
         assert_eq!(toks.len(), 2);
         assert_eq!(toks[0].charcode(), Some(b'a' as u32));
         assert_eq!(toks[1].charcode(), Some(b'b' as u32));
+    }
+
+    #[test]
+    fn comment_resets_to_line_start_ignoring_next_indent() {
+        // tex.web get_next：注释吞行后 state:=new_line（L7277），下一行**行首**
+        // 空格被忽略（new_line+spacer 属被忽略字符，L7310）。此前状态不重置导致
+        // `\ifnum0%` 后换行缩进的空格被当行中空格产出 → 终止外层数字扫描
+        // （latex.ltx L1122 引擎检查报 "Missing = inserted" 的根因）。
+        // a%c\n   b → a,b（缩进空格不产出 token）
+        let toks = scan_all("a%c\n   b");
+        assert_eq!(toks.len(), 2, "tokens: {toks:?}");
+        assert_eq!(toks[0].charcode(), Some(b'a' as u32));
+        assert_eq!(toks[1].charcode(), Some(b'b' as u32));
+        // 注释行后下一行即空行（行首行尾）→ 空行仍 \par（a%c\n   \nb → a \par b）
+        let toks = scan_all("a%c\n   \nb");
+        assert_eq!(toks.len(), 3, "tokens: {toks:?}");
+        assert_eq!(toks[0].charcode(), Some(b'a' as u32));
+        assert_eq!(toks[1].kind(), TokenKind::ControlSeq); // \par
+        assert_eq!(toks[2].charcode(), Some(b'b' as u32));
     }
 
     #[test]
