@@ -188,6 +188,9 @@ impl Expander {
             Primitive::Char => self.exec_char(),
             Primitive::Uppercase => self.exec_uppercase(),
             Primitive::Lowercase => self.exec_lowercase(),
+            // pdfTeX \expanded：组内容按 \edef 语义全展开后放回输入（exec/展开
+            // 上下文共用 scan_expanded_group；见 expr.rs exec_expanded）
+            Primitive::Expanded => self.exec_expanded(),
             Primitive::EndInput => self.exec_endinput(),
             Primitive::Ignorespaces => self.exec_ignorespaces(),
             // ---- 字体（M3-4，已有助手方法，保留委托） ----

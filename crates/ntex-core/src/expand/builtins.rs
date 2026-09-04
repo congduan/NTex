@@ -3,7 +3,7 @@
 /// 411 项（`\muexpr` 为 `Glueexpr` 的别名，故比 `Primitive::ALL` 多一项；
 /// TRIP 冲刺补充 13 个标准参数原语；LaTeX 兼容第八刀补 pdfTeX 引擎探测/兼容族
 /// 12 项），供 `register_builtins` 注册与 `tests.rs` 的一致性测试共用。
-pub(crate) const BUILTINS: [(&str, Primitive); 411] = [
+pub(crate) const BUILTINS: [(&str, Primitive); 412] = [
     ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -116,6 +116,8 @@ pub(crate) const BUILTINS: [(&str, Primitive); 411] = [
             ("numexpr", Primitive::NumExpr),
             ("detokenize", Primitive::Detokenize),
             ("unexpanded", Primitive::Unexpanded),
+            // pdfTeX（LaTeX 兼容第九刀一族）：\expanded{...} 按 \edef 语义全展开
+            ("expanded", Primitive::Expanded),
             ("eTeXversion", Primitive::ETeXVersion),
             ("eTeXrevision", Primitive::ETeXRevision),
             // M4-3 数学字体族

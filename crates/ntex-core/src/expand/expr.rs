@@ -151,6 +151,12 @@ impl Expander {
                     }
                     out.extend(detok.into_iter().map(|t| (t, false)));
                 }
+                EqSlot::Primitive(Primitive::Expanded) => {
+                    // pdfTeX \expanded{...}：组内容按 \edef 语义全展开（结果已
+                    // 无可展开项，标记 false 直接入 out；\edef 扫描器会原样吸收）
+                    let toks = self.scan_expanded_group()?;
+                    out.extend(toks.into_iter().map(|t| (t, false)));
+                }
                 EqSlot::Primitive(Primitive::String_) => {
                     // \string<token>：token 转文本（字符序列）
                     let t = self
@@ -783,6 +789,28 @@ impl Expander {
         Ok(())
     }
 
+    /// pdfTeX `\expanded{<balanced text>}`（可展开）：组内容按 `\edef` 语义
+    /// **全展开**后放回输入流继续处理（`\edef\1{...}` 的体内联版）。
+    /// 主循环执行与展开上下文（`\edef`/`\write`/外层 `\expanded`）同路径。
+    fn exec_expanded(&mut self) -> Result<()> {
+        let toks = self.scan_expanded_group()?;
+        self.emit_tokens(toks)
+    }
+
+    /// `\expanded` 实参扫描：scan_left_brace（filler 语义——跳空格/`\relax`、
+    /// 展开可展开项）消费强制 `{` 后，组内容按 `\edef` 体扫描（protected 宏
+    /// 抑制展开——pdfTeX 语义同 `\edef`；可展开项展开后压帧递归、条件即时
+    /// 求值）。复用 `scan_edef_body`（macro_def 的 `#` 转换 + `\begingroup`
+    /// 计深）——字面 `#` 直达 `\expanded` 实参在 LaTeX 源中罕见，偏差记录于
+    /// 报告 §18。
+    fn scan_expanded_group(&mut self) -> Result<Vec<Token>> {
+        self.scan_left_brace()?;
+        self.suppress_expansion += 1;
+        let scanned = self.scan_edef_body();
+        self.suppress_expansion -= 1;
+        scanned
+    }
+
     /// `\scantokens{...}`（M4-5 e-TeX）：组内容 detokenize 为文本后按**当前**
     /// catcode 重新扫描（eTeX 语义：等价于从字符串 `\input`）。
     /// 参数为 `<general text>`：先展开可展开项（`\scantokens\expandafter{\1}`）。
@@ -868,7 +896,22 @@ impl Expander {
                 .ok_or_else(|| Error::invalid_input("\\csname 未闭合（缺少 \\endcsname）"))?
                 .0;
             if let Some(csid) = tok.csid() {
-                if self.intern.name(csid) == "endcsname" {
+                // TeX scan_csname 终止判定按**含义**（tex.web `cur_cmd=end_csname`）：
+                // cs 名不必是 "endcsname"——expl3 通篇用 `\cs_end:`（L1494
+                // `\let\cs_end:\tex_endcsname:D`，槽 = EndCsname 原语）闭合
+                // `\csname`。旧实现只认名为 "endcsname" 的 token → `\cs_end:`
+                // 落入不可展开臂报 Missing endcsname（L1907 起每处
+                // `\csname...\cs_end:` 级联）。沿别名链解引用后判槽。
+                let mut id = csid;
+                let mut hops = 0;
+                while let EqSlot::Alias(next) = self.eqtb.slot(id) {
+                    id = *next;
+                    hops += 1;
+                    if hops > 100 {
+                        return Err(Error::invalid_input("\\let 别名环"));
+                    }
+                }
+                if self.eqtb.slot(id) == &EqSlot::Primitive(Primitive::EndCsname) {
                     break;
                 }
                 match self.eqtb.slot(csid).clone() {

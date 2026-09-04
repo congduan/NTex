@@ -1932,6 +1932,112 @@ I changed this one to zero.
         );
     }
 
+    // ---------- LaTeX 兼容第十二刀：l.398 阻塞点根因链（报告 §18） ----------
+
+    #[test]
+    fn lowercase_group_contains_relax_meaning_cs_as_data() {
+        // scan_general_text（\lowercase/\write 参数）：`\relax` 终止只限**未进
+        // 平衡组**时；组内与 `\relax` 同义的 cs（`\csname` 制造）是普通数据。
+        // expl3-code L205 `\lowercase{\endgroup\def\PackageError#1...}` 的
+        // `\PackageError`（L199 \csname 刚制造为 relax）曾被截断 → `\def` 后接
+        // 字面 `#` → Missing control sequence 级联（l.398 现场，报告 §18）。
+        let (r, t) = run_transcript(concat!(
+            "\\csname PkgErr\\endcsname ",
+            "\\lowercase{\\endgroup\\def\\PkgErr#1#2{ok:#1:#2}} ",
+            "\\PkgErr{A}{B}"
+        ));
+        assert!(r.is_ok(), "应可恢复运行");
+        assert!(
+            !t.contains("Missing control sequence"),
+            "组内 relax 同义 cs 不应截断 general text：{t}"
+        );
+    }
+
+    #[test]
+    fn expanded_primitive_expands_like_edef() {
+        // pdfTeX \expanded{...}：组内容按 \edef 语义全展开（第十二刀新增原语；
+        // expl3 L196 引擎门闩与 l3names 别名表要求它存在）
+        assert_eq!(expand("\\def\\a{X}\\expanded{\\a Y}").unwrap(), "XY");
+        assert_eq!(expand("\\def\\b{42}\\expanded{\\number\\b}").unwrap(), "42");
+        assert_eq!(
+            expand("\\def\\a{1}\\expanded{\\ifnum\\a=1 yes\\else no\\fi}").unwrap(),
+            "yes"
+        );
+    }
+
+    #[test]
+    fn ifnum_nested_cond_else_digit_joins_left_operand() {
+        // expl3 引擎门闩 `\ifnum0\ifx…\else 1\fi=0`：嵌套条件假分支的数字 `1`
+        // 必须并入左操作数（scan_number 十进制循环展开 `\expandafter`/可展开项，
+        // 条件链就地求值）；否则关系符扫描拿 `1` 报 "Missing = inserted"。
+        assert_eq!(
+            expand("\\ifnum0\\ifx\\expanded\\relax\\else 1\\fi=0 ABORT\\else OK\\fi").unwrap(),
+            "OK"
+        );
+        // 旧引擎路径（\expanded 未定义，\csname 制造 relax）：内层 \ifx 真、
+        // 分支为空 → 0=0 真（\expandafter 先展开 \csname——\ifx 不展开操作数，
+        // 与 expl3 引擎门闩同构）
+        assert_eq!(
+            expand(
+                "\\ifnum0\\expandafter\\ifx\\csname nope\\endcsname\\relax\\else 1\\fi=0 \
+                 T\\else F\\fi"
+            )
+            .unwrap(),
+            "T"
+        );
+    }
+
+    #[test]
+    fn csname_terminates_on_endcsname_meaning_not_name() {
+        // scan_csname 按**含义**终止（tex.web cur_cmd=end_csname）：expl3 的
+        // `\cs_end:` 是 `\endcsname` 别名（槽 = EndCsname 原语），名字不同也应
+        // 闭合 `\csname`。旧实现按名 "endcsname" 判定 → `\cs_end:` 报
+        // Missing endcsname 级联（l3prg `\use:c{…\cs_end:}` 全炸，报告 §18）。
+        let src = concat!(
+            "\\catcode58=11 \\catcode95=11 ", // `:`/`_` 变字母 → `\cs_end:` 是单 cs
+            "\\let\\cs_end:\\endcsname ",
+            "\\expandafter\\ifx\\csname ab\\cs_end:\\relax T\\else F\\fi"
+        );
+        assert_eq!(expand(src).unwrap(), "T");
+        let (r, t) = run_transcript(src);
+        assert!(r.is_ok());
+        assert!(!t.contains("Missing endcsname"), "\\cs_end: 应闭合 csname：{t}");
+        assert!(!t.contains("Extra \\endcsname"), "不应泄漏 \\endcsname：{t}");
+    }
+
+    #[test]
+    fn endline_space_ignored_when_char32_ignored() {
+        // expl3 语法（cat 32=9 ignore）：行尾插入的 char-32 被忽略 → 行边界消失。
+        // 旧扫描器无条件在行尾制造 cat-10 空格 → `\def\kp#1#2{` 参数文本带尾随
+        // 空格，使 #2 变"空格定界"实参、实参扫描一路吞到首个 `}`（l.398 级联的
+        // 第三根因，报告 §18）。
+        let src = concat!(
+            "\\catcode32=9 \\endlinechar=32\n",
+            "\\def\\a#1#2{[#1][#2]}\n",
+            "\\a X Y"
+        );
+        assert_eq!(expand(src).unwrap(), "[X][Y]");
+    }
+
+    #[test]
+    fn l3names_primitive_alias_table_header_ok() {
+        // l3names 表头最小复现（第十二刀 catcode 归位 + 别名表 + 数项）：
+        // 表能建、别名能用（此前 #2 被空格定界 → 实参扫描跑到首个 } 级联）。
+        let src = concat!(
+            "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode32=9 \\catcode58=11 ",
+            "\\catcode95=11 \\endlinechar=32\n",
+            "\\let\\tex_global:D\\global\n",
+            "\\let\\tex_let:D\\let\n",
+            "\\begingroup\n",
+            "\\long\\def\\__kernel_primitive:NN #1#2{\\tex_global:D\\tex_let:D#2#1}\n",
+            "\\__kernel_primitive:NN\\above\\tex_above:D\n",
+            "\\__kernel_primitive:NN\\ifeof\\tex_ifeof:D\n",
+            "\\endgroup\n",
+            "\\ifx\\tex_ifeof:D\\ifeof OK\\else BAD\\fi"
+        );
+        assert_eq!(expand(src).unwrap(), "OK");
+    }
+
     #[test]
     fn globaldefs_param_adjusts_assignment_scope() {
         // tex.web prefixed_command：\globaldefs>0 → 所有赋值隐式全局；<0 →

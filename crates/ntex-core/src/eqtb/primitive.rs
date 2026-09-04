@@ -68,6 +68,10 @@ define_primitives! {
         Number,
         Unexpanded,
         Detokenize,
+        // pdfTeX \expanded{<balanced text>}：组内容按 \edef 语义全展开后放回输入
+        // （pdfTeX ≥1.30 可展开原语；expl3 L196 引擎门闩 `\ifx\csname expanded
+        // \endcsname\relax` 与 l3names 别名表都要求它存在）。
+        Expanded,
         // \eTeXrevision 可展开（→".6"，etrip 版本宏习语 `\number\eTeXversion\eTeXrevision`）；
         // \eTeXversion 是内部整数（非可展开），`\the\eTeXversion` 由 the_tokens_after 直读。
         ETeXRevision,
@@ -215,6 +219,7 @@ define_primitives! {
     Unless,
     NumExpr,
     Detokenize,
+    Expanded,
     Unexpanded,
     ETeXVersion,
     ETeXRevision,

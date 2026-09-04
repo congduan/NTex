@@ -454,9 +454,21 @@ impl Expander {
                     toks.push(t);
                 }
                 _ => {
-                    // \relax 无条件终止
-                    if t.csid()
-                        .is_some_and(|c| self.eqtb.slot(c) == &EqSlot::Primitive(Primitive::Relax))
+                    // \relax 终止 general text —— **仅限未进入平衡组时**（TeX
+                    // scan_toks 的 general text 语义：`\relax` 只作 `<filler>`
+                    // 出现在必选 `{` 之前；平衡组内容一律是数据，含与 `\relax`
+                    // 同义的 cs——`\csname` 制造出的 relax 在 `\lowercase{...}`
+                    // 组内是普通 token）。旧实现无条件终止，expl3-code L205
+                    // `\lowercase{\endgroup\def\PackageError#1...}` 中
+                    // `\PackageError`（L199 `\csname` 刚制造为 relax）把组
+                    // 扫描截断在 `\def` 后 → `\def` 后接字面 `#` → Missing
+                    // control sequence 级联（报告 §18）。depth==0 只在开组
+                    // `{` 之前出现（组闭合即 break），故该分支保留既有
+                    // "裸 general text 遇 \relax 终止"行为。
+                    if depth == 0
+                        && t.csid().is_some_and(|c| {
+                            self.eqtb.slot(c) == &EqSlot::Primitive(Primitive::Relax)
+                        })
                     {
                         break;
                     }

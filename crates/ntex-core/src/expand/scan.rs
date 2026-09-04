@@ -474,6 +474,76 @@ impl Expander {
                         self.step_conditional(op)?;
                         continue;
                     }
+                    // get_x_token 展开语义的**窄子集**：仅当数字中途的
+                    // `\expandafter` 揭示的是**条件开始**（\if*）才展开。
+                    // expl3 引擎门闩 `\ifnum0\expandafter\ifx\csname …=0`：
+                    // `0` 后 `\expandafter\ifx…`——不展开则左操作数停在 0、
+                    // 关系符扫描拿到内层 `\ifx` 假分支（\else 后）的活跃数字
+                    // 1，报 "Missing = inserted for \ifnum"（第十二轮）；展开后
+                    // 条件链在数字循环内就地求值、分支数字 1 继续累计（01=1）。
+                    // 限条件开始：`\ifnum1=1\expandafter\chardef\else…` 右操作数
+                    // 后是已完成数外的 `\expandafter`（指向 \chardef 非条件）——
+                    // 展开会把帧外 \else 急切消费致结构错乱（回归）。其他可展开
+                    // 项（`\number`/`\the`/宏）保持旧行为（停在它们处放回，
+                    // 全展开会把 `\count0=5\number\count0` 后续 `\number` 吸入
+                    // 当前数，与既有语义/测试相悖；报告 §18 偏差记录）。
+                    if let Some(csid) = tok.csid() {
+                        if matches!(
+                            self.eqtb.slot(csid),
+                            EqSlot::Primitive(Primitive::Expandafter)
+                        ) {
+                            let reveals_cond_start = match self.fetch()? {
+                                Some((nt, _)) => {
+                                    let c = nt.csid().is_some_and(|nid| {
+                                        matches!(
+                                            self.eqtb.slot(nid),
+                                            EqSlot::Primitive(p)
+                                                if matches!(
+                                                    CondOp::from_prim(*p),
+                                                    Some(
+                                                        CondOp::If
+                                                            | CondOp::IfCat
+                                                            | CondOp::IfNum
+                                                            | CondOp::IfDim
+                                                            | CondOp::IfX
+                                                            | CondOp::IfOdd
+                                                            | CondOp::IfCase
+                                                            | CondOp::IfTrue
+                                                            | CondOp::IfFalse
+                                                            | CondOp::IfDefined
+                                                            | CondOp::IfCsname
+                                                            | CondOp::IfPrimitive
+                                                            | CondOp::IfInner
+                                                            | CondOp::IfVMode
+                                                            | CondOp::IfHMode
+                                                            | CondOp::IfMMode
+                                                            | CondOp::IfEof
+                                                            | CondOp::IfVoid
+                                                            | CondOp::IfHBox
+                                                            | CondOp::IfVBox
+                                                            | CondOp::IfFontChar
+                                                    )
+                                                )
+                                        )
+                                    });
+                                    self.unread(nt);
+                                    c
+                                }
+                                None => false,
+                            };
+                            if reveals_cond_start {
+                                let mut expansion = Vec::new();
+                                self.expand_once((tok, false), &mut expansion)?;
+                                if !expansion.is_empty() {
+                                    self.stack.push(InputFrame::TokenList {
+                                        items: Arc::from(expansion),
+                                        pos: 0,
+                                    });
+                                }
+                                continue;
+                            }
+                        }
+                    }
                     self.unread(tok);
                     break;
                 }

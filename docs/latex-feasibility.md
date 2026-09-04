@@ -1062,3 +1062,115 @@ token 一律用 `get_token`**——它只做 get_next + 词法包装，既不展
   step_conditional 与 `arg_cond` 计数），注释载 tex.web macro_call/scan_toks
   行号对照、偏差记录与惰性跳过不变量。
 - `crates/ntex-core/src/expand/tests.rs`：新增 3 测（§17.3）。
+
+## 18. 2026-09-04 第十二刀进展（l.398 阻塞点根因链——四引擎层缺口 + 行模型 catcode）
+
+### 18.1 结论：§17.4 的"l.398 是独立阻塞点"进一步证伪——它是四条根因链的合流现场
+
+§17.4 已证伪"l.398 是 \else/\fi 错位级联"；本刀用 `NTEX_TRACE_EXEC` 逐步定位证明
+**l.398/l.819/\advance 终态是更上游根因的合流现场**。修复后该现场整体消失，载入
+从 expl3-code L819 区（约 L290 处 `\advance` 终态）推进到 **L25851**（l3tl/l3fp
+分析段）才遇下一阻塞。l.398 现场本身由**四条独立缺口**依次引爆：
+
+### 18.2 根因一：`\expanded` 原语缺失 → expl3 L196 引擎门闩误判"引擎过旧"
+
+expl3-code L190-196 门闩 `\ifnum0\expandafter\ifx\csname luatexversion\endcsname
+\relax \expandafter\ifx\csname expanded\endcsname\relax\else 1\fi =0`——NTex 伪装
+pdfTeX 但漏注册 `\expanded`（第九刀只加了 12 项，无此），`\csname expanded\endcsname`
+= relax → 门闩为真 → 进入"引擎过旧"中止分支（L197-215）。第九/十/十一刀"越过
+L196"实为**错误恢复误闯**：中止分支的 fallback 报错后 recovery 吞掉 `\endinput`，
+执行"穿过"中止块继续，状态已被污染。
+
+修复：`\expanded` 真注册为可展开原语（eqtb EXPANDABLE + numbered、builtins、
+primitive.rs exec、expr.rs expand_once、free.rs is_expandable_prim 见下）——
+语义 = `\edef` 内联（scan_left_brace + scan_edef_body，protected 宏抑制；偏差：
+`#` 转换沿用 macro_def 语义，字面 `#` 直达实参在 LaTeX 源中极罕见）。
+
+### 18.3 根因二：`scan_general_text` 在平衡组内以 relax 同义 cs 截断 → `\def` 后接字面 `#`
+
+中止分支的 fallback L205 `\lowercase{\endgroup\def\PackageError#1#2#3{...}}`：
+L199 `\expandafter\ifx\csname PackageError\endcsname\relax` 先把 `\PackageError`
+**制造为 relax**；`\lowercase` 实参扫描（`scan_general_text`，io.rs）在组内遇到
+该 relax 同义 cs 即无条件 break——组被截断为 `[\endgroup, \def]`，放回后 `\def`
+的下一 token 是源里紧跟的字面 `#` → "! Missing control sequence inserted." +
+"! Too many }'s."。tex.web scan_toks 的 general text：`\relax` 只作 `{` 前的
+`<filler>`，平衡组内容一律数据。
+
+修复：io.rs `scan_general_text` 的 `\relax` 终止加 `depth == 0` 守卫（组内为数据）。
+
+### 18.4 根因三：scan_number 数字中途不展开 `\expandafter` → 门闩假分支数字 1 泄漏到关系符位
+
+注册 `\expanded` 后门闩应走假分支（`\else 1\fi` → 1），但 scan_number 十进制循环
+遇 `\expandafter`（非数字/非条件）直接放回 break，左操作数停在 0；关系符扫描
+（scan_relation）处理 `\expandafter\ifx…` 链时拿到**活跃假分支的数字 1** → 
+"! Missing = inserted for \ifnum."。修复：十进制循环遇 `\expandafter` 且其揭示的
+下一 token 是**条件开始**（\if*）时展开重取（门闩 `\expandafter\ifx…` 即此形）；
+指向普通命令（`\ifnum1=1\expandafter\chardef…` 的已完成数之后）不展开——避免把
+帧外 `\else` 急切消费（回归）。其他可展开项（`\number`/`\the`/宏）维持旧行为
+（停在它们处放回）——全展开会把 `\count0=5\number\count0` 的后续 `\number` 吸入
+当前数，与既有语义/测试相悖（**记录偏差**：真实 TeX get_x_token 会吸入，NTex
+不吸；TRIP/既有 300+ 单测锁死该语义）。
+
+### 18.5 根因四：行模型把行尾硬编码为 cat-10 空格 → expl3 cat 32=Ignore 下 `\def` 参数文本带尾随空格
+
+input.rs scan_token 在行中行尾无条件产出 `Char(cat=Space, ch=32)`（A1 行模型
+"LF=5" 硬编码）；expl3 把 cat 32 设 Ignored(9)（L235 `\catcode 32=9`），真实 TeX
+行尾插入的 char-32 被忽略、行边界消失。NTex 注入的 cat-10 空格进入
+`\def\__kernel_primitive:NN #1#2` 的**参数文本** → `#2` 变"空格定界"实参 → 别名表
+每一项的实参扫描一路吞到 l.819 首个 `}`（`\use_ii:nn #1#2 {#2}`）→ "Argument of
+\__kernel_primitive:NN has an extra }" + 别名丢失 + `\/`/`\above`/`\accent` 执行 +
+终态 `\advance` 目标错误。l.398 的 `\ifeof` 项只是吞行 recovery 的落点。
+
+修复：input.rs 行尾分支查 cat 32 当前 catcode——Ignored → 忽略（行边界消失），
+Space → 原空格，其他 catcode → 按该 catcode 产出（tex.web end_line_char 语义的
+行模型子集；cat 32 非 Space 时才偏离旧行为，plain/TRIP/LaTeX 恒 Space 不受影响）。
+
+### 18.6 根因五（次生）：scan_csname 按 cs **名**而非**含义**判终止 → `\cs_end:` 不闭合
+
+l3names 之后 expl3 通篇 `\csname…\cs_end:`（`\cs_end:` = L1494
+`\let\cs_end:\tex_endcsname:D`，槽是 EndCsname 原语）；scan_csname 只认名为
+"endcsname" 的 token → 每个 `\cs_end:` 都报 Missing endcsname 级联。修复：沿别名
+链解引用后判槽 == `Primitive::EndCsname`（tex.web cur_cmd=end_csname 语义）。
+
+### 18.7 实测（latex_probe --initex，基线 §16.2 口径）
+
+- 改动前（93f673e）：21 错误行，终态 `\advance 目标必须是寄存器或内部参数`
+  （l.819 区，dumped=false）。
+- 改动后：l3names 首表（~L281-818，约 300 项 `\tex_*:D` 别名）**完整执行**；
+  载入推进至 **expl3-code L25851**（l3tl/l3fp 分析段）才遇下一阻塞；transcript
+  3.89MB/9989 错误行，终态输入栈超限（5001 帧 > 5000）——**下游 expl3 生成器
+  无界递归**，非本刀根因链。
+
+### 18.8 下一真实阻塞点（精确）
+
+l3basics（L1475 起）条件生成器 `\__prg_generate_conditional:NNnnnnNw`
+（L1759-1775）被 L1907 `\prg_gset_conditional:Npnn \cs_if_exist:N #1 { p , T , F ,
+TF }` 调用时：`\use:c { __prg_generate_#8_form:wNNnnnnN }`（csname 形式分派，
+`#8` 遍历 p/T/F/TF）后随 `\tl_if_empty:nF {#8} { \msg_error:nnee … }` 作**尾参**。
+NTex 未把该尾参当数据传给形式生成器，而是**就地执行** `\tl_if_empty:nF`（此时
+l3tl 未载入、未定义）→ undefined-cs + Missing endcsname 级联，最终在递归生成中
+栈超限。属"展开结构/尾参数据"类缺口，与 §16.4/§17.4 同族的下一独立阻塞点。
+
+已知表象：错误上下文前几条误标 `l.398`——`scan_dimen_inner` 设 `error_anchor`
+（clamp_dimen 回溯用）后未在成功路径清除，Undefined-cs 处理器直读
+`error_context()` 不清锚 → 锚残留把后续错误上下文钉在 l.398（纯报错行号表象，
+不影响执行语义；待后续刀清锚）。
+
+### 18.9 改动清单
+
+- `crates/ntex-core/src/eqtb/primitive.rs`：`Expanded` 进 EXPANDABLE 列表 + 编号列表。
+- `crates/ntex-core/src/expand/builtins.rs`：注册 `("expanded", Primitive::Expanded)`（数组长 411→412）。
+- `crates/ntex-core/src/expand/primitive.rs`：exec 主分发加 `Primitive::Expanded => self.exec_expanded()`。
+- `crates/ntex-core/src/expand/expr.rs`：`exec_expanded`/`scan_expanded_group`（scan_left_brace
+  + suppress_expansion + scan_edef_body）+ expand_once 加 Expanded 臂；`scan_csname`
+  终止判定改按含义（别名链解引用判 EndCsname 原语）。
+- `crates/ntex-core/src/expand/io.rs`：`scan_general_text` 的 `\relax` 终止加 `depth==0` 守卫。
+- `crates/ntex-core/src/expand/scan.rs`：scan_number 十进制循环——`\expandafter` 揭示
+  条件开始时展开重取（窄子集）；否则维持放回（偏差记录 §18.4）。
+- `crates/ntex-core/src/input.rs`：行尾插入字符按 cat 32 当前 catcode 处理（Ignored→忽略）。
+- `crates/ntex-core/src/expand/tests.rs`：新增 6 测（§18 各根因最小复现，双轨自动覆盖）。
+
+### 18.10 验证
+
+- `cargo test -p ntex-core --lib`：304 通过（含新增 6 测）；全 workspace `make check`
+  （fmt + clippy -D warnings + cargo test 含 TRIP/ETRIP）全绿。

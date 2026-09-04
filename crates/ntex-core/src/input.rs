@@ -231,7 +231,21 @@ pub fn scan_token(
                             return Ok(Some(Token::control_sequence(csid)));
                         }
                         *state = ScanState::LineStart;
-                        return Ok(Some(Token::char(Catcode::Space, b' ' as u32)));
+                        // 行尾插入字符按其**当前 catcode** 处理（tex.web
+                        // end_line_char 语义；本引擎行模型硬编码行尾插入 char 32）。
+                        // expl3 把 cat 32 设 Ignored(9)：行尾空格被忽略 → 行边界
+                        // 消失——l3names `\def\__kernel_primitive:NN #1#2{` 的参数
+                        // 文本因此不含尾随空格；否则 #2 变"空格定界"实参、实参扫描
+                        // 一路吞到首个 `}`（l.398/l.819 级联的第三根因，报告 §18）。
+                        // cat 32 维持 Space(10) 时行为不变（plain/TRIP/LaTeX）。
+                        match catcodes.get(b' ') {
+                            Catcode::Ignored => continue,
+                            Catcode::Space => {
+                                return Ok(Some(Token::char(Catcode::Space, b' ' as u32)))
+                            }
+                            // 罕见：cat 32 被设为其他 catcode → 按该 catcode 产出
+                            other => return Ok(Some(Token::char(other, b' ' as u32))),
+                        }
                     }
                     Catcode::Space => {
                         // 行首空格忽略；连续空格合并；行中首个空格 → 空格 token
