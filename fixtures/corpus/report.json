@@ -1,0 +1,50 @@
+[
+ {
+  "file": "latex/sample2e.tex",
+  "dvi": null,
+  "pdf": null,
+  "error": "DVI: 未产出页面（源码缺少 \\shipout）"
+ },
+ {
+  "file": "latex/small2e.tex",
+  "dvi": null,
+  "pdf": null,
+  "error": "DVI: 未产出页面（源码缺少 \\shipout）"
+ },
+ {
+  "file": "latex/testpage.tex",
+  "dvi": null,
+  "pdf": null,
+  "error": "DVI: 未产出页面（源码缺少 \\shipout）"
+ },
+ {
+  "file": "math/basic-expressions.tex",
+  "dvi": null,
+  "pdf": null,
+  "error": "DVI: 排版失败：非法输入：双重上标（Double superscript）"
+ },
+ {
+  "file": "math/symbols-matrix.tex",
+  "dvi": null,
+  "pdf": null,
+  "error": "DVI: 已写出 /home/ubuntu/NTex/fixtures/corpus/math/symbols-matrix.dvi（203 字节，1 页，0 字体）"
+ },
+ {
+  "file": "plain/letterformat.tex",
+  "dvi": null,
+  "pdf": null,
+  "error": "DVI: 排版失败：非法输入：\\advance 目标必须是寄存器或内部参数"
+ },
+ {
+  "file": "plain/list.tex",
+  "dvi": null,
+  "pdf": null,
+  "error": "DVI: 排版失败：非法输入：\\multiply/\\divide 目标必须是寄存器或内部参数"
+ },
+ {
+  "file": "plain/plain.tex",
+  "dvi": null,
+  "pdf": null,
+  "error": "DVI: 排版失败：非法输入：寄存器未分配（先 \\newcount 等分配）"
+ }
+]
