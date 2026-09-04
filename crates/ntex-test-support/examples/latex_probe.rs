@@ -23,6 +23,18 @@ struct SurveyVfs {
     mem: MemVfs,
 }
 
+/// 路径归一化：剥掉前导 `./`（RFC-3 不解析路径语义；此处是勘察工具侧让内存
+/// 后端对齐真实文件系统——LocalVfs 天然把 `./x` 与 `x` 视为同一文件，而
+/// MemVfs 是精确字符串键。latex.ltx L195 的 `\@currdir` 探测正依赖这一语义：
+/// `\immediate\openout15=texsys.aux` 后 `\IfFileExists{./texsys.aux}`）。
+fn normalize(path: &str) -> String {
+    let mut p = path;
+    while let Some(rest) = p.strip_prefix("./") {
+        p = rest;
+    }
+    p.to_owned()
+}
+
 impl SurveyVfs {
     fn new(root: impl Into<String>) -> Self {
         Self {
@@ -34,19 +46,20 @@ impl SurveyVfs {
 
 impl Vfs for SurveyVfs {
     fn read(&mut self, path: &str) -> std::io::Result<Option<Vec<u8>>> {
+        let path = &normalize(path);
         let stripped = path.strip_prefix(&self.root).unwrap_or(path);
         let p = std::path::Path::new(&self.root).join(stripped);
         match std::fs::read(&p) {
             Ok(bytes) => Ok(Some(bytes)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => self.mem.read(path),
             Err(e) => Err(e),
         }
     }
     fn write(&mut self, path: &str, bytes: &[u8]) -> std::io::Result<()> {
-        self.mem.write(path, bytes)
+        self.mem.write(&normalize(path), bytes)
     }
     fn append(&mut self, path: &str, bytes: &[u8]) -> std::io::Result<()> {
-        self.mem.append(path, bytes)
+        self.mem.append(&normalize(path), bytes)
     }
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self

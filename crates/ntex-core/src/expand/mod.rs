@@ -350,8 +350,13 @@ pub(crate) struct ReadStream {
 /// `Clone`（M5 阶段二）：段级回滚还原写流表（待写内容 token 列表 `Arc` 共享）。
 #[derive(Debug, Clone)]
 pub(crate) struct WriteStream {
-    /// 目标路径；None = 未 `\openout`（`\write` 到该流报错）。
+    /// 目标路径；`None` = 流未打开（tex.web `write_open[j]=false`）。
     path: Option<String>,
+    /// 已在本轮截断（创建）过目标文件。RFC-3 §4.4：`\openout` 语义为覆盖——
+    /// 首次实际写出用 `Vfs::write` 清空目标（丢弃上次作业残留），其后 `append`。
+    /// 注意：该标志随段级回滚还原为 false，重放段首条写出会再截断一次
+    /// （副作用段本就被 M5 的 side_effects_match 闸整体重放，可接受）。
+    created: bool,
     /// 延迟待写 token 列表（`\write` 入队；flush 时展开落盘）。
     pending: Vec<TokenArray>,
 }

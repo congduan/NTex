@@ -3,6 +3,12 @@ impl Expander {
 
     /// `\input<file>`：读文件内容推入 `Source` 输入帧（支持嵌套）。
     ///
+    /// 缺文件走 tex.web `prompt_file_name`（s="input file name"）的致命分支：
+    /// `! I can't find file \`x'.` + show_context（e=".tex"）+ "Please type another
+    /// input file name"，随后 `interaction < scroll_mode` → `fatal_error`。
+    /// 引擎无交互层（无法交互询问替代文件名），一律按致命分支：报错进转录，
+    /// `run()` 返回 `Err` 终止（`\@input`/`\IfFileExists` 类守卫探测走 `\openin`，
+    /// 不经此处，见 latex.ltx L9889）。
     fn exec_input(&mut self) -> Result<()> {
         let name = self.scan_file_name()?;
         let mut content = self
@@ -27,7 +33,16 @@ impl Expander {
                 });
                 Ok(())
             }
-            None => Err(Error::invalid_input(format!("找不到文件：{name}"))),
+            None => {
+                self.write_error_help_no_read_again(
+                    &format!("I can't find file `{name}'."),
+                    "Please type another input file name\n",
+                );
+                self.sink.write16("! Emergency stop.".to_string())?;
+                self.sink
+                    .write16("*** (job aborted, file error in nonstop mode)".to_string())?;
+                Err(Error::invalid_input(format!("找不到文件：{name}")))
+            }
         }
     }
 
@@ -57,6 +72,24 @@ impl Expander {
                     }
                     _ => return Err(Error::invalid_input("文件名含非法 token")),
                 }
+            }
+        } else if first.charcode() == Some(34) {
+            // "file name"：web2c 对带引号文件名剥引号（kpathsea quote_name 语义，
+            // 引号内空格保留）。latex.ltx 的 \IfFileExists/\@partaux 即此形式：
+            // `\openin\@inputcheck"#1" `、`\immediate\openout\@partaux "#1.aux"`。
+            loop {
+                let t = self
+                    .fetch()?
+                    .ok_or_else(|| Error::invalid_input("文件名引号未闭合"))?
+                    .0;
+                if t.charcode() == Some(34) {
+                    break;
+                }
+                let ch = t
+                    .charcode()
+                    .and_then(char::from_u32)
+                    .ok_or_else(|| Error::invalid_input("文件名含非法字符"))?;
+                name.push(ch);
             }
         } else {
             self.unread(first);
@@ -191,7 +224,9 @@ impl Expander {
             // map_or 保持 MSRV 1.80（is_none_or 需 1.82）
             StreamKind::Read => (0..=15)
                 .find(|&i| self.read_streams.get(i).map_or(true, |s| s.is_none())),
-            StreamKind::Write => (0..=17)
+            // tex.web：写流只有 0..15（16/17 是流号钳制哨兵，恒不可打开）；
+            // LaTeX 的 `\newwrite` 同为 `\sixt@@n` 上限（latex.ltx L367）。
+            StreamKind::Write => (0..=15)
                 .find(|&i| self.write_streams.get(i).map_or(true, |s| s.is_none())),
         };
         let n = free.ok_or_else(|| Error::invalid_input("无空闲流号"))?;
@@ -267,23 +302,27 @@ impl Expander {
         Ok(())
     }
 
-    /// `\openout<n>=<file>`：登记写流目标路径（不立即创建文件）。
+    /// `\openout<n>=<file>`：登记写流目标路径。
+    ///
+    /// tex.web `open_out_file`：流号 0..=15；非 `\immediate` 的 `\openout` 是
+    /// whatsit 节点（延迟到 shipout 才 `a_open_out`，页面被丢弃则文件不产生），
+    /// 故此处只登记路径，截断/创建推迟到首次实际写出（`open_if_needed`）。
+    /// `\immediate\openout` 立即创建（截断）。
     fn exec_openout(&mut self) -> Result<()> {
-        // TeX：\openout 流号 0..=15（trip.tex L94 报错消息 "between 0 and 15"）
         let idx = self.scan_stream_index("\\openout", 15)?;
         self.expect_equals()?;
         let name = self.scan_file_name()?;
         let immediate = self.take_immediate();
-        self.ensure_write_stream(idx);
+        while self.write_streams.len() <= idx {
+            self.write_streams.push(None);
+        }
         self.write_streams[idx] = Some(WriteStream {
             path: Some(name.clone()),
+            created: false,
             pending: Vec::new(),
         });
         if immediate {
-            // \immediate\openout：立即创建（TeX 语义）
-            self.vfs
-                .write(&name, b"")
-                .map_err(|e| Error::io("VFS 写入", &name, e))?;
+            self.open_if_needed(idx)?;
         }
         Ok(())
     }
@@ -291,76 +330,81 @@ impl Expander {
     /// `\closeout<n>`：flush 待写内容并关闭。
     fn exec_closeout(&mut self) -> Result<()> {
         let idx = self.scan_stream_index("\\closeout", 15)?;
-        // \closeout 恒 flush（immediate 前缀对 closeout 无额外效果，两分支等价）
+        // \closeout 恒 flush（immediate 前缀对 closeout 无额外效果，两分支等价）。
+        // 流未 `\openout`（无槽/无路径）→ no-op（tex.web：write_open[j]:=false）。
         self.flush_write_stream(idx)?;
-        self.ensure_write_stream(idx);
-        self.write_streams[idx] = None;
+        self.open_if_needed(idx)?;
+        if let Some(slot) = self.write_streams.get_mut(idx) {
+            *slot = None;
+        }
         Ok(())
     }
 
     /// `\write<n><general text>`：token 列表入队（延迟）或立即展开落盘（`\immediate`）。
+    ///
+    /// tex.web `write_out`（§24847）：流号先钳制 `j`（负→17、>15→16，16/17 恒
+    /// `write_open=false`），已 `\openout` 的 0..15 写文件；否则
+    /// - `j=17`（负流号，`\write-1`/`\wlog`）→ 仅 log；
+    /// - `j=16`（>15，LaTeX `\typeout`=`\write17`）**与未打开的 0..15** →
+    ///   终端+log（tex.web「write to the terminal if file isn't open」——ETRIP 的
+    ///   `\immediate\write15`、LaTeX 的 `\write\@unused` 都靠这条进转录）。
     fn exec_write(&mut self) -> Result<()> {
-        // TeX 语义：\write 流号 -1..=18（-1 = log-only；16 = 终端；18 = shell）。
         let n = self.scan_number()?;
         if n == 18 {
             return Err(Error::invalid_input("\\write18（shell 转义）暂不支持"));
         }
-        let toks = Arc::from(self.scan_general_text()?);
-        // 消费 \immediate 前缀（流 15/16 终端写也须消费，避免污染后续 \write）
+        let toks: TokenArray = Arc::from(self.scan_general_text()?);
+        // 消费 \immediate 前缀（终端/文件写都须消费，避免污染后续 \write）
         let immediate = self.take_immediate();
-        if n == -1 {
-            // 流 -1：log-only（`\write-1{...}`）。\immediate 立即写 log；否则
-            // whatsit 节点 + 延迟到 shipout 边界（TeX 语义，参考 log L44/L58）。
+        // 已打开的文件流（0..=15 且 `\openout` 过）→ 写文件
+        let open_idx = if (0..=15).contains(&n) {
+            self.write_streams
+                .get(n as usize)
+                .and_then(|s| s.as_ref())
+                .filter(|st| st.path.is_some())
+                .map(|_| n as usize)
+        } else {
+            None
+        };
+        let Some(idx) = open_idx else {
+            // 未打开/非文件流：`\immediate` 立即写转录（tex.web：未打开流 →
+            // 「write to the terminal」，LaTeX 的 `\typeout`=`\immediate\write17`、
+            // `\GenericError` 的 `\immediate\write\@unused` 都靠这条）；否则只留
+            // whatsit 节点（box 追踪显示用）。
+            let text: String = toks
+                .iter()
+                .filter_map(|t| t.charcode())
+                .filter_map(char::from_u32)
+                .collect();
+            self.sink.whatsit(text)?;
             if immediate {
+                // ETRIP 冲刺：记录最近 "Checking ..." 段标题（错误定位用）
                 let s = self.expand_to_string(&toks)?;
-                return self.sink.write16(s);
+                if s.starts_with("Checking ") {
+                    self.section_label = s.trim().to_owned();
+                }
+                self.sink.write16(s)?;
+            } else if n < 0 {
+                // 负流号（j=17，log-only）：延迟到 shipout/结束边界写 log——
+                // 既有路径（TRIP L441 `\write-100000` 的参考输出 `write->…` 已验证）
+                self.log_write_pending.push(toks);
             }
-            let text: String = toks
-                .iter()
-                .filter_map(|t| t.charcode())
-                .filter_map(char::from_u32)
-                .collect();
-            self.sink.whatsit(text)?;
-            self.log_write_pending.push(toks);
+            // 其余非 immediate（未打开的 0..15、流号 >15）：保持既有「无目标文件的
+            // 延迟写忽略」简化。tex.web 在 shipout 的 write_out 会跳过 leaders 内的
+            // whatsit（`if not doing_leaders`）；引擎 flush 不感知 leaders（whatsit
+            // 节点只存文本），入队会把 TRIP L137 `\write111{\help}`（leaders 内、
+            // `\help` 未定义）展开 → 运行中止。
             return Ok(());
-        }
-        if !(0..=17).contains(&n) {
-            // TeX：无效流号（如 trip.tex L137 `\write111`）→ 忽略 whatsit
-            // （参考 log 显示 `.\write*{\help }`，不报错不写出）。
-            let text: String = toks
-                .iter()
-                .filter_map(|t| t.charcode())
-                .filter_map(char::from_u32)
-                .collect();
-            self.sink.whatsit(text)?;
-            return Ok(());
-        }
-        let idx = n as usize;
-        // 流 16 = 终端（TeX：\write16 写终端与日志，无需 \openout）；
-        // ETRIP 的 \typeout/\error 用 \write15（同终端；TeX 预留流 15 作 log 输出）
-        if idx == 16 || idx == 15 {
-            let s = self.expand_to_string(&toks)?;
-            // ETRIP 冲刺：记录最近 "Checking ..." 段标题（错误定位用）
-            if s.starts_with("Checking ") {
-                self.section_label = s.trim().to_owned();
-            }
-            return self.sink.write16(s);
-        }
-        self.ensure_write_stream(idx);
+        };
         if immediate {
             let s = self.expand_to_string(&toks)?;
-            // TeX 语义：\immediate\write 到未打开的流 → 内容静默丢弃（trip.log
-            // L431 `\immediate\write10`，流 10 已于 L153 \closeout）。
-            let Some(path) = self
-                .write_streams
-                .get(idx)
-                .and_then(|s| s.as_ref())
-                .and_then(|st| st.path.clone())
-            else {
-                return Ok(());
-            };
+            self.open_if_needed(idx)?;
             let mut out = s;
             out.push('\n');
+            let path = self.write_streams[idx]
+                .as_ref()
+                .and_then(|st| st.path.clone())
+                .expect("open_idx 已判定流已打开");
             self.vfs
                 .append(&path, out.as_bytes())
                 .map_err(|e| Error::io("VFS 写入", &path, e))?;
@@ -374,7 +418,7 @@ impl Expander {
             self.sink.whatsit(text)?;
             self.write_streams[idx]
                 .as_mut()
-                .expect("exec_write 已 ensure 流槽")
+                .expect("open_idx 已判定流已打开")
                 .pending
                 .push(toks);
         }
@@ -425,6 +469,13 @@ impl Expander {
 
     /// 把 token 列表展开成字符串（flush 边界写文件用）：完全展开后
     /// 字符 token → 字节、空格 → ` `；不可展开的 cs → 报错。
+    ///
+    /// 偏差（有意，范围外）：tex.web `token_show` 对字符 token 一律印其字符
+    /// （含组字符 `{`/`}`），此处只取 cat 10/11/12——共享此函数的
+    /// `\message`/`\show`/`\special` 输出须保持不变。副作用：引擎行模型
+    /// LF=5（§latex-feasibility A1 偏差）把 `^^J` 归并为空格 token，故
+    /// `\write{a^^Jb}` 写出空格而非 LF；latex.ltx L177 的 texsys.aux 探测
+    /// 因此带尾空格（其 `\ifx` 对比失败 → 非致命 "BAD: old file" 噪声）。
     fn expand_to_string(&mut self, toks: &[Token]) -> Result<String> {
         self.debug_expand_caller = "write";
         let expanded = self.expand_region(toks.to_vec())?;
@@ -446,21 +497,48 @@ impl Expander {
         Ok(s)
     }
 
-    /// flush 单个写流：展开全部待写 token 并追加到目标文件（每条后加换行）。
-    fn flush_write_stream(&mut self, idx: usize) -> Result<()> {
-        let (path, pending) = {
-            let Some(stream) = self.write_streams.get_mut(idx).and_then(|s| s.as_mut()) else {
-                return Ok(()); // 未打开：无操作
-            };
-            if stream.pending.is_empty() {
-                return Ok(());
-            }
-            (stream.path.clone(), std::mem::take(&mut stream.pending))
+    /// 打开（截断）写流目标文件：RFC-3 §4.4，`\openout` 语义为覆盖——首次实际
+    /// 写出（`\immediate\write`/flush 边界/`\closeout`）清空目标，其后追加。
+    fn open_if_needed(&mut self, idx: usize) -> Result<()> {
+        let Some(stream) = self.write_streams.get_mut(idx).and_then(|s| s.as_mut()) else {
+            return Ok(()); // 流未打开（无 `\openout`）：无操作
         };
-        let Some(path) = path else {
-            // TeX 语义：延迟 \write 到未打开的流在 shipout 时被忽略（内容丢弃）。
+        if stream.created {
+            return Ok(());
+        }
+        let Some(path) = stream.path.clone() else {
             return Ok(());
         };
+        self.vfs
+            .write(&path, b"")
+            .map_err(|e| Error::io("VFS 写入", &path, e))?;
+        if let Some(stream) = self.write_streams.get_mut(idx).and_then(|s| s.as_mut()) {
+            stream.created = true;
+        }
+        Ok(())
+    }
+
+    /// flush 单个写流：展开全部待写 token 并追加到目标文件（每条后加换行）。
+    fn flush_write_stream(&mut self, idx: usize) -> Result<()> {
+        let has_pending = self.write_streams
+            .get(idx)
+            .and_then(|s| s.as_ref())
+            .map(|st| st.path.is_some() && !st.pending.is_empty())
+            .unwrap_or(false);
+        if !has_pending {
+            return Ok(()); // 流未打开或无待写内容：无操作
+        }
+        let pending = {
+            let stream = self.write_streams[idx]
+                .as_mut()
+                .expect("has_pending 已判定");
+            std::mem::take(&mut stream.pending)
+        };
+        self.open_if_needed(idx)?;
+        let path = self.write_streams[idx]
+            .as_ref()
+            .and_then(|st| st.path.clone())
+            .expect("has_pending 已判定流已打开");
         let mut out = String::new();
         for toks in pending {
             out.push_str(&self.expand_to_string(&toks)?);
@@ -476,13 +554,17 @@ impl Expander {
         for i in 0..self.write_streams.len() {
             self.flush_write_stream(i)?;
         }
-        // TRIP：`\write-1`（log-only）待写内容展开后写 log（每条后加换行）。
+        // 转录流（`\write-1` log-only、未打开流、流号 >15）待写内容：
+        // 每条一行（tex.web write_out 是 token_show + print_ln——每条恰一个换行，
+        // 收尾换行由 write16 追加）。
         if !self.log_write_pending.is_empty() {
             let pending = std::mem::take(&mut self.log_write_pending);
             let mut out = String::new();
             for toks in pending {
+                if !out.is_empty() {
+                    out.push('\n');
+                }
                 out.push_str(&self.expand_to_string(&toks)?);
-                out.push('\n');
             }
             self.sink.write16(out)?;
         }
@@ -500,19 +582,6 @@ impl Expander {
     fn ensure_read_stream(&mut self, idx: usize) {
         while self.read_streams.len() <= idx {
             self.read_streams.push(None);
-        }
-    }
-
-    /// 确保写流槽存在（未打开时补空槽）。
-    fn ensure_write_stream(&mut self, idx: usize) {
-        while self.write_streams.len() <= idx {
-            self.write_streams.push(None);
-        }
-        if self.write_streams[idx].is_none() {
-            self.write_streams[idx] = Some(WriteStream {
-                path: None,
-                pending: Vec::new(),
-            });
         }
     }
 

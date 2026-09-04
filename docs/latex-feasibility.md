@@ -273,3 +273,106 @@ target/debug/examples/latex_probe /tmp/latexsurvey/flat.ltx   # 43 ms, 1 err, du
 
 - 新增 `crates/ntex-test-support/examples/latex_probe.rs`（勘察工具，~100 行，不动引擎语义）。
 - 新增本报告。**未修改任何引擎核心语义**；`--shim` 的 INITEX catcode 归位只存在于勘察工具内。
+
+---
+
+## 9. 2026-09-04 第三轮进展（A2 文件通道 + A3 缺文件错误语义）
+
+> 本轮落地 §6 步骤 2（文件通道真实现）。依据 tex.web §24598-24601 / `write_out`
+> / `out_what` / `prompt_file_name` 重排了写流分发与缺文件错误语义。
+
+### 9.1 A2 文件通道 —— 已实现
+
+**关键 tex.web 事实**（此前实现的主要偏差来源）：`\write` 的流号先**钳制**为
+`j`（负→17、>15→16，`write_open[16]`/`write_open[17]` 恒 false），然后
+`write_out` 按 `if write_open[j] then selector:=j else begin … "write to the
+terminal if file isn't open" end` 分发。即：
+
+| 流号 | `\openout` 过 | tex.web 落点 |
+|---|---|---|
+| 0..15 | 是 | 该文件（`selector:=j`） |
+| 0..15 | 否 | **终端+log**（非丢弃！） |
+| >15（j=16，如 `\write16`、LaTeX `\typeout`=`\write17`） | — | 终端+log |
+| 负（j=17，`\write-1`/`\wlog`） | — | 仅 log |
+
+旧实现把「流 15/16/17」与终端混同、且把未打开流的延迟写静默丢弃——流 15 是
+合法**文件流**（latex.ltx L176 `\immediate\openout15=texsys.aux`），而
+`\typeout` 用流 17（L129）、`\GenericError` 用未打开的流 0（`\@unused`）。
+
+- `crates/ntex-core/src/expand/io.rs::exec_write` 按上表重排：已 `\openout` 的
+  0..15 → VFS 文件；`\immediate` 的其余流 → 转录；负流号非 immediate →
+  既有延迟 log 队列（TRIP L441 参考输出 `write->…` 已验证路径）。
+- **RFC-3 §4.4 补齐**：`\openout` 语义为覆盖——新增 `WriteStream.created`，
+  首次实际写出用 `Vfs::write` 清空目标（丢弃上次作业残留），其后 `append`；
+  `\closeout` 对登记过路径但零写出的流也创建空文件（tex.web `a_open_out`→
+  `a_close`）。
+- `\newwrite` 分配范围 0..=17 → **0..=15**（16/17 是钳制哨兵，不可打开；
+  LaTeX `\newwrite` 同为 `\sixt@@n` 上限，L367）。
+- **带引号文件名**：`scan_file_name` 支持 `"name with spaces"`（web2c 剥引号；
+  latex.ltx L1094 `\openin\@inputcheck"#1" `、L9766 `\openout\@partaux "#1.aux"`）。
+- 移除「为 `\write`/`\closeout` 补空流槽」的逻辑——幽灵槽会让后续 `\newwrite`
+  跳号（分配漂移）。
+- 勘察工具 `latex_probe` 的 `SurveyVfs` 增加前导 `./` 归一（MemVfs 是精确字符串
+  键，LocalVfs 天然解析 `./x`；latex.ltx L195 `\IfFileExists{./texsys.aux}` 正
+  依赖该语义）。
+
+**验证**：`latex.ltx` 头部 L160-215 的 `texsys.aux` 探测区首次真实走通——
+`\immediate\openout15` 落盘 → `\IfFileExists{./texsys.aux}` **探测到文件** →
+`\read` 回读首行（转录首行 `BAD: old file …` 即回读内容与 `\today` 的对比输出）。
+最小用例（流 15 文件落盘）入单测 `write15_after_openout15_lands_in_file`。
+
+### 9.2 A3 `\input` 缺文件错误语义 —— 已对齐
+
+§8.2 已纠正「静默跳过」为「硬错误终止」；本轮把消息与终止形态对齐 tex.web
+`prompt_file_name`（s="input file name"）+ `fatal_error`：
+
+```
+! I can't find file `nope.tex'.
+l.N <当前行>
+Please type another input file name
+! Emergency stop.
+*** (job aborted, file error in nonstop mode)
+```
+
+引擎无交互层（无法交互询问替代文件名），故一律取 `interaction < scroll_mode`
+的致命分支：报错进转录后 `run()` 返回 `Err` 终止。守卫型探测（`\IfFileExists`/
+`\@input`）走 `\openin`，不经此路径（latex.ltx L9889 `\@input` 缺文件 =
+`\typeout{No file …}`，非错误）。
+
+### 9.3 阻塞点刷新（含新发现的下一阻塞点）
+
+| # | 状态 | 说明 |
+|---|---|---|
+| A2 | **已修复** | 写流按 tex.web 分发、流 15 可作文件、未打开流 `\immediate` 写进转录；`latex.ltx` L160-215 探测区走通 |
+| A3 | **已修复** | `! I can't find file …` + 致命终止（引擎无交互层的等价形态） |
+| A1 / A4 | 已修复（上轮） | — |
+| **新（next）** | **L488 `\newbox\voidb@x` 失败** | `\voidb@x` 未定义 → `\strutbox` 等级联（转录 `! Undefined control sequence \voidb@x` + 一串 `Missing number`）。根因指向 `\e@alloc` 的 `\global#2#6\allocationnumber`，其中 `#2` 是 `\ifnum…\expandafter\chardef\else…\fi`——**`\global` 后接条件式赋值目标需要展开层支持**（TeX 在 `\global` 后展开 token 直至遇到真赋值原语）。位于 expl3（L1120）**之前**，故本刀未到达 "expl3 缺失" 报错 |
+| 新（噪声） | `\today` 渲染带空格 | 转录 `BAD: old file 2026/09/04: 02:32 (should be  2026/09/04: 02:32)`——回读内容与 `\today` 差在空格（`\two@digits`/`\number` 展开），非文件通道问题；后果仅 `\@currdir` 取 `\@empty` 而非 `./`（非致命） |
+| 新（偏差） | `\write` 中的 `^^J` | latex.ltx L126 `\newlinechar`^^J``；引擎行模型 LF=5（§8.1 偏差）把 `^^J` 在**扫描期**归并为空格 token → 写出空格而非换行。影响 `.aux` 内容保真与 `\typeout` 换行；修复属行模型（A1 延伸） |
+| 新（偏差） | 文件名终止空格 | tex.web `scan_file_name` **消费**名字后的空格；引擎 `unread` 回输入流 → 泄漏空格 token（非致命） |
+
+### 9.4 有意的简化（记录在案）
+
+- `expand_to_string` 只取 cat 10/11/12 字符：tex.web `token_show` 对**所有**字符
+  token（含组字符 `{`/`}`）都印其字符。该函数被 `\message`/`\show`/`\special`
+  共享，为不扰动既有转录对齐而保持原状。
+- 非 `\immediate` 写到未打开/越界流 → 丢弃（tex.web 会在 shipout 的 `write_out`
+  写出，但 leaders 内的 whatsit 被跳过——`if not doing_leaders`）。引擎 flush
+  不感知 leaders（whatsit 节点只存文本），若入队会把 TRIP L137
+  `\write111{\help}`（leaders 内、`\help` 未定义）展开 → 运行中止。
+- `\write18`（shell）仍拒绝（RFC-3）。
+
+### 9.5 本轮改动清单与回归
+
+- `crates/ntex-core/src/expand/io.rs`：`exec_write` 流分发重排、`open_if_needed`
+  （截断语义）、`exec_openout`/`exec_closeout`、`scan_file_name` 引号、
+  `exec_input` 致命错误块、`\newwrite` 0..=15、移除幽灵流槽。
+- `crates/ntex-core/src/expand/mod.rs`：`WriteStream.created`。
+- `crates/ntex-core/src/expand/tests.rs`：新增 9 个用例（流 15 文件、截断、
+  空文件、`\write16`/`\write17`/负流号、引号文件名、缺文件转录块）；2 个既有
+  用例改用 `\immediate`（tex.web：非 immediate 的 `\write16` 属延迟写，无
+  shipout 不落转录）。
+- `crates/ntex-test-support/examples/latex_probe.rs`：`SurveyVfs` 路径归一。
+- 回归：`make check`（fmt/clippy/test）全绿；`cargo run -p ntex-trip -- --driver
+  ntex` 仍停在 HEAD 已知的数学组错误（`group_end 无配对 group_begin`），无写
+  通道相关新错误。
