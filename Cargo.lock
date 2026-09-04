@@ -247,6 +247,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ntex-mcp"
+version = "0.1.0"
+dependencies = [
+ "ntex-core",
+ "ntex-dvi",
+ "ntex-io",
+ "ntex-layout",
+ "ntex-pdf",
+]
+
+[[package]]
 name = "ntex-pdf"
 version = "0.1.0"
 dependencies = [

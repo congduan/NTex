@@ -1,0 +1,17 @@
+[package]
+name = "ntex-mcp"
+description = "NTex MCP server（M9 形态①）：stdio JSON-RPC，TeX/LaTeX 源码 → PDF"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ntex-layout.workspace = true
+ntex-dvi.workspace = true
+ntex-pdf = { path = "../ntex-pdf", version = "0.1.0" }
+ntex-io.workspace = true
+ntex-core.workspace = true
+
+[lints]
+workspace = true

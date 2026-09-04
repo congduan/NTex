@@ -19,6 +19,7 @@ members = [
     "crates/ntex-trip",
     "crates/ntex-diff",
     "crates/ntex-bench",
+    "crates/ntex-mcp",
 ]
 
 [workspace.package]
