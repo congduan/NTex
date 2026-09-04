@@ -103,6 +103,36 @@ impl CatcodeTable {
         Self(t)
     }
 
+    /// INITEX（iniTeX / 格式构建态）初始表：tex.web §1273 默认表（含一处引擎偏差）。
+    ///
+    /// 除 `\`=0、`%`=14、空格=10、**LF=5**、CR=5、DEL=15、字母=11、NUL=9 外
+    /// **全部 12**（`^^I` 也是 12——INITEX 不给 tab 任何特殊待遇）。plain 表
+    /// （[`Self::new`]）是 plain.tex 装载后的产物，差异（`{`=1 `~`=13 `_`=8 等）
+    /// 正是 latex.ltx L98 `\ifnum\catcode`\{=1` 判别"是否已预载格式"的依据。
+    ///
+    /// **偏差说明**：tex.web 里 INITEX 的 LF 是 12（行结束符由读取层剥掉、再补一个
+    /// `\endlinechar`=13/CR）。本引擎的扫描器是字节流直读（`input.rs::scan_token`），
+    /// 不剥行尾字节——原始 LF 就是行尾符，`Comment` 跳行、空行→`\par` 都靠
+    /// catcode 5 找行尾。若按 tex.web 原样给 LF=12，第一条注释会一路吞到 EOF。
+    /// 故此处 LF 与 CR 同为 5（等价于"行尾符必有 catcode 5"的引擎行模型）。
+    pub fn initex() -> Self {
+        let mut t = [Catcode::Other as u8; 256];
+        t[0x00] = Catcode::Ignored as u8; // NUL
+        t[0x0A] = Catcode::EndOfLine as u8; // LF（引擎行模型：行尾字节，见上偏差说明）
+        t[0x0D] = Catcode::EndOfLine as u8; // CR
+        t[0x20] = Catcode::Space as u8; // space
+        t[0x25] = Catcode::Comment as u8; // '%'
+        t[0x5C] = Catcode::Escape as u8; // '\'
+        t[0x7F] = Catcode::Invalid as u8; // DEL
+        for b in b'A'..=b'Z' {
+            t[b as usize] = Catcode::Letter as u8;
+        }
+        for b in b'a'..=b'z' {
+            t[b as usize] = Catcode::Letter as u8;
+        }
+        Self(t)
+    }
+
     /// 查询某字节的 catcode。
     pub fn get(&self, byte: u8) -> Catcode {
         Catcode::from_u8(self.0[byte as usize]).expect("catcode 表只允许 0..=15")
@@ -159,6 +189,25 @@ mod tests {
         assert_eq!(t.get(b'Z'), Catcode::Letter);
         assert_eq!(t.get(b'0'), Catcode::Other);
         assert_eq!(t.get(b'.'), Catcode::Other);
+    }
+
+    #[test]
+    fn initex_table_is_tex_web_1273() {
+        let t = CatcodeTable::initex();
+        assert_eq!(t.get(b'\\'), Catcode::Escape);
+        assert_eq!(t.get(b'%'), Catcode::Comment);
+        assert_eq!(t.get(b' '), Catcode::Space);
+        assert_eq!(t.get(0x0D), Catcode::EndOfLine);
+        assert_eq!(t.get(0x7F), Catcode::Invalid);
+        assert_eq!(t.get(0x00), Catcode::Ignored);
+        assert_eq!(t.get(b'a'), Catcode::Letter);
+        assert_eq!(t.get(b'Z'), Catcode::Letter);
+        // INITEX 里这些都不是特殊字符（plain 表才是）；LF 例外——见
+        // [`CatcodeTable::initex`] 的引擎行模型偏差说明。
+        assert_eq!(t.get(b'\n'), Catcode::EndOfLine);
+        for &b in b"{}$&#^_~\t" {
+            assert_eq!(t.get(b), Catcode::Other, "byte 0x{b:02X}");
+        }
     }
 
     #[test]

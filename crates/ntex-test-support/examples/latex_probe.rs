@@ -56,6 +56,7 @@ impl Vfs for SurveyVfs {
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let shim = args.iter().any(|a| a == "--shim");
+    let initex = args.iter().any(|a| a == "--initex");
     let path = args
         .iter()
         .find(|a| !a.starts_with('-'))
@@ -75,6 +76,9 @@ fn main() -> Result<()> {
     input.extend_from_slice(&src);
 
     let mut ts = ntex_layout::Typesetter::with_tfm();
+    if initex {
+        ts = ts.initex();
+    }
     ts.set_vfs(Box::new(SurveyVfs::new(root)));
     let res = ts.typeset_bytes(input);
     let transcript = ts.take_transcript();

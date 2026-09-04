@@ -120,6 +120,14 @@ impl Typesetter {
         self
     }
 
+    /// iniTeX（INITEX / 格式构建态）语义：EXPANDER 换用 tex.web §1273 的初始
+    /// catcode 表（LaTeX 兼容铺开：latex.ltx L99 靠 `\{`=12 判别"纯 initex"）。
+    /// 默认 plain 风格表保持不变，plain/TRIP 路径不受影响。
+    pub fn initex(mut self) -> Self {
+        self.expander = self.expander.initex();
+        self
+    }
+
     /// 注入 VFS 后端（RFC-3；`\input`/`\write` 等副作用原语的文件接口）。
     pub fn set_vfs(&mut self, vfs: Box<dyn ntex_io::Vfs>) {
         self.expander.set_vfs(vfs);

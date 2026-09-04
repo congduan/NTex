@@ -2063,6 +2063,18 @@ ab5c}").unwrap();
         assert!(e.run_source(r"\patterns{ab5c").is_ok());
     }
 
+    #[test]
+    fn unbounded_macro_recursion_hits_input_stack_limit() {
+        // tex.web `stack_size`（TeX Live 取 5000）：无终止宏递归按 TeX 同款
+        // "TeX capacity exceeded, sorry [input stack size=N]" 报错终止，
+        // 而非无界推深输入栈直至耗尽内存（latex.ltx 加载挂死 root-cause，A4）。
+        let e = expand(r"\def\x{\x}\x");
+        assert!(e.is_err(), "无界递归应报错终止");
+        let err = e.unwrap_err().to_string();
+        assert!(err.contains("输入栈超限"), "错误信息：{err}");
+        assert!(err.contains(r"\x"), "应指明递归宏名：{err}");
+    }
+
     // ---------- M3 收尾（RFC-3）：VFS 副作用原语 ----------
 
     /// 运行源码（MemVfs 后端），返回 (输出字符串, VFS)。副作用用例不跑双轨。

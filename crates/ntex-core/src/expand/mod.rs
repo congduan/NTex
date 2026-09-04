@@ -40,6 +40,13 @@ use ntex_io::{LocalVfs, Vfs};
 /// 字体加载记录：外部名 + at 规格 + scaled（pass2 恢复字体表用；.fmt 不含字体表）。
 type FontLoad = (String, Option<i64>, Option<i64>);
 
+/// 输入栈帧数上限（tex.web `stack_size`；TeX Live 默认 5000）。
+///
+/// 宏递归展开（`\def\x{\x}\x` 类）在 tex.web 里以 "TeX capacity exceeded,
+/// sorry [input stack size=N]" 致命终止；本引擎由 [`Expander::call_macro`]
+/// 入口检查同一上限（防御单步内的无界递归——主循环 10M 步看门狗够不到）。
+const MAX_INPUT_STACK: usize = 5000;
+
 /// 输入帧：token 来源栈（LIFO，栈顶为当前帧）。
 ///
 /// `Clone`（M5 阶段二）：段级回滚还原 [`ControlState::stack`]，需要克隆悬挂
@@ -431,6 +438,7 @@ const DIAG_KEYS: &[&str] = &[
     "NTEX_COND_TRACE",
     "NTEX_IFNUM_TRACE",
     "NTEX_TRACE_EXEC",
+    "NTEX_TRACE_STACK",
     "NTEX_SANITY_CHECK",
 ];
 
@@ -614,6 +622,15 @@ impl Expander {
     /// 创建解释器轨道引擎（M2 双轨等价验证用）。
     pub fn new_interpreter() -> Self {
         Self::with_bytecode(false)
+    }
+
+    /// iniTeX（INITEX / 格式构建态）语义：换用 tex.web §1273 的初始 catcode 表。
+    ///
+    /// 只换表——eqtb 本就只含原语（INITEX 无格式预载），语义已对齐。
+    /// plain/TRIP 路径继续用 [`Self::new`] 的 plain 风格表，不受影响。
+    pub fn initex(mut self) -> Self {
+        self.catcodes = CatcodeTable::initex();
+        self
     }
 
     fn with_bytecode(use_bytecode: bool) -> Self {
@@ -1611,6 +1628,13 @@ impl Expander {
                         if diag_enabled("NTEX_TRACE_EXEC") {
                             eprintln!("[trace-exec] {p:?}");
                         }
+                        if diag_enabled("NTEX_TRACE_STACK") {
+                            eprintln!(
+                                "[trace-stack] {p:?} last_tok={:?} stack={}",
+                                self.last_tok,
+                                self.debug_stack_summary()
+                            );
+                        }
                         self.exec_primitive(p)
                     }
                 }
@@ -1696,6 +1720,21 @@ impl Expander {
 
     /// 展开宏调用：收集实参，压入字节码（M2）或宏体输入帧。
     fn call_macro(&mut self, csid: u32, def: Arc<MacroDef>) -> Result<()> {
+        // TeX 输入栈上限（tex.web `stack_size`；TeX Live 取 5000）：宏递归展开
+        // 无终止条件时以此报错终止，而非耗尽内存。此前无此保护——latex.ltx 加载
+        // 曾触发单步内无界递归（每层压一个 Bytecode 帧，主循环 10M 步上限够不到），
+        // RSS 涨至 OOM（docs/latex-feasibility.md A4）。真实 TeX 同为
+        // "TeX capacity exceeded, sorry [input stack size=N]" 致命错。
+        if self.stack.len() >= MAX_INPUT_STACK {
+            let name = self.intern.name(csid).to_owned();
+            let _ = self.sink.write16(format!(
+                "TeX capacity exceeded, sorry [input stack size = {MAX_INPUT_STACK}].\n"
+            ));
+            self.report_error_context();
+            return Err(Error::invalid_input(format!(
+                "输入栈超限（{MAX_INPUT_STACK} 帧）——宏 \\{name} 递归展开疑似无终止条件"
+            )));
+        }
         let args = if def.params.num_params > 0 {
             self.collect_args(csid, &def)?
         } else {
@@ -1740,6 +1779,15 @@ impl Expander {
     /// 取下一个 token；返回 `(token, noexpand)`。输入耗尽或越过读取下限返回 None。
     fn fetch(&mut self) -> Result<Option<(Token, bool)>> {
         loop {
+            // 输入栈深度兜底上限（tex.web `stack_size` 语义）：[`Self::call_macro`]
+            // 只盖宏帧，TokenList/Source 等帧的循环注入同样能把栈撑爆——此处统一
+            // 兜底（每次压帧后必经 fetch，故为全帧型的唯一收口点）。
+            if self.stack.len() > MAX_INPUT_STACK {
+                return Err(Error::invalid_input(format!(
+                    "输入栈超限（{} 帧 > {MAX_INPUT_STACK}）——展开/参数扫描疑似无终止条件",
+                    self.stack.len()
+                )));
+            }
             // 不允许读取位于子展开边界（read_floor）以下的帧
             if self.stack.len() <= self.read_floor {
                 return Ok(None);

@@ -189,7 +189,87 @@ cp /tmp/latexsurvey/tex/latex/base/latex.ltx /tmp/latexsurvey/flat.ltx
 target/debug/examples/latex_probe /tmp/latexsurvey/flat.ltx   # 43 ms, 1 err, dumped=false
 ```
 
-## 8. 本次改动
+## 8. 2026-09-04 第二轮进展（A1 修复 + A4 root-cause + 防挂保护）
+
+> 本轮把 §6 步骤 1（INITEX 初始 catcode 表）落地，并把步骤 3（死循环挂死）定位到根因
+> 并加上 TeX 同款保护。勘察工具 `latex_probe` 新增 `--initex`。
+
+### 8.1 A1 INITEX 初始 catcode 表 —— 已修复
+
+- 新增 [`CatcodeTable::initex()`](`crates/ntex-core/src/catcode.rs`)：tex.web §1273
+  默认表（`\`=0、`%`=14、空格=10、CR=5、DEL=15、字母=11、NUL=9，其余全 12）。
+- **引擎偏差（有意）**：tex.web 的 INITEX 里 LF 是 12（行尾符由读取层剥掉、再补
+  `\endlinechar`=13/CR）。本引擎扫描器是字节流直读（`input.rs::scan_token`），
+  不剥行尾字节，注释跳行/空行→`\par` 都靠 catcode 5 找行尾——若按 tex.web 原样给
+  LF=12，**第一条注释会一路吞到 EOF**（实测：全文 30 ms"跑完"、转录 0 字节、
+  `dumped=false`，实为整文件被跳过）。故引擎的 initex 表让 LF 与 CR 同为 5。
+- 通道：`Expander::initex()` → `Typesetter::initex()` → `latex_probe --initex`。
+  **plain/TRIP 路径不受影响**（默认构造仍是 plain 表；TRIP pass1 继续用 plain 表，
+  trip.log 对照零回归）。
+- 验证：`--initex` 下 latex.ltx L98 `\ifnum\catcode`\{=1` 不再误报
+  "LaTeX must be made using an initex with no format preloaded"（plain 表路径仍报，
+  作对照）。
+
+### 8.2 A4 死循环挂死 —— root-cause：无界宏递归（TeX 输入栈上限缺失）
+
+**§2 的"cfg 在场才挂"是误判。** 复测证据链：
+
+1. 删掉 L166 `\input texsys.cfg` 这一行 → **仍然挂死**（同一 469762048 字节分配失败）。
+   cfg 缺席之所以"43 ms 跑完"，是因为 `\input` 缺文件在本引擎是**硬错误**
+   （`expand/io.rs:30` `找不到文件：…`，直接终止加载）——整个加载在 L166 就停了，
+   根本没走到触发点，"cfg 在场"只是"没在 L166 早退"的别名。
+   **这同时纠正 §3-A3 的描述**：缺文件不是"静默跳过"而是"硬错误终止"；
+   §2 中"cfg 缺席 → 全文处理完毕"实为"L166 终止"（转录里那条 `l.167 \begingroup`
+   上下文行就是终止点），"43 ms"只是终止得快。
+2. 前缀/截断二分定位触发点：**L17342–17399**（ltpictur 区）
+   `\def\bezier#1)#2(#3)#4({\@bezier#1)(#3)(}` + `\def\@bezier#1(#2,#3)(#4,#5)(#6,#7){…}`
+   + `\MakeRobust\bezier`。最小复现（60 行，`latex.ltx` L17342–17405）即挂。
+3. 看门狗现场（SIGSTOP/SIGCONT 拉长墙钟后抓到，而非 10 s 一条）：
+   `stack=TokenList(1tok,pos=0) | Bytecode(pc=9) × 数千`——**输入栈被同名宏的递归展开
+   无界推深**。宏名由新增的栈上限报错直接点名：**`\@`**。
+4. 机理：plain 表下 `@` 是 catcode 12，于是 `\def\@bezier…` 定义的是**控制符号 `\@`**
+   （参数文本 `bezier#1(#2,#3)(#4,#5)(#6,#7)`），`\bezier` 被调用时其体里的
+   `\@bezier` 展开成 `\@` + 字母 → `\@` 又是一个带定界参数的宏 → 定界实参扫描
+   展开它自己 → 无界递归。真实 TeX 对此有 **`stack_size`（TeX Live 取 5000）上限**，
+   报 "TeX capacity exceeded, sorry [input stack size=5000]" 致命终止；本引擎没有，
+   于是单步内递归把 RSS 撑到 OOM（主循环 10M 步看门狗够不到——递归发生在一步之内）。
+
+**修复**（`crates/ntex-core/src/expand/mod.rs`）：
+
+- `call_macro`：压宏帧前检查 `stack.len() >= MAX_INPUT_STACK`（5000，tex.web
+  `stack_size` 语义），转录报 "TeX capacity exceeded, sorry [input stack size = 5000]."
+  后以可读错误终止（消息含递归宏名）；
+- `fetch()`：同一上限的全帧型兜底（TokenList/Source 等帧的循环注入不经过 `call_macro`；
+  每次压帧后必经 fetch，故这里是唯一收口点）。
+
+**效果**：latex.ltx 全文（cfg 在场/缺席、`--initex` 与否四种组合）从"挂死 + RSS 入 swap"
+变为**干净终止并给出可读错误**（~4 s、几十 MB），且报错点名递归宏。
+还原了"引擎契约：畸形输入不 panic、不无限循环"。
+
+### 8.3 阻塞点刷新
+
+| # | 状态 | 说明 |
+|---|---|---|
+| A1 | **已修复** | `CatcodeTable::initex()` + `Typesetter::initex()` + `latex_probe --initex`；LF=5 为引擎行模型偏差（§8.1） |
+| A4 | **已修复（root-cause + 防挂）** | 无界宏递归；TeX `stack_size` 同款上限 5000（§8.2） |
+| A2 | 未动 | 文件通道未落盘（`\write15` 落转录、`\IfFileExists` 恒假） |
+| A3 | **描述已纠正** | `\input` 缺文件 = 硬错误终止（非"静默跳过"）——它让加载在 L166 早退、掩盖后续阻塞点（§8.2 证据 1）；对齐真实 TeX 的 batchmode/交互语义仍是后续工作 |
+| 新 | **下一阻塞点** | `--initex` 下加载推进到 **L17474**（`ltmath`/`\@inmatherr` 区）后仍触发输入栈超限；转录累计 2576 条错误（2540 条 `! Undefined control sequence`，多为 `\@@`/`\@inmatherr` 等内核 cs）——下一刀应先解"错误恢复后 `\@` 类 cs 名失配"与 expl3 缺失 |
+
+### 8.4 本轮改动清单
+
+- `crates/ntex-core/src/catcode.rs`：`CatcodeTable::initex()` + 单测（tex.web §1273 + LF 偏差）。
+- `crates/ntex-core/src/expand/mod.rs`：`Expander::initex()`；`MAX_INPUT_STACK=5000`
+  上限（`call_macro` 前置检查 + `fetch` 兜底）；`NTEX_TRACE_STACK` 诊断开关
+  （每原语打印输入栈摘要，挂死定位用，与 `NTEX_TRACE_EXEC` 同款）。
+- `crates/ntex-layout/src/typeset/typesetter.rs`：`Typesetter::initex()`。
+- `crates/ntex-test-support/examples/latex_probe.rs`：`--initex` 开关。
+- `crates/ntex-core/src/expand/tests.rs`：无界宏递归 → 输入栈超限的回归单测。
+- 全量回归：`make check`（fmt/clippy/test）全绿。
+- **TRIP/ETRIP 零回归验证法**：`cargo run -p ntex-trip -- --driver ntex` 在 HEAD 本就
+  失败（数学组 `group_end 无配对 group_begin`，属已知的数学/模式机未完成区）——
+  在 HEAD 干净 worktree 上重建后逐字节比对，本轮前后输出**一致**（仅临时目录名不同）；
+  且本轮改动在该运行中零触发（无 `输入栈超限`、无 `initex` 路径）。门禁以 `make check` 为准。
 
 - 新增 `crates/ntex-test-support/examples/latex_probe.rs`（勘察工具，~100 行，不动引擎语义）。
 - 新增本报告。**未修改任何引擎核心语义**；`--shim` 的 INITEX catcode 归位只存在于勘察工具内。
