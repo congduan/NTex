@@ -110,9 +110,19 @@ fn int_param_index(p: Primitive) -> Option<usize> {
         Primitive::TracingPages => 59,
         Primitive::Pausing => 60,
         Primitive::SetLanguage => 61,
-        Primitive::OutputPenalty => 62,        _ => return None,
+        Primitive::OutputPenalty => 62,
+        // LaTeX 兼容第八刀：\pdfoutput（misc 63，pdfTeX 默认 0 = DVI 模式）。
+        // 可写内部整数参数——expl3 `\c_sys_output_str`/`\c_sys_engine_format_str`
+        // 以 `\tex_pdfoutput:D` 作数字读取，graphicx/hyperref 以 `\pdfoutput=` 赋值。
+        // （\pdfrandomseed 用 misc 64 但**不**入此表：pdfTeX 中它只读，
+        //  写入走 \pdfsetrandomseed。）
+        Primitive::PdfOutput => 63,
+        _ => return None,
     })
 }
+
+/// pdfTeX 兼容原语的只读整数/种子值（misc 64 = \pdfrandomseed 状态）。
+pub(crate) const PDF_RANDOM_SEED_IDX: usize = 64;
 
 /// 交互模式命令 → interactionmode 值（TeX：0=batch,1=nonstop,2=scroll,3=errorstop）。
 fn interaction_mode_value(p: Primitive) -> Option<i64> {
@@ -156,6 +166,58 @@ fn emit_count(v: i64) -> Vec<Token> {
     format_count(v)
         .bytes()
         .map(|b| Token::char(Catcode::Other, u32::from(b)))
+        .collect()
+}
+
+/// 文本 → 字符 token 序列（cat 12；pdfTeX 可展开字符串量的输出形式）。
+fn pdf_text_tokens(s: &str) -> Vec<Token> {
+    s.bytes()
+        .map(|b| Token::char(Catcode::Other, u32::from(b)))
+        .collect()
+}
+
+/// `\pdftexbanner`：pdfTeX 兼容层的 banner。
+///
+/// 版本段与 [\pdfTeX 探测原语值](Primitive::PdfTeXVersion) 对齐（1.40.25），
+/// 但保留 "NTex" 标识：banner 会进日志/PDF 元数据，不冒充真 pdfTeX 产物。
+pub(crate) const PDF_BANNER: &str = "This is pdfTeX, Version 1.40.25 (NTex pdfTeX compatibility layer)";
+
+fn pdf_banner_tokens() -> Vec<Token> {
+    pdf_text_tokens(PDF_BANNER)
+}
+
+/// `\pdfcreationdate` → `D:YYYYMMDDHHMMSSZ'00'`（pdfTeX PDF 时间串格式）。
+///
+/// 从 TeX 日期参数（\day/\month/\year/\time，misc 53-56）取值：引擎内已按
+/// 系统时钟初始化。`\time` 只有分钟精度，秒恒写 `00`（偏差见报告 §15.3）。
+fn pdf_creation_date_tokens(day: i64, month: i64, year: i64, minutes: i64) -> Vec<Token> {
+    let hour = minutes / 60;
+    let min = minutes % 60;
+    let year = year.clamp(0, 9999);
+    pdf_text_tokens(&format!(
+        "D:{year:04}{month:02}{day:02}{hour:02}{min:02}00Z'00'"
+    ))
+}
+
+/// `\pdfstrcmp`：两 token 串的字符串比较（detokenize 同规则转字节）→ -1/0/1。
+fn pdf_strcmp_value(a: &[Token], b: &[Token], intern: &InternTable) -> i64 {
+    let sa = pdf_detokenize_bytes(a, intern);
+    let sb = pdf_detokenize_bytes(b, intern);
+    match sa.cmp(&sb) {
+        std::cmp::Ordering::Less => -1,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => 1,
+    }
+}
+
+/// token 串 → 字节串（与 `\detokenize` 同一转换，再取字符码）。
+fn pdf_detokenize_bytes(toks: &[Token], intern: &InternTable) -> Vec<u8> {
+    let mut text = Vec::new();
+    for t in toks {
+        detokenize_token(*t, intern, &mut text);
+    }
+    text.iter()
+        .filter_map(|t| t.charcode().and_then(|c| u8::try_from(c).ok()))
         .collect()
 }
 
@@ -419,6 +481,23 @@ fn is_expandable_prim(p: Primitive) -> bool {
             | Primitive::Number
             | Primitive::ETeXVersion
             | Primitive::ETeXRevision
+            // LaTeX 兼容第八刀：pdfTeX 可展开族（带参的 PdfStrCmp/PdfFileSize/
+            // PdfUniformDeviate 与字符串量 PdfTeXBanner/PdfCreationDate；
+            // 只读整数 PdfTeXVersion 等仿 \eTeXversion 单独出现时展开为数字——
+            // 否则 exec 主循环报"未接入 dispatcher"，\numexpr 语境不可用）。
+            // 注意：进此白名单的原语必须在 expr.rs expand_once 与
+            // primitive_expand.rs dispatch_expandable 都有分支——否则
+            // "可展开 → 展开后重试"循环空转（见 expr.rs fuzz 挂死修复注释）。
+            | Primitive::PdfTeXVersion
+            | Primitive::PdfTeXRevision
+            | Primitive::PdfShellEscape
+            | Primitive::PdfElapsedTime
+            | Primitive::PdfRandomSeed
+            | Primitive::PdfTeXBanner
+            | Primitive::PdfCreationDate
+            | Primitive::PdfStrCmp
+            | Primitive::PdfFileSize
+            | Primitive::PdfUniformDeviate
             | Primitive::String_
             | Primitive::InputLineNo
             | Primitive::CurrentGroupLevel

@@ -1,9 +1,9 @@
 /// 内建原语注册表：`名字 → Primitive` 的单一事实源。
 ///
-/// 348 项（`\muexpr` 为 `Glueexpr` 的别名，故比 `Primitive::ALL` 多一项；
-/// TRIP 冲刺补充 13 个标准参数原语），
-/// 供 `register_builtins` 注册与 `tests.rs` 的一致性测试共用。
-pub(crate) const BUILTINS: [(&str, Primitive); 399] = [
+/// 411 项（`\muexpr` 为 `Glueexpr` 的别名，故比 `Primitive::ALL` 多一项；
+/// TRIP 冲刺补充 13 个标准参数原语；LaTeX 兼容第八刀补 pdfTeX 引擎探测/兼容族
+/// 12 项），供 `register_builtins` 注册与 `tests.rs` 的一致性测试共用。
+pub(crate) const BUILTINS: [(&str, Primitive); 411] = [
     ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -505,6 +505,29 @@ pub(crate) const BUILTINS: [(&str, Primitive); 399] = [
             ("mathcode", Primitive::MathCode),
             // TRIP 冲刺：\noboundary（数学字符边界抑制；直通 sink）
             ("noboundary", Primitive::NoBoundary),
+            // LaTeX 兼容第八刀：pdfTeX 引擎探测/兼容原语族（语义边界见
+            // eqtb/primitive.rs 该族注释与 docs/latex-feasibility.md §15）。
+            // 版本值对齐 pdfTeX 1.40.25（TeX Live 2024–2025 世代；
+            // latex.ltx engine-check 只要求 v1.40，l3kernel 仅探测存在性）。
+            ("pdftexversion", Primitive::PdfTeXVersion),
+            ("pdftexrevision", Primitive::PdfTeXRevision),
+            ("pdftexbanner", Primitive::PdfTeXBanner),
+            // \pdfoutput 默认 0 = DVI 模式（pdfTeX 默认即 0；NTex 输出 DVI，
+            // 非 0 值可赋但无 PDF 后端承接——偏差记录在报告 §15.3）
+            ("pdfoutput", Primitive::PdfOutput),
+            ("pdfshellescape", Primitive::PdfShellEscape),
+            ("pdfelapsedtime", Primitive::PdfElapsedTime),
+            ("pdfrandomseed", Primitive::PdfRandomSeed),
+            ("pdfsetrandomseed", Primitive::PdfSetRandomSeed),
+            ("pdfuniformdeviate", Primitive::PdfUniformDeviate),
+            // l3kernel 无条件 `\cs_new_eq:NN \__str_if_eq:nn \tex_strcmp:D`
+            // （expl3-code L5129）→ \pdfstrcmp 必须可展开，否则 expl3 全篇
+            // 字符串比较在首次调用时报"未定义控制序列"
+            ("pdfstrcmp", Primitive::PdfStrCmp),
+            // `\cs_new_eq:NN \__file_size:n \tex_filesize:D`（L12679）→
+            // \pdffilesize 缺失则 \file_full_name:n 的存在性探测瘫痪
+            ("pdffilesize", Primitive::PdfFileSize),
+            ("pdfcreationdate", Primitive::PdfCreationDate),
 ];
 
 impl Expander {

@@ -260,3 +260,31 @@ M4 数学 + e-TeX 验收时已实现的 e-TeX 原语：
 > 按"语义 diff 归零"口径收尾，实际需修的是错误恢复块格式统一（read-again `...` 等）+
 > `\muexpr`/glue order 语义项，工作量远小于 5415 行数字的表象。此数据作为上条收尾
 > 口径（降级决策）的数字依据。
+
+## LaTeX 兼容附加层：pdfTeX 引擎探测/兼容原语族（2026-09-04，第九刀）
+
+> 非 ETRIP 范围，随 LaTeX 兼容铺开注册（见 docs/latex-feasibility.md §15）。
+> 语义边界：**探测类真实现，行为类用到再补；未注册占位优于 relax 占位**
+> （未定义 → 误用报"未定义控制序列"，不静默空操作）。
+
+| 原语 | 语义 | 档次 |
+|---|---|---|
+| `\pdftexversion` / `\pdftexrevision` | 只读整数 140 / 25（pdfTeX 1.40.25；revision 是整数非字符串——latex.ltx L22501 `\ifnum\pdftexrevision<22`） | 真实现 |
+| `\pdftexbanner` | 可展开字符串（保留 "NTex" 标识，不冒充真 pdfTeX 产物） | 真实现 |
+| `\pdfoutput` | misc 63，默认 0 = DVI 模式（pdfTeX 默认同）；可赋值，非 0 无 PDF 后端承接 | 真实现（偏差记录） |
+| `\pdfshellescape` / `\pdfelapsedtime` | 只读 0 / 0（无 shell escape、无计时器） | 真实现（偏差记录） |
+| `\pdfrandomseed` / `\pdfsetrandomseed` | misc 64 种子只读 / 写 | 真实现 |
+| `\pdfuniformdeviate` | 可展开 `0 ≤ r < n`，确定性 LCG 推进种子 | 真实现（确定性偏差记录） |
+| `\pdfstrcmp` | 可展开字符串比较 → -1/0/1（l3kernel L5129 无条件别名 `\tex_strcmp:D`，expl3 字符串比较全走此路） | **必须真实现** |
+| `\pdffilesize` | 可展开文件字节数，缺失 → **空展开**（l3kernel `\file_full_name:n` 以空判"未找到"）；经 VFS | **必须真实现** |
+| `\pdfcreationdate` | 可展开 `D:YYYYMMDDHHMMSSZ'00'`（秒恒 00：`\time` 分钟精度） | 真实现 |
+
+- **引擎互斥约束**：只注册 pdfTeX 一族。\luatexversion/\kanjiskip/\filesize/
+  \XeTeXversion/\HINTversion 保持未定义——l3kernel `\c_sys_engine_str` 是按
+  `\tex_<name>:D` 存在性**拼接**引擎串，多引擎同定义 → 混合串 → 后端选择瘫痪。
+- **未注册占位**：\pdfmdfivesum/\pdffiledump/\pdfsavepos/\pdfannot 等行为族
+  （expl3 只别名不调用）。
+- 关键链路经验：`is_expandable_prim` 白名单原语**必须**同时有 `expr.rs
+  expand_once` 与 `primitive_expand.rs dispatch_expandable` 分支，否则展开空转
+  OOM（expr.rs fuzz 挂死修复注释）；只读整数作数字操作数需同时入
+  `scan.rs` number_cs 白名单 + `scan_number_inner` 读取臂。

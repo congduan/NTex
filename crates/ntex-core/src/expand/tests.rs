@@ -3077,4 +3077,122 @@ ab5c}").unwrap();
         let src2 = "\\ifnum0%\n  \\ifdefined\\qqneverdefined 1\\fi\n  \\ifdefined\\zzneverdefined 1\\fi\n  >0 T\\else F\\fi";
         assert_eq!(expand(src2).unwrap(), "F");
     }
+
+    // ---------- LaTeX 兼容第八刀：pdfTeX 引擎探测/兼容原语族 ----------
+
+    #[test]
+    fn pdftex_probe_primitives_are_defined_and_engine_fence_holds() {
+        // engine-check（latex.ltx L1122）按 `\ifdefined\pdffilesize` 探测；
+        // l3kernel `\c_sys_engine_str` 按 `\tex_pdftexversion:D` 存在性取 pdftex 分支。
+        // 引擎栅栏：其他引擎标记（luatexversion/kanjiskip/XeTeXversion）必须**保持
+        // 未定义**——多引擎同定义会把引擎串拼成无法识别的混合值。
+        let src = "\\ifdefined\\pdftexversion T\\else F\\fi\\ifdefined\\pdffilesize T\\else F\\fi\\ifdefined\\pdfstrcmp T\\else F\\fi\\ifdefined\\luatexversion T\\else F\\fi\\ifdefined\\kanjiskip T\\else F\\fi";
+        assert_eq!(expand(src).unwrap(), "TTTFF");
+    }
+
+    #[test]
+    fn pdftex_version_revision_are_number_operands() {
+        // latex.ltx L22500 实际用法：`\ifnum\pdftexversion=140 \ifnum\pdftexrevision<22`
+        assert_eq!(
+            expand(r"\ifnum\pdftexversion=140 \ifnum\pdftexrevision<22 OLD\else NEW\fi\else BAD\fi")
+                .unwrap(),
+            "NEW"
+        );
+        assert_eq!(expand(r"\number\pdftexversion.\number\pdftexrevision").unwrap(), "140.25");
+    }
+
+    #[test]
+    fn pdftex_banner_expands_as_string() {
+        // banner 保留 NTex 标识（不冒充真 pdfTeX 产物），版本段与探测值一致
+        let out = expand(r"\pdftexbanner").unwrap();
+        assert!(out.starts_with("This is pdfTeX, Version 1.40.25"), "banner：{out}");
+        assert!(out.contains("NTex"), "banner 须含 NTex 标识：{out}");
+    }
+
+    #[test]
+    fn pdfoutput_defaults_to_dvi_mode_and_is_assignable() {
+        // pdfTeX 默认 \pdfoutput=0（DVI）；expl3 按 `\tex_pdfoutput:D` 作数字读取
+        assert_eq!(
+            expand(r"\ifcase\pdfoutput DVI\or PDF\or PDF\else PDF\fi").unwrap(),
+            "DVI"
+        );
+        assert_eq!(expand(r"\pdfoutput=1 \the\pdfoutput").unwrap(), "1");
+        // 恢复 0：expl3 后端判定（dvips 分支）依赖
+        assert_eq!(expand(r"\pdfoutput=1 \pdfoutput=0 \ifnum\pdfoutput>0 P\else D\fi").unwrap(), "D");
+    }
+
+    #[test]
+    fn pdfstrcmp_compares_byte_strings() {
+        assert_eq!(expand(r"\ifnum\pdfstrcmp{abc}{abd}=0 E\else \pdfstrcmp{abc}{abd}\fi").unwrap(), "-1");
+        assert_eq!(expand(r"\pdfstrcmp{abc}{abc}").unwrap(), "0");
+        assert_eq!(expand(r"\pdfstrcmp{b}{a}").unwrap(), "1");
+        // 前缀短串小于长串；\pdfstrcmp 可在 \numexpr/\edef 中展开（expl3 \str_compare 用法）
+        assert_eq!(expand(r"\ifnum\pdfstrcmp{ab}{abc}>0 B\else S\fi").unwrap(), "S");
+        assert_eq!(expand(r"\edef\x{\pdfstrcmp{z}{a}}\x").unwrap(), "1");
+    }
+
+    #[test]
+    fn pdffilesize_reports_bytes_and_empty_for_missing() {
+        // 文件不存在 → 空展开：l3kernel \file_full_name:n 以空返回判定"未找到"
+        let mut vfs = MemVfs::new();
+        vfs.insert("data.bin", "0123456789");
+        let (out, _) = expand_vfs(
+            "\\def\\sz{\\pdffilesize{data.bin}}\\pdffilesize{missing.bin}|\\sz",
+            vfs,
+        )
+        .unwrap();
+        assert_eq!(out, "|10");
+    }
+
+    #[test]
+    fn pdfuniformdeviate_stays_in_range_and_seed_is_readable() {
+        // r 恒在 [0,n)；\pdfrandomseed 只读（写入走 \pdfsetrandomseed）
+        let out = expand(
+            r"\count0=\pdfuniformdeviate 7 \ifnum\count0<7 R\else BAD\fi \pdfsetrandomseed 42 \number\pdfrandomseed",
+        )
+        .unwrap();
+        assert_eq!(out, "R42");
+        // 同种子 → 同序列（确定性可复现；真 pdfTeX 为随机源——偏差记录报告 §15.3）
+        assert_eq!(
+            expand(r"\pdfsetrandomseed 9 \pdfuniformdeviate 100 \pdfuniformdeviate 100").unwrap(),
+            expand(r"\pdfsetrandomseed 9 \pdfuniformdeviate 100 \pdfuniformdeviate 100").unwrap()
+        );
+    }
+
+    #[test]
+    fn pdfshellescape_and_elapsedtime_are_safe_defaults() {
+        // 无 shell escape、无计时器：恒 0（l3kernel \c_sys_shell_escape_int /
+        // \sys_timer: 按非 LuaTeX 分支无条件读取）
+        assert_eq!(
+            expand(r"\ifnum\pdfshellescape=0 SAFE\else SHELL\fi \ifnum\pdfelapsedtime=0 IDLE\else RAN\fi")
+                .unwrap(),
+            "SAFEIDLE"
+        );
+    }
+
+    #[test]
+    fn pdfcreationdate_uses_pdf_datetime_format() {
+        // D:YYYYMMDDHHMMSSZ'00'（\time 只有分钟精度 → 秒恒 00）
+        let out = expand(r"\pdfcreationdate").unwrap();
+        assert!(out.starts_with("D:2"), "创建日期应为 2xxx 年：{out}");
+        assert!(out.ends_with("Z'00'"), "PDF 日期串收尾：{out}");
+        assert_eq!(out.len(), 21, "D: + 14 位 + Z'00'：{out}");
+    }
+
+    #[test]
+    fn latex_engine_check_aggregate_gate_passes() {
+        // latex.ltx L1122 原形：四探针聚合 >0（NTex 只注册 pdftex 族 → 单探针真）
+        let src = "\\ifnum0%\n  \\ifdefined\\pdffilesize 1\\fi\n  \\ifdefined\\filesize 1\\fi\n  \\ifdefined\\luatexversion\\ifnum\\luatexversion>94 1\\fi\\fi\n  \\ifdefined\\kanjiskip 1\\fi\n  >0 PASS\\else REJECT\\fi";
+        assert_eq!(expand(src).unwrap(), "PASS");
+    }
+
+    #[test]
+    fn pdf_primitives_work_in_numexpr_and_the() {
+        // expl3 \int_eval:n（= \number\numexpr）与 \the 路径
+        assert_eq!(
+            expand(r"\number\numexpr\pdftexversion+\pdfoutput\relax").unwrap(),
+            "140"
+        );
+        assert_eq!(expand(r"\the\pdfoutput|\the\pdftexversion").unwrap(), "0|140");
+    }
 }

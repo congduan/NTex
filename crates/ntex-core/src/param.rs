@@ -129,7 +129,7 @@ pub enum ParamValue {
 
 /// 内部整数参数总数（TeX/e-TeX 内部整数，ETRIP/TRIP 冲刺；仅存储/回读）。
 /// 下标与 [`crate::expand::int_param_index`] 的映射一致。
-pub const MISC_INTS: usize = 63;
+pub const MISC_INTS: usize = 65;
 
 /// 系统时间 → (日, 月, 年, 自午夜分钟数)（tex.web `date_and_time`；\day/\month/\year/\time）。
 /// 公历转换用 Howard Hinnant 的 days-from-civil 逆算法（无外部依赖）。
@@ -222,6 +222,11 @@ pub fn default_misc() -> [i64; MISC_INTS] {
         0,     // 60 Pausing（交互暂停开关；plain 默认 0）
         0,     // 61 SetLanguage（当前语言；plain 默认 0）
         0,     // 62 OutputPenalty（\\output 时惩罚；plain 默认 0）
+        // LaTeX 兼容第八刀：pdfTeX 原语状态
+        0, // 63 \pdfoutput（pdfTeX 默认 0 = DVI 模式；NTex 亦输出 DVI）
+        1, // 64 \pdfrandomseed（随机种子状态；\pdfsetrandomseed 写、
+           //        \pdfuniformdeviate 推进。pdfTeX 出厂种子非 0，取 1 避免首个
+           //        随机数序列恒 0——LCG 平凡不动点）
     ]
 }
 

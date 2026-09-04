@@ -285,6 +285,68 @@ impl Expander {
                             .map(|b| (Token::char(Catcode::Other, u32::from(b)), false)),
                     );
                 }
+                // LaTeX 兼容第八刀：pdfTeX 可展开族（is_expandable_prim 白名单成员，
+                // 此处必须有分支——否则 `_` 原样保留触发"展开后重试"空转，
+                // 见上方 fuzz 挂死修复注释）。语义与 dispatch_expandable 对齐。
+                EqSlot::Primitive(Primitive::PdfTeXVersion) => {
+                    out.extend(emit_count(140).into_iter().map(|t| (t, false)));
+                }
+                EqSlot::Primitive(Primitive::PdfTeXRevision) => {
+                    out.extend(emit_count(25).into_iter().map(|t| (t, false)));
+                }
+                EqSlot::Primitive(Primitive::PdfShellEscape) => {
+                    out.extend(emit_count(0).into_iter().map(|t| (t, false)));
+                }
+                EqSlot::Primitive(Primitive::PdfElapsedTime) => {
+                    out.extend(emit_count(0).into_iter().map(|t| (t, false)));
+                }
+                EqSlot::Primitive(Primitive::PdfRandomSeed) => {
+                    let v = self.params.misc[PDF_RANDOM_SEED_IDX];
+                    out.extend(emit_count(v).into_iter().map(|t| (t, false)));
+                }
+                EqSlot::Primitive(Primitive::PdfTeXBanner) => {
+                    out.extend(pdf_banner_tokens().into_iter().map(|t| (t, false)));
+                }
+                EqSlot::Primitive(Primitive::PdfCreationDate) => {
+                    let p = |q: Primitive| {
+                        self.params.misc[int_param_index(q).expect("日期时间参数在 misc 表")]
+                    };
+                    let toks = pdf_creation_date_tokens(
+                        p(Primitive::Day),
+                        p(Primitive::Month),
+                        p(Primitive::Year),
+                        p(Primitive::Time),
+                    );
+                    out.extend(toks.into_iter().map(|t| (t, false)));
+                }
+                EqSlot::Primitive(Primitive::PdfStrCmp) => {
+                    let a = self.scan_group_contents_expanding()?;
+                    let b = self.scan_group_contents_expanding()?;
+                    let v = pdf_strcmp_value(&a, &b, &self.intern);
+                    out.extend(emit_count(v).into_iter().map(|t| (t, false)));
+                }
+                EqSlot::Primitive(Primitive::PdfFileSize) => {
+                    let name = self.scan_file_name()?;
+                    if let Some(bytes) = self
+                        .vfs
+                        .read(&name)
+                        .map_err(|e| Error::io("VFS 读取", &name, e))?
+                    {
+                        out.extend(
+                            emit_count(bytes.len() as i64)
+                                .into_iter()
+                                .map(|t| (t, false)),
+                        );
+                    }
+                }
+                EqSlot::Primitive(Primitive::PdfUniformDeviate) => {
+                    let n = self.scan_number()?;
+                    let state = self.params.misc[PDF_RANDOM_SEED_IDX] as u32;
+                    let next = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                    self.params.misc[PDF_RANDOM_SEED_IDX] = i64::from(next);
+                    let r = if n <= 0 { 0 } else { i64::from((next >> 8) % (n as u32)) };
+                    out.extend(emit_count(r).into_iter().map(|t| (t, false)));
+                }
                 _ => {
                     // 未定义/不可展开原语：原样保留
                     out.push((tok, false));

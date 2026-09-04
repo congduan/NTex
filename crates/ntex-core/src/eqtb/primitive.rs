@@ -91,6 +91,15 @@ define_primitives! {
         EndInput,
         Ignorespaces,
         FontName,
+        // LaTeX 兼容第八刀：pdfTeX 探测/兼容原语的可展开成员（\pdftexbanner/
+        // \pdfcreationdate 字符串、\pdfstrcmp/\pdffilesize 带参字符串、
+        // \pdfuniformdeviate 随机数；\pdftexversion/\pdftexrevision 等内部整数
+        // 仿 \eTeXversion 单独出现时展开为数字 token）
+        PdfTeXBanner,
+        PdfCreationDate,
+        PdfStrCmp,
+        PdfFileSize,
+        PdfUniformDeviate,
     ]
     // 变体列表：自 1 起连续编号（0 为 eqtb 槽 Undefined 哨兵）
     Def = 1,
@@ -608,4 +617,35 @@ define_primitives! {
     PageDepth,
     PageFillLStretch,
     PageShrink,
+    // LaTeX 兼容第八刀：pdfTeX 引擎探测/兼容原语族（伪装 pdfTeX 声明兼容层——
+    // latex.ltx L1122 engine-check 探测 \pdffilesize/\filesize/\luatexversion/
+    // \kanjiskip 之任一；l3kernel `\c_sys_engine_str` 靠 `\tex_pdftexversion:D`
+    // 存在性取 pdftex 分支）。只注册 pdftex 一族：luatexversion/kanjiskip/
+    // XeTeXversion/HINTversion 一旦同定义会把引擎串拼成无法识别的混合值。
+    //
+    // 探测类真实现：
+    //   \pdftexversion=140、\pdftexrevision=25（pdfTeX 1.40.25；二者皆只读整数，
+    //   latex.ltx L22500 `\ifnum\pdftexrevision<22` 证明 revision 是整数非字符串）、
+    //   \pdftexbanner（可展开字符串）、\pdfoutput（misc 63，默认 0 = DVI 模式，
+    //   与 pdfTeX 默认一致，NTex 输出 DVI）、\pdfshellescape=0、
+    //   \pdfelapsedtime=0（无计时器，偏差见报告 §15）、\pdfrandomseed（misc 64
+    //   只读，经 \pdfsetrandomseed 写）、\pdfuniformdeviate（可展开，确定性 LCG）。
+    // 行为类真实现（l3kernel 无条件 `\cs_new_eq:NN` 别名 → 必须有）：
+    //   \pdfstrcmp（→\tex_strcmp:D，l3str 全篇字符串比较）、\pdffilesize
+    //   （→\tex_filesize:D，\file_full_name/n 用空返回判定"文件不存在"）。
+    // 未注册占位（用到再补，见报告 §15.4）：\pdfmdfivesum/\pdffiledump/
+    // \pdfsavepos/\pdfannot 等行为族——expl3 只 `\let` 别名不调用，
+    // 保持未定义使误用报"未定义控制序列"而非静默空操作。
+    PdfTeXVersion,
+    PdfTeXRevision,
+    PdfTeXBanner,
+    PdfOutput,
+    PdfShellEscape,
+    PdfElapsedTime,
+    PdfRandomSeed,
+    PdfSetRandomSeed,
+    PdfUniformDeviate,
+    PdfStrCmp,
+    PdfFileSize,
+    PdfCreationDate,
 }

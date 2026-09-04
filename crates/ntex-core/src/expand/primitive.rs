@@ -210,6 +210,13 @@ impl Expander {
             | Primitive::FontCharHt
             | Primitive::FontCharDp
             | Primitive::FontCharIc => self.exec_fontchar_dimen(prim),
+            // LaTeX 兼容第八刀：\pdfsetrandomseed<number>（写 misc 64 种子状态；
+            // \pdfrandomseed 读、\pdfuniformdeviate 推进——pdfTeX 随机源种子接口）
+            Primitive::PdfSetRandomSeed => {
+                let v = self.scan_number()?;
+                self.params.misc[PDF_RANDOM_SEED_IDX] = v;
+                Ok(())
+            }
             // M4-6 断字
             Primitive::Patterns => self.exec_patterns(),
             Primitive::Hyphenation => self.exec_hyphenation(),

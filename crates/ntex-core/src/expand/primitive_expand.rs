@@ -97,6 +97,58 @@ impl Expander {
                         .collect(),
                 )
             }
+            // LaTeX 兼容第八刀：pdfTeX 探测原语。只读整数单独出现展开为数字
+            // （仿 \eTeXversion；数字上下文另有 scan.rs 直读臂）。
+            Primitive::PdfTeXVersion => self.emit_tokens(emit_count(140)),
+            Primitive::PdfTeXRevision => self.emit_tokens(emit_count(25)),
+            Primitive::PdfShellEscape => self.emit_tokens(emit_count(0)),
+            Primitive::PdfElapsedTime => self.emit_tokens(emit_count(0)),
+            Primitive::PdfRandomSeed => {
+                self.emit_tokens(emit_count(self.params.misc[PDF_RANDOM_SEED_IDX]))
+            }
+            // 字符串量：\pdftexbanner/\pdfcreationdate（pdfTeX 可展开字符串）
+            Primitive::PdfTeXBanner => self.emit_tokens(pdf_banner_tokens()),
+            Primitive::PdfCreationDate => {
+                let p = |q: Primitive| self.params.misc[int_param_index(q).expect("日期时间参数在 misc 表")];
+                self.emit_tokens(pdf_creation_date_tokens(
+                    p(Primitive::Day),
+                    p(Primitive::Month),
+                    p(Primitive::Year),
+                    p(Primitive::Time),
+                ))
+            }
+            // \pdfstrcmp{<text1>}{<text2>}：字符串比较 → -1/0/1（pdfTeX 可展开；
+            // l3kernel L5129 无条件别名 \tex_strcmp:D，expl3 字符串比较全走这里）
+            Primitive::PdfStrCmp => {
+                let a = self.scan_group_contents_expanding()?;
+                let b = self.scan_group_contents_expanding()?;
+                let v = pdf_strcmp_value(&a, &b, &self.intern);
+                self.emit_tokens(emit_count(v))
+            }
+            // \pdffilesize{<file>}：文件字节数；文件不存在展开为空
+            // （l3kernel \file_full_name:n 以空返回判定"未找到"，pdfTeX 同语义）
+            Primitive::PdfFileSize => {
+                let name = self.scan_file_name()?;
+                match self.vfs.read(&name) {
+                    Ok(Some(bytes)) => self.emit_tokens(emit_count(bytes.len() as i64)),
+                    Ok(None) => Ok(()),
+                    Err(e) => Err(Error::io("VFS 读取", &name, e)),
+                }
+            }
+            // \pdfuniformdeviate<n>：0 ≤ r < n（n ≤ 0 → 0）。确定性 LCG 推进
+            // misc 64 种子（真 pdfTeX 为随机源；确定性可复现——偏差见报告 §15.3）
+            Primitive::PdfUniformDeviate => {
+                let n = self.scan_number()?;
+                let state = self.params.misc[PDF_RANDOM_SEED_IDX] as u32;
+                let next = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                self.params.misc[PDF_RANDOM_SEED_IDX] = i64::from(next);
+                let r = if n <= 0 {
+                    0
+                } else {
+                    i64::from((next >> 8) % (n as u32))
+                };
+                self.emit_tokens(emit_count(r))
+            }
             // \string<token>：token 转文本（字符序列；TeX 可展开原语）
             Primitive::String_ => {
                 let t = self

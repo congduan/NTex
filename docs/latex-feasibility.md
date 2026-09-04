@@ -772,3 +772,111 @@ latex.ltx L12804/L13103/L13168 的 `\globaldefs\@ne` 后续需要它。
 - `crates/ntex-core/src/input.rs` tests：新增
   `comment_resets_to_line_start_ignoring_next_indent`。
 - 回归：`make check` 全绿；TRIP/ETRIP 门禁以残留签名一致 + 全量测试绿为依据。
+
+## 15. 2026-09-04 第九轮进展（pdfTeX 引擎伪装——越过 engine-check 引擎墙，进入 l3kernel bootstrap）
+
+### 15.1 决策与最小探测集（主控决策：伪装 pdfTeX）
+
+engine-check（latex.ltx L1122-1134）是 **OR 门**（`\ifnum0\ifdefined\pdffilesize 1\fi
+\ifdefined\filesize 1\fi\ifdefined\luatexversion…\ifdefined\kanjiskip 1\fi >0`），
+但 l3kernel 的引擎判定是**互斥拼接**（expl3-code.tex L7934 `\c_sys_engine_str` 依
+`\cs_if_exist:NT \tex_<name>:D` 依次拼 hitex/luatex/pdftex/ptex·uptex/xetex）。
+**结论：只注册 pdfTeX 一族**，其他引擎标记（\luatexversion/\kanjiskip/\filesize/
+\XeTeXversion/\HINTversion）必须保持未定义——多引擎同定义会把引擎串拼成无法识别
+的混合值（如 "luatexpdftex"），反而瘫掉后端选择。单测
+`pdftex_probe_primitives_are_defined_and_engine_fence_holds` 固化该栅栏。
+
+关键机制：l3kernel L278 起用 `\__kernel_primitive:NN <prim> \tex_<name>:D`
+做 `\global\let` 无条件别名（L672-817），e-TeX 同名族在 L825-830/L898-907
+**条件别名**（`\ifdefined#1` 才 let）。因此：
+- `\tex_pdftexversion:D` 的"存在性"完全由 NTex 是否定义 `\pdftexversion` 决定
+  （引擎判定自动跟随，NTex 侧无需自己提供 `\tex_:D` 别名）；
+- `\pdfstrcmp → \tex_strcmp:D`（L5129 `\cs_new_eq:NN \__str_if_eq:nn`）与
+  `\pdffilesize → \tex_filesize:D`（L12679 `\__file_size:n`）是**无条件别名且被
+  expl3 全篇调用**——二者不做真实现则 expl3 字符串比较/文件名解析在首次调用时报
+  "未定义控制序列"。这是"最小集合"的真正边界：不是 engine-check 的 4 探针，
+  而是探针 + 两个被无条件别名的行为原语。
+
+### 15.2 注册的原语（12 项，eqtb/primitive.rs → builtins.rs → 处理器全链路）
+
+| 原语 | 语义 | 实现档次 |
+|---|---|---|
+| `\pdftexversion` | 只读整数 **140**（对齐 pdfTeX 1.40.x 世代；latex.ltx L22500 `\ifnum\pdftexversion=140` 证实值域） | 真实现（探测） |
+| `\pdftexrevision` | 只读整数 **25**。**勘误**：任务简报猜"字符串 .200000"——latex.ltx L22501 `\ifnum\pdftexrevision<22` 证明是**整数**（1.40.**25** 的尾段） | 真实现（探测） |
+| `\pdftexbanner` | 可展开字符串 `This is pdfTeX, Version 1.40.25 (NTex pdfTeX compatibility layer)`。**保留 NTex 标识**：banner 会进日志/文档元数据，伪装"原语面"不冒充产物 | 真实现（诚实标注） |
+| `\pdfoutput` | misc 63 整数参数，**默认 0 = DVI 模式**（与 pdfTeX 默认一致，NTex 亦输出 DVI）。可赋值（expl3 `\c_sys_output_str`/graphics/hyperref 读写） | 真实现（值面）；非 0 值无 PDF 后端承接 = 已记录偏差（§15.4） |
+| `\pdfshellescape` | 只读整数 0（无 shell escape；expl3 `\c_sys_shell_escape_int` 无条件读取） | 真实现（安全面） |
+| `\pdfelapsedtime` | 只读整数 0（无计时器） | 真实现（安全面）；偏差已记录 |
+| `\pdfrandomseed` | 只读整数（misc 64 种子状态） | 真实现（状态面） |
+| `\pdfsetrandomseed` | `<number>` → 写 misc 64 | 真实现 |
+| `\pdfuniformdeviate` | 可展开 `0 ≤ r < n`；确定性 LCG 推进种子（同种子同序列，可复现） | 真实现（确定性，非随机源——偏差已记录） |
+| `\pdfstrcmp` | 可展开，两 token 串按 `\detokenize` 同规则转字节后字典序比较 → -1/0/1 | **真实现**（expl3 无条件别名） |
+| `\pdffilesize` | 可展开，文件字节数；**缺失 → 空展开**（l3kernel `\file_full_name:n` L12696 以空返回判定"未找到"，pdfTeX 同语义）。文件读取走 VFS（`Vfs::read` 取长度，非 stat） | **真实现**（expl3 无条件别名） |
+| `\pdfcreationdate` | 可展开 `D:YYYYMMDDHHMMSSZ'00'`，取自 \day/\month/\year/\time（`\time` 仅分钟精度 → 秒恒 00） | 真实现；秒精度偏差已记录 |
+
+**未注册（占位决策）**：\pdfmdfivesum/\pdffiledump/\pdfsavepos/\pdfannot 等
+行为族。expl3 只 `\let` 别名不调用，保持未定义使误用报"未定义控制序列"而非
+静默空操作——比 relax 占位更符合"不静默错"约束。若后续加载路径真用到
+（如 `\file_mdfive_hash:n`，latex.ltx L9978 只别名不调用），届时补真语义。
+
+### 15.3 实测：latex.ltx --initex 越过 engine-check
+
+- **拒载错误消失**：转录中不再有 "LaTeX requires the e-TeX primitives"；
+  latex.ltx L1122 engine-check OR 门聚合 `01>0` → 真 → `\input expl3.ltx` 执行。
+- expl3.ltx（199 行 loader）+ expl3-code.tex（40266 行）**真载入**：
+  转录出现 `Package: expl3 2026-08-10 L3 programming layer (code)`（首次），
+  `\c_sys_engine_str` 探测链已读到 pdftex 分支。
+- 新停点：**expl3-code.tex L196**（l3kernel 自身的第二个引擎门闩）→ 详见 §15.5。
+- 终态：pass1 ERROR（级联下游 `\advance 目标必须是寄存器`）、dumped=false。
+
+### 15.4 新增单测与偏差清单
+
+`crates/ntex-core/src/expand/tests.rs` 新增 10 测（`pdftex_*`/`pdf*_…`）：
+探针存在性 + 引擎栅栏、version/revision 作数字操作数（latex.ltx L22500 原形）、
+banner 字符串、\pdfoutput 默认 0/可赋值/DVI 判定、\pdfstrcmp 四象限 + `\edef`
+展开、\pdffilesize 字节数 + 缺失空展开、\pdfuniformdeviate 值域 + 种子可读 +
+同种子同序列、\pdfshellescape/\pdfelapsedtime 安全默认、\pdfcreationdate 格式、
+engine-check OR 门原形（L1122 缩进形态）、\numexpr/\the 路径。
+
+**已记录偏差**（均不静默）：\pdfelapsedtime 恒 0；\pdfuniformdeviate 确定性 LCG
+（真 pdfTeX 为随机源）；\pdfcreationdate 秒恒 00；\pdfoutput 非 0 值无 PDF 后端；
+banner 含 NTex 标识。\pdfoutput=1 不报错（ packages 常见赋值路径，报错会阻断
+加载；效果偏差由 DVI 后端承接）。
+
+### 15.5 阻塞点刷新（第九轮，下一刀）
+
+| # | 状态 | 说明 |
+|---|---|---|
+| L1122 engine-check（pdfTeX 引擎墙） | **已越过** | 12 原语注册；OR 门聚合为真（§15.3） |
+| expl3 loader/`\input expl3.ltx` | **已越过** | expl3-code.tex 40266 行真载入，expl3 包头已打转录 |
+| **expl3-code.tex L193-206 引擎门闩** | **新（next）** | `\ifnum0%` 后接 `\expandafter\ifx\csname luatexversion\endcsname\relax…=0 %`：`scan_int` 读毕左操作数 `0` 之后的**关系符扫描臂不展开 token**（tex.web 该处 `repeat get_x_token` 语义），遇 `\expandafter` 直接报 `! Missing = inserted for \ifnum. <to be read again> expandafter`。**最小复现**：`\def\z{=}\ifnum0\z 0 T\else F\fi`——真实 TeX 得 `T`，NTex 得 `=0 T`（`\ifnum` 失败后 `=0 T` 泄漏为排版文本）。与第七/八刀所修**同族**（数字内条件聚合），位置在**关系符扫描**而非数字循环 |
+| 映射表级联（L341/364/398/819） | 待定位（疑似同根因） | L196 门闩失配后 `\ifnum` 残留未决，后续 `\else`/`\fi`/`\ifeof` 被**悬挂条件机**吞掉（`Extra \else`/`Extra \fi`/`Argument … extra }`），`\/`/`\above`/`\accent`/`\advance` 报"不能在此模式使用/目标必须是寄存器"。已证伪"宏参数扫描执行原语"假说（`\def\id#1{<\string#1>}\id\hbox` → `<\hbox>` 正常）。修 L196 后需复测该级联是否自消 |
+| 终态 | 未动 | pass1 ERROR、dumped=false；下刀首选 = scan_int 关系符扫描臂补 get_x_token 展开（复用 §14.1 条件臂经验），随后复测 expl3 bootstrap |
+
+### 15.6 本轮改动清单
+
+- `crates/ntex-core/src/eqtb/primitive.rs`：`Primitive` 加 12 个 `Pdf*` 变体
+  （5 个入 `EXPANDABLE:`），族注释写明语义边界与"只注册 pdftex 一族"的互斥理由。
+- `crates/ntex-core/src/expand/builtins.rs`：注册 12 名字（399 → 411），含
+  \pdfstrcmp/\pdffilesize 必须真实现的无条件别名依据。
+- `crates/ntex-core/src/param.rs`：`MISC_INTS` 63 → 65（misc 63 = \pdfoutput、
+  64 = 随机种子；fmt roundtrip 测试通过）。
+- `crates/ntex-core/src/expand/free.rs`：`int_param_index` 加 `PdfOutput => 63`
+  （\pdfrandomseed 故意**不入**此表以保只读）；`is_expandable_prim` 加 10 个
+  `Pdf*`；新增 `pdf_text_tokens`/`pdf_banner_tokens`/`pdf_creation_date_tokens`/
+  `pdf_strcmp_value`/`pdf_detokenize_bytes` 助手与 `PDF_BANNER` 常量。
+- `crates/ntex-core/src/expand/scan.rs`：`scan_number_inner` 补 5 个只读整数臂；
+  数字上下文白名单（number_cs）补 4 个探测整数（\pdfoutput 由 int_param_index 覆盖）。
+- `crates/ntex-core/src/expand/save.rs`：`\the` 上下文 7 个臂；`misc_int_name`
+  反向表补 63/64。
+- `crates/ntex-core/src/expand/expr.rs`：`expand_once` 补 10 个臂——**白名单原语
+  必须在此有分支**，否则 `_` 原样保留触发"展开后重试"空转（OOM，见该文件
+  fuzz 挂死修复注释）。
+- `crates/ntex-core/src/expand/primitive_expand.rs`：`dispatch_expandable` 补
+  10 个臂（只读整数单独出现 → 展开为数字，仿 \eTeXversion）。
+- `crates/ntex-core/src/expand/primitive.rs`：`exec_primitive` 补
+  `\pdfsetrandomseed` 执行臂。
+- `crates/ntex-core/src/expand/tests.rs`：新增 10 测（§15.4）。
+- 回归：`make check` 全绿（fmt / clippy -D warnings / cargo test --workspace）；
+  TRIP/ETRIP 零回归（新原语族独立命名空间，既有"未定义"断言不受影响——
+  `\luatexversion` 等其他引擎标记仍保持未定义）。

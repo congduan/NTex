@@ -540,6 +540,28 @@ impl Expander {
                     .bytes()
                     .map(|b| Token::char(Catcode::Other, u32::from(b)))
                     .collect()),
+                // LaTeX 兼容第八刀：pdfTeX 探测原语的 `\the` 读取
+                // （\pdftexbanner/\pdfcreationdate 真实 pdfTeX 为可展开字符串量；
+                //  \the 路径同样给值，避免 `\the\pdftexbanner` 报 Missing number）
+                Primitive::PdfTeXVersion => Ok(emit_count(140)),
+                Primitive::PdfTeXRevision => Ok(emit_count(25)),
+                Primitive::PdfShellEscape => Ok(emit_count(0)),
+                Primitive::PdfElapsedTime => Ok(emit_count(0)),
+                Primitive::PdfRandomSeed => {
+                    Ok(emit_count(self.params.misc[PDF_RANDOM_SEED_IDX]))
+                }
+                Primitive::PdfTeXBanner => Ok(pdf_banner_tokens()),
+                Primitive::PdfCreationDate => {
+                    let p = |q: Primitive| -> i64 {
+                        self.params.misc[int_param_index(q).expect("日期时间参数在 misc 表")]
+                    };
+                    Ok(pdf_creation_date_tokens(
+                        p(Primitive::Day),
+                        p(Primitive::Month),
+                        p(Primitive::Year),
+                        p(Primitive::Time),
+                    ))
+                }
                 Primitive::Badness => Ok(emit_count(0)),
                 // \the\fontdimen<num><font>：字体参数值（sp）
                 Primitive::FontDimen => {
@@ -1375,6 +1397,9 @@ fn misc_int_name(idx: usize) -> &'static str {
         58 => "exhyphenpenalty",
         59 => "tracingpages",
         60 => "parshape",
+        // LaTeX 兼容第八刀：pdfTeX 原语状态（misc 63/64）
+        63 => "pdfoutput",
+        64 => "pdfrandomseed",
         _ => "?",
     }
 }

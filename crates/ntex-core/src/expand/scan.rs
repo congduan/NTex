@@ -198,6 +198,34 @@ impl Expander {
                     self.fetch()?; // 消费 \eTeXversion
                     return Ok(if neg { -2 } else { 2 });
                 }
+                // LaTeX 兼容第八刀：pdfTeX 探测原语只读整数
+                // （\pdftexversion/\pdftexrevision 对齐 pdfTeX 1.40.25；
+                // \pdfshellescape=0（无 shell escape）；\pdfelapsedtime=0
+                // （无计时器，恒 0——偏差记录报告 §15.3）。
+                // latex.ltx L1122 engine-check 与 L22500 `\ifnum\pdftexrevision<22`
+                // 均以数字操作数身份读取）
+                EqSlot::Primitive(Primitive::PdfTeXVersion) => {
+                    self.fetch()?;
+                    return Ok(if neg { -140 } else { 140 });
+                }
+                EqSlot::Primitive(Primitive::PdfTeXRevision) => {
+                    self.fetch()?;
+                    return Ok(if neg { -25 } else { 25 });
+                }
+                EqSlot::Primitive(Primitive::PdfShellEscape) => {
+                    self.fetch()?;
+                    return Ok(0);
+                }
+                EqSlot::Primitive(Primitive::PdfElapsedTime) => {
+                    self.fetch()?;
+                    return Ok(0);
+                }
+                // \pdfrandomseed：只读（misc 64，经 \pdfsetrandomseed 写）
+                EqSlot::Primitive(Primitive::PdfRandomSeed) => {
+                    self.fetch()?;
+                    let v = self.params.misc[PDF_RANDOM_SEED_IDX];
+                    return Ok(if neg { -v } else { v });
+                }
                 // ETRIP 冲刺：\lccode<char>：字符的小写码（数字上下文读取）
                 EqSlot::Primitive(Primitive::LcCode) => {
                     self.fetch()?; // 消费 \lccode
@@ -1423,6 +1451,14 @@ impl Expander {
                                 | Primitive::Badness
                                 | Primitive::ETeXVersion
                                 | Primitive::ETeXRevision
+                                // LaTeX 兼容第八刀：pdfTeX 探测整数作数字操作数
+                                // （latex.ltx `\ifnum\pdftexversion=140`；\pdfoutput
+                                //  已由下方 int_param_index 分支覆盖）
+                                | Primitive::PdfTeXVersion
+                                | Primitive::PdfTeXRevision
+                                | Primitive::PdfShellEscape
+                                | Primitive::PdfElapsedTime
+                                | Primitive::PdfRandomSeed
                                 | Primitive::InputLineNo
                                 // TRIP：\parshape 作 dimen 的整数部分（\hangindent- \parshape pt）
                                 | Primitive::Parshape
