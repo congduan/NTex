@@ -669,34 +669,112 @@ saved_if_type: self.cur_if_type,
         }
     }
 
+    /// 关系符扫描（tex.web @<Test relation between integers or dimensions@> 取
+    /// token 用的是 `repeat get_x_token until cur_cmd<>spacer`）：**关系符位置的
+    /// 可展开 filler 先展开再判 `<`/`=`/`>`**。
+    ///
+    /// LaTeX 兼容第十刀：此前直接取字面 token，`\def\z{=}\ifnum0\z 0` 中 `\z`
+    /// 不展开 → "Missing = inserted"、`\z` 放回后 `=` 落到右操作数被当垃圾，
+    /// `0 T` 泄漏为排版文本。expl3-code.tex L193-206 引擎门闩
+    /// `\ifnum0%\expandafter\ifx…=0`（§15.5）同根因——关系符位置是一整段
+    /// 可展开探测链（`\expandafter`+嵌套 `\ifx`）。与第七/八刀（scan_number
+    /// 数字循环的展开/条件聚合）同族、位置不同，此处按 tex.web 另有
+    /// `\if*`/`\else`/`\fi` 条件机推进（step + drain）与未定义 cs 报错当
+    /// relax 两臂。
+    ///
+    /// `\relax`/寄存器/字符等不可展开项落"非关系符"臂放回（tex.web
+    /// back_error；TRIP L390 `\ifdim72p\iftrue` 的直写关系符形式不受影响）。
     fn scan_relation(&mut self, cond: &str) -> Result<Relation> {
-        self.skip_spaces()?;
-        let Some((tok, _)) = self.fetch()? else {
-            // TeX scan_relation：输入耗尽 → 按 = 恢复
-            let _ = self.sink.write16(format!(
-                "! Missing = inserted for \\{cond}.\n\
-                 I was expecting to see `<', `=', or `>'. Didn't.\n"
-            ));
-            return Ok(Relation::Eq);
-        };
-        match tok.charcode() {
-            Some(c) if c == b'<' as u32 => Ok(Relation::Lt),
-            Some(c) if c == b'=' as u32 => Ok(Relation::Eq),
-            Some(c) if c == b'>' as u32 => Ok(Relation::Gt),
-            _ => {
-                // TeX scan_relation：非关系符 → "Missing = inserted for \<cond>"，
-                // token 放回、关系按 = 恢复（TRIP L390 `\ifdim72p\iftrue t1i` 后遇 `1`）
-                let name = tok
-                    .csid()
-                    .map(|id| self.intern.name(id).to_string())
-                    .unwrap_or_else(|| format!("{:?}", tok));
+        loop {
+            self.skip_spaces()?;
+            let Some((tok, noexpand)) = self.fetch()? else {
+                // TeX scan_relation：输入耗尽 → 按 = 恢复
                 let _ = self.sink.write16(format!(
                     "! Missing = inserted for \\{cond}.\n\
-                     <to be read again>\n                   {name}\n\
                      I was expecting to see `<', `=', or `>'. Didn't.\n"
                 ));
-                self.unread(tok);
-                Ok(Relation::Eq)
+                return Ok(Relation::Eq);
+            };
+            // get_x_token 展开语义（同 scan_number 符号循环）：宏（非
+            // protected）/可展开原语展开后重取；未定义 cs 报错当 \relax 继续循环
+            // （tex.web get_x_token 错误恢复）。`\noexpand` 冻结的 token 不展开。
+            //
+            // 跳过区惰性消费（同 scan_number 数字循环的 is_skipping 臂）：关系符
+            // 位置的内层条件被拒分支（`\ifx…\else 1\fi` 的 `1\fi`）由本循环吞掉，
+            // 不得当关系符/右操作数——否则 `\else` 翻 Skipping 后 `1` 报
+            // "Missing ="、`\fi` 被右操作数数字循环吞掉（b 取 0 而非 1）。
+            if self.is_skipping() {
+                if let Some(op) = self.cond_op(tok) {
+                    self.step_conditional(op)?;
+                }
+                continue;
+            }
+            if let Some(csid) = tok.csid() {
+                let expandable = match self.eqtb.slot(csid).clone() {
+                    EqSlot::Undefined => {
+                        let _ = self.sink.write16(format!(
+                            "! Undefined control sequence.\n\\{}\n",
+                            self.intern.name(csid)
+                        ));
+                        true
+                    }
+                    EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
+                    EqSlot::Primitive(p) if p.is_expandable() => true,
+                    _ => false,
+                };
+                if expandable && !noexpand {
+                    let mut expansion = Vec::new();
+                    self.expand_once((tok, false), &mut expansion)?;
+                    if !expansion.is_empty() {
+                        self.stack.push(InputFrame::TokenList {
+                            items: Arc::from(expansion),
+                            pos: 0,
+                        });
+                    }
+                    continue;
+                }
+            }
+            // 条件原语：get_x_token 求值语义。tex.web 关系符取 token 的
+            // `repeat get_x_token until cur_cmd<>spacer` 对 if_test **与**
+            // fi_or_else 都走 expand（max_command<cur_cmd<call）——`\ifx…\relax
+            // \else 1\fi=0` 中 `\else` 不落"非关系符"臂，而是翻转分支帧后跳到
+            // \fi 弹帧（tex.web @<Terminate the current conditional…@>）。故此处
+            // 与 expr.rs \expandafter 臂同款：step_conditional + drain_open_skip。
+            // 注意不可用 maybe_eval_cond（数字扫描版刻意对 \fi/\else/\or 返回
+            // false 放回外层——TRIP L82 十六进制循环的 \fi 属外层未决条件），
+            // 关系符位是展开位置、语义就是 get_x_token 本身。
+            if let Some(op) = self.cond_op(tok) {
+                let before = self.cond_stack.len();
+                self.step_conditional(op)?;
+                if !matches!(op, CondOp::Fi) {
+                    let depth = if matches!(op, CondOp::Else | CondOp::Or) {
+                        before.saturating_sub(1)
+                    } else {
+                        before
+                    };
+                    self.drain_open_skip(depth)?;
+                }
+                continue;
+            }
+            match tok.charcode() {
+                Some(c) if c == b'<' as u32 => return Ok(Relation::Lt),
+                Some(c) if c == b'=' as u32 => return Ok(Relation::Eq),
+                Some(c) if c == b'>' as u32 => return Ok(Relation::Gt),
+                _ => {
+                    // 非关系符 → "Missing = inserted for \<cond>"，token 放回、
+                    // 关系按 = 恢复（tex.web back_error）
+                    let name = tok
+                        .csid()
+                        .map(|id| self.intern.name(id).to_string())
+                        .unwrap_or_else(|| format!("{:?}", tok));
+                    let _ = self.sink.write16(format!(
+                        "! Missing = inserted for \\{cond}.\n\
+                         <to be read again>\n                   {name}\n\
+                         I was expecting to see `<', `=', or `>'. Didn't.\n"
+                    ));
+                    self.unread(tok);
+                    return Ok(Relation::Eq);
+                }
             }
         }
     }

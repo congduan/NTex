@@ -880,3 +880,102 @@ banner 含 NTex 标识。\pdfoutput=1 不报错（ packages 常见赋值路径�
 - 回归：`make check` 全绿（fmt / clippy -D warnings / cargo test --workspace）；
   TRIP/ETRIP 零回归（新原语族独立命名空间，既有"未定义"断言不受影响——
   `\luatexversion` 等其他引擎标记仍保持未定义）。
+
+---
+
+## 16. 2026-09-04 第十轮进展（关系符扫描臂 get_x_token 展开——expl3 L196 引擎门闩越过）
+
+### 16.1 根因与修复落点
+
+tex.web 关系符扫描（`@<Test relation between integers or dimensions@>`，tex.web
+9785 起）取 token 用的不是裸 `get_token`，而是
+`repeat get_x_token until cur_cmd<>spacer`（tex.web 8222）——**关系符位置的可展开
+filler 先展开再判 `<`/`=`/`>`**。引擎此前的 `scan_relation` 直接 `fetch` 字面 token：
+`\def\z{=}\ifnum0\z 0 T\else F\fi` 中 `\z` 不展开 → `! Missing = inserted for \ifnum.`
+→ `\z` 放回后 `=` 落到右操作数被当垃圾 → `=0 T` 泄漏为排版文本（§15.5 最小复现）。
+
+修复 = `crates/ntex-core/src/expand/cond.rs` `scan_relation` 重写为 get_x_token
+循环，三臂（对齐 tex.web `x_token` 的 `expand` 分派表 7690-7691）：
+
+1. **可展开项**：宏（非 protected）/`p.is_expandable()` 原语 → `expand_once` +
+   TokenList 压栈重取；未定义 cs 报 `! Undefined control sequence.` 当 `\relax`
+   继续循环（get_x_token 错误恢复）。`\noexpand` 冻结 token 不展开。
+2. **条件原语（if_test **与** fi_or_else 都走 expand）**：`\ifx…\else 1\fi` 的
+   `\else` 不落"非关系符"臂，而是 `step_conditional` + `drain_open_skip` 跳到
+   `\fi` 弹帧（tex.web `@<Terminate the current conditional…@>`，9894-9903）。
+   **不可用 `maybe_eval_cond`**（数字扫描版刻意对 `\fi`/`\else`/`\or` 返回 false
+   放回外层——TRIP L82 十六进制循环的 `\fi` 属外层未决条件）；关系符位是
+   **展开位置**，语义就是 get_x_token 本身。此处与 `expr.rs` `\expandafter` 臂
+   同款惯用法（step + drain，含 Else/Or 的 `depth-1`）。
+3. **非关系符恢复臂不变**：`<`/`=`/`>` 直写形式（TRIP 大量用例面）零改动；
+   其余 token 仍报 `Missing = inserted`、放回、按 `=` 恢复（back_error）。
+
+**第二根因（同点补出）**：`\else` 翻 Skipping 后是**惰性跳过**模型，扫描循环必须
+自带 `is_skipping` 臂（与 `scan_number` 数字循环 438-443 同款）——否则被拒分支的
+`1` 被当垃圾报 `Missing =`、`\fi` 被右操作数数字循环吞掉（`b` 取 0 而非 1）。
+两臂缺一则复现用例分别停在 `=0 T` / `F`。
+
+### 16.2 实测（latex_probe，latex.ltx 2026-06-01 + l3kernel 2026-08-10）
+
+| 模式 | 修复前 | 修复后 | 变化 |
+|---|---|---|---|
+| 非 initex（=第九轮基线口径） | 26 错误行 | **24** | **恰去 2 行** |
+| `--initex` | —（基线未留同模式转录） | **23** | 同比去 2 行 |
+
+去掉的 2 行**全部**来自 expl3-code.tex L193-206 门闩（签名比对确认，其余错误签名
+逐一相同 → **零连带变化**）：
+
+- `! Missing = inserted for \ifnum.` `<to be read again> expandafter`
+- 其下游 `! Missing number, treated as zero.`（`l.196 = 0 %`）
+
+`\ifnum0%\expandafter\ifx\csname luatexversion\endcsname\relax…=0` 现按真实
+TeX 语义求值：`\csname` 未定义名 = `\relax`（第六刀）→ 内层 `\ifx` 真 → 分支产出
+空 → `=0` 在关系符位就位 → 门闩聚合真。终态不变：pass1 ERROR（`\advance 目标必须
+是寄存器或内部参数`）、dumped=false。
+
+### 16.3 单测（`crates/ntex-core/src/expand/tests.rs` 新增 3 测）
+
+`ifnum_relation_position_expands_filler`（`\def\z{=}` 两向 + `<`/`>` 同族 +
+`\ifdim`）、`ifnum_relation_position_evaluates_nested_cond`（L196 门闩原形两向 +
+`\iftrue`/`\iffalse…\else` 在关系符位求值）、`ifnum_relation_literal_forms_unchanged`
+（`<`/`=`/`>` 直写 + 数字 char 落非关系符臂的 back_error 恢复）。
+
+### 16.4 级联证伪 + 下一真实阻塞点
+
+**L341/364/398/819 级联 ≠ 本根因**（任务简报的"疑似同根因"证伪）：修复后
+`! Extra \else.`（l.341）/`! Extra \fi.`（l.364）/`! Missing control sequence
+inserted.`+`! Too many }'s.`（l.398 `\ifeof`）/`! You can't use \/ in vertical
+mode.`/`\over`/`\tex_accent:D` undefined/l.819 全部原样保留。真根因在
+**expl3-code.tex `\__kernel_primitive:NN` 别名表（l3names.dtx，L279-830）**：
+
+```
+\long \def \__kernel_primitive:NN #1#2 { \tex_global:D \tex_let:D #2 #1 }
+\__kernel_primitive:NN \else     \tex_else:D      % ← l.341
+\__kernel_primitive:NN \fi       \tex_fi:D        % ← l.364
+\__kernel_primitive:NN \ifeof    \tex_ifeof:D     % ← l.398
+```
+
+`\else`/`\fi`/`\or` 在这里是**宏实参数据**（`#1`），但 NTex 实参扫描把它们当
+"外层条件终结符"交给条件机并丢弃：
+`collect_undelimited_arg`（`crates/ntex-core/src/expand/macros.rs:255`）对
+Else/Fi/Or 无条件 `step_conditional` 后 recurse → `! Extra \else.`/`! Extra \fi.`，
+且实参错位一格（`#1` 吃到 `\tex_else:D`，后续表项连锁错位 → l.398/`\/`/`\over`/
+`\accent` 等签名）；定界版 `collect_args`（macros.rs:130-180）同款。**真实 TeX 的
+宏实参扫描不展开任何 token**（tex.web `scan_args` 用 `get_token`）——`\fi` 只在
+"闭合本次实参扫描之前已开启的帧"时才该交条件机，判定须带归属
+（`owns_skip`/帧 line 归属，与第六/七轮 `drain_open_skip` 的边界同源）。
+次级问题同域：`collect_args` 的 If\* 白名单缺 IfEof/IfVoid/IfHBox/IfVBox/IfInner/
+IfVMode/IfHMode/IfMMode/IfFontChar（`\ifeof` 作实参被就地求值而非当数据）。
+
+**下一刀首选**：`collect_undelimited_arg`/`collect_args` 的 fi_or_else 归属判定
+（`\else`/`\fi`/`\or` 是否属本次实参扫描之前开启的外层帧——用帧的 line/归属标记
+而非裸 `arg_cond` 计数），预期一次性消掉 l.341/364/398 及其连锁签名。次选：
+`\PackageError` 早启 fallback（expl3-code.tex L208-215，`\lowercase` + `\catcode`
+`\ =11` + 空格命名 cs 的 `\def\PackageError`）未生效 → l.220
+`\protected\edef\ExplSyntaxOff` 的 `\PackageError`/`\ShortText`/`\LongText`
+undefined 三连。
+
+**勘误（基线口径）**：§15.3/§15.5 引用的"pass1 ERROR（级联下游）"转录是非 initex
+模式产物；`--initex` 模式初始 catcode 表不同（`\ifnum\catcode`\{=1` 假 → 不触发
+"LaTeX must be made using an initex" 误报），两模式错误行数 24/23。后续轮次对比
+须锁定同一模式。

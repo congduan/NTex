@@ -803,6 +803,76 @@ mod tests {
     }
 
     #[test]
+    fn ifnum_relation_position_expands_filler() {
+        // LaTeX 兼容第十刀：关系符位置 = tex.web `repeat get_x_token until
+        // cur_cmd<>spacer`——可展开 filler（`\def\z{=}`）先展开再判 < = >。
+        // 修复前 `\z` 不展开 → "Missing = inserted"、`=` 落到右操作数被当垃圾，
+        // `0 T` 泄漏为排版文本（docs/latex-feasibility.md §15.5 最小复现）。
+        assert_eq!(expand("\\def\\z{=}\\ifnum0\\z 0 T\\else F\\fi").unwrap(), "T");
+        assert_eq!(expand("\\def\\z{=}\\ifnum0\\z 1 T\\else F\\fi").unwrap(), "F");
+        // < > 同族（filler 两向）
+        assert_eq!(expand("\\def\\lt{<}\\ifnum1\\lt 2 T\\else F\\fi").unwrap(), "T");
+        assert_eq!(expand("\\def\\lt{<}\\ifnum2\\lt 1 T\\else F\\fi").unwrap(), "F");
+        assert_eq!(expand("\\def\\gt{>}\\ifnum2\\gt 1 T\\else F\\fi").unwrap(), "T");
+        assert_eq!(expand("\\def\\gt{>}\\ifnum1\\gt 2 T\\else F\\fi").unwrap(), "F");
+        // \ifdim 同款
+        assert_eq!(
+            expand("\\def\\eq{=}\\ifdim1pt\\eq 1pt T\\else F\\fi").unwrap(),
+            "T"
+        );
+        assert_eq!(
+            expand("\\def\\eq{=}\\ifdim1pt\\eq 2pt T\\else F\\fi").unwrap(),
+            "F"
+        );
+    }
+
+    #[test]
+    fn ifnum_relation_position_evaluates_nested_cond() {
+        // expl3-code.tex L193-206 引擎门闩原形：关系符位置是可展开探测链
+        // `\expandafter\ifx\csname <引擎标记>\endcsname\relax…=0`。修复前此处报
+        // "Missing = inserted for \ifnum"（<to be read again> expandafter），
+        // \else/\fi 被悬挂条件机吞掉、后续 \__kernel_primitive:NN 映射表级联。
+        // \luatexversion 未定义（引擎栅栏契约）→ \csname 未定义名 = \relax
+        // （第六刀）→ \ifx 真、分支产出空 → `=0` 在关系符位就位。
+        assert_eq!(
+            expand(concat!(
+                "\\ifnum0\\expandafter\\ifx\\csname luatexversion\\endcsname\\relax",
+                "\\else 1\\fi=0 T\\else F\\fi"
+            ))
+            .unwrap(),
+            "T"
+        );
+        // 同形反向：\csname 展开为已定义的非 relax 原语 → \ifx 假 → \else 产出
+        // `1` → 落"非关系符"臂（token 放回、按 = 恢复）→ 0=1 假
+        assert_eq!(
+            expand(concat!(
+                "\\ifnum0\\expandafter\\ifx\\csname numexpr\\endcsname\\relax",
+                "\\else 1\\fi=0 T\\else F\\fi"
+            ))
+            .unwrap(),
+            "F"
+        );
+        // 条件原语在关系符位置直接求值：真分支产出关系符
+        assert_eq!(expand("\\ifnum1\\iftrue=\\fi 1 T\\else F\\fi").unwrap(), "T");
+        // 假分支跳过、\else 后产出关系符
+        assert_eq!(
+            expand("\\ifnum1\\iffalse<\\else=\\fi 1 T\\else F\\fi").unwrap(),
+            "T"
+        );
+    }
+
+    #[test]
+    fn ifnum_relation_literal_forms_unchanged() {
+        // 零回归护栏：关系符直写形式（TRIP 大量用例面）行为不变
+        assert_eq!(expand("\\ifnum3>2 yes\\else no\\fi").unwrap(), "yes");
+        assert_eq!(expand("\\ifnum4<4 yes\\else no\\fi").unwrap(), "no");
+        assert_eq!(expand("\\ifdim5pt=5pt y\\else n\\fi").unwrap(), "y");
+        // 非关系符（数字 char）在关系符位：报 "Missing = inserted"、token 放回、
+        // 按 = 恢复（tex.web back_error）——1pt=2pt 假
+        assert_eq!(expand("\\ifdim1pt 2pt y\\else n\\fi").unwrap(), "n");
+    }
+
+    #[test]
     fn ifnum_gluestretchorder_repro() {
         // ETRIP etrip.tex L938：\ifnum\gluestretchorder#5=#1
         assert_eq!(
