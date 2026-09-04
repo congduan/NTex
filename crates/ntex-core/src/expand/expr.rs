@@ -26,7 +26,21 @@ impl Expander {
         // （tex.web expand 的 fi_or_else 分支）——消耗该 token 并推进条件机，
         // 不重新输出（否则会被宏实参扫描吞掉，如 `\expandafter\2\fi`）。
         if let Some(op) = self.cond_op(t2.0) {
+            // tex.web：`\expandafter` 对第二个 token 走 get_x_token → expand，
+            // 分支跳过（false 的 \if*、\else/\or 的待弃分支）是**就地**完成的，
+            // 随后才把 t1 放回输入。主循环的惰性跳过会在 t1 落回时把它吞掉
+            // （\e@alloc 的 `\global\ifnum…\expandafter\chardef\else…\fi`），
+            // 故展开上下文里必须急切消费（见 drain_open_skip）。
+            let before = self.cond_stack.len();
             self.step_conditional(op)?;
+            if !matches!(op, CondOp::Fi) {
+                let depth = if matches!(op, CondOp::Else | CondOp::Or) {
+                    before.saturating_sub(1)
+                } else {
+                    before
+                };
+                self.drain_open_skip(depth)?;
+            }
             // 前面的 token 照常输出（t1）
             let seq = vec![t1];
             self.stack.push(InputFrame::TokenList {
@@ -78,9 +92,19 @@ impl Expander {
                         .fetch()?
                         .ok_or_else(|| Error::invalid_input("\\expandafter 链中断"))?;
                     out.push(a);
-                    // \else/\fi/\or：TeX expand() 的 fi_or_else 分支（展开为空格并推进条件机）
+                    // \else/\fi/\or：TeX expand() 的 fi_or_else 分支（展开为空格并推进条件机）；
+                    // 开着的跳过区同样就地消费（见 exec_expandafter 的说明）
                     if let Some(op) = self.cond_op(b.0) {
+                        let before = self.cond_stack.len();
                         self.step_conditional(op)?;
+                        if !matches!(op, CondOp::Fi) {
+                            let depth = if matches!(op, CondOp::Else | CondOp::Or) {
+                                before.saturating_sub(1)
+                            } else {
+                                before
+                            };
+                            self.drain_open_skip(depth)?;
+                        }
                     } else {
                         self.expand_once(b, out)?;
                     }

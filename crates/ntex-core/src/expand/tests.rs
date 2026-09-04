@@ -1666,6 +1666,86 @@ I changed this one to zero.
         assert_eq!(expand(src).unwrap(), "YY");
     }
 
+    // ─── \global 前缀与赋值之间的可展开序列（LaTeX 兼容第三刀）─────────────
+    // tex.web：前缀只置标志（prefixed_command 的前缀循环），赋值发生在主循环
+    // 后续 token——前缀与赋值原语之间可以隔条件、\expandafter 链、宏展开。
+    // latex.ltx L488 `\newbox\voidb@x` → `\e@alloc` 的
+    // `\global#2#6\allocationnumber`（#2 = `\ifnum…\expandafter\chardef\else…\fi`）
+    // 即依赖此语义。
+
+    #[test]
+    fn global_prefix_through_conditional_assign_target() {
+        // 条件选择的赋值目标（\newbox/\e@alloc 的真实形态）
+        assert_eq!(
+            expand("\\global\\ifnum1=1\\chardef\\x=3\\else\\chardef\\x=4\\fi\\the\\x").unwrap(),
+            "3"
+        );
+        // else 分支同样到达赋值
+        assert_eq!(
+            expand("\\countdef\\n=0 \\n=7 \\global\\ifnum\\n>8\\chardef\\x=3\\else\\chardef\\x=4\\fi\\the\\x")
+                .unwrap(),
+            "4"
+        );
+        // \global 确实全局：组外可见
+        assert_eq!(
+            expand("\\begingroup\\global\\ifnum1=1\\count0=5\\else\\relax\\fi\\endgroup\\the\\count0")
+                .unwrap(),
+            "5"
+        );
+    }
+
+    #[test]
+    fn global_prefix_through_expandable_chain() {
+        // \expandafter\chardef\csname…（\e@alloc@chardef 分支的形态）
+        assert_eq!(
+            expand("\\global\\expandafter\\chardef\\csname y\\endcsname=5\\the\\y").unwrap(),
+            "5"
+        );
+        // \relax 在前缀与赋值之间（tex.web 前缀循环跳过 \relax）
+        assert_eq!(expand("\\global\\relax\\chardef\\r=9\\the\\r").unwrap(), "9");
+        // 前缀 → 宏展开 → 赋值（TeX：前缀标志不随宏展开丢失）
+        assert_eq!(expand("\\def\\z{\\chardef\\q=7}\\global\\z\\the\\q").unwrap(), "7");
+    }
+
+    #[test]
+    fn expandafer_before_conditional_terminator_keeps_first_token() {
+        // `\expandafter` 的第二 token 是 \else：tex.web expand() 的 fi_or_else
+        // 处理是急切的（pass_text 消费到配对 \fi 后弹帧），t1 放回时**不得**被
+        // 惰性跳过区吞掉——否则 \chardef 消失、赋值目标落空（latex.ltx L488）。
+        assert_eq!(
+            expand("\\ifnum1=1\\expandafter\\chardef\\else\\relax\\fi\\a 1\\the\\a").unwrap(),
+            "1"
+        );
+        // \edef 展开上下文：\chardef 作为数据进入宏体
+        assert_eq!(
+            expand("\\edef\\b{\\ifnum1=1\\expandafter\\chardef\\else\\relax\\fi}\\meaning\\b").unwrap(),
+            "macro:->\\chardef"
+        );
+        // 嵌套条件：内层 \else 的急切消费只闭合内层帧，外层分支继续
+        assert_eq!(
+            expand(
+                "\\ifnum1=1\\ifnum1=1\\expandafter\\chardef\\else\\relax\\fi\\a 2\\else\\relax\\fi\\the\\a"
+            )
+            .unwrap(),
+            "2"
+        );
+    }
+
+    #[test]
+    fn globaldefs_param_adjusts_assignment_scope() {
+        // tex.web prefixed_command：\globaldefs>0 → 所有赋值隐式全局；<0 →
+        // 取消显式 \global（局部化）
+        assert_eq!(
+            expand("\\count0=0\\begingroup\\globaldefs=1 \\count0=5\\endgroup\\the\\count0").unwrap(),
+            "5"
+        );
+        assert_eq!(
+            expand("\\count1=0\\begingroup\\globaldefs=-1 \\global\\count1=6\\endgroup\\the\\count1")
+                .unwrap(),
+            "0"
+        );
+    }
+
     #[test]
     fn count_local_and_global_scoping() {
         let local = "\\count0=1\\begingroup\\count0=2\\the\\count0\\endgroup\\the\\count0";

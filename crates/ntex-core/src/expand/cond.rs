@@ -326,6 +326,46 @@ saved_if_type: self.cur_if_type,
         }
     }
 
+    /// 展开上下文里"开着的跳过区"的急切消费（tex.web `expand`：`\else`/`\or`
+    /// 的 `fi_or_else` 处理是 `while cur_chr<>fi_code do pass_text; pop`，
+    /// false 的 `\if*` 也由 `conditional` 就地 `pass_text`——分支从不滞留）。
+    ///
+    /// 主循环对"待丢弃的分支"是**惰性**跳过（`process_one` 逐 token 丢弃、
+    /// `\fi` 到来才弹帧），在逐 token 路径上与 tex.web 等价。但 `\expandafter`
+    /// 会把 token 推回输入流——若推回时条件帧仍处于 Skipping，推回的 token
+    /// 会被惰性跳过区吞掉（latex.ltx L488 `\newbox` → `\e@alloc` 的
+    /// `\global\ifnum…\expandafter\chardef\else…\fi\voidb@x\allocationnumber`
+    /// 即此：`\chardef` 被吞、`\voidb@x` 落空成 undefined）。展开上下文
+    /// （`exec_expandafter` / `expand_once` 的 Expandafter 臂）在推进条件机后
+    /// 用本函数把仍开着的跳过区就地消费，对齐 tex.web 的急切语义。
+    ///
+    /// `depth` 是刚进入 Skipping 的条件帧下标（调用前的 `cond_stack.len()`，
+    /// `\else`/`\or` 为 len-1）。消费直到该帧**离开 Skipping**：`\fi` 弹出它，
+    /// 或 `\ifcase` 的 `\or` 选中分支（回到 Processing——选中分支必须保持活）。
+    /// 期间：普通 token 丢弃（不展开、不执行、不报错——pass_text 语义）；
+    /// 嵌套 `\if*` 经条件机压惰性 Skipping 帧（等价 pass_text 的 `incr(l)`）；
+    /// 本层级的 `\else`/`\or` 继续跳（`while cur_chr<>fi_code`）。输入耗尽不报
+    /// 错——帧保持 Skipping，交给 `\end`/EOF 的 `Incomplete \if` 收口（与主
+    /// 循环惰性路径一致）。
+    fn drain_open_skip(&mut self, depth: usize) -> Result<()> {
+        while self
+            .cond_stack
+            .get(depth)
+            .is_some_and(|f| f.state == CondState::Skipping)
+        {
+            let Some((tok, noexpand)) = self.fetch()? else {
+                return Ok(());
+            };
+            if noexpand {
+                continue;
+            }
+            if let Some(op) = self.cond_op(tok) {
+                self.step_conditional(op)?;
+            }
+        }
+        Ok(())
+    }
+
     /// 跳过结束于本条件的 `\else`/`\or` 时进入该分支。
     fn enter_skipped_branch(
         &mut self,

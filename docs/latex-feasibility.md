@@ -376,3 +376,101 @@ Please type another input file name
 - 回归：`make check`（fmt/clippy/test）全绿；`cargo run -p ntex-trip -- --driver
   ntex` 仍停在 HEAD 已知的数学组错误（`group_end 无配对 group_begin`），无写
   通道相关新错误。
+
+---
+
+## 10. 2026-09-04 第四轮进展（`\global` 前缀链打通——L488 分配区越过）
+
+> 本刀任务假设"`\global` 后接条件式赋值目标"是引擎缺口。**实测推翻**：主循环
+> 天然支持前缀后隔可展开序列（`\global` 只置 `global_pending` 标志，`\ifnum`/
+> `\expandafter`/宏展开由主循环逐 token 处理，标志持续到真赋值原语消费）。
+> **真实根因在别处**：`\expandafter` 的第二 token 是 `\else`/`\or` 时，推回输入
+> 的第一 token 被惰性跳过区吞掉。
+
+### 10.1 真实根因：`\expandafter` 前置 token 被惰性跳过区吞掉
+
+tex.web 有**两条**"跳过分支"语义，本引擎只实现了惰性那条：
+
+| tex.web | 语义 | 引擎现状 |
+|---|---|---|
+| `expand()` 的 `fi_or_else` | `while cur_chr<>fi_code do pass_text; pop`——分支**就地消费**到配对 `\fi` 后立刻弹帧 | `\else`/`\or` 只把帧转 `Skipping`，分支 token 由主循环逐 token 丢弃（`process_one` 的 `is_skipping`）、`\fi` 到来才弹帧——**惰性** |
+| `conditional()` 的 false 分支 | 立即 `pass_text` 到 `\else`/`\fi` | 已实现（`skip_ahead`，急切）✓ |
+| 主循环逐 token 路径 | — | 惰性与急切**等价**（token 顺序不变、无推回）✓ |
+
+惰性实现只在"**跳过区开着的同一时刻有 token 被推回输入**"时出错——即
+`\expandafter`（tex.web：`get_token; get_token; if cur_cmd>max_command then expand;
+back_input; cur_tok:=t; back_input`）。展开 `\else` 时分支就地消费完毕、帧弹出
+**之后**才放回 `t`；而引擎放回 `t` 时帧仍 `Skipping`，主循环随即将 `t` 丢弃。
+
+`latex.ltx` L488 `\newbox\voidb@x` 的展开链正是此形态（`ltplain.dtx` `\e@alloc`）：
+
+```tex
+\global\ifnum\allocationnumber<\@cclvi
+       \expandafter\chardef   \else   % ← \expandafter 的第二 token 是 \else
+       \expandafter\e@alloc@chardef\fi
+  \voidb@x\allocationnumber           % ← 赋值目标随后
+```
+
+引擎行为：`\chardef` 被吞 → `\voidb@x` 在主循环当未定义 cs 报错 →
+`\allocationnumber`（`\countdef`'d）被当赋值目标执行 → 数量扫描撞上 `\wlog`
+的 `\immediate` → `! Missing number`。转录即 §9.3 所记 L488 级联。
+
+**修复**（`expand/cond.rs` 新增 `drain_open_skip(depth)`；`expand/expr.rs` 的
+`exec_expandafter` 与 `expand_once` 的 Expandafter 臂调用）：
+
+- 推进条件机后，若刚进入 `Skipping` 的帧（`\else`/`\or` 转换的栈顶帧，或
+  `\if*`/`\ifcase` 新压帧）仍在跳过，就**就地消费**分支 token（不展开、不执行、
+  不报错——`pass_text` 语义），直到该帧被 `\fi` 弹出或 `\ifcase` 的 `\or`
+  选中分支（回到 `Processing`，选中分支必须保持活）。
+- 嵌套 `\if*` 经条件机压惰性 Skipping 帧（等价 `pass_text` 的 `incr(l)`）；
+  本层 `\else`/`\or` 继续跳（`while cur_chr<>fi_code`）。
+- 输入耗尽不报错：帧保持 `Skipping`，交给 `\end`/EOF 的 `Incomplete \if` 收口
+  （与主循环惰性路径一致）。
+- **主循环的惰性跳过保持原样**（`\tracingcommands` 对 `\fi` 的追踪行为不变，
+  TRIP/ETRIP 转录零回归），仅展开上下文改急切。
+
+### 10.2 `\global` 前缀语义核查（对照 tex.web `prefixed_command`）
+
+前缀组合全部按主循环语义工作（新增单测锁定）：
+
+| 用例 | 结果 |
+|---|---|
+| `\global\ifnum1=1\chardef\x=3\else\chardef\x=4\fi` | ✓ x=3（else 分支同样 ✓）|
+| `\global\expandafter\chardef\csname y\endcsname=5` | ✓ y=5 |
+| `\global\relax\chardef\r=9`（tex.web 前缀循环跳 `\relax`）| ✓ |
+| `\global\z`（`\z` 展开为 `\chardef\q=7`：标志不随宏展开丢失）| ✓ |
+| `\global\ifnum…` 组内赋值 → 组外可见（真全局）| ✓ |
+
+**顺带补齐**：`\globaldefs`（tex.web `prefixed_command` 的 `Adjust for \globaldefs`）
+此前只注册不生效——`is_global()` 现按 tex.web 语义处理（`>0` 所有赋值隐式全局、
+`<0` 取消显式 `\global`）。该函数是全部 26 处赋值路径的唯一作用域收口点，
+latex.ltx L12804/L13103/L13168 的 `\globaldefs\@ne` 后续需要它。
+
+**未做（记录）**：tex.web 对"前缀后接不可加前缀命令"的报错
+`! You can't use a prefix with `\unskip'.`（TRIP L345）引擎仍未实现；当前
+`\global\unskip` 会把 `global_pending` **泄漏**给下一个赋值。需要"可加前缀命令"
+分类表（`max_non_prefixed_command` 语义），本刀未动。
+
+### 10.3 阻塞点刷新（第四轮）
+
+| # | 状态 | 说明 |
+|---|---|---|
+| L488 分配区 | **已越过** | `\newbox\voidb@x` 正常：转录 `\voidb@x =\box 10`（真实 TeX 同款 `\wlog` 行）；错误总数 2576 → 2564 |
+| **新（next）** | **L532 `\boxmaxdepth=\maxdimen`** | `scan_dimen_inner` 认 `\skipdef`/`\muskipdef`'d cs 作尺寸值，**不认 `\dimendef`'d cs**（tex.web `scan_dimen` 的 `<internal dimen>` 分支：`cur_cmd=assign_dimen` → 直接取 `eqtb[].sc`）。最小复现：`\dimendef\m=10 \m=100pt \hsize=\m` → `! Missing number, treated as zero. <to be read again> \m`。**级联**：报错后 `\m` 被放回输入 → 主循环把它当赋值目标执行 → 吞掉后续 `=<值>` 并改写 `\m` 自身 → L532–L547 连锁 6 条 `Missing number` + 1 条 `Missing {`（后者插入的 `{` 使组嵌套偏移，是 L16789+ 症状的疑似源头）。**属扫描器语义，本刀禁改**——修复面极小（在 `scan_dimen_inner` 补一个 `RegKind::Dimen` 臂，与既有 Skip/Muskip 臂同构），下一刀首选 |
+| 下游症状 | 未动 | L16789 `! Too many }'s.`、L16792+ `\@namedef`/`\newif` undefined（定义被组回滚的形态）、L17474 `\@inmatherr` 级联 2492 条（`dumped=false`）——待 L532 修复后重测，判断是否随之消失 |
+| `^^J` / `\today` | 复核仍在 | L301/L302 `\string^^J` → `\` + undefined（LF=5 行模型，§9.3）；转录头 `BAD: old file … (should be  2026/09/04…)` 双空格（`\today` 展开差空格 → `\@currdir` 取 `.`）。均非致命，本刀未处理 |
+
+### 10.4 本轮改动清单
+
+- `crates/ntex-core/src/expand/cond.rs`：新增 `drain_open_skip(depth)`（展开上下文的
+  急切分支消费；`pass_text` 语义）。
+- `crates/ntex-core/src/expand/expr.rs`：`exec_expandafter` 与 `expand_once` 的
+  Expandafter 臂在推进条件机后调用它（`\fi` 不需要：立即弹帧、无分支滞留）。
+- `crates/ntex-core/src/expand/save.rs`：`is_global()` 补 `\globaldefs` 语义。
+- `crates/ntex-core/src/expand/tests.rs`：新增 4 个用例（条件选赋值目标 ×2、
+  可展开链、`\expandafter`+`\else` 的 t1 保全（主循环 / `\edef` / 嵌套条件）、
+  `\globaldefs` 正负两向）。
+- 回归：`make check`（fmt/clippy/test）全绿；`cargo run -p ntex-trip -- --driver
+  ntex`（trip + etrip 两路）在 HEAD 与本刀下输出**逐字节一致**（仅 systemd unit
+  名/临时目录名/耗时内存行不同），仍停在 HEAD 已知的数学组错误
+  （`group_end 无配对 group_begin`）。

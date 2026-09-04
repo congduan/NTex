@@ -1213,10 +1213,18 @@ impl Expander {
     }
 
     /// 消费 `\global` 前缀（每个赋值只消费一次）。
+    ///
+    /// tex.web `prefixed_command` 的 `\globaldefs` 调整：`>0` 时所有赋值
+    /// 隐式全局化；`<0` 时取消显式 `\global`（局部化）。所有赋值路径（def/let/
+    /// 寄存器/chardef 族/字体/参数）都经此处取作用域，是唯一收口点。
     fn is_global(&mut self) -> bool {
         let g = self.global_pending;
         self.global_pending = false;
-        g
+        match self.params.misc[36] {
+            n if n < 0 => false, // \globaldefs<0：显式 \global 也被取消
+            0 => g,
+            _ => true, // \globaldefs>0：隐式 \global
+        }
     }
 
     /// 赋值完成后触发 `\\afterassignment`。
