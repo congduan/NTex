@@ -810,21 +810,31 @@ saved_if_type: self.cur_if_type,
                     }
                     continue;
                 }
-                // LaTeX 兼容第十六刀：条件原语在操作数位同样走 get_x_token →
-                // expand 的 if_test/fi_or_else 分支——**真实求值**并推进条件机，
-                // 而非落"不可展开 cs → 非字符哨兵"。此前嵌套条件不建帧，其
-                // `\else:`/`\fi:` 之后再打到主条件机 → 帧失衡（Extra \else/Extra
-                // \fi）。expl3 变体生成循环
-                // `\if:w #4 \__cs_generate_variant_loop_base:N #2 \else:`
-                // （expl3-code.tex l.2896）的右操作数展开体含 9 层嵌套 `\if:w`
-                // （`\__cs_generate_variant_loop_base:N`），首调用
-                // `\cs_generate_variant:Nn` 即触发 `Extra \else` 级联
-                // （expl3 l.3245-3324，见报告 §22.1）。与 scan_relation 臂同款：
-                // step_conditional + drain_open_skip（展开位置须急切消费跳过区，
-                // 见 expr.rs \expandafter 臂说明）。`\noexpand` 冻结的条件 token
-                // 仍是数据（tex.web get_x_token 的 frozen_dont_expand 不展开）。
-                // 别名链（expl3 的 `\if:w` = `\tex_let:D \if:w \if`）须解到原语——
-                // cond_op 只认 Primitive 槽，不解析 Alias。
+                // LaTeX 兼容第十六刀回归收敛（§22）：字符/类型操作数位的条件
+                // token 分两类处置——
+                //
+                // 1. `\else`/`\fi`/`\or`（fi_or_else 族）**必须**进条件机：
+                //    tex.web get_x_token 对 fi_or_else 走 expand →
+                //    @<Terminate the current conditional and skip to \fi@>，
+                //    本条件（栈顶 Evaluating）未决时 insert_relax——TRIP l.313
+                //    `\if\the\badness\fi\message{…}` 的 `\fi` 在本 `\if`
+                //    操作数位到来，靠此门回退 + frozen `\relax` 收口本条件；
+                //    4f45101 曾连同嵌套 `\if*` 一起路由（d672423 臂），TRIP
+                //    三个 if_operand 测试与 l.313 均锁此行为。
+                // 2. 嵌套 `\if*`（if_test 族）**维持数据语义**（非字符哨兵）：
+                //    d672423 按字面 get_x_token 在此就地求值，实测与实参抓取/
+                //    `c` 变换/csname 机器失配（它们按"条件 token = 数据"约定
+                //    校准）——开口条件帧跨操作数边界存活，后续定界实参扫描在
+                //    错位 token 流上配对：expl3 `\cs_if_free:cT { exp_args:Nc }`
+                //    （l.3027）的 csname 文本被污染成 `{exp_args:Nc}`（带花括
+                //    号）→ 误判未定义 → 对已存在的 `\exp_args:Nc` 重复 `\cs_new`
+                //    → kernel command-already-defined fatal（expl3-code.tex
+                //    l.3246 `\cs_generate_variant:Nn \cs_replacement_spec:N
+                //    { c }`，2026-09-05 二分复现 b7aeeba 过/HEAD 挂）。与 tex.web
+                //    的残差（真 TeX 会求值操作数位嵌套条件，V1 应出 "X T"）记
+                //    docs/latex-feasibility.md §22.3，待实参抓取层对齐后重开。
+                //    别名链（`\if:w` = `\tex_let:D \if:w \if`）须解到原语——
+                //    cond_op 只认 Primitive 槽，不解析 Alias。
                 if !noexpand {
                     let mut walk = csid;
                     let op = loop {
@@ -835,13 +845,10 @@ saved_if_type: self.cur_if_type,
                         }
                     };
                     if let Some(op) = op {
-                        // tex.web get_x_token：操作数位的条件**真实求值但帧保留**
-                        // ——被拒分支文本留在输入流由帧机制自然跳过，\else:/i:
-                        // 的配平由调用侧体首 i: 收（expl3 loop_invalid 的
-                        // i:i:i: idiom）。不得 drain（吞被拒分支会越过
-                        // 调用侧边界）。
-                        self.step_conditional(op, tok)?;
-                        continue;
+                        if matches!(op, CondOp::Fi | CondOp::Else | CondOp::Or) {
+                            self.step_conditional(op, tok)?;
+                            continue;
+                        }
                     }
                 }
                 if noexpand {

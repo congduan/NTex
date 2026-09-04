@@ -2070,27 +2070,38 @@ I changed this one to zero.
         assert_eq!(expand(r"\if aa T\else F\fi").unwrap().trim(), "T");
     }
 
-    // ---------- LaTeX 兼容第十六刀：\if 操作数位的嵌套条件真实求值（报告 §22） ----------
+    // ---------- 第十六刀回归收敛：\if 字符操作数位的嵌套条件 = 数据（§22.3） ----------
 
-    /// tex.web `conditional`（§L9716）：`expand` 遇 `if_test` **递归真实求值**——
-    /// 帧照常建立；假支由 `pass_text` 跳到本帧 `\else`（else 支文本留流）或
-    /// `\fi`（帧直接出栈、`\fi` 被消费）；真支文本原样留流。操作数位的 `\if*`
-    /// 因此不是哨兵：get_x_token 继续读分支文本首 token 作操作数。
-    /// 下列期望值均为真实 TeX ground truth（tex -interaction=nonstopmode，
-    /// TeXLive 2024，2026-09-05 变体实验 V1-V4 复核）。
+    /// d672423 曾把操作数位的 `\if*` 改为就地真实求值（tex.web get_x_token 字面
+    /// 语义），实测与实参抓取/csname 机器失配致 expl3 l.3246 fatal（§22.2），
+    /// 本测试改锁恢复后的**数据语义**：操作数位的条件 token 落非字符哨兵
+    /// （cs vs 哨兵恒假）。期望值为恢复后引擎与 b7aeeba 的逐点一致输出
+    /// （2026-09-05 vtest 双二进制复核）。与真实 TeX 的残差（真实 TeX 会展开
+    /// 求值，V1 应输出 "X T"）记 docs/latex-feasibility.md §22.3，待实参抓取
+    /// 层整体对齐 get_x_token 后重开本测试为求值语义。
     #[test]
-    fn if_operand_evaluates_nested_conditional_not_sentinel() {
-        // V1：嵌套假（c vs 空格，见 V3 注）→ 跳到 \else，else 支首 token `n`
-        // 即外层操作数（n vs n 真）；嵌套帧的 \fi 由主循环收口 → 输出 "X T"
-        assert_eq!(expand(r"\if n\if c o N\else n\fi X T\else F\fi").unwrap(), "X T");
-        // V2：同 V1 但 else 支首 token=m → n vs m 假 → F
-        assert_eq!(expand(r"\if n\if c o N\else m\fi X T\else F\fi").unwrap(), "F");
-        // V3：嵌套真（c=c）→ 真支留流，但操作数取到的是 `N` 前的 cat-10
-        // **空格**（"字符"含 spacer）→ n vs 空格 假 → F
-        assert_eq!(expand(r"\if n\if c c N\else m\fi n T\else F\fi").unwrap(), "F");
-        // V4：嵌套假且无 \else → pass_text 直达 \fi，嵌套帧彻底出栈 →
-        // 操作数 = 后续 `X` → n vs X 假 → F
-        assert_eq!(expand(r"\if n\if c o N\fi X T\else F\fi").unwrap(), "F");
+    fn if_operand_nested_conditional_stays_sentinel() {
+        // V1：嵌套 \if 当哨兵 → 外层 n vs 哨兵假 → 外层假支 F 活；分支残余
+        // 文本 `n X T` 照排（b7aeeba 一致行为）
+        assert_eq!(
+            expand(r"\if n\if c o N\else n\fi X T\else F\fi").unwrap(),
+            "nX TF"
+        );
+        // V2：同 V1，嵌套 else 支首 token=m（m X T 残余）
+        assert_eq!(
+            expand(r"\if n\if c o N\else m\fi X T\else F\fi").unwrap(),
+            "mX TF"
+        );
+        // V3：嵌套真支被当哨兵后，残余文本按 m N… 假支排（mn TF）
+        assert_eq!(
+            expand(r"\if n\if c c N\else m\fi n T\else F\fi").unwrap(),
+            "mn TF"
+        );
+        // V4：嵌套无 \else → `X T F` 残余
+        assert_eq!(
+            expand(r"\if n\if c o N\fi X T\else F\fi").unwrap(),
+            "X TF"
+        );
     }
 
     /// 第十六刀原始构造（模拟 expl3 `\__cs_generate_variant_loop_base:N`

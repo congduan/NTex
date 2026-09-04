@@ -1410,3 +1410,84 @@ TL tlnet 宏包已备齐（/tmp/latexsurvey/tex/latex/，勿重下）：
 - M9 中文战役：`ctex`（ctexart.cls 等）、`xecjk`、`fandol` 字体
   （fonts/opentype/public/fandol/ 12 个 OTF：宋/黑/楷/仿宋 + Braille）——
   plan.md §11.0 阶段 B 的"中文 TTF 备料"缺口已消。
+
+---
+
+## 22. 2026-09-05 第十六刀回归收敛（条件帧序改动后的 expl3 加载回归——主控二分 + 本地复现）
+
+### 22.1 回归发现与二分定位
+
+主控 worktree 二分给出区间 b7aeeba..HEAD（d672423 wip 操作数臂 / 4f45101 条件栈帧序
+三处修复 / 360c342 TRIP 数学）。本轮用**每提交独立 target 目录**复核（共享
+CARGO_TARGET_DIR 跨 worktree 时 cargo 指纹误判 fresh、交付陈旧二进制——同一 HEAD
+两次跑出 l.398 与 l.3324 两种结果，见 §22.4），逐提交 `latex_probe --initex`：
+
+| 提交 | 阻塞点 | 签名 |
+|---|---|---|
+| b7aeeba（良基线） | expl3-code **l.3324** | `conditional-base-undefined`（`\quark_if_no_value_p:N`）+ Incomplete \if |
+| d672423 | **l.3246** | `command-already-defined`（`\cs_generate_variant:Nn \cs_replacement_spec:N { c }`）+ Incomplete \if |
+| 4f45101 | **l.398** | `command-already-defined`（`\__kernel_primitive:NN \ifeof \tex_ifeof:D`）+ Incomplete \ifx |
+| 360c342 | l.398 | 同 4f45101 |
+
+**两个回归源**：d672423 先把阻塞点从 l.3324 拉回 l.3246，4f45101 再拉回 l.398；
+360c342 无辜（TRIP 数学，不碰 cond 主路径）。
+
+### 22.2 根因（对拍 + 插桩闭环）
+
+紧复现 = expl3-code 前 3260/3246 行前缀（catcode 归位 + `\ExplLoaderFileDate` 垫片 +
+`\immediate\write16{PREFIX-OK}\end`）：b7aeeba 过、HEAD 挂，且 **l.3246 单行触发**
+（l.3245 前缀两边都过）。NTEX_COND_TRACE/IFX_TRACE 对拍 + `scan_relation`/
+`scan_number_inner`/insert_relax 门逐点插桩，闭环到：
+
+- d672423 在 `get_x_char_operand`（`\if`/`\ifcat` 字符操作数位）新增"嵌套 `\\if*`
+  真实求值"臂（step_conditional + 开口帧跨操作数边界存活）。本引擎的宏实参抓取/
+  `c` 变换/csname 机器全部按 b7aeeba 的"操作数位条件 token = 数据（非字符哨兵）"
+  约定校准；求值留下的开口帧使后续**定界实参扫描在错位 token 流上配对**。
+- 终端证据：expl3 `\cs_if_free:cT { exp_args:Nc }`（l.3027）的 csname 文本被污染成
+  **`{exp_args:Nc}`（带花括号）**→ `\ifx <该 cs> \scan_stop:` 判"未定义" → 生成机器
+  对已存在的 `\exp_args:Nc`（真 Macro，二参 long）重复走 `\cs_new` →
+  `\__kernel_chk_if_free_cs:N` → kernel command-already-defined fatal。
+  4f45101 的帧序三修（压帧先于求值/skip_ahead 压帧后取定/target-1 真值转换）+ 
+  insert_relax 门本身 tex.web §L9725/@<Terminate…@> 忠实，但它把 d672423 臂的
+  影响面从 `\if` 扩到了全条件族，l.3246 处错位在 l3names 更早处显形（l.398）。
+- d672423 的动机场景（expl3 l.2896 变体循环 `Extra \else` 级联）**已被第十五刀修复**
+  （0 参数宏定界串调用点匹配，§21.1-1），该臂属重复治前期病灶。
+
+### 22.3 修复与 tex.web 裁决
+
+`get_x_char_operand` 的条件臂收窄为**只路由 `\else`/`\fi`/`\or`**（fi_or_else 族）：
+本条件（栈顶 Evaluating）未决时 insert_relax（frozen `\relax` 回插、token 不消费），
+嵌套 `\if*`（if_test 族）维持数据语义落非字符哨兵。
+
+裁决依据（两难不可全得，取 TRIP 锁定面 + 实证 expl3 面）：
+
+- **`\fi`/`\else` 路由必须保留**：TRIP l.313 `\if\the\badness\fi\message{…}` 的
+  `\fi` 在本 `\if` 操作数位到来，insert_relax 门是唯一收口（4f45101 注释 + TRIP
+  套件锁定）；本轮全量回退该臂的实验即复现 TRIP pass2 `! \if 缺少 \fi`。
+- **嵌套 `\if*` 求值必须移除**：tex.web get_x_token 字面语义确实求值（§@<Test if
+  two characters match@>），但 NTex 实参抓取层未对齐该语义前，求值 = token 流错位。
+  已知残差：`\if n\if c o N\else n\fi X T\else F\fi` 真实 TeX 输出 "X T"，本引擎
+  "nX TF"（哨兵语义）；已由 `if_operand_nested_conditional_stays_sentinel` 测试
+  锁定现状并注明待办（实参抓取层整体对齐 get_x_token 后重开为求值语义）。
+- 关系符位（`scan_relation`）与数字循环（`scan_number`/`maybe_eval_cond`）的既有
+  条件臂不动——那里帧由本条件就地收口，无跨边界泄漏（第七/八/十轮验证面）。
+
+### 22.4 验证与工具链坑
+
+- `latex_probe --initex`：阻塞点 **l.398 越过 → l.3324**（与 b7aeeba 等同）；
+  l.3246/3260 前缀复现双过。
+- `cargo test -p ntex-core`：**315 通过 / 0 失败**（含 if_operand 3 测：2 原样绿 +
+  1 个按恢复后语义重写并注明 tex.web 残差）；`cargo fmt --check`、
+  `cargo clippy -p ntex-core --all-targets` 干净。
+- TRIP/ETRIP driver（`ntex-trip --driver ntex`）：残留签名与 360c342 基线**逐字
+  一致**（TRIP pass2 `组未闭合 groups=[SemiSimple, MathLeft, MathLeft, Align]`；
+  ETRIP pass2 `group_end 无配对 group_begin` @ Checking \currentgrouptype 区），
+  无新增触发。
+- **工具链坑（二分纪律）**：共享 CARGO_TARGET_DIR 跨 worktree 复用会因 cargo 指纹
+  误判交付陈旧二进制（哈希名只含包元数据 `latex_probe-1f77894351f38db8`，各提交
+  同名互覆）；bisect 必须每 worktree 独立 target 目录（本仓全量构建仅 ~20 s，可
+  接受）。worktree 还须手拷 `fixtures/`（gitignore 不随 checkout）。
+- 下一刀靶子（恢复 l.3324 之后的真阻塞）：`\prg_generate_conditional_variant:Nnn`
+  的 p 形生成（`conditional-base-undefined`，`\quark_if_no_value_p:N` 未生成），
+  沿 §21.3 的 `\exp_last_unbraced:NNNNo` + 定界实参链下探；前置工程为
+  §22.3 残差的实参抓取层对齐。
