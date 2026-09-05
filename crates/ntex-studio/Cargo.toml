@@ -1,0 +1,20 @@
+[package]
+name = "ntex-studio"
+description = "NTex 实时预览工作台：左侧 TeX 编辑、右侧 vello GPU 实时渲染"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+# egui-wgpu 0.35 上游 MSRV 1.92，本 crate 覆盖 workspace 的 1.80（同 ntex-backend 惯例）。
+rust-version = "1.92"
+
+[dependencies]
+# 版本对齐是硬约束：eframe 0.35（egui-wgpu 0.35）与 vello 0.10 恰好共用 wgpu 29，
+# 单份 wgpu 才能在 egui 回调里直接驱动 vello Renderer。升级 eframe 大版本前必须
+# 先验 wgpu 与 vello 是否仍统一（0.36 已用 wgpu 30，会分裂成两份、类型不兼容）。
+eframe = { version = "0.35", features = ["wgpu"] }
+ntex-backend = { path = "../ntex-backend", version = "0.1.0" }
+ntex-layout.workspace = true
+vello = "0.10"
+
+[lints]
+workspace = true

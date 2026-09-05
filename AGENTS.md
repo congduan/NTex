@@ -44,8 +44,11 @@ make fixture-extras  # 获取补充对照 fixtures（pdftex expanded.{tex,txt} �
 # 端到端演示
 cargo run -p ntex-dvi -- demo.tex   # → demo.dvi
 cargo run -p ntex-pdf -- demo.dvi   # → demo.pdf
-cargo run -p ntex-backend -- demo.tex demo 144 --vello  # → demo-01.png…（vello GPU；去掉 --vello 走软光栅）
+cargo run -p ntex-backend -- demo.tex demo 144 --vello  # → demo-01.png…（vello GPU + 真字形；--no-glyphs 回落方框，去掉 --vello 走软光栅）
 cargo run -p ntex-backend -- demo.tex demo 144 --debug  # → demo-01-debug.png…（排版调试 overlay：盒边界/glue/断点标记，独立通道不影响正常渲染）
+
+# 实时预览工作台（左 TeX 编辑 / 右 vello GPU 渲染，250ms 防抖重排）
+cargo run -p ntex-studio [文件.tex]   # TFM 查找依赖运行目录，请在仓库根启动
 ```
 
 **重要限制**：`[profile.release]` 开了 `panic = "abort"` + `lto` + `codegen-units = 1`，
@@ -66,7 +69,8 @@ cargo run -p ntex-backend -- demo.tex demo 144 --debug  # → demo-01-debug.png�
 | `ntex-trip` | TRIP/ETRIP 一致性测试框架（`--test trip|etrip|both`，ntex in-process 驱动） |
 | `ntex-diff` | 差分测试工具（参考引擎 vs 本引擎） |
 | `ntex-bench` | 基准框架 |
-| `ntex-backend` | 渲染后端（M8）：`Backend` trait + 软光栅 + vello 0.10 GPU 实现（wgpu 29 无头纹理回读、area 亚像素 AA；与软光栅共享 prims 矩形遍历，位图可差分）+ 自研 PNG 导出 |
+| `ntex-backend` | 渲染后端（M8）：`Backend` trait + 软光栅 + vello 0.10 GPU 实现（wgpu 29 无头纹理回读、area 亚像素 AA；与软光栅共享 prims 矩形遍历，位图可差分）+ 自研 PNG 导出；`build_scene(prims)->Scene` 为公共 Scene 构建（无头回读与 GUI 表面渲染共用）；**字形通道**（`glyphs.rs`，`RenderOptions::glyphs`，默认关）：OT1→Unicode→Latin Modern OpenType 轮廓（kpsewhich/texlive 定位，vello glyph run 绘制，位置/宽度仍按 TFM；缺字体逐字符回落方框；软光栅不支持，强制关闭） |
+| `ntex-studio` | 实时预览工作台（M5+ 预览器先行形态）：eframe/egui-wgpu 0.35 + vello 表面渲染（离屏 Rgba8Unorm → blit 上屏），TeX 语法高亮编辑器、250ms 防抖同步重排、缩放/平移/翻页、dpi 与调试 overlay 与真字形开关（字形解析缓存跨重排复用）。**依赖硬约束：eframe 0.35 ↔ vello 0.10 恰好共用 wgpu 29**（升 eframe 大版本前必验对齐，0.36 已用 wgpu 30 会分裂） |
 
 常用源文件布局：
 - `crates/ntex-core/src/expand/`：展开引擎拆分目录——`builtins.rs`（原语注册）、`primitive.rs`
