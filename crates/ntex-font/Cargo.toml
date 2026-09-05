@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 ntex-core.workspace = true
+ttf-parser = "0.24"
 
 [lints]
 workspace = true
