@@ -16,6 +16,7 @@ use std::fmt;
 use ntex_font::FontMetrics;
 use ntex_layout::node::BoxNode;
 
+use crate::glyphs::GlyphCache;
 use crate::png::{encode_png, PngError};
 use crate::prims::{collect_page, validate_options, RenderOptions};
 use crate::raster::Pixmap;
@@ -70,14 +71,20 @@ impl Backend for TinySkiaBackend {
     fn render(
         &self,
         pages: &[BoxNode],
-        _fonts: &[FontMetrics],
+        fonts: &[FontMetrics],
         opts: &RenderOptions,
     ) -> Result<Vec<Pixmap>, BackendError> {
         validate_options(opts).map_err(BackendError)?;
+        // 软光栅不支持字形通道：强制关闭（字符走占位方框，差分口径不变）。
+        let opts = RenderOptions {
+            glyphs: false,
+            ..opts.clone()
+        };
+        let mut cache = GlyphCache::new();
         pages
             .iter()
             .map(|page| {
-                let prims = collect_page(page, opts);
+                let prims = collect_page(page, fonts, &opts, &mut cache);
                 let mut pm = Pixmap::new(prims.width, prims.height);
                 pm.fill(255, 255, 255);
                 // overlay 在内容之后绘制（独立通道，仅 debug 开启时非空）。

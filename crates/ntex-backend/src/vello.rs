@@ -24,8 +24,74 @@ use vello::wgpu;
 use vello::{AaConfig, AaSupport, RenderParams, Renderer, RendererOptions, Scene};
 
 use crate::backend::{Backend, BackendError};
+use crate::glyphs::GlyphCache;
 use crate::prims::{collect_page, validate_options, PagePrims, RenderOptions};
 use crate::raster::Pixmap;
+
+/// 矩形指令 → vello [`Scene`]（内容在前、debug overlay 在后，恒定白底语义）。
+///
+/// 抽出为公共函数供两类调用方复用：无头回读（[`VelloBackend`]）与
+/// GUI 表面渲染（ntex-studio，Scene 经 `append` 叠加缩放/平移变换）。
+pub fn build_scene(prims: &PagePrims) -> Scene {
+    let mut scene = Scene::new();
+    append_prims(&mut scene, prims);
+    scene
+}
+
+/// 把一页的矩形指令追加进既有 Scene（无变换；叠加变换由调用方 `append` 完成）。
+fn append_prims(scene: &mut Scene, prims: &PagePrims) {
+    // 内容矩形 → 真字形 → debug overlay（顺序与软光栅通道次序一致）。
+    for r in prims.rects.iter() {
+        // 非正尺寸丢弃（prims 层已过滤，此处双保险）。
+        if r.w <= 0.0 || r.h <= 0.0 {
+            continue;
+        }
+        let (cr, cg, cb) = r.color;
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            Color::from_rgba8(cr, cg, cb, 255),
+            None,
+            &Rect::new(r.x, r.y, r.x + r.w, r.y + r.h),
+        );
+    }
+    // 真字形：vello glyph run（Latin Modern 轮廓）。prims 坐标系 y 向下，
+    // vello 对字体轮廓空间（y 向上）内部自带 y 翻转对齐场景，故此处只做
+    // 平移（x/y 即基线原点）；字号 = em 像素数（位置与 advance 均来自 TFM，
+    // 字形仅按基线放置）。
+    for gp in &prims.glyphs {
+        let Some(gf) = prims.glyph_fonts.get(usize::from(gp.font)) else {
+            continue; // 下标越界属内部不变量破坏，跳过不 panic（引擎契约）
+        };
+        scene
+            .draw_glyphs(gf.font_data())
+            .font_size(gp.size as f32)
+            .transform(Affine::translate((gp.x, gp.y)))
+            .draw(
+                Fill::NonZero,
+                [vello::Glyph {
+                    id: gp.gid,
+                    x: 0.0,
+                    y: 0.0,
+                }]
+                .into_iter(),
+            );
+    }
+    // debug overlay（独立通道，仅 debug 开启时非空）。
+    for r in prims.debug.iter() {
+        if r.w <= 0.0 || r.h <= 0.0 {
+            continue;
+        }
+        let (cr, cg, cb) = r.color;
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            Color::from_rgba8(cr, cg, cb, 255),
+            None,
+            &Rect::new(r.x, r.y, r.x + r.w, r.y + r.h),
+        );
+    }
+}
 
 /// vello GPU 后端。
 #[derive(Debug, Clone, Copy)]
@@ -88,16 +154,17 @@ impl Backend for VelloBackend {
     fn render(
         &self,
         pages: &[ntex_layout::node::BoxNode],
-        _fonts: &[ntex_font::FontMetrics],
+        fonts: &[ntex_font::FontMetrics],
         opts: &RenderOptions,
     ) -> Result<Vec<Pixmap>, BackendError> {
         validate_options(opts).map_err(BackendError)?;
         let mut ctx = init_context(self.use_cpu)?;
         let max_dim = ctx.device.limits().max_texture_dimension_2d;
-        pages
+        let mut cache = GlyphCache::new();
+        let rendered = pages
             .iter()
             .map(|page| {
-                let prims = collect_page(page, opts);
+                let prims = collect_page(page, fonts, opts, &mut cache);
                 if prims.width == 0
                     || prims.height == 0
                     || prims.width > max_dim
@@ -110,28 +177,24 @@ impl Backend for VelloBackend {
                 }
                 render_page(&mut ctx, &prims)
             })
-            .collect()
+            .collect();
+        // 字形回落的字体（环境缺文件）提示一次（诊断，不影响渲染结果）。
+        if opts.glyphs {
+            let missing: Vec<_> = cache.missing().collect();
+            if !missing.is_empty() {
+                eprintln!(
+                    "ntex-backend：字形回落为方框（未找到字体文件）：{}",
+                    missing.join("、")
+                );
+            }
+        }
+        rendered
     }
 }
 
 /// 渲染一页：矩形指令 → Scene → GPU 纹理 → 回读为 [`Pixmap`]。
 fn render_page(ctx: &mut GpuContext, prims: &PagePrims) -> Result<Pixmap, BackendError> {
-    let mut scene = Scene::new();
-    // overlay 在内容之后绘制（独立通道，仅 debug 开启时非空）。
-    for r in prims.rects.iter().chain(&prims.debug) {
-        // 非正尺寸丢弃（prims 层已过滤，此处双保险）。
-        if r.w <= 0.0 || r.h <= 0.0 {
-            continue;
-        }
-        let (cr, cg, cb) = r.color;
-        scene.fill(
-            Fill::NonZero,
-            Affine::IDENTITY,
-            Color::from_rgba8(cr, cg, cb, 255),
-            None,
-            &Rect::new(r.x, r.y, r.x + r.w, r.y + r.h),
-        );
-    }
+    let scene = build_scene(prims);
     let (w, h) = (prims.width, prims.height);
     let texture = ctx.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("ntex-backend:vello:page"),

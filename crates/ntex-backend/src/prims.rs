@@ -9,9 +9,15 @@
 //!
 //! - 页面盒 HBox：基线 = 页参考点；VBox：顶 = 参考点；
 //! - 盒参考点由调用方传入（边距），矩形坐标为浮点像素（`sp_to_px` 换算）；
-//! - 字符无字形：TFM 只有度量（M9 字体子系统范围），画占位方框 + 基线标记。
+//! - 字符默认占位方框（TFM 只有度量）；`RenderOptions::glyphs` 开启时走
+//!   真字形通道（Latin Modern 轮廓，见 `glyphs.rs`），位置/宽度仍按 TFM。
 
-use ntex_layout::node::{BoxKind, BoxNode, GlueOrder, Node, GLUE_ORDER_FIL};
+use std::sync::Arc;
+
+use ntex_font::FontMetrics;
+use ntex_layout::node::{BoxKind, BoxNode, FontId, GlueOrder, Node, GLUE_ORDER_FIL};
+
+use crate::glyphs::{ot1_to_unicode, GlyphCache, GlyphFont};
 
 use crate::raster::sp_to_px;
 
@@ -58,6 +64,11 @@ pub struct RenderOptions {
     /// 调试 overlay：开启时盒边界/glue/断点标记收集到 [`PagePrims::debug`]
     /// 独立通道，`rects` 不受影响（两后端差分口径不变）。
     pub debug: bool,
+    /// 真字形渲染（vello 后端）：字符走 glyphs 通道（Latin Modern 轮廓，
+    /// 位置/宽度仍按 TFM），不再产占位方框；字体文件不可用时逐字符回落
+    /// 方框。软光栅后端不支持字形通道，强制按关闭处理。默认 false
+    /// （保持既有差分/快照口径零变化）。
+    pub glyphs: bool,
 }
 
 impl Default for RenderOptions {
@@ -67,6 +78,7 @@ impl Default for RenderOptions {
             page_size_pt: (595.276, 841.890),
             margin_pt: 72.0,
             debug: false,
+            glyphs: false,
         }
     }
 }
@@ -109,11 +121,79 @@ impl RectPrim {
 ///
 /// `debug` 是独立 overlay 通道（仅 [`RenderOptions::debug`] 开启时填充），
 /// 后端在 `rects` 之后绘制；`rects` 始终与 overlay 无关的纯内容指令。
+/// `glyphs` 为真字形通道（仅 [`RenderOptions::glyphs`] 开启时填充，vello
+/// 后端绘制；`glyph_fonts` 为页内去重的字体表，`GlyphPrim::font` 下标引用）。
 pub struct PagePrims {
     pub width: u32,
     pub height: u32,
     pub rects: Vec<RectPrim>,
+    pub glyphs: Vec<GlyphPrim>,
+    pub glyph_fonts: Vec<Arc<GlyphFont>>,
     pub debug: Vec<RectPrim>,
+}
+
+/// 真字形绘制指令：`(x, y)` = 基线原点（y 向下，同 rect 坐标系），
+/// `size` = em 的像素数（TFM 实际字号按 dpi 换算），`gid`/`font` 定位轮廓。
+#[derive(Debug, Clone, Copy)]
+pub struct GlyphPrim {
+    pub x: f64,
+    pub y: f64,
+    pub size: f64,
+    pub gid: u32,
+    pub font: u16,
+}
+
+/// 字形通道收集上下文（贯穿 collect 递归；`on = false` 时全部为空操作，
+/// 字符走占位方框口径）。
+pub(crate) struct GlyphCtx<'a> {
+    on: bool,
+    dpi: f64,
+    /// 排版输出的字体表（`FontId` 下标引用；提供名字与实际字号）。
+    metrics: &'a [FontMetrics],
+    cache: &'a mut GlyphCache,
+    out: &'a mut Vec<GlyphPrim>,
+    fonts_out: &'a mut Vec<Arc<GlyphFont>>,
+}
+
+impl GlyphCtx<'_> {
+    /// 尝试把字符收成字形指令；成功返回 true（调用方跳过占位方框），
+    /// 字体/字形/编码任一环节缺失返回 false（回落方框，不报错）。
+    fn push_char(&mut self, font: FontId, charcode: u32, x: f64, y: f64) -> bool {
+        if !self.on {
+            return false;
+        }
+        let Some(slot) = u8::try_from(charcode).ok().and_then(ot1_to_unicode) else {
+            return false; // OT1 之外/之上的编码位（如 T1 高位区）暂无映射
+        };
+        let Some(fm) = self.metrics.get(font.0 as usize) else {
+            return false;
+        };
+        let gf = match self.cache.resolve(&fm.name) {
+            Some(gf) => gf,
+            None => return false, // 环境无字体文件（kpsewhich 未命中）
+        };
+        let Some(gid) = gf.glyph_id(slot) else {
+            return false; // 该字体无此字形（如 lmroman 无希腊区）
+        };
+        // em 像素 = 实际字号（design × scale / 2^20）按 dpi 换算。
+        let em_sp = fm.design_size_sp.saturating_mul(fm.scale) >> 20;
+        let idx = match self.fonts_out.iter().position(|f| Arc::ptr_eq(f, &gf)) {
+            Some(i) => i,
+            None => {
+                self.fonts_out.push(gf);
+                self.fonts_out.len() - 1
+            }
+        };
+        let idx = u16::try_from(idx).unwrap_or(u16::MAX); // 页内字体数上限防御
+        self.out.push(GlyphPrim {
+            x,
+            y,
+            size: sp_to_px(em_sp, self.dpi),
+            gid,
+            font: idx,
+        });
+        true
+    }
 }
 
 /// 调试通道输出（`None` = 关闭，跳过全部标记逻辑）。
@@ -172,9 +252,18 @@ fn pt_to_sp(pt: f64) -> i64 {
 }
 
 /// 收集一页的矩形指令（页面白底清屏由各后端自行负责）。
-pub fn collect_page(page: &BoxNode, opts: &RenderOptions) -> PagePrims {
+///
+/// `fonts` = 排版输出的字体表（字形通道用；`cache` 跨页/跨渲染复用解析结果）。
+pub fn collect_page(
+    page: &BoxNode,
+    fonts: &[FontMetrics],
+    opts: &RenderOptions,
+    cache: &mut GlyphCache,
+) -> PagePrims {
     let (w_pt, h_pt) = opts.page_size_pt;
     let mut rects = Vec::new();
+    let mut glyphs = Vec::new();
+    let mut glyph_fonts = Vec::new();
     let mut debug = Vec::new();
     let rx = sp_to_px(pt_to_sp(opts.margin_pt), opts.dpi);
     // 页面盒参考点：HBox 基线 = 边距 + 页高；VBox 顶 = 边距。
@@ -196,11 +285,21 @@ pub fn collect_page(page: &BoxNode, opts: &RenderOptions) -> PagePrims {
         page_h_px - 2.0 * rx,
         DBG_MARGIN,
     );
-    collect_box(page, rx, ry, opts.dpi, &mut rects, &mut dbg);
+    let mut g = GlyphCtx {
+        on: opts.glyphs,
+        dpi: opts.dpi,
+        metrics: fonts,
+        cache,
+        out: &mut glyphs,
+        fonts_out: &mut glyph_fonts,
+    };
+    collect_box(page, rx, ry, opts.dpi, &mut rects, &mut g, &mut dbg);
     PagePrims {
         width: page_w_px.round() as u32,
         height: page_h_px.round() as u32,
         rects,
+        glyphs,
+        glyph_fonts,
         debug,
     }
 }
@@ -212,6 +311,7 @@ fn collect_box(
     ry: f64,
     dpi: f64,
     out: &mut Vec<RectPrim>,
+    g: &mut GlyphCtx,
     dbg: &mut DebugOut,
 ) {
     // 盒边界描边（HBox 蓝 / VBox 紫红）+ HBox 基线（青）。
@@ -224,11 +324,11 @@ fn collect_box(
         BoxKind::HBox => {
             dbg_stroke(dbg, rx, ry - h_px, w_px, h_px + d_px, DBG_HBOX);
             dbg_push(dbg, rx, ry, w_px, 1.0, DBG_BASELINE);
-            collect_hlist(bx, rx, ry, dpi, out, dbg);
+            collect_hlist(bx, rx, ry, dpi, out, g, dbg);
         }
         BoxKind::VBox => {
             dbg_stroke(dbg, rx, ry, w_px, h_px + d_px, DBG_VBOX);
-            collect_vlist(bx, rx, ry, dpi, out, dbg);
+            collect_vlist(bx, rx, ry, dpi, out, g, dbg);
         }
     }
 }
@@ -240,24 +340,34 @@ fn collect_hlist(
     ry: f64,
     dpi: f64,
     out: &mut Vec<RectPrim>,
+    g: &mut GlyphCtx,
     dbg: &mut DebugOut,
 ) {
     let mut cur_h = 0i64;
     for node in &bx.children {
         match node {
             Node::Char {
+                font,
+                charcode,
                 width,
                 height,
                 depth,
-                ..
             }
             | Node::Ligature {
+                font,
+                charcode,
                 width,
                 height,
                 depth,
                 ..
             } => {
                 let x = rx + sp_to_px(cur_h, dpi);
+                // 真字形通道优先（OT1→Unicode→LM 轮廓）；任一环节缺失
+                // 回落占位方框口径（与既有渲染一致）。
+                if g.push_char(*font, *charcode, x, ry) {
+                    cur_h += width;
+                    continue;
+                }
                 let w = sp_to_px(*width, dpi);
                 let top = ry - sp_to_px(*height, dpi);
                 let bot = ry + sp_to_px(*depth, dpi);
@@ -342,7 +452,7 @@ fn collect_hlist(
             Node::Box(inner) => {
                 let x = rx + sp_to_px(cur_h, dpi);
                 let child_ry = ry + sp_to_px(inner.shift, dpi);
-                collect_box(inner, x, child_ry, dpi, out, dbg);
+                collect_box(inner, x, child_ry, dpi, out, g, dbg);
                 cur_h += inner.width;
             }
             _ => {}
@@ -357,6 +467,7 @@ fn collect_vlist(
     ry: f64,
     dpi: f64,
     out: &mut Vec<RectPrim>,
+    g: &mut GlyphCtx,
     dbg: &mut DebugOut,
 ) {
     let mut cur_v = 0i64;
@@ -370,7 +481,7 @@ fn collect_vlist(
                 cur_v += inner.height;
                 let child_ref_y = ry + sp_to_px(cur_v, dpi);
                 let child_rx = rx + sp_to_px(inner.shift, dpi);
-                collect_box(inner, child_rx, child_ref_y, dpi, out, dbg);
+                collect_box(inner, child_rx, child_ref_y, dpi, out, g, dbg);
                 cur_v += inner.depth;
             }
             Node::Glue {
@@ -437,6 +548,7 @@ mod tests {
             page_size_pt: size,
             margin_pt: margin,
             debug: false,
+            glyphs: false,
         };
         assert!(validate_options(&bad(0.0, (100.0, 100.0), 72.0)).is_err());
         assert!(validate_options(&bad(72.0, (0.0, 100.0), 72.0)).is_err());
@@ -465,7 +577,7 @@ mod tests {
             dpi: 72.0,
             ..Default::default()
         };
-        let prims = collect_page(&page, &opts);
+        let prims = collect_page(&page, &[], &opts, &mut GlyphCache::new());
         assert_eq!(prims.width, 595);
         assert_eq!(prims.height, 842);
         assert_eq!(prims.rects.len(), 1);
@@ -498,7 +610,7 @@ mod tests {
             dpi: 72.0,
             ..Default::default()
         };
-        let prims = collect_page(&page, &opts);
+        let prims = collect_page(&page, &[], &opts, &mut GlyphCache::new());
         assert_eq!(prims.rects.len(), 3);
         // 基线 y = margin 72 + 页高 1 = 73；上区 [72,73)、基线段 y=73 h=1。
         let baseline = prims.rects[2];
@@ -536,11 +648,13 @@ mod tests {
         let collect = |debug| {
             collect_page(
                 &page,
+                &[],
                 &RenderOptions {
                     dpi: 72.0,
                     debug,
                     ..Default::default()
                 },
+                &mut GlyphCache::new(),
             )
         };
         let off = collect(false);
@@ -583,11 +697,13 @@ mod tests {
         };
         let prims = collect_page(
             &page,
+            &[],
             &RenderOptions {
                 dpi: 72.0,
                 debug: true,
                 ..Default::default()
             },
+            &mut GlyphCache::new(),
         );
         let band = prims.debug.iter().find(|r| r.color == DBG_GLUE).unwrap();
         assert!((band.x - 72.0).abs() < 1e-9 && (band.w - 10.0).abs() < 1e-9);
@@ -616,11 +732,13 @@ mod tests {
         };
         let prims = collect_page(
             &fil,
+            &[],
             &RenderOptions {
                 dpi: 72.0,
                 debug: true,
                 ..Default::default()
             },
+            &mut GlyphCache::new(),
         );
         assert!(
             !prims.debug.iter().any(|r| r.color == DBG_GLUE),
@@ -644,7 +762,7 @@ mod tests {
             debug,
             ..Default::default()
         };
-        let inf = collect_page(&mk(10_000), &opts(true));
+        let inf = collect_page(&mk(10_000), &[], &opts(true), &mut GlyphCache::new());
         let inf = inf
             .debug
             .iter()
@@ -652,7 +770,7 @@ mod tests {
             .unwrap();
         // 高度有 4px 下限（空行盒保护）。
         assert!((inf.w - 2.0).abs() < 1e-9 && (inf.h - 4.0).abs() < 1e-9);
-        let opt = collect_page(&mk(-50), &opts(true));
+        let opt = collect_page(&mk(-50), &[], &opts(true), &mut GlyphCache::new());
         let opt = opt.debug.iter().find(|r| r.color == DBG_PENALTY).unwrap();
         assert!((opt.w - 1.0).abs() < 1e-9);
     }

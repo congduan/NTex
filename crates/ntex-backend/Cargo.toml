@@ -12,6 +12,8 @@ rust-version = "1.88"
 ntex-layout.workspace = true
 ntex-font.workspace = true
 vello = "0.10"
+# 与 vello 0.10 内部同版本（字形解析），cargo 统一至单一 skrifa。
+skrifa = "0.44"
 pollster = "1.0.1"
 
 [dev-dependencies]

@@ -21,6 +21,14 @@
 //! （禁断深红粗线）。后端在内容之后绘制该通道，`rects` 不受影响，
 //! 正常渲染与差分口径零变化。
 //!
+//! ## 字形通道（M8 预览先行；完整字体子系统属 M9）
+//!
+//! [`RenderOptions::glyphs`] 开启时，字符改走 `glyphs` 通道：OT1 编码 →
+//! Unicode → Latin Modern OpenType 轮廓（[`glyphs`]，环境经 kpsewhich /
+//! texlive 目录定位），由 vello glyph run 绘制；**位置与宽度仍以 TFM 为
+//! 事实源**（字形仅按基线放置）。字体文件不可用逐字符回落占位方框。
+//! 软光栅后端不支持该通道（强制关闭，保持差分口径）。
+//!
 //! ## 与 plan 的偏差（历史）
 //!
 //! plan.md M8 条目选型为 tiny-skia。软光栅首版落地时构建环境**离线**且
@@ -34,11 +42,12 @@
 //! - 源单位 sp：`1pt = 65536sp`；像素 = `sp / 65_536 * dpi / 72`；
 //! - 页面原点左上、y 向下（同 DVI）；盒子/规则的参考点语义与 `ntex_dvi`
 //!   的 `hlist`/`vlist` 完全一致（见 [`prims`]）；
-//! - **字符无字形**：TFM 只有度量，无轮廓（M9 字体子系统范围）。字符按
-//!   任务简报画占位方框 + 基线标记示意，非最终排版效果。
+//! - **字符字形**：[`RenderOptions::glyphs`] 开启时走 Latin Modern 轮廓
+//!   （见「字形通道」节），缺省仍画占位方框 + 基线标记示意。
 
 #![deny(unsafe_code)]
 
+pub mod glyphs;
 pub mod png;
 pub mod prims;
 pub mod raster;
@@ -49,4 +58,4 @@ mod backend;
 mod vello;
 
 pub use backend::{Backend, BackendError, RectPrim, TinySkiaBackend};
-pub use vello::VelloBackend;
+pub use vello::{build_scene, VelloBackend};
