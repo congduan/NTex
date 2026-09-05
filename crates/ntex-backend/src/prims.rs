@@ -235,6 +235,183 @@ fn dbg_glue_h(
     dbg_push(dbg, x, ry - 1.0, shrink, 1.0, DBG_GLUE_SHRINK);
 }
 
+/// 引导区域宽度（tex.web `leader_wt`）：无延伸时取自然宽（此时退化为画一次），
+// 有 stretch 取 `stretch`（fill/filll 视作按传入的拉伸后宽度），负值钳 0。
+fn leaders_region_width(width: i64, stretch: i64) -> i64 {
+    if stretch > 0 {
+        stretch
+    } else {
+        width.max(0)
+    }
+}
+
+/// 引导内容自然宽（tex.web `leader_lr`）：box 取宽，rule 取宽。
+/// 引导内容自然高（垂直 leaders 用）：box 取 height+depth，rule 同理。
+fn leader_unit_height(inner: &Node) -> i64 {
+    match inner {
+        Node::Box(b) => b.height + b.depth,
+        Node::Rule { height, depth, .. } => height + depth,
+        _ => 0,
+    }
+}
+
+/// 引导符收集（tex.web `hlist_out` §623-629 leader 分支 / TeXbook Ch.21）。
+///
+/// 布局层经 `hpack` 把 glue_set 烘焙进胶水宽度，故引导区域宽 = 本节点 glue 的
+/// 拉伸后宽度（无 stretch 时为自然宽）。三种对齐：
+///
+/// - `Leaders`：重复单元按周期在区域内**取整对齐网格**，首单元起点 ≥ 区域起点，
+///   两端允许不满格留白；
+/// - `Cleaders`：取整份居中，两侧留白相等；
+/// - `Xleaders`：单元与间隙交替均分剩余空间（首尾必贴区域两端，间隙 ≥ 0）。
+///
+/// 单元 ≤ 0 或区域装不下一个完整单元时不绘制（tex.web `finite_shrink` 守卫：
+/// 防止死循环）。绘制把 inner 物化为既有 Rect/Glyph 指令：box 递归
+/// `collect_box`，rule 直接 `RectPrim::push`。
+fn collect_leaders(
+    kind: ntex_layout::node::LeadersKind,
+    inner: &Node,
+    width: i64,
+    stretch: i64,
+    cur: i64,
+    rx: f64,
+    ry: f64,
+    dpi: f64,
+    out: &mut Vec<RectPrim>,
+    g: &mut GlyphCtx,
+    dbg: &mut DebugOut,
+) {
+    let region = leaders_region_width(width, stretch);
+    if region <= 0 {
+        return;
+    }
+    let x0 = rx + sp_to_px(cur, dpi);
+    let region_px = sp_to_px(region, dpi);
+    match inner {
+        Node::Box(b) => {
+            let unit = b.width;
+            if unit <= 0 || sp_to_px(unit, dpi) <= 0.0 {
+                return;
+            }
+            let unit_px = sp_to_px(unit, dpi);
+            let count = (region_px / unit_px).floor() as i64;
+            if count <= 0 {
+                return;
+            }
+            let gap_px = region_px - count as f64 * unit_px;
+            let start_px = match kind {
+                ntex_layout::node::LeadersKind::Leaders => x0,
+                ntex_layout::node::LeadersKind::Cleaders => x0 + gap_px / 2.0,
+                ntex_layout::node::LeadersKind::Xleaders => {
+                    let step = if count > 1 {
+                        gap_px / (count + 1) as f64
+                    } else {
+                        0.0
+                    };
+                    let mut cx = x0;
+                    for _ in 0..count {
+                        draw_leader_unit(inner, cx, ry, dpi, out, g, dbg);
+                        cx += unit_px + step;
+                    }
+                    return;
+                }
+            };
+            for i in 0..count {
+                let ux = start_px + i as f64 * unit_px;
+                draw_leader_unit(inner, ux, ry, dpi, out, g, dbg);
+            }
+        }
+        Node::Rule {
+            width: rw,
+            height,
+            depth,
+        } => {
+            // 布局简化：未定宽度（`\leaders\hrule` 后接非 1fil glue）经 rule
+            // 扫描路径落成 i32::MIN 哨兵——渲染层视作非法，跳过不画。
+            if *rw <= 0 || *rw <= i32::MIN as i64 {
+                return;
+            }
+            let unit_px = sp_to_px(*rw, dpi);
+            let count = (region_px / unit_px).floor() as i64;
+            if count <= 0 {
+                return;
+            }
+            let gap_px = region_px - count as f64 * unit_px;
+            let start_px = match kind {
+                ntex_layout::node::LeadersKind::Leaders => x0,
+                ntex_layout::node::LeadersKind::Cleaders => x0 + gap_px / 2.0,
+                ntex_layout::node::LeadersKind::Xleaders => {
+                    let step = if count > 1 {
+                        gap_px / (count + 1) as f64
+                    } else {
+                        0.0
+                    };
+                    let top = ry - sp_to_px(*height, dpi);
+                    let h_px = sp_to_px(height + depth, dpi);
+                    let mut cx = x0;
+                    for _ in 0..count {
+                        RectPrim::push(out, cx, top, unit_px, h_px, (0, 0, 0));
+                        cx += unit_px + step;
+                    }
+                    return;
+                }
+            };
+            let top = ry - sp_to_px(*height, dpi);
+            let h_px = sp_to_px(height + depth, dpi);
+            for i in 0..count {
+                RectPrim::push(
+                    out,
+                    start_px + i as f64 * unit_px,
+                    top,
+                    unit_px,
+                    h_px,
+                    (0, 0, 0),
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 画一个引导单元：box 递归走 [`collect_box`]（复用字符占位/字形通道），
+// 其它类型无独立绘制形态（rule 在调用方直接物化）。
+fn draw_leader_unit(
+    inner: &Node,
+    x: f64,
+    ry: f64,
+    dpi: f64,
+    out: &mut Vec<RectPrim>,
+    g: &mut GlyphCtx,
+    dbg: &mut DebugOut,
+) {
+    if let Node::Box(b) = inner {
+        collect_box(b, x, ry + sp_to_px(b.shift, dpi), dpi, out, g, dbg);
+    }
+}
+
+/// 垂直引导单元：box 以「参考点 + height」递归（对照 vlist 的盒子推进）。
+fn draw_leader_unit_v(
+    inner: &Node,
+    rx: f64,
+    top: f64,
+    dpi: f64,
+    out: &mut Vec<RectPrim>,
+    g: &mut GlyphCtx,
+    dbg: &mut DebugOut,
+) {
+    if let Node::Box(b) = inner {
+        collect_box(
+            b,
+            rx + sp_to_px(b.shift, dpi),
+            top + sp_to_px(b.height, dpi),
+            dpi,
+            out,
+            g,
+            dbg,
+        );
+    }
+}
+
 /// 垂直 glue 标记：自然宽竖带（盒左内侧 3px）+ stretch 指示线。
 fn dbg_glue_v(dbg: &mut DebugOut, rx: f64, y: f64, h: f64, stretch: f64, order: GlueOrder) {
     let band = if order >= GLUE_ORDER_FIL {
@@ -426,6 +603,18 @@ fn collect_hlist(
                 );
                 cur_h += width;
             }
+            Node::Leaders {
+                kind,
+                inner,
+                width,
+                stretch,
+                ..
+            } => {
+                collect_leaders(
+                    *kind, inner, *width, *stretch, cur_h, rx, ry, dpi, out, g, dbg,
+                );
+                cur_h += leaders_region_width(*width, *stretch);
+            }
             Node::Kern { width } => {
                 dbg_push(dbg, rx + sp_to_px(cur_h, dpi), ry - 2.0, 1.0, 4.0, DBG_KERN);
                 cur_h += width;
@@ -500,6 +689,59 @@ fn collect_vlist(
                 );
                 cur_v += width;
             }
+            Node::Leaders {
+                kind,
+                inner,
+                width,
+                stretch,
+                ..
+            } => {
+                // 垂直列表里的 leaders：区域高度取拉伸后 glue（对齐 vbox 打包
+                // 烘焙语义）；单元高度 = inner height+depth，纵向逐格铺放。
+                let region = leaders_region_width(*width, *stretch);
+                if region > 0 {
+                    let unit = leader_unit_height(inner);
+                    if unit > 0 {
+                        let y0 = ry + sp_to_px(cur_v, dpi);
+                        let region_px = sp_to_px(region, dpi);
+                        let unit_px = sp_to_px(unit, dpi);
+                        let count = (region_px / unit_px).floor() as i64;
+                        if count > 0 {
+                            let gap_px = region_px - count as f64 * unit_px;
+                            let start_y = match kind {
+                                ntex_layout::node::LeadersKind::Leaders => y0,
+                                ntex_layout::node::LeadersKind::Cleaders => y0 + gap_px / 2.0,
+                                ntex_layout::node::LeadersKind::Xleaders => {
+                                    let step = if count > 1 {
+                                        gap_px / (count + 1) as f64
+                                    } else {
+                                        0.0
+                                    };
+                                    let mut cy = y0;
+                                    for _ in 0..count {
+                                        draw_leader_unit_v(inner, rx, cy, dpi, out, g, dbg);
+                                        cy += unit_px + step;
+                                    }
+                                    cur_v += region;
+                                    continue;
+                                }
+                            };
+                            for i in 0..count {
+                                draw_leader_unit_v(
+                                    inner,
+                                    rx,
+                                    start_y + i as f64 * unit_px,
+                                    dpi,
+                                    out,
+                                    g,
+                                    dbg,
+                                );
+                            }
+                        }
+                    }
+                }
+                cur_v += region;
+            }
             Node::Kern { width } => {
                 dbg_push(dbg, rx, ry + sp_to_px(cur_v, dpi), 4.0, 1.0, DBG_KERN);
                 cur_v += width;
@@ -539,6 +781,300 @@ fn collect_vlist(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn leaders_grid_alignment_counts_and_phase() {
+        let inner = Node::Box(BoxNode {
+            kind: BoxKind::HBox,
+            width: 10 * 65_536,
+            height: 2 * 65_536,
+            depth: 0,
+            shift: 0,
+            children: vec![Node::Rule {
+                width: 2 * 65_536,
+                height: 2 * 65_536,
+                depth: 0,
+            }],
+        });
+        let ld = Node::Leaders {
+            kind: ntex_layout::node::LeadersKind::Leaders,
+            inner: Box::new(inner),
+            width: 0,
+            stretch: 100 * 65_536,
+            shrink: 0,
+        };
+        let page = BoxNode {
+            kind: BoxKind::HBox,
+            width: 100 * 65_536,
+            height: 2 * 65_536,
+            depth: 0,
+            shift: 0,
+            children: vec![ld],
+        };
+        let opts = RenderOptions {
+            dpi: 72.0,
+            ..Default::default()
+        };
+        let prims = collect_page(&page, &[], &opts, &mut GlyphCache::new());
+        // 100pt 区域装 10pt 单元 → 10 份；内盒 rule 居中（单元左端 +4pt）。
+        assert_eq!(prims.rects.len(), 10);
+        let xs: Vec<f64> = prims.rects.iter().map(|r| r.x).collect();
+        // 首单元对齐网格起点 x0=72（72dpi 1pt=1px）；单元周期 10px。
+        assert!((xs[0] - 72.0).abs() < 1e-9);
+        for (i, pair) in xs.windows(2).enumerate() {
+            assert!((pair[1] - pair[0] - 10.0).abs() < 1e-9, "pair {i}: {pair:?}");
+        }
+        // rule 尺寸一致（2×2pt）。
+        assert!(prims
+            .rects
+            .iter()
+            .all(|r| (r.w - 2.0).abs() < 1e-9 && (r.h - 2.0).abs() < 1e-9));
+    }
+
+    #[test]
+    fn leaders_grid_shifts_to_glue_start() {
+        // 区域 25pt，单元 10pt → 2 份贴齐网格（Leaders 原点对齐），尾差 5pt 留白。
+        let ld = Node::Leaders {
+            kind: ntex_layout::node::LeadersKind::Leaders,
+            inner: Box::new(Node::Box(BoxNode {
+                kind: BoxKind::HBox,
+                width: 10 * 65_536,
+                height: 65_536,
+                depth: 0,
+                shift: 0,
+                children: vec![Node::Rule {
+                    width: 65_536,
+                    height: 65_536,
+                    depth: 0,
+                }],
+            })),
+            width: 0,
+            stretch: 25 * 65_536,
+            shrink: 0,
+        };
+        let page = BoxNode {
+            kind: BoxKind::HBox,
+            width: 25 * 65_536,
+            height: 65_536,
+            depth: 0,
+            shift: 0,
+            children: vec![ld],
+        };
+        let opts = RenderOptions {
+            dpi: 72.0,
+            ..Default::default()
+        };
+        let prims = collect_page(&page, &[], &opts, &mut GlyphCache::new());
+        assert_eq!(prims.rects.len(), 2);
+        let xs: Vec<f64> = prims.rects.iter().map(|r| r.x).collect();
+        assert!((xs[0] - 72.0).abs() < 1e-9);
+        assert!((xs[1] - 82.0).abs() < 1e-9); // 72 + 10pt
+    }
+
+    #[test]
+    fn cleaders_centers_with_equal_gaps() {
+        // 区域 25pt，单元 10pt → 2 份居中：两侧各 2.5pt 留白。
+        let ld = Node::Leaders {
+            kind: ntex_layout::node::LeadersKind::Cleaders,
+            inner: Box::new(Node::Box(BoxNode {
+                kind: BoxKind::HBox,
+                width: 10 * 65_536,
+                height: 65_536,
+                depth: 0,
+                shift: 0,
+                children: vec![Node::Rule {
+                    width: 65_536,
+                    height: 65_536,
+                    depth: 0,
+                }],
+            })),
+            width: 0,
+            stretch: 25 * 65_536,
+            shrink: 0,
+        };
+        let page = BoxNode {
+            kind: BoxKind::HBox,
+            width: 25 * 65_536,
+            height: 65_536,
+            depth: 0,
+            shift: 0,
+            children: vec![ld],
+        };
+        let opts = RenderOptions {
+            dpi: 72.0,
+            ..Default::default()
+        };
+        let prims = collect_page(&page, &[], &opts, &mut GlyphCache::new());
+        assert_eq!(prims.rects.len(), 2);
+        let xs: Vec<f64> = prims.rects.iter().map(|r| r.x).collect();
+        assert!((xs[0] - 74.5).abs() < 1e-9); // 72 + 2.5pt
+        assert!((xs[1] - 84.5).abs() < 1e-9); // +10pt
+    }
+
+    #[test]
+    fn xleaders_equalizes_gaps() {
+        // 区域 25pt，单元 10pt → 2 份 + 3 个等间隙（25−20)/3 ≈ 1.667pt。
+        let ld = Node::Leaders {
+            kind: ntex_layout::node::LeadersKind::Xleaders,
+            inner: Box::new(Node::Box(BoxNode {
+                kind: BoxKind::HBox,
+                width: 10 * 65_536,
+                height: 65_536,
+                depth: 0,
+                shift: 0,
+                children: vec![Node::Rule {
+                    width: 65_536,
+                    height: 65_536,
+                    depth: 0,
+                }],
+            })),
+            width: 0,
+            stretch: 25 * 65_536,
+            shrink: 0,
+        };
+        let page = BoxNode {
+            kind: BoxKind::HBox,
+            width: 25 * 65_536,
+            height: 65_536,
+            depth: 0,
+            shift: 0,
+            children: vec![ld],
+        };
+        let opts = RenderOptions {
+            dpi: 72.0,
+            ..Default::default()
+        };
+        let prims = collect_page(&page, &[], &opts, &mut GlyphCache::new());
+        assert_eq!(prims.rects.len(), 2);
+        let xs: Vec<f64> = prims.rects.iter().map(|r| r.x).collect();
+        assert!((xs[0] - 72.0).abs() < 1e-9);
+        let step = 10.0 + 5.0 / 3.0; // 单元 + 间隙（(25−20)/3 ≈ 1.667px）
+        assert!((xs[1] - (72.0 + step)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn leaders_rule_units_materialize_rects() {
+        // inner = Rule：\leaders\hrule 一串矩形（3 份 4pt 宽、间隔 1pt）。
+        let ld = Node::Leaders {
+            kind: ntex_layout::node::LeadersKind::Leaders,
+            inner: Box::new(Node::Rule {
+                width: 4 * 65_536,
+                height: 65_536,
+                depth: 0,
+            }),
+            width: 0,
+            stretch: 15 * 65_536,
+            shrink: 0,
+        };
+        let page = BoxNode {
+            kind: BoxKind::HBox,
+            width: 15 * 65_536,
+            height: 65_536,
+            depth: 0,
+            shift: 0,
+            children: vec![ld],
+        };
+        let opts = RenderOptions {
+            dpi: 72.0,
+            ..Default::default()
+        };
+        let prims = collect_page(&page, &[], &opts, &mut GlyphCache::new());
+        assert_eq!(prims.rects.len(), 3);
+        let xs: Vec<f64> = prims.rects.iter().map(|r| r.x).collect();
+        assert!((xs[0] - 72.0).abs() < 1e-9);
+        // rule 单元 4pt：x2 = x1 + 4（rule 连排， Leaders 不加间隔）。
+        assert!((xs[1] - 76.0).abs() < 1e-9);
+        assert!((xs[2] - 80.0).abs() < 1e-9);
+        assert!(prims.rects.iter().all(|r| (r.w - 4.0).abs() < 1e-9));
+    }
+
+    #[test]
+    fn leaders_narrower_than_unit_draws_nothing() {
+        // 区域 9pt < 单元 10pt → 零绘制（三种 kind 均不越界）。
+        let mk = |kind| Node::Leaders {
+            kind,
+            inner: Box::new(Node::Box(BoxNode {
+                kind: BoxKind::HBox,
+                width: 10 * 65_536,
+                height: 65_536,
+                depth: 0,
+                shift: 0,
+                children: vec![],
+            })),
+            width: 0,
+            stretch: 9 * 65_536,
+            shrink: 0,
+        };
+        for kind in [
+            ntex_layout::node::LeadersKind::Leaders,
+            ntex_layout::node::LeadersKind::Cleaders,
+            ntex_layout::node::LeadersKind::Xleaders,
+        ] {
+            let page = BoxNode {
+                kind: BoxKind::HBox,
+                width: 9 * 65_536,
+                height: 65_536,
+                depth: 0,
+                shift: 0,
+                children: vec![mk(kind)],
+            };
+            let opts = RenderOptions {
+                dpi: 72.0,
+                ..Default::default()
+            };
+            let prims = collect_page(&page, &[], &opts, &mut GlyphCache::new());
+            assert!(prims.rects.is_empty(), "kind {kind:?} 不应绘制");
+        }
+    }
+
+    #[test]
+    fn leaders_char_box_glyph_and_fallback_paths() {
+        // inner 含字符：字形关 → 仅占位方框（3 条矩形）；字形开 + 无字体表 →
+        // 同样回落方框（不 panic）；两状态都出墨。
+        let mk = || {
+            Node::Leaders {
+                kind: ntex_layout::node::LeadersKind::Leaders,
+                inner: Box::new(Node::Box(BoxNode {
+                    kind: BoxKind::HBox,
+                    width: 10 * 65_536,
+                    height: 65_536,
+                    depth: 0,
+                    shift: 0,
+                    children: vec![Node::Char {
+                        font: FontId(0),
+                        charcode: b'.' as u32,
+                        width: 65_536,
+                        height: 65_536,
+                        depth: 0,
+                    }],
+                })),
+                width: 0,
+                stretch: 10 * 65_536,
+                shrink: 0,
+            }
+        };
+        let page = BoxNode {
+            kind: BoxKind::HBox,
+            width: 10 * 65_536,
+            height: 65_536,
+            depth: 0,
+            shift: 0,
+            children: vec![mk()],
+        };
+        let base = RenderOptions {
+            dpi: 72.0,
+            ..Default::default()
+        };
+        let off = collect_page(&page, &[], &base, &mut GlyphCache::new());
+        assert_eq!(off.rects.len(), 3);
+        assert!(off.glyphs.is_empty());
+        let on_opts = RenderOptions {
+            glyphs: true,
+            ..base.clone()
+        };
+        let on = collect_page(&page, &[], &on_opts, &mut GlyphCache::new());
+        assert_eq!(on.rects.len(), 3);
+    }
 
     #[test]
     fn validate_options_rejects_bad() {
