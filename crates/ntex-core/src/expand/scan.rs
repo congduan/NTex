@@ -82,8 +82,21 @@ impl Expander {
                 // 展开后重新进入符号处理（trip.tex L103 `\tracingoutput\on`：
                 // \on 宏展开为 1 作为参数值——缺此分支则报 Missing number 并把
                 // \on 遗留到输入流，L104 \moveleft 连锁错位）。
+                //
+                // e-TeX \protected 抑制面（etex-manual "Protected macros … are
+                // not expanded **when building an expanded token list**"）只盖
+                // token 列表吸收（\edef/\write/\message 的 xpand 循环，见
+                // scan_edef_body 的 protected 臂）——**数值扫描不是列构建**：
+                // get_x_token 无 protected 门，expl3 的
+                // `\exp:w \exp_end_continue_f:w <stuff>`（l3expan 全族的
+                // romannumeral 技巧，\exp_end_continue_f:w 是 protected 宏，
+                // expl3-code L2792）在 \expanded/f 型实参内依赖此语义展开成
+                // char-0 供 scan_int 取 0；此前的 suppress_expansion 门在
+                // \expanded 内把它挡成不可展开 → "Missing number, treated as
+                // zero"，quark 模块 `\__quark_module_name:N` 全灭（expl3
+                // l.3782 起 invalid-function bail out，§24）。
                 let expandable = match self.eqtb.slot(csid).clone() {
-                    EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
+                    EqSlot::Macro(_) => true,
                     EqSlot::Primitive(p) if p.is_expandable() => true,
                     _ => false,
                 };
@@ -1656,8 +1669,10 @@ impl Expander {
             // 组成 "pt"（\iftrue 被求值消费，`t1i` 中 `t` 匹配单位、`1` 放回）。
             if let Some(csid) = tok.csid() {
                 let slot = self.eqtb.slot(csid).clone();
+                // 单位词扫描同为数值扫描（scan_keyword 的 get_x_token）：
+                // 非 token 列构建，protected 宏照常展开（见 scan_number_inner 注）
                 let expandable = match slot {
-                    EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
+                    EqSlot::Macro(_) => true,
                     EqSlot::Primitive(p) => p.is_expandable(),
                     _ => false,
                 };

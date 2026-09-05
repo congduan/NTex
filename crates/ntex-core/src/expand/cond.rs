@@ -821,18 +821,21 @@ saved_if_type: self.cur_if_type,
                 //    操作数位到来，靠此门回退 + frozen `\relax` 收口本条件；
                 //    4f45101 曾连同嵌套 `\if*` 一起路由（d672423 臂），TRIP
                 //    三个 if_operand 测试与 l.313 均锁此行为。
-                // 2. 嵌套 `\if*`（if_test 族）**维持数据语义**（非字符哨兵）：
-                //    d672423 按字面 get_x_token 在此就地求值，实测与实参抓取/
-                //    `c` 变换/csname 机器失配（它们按"条件 token = 数据"约定
-                //    校准）——开口条件帧跨操作数边界存活，后续定界实参扫描在
-                //    错位 token 流上配对：expl3 `\cs_if_free:cT { exp_args:Nc }`
-                //    （l.3027）的 csname 文本被污染成 `{exp_args:Nc}`（带花括
-                //    号）→ 误判未定义 → 对已存在的 `\exp_args:Nc` 重复 `\cs_new`
-                //    → kernel command-already-defined fatal（expl3-code.tex
-                //    l.3246 `\cs_generate_variant:Nn \cs_replacement_spec:N
-                //    { c }`，2026-09-05 二分复现 b7aeeba 过/HEAD 挂）。与 tex.web
-                //    的残差（真 TeX 会求值操作数位嵌套条件，V1 应出 "X T"）记
-                //    docs/latex-feasibility.md §22.3，待实参抓取层对齐后重开。
+                // 2. 嵌套 `\if*`（if_test 族）**就地求值**（tex.web get_x_token →
+                //    expand → conditional）：操作数位遇 `\if*`，TeX 完整求值该内层
+                //    条件——其帧自带收口（`\else`/`\fi` 由它自己配对），被弃分支
+                //    就地排空（drain_open_skip），只让选中分支文本落入操作数扫描。
+                //    §22.3 曾按"数据哨兵"裁决（d672423 求值致 csname 机器失配），
+                //    该裁决的实害并非求值本身，而是**求值后帧不收口**：内层
+                //    `\if*` 不进条件机 → 其 `\else:`/`\fi:` 落到外层条件——
+                //    `\else` 错配外层（提前终止外层跳过）、`\fi` 把外层帧弹掉
+                //    （expl3 变体机器 `\if:w 0 <A><C>0 …\else:<invalid>\fi:` 的
+                //    A/C 测试链即此形态：`\if:w N #4 \else:\if:w n #4 \else:1\fi:
+                //    \fi:` 数据哨兵化后外层被 A 链的 `\fi:` 收口 → C 链/`0`/
+                //    `\special` 全部落到顶层裸执行 → Extra \else/\fi 级联 +
+                //    invalid-variant 误触发，expl3-code l.3245-3395 每个变体
+                //    调用 7 错，latex.ltx l.10298 输入栈超限，§23-§24）。
+                //    §22.3 的 V1 残差（真 TeX 出 "X T"）随之翻正：求值语义。
                 //    别名链（`\if:w` = `\tex_let:D \if:w \if`）须解到原语——
                 //    cond_op 只认 Primitive 槽，不解析 Alias。
                 if !noexpand {
@@ -849,6 +852,20 @@ saved_if_type: self.cur_if_type,
                             self.step_conditional(op, tok)?;
                             continue;
                         }
+                        // if_test 族：就地求值 + 被弃分支排空（同 expr.rs
+                        // `\expandafter` 臂的 step + drain 组合——Else/Or 的
+                        // 帧是**外层**的，drain 目标下移一层）。
+                        let before = self.cond_stack.len();
+                        self.step_conditional(op, tok)?;
+                        if !matches!(op, CondOp::Fi) {
+                            let depth = if matches!(op, CondOp::Else | CondOp::Or) {
+                                before.saturating_sub(1)
+                            } else {
+                                before
+                            };
+                            self.drain_open_skip(depth)?;
+                        }
+                        continue;
                     }
                 }
                 if noexpand {

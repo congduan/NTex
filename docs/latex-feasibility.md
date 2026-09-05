@@ -1603,3 +1603,79 @@ tex.web `@<Look for parameter number or ##@>`（L9416-9423）：报错 + `back_e
 走了**本不该走的** variant-same-as-base/invalid-variant 分支（载入期
 `\__cs_generate_variant_chk:nnTF` 是恒 FALSE 桩 `\use_ii:nn`，expl3-code.tex
 L2890，L5762 才替换为 `\str_if_eq:nnTF`），即桩的 `\use_ii:nn` 取参被错位。
+
+## 24. 2026-09-05 第十八轮：操作数位嵌套条件重开求值语义（§22.3 裁决推翻）+ protected 数值扫描门拆除
+
+主控简报锁定的 l.10298 输入栈超限（5001 帧）只是表现层。本轮用 `NTEX_COND_TRACE`
++ 临时 `collect_args` 实参转储（已拆）把变体机器逐迭代铺开，定位**两个**引擎偏差，
+合并修复后 latex.ltx 载入错误 **7669 → 5**（transcript 666446 → 1335 字节），
+l.10298 越过，expl3 变体机器 l.3245-3395 **每个变体调用 7 错的家族清零**。
+
+### 24.1 修复一：`\if` 操作数位嵌套 `\if*` 重开为求值语义（§22.3 裁决推翻）
+
+§22.3 曾把操作数位的嵌套 `\if*` 裁为**数据哨兵**（非字符）。本轮证明该裁决的
+实害不在求值本身，而在**求值后帧不收口**：d672423 求值时内层 `\if` 帧跨操作数
+边界存活，但其 `\else:`/`\fi:` 落到**外层**条件——`\else` 提前终止外层跳过、
+`\fi` 把外层帧弹掉。expl3 变体机器的 `\if:w 0 <A><C>0 …\else:<invalid>\fi:`
+（expl3-code L2899-2905）正是此形态：
+
+- A 测试 `\if:w N #4 \else:\if:w n #4 \else:1\fi:\fi:` 数据哨兵化后不进条件机，
+  其 `\fi:` 落到外层 `\if:w 0` → 外层被 A 链错误收口；
+- C 测试/`0`/`\special`/`\else:<invalid>` 全部落到顶层裸执行 → invalid-variant
+  误触发（`\msg_error:nneeee` undefined）+ Extra `\else`/`\fi` 级联 = 每调用
+  7 错（1×Extra \else、3×Extra \fi、2×undefined、2×级联，expl3 l.3245-3395
+  全体变体调用重复）→ 错误计数 46→7669，末态 l.10298 输入栈超限。
+
+**修复**（`cond.rs` `get_x_char_operand`）：操作数位的 `\if*`（if_test 族）就地
+求值 = `step_conditional` + 被弃分支 `drain_open_skip`（同 `expr.rs` `\expandafter`
+臂的组合；Else/Or 的 drain 目标下移一层）。帧由内层条件**自带收口**，被弃分支
+就地排空，只有选中分支文本落入操作数扫描——tex.web get_x_token → expand →
+conditional 的字面语义。`\else:`/`\fi:`/`\or:` 路由（TRIP l.313 门）与
+`\noexpand` 臂不动。
+
+**§22.3 的 V1 残差翻正**：`\if n\if c o N\else n\fi X T\else F\fi` 四值
+V1-V4 = X T / F / F / F（与 tex.web `@<Test if two characters match@>` 逐点
+推演一致）。`if_operand_nested_conditional_stays_sentinel` 改名
+`if_operand_nested_conditional_evaluates` 并锁新值。
+
+### 24.2 修复二：protected 宏的数值/操作数扫描门拆除（e-TeX 抑制面收窄）
+
+quark 模块 `\__kernel_quark_new_test:N`（expl3 l.3782）报 "Missing number,
+treated as zero" + `\exp_end_continue_f:w` 回读。根因：引擎把 e-TeX
+`\protected` 抑制面实现为全局 `suppress_expansion` 计数，数值扫描
+（`scan_number_inner`/`scan_dimen_inner` 单位词两臂）也查它——而
+`\expanded`/f 型实参内 `suppress_expansion > 0`，expl3 l3expan 全族的
+`\exp:w \exp_end_continue_f:w <stuff>`（romannumeral 技巧；`\exp_end_continue_f:w`
+是 **protected** 宏，expl3-code L2792 `\cs_new_protected:Npn`）被挡成不可展开。
+
+etex-manual 原文："Protected macros … are not expanded **when building an
+expanded token list**"（\edef/\xdef/\message/\errmessage/\special/\mark/\marks/
+\write + 对齐 \noalign/\omit 前瞻）——**抑制只盖 token 列表吸收，数值扫描
+（scan_int/scan_dimen 的 get_x_token）不在其列**。修复：三处数值扫描的
+`EqSlot::Macro(_)` 一律可展开（列表构建处的门保留：`scan_edef_body`、
+`process_expand_only`、`fetch_non_filler` 等）。
+
+### 24.3 验证与遗留
+
+| 门禁 | 结果 |
+| --- | --- |
+| ntex-core 全测 | **315 通过 / 0 失败**（sentinel 测试按 §24.1 翻正） |
+| TRIP | 与 HEAD（6128722 worktree 隔离重建）输出 **逐字节一致**（仅 tempdir 路径与计时尾差）；pass2 终态硬错不变（`组未闭合 groups=[SemiSimple,MathLeft,MathLeft,Align]`） |
+| latex.ltx --initex | 错误 **7669 → 5**（2×l.301/302 `\^^J` undefined 既有 + 3×新阻塞点级联）；transcript 666446 → 1335 字节；**l.10298 越过**（输入栈不再超限，pass1 OK） |
+| ETRIP | fixtures 缺失（既有跳过，非本轮引入） |
+
+**新阻塞点（下一刀靶）**：quark 模块 l.3782 `\__kernel_quark_new_test:N
+\__tl_if_recursion_tail_break:nN` → `Module quark, message name
+"invalid-function": Arguments 'test' and ''` bail out。已定位到
+`\__quark_module_name:N`（expl3-code L3505-3525，`\__quark_tmp:w` 以
+`\tl_to_str:n { : _ }` 实例化的**参数化嵌套定义**族）：引擎中它返回**未走
+chunk-walk 的原名**而非模块名 `tl`。疑似点（本轮探针 B/C 已排除了
+`\cs_to_str:N`/`\exp_last_unbraced:Nf` 单独路径）：`\exp:w \exp_end_continue_f:w
+{ \cs_to_str:N #1 }` 中**组内容的展开时机**（tex.web romannumeral 在 `{` 处停，
+真实 TeX 里由 e 型实参的 xpand 循环先展开组内 token 再被 `:w` 的 `##1` 抓走；
+引擎 scan_edef_body 的组收集与宏实参抓取的交错序）与多 token 定界符
+（`#1<sp>:<sp>#2<sp>\s__quark`，qp14/qp15 实测引擎把首个 `<sp>` 留给了
+`#1`，真实 TeX 后缀匹配应收掉）两处，连带 `\exp_args:NNcc` undefined
+（quark 条件生成器动态造的 exp_args 变体未落地）与 latex.ltx l.398
+`\__kernel_primitive:NN` 行的级联。另：`\show`/`\meaning` 的宏参数文本打印
+不显示定界符（primitive.rs L431 只拼 `#1..#n`），本轮排查中曾误导，待修。

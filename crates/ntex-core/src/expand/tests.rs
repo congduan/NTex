@@ -2082,37 +2082,36 @@ I changed this one to zero.
         assert_eq!(expand(r"\if aa T\else F\fi").unwrap().trim(), "T");
     }
 
-    // ---------- 第十六刀回归收敛：\if 字符操作数位的嵌套条件 = 数据（§22.3） ----------
+    // ---------- 第十八刀：\if 字符操作数位的嵌套条件 = 就地求值（§24 重开 §22.3） ----------
 
-    /// d672423 曾把操作数位的 `\if*` 改为就地真实求值（tex.web get_x_token 字面
-    /// 语义），实测与实参抓取/csname 机器失配致 expl3 l.3246 fatal（§22.2），
-    /// 本测试改锁恢复后的**数据语义**：操作数位的条件 token 落非字符哨兵
-    /// （cs vs 哨兵恒假）。期望值为恢复后引擎与 b7aeeba 的逐点一致输出
-    /// （2026-09-05 vtest 双二进制复核）。与真实 TeX 的残差（真实 TeX 会展开
-    /// 求值，V1 应输出 "X T"）记 docs/latex-feasibility.md §22.3，待实参抓取
-    /// 层整体对齐 get_x_token 后重开本测试为求值语义。
+    /// §22.3 曾按"数据哨兵"裁决（d672423 求值后帧不收口，内层 `\else`/`\fi`
+    /// 落到外层条件 → expl3 变体机器 `\if:w 0 <A><C>0` 结构被 A 链的 `\fi:`
+    /// 错误收口）。第十八刀定位实害在**帧不收口**而非求值本身，重开为
+    /// tex.web get_x_token → expand → conditional 的**求值语义**：操作数位的
+    /// `\if*` 完整求值（帧自带收口 + 被弃分支 drain），只让选中分支文本落入
+    /// 操作数扫描。四值与 tex.web `@<Test if two characters match@>` 逐点推演
+    /// 一致（2026-09-05），expl3 变体机器 l.3245-3395 全绿随之达成（§24）。
     #[test]
-    fn if_operand_nested_conditional_stays_sentinel() {
-        // V1：嵌套 \if 当哨兵 → 外层 n vs 哨兵假 → 外层假支 F 活；分支残余
-        // 文本 `n X T` 照排（b7aeeba 一致行为）
+    fn if_operand_nested_conditional_evaluates() {
+        // V1：嵌套 \if c o 假 → 取 else 支 `n` 作外层右操作数 → n=n 真 → X T
         assert_eq!(
             expand(r"\if n\if c o N\else n\fi X T\else F\fi").unwrap(),
-            "nX TF"
+            "X T"
         );
-        // V2：同 V1，嵌套 else 支首 token=m（m X T 残余）
+        // V2：嵌套 else 支首 token=m → n≠m 假 → F
         assert_eq!(
             expand(r"\if n\if c o N\else m\fi X T\else F\fi").unwrap(),
-            "mX TF"
+            "F"
         );
-        // V3：嵌套真支被当哨兵后，残余文本按 m N… 假支排（mn TF）
+        // V3：嵌套真支 `N` → n≠N 假 → F
         assert_eq!(
             expand(r"\if n\if c c N\else m\fi n T\else F\fi").unwrap(),
-            "mn TF"
+            "F"
         );
-        // V4：嵌套无 \else → `X T F` 残余
+        // V4：嵌套无 \else（假 → 空贡献）→ 外层右操作数取 `X` → n≠X 假 → F
         assert_eq!(
             expand(r"\if n\if c o N\fi X T\else F\fi").unwrap(),
-            "X TF"
+            "F"
         );
     }
 
