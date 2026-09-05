@@ -454,8 +454,15 @@ mod tests {
             expand("\\count20=65\\lccode\\count20=0\\relax\\ifnum\\lccode`A=0 yes\\else no\\fi").unwrap(),
             "yes"
         );
-        // \the 读回
-        assert_eq!(expand("\\lccode`B=`b\\the\\lccode`B").unwrap(), "98");
+        // \the 读回（字母常量后跟空格：tex.web @<Scan an optional space@> 把空格
+        // 吞掉，\the 在赋值完成后才求值）
+        assert_eq!(expand("\\lccode`B=`b \\the\\lccode`B").unwrap(), "98");
+        // 字母常量后**紧跟** \the：tex.web @<Scan an optional space@> 是
+        // `get_x_token; if cur_cmd<>spacer then back_input`——get_x_token 会展开
+        // `\the`（convert > max_command），展开产物留在流里（back_input 只放回
+        // 当前 token），此刻赋值尚未发生 → 读到旧值 0。expl3 f 型展开
+        // （`\exp:w \exp_end_continue_f:w`）正依赖此"字母常量后继续展开"语义。
+        assert_eq!(expand("\\lccode`B=`b\\the\\lccode`B").unwrap(), "0");
         // 组作用域回滚
         assert_eq!(
             expand("\\lccode`C=1{\\lccode`C=2}\\the\\lccode`C").unwrap(),

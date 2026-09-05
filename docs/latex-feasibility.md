@@ -1763,3 +1763,74 @@ f1c1503 的当前树全绿。主根唯一：360c342。
 **遗留**：sink 的 `Mode::Math + display=true` 臂（"Missing $ inserted." + 收 +
 重进）在两侧门都接线后已不可达（360c342 起即如此），留作恢复路径保险丝未删；
 连带的 math 组生命周期 P0（§24.3 遗留）不受本轮影响。
+
+## 26. 2026-09-05 第十九轮：`\romannumeral` 字母常量后继续展开——expl3 f 型展开落地，quark 区越过
+
+主控简报锁定的 `Module quark, message name "invalid-function": Arguments 'test' and ''`
+（expl3-code l.3782 `\__kernel_quark_new_test:N \__tl_if_recursion_tail_break:nN`）
+只是一根表现层线头。本轮把 quark 条件生成链逐环 dump（`\cs_to_str:N` →
+`\__quark_module_name:w` → `\__quark_module_name_loop:w` → `\__quark_module_name_end:w`）
+后定位到**一个**引擎偏差，修复后 latex.ltx 载入从 expl3 **l.3782 → l.29550+**
+（regex 模块 `\__regex_replacement_c_E:w` 区），invalid-function / Missing
+endcsname / Argh bail out / Incomplete \ifx 四个错误全部消失。
+
+### 26.1 根因：`\exp:w \exp_end_continue_f:w <stuff>` 的 f 型展开在引擎里是"惰性空转"
+
+- `\exp:w` = `\tex_let:D \exp:w \tex_romannumeral:D`（expl3-code L1498），
+  `\exp_end_continue_f:w` = protected 宏，体为 `` `^^@ `` ——即 `\romannumeral`
+  的**字母常量**（char code 0）。l3expan 的权威注释："after a character code,
+  TeX will still look for further digits, so full expansion continues until an
+  unexpandable token is found"——即字母常量之后数字扫描**继续逐 token 展开**。
+- 引擎在 [`scan_number_inner`] 里走完 `try_scan_backquote` 后直接
+  `skip_trailing_spaces()` 收尾返回——字母常量成了扫描终点，`<stuff>` 一个
+  token 都没展开。于是 `\__quark_module_name:N`（expl3-code L3505）的
+  `\exp_last_unbraced:Nf \__quark_module_name:w { \cs_to_str:N ##1 } : \s__quark`
+  把 **`\cs_to_str:N ##1` 以裸 token 列**交进 `##1` 的实参扫描：`##1`（`:`
+  定界）只能落在显式 `:` 上取到整个名字、`_` 分割随之全部落空 →
+  `\__quark_new_test_aux:Nn` 收到"原名"而非模块名 `tl` →
+  `\csname q__<原名>_recursion_tail` → Missing endcsname → invalid-function。
+- **实证链**（qp6/qp9 最小复现，`\write16` 逐环 dump）：修复前
+  `W:base=[exp_after:wN]tail=[]`、`LOOP:arg=[exp_after:wN]`；修复后
+  `W:base=[exp_after]tail=[wN]`、`LOOP:arg=[exp]`、`END:a=[exp]` ✓。
+
+### 26.2 修复：`scan.rs` 字母常量臂改为"继续 get_x_token 展开到不可展开 token"
+
+`try_scan_backquote` 成功后进入循环：宏/可展开原语 `expand_once` 后续扫、
+条件 token `step_conditional`（`\fi`/`\else`/`\or` 在空条件栈上维持放回）、
+不可展开 token 放回收尾，`skip_trailing_spaces()` 语义不变。**展开产物不折入
+数值**（放回照常输出）——`\lccode`B=`b\the\lccode`B` = "0" 即 tex.web
+`@<Scan an optional space@>`（`get_x_token; if cur_cmd<>spacer then
+back_input`）的字面语义：get_x_token 展开 `\the`、back_input 只放回当前
+token、此刻赋值未发生。与 `\exp_end:`（chardef 0 → 内部整数立即收尾不前瞻）
+恰成 expl3 文档化的两态对照。
+
+**测试翻正**：`lccode_assign_and_read` 第 3 断言 `"98"` → 新增空格变体
+`\lccode`B=`b \the\lccode`B` = `"98"`（空格被吞、`\the` 赋值后才求值）+
+无空格变体 = `"0"`（§26.2 语义），并附 tex.web 依据。
+
+### 26.3 验证
+
+| 门禁 | 结果 |
+| --- | --- |
+| ntex-core 全测 | **315 通过 / 0 失败**（同 §24.3 基线；1 断言按 §26.2 翻正） |
+| TRIP | 与 HEAD（35282f9 worktree 隔离重建 + 独立 CARGO_TARGET_DIR）输出**逐字节一致**（仅 tempdir 路径与 systemd-run 包裹尾差）；pass2 终态硬错不变（`group_end 无配对 group_begin`） |
+| ETRIP | 同上，与 HEAD **逐字节一致** |
+| clippy/fmt（ntex-core） | `-D warnings` 绿、`fmt --check` 绿 |
+| latex.ltx --initex | quark l.3782 区**越过**：invalid-function/Missing endcsname/Argh/Incomplete \ifx 全消；载入推进到 regex 模块 `\__regex_replacement_c_E:w`（expl3-code ≈l.29550）后被新阻塞点**致命**截断（见 26.4）；transcript 25 错（6 → 25 为**前进性增长**：原 6 错里 4 锚点已消，新错误全部来自新读入的 ~2.6 万行） |
+
+### 26.4 新阻塞点（下一刀靶）
+
+`\char_set_catcode_group_end:N \^^@`（expl3-code L29548，regex 模块用 char 0
+当 catcode-2 组尾做 `\if_false: { \fi: ^^@` 平衡技巧）报 **Undefined control
+sequence** → `\__regex_replacement_c_E:w` 的体扫描把 `^^@` 当普通 token、
+吞到 EOF → 致命 `替换文本未闭合（缺少 }）`。疑点：`\char_set_catcode_*:N`
+族定义在 L9173-9207（**早于**使用点），却在使用点 undefined——需查
+L9173 定义是否真落地（`char_set_catcode:nn` 体含 `` `#1 `` 反引号+参数 token，
+疑 [`try_scan_backquote`] 只认 Char/ControlSeq 不认 MacroParam）。连带未定义
+清单：`\exp_args:NNcc`、`\exp_args:Nno`、`\c__tl_rescan_marker_tl`、
+`\msg_expandable_error:nn`、`\char_set_catcode_math_subscript:N`。
+
+**同轮顺手澄清（勿再当靶）**：`\write16` 的 token 打印**丢弃 cs token**
+（NTex io.rs 只收集字符 token；tex.web 会打 `\csname`）且**丢弃组 token
+花括号**——本轮所有 `\write16` 探针读数都受此影响，读数时须自行补回
+`{...}`/`\cs` 形态；另 `\escapechar=-1` 未被 `\string` 尊重（仍打 `\`）。

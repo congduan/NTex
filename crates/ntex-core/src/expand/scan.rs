@@ -117,9 +117,56 @@ impl Expander {
         }
         // 反引号字符码：`<char>（TeX scan_int 的 alphabetic constant，TeXbook p.267）
         if let Some(code) = self.try_scan_backquote()? {
+            // 字母常量之后 TeX **仍继续展开**（l3expan 对 `\exp_end_continue_f:w`
+            // 的注释："after a character code, TeX will still look for further
+            // digits, so full expansion continues until an unexpandable token is
+            // found"）。逐 token `get_x_token`（可展开项就地展开、条件就地步进），
+            // 直到不可展开 token 放回——展开产物**不折入数值**（`\lccode`B=`b\the
+            // \lccode`B`=98 etrip 同款：数字放回照常输出）。expl3 全族 f 型展开
+            // （`\exp:w \exp_end_continue_f:w <stuff>` = `\romannumeral` `^^@，即
+            // 字符码 0）依赖此语义：哨兵展开成 0 后继续前瞻、把 <stuff> 展开到位，
+            // 与 `\exp_end:`（chardef 0，内部整数立即收尾不前瞻）相区分。quark
+            // 模块 `\__quark_module_name:N`（expl3-code L3505）的
+            // `\exp_last_unbraced:Nf \__quark_module_name:w { \cs_to_str:N #1 }`
+            // 正是靠它把 `\cs_to_str:N` 的展开产物（字符）真正交到参数匹配手里；
+            // 缺此前瞻则 `\cs_to_str:N #1` 以裸 token 进入 `##1`，`:`/`_` 两个
+            // 分割点全部落空 → 模块名取到原名 → invalid-function bail out（§24.3）。
+            let val: i64 = code;
+            while let Some((tok, _)) = self.fetch()? {
+                if let Some(csid) = tok.csid() {
+                    let expandable = match self.eqtb.slot(csid).clone() {
+                        EqSlot::Macro(_) => true,
+                        EqSlot::Primitive(p) if p.is_expandable() => true,
+                        _ => false,
+                    };
+                    if expandable {
+                        let mut expansion = Vec::new();
+                        self.expand_once((tok, false), &mut expansion)?;
+                        if !expansion.is_empty() {
+                            self.stack.push(InputFrame::TokenList {
+                                items: Arc::from(expansion),
+                                pos: 0,
+                            });
+                        }
+                        continue;
+                    }
+                }
+                if let Some(op) = self.cond_op(tok) {
+                    if matches!(op, CondOp::Fi | CondOp::Else | CondOp::Or)
+                        && self.cond_stack.is_empty()
+                    {
+                        self.unread(tok);
+                        break;
+                    }
+                    self.step_conditional(op, tok)?;
+                    continue;
+                }
+                self.unread(tok);
+                break;
+            }
             // TeX scan_int：数字（含反引号常量）后跟随的空格被吞
             self.skip_trailing_spaces()?;
-            return Ok(if neg { -code } else { code });
+            return Ok(if neg { -val } else { val });
         }
         // 基数前缀：十六进制 `"`（radix 16）与八进制 `'`（radix 8），TeXbook p.267
         if let Some((tok, _)) = self.fetch()? {
