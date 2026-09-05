@@ -1491,3 +1491,34 @@ CARGO_TARGET_DIR 跨 worktree 时 cargo 指纹误判 fresh、交付陈旧二进�
   的 p 形生成（`conditional-base-undefined`，`\quark_if_no_value_p:N` 未生成），
   沿 §21.3 的 `\exp_last_unbraced:NNNNo` + 定界实参链下探；前置工程为
   §22.3 残差的实参抓取层对齐。
+
+### 22.5 十六刀主靶极简复现（五轮接管，主控验收）
+
+五轮（glm，跨夜复现迭代 56 样本，/tmp/r16b/）被接管时无代码产出（纯复现），
+但其 g3→极简化收敛出**直指机制层的最小复现**：
+
+```tex
+\def\ttl#1{#1}
+\expandafter\def\expandafter\resW\expandafter{\ttl { ma }}
+\message{W: \meaning\resW}
+```
+
+- 引擎实测：`W: macro:-> ma`（\ttl 被展开、组剥、空格异常）
+- 真实 TeX：链3 A=`{` B=`\ttl` → `{` 放回、`\ttl` 展开读参 `{ ma }` → 流 =
+  `\def\resW{ ma }` → `W: macro:-> ma`（**引擎此处正确**）
+- 关键差异场景（min3）：
+
+```tex
+\def\ttl#1{#1}
+\def\testY#1#2{\expandafter\def\expandafter\resY\expandafter{\expandafter#1#2}}
+\testY \ttl { ma }
+% 引擎: Y: macro:->\ttl ma   真实 TeX: Y: macro:->\ttl {ma}
+```
+
+**差异 = `\expandafter#1#2` 展开中 B=`{ ma }` 组参数回流后，def 体收集
+丢组符**（对照 min2 直接 `\def\resZ{ \ttl {ma} }` 组保留正常——收集器本身
+无恙，是 `\expandafter` 的 `expand_once` 路径中组参数 token 的 `csid=None`
+回流形态有问题）。下一刀靶子：`expand_once`（expr.rs L65）尾部对非 cs
+token（组符/字符）的回写与 fetch 流的组配对。修复后预期 l.3324 越过
+（`\\__cs_generate_variant:ww` 的参数文本 `{ \\tl_to_str:n{ma} }` 定界依赖
+组原样回流）。
