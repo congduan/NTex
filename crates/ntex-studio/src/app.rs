@@ -317,7 +317,17 @@ impl eframe::App for Studio {
                     };
                     self.auto_fit = false;
                 }
-                let drag = ui.input(|i| i.pointer.primary_down().then(|| i.pointer.delta()));
+                // 主键拖拽平移：需按下且起点在预览区内才接管（egui 输入是全局的，
+                // 编辑器里选择文字的 primary_down 不得移动预览页面）；
+                // 起点在预览内时即使拖出边界也继续跟随，避免拖拽中途丢失。
+                let drag = ui.input(|i| {
+                    let origin_in_preview = i
+                        .pointer
+                        .press_origin()
+                        .is_some_and(|origin| area.contains(origin));
+                    (i.pointer.primary_down() && (origin_in_preview || over_preview))
+                        .then(|| i.pointer.delta())
+                });
                 if let Some(d) = drag.filter(|d| *d != egui::Vec2::ZERO) {
                     self.pan = Some(match self.pan {
                         Some((x, y)) => (x + d.x, y + d.y),

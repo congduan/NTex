@@ -5,6 +5,8 @@
 
 > 最简概括：**"一个基于状态快照的 TeX 虚拟机（求值）+ 纯节点流的多线程增量布局（排版）+ GPU/Canvas（渲染）"**
 
+![ntex-studio 实时预览工作台（左：TeX 源码编辑；右：vello GPU 渲染）](screenshots/screenshot1.png)
+
 ## 核心架构
 
 ```
