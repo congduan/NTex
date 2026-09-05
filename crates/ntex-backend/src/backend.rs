@@ -80,7 +80,8 @@ impl Backend for TinySkiaBackend {
                 let prims = collect_page(page, opts);
                 let mut pm = Pixmap::new(prims.width, prims.height);
                 pm.fill(255, 255, 255);
-                for r in &prims.rects {
+                // overlay 在内容之后绘制（独立通道，仅 debug 开启时非空）。
+                for r in prims.rects.iter().chain(&prims.debug) {
                     pm.fill_rect(r.x, r.y, r.w, r.h, r.color);
                 }
                 Ok(pm)
@@ -156,5 +157,28 @@ mod tests {
         assert!(pm.pixel_nonwhite(72, 72));
         assert!(!pm.pixel_nonwhite(71, 72));
         assert!(!pm.pixel_nonwhite(74, 74));
+    }
+
+    #[test]
+    fn debug_overlay_paints_margin_stroke() {
+        // 空页面：debug 关 → 全白；开 → 版心描边四角有墨（72dpi 边距 72px，
+        // 版心右下 ≈ (522, 769)）。
+        let opts_off = RenderOptions {
+            dpi: 72.0,
+            ..Default::default()
+        };
+        let opts_on = RenderOptions {
+            dpi: 72.0,
+            debug: true,
+            ..Default::default()
+        };
+        let off = &TinySkiaBackend
+            .render(&[page_with_children(vec![])], &[], &opts_off)
+            .unwrap()[0];
+        assert!(!off.pixel_nonwhite(72, 72));
+        let page = page_with_children(vec![]);
+        let on = &TinySkiaBackend.render(&[page], &[], &opts_on).unwrap()[0];
+        assert!(on.pixel_nonwhite(72, 72));
+        assert!(on.pixel_nonwhite(522, 769));
     }
 }

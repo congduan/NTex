@@ -738,6 +738,7 @@ vs 全量 diff 作 CI 常驻检查，闭环 §7 风险项）；`.aux`/`.toc` 增
   （demo.tex 两页对比墨水比 1.02\~1.04，均为字体提示/抗锯齿差异）。
 - [ ] L2 字节兼容：简单文档对照 pdfTeX 逐字节 diff（关闭时间戳/元数据随机性）
 - [x] **渲染后端**（2026-09-05 选型由 Skia 改为 vello：纯 Rust/wgpu 栈、WASM 同构、免 C++ 绑定，见 §13）：`crates/ntex-backend` 落地 `Backend` trait + 双实现——软光栅（离线环境自研位图/PNG）+ **vello 0.10 GPU 路径**（wgpu 29 无头渲染 Rgba8Unorm 纹理回读，area 亚像素 AA）。两后端共享「盒树 → 矩形指令」prims 遍历，demo 差分：墨区面积差 0.15%、几何完全重合（差异仅亚像素边缘表现）；GPU 不可用报错回落软光栅。CLI：`cargo run -p ntex-backend -- demo.tex out 144 --vello`。字符暂为占位方框（TFM 无轮廓，M9 字形在同一 prims 层扩展曲线指令，两后端同步受益）
+- [x] **排版调试 overlay**（2026-09-05）：prims 层独立 `debug` 通道（`RenderOptions::debug` / CLI `--debug`）——版心+盒边界描边（HBox 蓝/VBox 紫红）、基线（青）、glue 自然宽带+stretch/shrink 指示线（fil 阶亮绿）、kern 橙线、penalty 断点标记（禁断深红粗线）；两后端在内容之后绘制，`rects` 通道与差分口径零变化（demo 实测 GPU/软光栅 debug 位图逐字节一致）
 - [ ] WASM 前端：wasm-bindgen + Canvas2D/WebGL 实时预览（接 M5 增量，毫秒级刷新）
 - [ ] SyncTeX 源码映射（IDE 点击跳转）
 

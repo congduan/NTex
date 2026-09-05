@@ -45,6 +45,7 @@ make fixture-extras  # 获取补充对照 fixtures（pdftex expanded.{tex,txt} �
 cargo run -p ntex-dvi -- demo.tex   # → demo.dvi
 cargo run -p ntex-pdf -- demo.dvi   # → demo.pdf
 cargo run -p ntex-backend -- demo.tex demo 144 --vello  # → demo-01.png…（vello GPU；去掉 --vello 走软光栅）
+cargo run -p ntex-backend -- demo.tex demo 144 --debug  # → demo-01-debug.png…（排版调试 overlay：盒边界/glue/断点标记，独立通道不影响正常渲染）
 ```
 
 **重要限制**：`[profile.release]` 开了 `panic = "abort"` + `lto` + `codegen-units = 1`，

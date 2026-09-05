@@ -31,6 +31,7 @@ tmp_pngcmp.py
 # 引擎本地构建产物（站点素材在 site/public/ 内另行跟踪）
 /demo.dvi
 /demo.pdf
+/demo-*.png
 
 # TRIP/ETRIP 运行产物
 /tr

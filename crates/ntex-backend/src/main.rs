@@ -1,7 +1,9 @@
 //! demo 驱动：读 .tex → `Typesetter::typeset_dvi` 排版 → 逐页渲染 PNG。
 //!
-//! 用法：`ntex-backend <input.tex> [output_prefix] [dpi] [--vello]`
-//! 输出：`<prefix>-<页码,01 起>.png`（默认前缀 = 输入文件名去扩展名）。
+//! 用法：`ntex-backend <input.tex> [output_prefix] [dpi] [--vello] [--debug]`
+//! 输出：`<prefix>-<页码,01 起>.png`（默认前缀 = 输入文件名去扩展名）；
+//! `--debug` 时文件名带 `-debug` 后缀，并叠加排版调试 overlay
+//! （盒边界/glue/断点标记）。
 //! `--vello` 走 GPU 后端（vello/wgpu，无头纹理回读）；缺省软光栅。
 
 use std::path::Path;
@@ -12,12 +14,28 @@ use ntex_layout::typeset::Typesetter;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 || args.len() > 5 {
-        eprintln!("用法：ntex-backend <input.tex> [output_prefix] [dpi] [--vello]");
+    if args.len() < 2 {
+        eprintln!("用法：ntex-backend <input.tex> [output_prefix] [dpi] [--vello] [--debug]");
+        return ExitCode::from(2);
+    }
+    // flag 解析：未知 `-` 前缀参数报错；positional 1..=3 个。
+    for a in &args[1..] {
+        match a.as_str() {
+            "--vello" | "--debug" => {}
+            other if other.starts_with('-') => {
+                eprintln!("未知参数：{other}");
+                return ExitCode::from(2);
+            }
+            _ => {}
+        }
+    }
+    let positional: Vec<&String> = args[1..].iter().filter(|a| !a.starts_with('-')).collect();
+    if positional.len() > 3 {
+        eprintln!("用法：ntex-backend <input.tex> [output_prefix] [dpi] [--vello] [--debug]");
         return ExitCode::from(2);
     }
     let use_vello = args.iter().skip(1).any(|a| a == "--vello");
-    let positional: Vec<&String> = args[1..].iter().filter(|a| !a.starts_with('-')).collect();
+    let debug = args.iter().skip(1).any(|a| a == "--debug");
     let tex_path = Path::new(positional[0]);
     let prefix = positional.get(1).map(|s| s.to_string()).unwrap_or_else(|| {
         tex_path
@@ -46,6 +64,7 @@ fn main() -> ExitCode {
     };
     let opts = RenderOptions {
         dpi,
+        debug,
         ..RenderOptions::default()
     };
     let backend_name = if use_vello { "vello(gpu)" } else { "软光栅" };
@@ -62,7 +81,8 @@ fn main() -> ExitCode {
         }
     };
     for (idx, png) in pngs.iter().enumerate() {
-        let out_path = format!("{prefix}-{:02}.png", idx + 1);
+        let suffix = if debug { "-debug" } else { "" };
+        let out_path = format!("{prefix}-{:02}{suffix}.png", idx + 1);
         if let Err(err) = std::fs::write(&out_path, png) {
             eprintln!("写 {} 失败：{}", out_path, err);
             return ExitCode::from(1);

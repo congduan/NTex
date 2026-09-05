@@ -117,7 +117,8 @@ impl Backend for VelloBackend {
 /// 渲染一页：矩形指令 → Scene → GPU 纹理 → 回读为 [`Pixmap`]。
 fn render_page(ctx: &mut GpuContext, prims: &PagePrims) -> Result<Pixmap, BackendError> {
     let mut scene = Scene::new();
-    for r in &prims.rects {
+    // overlay 在内容之后绘制（独立通道，仅 debug 开启时非空）。
+    for r in prims.rects.iter().chain(&prims.debug) {
         // 非正尺寸丢弃（prims 层已过滤，此处双保险）。
         if r.w <= 0.0 || r.h <= 0.0 {
             continue;
