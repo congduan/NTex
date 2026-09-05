@@ -2420,6 +2420,62 @@ I changed this one to zero.
         (r, std::mem::take(&mut sink.transcript))
     }
 
+    /// 0 参数宏的**纯定界串参数文本**（`\def\X\fi:\use:n{...}`）在展开上下文
+    /// （`\edef`/`\csname` 名字扫描）也须在调用点匹配并吞掉。
+    ///
+    /// tex.web macro_call `if info(r)<>end_match_token then @<Scan the
+    /// parameters@>`——参数文本非空时 0 参数宏同样走参数匹配；`\else`/`\fi`
+    /// 在实参扫描里是**数据**（get_token，不推进条件机）。expl3 条件生成器
+    /// fast form（`\__prg_T_true:w`/`\__prg_F_true:w`/`\__prg_TF_true:w`/
+    /// `\__prg_p_true:w`）即此形态：体首 `\fi:` 负责闭合调用点的条件帧。
+    /// 旧实现 expand_once/scan_csname 两处对 `num_params==0` 直接跳过匹配，
+    /// 定界串泄给条件机 → 帧被提前弹掉 + "Extra \fi."，expl3-code.tex
+    /// l.7934 起 `\str_const:Ne` 区级联、`\str_case` 全线 extra-} 失衡
+    /// （错误 7016 → 修复后 1835，终态行号 l.8073 → l.9353）。
+    #[test]
+    fn zero_param_macro_delimiter_text_consumed_in_expansion_contexts() {
+        // l3kernel fast form 的最小同构：T 分支选择器（expl3 catcode：`_`/`:` 为字母）。
+        // 执行路径（call_macro）旧测已盖；此处盖**展开上下文**的两处调用点：
+        // \edef 体扫描（expand_once）与 \csname 名字扫描（scan_csname）。
+        let setup = concat!(
+            "\\catcode`\\_=11 \\catcode`\\:=11 %\n",
+            "\\let\\fi:\\fi %\n",
+            "\\long\\def\\usei:nn#1#2{#1}%\n",
+            "\\long\\def\\use:n#1{#1}%\n",
+            "\\long\\def\\use_none:n#1{}%\n",
+            "\\long\\def\\T_true:w\\fi:\\use_none:n{\\fi:\\use:n}%\n",
+            "\\def\\cond:NT#1{\\ifdefined#1\\T_true:w\\fi:\\use_none:n}%\n",
+            "\\def\\foo{FOO}%\n",
+        );
+        // \edef：`\T_true:w` 吞掉定界串 `\fi: \use_none:n`，体首 `\fi:` 闭合
+        // \ifdefined 帧，`\use:n` 取真分支 → 结果 YES（旧实现帧被提前弹掉，
+        // 报 "Extra \fi." 且结果为空）
+        assert_eq!(
+            expand(&format!(
+                "{setup}\\edef\\res{{\\cond:NT\\foo{{YES}}}}\\res"
+            ))
+            .unwrap(),
+            "YES"
+        );
+        // 假分支：`\ifdefined` 为假 → 跳到 `\fi`，`\use_none:n` 吞掉分支组
+        assert_eq!(
+            expand(&format!(
+                "{setup}\\edef\\res{{\\cond:NT\\undef{{NO}}}}\\res"
+            ))
+            .unwrap(),
+            ""
+        );
+        // \csname 名字扫描：不消费定界串会把 `\fi:` 泄进名字文本
+        //（"Missing endcsname inserted"）；正确行为下名字 = X+YES
+        assert_eq!(
+            expand(&format!(
+                "{setup}\\edef\\res{{\\expandafter\\string\\csname X\\cond:NT\\foo{{YES}}\\endcsname}}\\res"
+            ))
+            .unwrap(),
+            "\\XYES"
+        );
+    }
+
     /// TRIP 冲刺调试（临时）。
     #[test]
     fn dbg_trip_l26_mathchardef() {

@@ -76,11 +76,16 @@ impl Expander {
                 }
                 EqSlot::Macro(m) => {
                     let def = m.value.clone();
-                    let args = if def.params.num_params > 0 {
-                        self.collect_args(csid, &def)?
-                    } else {
-                        Vec::new()
-                    };
+                    // 0 参数宏也必须走 collect_args：参数文本可能是**纯定界串**
+                    // （`\def\X\fi:\use:n{...}`），调用点须匹配并吞掉（tex.web
+                    // macro_call `if info(r)<>end_match_token`；与 call_macro 同一
+                    // 契约）。expl3 条件生成器 fast form 的 `\__prg_T_true:w`/
+                    // `\__prg_F_true:w`/`\__prg_TF_true:w`/`\__prg_p_true:w` 即此
+                    // 形态：`\edef`/f 型展开（\exp:w）里跳过匹配会把体首 `\fi:`
+                    // 泄给条件机——帧被体内 `\fi:` 提前弹掉，随后定界串里的 `\fi:`
+                    // 再来一次即 "! Extra \fi."（expl3-code l.7934 起 \str_const:Ne
+                    // 区级联，\str_case 全线 extra-} 失衡即源于此）。
+                    let args = self.collect_args(csid, &def)?;
                     let materialized = materialize(&def.body, &args);
                     out.extend(materialized.into_iter().map(|t| (t, false)));
                 }
@@ -928,11 +933,12 @@ impl Expander {
                 }
                 match self.eqtb.slot(csid).clone() {
                     EqSlot::Macro(m) => {
-                        let args = if m.value.params.num_params > 0 {
-                            self.collect_args(csid, &m.value)?
-                        } else {
-                            Vec::new()
-                        };
+                        // 0 参数宏同样须匹配纯定界串参数文本（tex.web macro_call
+                        // `if info(r)<>end_match_token`）——\csname 名字扫描里展开
+                        // 可展开宏时漏匹配会把定界串（如 fast-form 条件的
+                        // `\fi: \use_none:n`）泄进名字文本 → "Missing endcsname
+                        // inserted" 级联。
+                        let args = self.collect_args(csid, &m.value)?;
                         let body = materialize(&m.value.body, &args);
                         let seq: Vec<(Token, bool)> =
                             body.into_iter().map(|t| (t, false)).collect();

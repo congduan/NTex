@@ -1947,3 +1947,94 @@ retain（新增 3 测）。315 旧测 + ntex-trip 全绿无回归。
 - **`\ifdefined` 与控制词**：组外 `_` 回到 cat 8 时 `\ifdefined\c__kt` 测的是
   `\c`（控制词遇非字母终止）——回归测试须把 `\catcode`\_=11` 放组外整行，
   否则误判引擎回归（本轮写测时自坑一次）。
+
+## 28. 2026-09-06 第二十一轮：0 参数宏纯定界串在展开上下文漏匹配——`\__str_case:nw` extra-} 全线消除
+
+### 28.1 阻塞点与症状
+
+HEAD=09211e9（二十轮 retain 守卫）。latex.ltx --initex 探针终态：**7016 条错误**
+（去重 7 类签名），末态死因 `输入栈超限（5001 帧 > 5000）`，级联核心在
+expl3-code.tex l.7934 起 `\str_const:Ne \c_sys_engine_str` /
+`\c_sys_engine_version_str`（内含 `\str_case:on`）执行区：
+
+| 签名 | 条数 | 说明 |
+|---|---|---|
+| `Argument of \__str_case_end:nw has an extra }` | 3987 | str_case 收尾机器失衡 |
+| `Argument of \__str_case:nw has an extra }` | 1992 | 同上，迭代级 |
+| `Extra \fi` | 1002 | fast-form 条件体首 `\fi:` 泄漏 |
+| `Missing endcsname inserted` / `Extra \endcsname` | 8/7 | `\csname` 名字扫描被污染 |
+| `Missing number, treated as zero` | 18 | `\exp:w` f 型展开误吞数据 |
+| `Undefined control sequence` | 2 | 既有 `^^J`（l.301/302，本轮外） |
+
+### 28.2 根因：两处调用点对 0 参数宏跳过参数匹配
+
+`\cs_if_exist:NT` 由 expl3 条件生成器产成（本引擎 `\show` 实测）：
+
+```tex
+\cs_if_exist:NT=macro:#1->\if_meaning:w#1\scan_stop:\use_i:nnnn\else:\fi:
+  \if_cs_exist:N#1\__prg_T_true:w\fi:\use_none:n
+```
+
+尾段是 l3kernel fast form：`\__prg_T_true:w` 是 **0 参数宏 + 纯定界串参数文本**
+`\def\__prg_T_true:w\fi:\use_none:n{\fi:\use:n}`——调用点必须匹配并**吞掉**
+`\fi: \use_none:n`（tex.web macro_call `if info(r)<>end_match_token then
+@<Scan the parameters@>`：参数文本非空时 0 参数宏同样走参数匹配，实参扫描用
+get_token，`\fi` 在此是**数据**、不推进条件机），再由体首 `\fi:` 闭合
+`\if_cs_exist:N` 帧。
+
+引擎的执行路径（`call_macro`，expand/mod.rs）早已按此契约走 `collect_args`
+（20 轮前修复），但**展开上下文的两个调用点**仍按 `num_params > 0` 分流，0 参数
+直接 `Vec::new()` 跳过匹配：
+
+- `expand_once` 的 `EqSlot::Macro` 臂（expr.rs）——`\edef` 体扫描
+  （`scan_edef_body`）、`\romannumeral` f 型展开等一切"展开一次"位；
+- `scan_csname` 的名字扫描展开臂（expr.rs）。
+
+后果（`\edef\res{\cs_if_exist:NT\foo{YES}}` 级）：定界串 `\fi: \use_none:n`
+滞留输入流 → 泄给条件机把 `\if_cs_exist:N` 帧提前弹掉 → 体首 `\fi:` 无帧可闭
+→ `! Extra \fi.` + 实参错位一格；`\str_case` 的 case 列表逐格错位后连续组
+`}{` 相撞 → `\__str_case(_end):nw extra }` 全线失衡、自持递归至栈超限。
+`\csname` 位同理：定界串泄进名字文本 → `Missing endcsname inserted` 级联。
+
+修复：两处一律走 `collect_args`（其 n==0 臂已按 tex.web 实现"纯定界串匹配 +
+失配报 Use of \X doesn't match 并忽略调用"，空参数文本零开销）。
+
+### 28.3 验证
+
+| 门禁 | 前 | 后 |
+|---|---|---|
+| latex.ltx --initex 错误（transcript 全量） | 7016 | **1835** |
+| 错误签名类数 | 7 | **3** |
+| str_case 系（3 签名合计 6981） | 6981 | **0** |
+| 终态阻塞点 | l.8073（栈超限） | **l.9365**（`\char_generate:nn` 区 `\if_case:w \tex_numexpr:D 13-#2`，`\ifnum` 关系符位遇 `+` 自持 → 步数超限） |
+| `cargo test -p ntex-core` | 318 绿 | **319 绿**（新增回归测） |
+| TRIP（ntex-trip --driver ntex） | 基线 | 与基线逐字节一致（仅 systemd unit id/临时目录/时计伪影） |
+
+新增回归测 `zero_param_macro_delimiter_text_consumed_in_expansion_contexts`：
+以 fast form 最小同构盖 `\edef`（真/假分支）与 `\csname` 名字扫描两个调用点；
+在旧实现上实测失败（`""` vs `"YES"`），防回滚。
+
+### 28.4 下一阻塞点（本轮未修）
+
+l.9365 `\__char_generate_aux:nnw`（`\char_generate:nn` bootstrap，l.9341 起
+`\int_step_function:nnN {0}{255} \__char_tmp:n` 每 iteration 约 7 条）：
+`! Missing = inserted for \ifnum.`（关系符位读到 `+`，cat 12）×1812，
+终态步数超限。与本轮同区（`\str_const:Ne` 执行区已过），性质另案；
+另有 21 条 `Missing number`（l.7952 区 `\str_if_eq_p:Vn`/`\bool_if:nTF`，
+本轮前已存在，条数 18→21 略增——str_case 链修复后走得更远所致）。
+
+### 28.5 工具坑（继承 + 新增）
+
+- **探针终态行号看 `Source(...,pos=N)` 帧**：watchdog/栈超限消息里的
+  `Source(bytes,pos)` 对应嵌套文件字节偏移，`python3` 按字节计数换算行号——
+  transcript 的 `l.NNN` 只反映报错时最内层文件行，二者常差 12 行（本层 patch
+  后）。
+- **二分 harness**：`/tmp/r21/w2/`（latex.ltx + expl3.ltx + expl3-code.tex +
+  texsys.cfg 拷贝即自洽，SurveyVfs 以输入文件父目录为根）；`cp expl3-code.tex.orig
+  expl3-code.tex` + python 按行号 patch 可做"执行级 bisect"（比 head -N 截断
+  稳——expl3-code 截断点必须落在定义边界）。
+- **最小复现的 `\fi:` 必须先 `\let\fi:\fi`**：expl3 catcode 下 `\fi:` 是独立
+  控制词，直接写 `\fi:` 是未定义 cs——不 Aliasing 会让复现呈现"帧不闭合"
+  假象（本轮 cond2/cond4 排查绕了一圈才定位到此）。
+- **回归测的 catcode 行**：`\catcode`\_=11` 的反引号不可省；`run_transcript`
+  断言 write16 消息、`expand()` 断言 token 输出，二者用途不同。
