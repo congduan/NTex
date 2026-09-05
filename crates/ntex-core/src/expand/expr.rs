@@ -811,7 +811,9 @@ impl Expander {
     fn scan_expanded_group(&mut self) -> Result<Vec<Token>> {
         self.scan_left_brace()?;
         self.suppress_expansion += 1;
-        let scanned = self.scan_edef_body();
+        // `\expanded` 无"正在定义的 cs"：def_name 传空（Illegal parameter
+        // number 消息省略 "of \X" 段）。
+        let scanned = self.scan_edef_body("");
         self.suppress_expansion -= 1;
         scanned
     }

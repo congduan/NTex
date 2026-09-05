@@ -1957,10 +1957,22 @@ I changed this one to zero.
 
     #[test]
     fn delimited_arg_nested_groups_do_not_error() {
-        // 组套组：内层 `}` 依次配对，全部是数据
+        // 组套组：内层 `}` 依次配对，全部是数据。
+        // 实参整体恰为单组 → tex.web Tidy up（m=1）剥外层花括号：`#1` =
+        // A{B{C}}D（内层组原样保留）。macro_call 只剥一层、只剥整体单组。
         assert_eq!(
             expand("\\def\\foo#1;{\\detokenize{#1}}\\foo {A{B{C}}D};").unwrap(),
-            "{A{B{C}}D}"
+            "A{B{C}}D"
+        );
+        // 顶层混入其他 token（m≥1）→ 不剥：`\a{x}y!` = `{x}y`
+        assert_eq!(
+            expand("\\def\\foo#1!{\\detokenize{#1}}\\foo {A}B!").unwrap(),
+            "{A}B"
+        );
+        // 整体单组嵌两层：只剥最外层 → `{A}`
+        assert_eq!(
+            expand("\\def\\foo#1!{\\detokenize{#1}}\\foo {{A}}!").unwrap(),
+            "{A}"
         );
     }
 

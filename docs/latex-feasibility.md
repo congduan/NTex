@@ -1522,3 +1522,84 @@ CARGO_TARGET_DIR 跨 worktree 时 cargo 指纹误判 fresh、交付陈旧二进�
 token（组符/字符）的回写与 fetch 流的组配对。修复后预期 l.3324 越过
 （`\\__cs_generate_variant:ww` 的参数文本 `{ \\tl_to_str:n{ma} }` 定界依赖
 组原样回流）。
+
+## 23. 2026-09-05 第十七轮：store_arg 组实参语义裁决（简报前提证伪）+ 两项 tex.web 保真修复
+
+主控简报锁定"`collect_undelimited_arg` 剥组是 l.3324 根因，须改为连组存储"。
+本轮按硬约束（TRIP fixtures 为 ground truth）先做语义裁决，**结论：简报前提不成立**，
+现行剥组实现正确；随后落两项 tex.web 保真修复，latex.ltx 载入 l.3324 → l.10298。
+
+### 23.1 语义裁决：真实 TeX 对无分隔组实参**存储前剥组**（"连组存储"不存在）
+
+tex.web macro_call（L8144-8160）两层机制：
+
+1. `@<Contribute an entire group to the current parameter@>`：组**连同花括号**暂存
+   （`fast_store_new_token`/`rbrace_ptr:=p`）；
+2. `@<Tidy up the parameter just scanned, and tuck it away@>`：判定
+   `(m=1) and (info(p)<right_brace_limit)` → `link(rbrace_ptr):=null; free_avail(p)`
+   **剥去外层花括号**后才 `pstack[n]:=…`。Knuth 注释原文："If the parameter consists
+   of a single group enclosed in braces, we must strip off the enclosing braces."
+
+无分隔实参首轮即 `goto found` ⇒ **`m` 恒为 1** ⇒ 组实参必被剥组；宏体回填
+（`begin_token_list(param_stack[...],parameter)`，L7518）直接逐 token 读出，**无
+第二级剥组**。即不存在"存储带组、使用剥组"的两级模型。
+
+三路独立证据互相印证：
+
+- **TRIP log**（官方 ground truth）：45 条 tracing_macros `#N<-…` 追踪**无一含花括号**；
+- **极简复现**（§22.5 的 testY）tex.web 逐 token 推演：`#2`=`␣ma␣`（剥组后含首尾空格），
+  最内层 `\expandafter` 的两次 `get_token`（L7699-7703，**非** get_x_token）读到空格
+  token 不展开、原样放回 ⇒ `\resY` 体 = `\ttl␣ma␣` ⇒ `\meaning` = `macro:->\ttl ma `。
+  引擎实测输出 `Y: [macro:->\ttl ma ]`（尾空格即 #2 首尾空格）**与推演逐 token 一致**；
+  简报所记"真实 TeX(对): `\ttl {ma}`"系预测而非实测（本机无真实 TeX 二进制可对照）；
+- **TRIP 全篇排版输出**：若参数连组存储，几乎每个宏调用的 `#1` 都会向 DVI 泄出
+  `{`/`}` 字符，trip.log 8000+ 行无从对上。
+
+### 23.2 真偏差（第十七刀）：定界实参整体恰为单组时未剥组
+
+tex.web 的剥组判定对**定界/无分隔两族一视同仁**，仅要求 `m=1`（整个实参恰为一个
+顶层贡献单元且其为组）。现行 `collect_delimited_arg` 只按定界符后缀截断、不剥组：
+
+```tex
+\def\a#1!{…}  \a{x}!   % 引擎(旧): #1={x}   tex.web: #1=x  （m=1 → 剥）
+\def\b#1!{…}  \b xy!   % 两边一致: #1=xy
+\def\c#1!{…}  \c {x}y! % 两边一致: #1={x}y  （m=2 → 不剥）
+```
+
+修复：`macros.rs` 新增 `strip_single_group`——buf 首 token 为 `{` 且其配对 `}` 恰为
+buf 末 token（等价 `m=1`）时剥一层。仅正常 found 路径剥：runaway / extra-} /
+Paragraph ended 恢复路径在 tex.web 里 `pstack[n]:=link(temp_head)` 原样保留。
+`\a{{x}}!` → `{x}`（只剥一层）。
+
+### 23.3 修复二：`\def` 体 "Illegal parameter number" 由 fatal 改 tex.web 可恢复
+
+tex.web `@<Look for parameter number or ##@>`（L9416-9423）：报错 + `back_error`
+（越界 token 放回输入流）+ `cur_tok:=s`（存回字面 `#`）后**继续扫描**。旧实现
+`return Err(invalid_input)` 整体中止（`\expanded`/`\edef` 体共用同一路径）。
+现按 tex.web 恢复：`unread(越界 token)` + `write_error_help`(含 Knuth 三行 help)
++ `out.push(字面 #)`；`scan_balanced_text`/`scan_edef_body` 线程化 `def_name`
+（`\expanded` 无定义中 cs，传空省略 "of \X" 段）。
+
+### 23.4 验证与遗留
+
+| 门禁 | 结果 |
+| --- | --- |
+| ntex-core 全测 | 315 通过 / 0 失败（`delimited_arg_nested_groups_do_not_error` 预期由旧偏差改为 tex.web 语义，另补 m≥1 不剥与只剥一层两断言） |
+| TRIP（--fixtures 临时布局） | log 与基线**逐字节一致**；pass2 终态硬错不变（`组未闭合 groups=[SemiSimple,MathLeft,MathLeft,Align]`） |
+| ETRIP | fixtures 缺失（`fixtures/trip/etrip/`）——既有跳过，非本轮引入 |
+| latex.ltx --initex | **l.3324 → l.10298**（越过了 conditional-base-undefined bail out + "Incomplete \ifx; all text was ignored after line 3324"） |
+
+**十六刀主靶未达成**：`Extra \else`/`Extra \fi` 家族与修复前逐字节相同（transcript
+前 199 行一致，含 l.398 1 处 + l.3245-3395 每个变体调用 7 错：1×Extra \else、
+3×Extra \fi、2×`\msg_error:nneeee` undefined、2×后续级联）。剥组/Illegal-param
+两项修复只是让载入**越过 bail out 继续读**，错误家族原样沿后续千行重复，故错误
+计数 46 → 7669——其中绝大部分是先前被 "all text was ignored" 屏蔽的同一根因。
+
+**新阻塞点（下一刀靶）**：`l.10298` 输入栈超限（5001 帧 > 5000），同族根因在
+`\__cs_generate_variant_loop:nNwN`（expl3-code.tex L2891-2920）的 `\if:w` 三层嵌套
+与 `{ ~ { } \fi: \__cs_generate_variant_loop_long:wNNnn } ~` 组内藏 `\fi:` 惯用法——
+定性线索：per-call 7 错中 `Extra \else`×1/`Extra \fi`×3 的 1+3 结构恰对应该函数
+`\if:w`/`\else:`/`\fi:` 的错配形态；`\msg_error:nneeee` undefined 说明变体机器
+走了**本不该走的** variant-same-as-base/invalid-variant 分支（载入期
+`\__cs_generate_variant_chk:nnTF` 是恒 FALSE 桩 `\use_ii:nn`，expl3-code.tex
+L2890，L5762 才替换为 `\str_if_eq:nnTF`），即桩的 `\use_ii:nn` 取参被错位。

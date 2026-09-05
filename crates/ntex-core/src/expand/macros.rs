@@ -239,7 +239,7 @@ impl Expander {
                 return Ok(Arc::from(buf));
             }
         }
-        Ok(Arc::from(buf))
+        Ok(Arc::from(strip_single_group(buf)))
     }
 
     /// 检查 `buf` 尾部是否与定界符逐 token 相同。
@@ -256,6 +256,15 @@ impl Expander {
 
     /// 收集一个无分隔实参：
     /// 跳过前导空格；`{...}` 取组内容（去外层花括号），否则取单个 token。
+    ///
+    /// tex.web 语义注记（store_arg 裁决）：macro_call 对**无分隔**实参——
+    /// 无论单 token 还是组——`m` 恒为 1（首轮即 `goto found`），故组实参在
+    /// `@<Tidy up the parameter just scanned@>` 处**必被剥去外层花括号**
+    /// （"If the parameter consists of a single group enclosed in braces, we
+    /// must strip off the enclosing braces."）。存储进 param_stack 的值不含
+    /// 花括号，宏体回填（begin_token_list(parameter)）也不再有剥组环节。
+    /// TRIP log 的 45 条 `#N<-…` 追踪（tracing_macros）无一含花括号，与此一致。
+    /// **不存在**"连组存储、使用时剥组"的两级模型。
     fn collect_undelimited_arg(&mut self, long: bool, name: &str) -> Result<TokenArray> {
         // 跳过前导空格
         loop {
@@ -413,11 +422,11 @@ impl Expander {
             // 扫描时即展开可展开项、组深含 \begingroup/\endgroup、条件即时求值；
             // 输入耗尽未配平 → "Runaway definition" 转录报告并以 } 收尾（可恢复）。
             self.suppress_expansion += 1;
-            let scanned = self.scan_edef_body().map_err(ctx);
+            let scanned = self.scan_edef_body(&cs_name).map_err(ctx);
             self.suppress_expansion -= 1;
             scanned?
         } else {
-            self.scan_balanced_text().map_err(ctx)?
+            self.scan_balanced_text(&cs_name).map_err(ctx)?
         };
         // TeX scan_toks（macro_def）hash_brace：参数文本以 `#{` 收尾时，`{` 被存为
         // 末参定界符，同时把同一 `{` 追加到宏体 token 列**末尾**。调用时该定界符
@@ -537,7 +546,7 @@ impl Expander {
     }
 
     /// 扫描平衡花括号内的替换文本；`#n` → 参数槽 token，`##` → 字面 `#`。
-    fn scan_balanced_text(&mut self) -> Result<Vec<Token>> {
+    fn scan_balanced_text(&mut self, def_name: &str) -> Result<Vec<Token>> {
         let mut out = Vec::new();
         let mut depth = 0usize;
         loop {
@@ -567,7 +576,24 @@ impl Expander {
                     } else if is_parameter_char(next) {
                         out.push(Token::char(Catcode::Parameter, b'#' as u32));
                     } else {
-                        return Err(Error::invalid_input("替换文本中 # 后必须跟数字或 #"));
+                        // tex.web @<Look for parameter number or ##@>（L9416-9423）：
+                        // "Illegal parameter number in definition of \<cs>" **可恢复**
+                        // ——back_error 把越界 token 放回输入流、`cur_tok:=s` 存回
+                        // 字面 `#` 后继续扫描。旧实现 fatal 中止，latex.ltx l.10163
+                        // 区（l3prop 生成器体的 `#` 接非数字）被整体截断。
+                        self.unread(next);
+                        let def = if def_name.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" \\{def_name}")
+                        };
+                        self.write_error_help(
+                            &format!("Illegal parameter number in definition of{def}."),
+                            "You meant to type ## instead of #, right?\n\
+                             Or maybe a } was forgotten somewhere earlier, and things\n\
+                             are all screwed up? I'm going to assume that you meant ##.\n",
+                        );
+                        out.push(tok);
                     }
                 }
                 _ => {
@@ -606,7 +632,7 @@ impl Expander {
     /// - **输入耗尽未配平** → 转录报告 "Runaway definition?" 并以 `}` 收尾
     ///   （可恢复，TeX 语义，不报错）；
     /// - `\edef` 上下文（`suppress_expansion > 0`）：protected 宏不展开，原样收入。
-    fn scan_edef_body(&mut self) -> Result<Vec<Token>> {
+    fn scan_edef_body(&mut self, def_name: &str) -> Result<Vec<Token>> {
         let mut out = Vec::new();
         let mut depth = 0usize;
         let mut runaway = false;
@@ -656,7 +682,20 @@ impl Expander {
                     } else if is_parameter_char(next) {
                         out.push(Token::char(Catcode::Parameter, b'#' as u32));
                     } else {
-                        return Err(Error::invalid_input("替换文本中 # 后必须跟数字或 #"));
+                        // 同 scan_balanced_text：tex.web L9416-9423 可恢复语义
+                        self.unread(next);
+                        let def = if def_name.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" \\{def_name}")
+                        };
+                        self.write_error_help(
+                            &format!("Illegal parameter number in definition of{def}."),
+                            "You meant to type ## instead of #, right?\n\
+                             Or maybe a } was forgotten somewhere earlier, and things\n\
+                             are all screwed up? I'm going to assume that you meant ##.\n",
+                        );
+                        out.push(tok);
                     }
                 } else {
                     out.push(tok);
@@ -948,4 +987,43 @@ impl Expander {
         }
     }
 
+}
+
+/// tex.web macro_call `@<Tidy up the parameter just scanned, and tuck it away@>`：
+/// 整个定界实参**恰为一个组**时剥去外层花括号。
+///
+/// tex.web 的判定是 `(m=1) and (info(p)<right_brace_limit)`——`m` 计主循环
+/// 顶层"贡献单元"数（单 token 记 1，整组也只记 1，定界符前缀逐 token 记），
+/// `p` 是首存 token；`rbrace_ptr:=p` 后 `link(rbrace_ptr):=null` 丢弃配对
+/// `}`、再释放首 `{`。等价于：buf 非空、首 token 是 `{`、其配对 `}` 恰为
+/// buf 末 token（无其他顶层 token 混入 ⇔ m=1）。
+///
+/// 注意与无分隔实参的差异：无分隔实参 `m` 恒为 1，故**组实参必剥组**；
+/// 定界实参只有整体恰为单组才剥——`\def\a#1!` 下 `\a{x}!` 得 `x`，
+/// `\a{x}y!` 得 `{x}y`，`\a{{x}}!` 得 `{x}`（tex.web 只剥一层）。
+/// 仅正常 found 路径剥：runaway / extra-} / Paragraph ended 恢复路径在
+/// tex.web 里直接 `pstack[n]:=link(temp_head)`，保留原样。
+fn strip_single_group(buf: Vec<Token>) -> Vec<Token> {
+    if buf.len() < 2 || buf[0].catcode() != Some(Catcode::BeginGroup) {
+        return buf;
+    }
+    let mut depth = 0usize;
+    let mut close = None;
+    for (i, t) in buf.iter().enumerate() {
+        match t.catcode() {
+            Some(Catcode::BeginGroup) => depth += 1,
+            Some(Catcode::EndGroup) => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    match close {
+        Some(i) if i == buf.len() - 1 => Vec::from(&buf[1..i]),
+        _ => buf,
+    }
 }
