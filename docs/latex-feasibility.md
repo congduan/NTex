@@ -1834,3 +1834,116 @@ L9173 定义是否真落地（`char_set_catcode:nn` 体含 `` `#1 `` 反引号+�
 （NTex io.rs 只收集字符 token；tex.web 会打 `\csname`）且**丢弃组 token
 花括号**——本轮所有 `\write16` 探针读数都受此影响，读数时须自行补回
 `{...}`/`\cs` 形态；另 `\escapechar=-1` 未被 `\string` 尊重（仍打 `\`）。
+
+## 27. 2026-09-05 第二十轮：unsave 的 retain 守卫缺失——"组内先局部触碰后 \global 赋值"全局定义被回滚
+
+### 27.0 简报前提核伪
+
+任务简报判定 l.19236 阻塞点 = `#{` 宏（`\declare@robustcommand@auxi#1#2#{` 等）
+的**调用侧**死循环，并给出 hb7 极简复现（`\def\usepkg#1#{OK-BODY}` +
+`\usepkg{opt}`）。实测证伪：
+
+- hb7 在 HEAD（b9a9851 预编译二进制）上 **通过**（输出 OK-DONE，无循环）——
+  十四刀落地的 hash_brace 存储语义 + 调用侧定界符匹配（`{` 作末参定界符，
+  depth==0 时定界优先于整组贡献，§22 判定顺序）已对齐 tex.web。
+- hb2/hb3/hb4/hb10 电池全部通过（hb3/hb4 残留 `\foo` undefined 与本轮无关）。
+- TRIP L159/L161 用例不回退（318 测全绿，ntex-trip 4 测全绿）。
+
+l.19236 的 `\declare@robustcommand@auxi` 级联是**下游症状**，真根因在
+expl3-code.tex 更早处（见 27.1）。
+
+### 27.1 真根因：save 恢复缺 "retaining" 守卫
+
+**plain-TeX 层最小复现**（`/tmp/hb6/gsave.tex`）：
+
+```tex
+\begingroup
+  \expandafter\let\csname GXX\endcsname\relax   % 局部赋值 → 压 save 条目
+  \global\def\GXX{GLOBAL-VALUE}                 % 全局赋值 → 不压条目
+\endgroup
+\ifdefined\GXX \message{SURVIVED}\else\message{LOST}\fi   % 修前: LOST（真 TeX: SURVIVED）
+```
+
+tex.web 语义：eqtb 每槽带层级 eq_level；unsave 恢复时
+`@<Store save_stack[save_ptr] in eqtb[p], unless eqtb[p] holds a global value@>`
+——当前槽层级 = level_one（全局）→ **retaining**（丢弃陈旧 save 条目，保留组内
+\global 赋值）；否则恢复旧值连同旧层级。NTex 无层级模型，restore 无条件覆盖：
+组内"先局部触碰（压条目）→ 后 \global 赋值（不压）"的条目在组末把全局定义
+回滚成触碰前的值。
+
+**expl3 全线踩中**（save 条目多由 `\csname` 制造 relax 压入，TeX 2.9 起局部）：
+
+1. expl3.ltx l.23-30：`\csname c__kernel_expl_date_tl\endcsname`（制造 relax）
+   + `\global\let` 守卫——组末被回滚；
+2. expl3-code l.3195-3248 变体生成器 `\__cs_tmp:w { nc }` 族：
+   `\group_begin:` + `\cs_if_free:cT`（c 型展开的 `\csname` 制造 relax）+
+   `\cs_gset:cpn`（全局）+ `\group_end:`——`\exp_args:Nno`/`:Nnc`/`:NNcc`
+   等全部变体组末蒸发（l.3202 区 Undefined control sequence 级联，即 round 20
+   遗留的"下一靶"）；
+3. **致命下游**：`\char_set_catcode_group_end:N`/`\char_set_catcode_math_subscript:N`
+   （expl3-code l.9175/9187 定义）因同类路径失效，使用点（l.25849/l.29535 regex
+   与 tl_analysis 区的 `^^@` catcode 舞台）报未定义——`^^@` 停在
+   `\char_set_catcode_group_begin:N` 置的 cat 1 未被复位 →
+   `\cs_new_protected:Npn \__tl_analysis_a_egroup:w` 与
+   `\__regex_replacement_c_E:w` 的定义体扫描靠 `^^@`(cat1) 隐形开组配平，
+   多吞一层深度 → **体 runaway 吞穿 expl3-code.tex 到 latex.ltx**
+   （transcript 错误行序 36605→39988→1361→1405→6844→18946→19236，即简报
+   说的 l.19236 `#{` 级联——它是 runaway 体扫描吃到的第 N 个 `#`+`{`）。
+
+### 27.2 修复：eq_level 最小两档化
+
+tex.web 层级模型的最小落地（不引入全量 level 字段，只区分"当前值是否全局"）：
+
+- `Eqtb` 增 `levels: Vec<u8>` 侧表（0=全局/底层组，1=组内局部；`.fmt` 载入后
+  全 0——dump 后的槽语义上等同初表原语 level_one）；
+- `SavedValue::Eqtb` 增 `prev_level`（tex.web 的 save 条目本就随槽值存层级）；
+- 全部 cs 槽赋值点（\def/\gdef、set_slot_scoped、\let、\futurelet、\csname 制造
+  relax、\openin/\openout 流、\font）压栈带 `prev_level` 并经 `eq_mark_level`
+  登记层级；其中 **\futurelet 此前完全不压栈不登记**（tex.web \futurelet 走同一
+  作用域 define 路径）——顺带修正；
+- restore：当前层级==0 → retain（`\tracingrestores` 下输出 `{retaining …}`，
+  对齐 tex.web restore_trace 的 retaining 分支）；否则恢复旧值连同旧层级。
+
+语义自检（全部与 tex.web 一致）：组内 global 先于 local → 组末恢复全局值
+（`local_after_global_in_group_restores_global_value`）；global 后于 local →
+retain（新增 3 测）。315 旧测 + ntex-trip 全绿无回归。
+
+### 27.3 修复后的新终态（下一靶）
+
+修复使 expl3 变体/c 项目守卫真正生效，加载显著推进，但暴露**下一层引擎 bug**，
+新终态为 fatal：
+
+```
+== pass1 ERROR: 输入栈超限（5001 帧 > 5000）
+! Argument of \__str_case_end:nw has an extra }.  (l.8073 区)
+```
+
+错误级联自 expl3-code **l.5600-5700**（`\str_case`/`\__str_change_case` 区，
+`\exp_last_unbraced:NNNNo` + `\cs_generate_variant:Nn \__str_change_case_output:nw { f }`
+一带）以 `! Extra \fi.` 开始（修前该区静默通过——当时变体已被 27.1 缺陷整批
+蒸发，`\cs_if_free` 走"已存在"跳过分支）。**此为修后新暴露的偏差**，非本轮
+修复引入的回归（318 测 + hb 电池 + TRIP 全绿佐证）；f 型变体现在真正生成并
+参与运行，其展开/扫描路径有待下一刀（round 15/16 曾在 `\exp_last_unbraced:NNNNo`
+交过手）。错误上下文 `l.N` 行号在 Extra-\fi 级联区仍显示陈旧锚点行
+（`error_anchor` 的一次性消费已修 undef 出口；其余扫描出口残留待清）。
+
+### 27.4 同轮顺手修正
+
+- **\futurelet 作用域**：此前不压 save 栈（局部 `\futurelet` 组末不回滚，且
+  层级失登记破坏 retain 判定）——补齐压栈 + 登记（tex.web \futurelet 与 \let
+  同一 define 路径）。
+- **\global 前缀消费**：\futurelet 现按赋值语义消费 `\global` 前缀。
+- **error_anchor 泄漏**：undefined-cs 出口消费锚点后不清除，污染后续所有
+  `l.N` 上下文（27.1 排查中花费大量时间的"l.398 假行号"即此）——undef 出口
+  补清除；其余扫描类出口（数字/维度扫描）的锚点残留仍在。
+
+### 27.5 勘误与工具坑（继承记录）
+
+- **hb7 复现脚本**：`/tmp/hb6/hb7.tex`；gsave 复现：`/tmp/hb6/gsave.tex`；
+  `\ifx`/`\csname`/`\global` 电池：`/tmp/hb6/let1-6.tex`。
+- **trim 探针法**：把 survey 树的 `expl3-code.tex` 换成 `head -N` + `\endinput`
+  再跑 latex.ltx 探针，可精确定位"定义成功 vs 使用点失效"（27.1 判定
+  `\char_set_catcode_group_end:N` 属后者的关键）；用后必须还原。
+- **`\ifdefined` 与控制词**：组外 `_` 回到 cat 8 时 `\ifdefined\c__kt` 测的是
+  `\c`（控制词遇非字母终止）——回归测试须把 `\catcode`\_=11` 放组外整行，
+  否则误判引擎回归（本轮写测时自坑一次）。

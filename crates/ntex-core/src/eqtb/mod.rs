@@ -45,6 +45,14 @@ pub enum StreamKind {
 #[derive(Debug, Clone, Default)]
 pub struct Eqtb {
     slots: Vec<EqSlot>,
+    /// 每槽"当前含义的层级"（tex.web eq_level，仅两档）：
+    /// 0 = 全局（tex.web level_one；初值/`.fmt` 载入后均为此），
+    /// 1 = 组内局部赋值后的当前值。unsave 恢复时层级为 0 的槽 **retain**
+    /// （tex.web @<Store save_stack[save_ptr] in eqtb[p], unless eqtb[p]
+    /// holds a global value@>）——组内"先局部触碰、后 \global 赋值"的陈旧
+    /// save 条目不得把全局定义恢复掉（expl3 `\group_begin: …
+    /// \cs_gset… \group_end:` 变体生成即依赖此语义）。
+    levels: Vec<u8>,
 }
 
 impl Eqtb {
@@ -56,12 +64,24 @@ impl Eqtb {
     fn ensure(&mut self, csid: u32) {
         while (self.slots.len() as u32) <= csid {
             self.slots.push(EqSlot::Undefined);
+            self.levels.push(0);
         }
     }
 
     /// 读取槽（越界视为未定义）。
     pub fn slot(&self, csid: u32) -> &EqSlot {
         self.slots.get(csid as usize).unwrap_or(&EqSlot::Undefined)
+    }
+
+    /// 槽层级（越界 = 全局）。
+    pub fn level(&self, csid: u32) -> u8 {
+        self.levels.get(csid as usize).copied().unwrap_or(0)
+    }
+
+    /// 记槽层级（与槽值赋值配对调用）。
+    pub fn set_level(&mut self, csid: u32, level: u8) {
+        self.ensure(csid);
+        self.levels[csid as usize] = level;
     }
 
     /// 可变槽（自动扩展）。
@@ -112,9 +132,11 @@ impl Eqtb {
         &self.slots
     }
 
-    /// 整体替换槽（`.fmt` 快照：加载用）。
+    /// 整体替换槽（`.fmt` 快照：加载用）。层级全部复位为全局——
+    /// dump 后的槽语义上等同初表原语（tex.web level_one）。
     pub fn replace_slots(&mut self, slots: Vec<EqSlot>) {
         self.slots = slots;
+        self.levels = vec![0; self.slots.len()];
     }
 }
 

@@ -899,6 +899,7 @@ impl Expander {
                 SavedValue::Eqtb {
                     csid,
                     prev: self.eqtb.slot(csid).clone(),
+                    prev_level: self.eqtb.level(csid),
                 },
             ));
         }
@@ -919,6 +920,7 @@ impl Expander {
             }
             _ => return Err(Error::invalid_input("\\let 仅支持控制序列或字符")),
         }
+        self.eq_mark_level(csid, global);
         // \tracingassigns：\let 赋值后打点（prev 在赋值前已存）
         if let Some(prev) = prev_trace {
             let new = self.eqtb.slot(csid).clone();
@@ -947,7 +949,22 @@ impl Expander {
             .fetch()?
             .ok_or_else(|| Error::invalid_input("\\futurelet 后缺少被观察 token"))?
             .0;
+        // 作用域与 \let 同（tex.web prefix 循环后同一 let 赋值路径）：组内局部
+        // 保存 + 层级登记——futurelet 不登记会让"局部值 + 全局层级"破坏
+        // unsave 的 retain 守卫（expl3 \@ifnextchar 高频使用）。
+        let global = self.is_global();
+        if !global && self.group_level > 0 {
+            self.save_stack.push((
+                self.group_level,
+                SavedValue::Eqtb {
+                    csid,
+                    prev: self.eqtb.slot(csid).clone(),
+                    prev_level: self.eqtb.level(csid),
+                },
+            ));
+        }
         self.let_to(csid, t2);
+        self.eq_mark_level(csid, global);
         let items: Vec<(Token, bool)> = vec![(t1, false), (t2, false)];
         self.stack.push(InputFrame::TokenList {
             items: Arc::from(items),

@@ -217,6 +217,9 @@ pub(crate) enum SavedValue {
     Eqtb {
         csid: u32,
         prev: EqSlot,
+        /// 压栈时槽的层级（tex.web eq_level，随槽值一起恢复）：
+        /// 0 = 全局（tex.web level_one），1 = 组内局部。
+        prev_level: u8,
     },
     Count {
         idx: usize,
@@ -1062,7 +1065,9 @@ impl Expander {
             {
                 let bytes: &[u8] = bytes;
                 // 报错锚点（clamp_dimen 值扫描报错）：pos 已推进到报错后的行，
-                // 用值扫描起始位置回溯（tex.web l.N 上下文停在值所在行）
+                // 用值扫描起始位置回溯（tex.web l.N 上下文停在值所在行）。
+                // 只读（&self）；消费由各报错出口负责（undef 路径自行清除，
+                // report_error_context 出口见下）。
                 let end = self.error_anchor.unwrap_or(*pos).min(bytes.len());
                 let (line_no, line_start, line_end) = Self::locate_line(bytes, line_starts, end);
                 let line = String::from_utf8_lossy(&bytes[line_start..line_end]).into_owned();
@@ -1549,6 +1554,9 @@ impl Expander {
                         if let Some((n, line)) = self.error_context() {
                             msg.push_str(&format!("l.{n} {line}\n"));
                         }
+                        // 锚点一次性使用（本出口不经 report_error_context；残留
+                        // 锚点会把后续所有 `l.N` 上下文拉回旧行）
+                        self.error_anchor = None;
                         let _ = self.sink.write16(msg);
                         Ok(())
                     }

@@ -1807,6 +1807,59 @@ I changed this one to zero.
         assert_eq!(expand(src).unwrap(), "YY");
     }
 
+    // ─── unsave 的 retaining 分支（tex.web @<Store save_stack[save_ptr] in
+    // eqtb[p], unless eqtb[p] holds a global value@>）────────────────────────
+    // 组内"先局部触碰（压 save 条目）、后 \global 赋值"：组末恢复必须跳过该
+    // 陈旧条目，保留全局值。expl3 全线依赖：expl3.ltx l.23-30 的
+    // `\csname c__kernel_expl_date_tl\endcsname`（局部制造 relax）+
+    // `\global\let` 守卫、l.3195 起的 `\exp_args:*` 变体生成器
+    // （`\group_begin: … \cs_if_free:cT` 的 c 型 \csname 制造 + `\cs_gset`
+    // 全局定义 + `\group_end:`）——此前组末把全局定义回滚成局部触碰前的值，
+    // 变体名整体失效（expl3-code l.3202 区 Undefined control sequence 级联，
+    // 最终 `\char_set_catcode_group_end:N` 缺失 → `^^@` catcode 复位失败 →
+    // regex 替换宏定义体 runaway）。
+
+    #[test]
+    fn global_def_survives_group_after_local_touch() {
+        // \csname 制造（局部 relax）+ \global\def：组末 retain
+        assert_eq!(
+            expand(
+                "\\begingroup\\expandafter\\let\\csname gz\\endcsname\\relax\\global\\def\\gz{G}\\endgroup\\ifdefined\\gz KEEP\\else LOST\\fi"
+            )
+            .unwrap(),
+            "KEEP"
+        );
+        // 全局值不被局部触碰前的旧值覆盖
+        assert_eq!(
+            expand("\\begingroup\\def\\gv{L}\\global\\def\\gv{G}\\endgroup\\gv").unwrap(),
+            "G"
+        );
+    }
+
+    #[test]
+    fn global_let_survives_group_after_csname_relax() {
+        // expl3.ltx l.23-30 原型（_ 为字母的语法态）：组内 \csname 制造 relax
+        // （局部，TeX 2.9）→ \global\let → 组末 retain。注意组外检查须保持
+        // _ 为字母，否则 \c__kt 被读作控制词 \c + 字符。
+        assert_eq!(
+            expand(
+                "\\catcode`\\_=11 \\begingroup\\expandafter\\ifx\\csname c__kt\\endcsname\\relax\\global\\let\\c__kt\\relax\\fi\\endgroup\\ifdefined\\c__kt KEEP\\else LOST\\fi"
+            )
+            .unwrap(),
+            "KEEP"
+        );
+    }
+
+    #[test]
+    fn local_after_global_in_group_restores_global_value() {
+        // 反向序：组内先 \global 再局部赋值——组末恢复到全局值（tex.web：局部
+        // 赋值压栈存全局值；retain 守卫不适用，因局部赋值后层级回到局部）
+        assert_eq!(
+            expand("\\global\\def\\a{G}\\begingroup\\def\\a{L}\\endgroup\\a").unwrap(),
+            "G"
+        );
+    }
+
     // ─── \global 前缀与赋值之间的可展开序列（LaTeX 兼容第三刀）─────────────
     // tex.web：前缀只置标志（prefixed_command 的前缀循环），赋值发生在主循环
     // 后续 token——前缀与赋值原语之间可以隔条件、\expandafter 链、宏展开。

@@ -299,10 +299,12 @@ impl Expander {
                 SavedValue::Eqtb {
                     csid,
                     prev: self.eqtb.slot(csid).clone(),
+                    prev_level: self.eqtb.level(csid),
                 },
             ));
         }
         self.eqtb.set_font(csid, 0);
+        self.eq_mark_level(csid, global);
         if tracing {
             self.trace_assign(csid, global, prev0.as_ref().expect("tracing 时已存"), &EqSlot::Font(0));
         }

@@ -845,16 +845,30 @@ impl Expander {
     }
 
     fn restore(&mut self, v: SavedValue) {
-        // \tracingrestores>0：恢复动作输出 `{restoring ...}`（tex.web restore_trace + show_eqtb）。
-        // 先用不可变借用构造消息体（值即写回值），再执行恢复，最后写转录。
+        // retain 判定须在恢复前：eqtb 槽当前层级为全局（0）→ 丢弃该陈旧条目
+        //（tex.web @<Store save_stack[save_ptr] in eqtb[p], unless eqtb[p]
+        // holds a global value@> 的 "retaining" 分支）。
+        let retain = matches!(&v, SavedValue::Eqtb { csid, .. } if self.eqtb.level(*csid) == 0);
+        // \tracingrestores>0：恢复动作输出 `{restoring ...}` / `{retaining ...}`
+        //（tex.web restore_trace + show_eqtb）。先用不可变借用构造消息体
+        //（值即写回值），再执行恢复，最后写转录。
         let trace = if self.params.misc[4] > 0 {
             Some(self.restore_trace_body(&v))
         } else {
             None
         };
         match v {
-            SavedValue::Eqtb { csid, prev } => {
-                *self.eqtb.slot_mut(csid) = prev;
+            SavedValue::Eqtb {
+                csid,
+                prev,
+                prev_level,
+            } => {
+                // 当前层级为全局 → retain（保留组内 \global 赋值，丢弃陈旧
+                // save 条目）；否则恢复旧值连同旧层级。
+                if !retain {
+                    *self.eqtb.slot_mut(csid) = prev;
+                    self.eqtb.set_level(csid, prev_level);
+                }
             }
             SavedValue::Count { idx, prev } => self.registers.set_count(idx, prev),
             SavedValue::Dimen { idx, prev } => self.registers.set_dimen(idx, prev),
@@ -922,7 +936,8 @@ impl Expander {
             // \\tracingassigns 开启时组恢复不打 {restoring}（tex.web：恢复走
             // tracingassigns 的 changing/into 语义或静默；参考 etrip 无恢复行）
             if !body.is_empty() && self.params.misc[5] <= 0 {
-                let _ = self.sink.write16(format!("{{restoring {body}}}\n"));
+                let verb = if retain { "retaining" } else { "restoring" };
+                let _ = self.sink.write16(format!("{{{verb} {body}}}\n"));
             }
         }
     }
@@ -932,7 +947,7 @@ impl Expander {
     /// 构造 `{restoring ...}` 的消息体（不含花括号与换行；tex.web `show_eqtb` 分区格式）。
     fn restore_trace_body(&self, v: &SavedValue) -> String {
         match v {
-            SavedValue::Eqtb { csid, prev } => {
+            SavedValue::Eqtb { csid, prev, .. } => {
                 // tex.web restore_trace 用 print_cs（**总是带 escape**，单字符非字母
                 // cs 如 \5 也显示 `\5`）——cs_name_display 会返裸字符，曾导致
                 // `{restoring 5select font...}` 缺反斜杠；且 `=` 分隔符缺失。
@@ -1152,16 +1167,26 @@ impl Expander {
                 SavedValue::Eqtb {
                     csid,
                     prev: self.eqtb.slot(csid).clone(),
+                    prev_level: self.eqtb.level(csid),
                 },
             ));
         }
         self.eqtb.define_macro(csid, def);
+        self.eq_mark_level(csid, global);
         if tracing {
             let new = self.eqtb.slot(csid).clone();
             self.trace_assign(csid, global, prev.as_ref().expect("tracing 时已存"), &new);
         }
         self.finish_assignment();
     }
+    /// cs 槽赋值后的层级登记（tex.web eq_level 最小两档化）：
+    /// 全局赋值或底层组（group_level==0，tex.web cur_level=level_one）→ 0；
+    /// 组内局部赋值 → 1。restore 侧以"当前层级==0"作 retain 守卫。
+    fn eq_mark_level(&mut self, csid: u32, global: bool) {
+        self.eqtb
+            .set_level(csid, if global || self.group_level == 0 { 0 } else { 1 });
+    }
+
     /// e-TeX \tracingassigns（misc 5）>0：赋值追踪（`{changing X=old}` +
     /// `{into X=new}`，全局为 `{globally changing ...}`；同值重新赋值为
     /// `{reassigning X=new}`——etrip L422-445 \tracingassigns 检查段）。
@@ -1203,10 +1228,12 @@ impl Expander {
                 SavedValue::Eqtb {
                     csid,
                     prev: self.eqtb.slot(csid).clone(),
+                    prev_level: self.eqtb.level(csid),
                 },
             ));
         }
         *self.eqtb.slot_mut(csid) = slot;
+        self.eq_mark_level(csid, global);
         self.finish_assignment();
     }
 

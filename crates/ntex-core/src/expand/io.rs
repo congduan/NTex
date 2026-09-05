@@ -238,10 +238,12 @@ impl Expander {
                 SavedValue::Eqtb {
                     csid,
                     prev: self.eqtb.slot(csid).clone(),
+                    prev_level: self.eqtb.level(csid),
                 },
             ));
         }
         *self.eqtb.slot_mut(csid) = EqSlot::Stream(s, n);
+        self.eq_mark_level(csid, global);
         self.finish_assignment();
         Ok(())
     }

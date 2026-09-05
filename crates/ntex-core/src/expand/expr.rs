@@ -889,10 +889,12 @@ impl Expander {
                 SavedValue::Eqtb {
                     csid,
                     prev: EqSlot::Undefined,
+                    prev_level: self.eqtb.level(csid),
                 },
             ));
         }
         *self.eqtb.slot_mut(csid) = EqSlot::Primitive(Primitive::Relax);
+        self.eq_mark_level(csid, false);
     }
 
     /// `\csname` 名字扫描（`\csname`/`\ifcsname` 用）：收集直到 `\endcsname` 的名字字符。
