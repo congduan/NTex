@@ -61,6 +61,15 @@ pub trait TokenSink: std::fmt::Debug {
     fn math_display_allowed(&self) -> bool {
         true
     }
+    /// **收**数学时是否要求配对的第二个 `$`（tex.web mmode+math_shift →
+    /// after_math：显示数学（mode=+mmode）收尾必 "Check that another $
+    /// follows"——有则一并消费、无则报 "Display math should end with $$"
+    /// 照收；行内数学（mode=-mmode）走 Finish math in text，**不 peek**，
+    /// 随后的 `$` 由水平模式按 init_math 重新判定）。默认 true（纯展开轨道
+    /// 无模式概念，保持"peek 到即消费"的既有行为）。
+    fn math_close_consumes_dollar(&self) -> bool {
+        true
+    }
     /// 数学样式原语（`\displaystyle`=0/`\textstyle`=1/`\scriptstyle`=2/`\scriptscriptstyle`=3；M4-2）。
     fn math_style(&mut self, _style: u8) -> Result<()> {
         Ok(())

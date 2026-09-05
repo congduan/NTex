@@ -1661,10 +1661,22 @@ impl Expander {
                     // 闭合（TRIP L210 `\hbox{$$}$`、L340 单元内 `$$`：参考日志
                     // 两行 `{math mode: math shift character $}` + restoring，
                     // 且数学必须关上——否则对齐/数学组悬挂到文档尾致命）。
-                    // 数学内（entering=false）保持既有约定：peek 到即消费，
-                    // sink Math 臂按 display 连续切换（trip L261 `$\x` 残留场景）。
-                    let display =
-                        self.next_is_math_shift(entering && self.sink.math_display_allowed())?;
+                    // 数学内（entering=false）是**闭合**语义，与进入侧不对称：
+                    // tex.web mmode+math_shift → after_math——显示数学
+                    // （mode=+mmode）收尾必 "Check that another $ follows"
+                    // （吃掉配对 `$`，否则报 "Display math should end with $$"
+                    // 照收）；行内数学（mode=-mmode）走 Finish math in text，
+                    // **不 peek**——紧随的 `$` 落回水平模式由 init_math 重新
+                    // 判定（`$x$$y$` = `$x$`+`$y$`，real TeX 如此）。360c342
+                    // 把闭合侧一律拦成"只 peek 不消费"，`$$x$$` 的第二个 `$`
+                    // 被 back_input 后在非数学态重开一个永不闭合的行内公式 →
+                    // "数学模式未闭合"。
+                    let consume_for_display = if entering {
+                        self.sink.math_display_allowed()
+                    } else {
+                        self.sink.math_close_consumes_dollar()
+                    };
+                    let display = self.next_is_math_shift(consume_for_display)?;
                     self.in_math = !self.in_math;
                     // TRIP 冲刺：进入数学模式时注入 `\everymath`（TeX `$` 处理语义）
                     if entering && !self.everymath.is_empty() {

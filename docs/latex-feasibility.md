@@ -1679,3 +1679,87 @@ chunk-walk 的原名**而非模块名 `tl`。疑似点（本轮探针 B/C 已排
 （quark 条件生成器动态造的 exp_args 变体未落地）与 latex.ltx l.398
 `\__kernel_primitive:NN` 行的级联。另：`\show`/`\meaning` 的宏参数文本打印
 不显示定界符（primitive.rs L431 只拼 `#1..#n`），本轮排查中曾误导，待修。
+
+## 25. 2026-09-05 math_display 单测回归修复（360c342 的 `$$` 闭合侧接线缺陷）
+
+### 25.1 回归与定位
+
+`cargo test -p ntex-layout math_display` 6 失败（math_display_formula 等，全部
+`数学模式未闭合（缺少 $）`——typesetter.rs finish 校验 `builder.math` 非空）。
+主控 worktree 逐提交二分：b585864…4f45101 全绿，**360c342 转红**。该提交动机
+正当（TRIP L210/L340 受限水平 `$$` 退化），但 ntex-layout 单测没跑——
+`$$x$$`（垂直模式、文档开头）当场报未闭合。
+
+插桩追踪 `$$x$$`：`[entering=true allowed=true display=true]` → sink Vertical
+臂进显示数学 ✓；`[entering=false allowed=false display=false]` → sink
+DisplayMath 臂收显示数学 ✓；随后**第三个事件** `[entering=true display=false]`
+在垂直模式重开行内公式，math.len=1 永不归零——多出来的事件就是被 back_input
+的第二个 `$`。
+
+### 25.2 根因：tex.web 两侧不对称，360c342 只改对了一半
+
+tex.web 的 `$` 处理**进入/闭合两侧语义不对称**：
+
+- 进入侧 `hmode+math_shift: init_math`（tex.web L21700/L21703）：`get_token`
+  后 `if (cur_cmd=math_shift) and (mode>0)` 才进显示数学，否则 `back_input` 进
+  **普通**数学——360c342 已如实接线（`math_display_allowed`；受限水平
+  mode<0 → 放回，`$$` 退化为两次独立进出）。
+- 闭合侧 `mmode+math_shift: after_math`（tex.web L22401）：**显示数学**
+  （mode=+mmode）收尾必 "Check that another $ follows"（L22585：`get_x_token`，
+  非 `$` 则报 "Display math should end with $$" + back_error 照收）；**行内
+  数学**（mode=-mmode）走 "Finish math in text"，**根本不 peek**——紧随的
+  `$` 落回水平/垂直模式由 init_math 重新判定（`$x$$y$` = `$x$`+`$y$`，
+  real TeX 如此）。
+
+360c342 把消费门改成 `entering && math_display_allowed()`，闭合侧
+（entering=false）一律"只 peek 不消费"：`$$x$$` 的闭合 `$` 把第二个 `$`
+back_input 后，它在非数学态（垂直模式，allowed=true）重开一个**永不闭合**的
+行内公式。同文件 ntex-layout/tests/modecheck.rs 首测当时即转红——其注释
+（"已知缺口：…探测须改为查询 sink 的 `mode>0`"）预告的正是这条，但断言写的
+是**现状**（`}` 在数学模式被追踪）而非 tex.web 语义，等于把缺口钉进了门禁。
+
+### 25.3 修复：闭合侧按 sink 模式分派（新增 `math_close_consumes_dollar`）
+
+- `crates/ntex-core/src/sink.rs`：新增 trait 钩子 `math_close_consumes_dollar()`
+  （默认 true：纯展开轨道无模式概念，保持"peek 到即消费"的既有行为）；
+  `math_display_allowed` 语义不变（进入侧 mode>0）。
+- `crates/ntex-layout/src/typeset/sink.rs`：NodeBuilder 覆写为
+  `matches!(mode, DisplayMath)`——只有**显示**数学收尾要求配对 `$`。
+- `crates/ntex-core/src/expand/mod.rs`：`consume_for_display = entering ?
+  math_display_allowed() : math_close_consumes_dollar()`。
+- `crates/ntex-layout/tests/modecheck.rs`：首测断言翻正为 tex.web/trip.log
+  语义（`{math mode: math shift character $}` + `{restricted horizontal mode:
+  end-group character }}`，即 trip.log L1832/L1834 同款）。
+
+进入侧行为与 360c342 完全一致（TRIP 受限水平退化不动）；闭合侧只在
+**DisplayMath** 下与 360c342 不同（消费配对 `$`），行内数学闭合与 360c342
+逐位一致（不消费）。约束条件逐 token 对拍过 TRIP L210 `\hbox{$$}$\par}`：
+`$`#1 peek 放回 `$`#2 进普通数学 → `$`#2 peek `}` 放回并收数学 → `}` 落回
+受限水平，与 trip.log L1831/L1832/L1834 逐行一致。
+
+### 25.4 验证
+
+| 门禁 | 结果 |
+| --- | --- |
+| `cargo test -p ntex-layout` | **159 lib + 4 + 4 + 3 全绿**（math_display 9/9，含 `math_display_inside_hbox_falls_back_to_inline_math` 受限退化用例；modecheck 3/3） |
+| `cargo test -p ntex-core` | **315 通过 / 0 失败**（f1c1503 的 if_operand V1-V4 不回退） |
+| TRIP | 与 HEAD（99c3a63 worktree 隔离重建 + 独立 CARGO_TARGET_DIR）残留**逐字节一致**；pass2 终态硬错不变（`组未闭合 groups=[SemiSimple,MathLeft,MathLeft,Align]`） |
+| ETRIP | fixtures 现已在场（§24.3 时缺失，非本轮引入）。**净改善**：NTex 自生的 `! Display math should end with $$.` 消失（参考 etrip.log 0 处）；`\box0` 从空 vbox+marks 变为与参考同构的 a/beginL/b/beginR/p/mathon/q/…/mathoff 链（度量仍差，thinmuskip 10.0 vs 4.99988）；终态同为既有内部错 `group_end 无配对 group_begin`（transcript 7628 → 8678 字节，走得更远） |
+| latex.ltx --initex | 与 HEAD、与 f1c1503 worktree **逐字节一致**（5 错误、quark l.3782 → l.398/400 级联、pass1 OK、dumped=false——§24.3 状态原样） |
+| `cargo test --workspace` | 除 ntex-pdf 既有失败外全绿 |
+
+**f1c1503 判定**：与 math_display 回归无关。其改动在 `\if` 操作数位求值与
+protected 数值扫描门，不在 `$$` 接线；本轮在 f1c1503 worktree（隔离重建）
+复跑 latex_probe 与 HEAD/修复后逐字节一致，且 6 个 math_display 测试在含
+f1c1503 的当前树全绿。主根唯一：360c342。
+
+**既有失败（非本轮引入，均有 worktree 实证）**：
+- `ntex-backend` clippy `-D warnings` 红：`chunks_exact_mut(4)` 常量块
+  （raster.rs:58，`clippy::chunks_exact_to_as_chunks`）——HEAD 同红。
+- `ntex-pdf` `write_pdf_embeds_multi_font_family_and_pages_use_own_fonts` 红：
+  `/BaseFont /cmr10` 未按 Type1 惯例大写为 `/CMR10`（pdf.rs:454 断言）——
+  HEAD 同红。
+
+**遗留**：sink 的 `Mode::Math + display=true` 臂（"Missing $ inserted." + 收 +
+重进）在两侧门都接线后已不可达（360c342 起即如此），留作恢复路径保险丝未删；
+连带的 math 组生命周期 P0（§24.3 遗留）不受本轮影响。

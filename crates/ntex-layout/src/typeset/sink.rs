@@ -1066,6 +1066,13 @@ impl TokenSink for NodeBuilder {
         matches!(self.mode(), Mode::Vertical | Mode::Horizontal)
     }
 
+    /// tex.web after_math：只有**显示**数学收尾要求配对 `$`（无则报
+    /// "Display math should end with $$" 照收）；行内数学收尾不 peek——
+    /// 紧随的 `$` 落回水平/垂直模式由 init_math 重新判定。
+    fn math_close_consumes_dollar(&self) -> bool {
+        matches!(self.mode(), Mode::DisplayMath)
+    }
+
     /// 当前模式名（`\tracingcommands` 追踪；tex.web print_mode 语义）。
     fn mode_name(&self) -> String {
         match self.mode() {
