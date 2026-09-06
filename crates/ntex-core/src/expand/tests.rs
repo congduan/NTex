@@ -289,6 +289,60 @@ mod tests {
     }
 
     #[test]
+    fn ifx_noexpand_macro_is_unequal() {
+        // tex.web l.7506-7516（no_expand_flag=257）：`\noexpand` 标记的 cs 在
+        // `\ifx` 比较时，若原含义**可展开**则被替换为 (relax,257)——与原含义
+        // 不等；不可展开 cs / 字符 token 含义原样保留（相等）。expl3 全族
+        // "宏还是寄存器" 判别 `\exp_after:wN \if_meaning:w \exp_not:N #1 #1`
+        // 依赖此语义：宏 → \else 臂（展开一次取值）、寄存器 → \the 臂。
+        // 宏（可展开）→ 不等。`\noexpand` 须先经 `\expandafter` 展开（真实
+        // TeX 里裸 `\ifx\noexpand\a\a` 的第一操作数是 `\noexpand` 原语本身）
+        assert_eq!(
+            expand("\\def\\a{XX}\\expandafter\\ifx\\noexpand\\a\\a T\\else F\\fi").unwrap(),
+            "F"
+        );
+        // 不可展开（\let 到 \relax）→ 含义原样保留 → 相等
+        assert_eq!(
+            expand("\\let\\b\\relax\\expandafter\\ifx\\noexpand\\b\\b T\\else F\\fi").unwrap(),
+            "T"
+        );
+        // 可展开原语（\csname，cur_cmd>max_command）→ 同样被替换 → 不等
+        assert_eq!(
+            expand("\\expandafter\\ifx\\noexpand\\csname\\csname T\\else F\\fi").unwrap(),
+            "F"
+        );
+        // 不可展开原语（\count，赋值类）→ 含义原样保留 → 相等
+        assert_eq!(
+            expand("\\expandafter\\ifx\\noexpand\\count\\count T\\else F\\fi").unwrap(),
+            "T"
+        );
+        // 无 \noexpand 时语义不变（宏 vs 宏同义）
+        assert_eq!(expand("\\def\\a{XX}\\ifx\\a\\a T\\else F\\fi").unwrap(), "T");
+    }
+
+    #[test]
+    fn expl3_v_variant_macro_value_via_expandafter_ifx() {
+        // l3expan `\__exp_eval_register:N` 机制级复刻：`\ifx\noexpand#1#1` 判别
+        // "宏还是寄存器"——宏 → `\use_i_ii:nnn` 去掉 `\the`（结果 `\exp_end: <宏>`，
+        // 宏就地展开）；寄存器 → 保留 `\the`。修复前宏被误判为寄存器 →
+        // `\the<宏>` 报 "You can't use \the with this"，`\str_if_eq_p:Vn` 全族
+        // V 变体失效（expl3 sys/prop/bool 模块级联）。
+        let src = concat!(
+            "\\chardef\\Z=0 ",
+            "\\def\\val{pdftex} ",
+            "\\def\\useIIi#1#2#3{#1#2} ",
+            "\\def\\evalreg#1{\\expandafter\\ifx\\noexpand#1#1\\ifx\\relax#1\\relax ERR\\fi",
+            "\\else\\expandafter\\useIIi\\fi\\expandafter\\Z\\the#1} ",
+            "\\edef\\tmp{\\evalreg\\val}\\tmp"
+        );
+        // 宏被就地展开（`\the` 已被摘除）；寄存器臂会报 "You can't use \the
+        // with this"（unwrap 捕获）、判别失败会输出 ERR。
+        let out = expand(src).unwrap();
+        assert!(out.ends_with("pdftex"), "got {out:?}");
+        assert!(!out.contains("ERR"), "got {out:?}");
+    }
+
+    #[test]
     fn catcode_change_affects_later_input() {
         // \catcode92=12 后 `\` 变为普通字符。
         // 用 \relax 隔离数字与后续输入（数字扫描会预读紧邻 token，与真实 TeX 一致）。

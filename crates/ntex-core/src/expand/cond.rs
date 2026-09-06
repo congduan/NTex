@@ -563,14 +563,16 @@ saved_if_type: self.cur_if_type,
                 Ok(k1 == k2)
             }
             CondOp::IfX => {
-                let t1 = self
+                // tex.web `\ifx` 操作数取 token 用 get_next（不展开）——但
+                // `\noexpand` 标记仍须带到比较里（见 ifx_equal 的 NoExpandRelax
+                // 臂）：expl3 全族 "宏还是寄存器" 判别
+                // `\exp_after:wN \if_meaning:w \exp_not:N #1 #1` 依赖它。
+                let (t1, ne1) = self
                     .fetch()?
-                    .ok_or_else(|| Error::invalid_input("\\ifx 缺操作数"))?
-                    .0;
-                let t2 = self
+                    .ok_or_else(|| Error::invalid_input("\\ifx 缺操作数"))?;
+                let (t2, ne2) = self
                     .fetch()?
-                    .ok_or_else(|| Error::invalid_input("\\ifx 缺操作数"))?
-                    .0;
+                    .ok_or_else(|| Error::invalid_input("\\ifx 缺操作数"))?;
                 if diag_enabled("NTEX_IFX_TRACE") {
                     let n = |t: Token| match t.csid() {
                         Some(id) => {
@@ -578,9 +580,9 @@ saved_if_type: self.cur_if_type,
                         }
                         None => format!("{t:?}"),
                     };
-                    eprintln!("[trace-ifx] {} vs {}", n(t1), n(t2));
+                    eprintln!("[trace-ifx] ne=({ne1},{ne2}) {} vs {}", n(t1), n(t2));
                 }
-                Ok(self.ifx_equal(t1, t2))
+                Ok(self.ifx_equal(t1, ne1, t2, ne2))
             }
             CondOp::IfNum => {
                 let a = self.scan_number()?;
@@ -709,15 +711,38 @@ saved_if_type: self.cur_if_type,
     }
 
     /// `\ifx`：字符按 (catcode,char)；控制序列按含义（解析别名）；其余 false。
-    fn ifx_equal(&self, t1: Token, t2: Token) -> bool {
+    ///
+    /// 操作数若带 `\noexpand` 标记（tex.web expand() 的 frozen_dont_expand
+    /// 标记被 get_next 读到时，l.7506-7516）：可展开 cs 的含义被替换为
+    /// `(relax, no_expand_flag=257)`——[`MeaningKey::NoExpandRelax`]；
+    /// 不可展开 cs / 字符 token 含义原样保留（`if cur_cmd>max_command` 才
+    /// 替换）。两侧对称：`\ifx\noexpand\A\noexpand\A` 两键同为 NoExpandRelax
+    /// → 真。
+    fn ifx_equal(&self, t1: Token, ne1: bool, t2: Token, ne2: bool) -> bool {
         match (t1.kind(), t2.kind()) {
             (TokenKind::Char, TokenKind::Char) => t1 == t2,
             (TokenKind::ControlSeq, TokenKind::ControlSeq) => {
-                self.meaning_key(t1.csid().expect("ControlSeq 必有 csid"))
-                    == self.meaning_key(t2.csid().expect("ControlSeq 必有 csid"))
+                self.ifx_meaning(t1, ne1) == self.ifx_meaning(t2, ne2)
             }
             _ => false,
         }
+    }
+
+    /// 操作数的 `\ifx` 含义键（含 `\noexpand` 替换臂，见 [`Self::ifx_equal`]）。
+    fn ifx_meaning(&self, tok: Token, noexpand: bool) -> MeaningKey {
+        if noexpand {
+            if let Some(csid) = tok.csid() {
+                let expandable = match self.eqtb.slot(csid).clone() {
+                    EqSlot::Macro(_) => true,
+                    EqSlot::Primitive(p) => p.is_expandable(),
+                    _ => false,
+                };
+                if expandable {
+                    return MeaningKey::NoExpandRelax;
+                }
+            }
+        }
+        self.meaning_key(tok.csid().expect("ControlSeq 必有 csid"))
     }
 
     /// 控制序列的含义键（沿 Alias 链解析；环检测替代固定跳数上限）。

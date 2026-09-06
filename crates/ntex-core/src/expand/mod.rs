@@ -302,6 +302,15 @@ pub(crate) enum SavedValue {
 #[derive(Debug, Clone, PartialEq)]
 enum MeaningKey {
     Undefined,
+    /// `\noexpand` 冻结的**可展开** cs 的临时含义（tex.web l.7506-7516：
+    /// `frozen_dont_expand` 标记被读取时 `if cur_cmd>max_command then
+    /// (cur_cmd,cur_chr):=(relax,no_expand_flag)`，no_expand_flag=257——
+    /// 真实 `\relax` 的 cur_chr 是 eqtb 指针，永不为 257，故这是一个任何
+    /// 实际 cs 都取不到的独立含义键）。expl3 `\__exp_eval_register:N` 的
+    /// "宏还是寄存器"判别 `\exp_after:wN \if_meaning:w \exp_not:N #1 #1`
+    /// 正依赖此语义：宏（可展开）→ 本键，与原含义不等 → `\else` 臂
+    /// （展开一次取值）；寄存器（不可展开）→ 原含义 → `\the` 臂。
+    NoExpandRelax,
     /// 宏：含义 = 参数规格 + 宏体（含 `\long`）+ **outer 标志**（tex.web：
     /// `\ifx` 比较 eqtb 条目，`outer` 是 eq_type 的一部分，需区分）。
     Macro {

@@ -2166,3 +2166,151 @@ prop 值哨兵区），终态死因 `输入栈超限（5001 帧）`。105 条签
   plain 模式正常——独立缺口，未在本轮修。
 - **Rust `concat!` 里的 `%`**：无真实换行时注释吞到 EOF（repo 已有注释告诫，
   tests.rs `nested_param_in_macro_arg_repro`）；本轮新测全部 `%\n`。
+
+## 30. 2026-09-06 第二十三轮：`\ifx` 漏掉 `\noexpand` 替换臂——expl3 V 变体族首个根因落地
+
+### 30.1 起点与简报靶子证伪
+
+HEAD=0095edd，探针终态 **105 条错误**（本轮复测逐签名一致，见 §29.6）。简报三靶
+复核结果：
+
+1. **`\c_max_intarrray_int` "拼接" 假说证伪**：expl3-code.tex l.7473 上游原文就是
+   `\int_const:Nn \c_max_intarrray_int { 1 073 741 823 }`（l3array 专用上限常量，
+   `/tmp/latexsurvey` 副本同行同文），日志行 `\c_max_intarrray_int=\count25` 是
+   `\int_new:N`（值 > `\c__int_max_constdef_int` 走 newcount 分支）的正常分配
+   打印——**无任何引擎缺陷**。
+2. `\exp_last_unbraced:NNNNo` 族（32 条 extra-}）：非独立根因，见 30.4。
+3. `\c__prop_basis_int` undefined：级联——l.10008 `\int_const:Nn \c__prop_basis_int
+   { \c_max_char_int - ``! }` 执行时数字扫描已带病，常量未建成（transcript
+   `\c__prop_basis_int` 3 处 undefined + l.10024 `\char_generate:nn { ``\! + #1 }`
+   区 5 条 Missing number）。
+
+### 30.2 定位路径（write16 探针 + 输入栈帧转储）
+
+- 新增探针临时插桩（已随本轮移除）：`report_missing_number` 挂
+  `NTEX_MISSING_NUM_TRACE`，dump `debug_stack_summary()` + 最深 4 帧的
+  `pos` 与后续 10 个 token（cs 名解码）。一轮跑出全部 48 条 Missing number 的
+  失败点栈，比逐条 patch bisect 快一个量级。
+- `Source(1387070B,pos=N)` 字节偏移换行号（§28.5 方法）给出精确源行：
+  l.7952（`\__sys_const:nn`×`\str_if_eq_p:Vn`，12 条）、l.7959/8016/8073
+  （sys 同族 9 条）、l.9468-9645（token 模块 20 条）、l.10018/10024/10232
+  （prop 8 条）。
+- **最小探针对照**（在 harness 里插 `\immediate\write16`，l.7948 前）：
+
+  | 探针 | 结果 | 结论 |
+  |---|---|---|
+  `\tex_strcmp:D {pdftex}{pdftex}` | `0` | strcmp 正常 |
+  `\if:w 0 \tex_strcmp:D {…}{…}` | `EQ` | `\if` + strcmp 正常 |
+  `\if_predicate:w \str_if_eq_p:Vn \c_sys_engine_str {pdftex}` | `FALSE`（应 TRUE） | `\ifodd` 操作数链断 |
+  `\bool_if:nTF {\str_if_eq_p:Vn …} TRUE\else FALSE\fi` | `RUEFALSE`（应 TRUE） | 分支选择崩坏 |
+  `\exp_args:NV \use:n \c_sys_engine_str` | `! You can't use \the with this.` | **直接暴露根因** |
+
+### 30.3 根因：`\ifx` 比较丢了 `\noexpand` 替换语义
+
+`\str_if_eq_p:Vn` = `\exp_args:NV \str_if_eq_p:nn`，其 V 展开核心是 l3expan
+`\__exp_eval_register:N`（expl3-code l.2533）：
+
+```tex
+\exp_after:wN \if_meaning:w \exp_not:N #1 #1   % \ifx\noexpand#1 #1：判"宏还是寄存器"
+  \if_meaning:w \scan_stop: #1 \__exp_eval_error_msg:w \fi:
+\else:
+  \exp_after:wN \use_i_ii:nn                    % 宏臂：\use_i_ii:nnn #1#2#3 → #1#2 摘掉 \the
+\fi:
+\exp_after:wN \exp_end: \tex_the:D #1           % 寄存器臂：\the 取值，\exp_end:(chardef 0) 终止 \exp:w
+```
+
+tex.web 语义（l.7506-7516，`no_expand_flag=257`）：`\noexpand` 只是往输入里插
+`frozen_dont_expand` 标记；该标记被读到时 `if cur_cmd>max_command then
+(cur_cmd,cur_chr):=(relax,257)`——**可展开 cs（宏/可展开原语）的临时含义是
+(relax,257)**，真实 `\relax` 的 cur_chr 是 eqtb 指针永不为 257，故这是一个独立
+含义键；不可展开 cs / 字符 token 含义原样保留。因此 `\ifx\noexpand#1#1`
+对宏为**假**（走 `\else` 宏臂）、对寄存器为**真**（走 `\the` 臂）。
+
+NTex 的 `CondOp::IfX` 用 `fetch().0` 取操作数，把 `noexpand` 标记**整枚丢弃**，
+`ifx_equal` 直接比含义键 → 宏被判成"寄存器" → `\the\c_sys_engine_str` →
+`! You can't use \the with this.` → 数字扫描带病继续 → 每个使用 V/v 变体的
+模块级联报 Missing number / extra-}。
+
+（`\if`/`\ifcat` 的 `\noexpand`→active char 臂 cond.rs 早已实现（tex.web
+`get_x_token_or_active_char`），只有 `\ifx` 缺。）
+
+### 30.4 修复（机制层两处，均 tex.web 直译）
+
+`cond.rs`：
+
+1. `MeaningKey` 新增 `NoExpandRelax` 变体（mod.rs，注释引 tex.web l.7506）；
+2. `ifx_equal(t1, ne1, t2, ne2)` 带上 noexpand 标记，经新助手 `ifx_meaning`：
+   标记 + ControlSeq 且槽位可展开（`Macro` / `Primitive::is_expandable()`，
+   即 tex.web `cur_cmd>max_command`）→ `NoExpandRelax`；否则走原 `meaning_key`。
+   两侧对称（`\ifx\noexpand\A\noexpand\A` 两键同为 NoExpandRelax → 真，同 tex.web）。
+
+`\if`/`\ifcat` 路径与字符 token 完全不受影响；`noexpand=false` 时行为逐位不变。
+
+### 30.5 验证
+
+| 门 | 结果 |
+|---|---|
+| latex_probe --initex（/tmp/r21/w2，无 patch1） | **105 → 97**（l.7952 区 12→6、l.8016 4→2 等 8 条清零） |
+| `cargo test -p ntex-core` | **323 绿**（321 既有 + 2 新增回归测） |
+| TRIP | 见 30.7 说明（本修复的 delta 路径在 trip.tex 不可达） |
+
+新增回归测：`ifx_noexpand_macro_is_unequal`（宏/`\let` 到 relax/可展开原语/
+不可展开原语四臂 + 无 `\noexpand` 对照）、`expl3_v_variant_macro_value_via_expandafter_ifx`
+（`\__exp_eval_register:N` 机制级复刻，断言宏就地展开且 `\the` 被摘除）。
+
+### 30.6 下一阻塞点：`\prg_return_true:` 的 romannumeral 新语义（本轮证据链已备好）
+
+剩余 97 条的**主根因**已定位到一半：2026 版 l3kernel 把
+`\prg_return_true:` / `\prg_return_false:` 从 chardef（`\c_true_bool`/`\c_false_bool`）
+改成了 romannumeral 技巧（expl3-code l.1673-1676）：
+
+```tex
+\cs_gset:Npn \prg_return_true:  { \exp_after:wN \use_i:nn  \exp:w }
+\cs_gset:Npn \prg_return_false: { \exp_after:wN \use_ii:nn \exp:w }
+```
+
+即条件体的 `\if:w <test> \prg_return_true: \else: \prg_return_false: \fi:` 里，
+`\prg_return_*:` 自带一个 `\exp:w`（romannumeral）：数字扫描先吞 `\else`（条件机
+翻 Skipping）、跳过假分支、在 `\fi` 弹帧，再在 `\exp_end:`（chardef 0，**数字扫描
+中段**的内部量）取 0 终止，随后 `\use_i:nn`/`\use_ii:nn` 在剩余 token 里挑真/假
+分支。配套生成器 `\__prg_T_true:w \fi: \use_none:n` / `\__prg_F_true:w \fi: \use:n` /
+`\__prg_TF_true:w \fi: \use_ii:nn` / `\__prg_p_true:w \fi: \c_false_bool`
+（l.1819-1823，帧转储里 `[\fi: \use_none:n]`/`[\fi: \use:n]` 即其定界串）。
+
+本轮帧转储显示 `\ifodd`（`\if_predicate:w`）操作数数字扫描在此链报 Missing number
+（read-again `\use:n`）——与 §29 的 peek_int_op 同族：**数字扫描的
+"中段内部量 + 条件机步进" 组合臂缺**（tex.web scan_int 的
+`min_internal<=cur_cmd<=max_internal → scan_something_internal` 分支只在
+首 token 位实现（scan.rs peek_csid 的 `EqSlot::MathChar` 等），经 `\else`/`\fi`
+步进后才到达的内部量落在十进制数字循环（scan.rs ~L560）里被当终结符）。
+修复方向：数字循环在 `!any` 时遇到内部量（MathChar/Register/\the 族）按 tex.web
+直接取值返回；或让符号循环（scan.rs ~L100）对 `\else`/`\fi`/`\or` 按 get_x_token
+继续步进（须保住 TRIP L82 十六进制循环"游离 `\fi` 放回"契约，见 scan.rs
+maybe_eval_cond 注释）。
+
+### 30.7 TRIP 门禁说明（诚实记录）
+
+`cargo run -p ntex-trip -- --driver ntex --test trip` 本轮报
+`TRIP：失败（驱动 ntex）`，pass2 终态 `组未闭合（缺少 }）groups=[SemiSimple,
+MathLeft, MathLeft, Align]`——**HEAD=0095edd 基线对拍逐字节一致**（`git worktree
+add /tmp/r23/head 0095edd` + 独立 `CARGO_TARGET_DIR` 冷构建，diff 仅 cargo
+banner 两行；共享 target 目录会交付陈旧二进制，见 §22）。即该失败是 HEAD 既有
+状态，非本轮引入。辅助论证：delta 路径只在 "`\ifx` 操作数带 noexpand 标记"时
+可达，`fixtures/trip/trip.tex` 全部 7 处 `\ifx`（l.11/389/390/400/401/405/417）
+均无 `\noexpand` 前缀操作数（l.405 的 `\expandafter` 展开的是 `\csname`，
+无标记；l.436 的 `\expandafter\noexpand\dol` 落在 `\if$` 字符比较臂，本修复
+未触碰该臂）。
+
+### 30.8 本轮踩坑
+
+- **write16 探针会污染错误计数**：插 `\immediate\write16{…\cs_split_function:N …}`
+  后错误 97→30（探针表达式自身的错误恢复改变了后续状态）——探针只能用于
+  定位，不能当计数基线；每轮插桩后必须 `cp expl3-code.tex.orig expl3-code.tex`
+  再复测终态。
+- **`\write16` 打印 `{…}` 组不可见**：`expand_to_string` 只收 cat 10/11/12，
+  `{base}{signature}` 印成 `basesignature`——第一眼会误判"冒号丢了"
+  （本轮在 `\cs_split_function:N` 上绕了三步）。
+- **裸 `\ifx\noexpand\A\A` 在真实 TeX 里也是假**：第一操作数是 `\noexpand`
+  原语本身（get_next 不展开）——expl3 惯用法必须带 `\expandafter`
+  （`\expandafter\ifx\noexpand#1#1`）。写回归测时若漏掉 `\expandafter`
+  会把"修复无效"误判出来。
