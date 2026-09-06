@@ -393,7 +393,7 @@ impl Expander {
     /// rounding"：`"7FFFFFFE*"7FFFFFFE/"7FFFFFFD` 的中间乘积 2^62 不得误判溢出）。
     fn eval_int_expression(&mut self) -> Result<i64> {
         let mut value = self.expr_mul_term()?;
-        while let Some(op) = self.peek_int_op()? {
+        while let Some(op) = self.peek_int_op(true)? {
             if op != b'+' && op != b'-' {
                 self.unread(Token::char(Catcode::Other, op as u32));
                 break;
@@ -411,7 +411,7 @@ impl Expander {
     /// 乘法项：`factor (('*'|'/') factor)*`（i128 中间量，见 [`Self::eval_int_expression`]）。
     fn expr_mul_term(&mut self) -> Result<i128> {
         let mut value = i128::from(self.expr_factor()?);
-        while let Some(op) = self.peek_int_op()? {
+        while let Some(op) = self.peek_int_op(false)? {
             if op != b'*' && op != b'/' {
                 self.unread(Token::char(Catcode::Other, op as u32));
                 break;
@@ -474,50 +474,97 @@ impl Expander {
     }
 
     /// 取下一个整数运算符（`+ - * /`）或 `\relax`（结束符，吸收）；其余 token 放回。
-    fn peek_int_op(&mut self) -> Result<Option<u8>> {
-        let Some((tok, _)) = self.fetch()? else { return Ok(None) };
-        // \relax 终止表达式：`\relax` 原语、`\let\9=\relax` 别名，或
-        // `\def\9{\relax}` 宏（etrip 大量用 `\9` 收尾——942 行是宏定义而非 \let）。
-        if let Some(id) = tok.csid() {
-            let mut cur = id;
-            let mut depth = 0;
-            let mut is_relax = false;
-            loop {
-                match self.eqtb.slot(cur) {
-                    EqSlot::Alias(t) => {
-                        cur = *t;
-                        depth += 1;
-                        if depth > 100 {
+    ///
+    /// `absorb_relax` 只在**加法层**（eval_*_expression 的运算符循环）为真：
+    /// 本引擎的乘/加两级各做一次前瞻（etex.web scan_expr 是单层循环单次前瞻），
+    /// 若乘法层也吸收 `\relax`，加法层的第二次前瞻就越过了表达式终点、把外侧
+    /// token（如 `\glueexpr 1pt \relax\the\skip0` 的 `\the`）展开吞掉。
+    ///
+    /// 前瞻是 **get_x_token** 语义（etex.web scan_expr 运算符循环
+    /// `get_x_token; if cur_tok<>plus/minus then back_input`）：可展开 token
+    /// 先展开一次，以展开产物的**首 token** 判定运算符/终结符；判为终结符时
+    /// 该首 token 放回，其余展开产物仍在输入流中（顺序不变）。
+    ///
+    /// expl3 的 `\int_value:w \__int_eval:w <n> \exp_after:wN \__int_sep:`（
+    /// `\int_step_function:nnnN`、`\__char_generate_aux:w` 等）正依赖这一步把
+    /// `\expandafter` 在前瞻里就地消化——`\__int_sep:`（`\let`，不可展开）落为
+    /// 终结符、后续 `\int_value:w` 的求值产物排在其后。若按 get_token 直读，
+    /// `\expandafter` 被原样放回，调用方的定界实参扫描便把 `\expandafter` 与
+    /// 下一值整段吞进同一个实参（expl3-code l.9364 `\char_generate:nn`
+    /// bootstrap 区 1812 条 "Missing = inserted for \ifnum" 的根因：`\ifnum`
+    /// 关系符位读到表达式里的 `+`）。
+    fn peek_int_op(&mut self, absorb_relax: bool) -> Result<Option<u8>> {
+        loop {
+            let Some((tok, noexpand)) = self.fetch()? else {
+                return Ok(None);
+            };
+            // \relax 终止表达式：`\relax` 原语、`\let\9=\relax` 别名，或
+            // `\def\9{\relax}` 宏（etrip 大量用 `\9` 收尾——942 行是宏定义而非 \let）。
+            if let Some(id) = tok.csid() {
+                let mut cur = id;
+                let mut depth = 0;
+                let mut is_relax = false;
+                loop {
+                    match self.eqtb.slot(cur) {
+                        EqSlot::Alias(t) => {
+                            cur = *t;
+                            depth += 1;
+                            if depth > 100 {
+                                break;
+                            }
+                        }
+                        EqSlot::Macro(m) => {
+                            // 宏体为单个 `\relax`（如 `\def\9{\relax}`）→ 等价终止符
+                            is_relax = m.value.body.len() == 1
+                                && self.is_relax_token(&m.value.body[0]);
                             break;
                         }
+                        EqSlot::Primitive(Primitive::Relax) => {
+                            is_relax = true;
+                            break;
+                        }
+                        _ => break,
                     }
-                    EqSlot::Macro(m) => {
-                        // 宏体为单个 `\relax`（如 `\def\9{\relax}`）→ 等价终止符
-                        is_relax = m.value.body.len() == 1
-                            && self.is_relax_token(&m.value.body[0]);
-                        break;
+                }
+                if is_relax {
+                    if !absorb_relax {
+                        self.unread(tok);
                     }
-                    EqSlot::Primitive(Primitive::Relax) => {
-                        is_relax = true;
-                        break;
+                    return Ok(None); // \relax 吸收
+                }
+                // get_x_token 展开臂：宏（非 protected 抑制面）与可展开原语展开
+                // 一次后重探。`\noexpand` 冻结的 token 不展开（e-TeX 语义）。
+                // 条件原语不在此臂（与数字循环同限：游离 `\fi` 属外层条件，放回）。
+                if !noexpand {
+                    let expandable = match self.eqtb.slot(id).clone() {
+                        EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
+                        EqSlot::Primitive(p) => p.is_expandable(),
+                        _ => false,
+                    };
+                    if expandable {
+                        let mut expansion = Vec::new();
+                        self.expand_once((tok, false), &mut expansion)?;
+                        if !expansion.is_empty() {
+                            self.stack.push(InputFrame::TokenList {
+                                items: Arc::from(expansion),
+                                pos: 0,
+                            });
+                        }
+                        continue;
                     }
-                    _ => break,
                 }
             }
-            if is_relax {
-                return Ok(None); // \relax 吸收
-            }
-        }
-        if tok.catcode() == Some(Catcode::Other) {
-            if let Some(ch) = tok.charcode() {
-                if matches!(ch, 0x2B | 0x2D | 0x2A | 0x2F) {
-                    // + - * /
-                    return Ok(Some(ch as u8));
+            if tok.catcode() == Some(Catcode::Other) {
+                if let Some(ch) = tok.charcode() {
+                    if matches!(ch, 0x2B | 0x2D | 0x2A | 0x2F) {
+                        // + - * /
+                        return Ok(Some(ch as u8));
+                    }
                 }
             }
+            self.unread(tok);
+            return Ok(None);
         }
-        self.unread(tok);
-        Ok(None)
     }
 
     /// token 是否等价于 `\relax`（原语或经 `\let` 别名链指向 `\relax`）。
@@ -573,7 +620,7 @@ impl Expander {
     /// `\relax` 或不可识别 token 结束，后者放回）。
     fn eval_dimen_expression(&mut self) -> Result<i64> {
         let mut value = i128::from(self.dimen_expr_term()?);
-        while let Some(op) = self.peek_int_op()? {
+        while let Some(op) = self.peek_int_op(true)? {
             if op != b'+' && op != b'-' && op != b'*' && op != b'/' {
                 self.unread(Token::char(Catcode::Other, op as u32));
                 break;
@@ -661,7 +708,7 @@ impl Expander {
             0
         };
         let mut has_op = false;
-        while let Some(op) = self.peek_int_op()? {
+        while let Some(op) = self.peek_int_op(true)? {
             if op != b'+' && op != b'-' {
                 self.unread(Token::char(Catcode::Other, op as u32));
                 break;
@@ -708,7 +755,7 @@ impl Expander {
     /// 作用于**本项**（`7pt+12pt/4` = 7pt + (12pt/4)，etrip L888）。
     fn glue_expr_mul_term(&mut self, mu: bool) -> Result<Glue> {
         let mut g = self.glue_expr_term(mu)?;
-        while let Some(op) = self.peek_int_op()? {
+        while let Some(op) = self.peek_int_op(false)? {
             if op != b'*' && op != b'/' {
                 self.unread(Token::char(Catcode::Other, op as u32));
                 break;

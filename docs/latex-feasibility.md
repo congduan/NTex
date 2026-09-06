@@ -2038,3 +2038,131 @@ l.9365 `\__char_generate_aux:nnw`（`\char_generate:nn` bootstrap，l.9341 起
   假象（本轮 cond2/cond4 排查绕了一圈才定位到此）。
 - **回归测的 catcode 行**：`\catcode`\_=11` 的反引号不可省；`run_transcript`
   断言 write16 消息、`expand()` 断言 token 输出，二者用途不同。
+
+## 29. 2026-09-06 第二十二轮：表达式终结符前瞻 get_x_token 化——`\ifnum` 关系符位读到 `+`（l.9365）1812 条清零
+
+### 29.1 阻塞点与症状
+
+HEAD=ba73a66（二十一轮 0 参数纯定界串匹配）。latex.ltx --initex 探针终态
+**1835 条错误**：
+
+| 签名 | 条数 | 说明 |
+|---|---|---|
+| `Missing = inserted for \ifnum` | 1812 | 关系符位读到 `+`（cat 12）——本轮靶子 |
+| `Missing number, treated as zero` | 21 | l.7952 区 `\str_if_eq_p:Vn`（二十轮前已有） |
+| `Undefined control sequence` | 2 | 既有 `^^J`（l.301/302，本轮外） |
+
+1812 条**全部无 `l.NNN` 上下文行**（错误发生在宏展开产物里而非源行），且
+`Missing =` 后紧跟的 `<to be read again>` 恒为 `Char(cat=Other,ch=43)`——高度
+规律 = 自持循环（终态死因 `处理步骤超限`，步数帽打满）。位置：expl3-code.tex
+l.9364 `\int_step_function:nnN { 0 } { 255 } \__char_tmp:n`（`\char_generate:nn`
+bootstrap，l.9341 起），transcript 的 `l.NNN` 与真实行号差 ~12。
+
+### 29.2 定位路径（三层收敛，各一步到位）
+
+1. **harness 复现**：`/tmp/r21/w2`（latex.ltx + expl3.ltx + expl3-code.tex +
+   texsys.cfg）+ `patch1.sh`（把 l.7934-7946 `\str_const:Ne \c_sys_engine_str`
+   块替换为 `\str_const:Nn …{ pdftex }`）+ **release** 二进制 → 1835 精确复现。
+   陷阱：`target/debug/examples/latex_probe`（23:52）早于二十一轮提交，跑出来是
+   7016/2537 的旧签名；主控基线用 `--release`。
+2. **行级 patch bisect**（改 expl3-code.tex 单行 + 重跑，~0.3 s/次）：
+
+   | patch | 结果 | 结论 |
+   |---|---|---|
+   | `{0}{255}`→注释 | `Missing =` 消失 | 循环是唯一来源 |
+   | `{0}{255}`→`{0}{3}` | 仍 1812 | 一次迭代即自持（非逐迭代累加） |
+   | 去掉 `#5{#2}`（l.7048） | 错误**变多**（4976） | 与 `\__char_tmp:n` 无关 |
+   | 去掉尾递归（l.7049-7051） | `Missing =` 消失 | 污染在尾递归的值构造 |
+
+3. **输入栈帧转储**：临时在 `scan_relation` 的 "Missing =" 臂挂
+   `NTEX_IFNUM_TRACE` 转储（含 Bytecode 帧按 tag≤3 解码）。首个失败点栈：
+
+   ```
+   #14 BC(pc=2/31)  \__int_step:Nw 体首（\if_int_compare:w #2 #1 #4 \exp_stop_f:）
+   #15 ARG(7 tok)   '0' \exp_after:wN '+' \int_value:w \__int_eval:w \c_one_int \exp_after:wN
+   ```
+
+   `\__int_step:Nw` 的 `#2`（当前值）= **setup 阶段残留的裸 token**
+   （`0 \expandafter + \number\numexpr \c_one_int \expandafter`），不是数字。
+
+### 29.3 根因：`\numexpr` 终结符前瞻用了 get_token 而非 get_x_token
+
+expl3 的计数器传值习语（l.7017 起 `\int_step_function:nnnN`）：
+
+```tex
+\cs_new:Npn \int_step_function:nnnN #1#2#3
+  {
+    \exp_after:wN \__int_step:w
+    \int_value:w \__int_eval:w #1 \exp_after:wN \__int_sep:
+    ...
+```
+
+`\__int_sep:` 是 `\let` 别名（`=\__kernel_int_sep:=\tex_let:D`），作**定界符**。
+真 TeX 链路：`\exp_after:wN` 的 B 是 `\int_value:w`（convert，`cur_cmd>max_command`
+→ expand），`conv_toks`→`scan_int`→`scan_expr`；`scan_expr` 的**运算符前瞻**是
+`get_x_token`——`\expandafter`（可展开）被就地展开一次，产物首 token
+`\__int_sep:` 判为终结符 → `back_input`。最终流是
+`\__int_step:w 0 \__int_sep: 1 \__int_sep: 255 \__int_sep: \__char_tmp:n`。
+
+tex.web 依据：§7697 `\expandafter` 实现
+（`get_token; t:=cur_tok; get_token; if cur_cmd>max_command then expand else back_input; cur_tok:=t; back_input;`）
+与 §8707 `scan_int` 数字累计循环
+（`loop … else goto done; … get_x_token; end; done: if cur_cmd<>spacer then back_input;`）——
+**数值/表达式扫描的每个前瞻位都是 get_x_token 位**。
+
+NTex 的 `peek_int_op`（expr.rs）用裸 `fetch()`：`\expandafter` 原样放回 →
+`\__int_step:w` 的定界实参扫描把 `\expandafter`+下一值整段吞进 `#1` → 下一值
+没被求值就进了实参 → 下一迭代 `\if_int_compare:w #2 #1 #4` 的左操作数是
+`\number\numexpr 0` + 关系符位读到 `+ #3` 的 `+` → 1812 条自持循环。
+
+### 29.4 修复（机制层，两处）
+
+`expr.rs::peek_int_op`：
+
+1. **get_x_token 臂**（本轮主修）：循环内 fetch 后，`EqSlot::Macro`（非
+   protected 抑制面）/`Primitive::is_expandable()` 展开一次、产物压回、`continue`
+   重探；`\noexpand` 冻结 token 不展开；条件原语不在此臂（与数字循环同限：
+   游离 `\fi` 属外层条件，放回——`scan.rs` 数字循环第十二刀注释同款约束）。
+   同函数被 `\dimexpr`/`\glueexpr`/`\muexpr` 的运算符循环复用，一并修正。
+2. **`\relax` 吸收限加法层**（`absorb_relax: bool` 参数，回归门逼出来的第二处）：
+   本引擎乘/加两级各做一次前瞻（etex.web scan_expr 是单层循环单次前瞻）。若
+   乘法层也吸收 `\relax`，加法层的第二次前瞻就越过表达式终点，把**外侧**
+   token 展开吞进表达式：`\skip0=\glueexpr 1pt \relax\the\skip0` 里 `\the\skip0`
+   被前瞻吞掉，产物 `0pt` 泄漏为排版文本 → `glueexpr_in_skip_assignment` 失败
+   （319 绿 → 1 红）。现乘法层（`expr_mul_term`/`glue_expr_mul_term`）传 false、
+   加法层（`eval_int/dimen/glue_expression`）传 true。
+
+### 29.5 验证
+
+| 门 | 结果 |
+|---|---|
+| latex_probe --initex（+patch1） | **1835 → 105**（1812 条清零），阻塞点 l.9365 → **l.10298** |
+| `cargo test -p ntex-core` | **321 绿**（319 既有 + 2 新增回归测） |
+| `cargo run -p ntex-trip -- --driver ntex --test trip` | 与二十一轮基线**逐字节一致**（差异仅 unit id/临时目录/时计） |
+
+新增回归测：`expr_terminator_peek_expands_expandable_token`（原语级复刻
+`\int_step` 链：`\sep`=`\let` 别名定界 + `\expandafter\number\numexpr` 尾递归，
+断言 `[0][1][2][3]B`；另含 `\let` 别名作终结符、可展开宏作终结符两护栏）与
+`expr_relax_absorbed_once_at_add_level`（`\relax` 单次吸收/泄漏护栏）。
+
+### 29.6 下一阻塞点与残留
+
+l.10298 区（expl3-code l.10232-10298，`\__prop_pair:wn` / `\tl_set:Nn #3`
+prop 值哨兵区），终态死因 `输入栈超限（5001 帧）`。105 条签名：
+`Missing number, treated as zero` 48、`Argument of \use_ii:nn has an extra }` 32、
+`Undefined control sequence` 6、`Illegal parameter number in definition of` 3、
+`Extra \fi` 3、`use_i:nn` extra-} 3、`Missing endcsname`/`use_none:nnnn`/`use_ii:nnn`
+各 2、`Too many }'s`/`Missing = for \ifnum`/`Missing )`/`Arithmetic overflow` 各 1。
+`\exp_last_unbraced:NNNNo` / prop 模块（第十五刀遗留靶）在此区。
+
+### 29.7 本轮踩坑
+
+- **陈旧 debug 二进制**：`target/debug/examples/*` 与 release 产物时间戳可差数
+  小时，跨轮跑探针先 `ls -la` 对提交时间，否则签名全错（本轮 7016/2537 假象）。
+- **探针转录只收 write16/错误**：typeset 字符（如条件真分支的 `B`）不进
+  transcript——用探针做行为对照时必须走 `\message`，否则会误判"token 被吞"
+  （本轮绕了三步假线索）。
+- **`--initex` 模式缺 `\message` 原语**：INITEX eqtb 缺项（`{A}` 被当排版文本），
+  plain 模式正常——独立缺口，未在本轮修。
+- **Rust `concat!` 里的 `%`**：无真实换行时注释吞到 EOF（repo 已有注释告诫，
+  tests.rs `nested_param_in_macro_arg_repro`）；本轮新测全部 `%\n`。

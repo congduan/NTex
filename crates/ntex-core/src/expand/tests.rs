@@ -867,6 +867,70 @@ mod tests {
             "T"
         );
     }
+    #[test]
+    fn expr_terminator_peek_expands_expandable_token() {
+        // 表达式终结符位是 **get_x_token** 位置（etex.web scan_expr 运算符循环
+        // `get_x_token; if cur_tok<>plus/minus then back_input`）：可展开 token
+        // 展开一次后以其产物首 token 判定"运算符/终结符"，终结符放回。
+        //
+        // expl3 的 `\int_value:w \__int_eval:w <n> \exp_after:wN \__int_sep:`
+        // （`\int_step_function:nnnN`、`\__char_generate_aux:w`）依赖这一步：
+        // `\__int_sep:`（\let 别名，不可展开）落为终结符、后续 `\int_value:w`
+        // 的求值产物排在其后。get_token 直读则 `\expandafter` 原样放回，调用方
+        // 的定界实参扫描把 `\expandafter`+下一值整段吞进同一个实参——expl3-code
+        // l.9364 `\char_generate:nn` bootstrap 区 1812 条
+        // "Missing = inserted for \ifnum"（`\ifnum` 关系符位读到表达式 `+`）。
+        //
+        // 原语级最小形：\sep = \let 别名（expl3 \__int_sep: 的真身）。
+        // 注意：`%` 后必须真实换行（无换行会把其余输入全部注释掉）。
+        let src = concat!(
+            "\\def\\body#1{[#1]}%\n",
+            "\\let\\sep=\\let%\n",
+            "\\def\\stepfun #1#2#3{%\n",
+            "\\expandafter\\stepw\\number\\numexpr #1 \\expandafter\\sep%\n",
+            "\\number\\numexpr #2 \\expandafter\\sep%\n",
+            "\\number\\numexpr #3 \\sep}%\n",
+            "\\def\\stepw #1\\sep #2\\sep #3\\sep #4{\\stepn >#1\\sep{#2}{#3}{#4}}%\n",
+            "\\def\\stepn #1#2\\sep #3#4#5{%\n",
+            "\\ifnum #2 #1 #4 \\relax B\\else%\n",
+            "#5{#2}%\n",
+            "\\expandafter\\stepn\\expandafter#1\\number\\numexpr #2 + #3 \\sep {#3}{#4}{#5}%\n",
+            "\\fi}%\n",
+            "\\stepfun {0}{1}{3}\\body%\n",
+        );
+        assert_eq!(expand(src).unwrap(), "[0][1][2][3]B");
+        // 同位直写（无 \expandafter）：`\let` 别名原语作终结符，不展开、放回，
+        // 交还调用方的定界实参匹配（expl3 `\__int_sep:` 的用法）
+        assert_eq!(
+            expand("\\def\\g #1\\sep{[#1]}\\expandafter\\g\\number\\numexpr 1 + 1 \\sep").unwrap(),
+            "[2]"
+        );
+        // 终结符是可展开宏：展开后以其产物首 token 判定（tex.web get_x_token）
+        assert_eq!(
+            expand("\\def\\plus{+2}\\number\\numexpr 1 \\plus \\relax X").unwrap(),
+            "3X"
+        );
+    }
+
+    #[test]
+    fn expr_relax_absorbed_once_at_add_level() {
+        // `\relax` 只在**加法层**前瞻吸收一次：乘法层若也吸收，加法层的第二次
+        // 前瞻就越过表达式终点、把外侧可展开 token（`\the\skip0`）展开吞进
+        // 表达式——`\skip0` 赋值正确而 `\the` 产物 `0pt` 泄漏为排版文本。
+        assert_eq!(
+            expand(r"\skip0=\glueexpr 1pt plus 2pt - 0.5pt \relax\the\skip0").unwrap(),
+            "0.5pt plus 2.0pt"
+        );
+        // 无运算符同形（乘法层前瞻直接落 `\relax`）
+        assert_eq!(
+            expand(r"\skip0=\glueexpr 1pt \relax\the\skip0").unwrap(),
+            "1.0pt"
+        );
+        assert_eq!(
+            expand(r"\count0=\numexpr 1 + 2 \relax\the\count0").unwrap(),
+            "3"
+        );
+    }
 
     #[test]
     fn ifnum_relation_literal_forms_unchanged() {
