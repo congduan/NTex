@@ -13,6 +13,8 @@ rust-version = "1.92"
 # 先验 wgpu 与 vello 是否仍统一（0.36 已用 wgpu 30，会分裂成两份、类型不兼容）。
 eframe = { version = "0.35", features = ["wgpu"] }
 ntex-backend = { path = "../ntex-backend", version = "0.1.0" }
+# segmentize：studio 增量分派的段 diff 基准（与引擎 IncrementalTypesetter 同源）。
+ntex-core.workspace = true
 ntex-layout.workspace = true
 vello = "0.10"
 

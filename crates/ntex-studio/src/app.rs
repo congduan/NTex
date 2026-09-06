@@ -8,7 +8,8 @@ use eframe::egui::{CentralPanel, Panel};
 use eframe::egui_wgpu::RenderState;
 use ntex_backend::prims::collect_page;
 use ntex_backend::{build_scene, RenderOptions};
-use ntex_layout::typeset::Typesetter;
+use ntex_core::incremental::segmentize;
+use ntex_layout::typeset::{CompileOutput, IncrementalTypesetter};
 use vello::Scene;
 
 use crate::editor;
@@ -42,6 +43,14 @@ pub struct Studio {
     last_edit: Instant,
 
     // —— 排版侧 ——
+    /// 常驻增量排版器：段级缓存跨防抖重排复用（含 `Rc` 非 Send，随 UI 线程
+    /// 同步编译，不可移后台线程）。
+    inc: IncrementalTypesetter,
+    /// 最近一次成功编译对应的段列表（增量 diff 基准；失败置 None 强制全量）。
+    seg_snapshot: Option<Vec<String>>,
+    /// 最近一次成功排版的页面输出（源码未变、仅 dpi/调试/字形参数变更时
+    /// 免引擎重排，直接重编码 Scene；与 seg_snapshot 同生共死）。
+    last_output: Option<CompileOutput>,
     pages: Vec<PageScene>,
     page: usize,
     dpi: f64,
@@ -67,6 +76,9 @@ impl Studio {
         source: String,
         file_note: Option<String>,
     ) -> Self {
+        // egui 内置字体不含 CJK 字形，先注册系统字体回落（状态栏/编辑器中文、
+        // ◀/▶ 按钮符号都依赖它），GPU 有无两条路径均需生效。
+        install_cjk_fonts(&cc.egui_ctx);
         // GPU 侧常驻资源注入 egui renderer 的回调资源仓（一次性）。
         // Mutex 包装：vello Renderer 内含 RefCell 非 Sync，而回调资源仓
         // 在 native 下要求 Send+Sync（渲染阶段单线程持锁，无争用）。
@@ -91,13 +103,16 @@ impl Studio {
             file_note,
             dirty: true,
             last_edit: Instant::now() - DEBOUNCE, // 启动即先排一次
+            inc: IncrementalTypesetter::with_tfm_paginated(),
+            seg_snapshot: None,
+            last_output: None,
             pages: Vec::new(),
             page: 0,
             dpi: 144.0,
             debug: false,
             glyphs_on: true,
             glyph_cache: ntex_backend::glyphs::GlyphCache::new(),
-            status: "就绪".to_owned(),
+            status: "Ready".to_owned(),
             err: None,
             zoom: 1.0,
             pan: None,
@@ -114,6 +129,9 @@ impl Studio {
             file_note,
             dirty: false,
             last_edit: Instant::now(),
+            inc: IncrementalTypesetter::with_tfm_paginated(),
+            seg_snapshot: None,
+            last_output: None,
             pages: Vec::new(),
             page: 0,
             dpi: 144.0,
@@ -121,63 +139,112 @@ impl Studio {
             glyphs_on: true,
             glyph_cache: ntex_backend::glyphs::GlyphCache::new(),
             status: String::new(),
-            err: Some(format!("GPU 不可用，预览已停用：{err}")),
+            err: Some(format!("GPU unavailable, preview disabled: {err}")),
             zoom: 1.0,
             pan: None,
             auto_fit: true,
         }
     }
 
-    /// 同步重排：源码 → 页盒树 → prims → vello Scene（demo 级文档毫秒量级，
-    /// 阻塞一帧可接受；更大文档后续再考虑后台线程 + 增量）。
+    /// 同步重排（三路分派）：
+    ///
+    /// - 恰一段替换（段数不变）→ `IncrementalTypesetter::edit(k)` 增量：未变段
+    ///   注入缓存节点流（行盒免重排），仅重跑页面装配；
+    /// - 源码未变（dpi/调试/字形参数触发）→ 免引擎，复用上次页面输出仅重编码；
+    /// - 其余（首排/段增删/多段改/上次失败）→ `compile` 全量重建缓存。
+    ///
+    /// 同步执行（增量排版器含 `Rc` 非 Send，随 UI 线程；demo 级毫秒量级阻塞
+    /// 一帧可接受，更大文档后续再考虑后台线程）。
     fn compile_now(&mut self) {
         let started = Instant::now();
-        match Typesetter::with_tfm().typeset_dvi(&self.source) {
-            Ok((pages, fonts)) => {
-                let opts = RenderOptions {
-                    dpi: self.dpi,
-                    debug: self.debug,
-                    glyphs: self.glyphs_on,
-                    ..RenderOptions::default()
+        let new_segs = segmentize(&self.source);
+        let edited = match &self.seg_snapshot {
+            Some(old) => edited_segment(old, &new_segs),
+            None => None,
+        };
+        let attempted = if edited.is_none() && self.seg_snapshot.as_deref() == Some(&new_segs[..]) {
+            Ok((
+                Recompile::Reuse,
+                self.last_output
+                    .clone()
+                    .expect("段快照与输出存档同生共死（零变化必有存档）"),
+            ))
+        } else {
+            match edited {
+                Some(k) => self.inc.edit(k, &new_segs[k]).map(|o| (Recompile::Edit, o)),
+                None => self.inc.compile(&self.source).map(|o| (Recompile::Full, o)),
+            }
+            .map_err(|e| e.to_string())
+        };
+        match attempted {
+            Ok((plan, out)) => {
+                let stats = self.inc.stats();
+                self.rebuild_scenes(&out);
+                self.seg_snapshot = Some(new_segs);
+                self.last_output = Some(out);
+                let mode = match plan {
+                    Recompile::Reuse => "params-only re-encode".to_owned(),
+                    Recompile::Edit => {
+                        format!(
+                            "incremental {} recomputed / {} reused",
+                            stats.executed, stats.reused
+                        )
+                    }
+                    Recompile::Full => "full".to_owned(),
                 };
-                // 字形字体解析缓存借出参与页收集，结束后归还（跨重排复用，
-                // 编辑防抖周期内不重复 kpsewhich/解析）。
-                let mut cache = std::mem::take(&mut self.glyph_cache);
-                self.pages = pages
-                    .iter()
-                    .map(|p| {
-                        let prims = collect_page(p, &fonts, &opts, &mut cache);
-                        let (w, h) = (prims.width, prims.height);
-                        PageScene {
-                            scene: build_scene(&prims),
-                            w,
-                            h,
-                        }
-                    })
-                    .collect();
-                self.glyph_cache = cache;
-                self.page = self.page.min(self.pages.len().saturating_sub(1));
                 self.status = format!(
-                    "{} 页 · 排版+编码 {} ms",
+                    "{} pages · {} · {} ms",
                     self.pages.len(),
+                    mode,
                     started.elapsed().as_millis()
                 );
                 // 字形回落的字体提示（环境缺文件，逐字符方框口径）。
                 if self.glyphs_on {
                     let missing: Vec<_> = self.glyph_cache.missing().collect();
                     if !missing.is_empty() {
-                        self.status
-                            .push_str(&format!("（字形回落：{} 未找到字体）", missing.join("、")));
+                        self.status.push_str(&format!(
+                            " (glyph fallback: no font for {})",
+                            missing.join(", ")
+                        ));
                     }
                 }
                 self.err = None;
             }
             Err(err) => {
-                // 编译失败保留旧页面（预览不闪空），错误进状态栏。
-                self.err = Some(err.to_string());
+                // 编译失败保留旧页面（预览不闪空）；引擎内部状态已随编辑推进，
+                // 丢弃增量快照，下次必全量重建（正确性优先）。
+                self.seg_snapshot = None;
+                self.last_output = None;
+                self.err = Some(err);
             }
         }
         self.dirty = false;
+    }
+
+    /// 页面节点 → collect_page + vello Scene（字形字体解析缓存跨重排借出/归还）。
+    fn rebuild_scenes(&mut self, out: &CompileOutput) {
+        let opts = RenderOptions {
+            dpi: self.dpi,
+            debug: self.debug,
+            glyphs: self.glyphs_on,
+            ..RenderOptions::default()
+        };
+        let mut cache = std::mem::take(&mut self.glyph_cache);
+        self.pages = out
+            .pages
+            .iter()
+            .map(|p| {
+                let prims = collect_page(p, &out.fonts, &opts, &mut cache);
+                let (w, h) = (prims.width, prims.height);
+                PageScene {
+                    scene: build_scene(&prims),
+                    w,
+                    h,
+                }
+            })
+            .collect();
+        self.glyph_cache = cache;
+        self.page = self.page.min(self.pages.len().saturating_sub(1));
     }
 
     /// 当前页显示参数：(scale, offset)——页面像素 → 显示物理像素的仿射。
@@ -220,7 +287,7 @@ impl eframe::App for Studio {
                 }
                 ui.separator();
                 let n = self.pages.len();
-                ui.label(format!("页 {}/{}", self.page + 1, n.max(1)));
+                ui.label(format!("Page {}/{}", self.page + 1, n.max(1)));
                 if ui
                     .add_enabled(self.page > 0, egui::Button::new("◀"))
                     .clicked()
@@ -238,8 +305,8 @@ impl eframe::App for Studio {
                     self.auto_fit = true;
                 }
                 ui.separator();
-                ui.label(format!("缩放 {:.0}%", self.zoom * 100.0));
-                if ui.button("适配 (0)").clicked() {
+                ui.label(format!("Zoom {:.0}%", self.zoom * 100.0));
+                if ui.button("Fit (0)").clicked() {
                     self.zoom = 1.0;
                     self.pan = None;
                     self.auto_fit = true;
@@ -252,8 +319,8 @@ impl eframe::App for Studio {
                             .suffix(" dpi"),
                     )
                     .changed();
-                let dbg_changed = ui.checkbox(&mut self.debug, "调试 overlay").changed();
-                let glyph_changed = ui.checkbox(&mut self.glyphs_on, "字形").changed();
+                let dbg_changed = ui.checkbox(&mut self.debug, "Debug overlay").changed();
+                let glyph_changed = ui.checkbox(&mut self.glyphs_on, "Glyphs").changed();
                 if dpi_changed || dbg_changed || glyph_changed {
                     self.dirty = true;
                     self.last_edit = Instant::now();
@@ -356,9 +423,9 @@ impl eframe::App for Studio {
                     ui.centered_and_justified(|ui| {
                         ui.label(
                             egui::RichText::new(if self.render.is_none() {
-                                "GPU 预览不可用（wgpu 初始化失败）"
+                                "GPU preview unavailable (wgpu init failed)"
                             } else {
-                                "（无页面）"
+                                "(no pages)"
                             })
                             .color(egui::Color32::GRAY),
                         );
@@ -408,5 +475,95 @@ impl eframe::App for Studio {
                     ui.ctx().request_repaint_after(DEBOUNCE);
                 }
             });
+    }
+}
+
+/// 为 egui 注册 CJK 回落字体。egui 内置字体无 CJK 字形，编辑器中的中文
+/// 内容、引擎输出的中文错误信息（及 ◀/▶ 按钮符号）缺回落时显示为方框；追加到 Proportional 与
+/// Monospace 两族末位——拉丁字符仍用内置字体，仅 CJK/符号回落。按平台
+/// 候选系统字体逐个尝试，全部缺失则维持默认（不视为错误）。
+fn install_cjk_fonts(ctx: &egui::Context) {
+    let candidates = [
+        // macOS
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        // Linux
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        // Windows
+        "C:\\Windows\\Fonts\\msyh.ttc",
+    ];
+    let Some(bytes) = candidates.iter().find_map(|p| std::fs::read(p).ok()) else {
+        return;
+    };
+    let mut fonts = egui::FontDefinitions::default();
+    fonts
+        .font_data
+        .insert("cjk".into(), Arc::new(egui::FontData::from_owned(bytes)));
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        fonts.families.entry(family).or_default().push("cjk".into());
+    }
+    ctx.set_fonts(fonts);
+}
+
+/// 重排分派口径（状态栏展示）。
+#[derive(Clone, Copy)]
+enum Recompile {
+    /// 源码未变（仅渲染参数），免引擎复用上次输出。
+    Reuse,
+    /// 恰一段替换，增量重放。
+    Edit,
+    /// 全量编译（首排/段结构变化/多段改/失败重建）。
+    Full,
+}
+
+/// 段 diff → 增量计划：`Some(k)` = 段数不变且恰好段 k 被替换（可走增量
+/// `edit(k)`：未变段注入缓存节点流，行盒免重排）；`None` = 其余（多段变化/
+/// 段数增删/完全相同——完全相同时调用方另行判定走"免引擎"复用，见
+/// `Studio::compile_now`）。
+fn edited_segment(old: &[String], new: &[String]) -> Option<usize> {
+    if old.len() != new.len() {
+        return None;
+    }
+    let mut diff = old
+        .iter()
+        .zip(new.iter())
+        .enumerate()
+        .filter_map(|(i, (a, b))| (a != b).then_some(i));
+    let first = diff.next()?;
+    diff.next().is_none().then_some(first)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::edited_segment;
+
+    fn segs(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    /// 完全相同 → None（调用方以"零变化"另行走免引擎复用）。
+    #[test]
+    fn identical_is_none() {
+        let a = segs(&["a\n", "b\n"]);
+        assert_eq!(edited_segment(&a, &a), None);
+        assert_eq!(edited_segment(&[], &[]), None);
+    }
+
+    #[test]
+    fn single_replacement_finds_index() {
+        let old = segs(&["a\n", "b\n", "c\n"]);
+        let new = segs(&["a\n", "B\n", "c\n"]);
+        assert_eq!(edited_segment(&old, &new), Some(1));
+    }
+
+    /// 多段变化 / 段数增删 → None（全量）。
+    #[test]
+    fn multi_change_or_len_change_is_none() {
+        let old = segs(&["a\n", "b\n"]);
+        assert_eq!(edited_segment(&old, &segs(&["A\n", "B\n"])), None);
+        assert_eq!(edited_segment(&old, &segs(&["a\n"])), None);
+        assert_eq!(edited_segment(&old, &segs(&["a\n", "b\n", "c\n"])), None);
     }
 }

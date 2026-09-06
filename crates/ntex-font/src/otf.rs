@@ -125,8 +125,8 @@ impl OtfFont {
     /// 读全量字节 + `ttf_parser::Face::parse` 校验；提取 name/head
     /// 到 [`GlobalMetrics`] 与名字字段；表数据零拷贝借用 `data`。
     pub fn load(path: &Path) -> Result<OtfFont> {
-        let data = std::fs::read(path)
-            .map_err(|e| OtfError(format!("读取 {}: {e}", path.display())))?;
+        let data =
+            std::fs::read(path).map_err(|e| OtfError(format!("读取 {}: {e}", path.display())))?;
         Self::from_data(data)
     }
 
@@ -228,7 +228,6 @@ struct OutlineAcc {
 }
 
 impl OutlineAcc {
-
     fn outline(self) -> Outline {
         let mut points = [OutlinePoint::Close; MAX_OUTLINE_POINTS];
         let len = self.points.len().min(MAX_OUTLINE_POINTS);
@@ -290,7 +289,6 @@ impl OutlineBuilder for OutlineAcc {
         self.push(OutlinePoint::Close);
     }
 }
-
 
 #[cfg(test)]
 mod tests;

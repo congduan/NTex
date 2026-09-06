@@ -268,6 +268,9 @@ fn leader_unit_height(inner: &Node) -> i64 {
 /// 单元 ≤ 0 或区域装不下一个完整单元时不绘制（tex.web `finite_shrink` 守卫：
 /// 防止死循环）。绘制把 inner 物化为既有 Rect/Glyph 指令：box 递归
 /// `collect_box`，rule 直接 `RectPrim::push`。
+// 装配参数即 TeX 排版语义的自然元组（尺寸/伸缩/坐标系/输出上下文），打包成
+// 结构体反而割裂调用点；此处豁免参数数检查。
+#[allow(clippy::too_many_arguments)]
 fn collect_leaders(
     kind: ntex_layout::node::LeadersKind,
     inner: &Node,
@@ -822,7 +825,10 @@ mod tests {
         // 首单元对齐网格起点 x0=72（72dpi 1pt=1px）；单元周期 10px。
         assert!((xs[0] - 72.0).abs() < 1e-9);
         for (i, pair) in xs.windows(2).enumerate() {
-            assert!((pair[1] - pair[0] - 10.0).abs() < 1e-9, "pair {i}: {pair:?}");
+            assert!(
+                (pair[1] - pair[0] - 10.0).abs() < 1e-9,
+                "pair {i}: {pair:?}"
+            );
         }
         // rule 尺寸一致（2×2pt）。
         assert!(prims
@@ -1031,27 +1037,25 @@ mod tests {
     fn leaders_char_box_glyph_and_fallback_paths() {
         // inner 含字符：字形关 → 仅占位方框（3 条矩形）；字形开 + 无字体表 →
         // 同样回落方框（不 panic）；两状态都出墨。
-        let mk = || {
-            Node::Leaders {
-                kind: ntex_layout::node::LeadersKind::Leaders,
-                inner: Box::new(Node::Box(BoxNode {
-                    kind: BoxKind::HBox,
-                    width: 10 * 65_536,
+        let mk = || Node::Leaders {
+            kind: ntex_layout::node::LeadersKind::Leaders,
+            inner: Box::new(Node::Box(BoxNode {
+                kind: BoxKind::HBox,
+                width: 10 * 65_536,
+                height: 65_536,
+                depth: 0,
+                shift: 0,
+                children: vec![Node::Char {
+                    font: FontId(0),
+                    charcode: b'.' as u32,
+                    width: 65_536,
                     height: 65_536,
                     depth: 0,
-                    shift: 0,
-                    children: vec![Node::Char {
-                        font: FontId(0),
-                        charcode: b'.' as u32,
-                        width: 65_536,
-                        height: 65_536,
-                        depth: 0,
-                    }],
-                })),
-                width: 0,
-                stretch: 10 * 65_536,
-                shrink: 0,
-            }
+                }],
+            })),
+            width: 0,
+            stretch: 10 * 65_536,
+            shrink: 0,
         };
         let page = BoxNode {
             kind: BoxKind::HBox,

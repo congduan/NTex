@@ -3,11 +3,8 @@
 
 use super::*;
 
-const FANDOL: &str = if cfg!(feature = "never") {
-    "unreachable"
-} else {
-    "/tmp/latexsurvey/fonts/opentype/public/fandol/FandolSong-Regular.otf"
-};
+// 样本路径固定（/tmp 非入库路径）；缺文件时逐测试早退跳过。
+const FANDOL: &str = "/tmp/latexsurvey/fonts/opentype/public/fandol/FandolSong-Regular.otf";
 
 fn load_fandol() -> Option<OtfFont> {
     OtfFont::load(std::path::Path::new(FANDOL)).ok()
@@ -59,7 +56,11 @@ fn outline_cff_points_present() {
     };
     let gid = f.glyph_index('永').unwrap();
     let o = f.glyph_outline(gid).unwrap();
-    assert!(o.points.len() >= 32, "『永』字八法轮廓点数合理：{}", o.points.len());
+    assert!(
+        o.points.len() >= 32,
+        "『永』字八法轮廓点数合理：{}",
+        o.points.len()
+    );
 }
 
 #[test]
