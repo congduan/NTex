@@ -444,16 +444,22 @@ impl NodeBuilder {
                 }
                 let mut out = self.math_atom_nodes(base, style);
                 let s_style = style.next();
-                // 上标：内容打包为 hbox，shift 上移（hlist 内 Box.shift 为垂直位移）
+                // 上标：内容打包为 hbox，shift 上移（hlist 内 Box.shift 为垂直位移）。
+                // tex.web make_scripts 对 sub/sup 盒都执行 width(x)+=script_space
+                // （盒宽加大但字形不移动）；分式规则宽 = max(分子,分母盒宽)，
+                // demo1 对照：官方 `{1\over n^2}` 规则宽 687373 vs 修前 654605，
+                // 差 32768 = \scriptspace(0.5pt)。
                 if let Some(sup_atoms) = sup {
                     let nodes = self.math_to_hlist(sup_atoms, s_style);
                     let mut b = BoxNode::new_hbox(nodes);
+                    b.width += self.params.scriptspace;
                     b.shift = -self.script_rise(style);
                     out.push(Node::Box(b));
                 }
                 if let Some(sub_atoms) = sub {
                     let nodes = self.math_to_hlist(sub_atoms, s_style);
                     let mut b = BoxNode::new_hbox(nodes);
+                    b.width += self.params.scriptspace;
                     b.shift = self.script_drop();
                     out.push(Node::Box(b));
                 }

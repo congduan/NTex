@@ -1537,6 +1537,36 @@ mod tests {
         );
     }
 
+    /// P4（demo1 对照）：sub/sup 盒宽须加 \scriptspace（tex.web make_scripts
+    /// `width(x):=width(x)+script_space`，盒宽加大但字形不移动）。
+    /// TinyTeX 实测铁证：`{1\over n^2}` 分式规则宽 = max(分子,分母盒宽)，
+    /// 官方 DVI `putrule w=687373`（分母 n² 盒含 0.5pt scriptspace），
+    /// 修前 654605 = 687373-32768。`{π^2\over 6}` 同样 623731 vs 590963。
+    #[test]
+    fn math_script_box_width_includes_scriptspace() {
+        let children = math_line_all_children(r"$x^2$");
+        // children：[Char x, Box(sup)]（mathon/mathoff/parfillskip 已剥离）
+        let sup = children
+            .iter()
+            .find_map(|n| match n {
+                Node::Box(b) => Some(b),
+                _ => None,
+            })
+            .expect("上标应打包为 hbox");
+        // 测试度量：'2' 在 scriptscript 阶宽度缩放为 735；盒宽须再加 \scriptspace=32768
+        let inner = match sup.children.last() {
+            Some(Node::Char { width, .. }) => *width,
+            other => panic!("上标盒内应为字形节点：{other:?}"),
+        };
+        assert_eq!(
+            sup.width,
+            inner + 32768,
+            "sup 盒宽应含 \\scriptspace：{children:?}"
+        );
+        // shift（垂直位移）不受 scriptspace 影响：符号在盒内不移动
+        assert_eq!(sup.children.len(), 1, "盒内仍只有一个字形节点");
+    }
+
     #[test]
     fn math_over_outside_math_rejected() {
         // TeX 报错并恢复：消息入转录，执行继续
