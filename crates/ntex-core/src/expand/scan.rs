@@ -1785,7 +1785,9 @@ impl Expander {
         // 单位/阶后缀：连续字母，取**最长**已知单位或 fil/fill/filll 阶前缀
         // （TeX scan_keyword 逐个字母匹配的等价：`1ptminus0fil` → "pt" + 放回 "minus"；
         // `0fillminus0filll` → 阶词 "fill" 被消费并回传，放回 "minus"）。
-        const UNITS: &[&str] = &["sp", "pt", "bp", "in", "cm", "mm", "pc", "cc", "dd", "mu"];
+        const UNITS: &[&str] = &[
+            "sp", "pt", "bp", "in", "cm", "mm", "pc", "cc", "dd", "mu", "em", "ex",
+        ];
         const ORDER_WORDS: &[&str] = &["fil", "fill", "filll"];
         let mut unit_tokens: Vec<(Token, char)> = Vec::new();
         while let Some((tok, _)) = self.fetch()? {
@@ -1946,6 +1948,14 @@ impl Expander {
         let scaled: i128 = if unit == "mu" {
             // mu 单位：1mu = 65536 单位（pdfTeX 实测 \mutoglue/\gluetomu 1:1，无 quad 换算）
             num_pt
+        } else if unit == "em" || unit == "ex" {
+            // TeX 内部单位（tex.web scan_dimen）：em = quad(cur_font)（fontdimen 6）、
+            // ex = x_height(cur_font)（fontdimen 5）。字体参数缺失（nullfont/
+            // 无加载器）按 0 计（tex.web nullfont quad/x_height = 0 同义）。
+            let font = self.sink.current_font();
+            let param = if unit == "em" { 6 } else { 5 };
+            let unit_sp = i128::from(self.font_loader.font_param(font, param).unwrap_or(0));
+            num_pt * unit_sp / i128::from(SP_PER_PT)
         } else {
             let unit_sp =
                 unit_to_sp(&unit).ok_or_else(|| Error::invalid_input(format!("未知单位：{unit}")))?;

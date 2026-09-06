@@ -607,7 +607,8 @@ pub struct Expander {
     /// `\delcode` 表：字符码 → 定界符码（TeX delcode；无覆盖 = 0x500000 默认）。
     delcodes: HashMap<u32, u32>,
     /// TRIP 冲刺：`\mathcode` 表：字符码 → 数学码（TeX initex 默认：
-    /// catcode 11/12 字符 = 0x7000+码，其余 = 0x8000 无效）。
+    /// 字母（cat 11）= 0x7100+码（fam 1 数学斜体）、其余 cat 11/12 =
+    /// 0x7000+码（fam 0）、非 11/12 = 0x8000 无效）。
     mathcodes: HashMap<u32, u32>,
     /// `\lccode` 表：字符码 → 小写码（TeX 默认全 0；etrip 断字测试用）。
     lccodes: [i64; 256],
@@ -734,8 +735,9 @@ impl Expander {
             hyphenchars: HashMap::new(),
             delcodes: HashMap::new(),
             // TRIP 冲刺：initex 默认 mathcode（tex.web `init_math_codes`）：
-            // letter/other_char（catcode 11/12）→ 0x7000+码（class 7 variable, family 0），
-            // 其余 → 0x8000（无效，触发 "Missing character" 语义一致）。
+            // 字母（cat 11）→ 0x7100+码（class 7 variable, family 1 数学斜体）、
+            // 其余 letter/other_char（catcode 11/12）→ 0x7000+码（class 7
+            // variable, family 0），其余 → 0x8000（无效，"Missing character"）。
             mathcodes: default_mathcodes(),
             lccodes: [0; 256],
             uccodes: [0; 256],
@@ -1711,10 +1713,18 @@ impl Expander {
                     SlotAction::Stream => Err(Error::invalid_input(
                         "流引用不能直接使用（需在 \\read/\\write 等扫描上下文中）",
                     )),
-                    // ETRIP 冲刺：\mathchardef\cs=<num> 绑定的 cs 执行时输出字符
-                    // （数学原子语义在排版器侧细化；此处按 \char 处理）
+                    // ETRIP 冲刺：\mathchardef\cs=<num> 绑定的 cs 执行时推送
+                    // 完整数学字符原子（tex.web main_control `math_given`：
+                    // class<<12 | fam<<8 | char 全量进 mlist——demo 差异 #3：
+                    // \sum="1350 的 fam3（cmex10 大算符）此前被丢成 fam0 文本
+                    // 字符）。数学模式外退回 \char 文本行为（TeX 语义应为
+                    // "Missing $ inserted" 报错，ETRIP 后续对齐）。
                     SlotAction::MathChar(code) => {
-                        self.sink.token(Token::char(Catcode::Other, code & 0xFF))
+                        if self.in_math {
+                            self.sink.math_char_full(code)
+                        } else {
+                            self.sink.token(Token::char(Catcode::Other, code & 0xFF))
+                        }
                     }
                     SlotAction::Macro(def) => {
                         // \outer（tex.web scan_depth>0 禁止）：outer 宏在展开
@@ -1805,6 +1815,17 @@ impl Expander {
                     }
                     return self.sink.math_shift(display);
                 }
+                // 数学模式普通字符（letter/other，cat 11/12）→ 查 \mathcode 表
+                // 改道为完整数学字符原子（tex.web 主控制数学分支：普通字符=
+                // 隐式 mathcode 查表；class<<12 | fam<<8 | char）。demo 差异 #1：
+                // $E=mc^2$ 字母默认 fam1（cmmi 斜体，initex 表 0x7100+码），
+                // 此前布局侧硬编码 fam0（cmr 正体）。`^`/`_`（cat 7/8）、空格
+                // （cat 10）、组定界（cat 1/2）不走此路。
+                if self.in_math && matches!(tok.catcode(), Some(Catcode::Letter | Catcode::Other)) {
+                    let ch = tok.charcode().unwrap_or(0);
+                    let code = self.mathcodes.get(&ch).copied().unwrap_or(0x8000);
+                    return self.sink.math_char_full(code);
+                }
                 // 组定界符（cat 1/2）在主流层建立/结束组（M1-11）。
                 // 对齐上下文（`\halign`/`\valign`）的 `{`/`}` 平衡计数、
                 // `\noalign` 组与对齐组配对已在 align_on_token（align_body_step）
@@ -1818,7 +1839,6 @@ impl Expander {
             _ => self.sink.token(tok),
         }
     }
-
     /// 展开上下文（TeX `expand()`，`\edef`/`\xdef`/`\write`）：只展开可展开项——
     /// 宏、可展开原语（`\the`/`\expandafter`/`\noexpand`/`\number`/`\unexpanded`/
     /// `\detokenize`/`\eTeXversion`/`\eTeXrevision`）；条件由 process_one 拦截。

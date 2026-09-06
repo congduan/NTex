@@ -19,6 +19,11 @@ use crate::type1::load_pfb;
 /// DVI 单位：1pt = 65536sp（mag=1000）。
 const SP_PER_PT: f64 = 65_536.0;
 
+/// DVI 原点偏移：DVI 坐标 (0,0) 对应页面左上 (1in, 1in)（TeX 的 \hoffset/
+/// \voffset 默认 0 即 1in 边距，dvipdfmx/dvips 同口径）。换算成页面坐标时
+/// 水平 +72pt、垂直（自页顶）+72pt。
+const ORIGIN_PT: f64 = 72.0;
+
 /// 转换参数。
 pub struct PdfOptions {
     /// 页面尺寸（pt）：宽、高。
@@ -44,8 +49,9 @@ pub fn write_pdf(dvi: &Dvi, opts: &PdfOptions) -> io::Result<Vec<u8>> {
         for op in &page.ops {
             match op {
                 DrawOp::Char { font, code, h, v } => {
-                    let x = *h as f64 / SP_PER_PT;
-                    let y = h_pt - *v as f64 / SP_PER_PT;
+                    // DVI 原点在页面 (1in,1in)：水平 +72pt；y 自页顶量起再翻转
+                    let x = ORIGIN_PT + *h as f64 / SP_PER_PT;
+                    let y = h_pt - ORIGIN_PT - *v as f64 / SP_PER_PT;
                     match run.last() {
                         Some(&(pf, _, _, py)) if pf != *font || (py - y).abs() > 0.001 => {
                             emit_line(&mut c, dvi, &run)?;
@@ -63,9 +69,9 @@ pub fn write_pdf(dvi: &Dvi, opts: &PdfOptions) -> io::Result<Vec<u8>> {
                 } => {
                     emit_line(&mut c, dvi, &run)?;
                     run.clear();
-                    let x = *h as f64 / SP_PER_PT;
+                    let x = ORIGIN_PT + *h as f64 / SP_PER_PT;
                     let w = *width as f64 / SP_PER_PT;
-                    let y = h_pt - *v as f64 / SP_PER_PT;
+                    let y = h_pt - ORIGIN_PT - *v as f64 / SP_PER_PT;
                     let hgt = *height as f64 / SP_PER_PT;
                     if w > 0.0 && hgt > 0.0 {
                         writeln!(c, "{:.4} {:.4} {:.4} {:.4} re f", x, y, w, hgt)?;
@@ -405,6 +411,35 @@ mod tests {
         // 第二行基线 = 页高 - v = 20 - 10 = 10pt
         assert!(s.contains("Tm [("), "{s}");
         let _ = w_t;
+    }
+
+    /// DVI 原点偏移：DVI (0,0) 应画到页面 (1in,1in)（自页左/自页顶），
+    /// 与 dvipdfmx 同口径。曾遗漏 +72pt 导致内容整体上移贴住页顶。
+    #[test]
+    fn tm_places_origin_at_one_inch() {
+        let Some(mut dvi) = test_dvi() else {
+            eprintln!("未找到 cmr10.tfm，跳过");
+            return;
+        };
+        dvi.pages = vec![Page {
+            ops: vec![DrawOp::Char {
+                font: 0,
+                code: b'T',
+                h: 0,
+                v: 0,
+            }],
+        }];
+        // letter 纵向 11in = 792pt
+        let pdf = write_pdf(
+            &dvi,
+            &PdfOptions {
+                page_size: (612.0, 792.0),
+            },
+        )
+        .unwrap();
+        let s = String::from_utf8_lossy(&pdf);
+        // x = 72；y = 792 - 72 - 0 = 720
+        assert!(s.contains("1 0 0 1 72.0000 720.0000 Tm"), "{s}");
     }
 
     /// 多字体（M8）：两页两字体（cmr10/cmtt10，缺任一度量则跳过）。

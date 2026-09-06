@@ -292,7 +292,9 @@ impl TokenSink for NodeBuilder {
         // \mathord 等不是合法字段开头（tex.web scan_math othercases；连续
         // `\mathord\mathord x` 第二个在此报 Missing { inserted）
         self.check_math_field_break()?;
-        self.class_pending = Some(Self::class_of(class));
+        // 入参是命令编号（1=Bin/2=Op/7=Inner），须用 class_of_cmd 而非
+        // mathcode 体系的 class_of（两体系 Bin/Op 互换）
+        self.class_pending = Some(Self::class_of_cmd(class));
 
         Ok(())
     }

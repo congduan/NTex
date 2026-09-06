@@ -51,7 +51,8 @@ enum Mode {
     DisplayMath,
 }
 
-/// 数学原子类别（TeXbook 附录 G：8 类原子）。
+/// 数学原子类别（TeXbook 附录 G：8 类原子；Var 为第 9 类"变量字母"，
+/// initex 默认 mathcode 字母 = x+"7100 → class 7）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MathClass {
     Ord,
@@ -62,6 +63,9 @@ enum MathClass {
     Close,
     Punct,
     Inner,
+    /// 变量字母（class 7）：间距按 Ord 查表（TeXbook 附录 G 规则 18 表
+    /// 无 Var 行，tex.web `var_noad` 同 `ord_noad` 处理）。
+    Var,
 }
 
 /// 数学样式（决定字阶与 spacing 表；TeXbook p.140-141）。
@@ -90,6 +94,16 @@ impl MathStyle {
             MathStyle::Display | MathStyle::Text => MathStyle::Script,
             MathStyle::Script => MathStyle::ScriptScript,
             MathStyle::ScriptScript => MathStyle::ScriptScript,
+        }
+    }
+
+    /// 对应数学字体字阶下标（`math_fonts[fam]` 的 text/script/scriptscript 槽：
+    /// tex.web cur_size，Display/Text 用 text 槽 0）。
+    fn size_kind(self) -> usize {
+        match self {
+            MathStyle::Display | MathStyle::Text => 0,
+            MathStyle::Script => 1,
+            MathStyle::ScriptScript => 2,
         }
     }
 }
@@ -468,6 +482,19 @@ impl Fonts {
                 .get(font.0 as usize)
                 .and_then(|fm| fm.font_params.get(idx.saturating_sub(1)).copied())
                 .unwrap_or(0),
+        }
+    }
+
+    /// 更大变体字符（TFM char_info tag=2；tex.web make_op display 大算符
+    /// 放大用，cmex10 char 80→88）。fn 指针占位 / 无变体返回 None。
+    fn next_larger(&self, font: FontId, charcode: u32) -> Option<u32> {
+        match self {
+            Fonts::Fn { .. } => None,
+            Fonts::Tfm(table) => table
+                .borrow()
+                .get(font.0 as usize)
+                .and_then(|fm| fm.next_larger.get(charcode as usize).copied().flatten())
+                .map(|c| c as u32),
         }
     }
 }
@@ -877,17 +904,36 @@ impl NodeBuilder {
         }
     }
 
-    /// u8（0-7）→ 数学类别（tex.web math_char/scan_math 的类编号）。
+    /// u8（0-7）→ 数学类别（TeXbook 附录 B \mathcode 类编号：
+    /// 0=Ord 1=Op 2=Bin 3=Rel 4=Open 5=Close 6=Punct 7=Var。
+    /// plain.tex 铁证：\sum="1350 → class 1=Op（大算符）、`+`="202B →
+    /// class 2=Bin。此前 1/2 互换（\sum 误 Bin、+ 误 Op）、7 误 Inner
+    /// （Inner 由原子类型 Fraction/Delimited/`\mathinner` 给出，非 mathcode
+    /// 编码；Var 间距按 Ord 查 Rule 18 表）。
     fn class_of(class: u8) -> MathClass {
         match class {
-            0 => MathClass::Ord,
-            1 => MathClass::Bin,
-            2 => MathClass::Op,
+            1 => MathClass::Op,
+            2 => MathClass::Bin,
             3 => MathClass::Rel,
             4 => MathClass::Open,
             5 => MathClass::Close,
             6 => MathClass::Punct,
-            _ => MathClass::Inner,
+            7 => MathClass::Var,
+            _ => MathClass::Ord,
+        }
+    }
+
+    /// `\mathord`=0/`\mathbin`=1/`\mathop`=2/`\mathrel`=3/`\mathopen`=4/
+    /// `\mathclose`=5/`\mathpunct`=6/`\mathinner`=7（tex.web math_comp 命令
+    /// 编号）→ 数学类别。与 [class_of]（mathcode 类字段编号）是**不同体系**：
+    /// Bin/Op 编号互换（mathcode 1=Op/2=Bin），且命令 7=Inner 而 mathcode 7=Var。
+    /// 混用会让 `\mathbin` 得 Op 类（间距误 thinmuskip）。
+    fn class_of_cmd(n: u8) -> MathClass {
+        match n {
+            1 => MathClass::Bin,
+            2 => MathClass::Op,
+            7 => MathClass::Inner,
+            _ => Self::class_of(n),
         }
     }
 

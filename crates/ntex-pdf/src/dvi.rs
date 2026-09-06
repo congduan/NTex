@@ -66,13 +66,25 @@ fn read_uint(b: &[u8], i: &mut usize, n: usize) -> io::Result<u32> {
     Ok(v)
 }
 
-/// 读 `n` 字节大端有符号整数（1..=4；最高字节为符号位）。
+/// 读 `n` 字节大端有符号整数（1..=4；最高字节的最高位为符号位）。
+///
+/// 3/4 字节形式必须按位宽符号扩展：DVI 运动量（right/down/w/x/y/z）大量使用
+/// 负的 `*3`/`*4` 编码（数学上下标回退、行间回跳），若按无符号读会把
+/// "上移 13pt"（0xF30000 = -851968sp）当成 "+15925248sp ≈ 243pt"，
+/// 坐标整体飞出页面（demo1 数学区即被推出页宽外）。
 fn read_signed(b: &[u8], i: &mut usize, n: usize) -> io::Result<i64> {
     let v = read_uint(b, i, n)? as i64;
     Ok(match n {
-        1 => (v as i8) as i64,
-        2 => (v as i16) as i64,
-        _ => v,
+        1 => (v as u8 as i8) as i64,
+        2 => (v as u16 as i16) as i64,
+        3 => {
+            if v & 0x0080_0000 != 0 {
+                v - 0x0100_0000
+            } else {
+                v
+            }
+        }
+        _ => (v as u32 as i32) as i64,
     })
 }
 
@@ -211,9 +223,11 @@ impl<'a> Parser<'a> {
                     ops.push(DrawOp::Char { font, code, h, v });
                 }
                 132 => {
-                    // set_rule：宽 a、高 b（规则底部在 v，向上 b）
-                    let width = read_i32(self.b, &mut self.i)?;
+                    // set_rule a b：a=height（垂直尺寸）、b=width（水平尺寸），
+                    // 规则左上角在 (h,v)，画出后 h ← h + b。曾把 a/b 互换读，
+                    // 导致 h 按 height 推进（坐标漂移）且 PDF 里规则纵横颠倒。
                     let height = read_i32(self.b, &mut self.i)?;
+                    let width = read_i32(self.b, &mut self.i)?;
                     ops.push(DrawOp::Rule {
                         h,
                         v,
@@ -223,9 +237,9 @@ impl<'a> Parser<'a> {
                     h += width;
                 }
                 137 => {
-                    // put_rule
-                    let width = read_i32(self.b, &mut self.i)?;
+                    // put_rule a b：同 set_rule，但不推进 h
                     let height = read_i32(self.b, &mut self.i)?;
+                    let width = read_i32(self.b, &mut self.i)?;
                     ops.push(DrawOp::Rule {
                         h,
                         v,
@@ -479,11 +493,12 @@ mod tests {
                 width,
                 height,
             } => {
-                // 规则在 'a' 之后：h = 字符宽
+                // 规则在 'a' 之后：h = 字符宽。
+                // set_rule a b：a=height(100)、b=width(200)，修复后不再互换。
                 assert_eq!(*h, 327_681);
                 assert_eq!(*v, 0);
-                assert_eq!(*width, 100);
-                assert_eq!(*height, 200);
+                assert_eq!(*width, 200);
+                assert_eq!(*height, 100);
             }
             other => panic!("预期 Rule，得到 {other:?}"),
         }
@@ -555,5 +570,57 @@ mod tests {
 
         let err = parse(&d).unwrap_err();
         assert!(err.to_string().contains("未定义字体号 0"), "{err}");
+    }
+
+    /// 3/4 字节运动量的符号扩展：真实 TeX 的 DVI（数学上下标回退、\topskip
+    /// 对齐等）大量使用负的 right3/down3/down4。曾按无符号读，把 -917504sp
+    /// 当成 +15835776sp，坐标飞出页面（demo1 数学区被推出页宽外）。
+    #[test]
+    fn signed_motion_values_are_sign_extended() {
+        // 纯函数级：0xF30000（3 字节）= -851968；0xFD8286CF（4 字节）= -41682863
+        let mut i = 0;
+        assert_eq!(
+            read_signed(&[0xF3, 0x00, 0x00], &mut i, 3).unwrap(),
+            -851_968
+        );
+        let mut i = 0;
+        let b4 = (-41_682_863i32).to_be_bytes();
+        assert_eq!(read_signed(&b4, &mut i, 4).unwrap(), -41_682_863);
+        // 正值不受影响：0x024239 = 131072+16896+57 = 148025
+        let mut i = 0;
+        assert_eq!(
+            read_signed(&[0x02, 0x42, 0x39], &mut i, 3).unwrap(),
+            148_025
+        );
+
+        // 端到端：right3(-10pt) + down3(-2pt) 后的字符坐标必须左/上偏移
+        let Some(_) = ntex_font::find_tfm("cmr10") else {
+            eprintln!("未找到 cmr10.tfm，跳过");
+            return;
+        };
+        let mut body = Vec::new();
+        push_fnt_def(&mut body, 0, b"cmr10");
+        body.push(171); // fnt_num_0
+        body.push(b'a');
+        body.push(145); // right3 -655360（-10pt）
+        body.extend_from_slice(&(-655_360i32).to_be_bytes()[1..4]);
+        body.push(b'b');
+        body.push(159); // down3 -131072（-2pt）
+        body.extend_from_slice(&(-131_072i32).to_be_bytes()[1..4]);
+        body.push(b'c');
+        let mut d = pre_header();
+        push_page(&mut d, &body);
+        d.push(248);
+        d.push(0);
+        let dvi = parse(&d).unwrap();
+        let ops = &dvi.pages[0].ops;
+        let char_xy = |op: &DrawOp| match op {
+            DrawOp::Char { h, v, .. } => (*h, *v),
+            other => panic!("预期 Char，得到 {other:?}"),
+        };
+        assert_eq!(char_xy(&ops[0]), (0, 0));
+        let (w_a, _, _) = dvi.fonts[0].char_metrics(b'a' as u32);
+        assert_eq!(char_xy(&ops[1]), (w_a - 655_360, 0), "right3 负值应左移");
+        assert_eq!(char_xy(&ops[2]).1, -131_072, "down3 负值应上移");
     }
 }

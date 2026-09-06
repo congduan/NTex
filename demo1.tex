@@ -1,0 +1,48 @@
+% This is a Plain TeX document, NOT a LaTeX document.
+% There is no preamble, no \documentclass, and no \begin{document}.
+
+% 1. Setting Up Margins (Plain TeX style)
+\hsize=6.5in
+\vsize=9.0in
+\hoffset=0.0in
+\voffset=0.0in
+
+% 2. Title Section
+\font\titlefont=cmr12 scaled \magstep3
+\font\boldfont=cmbx10 scaled \magstep1
+\centerline{\titlefont Plain TeX Demonstration}
+\vskip 0.5in
+
+% 3. First Paragraph
+This is a simple document typeset using standard {\boldfont Plain TeX} rather 
+than LaTeX. In Plain TeX, paragraph breaks are created by leaving a blank line 
+in the source file, just like in LaTeX.
+
+\vskip 0.25in
+
+% 4. Headings (Created manually using primitives)
+{\boldfont 1. Mathematical Formulas}
+\medskip
+You can write inline math like $E = mc^2$, or displayed math equations using 
+double dollar signs:
+$$ \sum_{n=1}^{\infty} {1 \over n^2} = {\pi^2 \over 6} $$
+Notice that instead of \LaTeX's \vbox{\tt\string\frac\{1\}\{n\^2\}}, Plain TeX uses the 
+native {\tt\string\over} primitive.
+
+\vskip 0.25in
+
+% 5. Creating a List
+{\boldfont 2. Bulleted Lists}
+\medskip
+Plain TeX uses the {\tt\string\item} macro for lists. It does not require wrapping 
+them inside an environment:
+
+\item{$\bullet$} This is the first item in a native TeX list.
+\item{$\bullet$} This is the second item.
+\item{$\bullet$} Notice there is no closing tag needed for this list.
+
+\vskip 0.5in
+\centerline{\it End of Document.}
+
+% 6. The standard primitive to tell TeX to stop processing and output the page.
+\bye

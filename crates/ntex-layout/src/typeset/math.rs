@@ -419,6 +419,11 @@ impl NodeBuilder {
     fn math_atom_nodes(&self, atom: &MathAtom, style: MathStyle) -> Vec<Node> {
         match atom {
             MathAtom::Char(mc) => {
+                // Op 大算符：vcenter（+display 变体放大），tex.web make_op
+                // 对所有 Op 字符原子生效（demo1 差异 #3：display Σ 未放大居中）
+                if mc.class == MathClass::Op {
+                    return self.op_nodes(mc, style, None, None);
+                }
                 let (font, num, den) = self.math_char_font(mc, style);
                 let (w, h, d) = self.math_metrics(font, mc.charcode, num, den);
                 vec![Node::Char {
@@ -430,6 +435,13 @@ impl NodeBuilder {
                 }]
             }
             MathAtom::Scripts { base, sub, sup } => {
+                // display 大算符带上下标：limits 堆叠（tex.web make_op subtype
+                // =limits 默认于 display；`\sum_{n=1}^{\infty}` 上下限居中于 Σ）
+                if let MathAtom::Char(mc) = base.as_ref() {
+                    if mc.class == MathClass::Op && style == MathStyle::Display {
+                        return self.op_nodes(mc, style, sub.as_deref(), sup.as_deref());
+                    }
+                }
                 let mut out = self.math_atom_nodes(base, style);
                 let s_style = style.next();
                 // 上标：内容打包为 hbox，shift 上移（hlist 内 Box.shift 为垂直位移）
@@ -518,7 +530,11 @@ impl NodeBuilder {
         }
     }
 
-    /// 分式 → 节点（M4-2 简化：分子/分式线/分母垂直堆叠；M4-3 用 fontdimen 精化）。
+    /// 分式 → 节点（tex.web §1184 `make_fraction` 精确垂直几何；2026-09-06
+    /// demo1 差异 #3 收尾：此前分式盒挂公式基线下，现按 num1/denom1/axis 重排
+    /// ——参考点构造使分式线落在基线上方 axis 处；num/den rebox 等宽居中）。
+    /// `\atop`（thickness=0）与 `\over`（None=默认厚度 mathex(8)）均覆盖；
+    /// 外壳 null delimiter（两侧各 \nulldelimiterspace=1.2pt）暂略。
     fn fraction_nodes(
         &self,
         num: &[MathAtom],
@@ -526,41 +542,249 @@ impl NodeBuilder {
         thickness: Option<i64>,
         style: MathStyle,
     ) -> Vec<Node> {
-        let num_b = BoxNode::new_hbox(self.math_to_hlist(num, style));
-        let den_b = BoxNode::new_hbox(self.math_to_hlist(den, style));
+        // 分子/分母字阶：display→text、其余降一级（tex.web num_style/denom_style）
+        let sub_style = match style {
+            MathStyle::Display => MathStyle::Text,
+            s => s.next(),
+        };
+        let mut num_b = BoxNode::new_hbox(self.math_to_hlist(num, sub_style));
+        let mut den_b = BoxNode::new_hbox(self.math_to_hlist(den, sub_style));
+        // num1/num2/num3/denom1/denom2 = mathsy(8..12)（tex.web @d L13817-13821）
+        let kind = style.size_kind();
+        let fam2 = self
+            .math_fonts
+            .get(2)
+            .and_then(|s| s.get(kind))
+            .copied()
+            .flatten();
+        let fp = |idx: usize| match fam2 {
+            Some(f) => self.fonts.font_param(f, idx),
+            None => 0,
+        };
+        // 默认分式线厚度 = mathex(8)（tex.web @d L13841，非 fam2！）
+        let fam3 = self
+            .math_fonts
+            .get(3)
+            .and_then(|s| s.get(kind))
+            .copied()
+            .flatten();
+        let default_t = match fam3 {
+            Some(f) => self.fonts.font_param(f, 8),
+            None => 2 * SP_PER_PT / 5,
+        };
+        let t = thickness.unwrap_or(default_t);
+        let axis = self.axis_height(style);
+        let display = style == MathStyle::Display;
+        // 初始 shift_up/shift_down（display 用 num1/denom1；否则 num2/num3/denom2）
+        let (mut shift_up, mut shift_down) = if display {
+            (fp(8), fp(11))
+        } else {
+            (if t != 0 { fp(9) } else { fp(10) }, fp(12))
+        };
         let width = num_b.width.max(den_b.width);
-        let num_height = num_b.height;
-        let t = thickness.unwrap_or(SP_PER_PT * 2 / 5); // 默认分式线 0.4pt
-        let gap = 2 * SP_PER_PT; // 分子/分母与线的间隙（M4-3 用 fontdimen num1 等）
-        let mut children = Vec::new();
-        children.push(Node::Box(num_b));
-        // 垂直间隙（vbox 内 x 不推进；宽度 0 避免抬高 vbox 总宽）
-        children.push(Node::Glue {
-            name: None,            width: 0,
-            stretch: 0,
-            shrink: 0,
-            stretch_order: 0,
-            shrink_order: 0,
-        });
+        Self::rebox_centered(&mut num_b, width);
+        Self::rebox_centered(&mut den_b, width);
+        let (num_h, num_d, den_h, den_d) = (num_b.height, num_b.depth, den_b.height, den_b.depth);
+        let mut children: Vec<Node> = Vec::new();
         if t > 0 {
+            // 有分式线：clr = display ? 3t : t；间隙不足则同时外推
+            let clr = if display { 3 * t } else { t };
+            let delta = t / 2;
+            let delta1 = clr - ((shift_up - num_d) - (axis + delta));
+            let delta2 = clr - ((axis - delta) - (den_h - shift_down));
+            if delta1 > 0 {
+                shift_up += delta1;
+            }
+            if delta2 > 0 {
+                shift_down += delta2;
+            }
+            children.push(Node::Box(num_b));
+            children.push(Node::Kern {
+                width: (shift_up - num_d) - (axis + delta),
+            });
             children.push(Node::Rule {
                 width,
                 height: t,
                 depth: 0,
             });
+            children.push(Node::Kern {
+                width: (axis - delta) - (den_h - shift_down),
+            });
+            children.push(Node::Box(den_b));
+        } else {
+            // \atop：clr 按默认厚度计（tex.web：7×/3× default_rule_thickness）
+            let clr = if display {
+                7 * default_t
+            } else {
+                3 * default_t
+            };
+            let delta = (clr - ((shift_up - num_d) - (den_h - shift_down))) / 2;
+            if delta > 0 {
+                shift_up += delta;
+                shift_down += delta;
+            }
+            children.push(Node::Box(num_b));
+            children.push(Node::Kern {
+                width: (shift_up - num_d) - (den_h - shift_down),
+            });
+            children.push(Node::Box(den_b));
         }
-        children.push(Node::Glue {
-            name: None,            width: 0,
-            stretch: 0,
-            shrink: 0,
-            stretch_order: 0,
-            shrink_order: 0,
-        });
-        children.push(Node::Box(den_b));
-        let mut b = BoxNode::new_vbox(children);
-        // 参考点 = 分式线：顶部（num 顶）到线 = num 高 + gap + t/2（hlist 内 shift 为垂直位移）
-        b.shift = num_height + gap + t / 2;
-        vec![Node::Box(b)]
+        let mut v = BoxNode::new_vbox(children);
+        v.width = width;
+        // height(v)=shift_up+h(num)、depth(v)=d(den)+shift_down（tex.web）→
+        // 分式线中心恰好落在参考点上方 axis 处（vcenter 于数学轴）
+        v.height = shift_up + num_h;
+        v.depth = den_d + shift_down;
+        vec![Node::Box(v)]
+    }
+
+    /// 数学轴高度（tex.web `mathsy(22)`：fam 2 当前字阶字体 fontdimen 22；
+    /// 字体未加载回退 0）。
+    fn axis_height(&self, style: MathStyle) -> i64 {
+        let kind = style.size_kind();
+        let font = self
+            .math_fonts
+            .get(2)
+            .and_then(|s| s.get(kind))
+            .copied()
+            .flatten();
+        match font {
+            Some(f) => self.fonts.font_param(f, 22),
+            None => 0,
+        }
+    }
+
+    /// `big_op_spacing1..5`（tex.web `mathex(9..13)`：fam 3 字体 fontdimen
+    /// 9–13，大算符上下限最小间隙与盒顶/底 clearance）。
+    fn big_op_spacings(&self, style: MathStyle) -> [i64; 5] {
+        let kind = style.size_kind();
+        let font = self
+            .math_fonts
+            .get(3)
+            .and_then(|s| s.get(kind))
+            .copied()
+            .flatten();
+        match font {
+            Some(f) => [
+                self.fonts.font_param(f, 9),
+                self.fonts.font_param(f, 10),
+                self.fonts.font_param(f, 11),
+                self.fonts.font_param(f, 12),
+                self.fonts.font_param(f, 13),
+            ],
+            None => [0; 5],
+        }
+    }
+
+    /// hbox 撑宽居中（tex.web `rebox`）：两侧对称 kern（引擎 DVI 端无 glue
+    /// set，故用 kern 而非 TeX 的 fil glue，坐标等价）。0 宽侧不插 kern。
+    fn rebox_centered(b: &mut BoxNode, width: i64) {
+        if width > b.width {
+            let left = (width - b.width) / 2;
+            if left > 0 {
+                b.children.insert(0, Node::Kern { width: left });
+            }
+            let right = width - b.width - left;
+            if right > 0 {
+                b.children.push(Node::Kern { width: right });
+            }
+            b.width = width;
+        }
+    }
+
+    /// Op 大算符布局（tex.web §1185 make_op）：
+    /// - display 时沿 next_larger 放大一步（`\sum="1350` → cmex10 80→88）；
+    /// - 字符盒 vcenter：`shift = half(h−d) − axis_height`（hlist 中正=下移）；
+    /// - display 带 sup/sub 时上下限堆叠（limits；真实 TeX showbox 验证：
+    ///   `[kern(bos5), sup, kern(shift_up), op, kern(shift_down), sub, kern(bos5)]`，
+    ///   `shift_up = max(bos3 − d(sup), bos1)`，`shift_down = max(bos4 − h(sub), bos2)`，
+    ///   vbox 参考点 = op 行盒基线，height/depth 手工按段累加）。
+    fn op_nodes(
+        &self,
+        mc: &MathChar,
+        style: MathStyle,
+        sub: Option<&[MathAtom]>,
+        sup: Option<&[MathAtom]>,
+    ) -> Vec<Node> {
+        let (font, num, den) = self.math_char_font(mc, style);
+        let mut ch = mc.charcode;
+        // display 变体放大（tex.web：cur_style < text_style 且 char_tag=list_tag）
+        if style == MathStyle::Display {
+            if let Some(larger) = self.fonts.next_larger(font, ch) {
+                if self.fonts.char_exists(font, larger) {
+                    ch = larger;
+                }
+            }
+        }
+        let (w, h, d) = self.math_metrics(font, ch, num, den);
+        let axis = self.axis_height(style);
+        // vcenter（cmex10 大算符基线在设计上偏离中心，如 'X' h=1.0/d=15.0 → shift≈−9.5pt）
+        let shift = (h - d) / 2 - axis;
+        let mut sigma = BoxNode::new_hbox(vec![Node::Char {
+            font,
+            charcode: ch,
+            width: w,
+            height: h,
+            depth: d,
+        }]);
+        sigma.shift = shift;
+        if sub.is_none() && sup.is_none() {
+            return vec![Node::Box(sigma)];
+        }
+        let [bos1, bos2, bos3, bos4, bos5] = self.big_op_spacings(style);
+        // op 行盒：Σ 盒 shift 后的实际占位（引擎 hbox_dimensions 不计子盒 shift，手工设）
+        let op_h = h - shift;
+        let op_d = d + shift;
+        let s_style = style.next();
+        let mut sup_b = sup
+            .filter(|a| !a.is_empty())
+            .map(|a| BoxNode::new_hbox(self.math_to_hlist(a, s_style)));
+        let mut sub_b = sub
+            .filter(|a| !a.is_empty())
+            .map(|a| BoxNode::new_hbox(self.math_to_hlist(a, s_style)));
+        let width = [Some(w), sup_b.as_ref().map(|b| b.width), sub_b.as_ref().map(|b| b.width)]
+            .into_iter()
+            .flatten()
+            .max()
+            .unwrap_or(0);
+        // op 行盒（Σ 盒居中撑宽，h/d 按 shift 后实际占位）
+        let left = (width - w) / 2;
+        let mut op_row = BoxNode::new_hbox(vec![
+            Node::Kern { width: left },
+            Node::Box(sigma),
+            Node::Kern {
+                width: width - w - left,
+            },
+        ]);
+        op_row.width = width;
+        op_row.height = op_h;
+        op_row.depth = op_d;
+        // limits vbox（参考点 = op 行盒基线）
+        let mut children: Vec<Node> = Vec::new();
+        let mut v_height = op_h;
+        let mut v_depth = op_d;
+        if let Some(x) = sup_b.as_mut() {
+            Self::rebox_centered(x, width);
+            let shift_up = (bos3 - x.depth).max(bos1);
+            children.push(Node::Kern { width: bos5 });
+            children.push(Node::Box(x.clone()));
+            children.push(Node::Kern { width: shift_up });
+            v_height += bos5 + x.height + x.depth + shift_up;
+        }
+        children.push(Node::Box(op_row));
+        if let Some(z) = sub_b.as_mut() {
+            Self::rebox_centered(z, width);
+            let shift_down = (bos4 - z.height).max(bos2);
+            children.push(Node::Kern { width: shift_down });
+            children.push(Node::Box(z.clone()));
+            children.push(Node::Kern { width: bos5 });
+            v_depth += shift_down + z.height + z.depth + bos5;
+        }
+        let mut v = BoxNode::new_vbox(children);
+        v.width = width;
+        v.height = v_height;
+        v.depth = v_depth;
+        vec![Node::Box(v)]
     }
 
     /// 根式 → 节点（M4-2 简化：内容上方画分式线式横线；M4-3 换 cmex10 根号）。
@@ -703,7 +927,7 @@ fn spacing_code(l: MathClass, r: MathClass, style: MathStyle) -> SpacingCode {
         /*inner*/  [1, 1, 2, 3, 1, 0, 1, 1],
     ];
     let idx = |c: MathClass| match c {
-        MathClass::Ord => 0,
+        MathClass::Ord | MathClass::Var => 0,
         MathClass::Op => 1,
         MathClass::Bin => 2,
         MathClass::Rel => 3,

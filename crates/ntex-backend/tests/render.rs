@@ -173,12 +173,11 @@ fn matches_dvi_rule_geometry() {
         .collect();
     assert_eq!(rules.len(), 1);
     // DVI：页基线 = page.height（v=196608），h = 边距(0) + kern。
-    // ⚠ 上游字段命名偏差（ntex-pdf 解析器把 set_rule 的宽记入 height、高记入
-    // width，与 DVI 规范相反；ntex-dvi 写出是「先宽后高」）。这里按解析器
-    // 实际输出锁定，防后续解析器修正时静默漂移。
+    // set_rule 语义（DVI 规范）：a=height（垂直尺寸）在前、b=width 在后，
+    // 解析器已按规范读取（曾宽高颠倒，2026-09-06 修正并回归锁定）。
     assert_eq!(
         rules[0],
-        (5 * SP_PER_PT, 3 * SP_PER_PT, 3 * SP_PER_PT, 12 * SP_PER_PT)
+        (5 * SP_PER_PT, 3 * SP_PER_PT, 12 * SP_PER_PT, 3 * SP_PER_PT)
     );
 
     // 位图：与 multi_page 一致，实际规则在 x∈[144,176)、y∈[141,164)。

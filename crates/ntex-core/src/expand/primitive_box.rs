@@ -28,6 +28,9 @@ impl Expander {
             // 带参数扫描的排版原语：扫描在 VM 侧完成，结果交给 sink
             Primitive::HSkip | Primitive::VSkip => {
                 let g = self.scan_glue()?;
+                if prim == Primitive::VSkip {
+                    self.vertical_command_implicit_par()?;
+                }
                 self.sink.glue(g)
             }
             Primitive::Kern => {
@@ -66,11 +69,23 @@ impl Expander {
             Primitive::HFil => self.sink.fill_glue(0),
             Primitive::HFill => self.sink.fill_glue(1),
             Primitive::HSS => self.sink.fill_glue(2),
-            Primitive::VFil => self.sink.fill_glue(3),
-            Primitive::VFill => self.sink.fill_glue(4),
-            Primitive::VSS => self.sink.fill_glue(5),
+            Primitive::VFil => {
+                self.vertical_command_implicit_par()?;
+                self.sink.fill_glue(3)
+            }
+            Primitive::VFill => {
+                self.vertical_command_implicit_par()?;
+                self.sink.fill_glue(4)
+            }
+            Primitive::VSS => {
+                self.vertical_command_implicit_par()?;
+                self.sink.fill_glue(5)
+            }
             // TRIP 冲刺：\vfilneg（plain.tex：负 1fil vskip；走 fill_glue kind=6）
-            Primitive::VFilNeg => self.sink.fill_glue(6),
+            Primitive::VFilNeg => {
+                self.vertical_command_implicit_par()?;
+                self.sink.fill_glue(6)
+            }
             // TRIP 冲刺：\hfilneg（plain.tex：负 1fil hskip；走 fill_glue kind=7）
             Primitive::HFilNeg => self.sink.fill_glue(7),
             // TRIP 冲刺：\/（斜体校正，直通 sink）
@@ -79,5 +94,21 @@ impl Expander {
                 "未接入 dispatch_box 的原语 {other:?}"
             ))),
         }
+    }
+
+    /// tex.web main_control：垂直命令（\vskip/\vfil/\vfill/\vss/\vfilneg）在
+    /// （非受限）水平模式 → 先 end_graf（隐式 \par）再 back_input 重执行。
+    ///
+    /// demo 差异 #4：`{\boldfont 2. Bulleted Lists}\medskip` 中 \medskip 的
+    /// \vskip 直接 append 进水平列表 → 标题行未断、后段并轨同基线。VM 侧
+    /// 等效实现：hmode（mode_code 2）先发 \par 事件。受限水平（5）/数学（3/6）
+    /// 的报错路径不在本次范围（TRIP 后续）；垂直模式无操作。
+    fn vertical_command_implicit_par(&mut self) -> Result<()> {
+        if self.sink.mode_code() == 2 {
+            let ln = self.error_context().map(|(n, _)| n as i64).unwrap_or(0);
+            self.sink.paragraph_line(ln)?;
+            self.sink.primitive(Primitive::Par)?;
+        }
+        Ok(())
     }
 }

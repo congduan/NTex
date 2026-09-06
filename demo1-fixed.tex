@@ -1,0 +1,91 @@
+% demo1-fixed：demo1.tex 的 NTex 自举版（当前引擎为 iniTeX 初始态、无 plain 格式预载，
+% 需显式装配字体族与 plain 宏；对照 demo1.tex 的依赖缺口）。
+\hsize=6.5in
+\vsize=9.0in
+
+% ---- 字体装配（plain.tex 等价手写）----
+\font\tenrm=cmr10
+\font\titlefont=cmr12 scaled 1728
+\font\boldfont=cmbx10 scaled 1200
+\font\tenti=cmti10
+\font\tentt=cmtt10
+\font\tenmi=cmmi10
+\font\tensy=cmsy10
+\font\tenex=cmex10
+\font\sevenrm=cmr7
+\font\sevenmi=cmmi7
+\font\sevensy=cmsy7
+\font\fiverm=cmr5
+\font\fivemi=cmmi5
+\font\fivesy=cmsy5
+\textfont0=\tenrm
+\scriptfont0=\sevenrm
+\scriptscriptfont0=\fiverm
+\textfont1=\tenmi
+\scriptfont1=\sevenmi
+\scriptscriptfont1=\fivemi
+\textfont2=\tensy
+\scriptfont2=\sevensy
+\scriptscriptfont2=\fivesy
+\textfont3=\tenex
+\tenrm
+
+% ---- plain 关键垂直/行距参数（无格式预载时的等价手写）----
+\topskip=10pt
+\parskip=0pt
+\parindent=0pt
+\baselineskip=12pt
+\lineskip=1pt
+\lineskiplimit=0pt
+\abovedisplayskip=12pt plus3pt minus9pt
+\belowdisplayskip=12pt plus3pt minus9pt
+\abovedisplayshortskip=0pt plus3pt
+\belowdisplayshortskip=7pt plus3pt minus4pt
+
+% ---- 数学命令（plain.tex mathchardef 摘录）----
+\mathchardef\sum="1350
+\mathchardef\infty="1231
+\mathchardef\pi="0170
+\mathchardef\bullet="220F
+
+% ---- plain 宏最小集 ----
+\def\centerline#1{\hbox to\hsize{\hss#1\hss}}
+\def\medskip{\vskip6pt plus2pt minus2pt}
+\def\it{\tenti}
+\def\tt{\tentt}
+\def\item#1{\par\hangindent=1.5em\hangafter=1\noindent\hbox to1.5em{#1\hss}\ignorespaces}
+\def\LaTeX{LaTeX}
+\def\bye{\par\vfill\eject\end}
+
+\centerline{\titlefont Plain TeX Demonstration}
+\vskip 0.5in
+
+This is a simple document typeset using standard {\boldfont Plain TeX} rather
+than LaTeX. In Plain TeX, paragraph breaks are created by leaving a blank line
+in the source file, just like in LaTeX.
+
+\vskip 0.25in
+
+{\boldfont 1. Mathematical Formulas}
+\medskip
+You can write inline math like $E = mc^2$, or displayed math equations using
+double dollar signs:
+$$ \sum_{n=1}^{\infty} {1 \over n^2} = {\pi^2 \over 6} $$
+Notice that instead of \LaTeX's \vbox{\tt\string\frac\char`\{1\char`\}\char`\{n\char`\^2\char`\}}, Plain TeX uses the
+native {\tt\string\over} primitive.
+
+\vskip 0.25in
+
+{\boldfont 2. Bulleted Lists}
+\medskip
+Plain TeX uses the {\tt\string\item} macro for lists. It does not require wrapping
+them inside an environment:
+
+\item{$\bullet$} This is the first item in a native TeX list.
+\item{$\bullet$} This is the second item.
+\item{$\bullet$} Notice there is no closing tag needed for this list.
+
+\vskip 0.5in
+\centerline{\it End of Document.}
+
+\bye

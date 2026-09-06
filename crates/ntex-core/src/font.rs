@@ -30,6 +30,15 @@ pub trait FontLoader: std::fmt::Debug {
     fn char_metric(&mut self, _font: u32, _ch: u32) -> Option<(i64, i64, i64)> {
         None
     }
+
+    /// 查询字体参数（sp，1-based TFM 参数序：1=slant 2=space … 5=x_height 6=quad
+    /// 7=extra_space，8+=数学扩展）。
+    ///
+    /// TeX 内部单位 em/ex（tex.web scan_dimen：`em → quad(cur_font)`、
+    /// `ex → x_height(cur_font)`）用。字体未加载/无该参数 → None（按 0 计）。
+    fn font_param(&mut self, _font: u32, _param: usize) -> Option<i64> {
+        None
+    }
 }
 
 /// 默认加载器：未安装时 `\font` 报错（提示安装排版层加载器）。

@@ -71,6 +71,7 @@ impl FontLoader for TfmLoader {
                 lig_kern_steps: Vec::new(),
                 kern_values: Vec::new(),
                 lig_kern_index: Vec::new(),
+                next_larger: Vec::new(),
                 font_params: Vec::new(),
             });
         }
@@ -93,6 +94,17 @@ impl FontLoader for TfmLoader {
         let table = self.table.borrow();
         let fm = table.get(font as usize)?;
         fm.chars.get(ch as usize).copied().flatten()
+    }
+
+    /// 字体参数查询（em/ex 内部单位：param 5=x_height、6=quad）：
+    /// `font_params[param-1]`（已按 scaled 缩放）；nullfont/越界 → None。
+    fn font_param(&mut self, font: u32, param: usize) -> Option<i64> {
+        if param == 0 {
+            return None;
+        }
+        let table = self.table.borrow();
+        let fm = table.get(font as usize)?;
+        fm.font_params.get(param - 1).copied()
     }
 }
 

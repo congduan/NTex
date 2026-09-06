@@ -1,8 +1,10 @@
 // ---------- 自由函数 ----------
 
-/// TRIP 冲刺：TeX initex 默认 mathcode 表（tex.web `init_math_codes`）：
-/// catcode 11/12（letter/other_char）→ `0x7000+码`（class 7 variable、family 0、
-/// 字符码本身），其余 → `0x8000`（无效，触发 "Missing character"）。
+/// TRIP 冲刺：TeX initex 默认 mathcode 表（tex.web `init_math_codes`；
+/// plain.tex L49-51 记载）：**字母 A-Z/a-z → `0x7100+码`**（class 7
+/// variable、**family 1**——数学斜体 cmmi，demo `$E=mc^2$` 斜体来源）、
+/// 数字/其余 catcode 11/12 → `0x7000+码`（class 7 variable、family 0），
+/// 非 11/12 码点 → `0x8000`（无效，触发 "Missing character"）。
 ///
 /// initex 初始 catcode：A-Z/a-z = 11；数字/标点/非 ASCII = 12；
 /// 排除特殊字符（0=ignored、tab/CR=end_line/space、`\ { } $ # ^ _ ~ %`）。
@@ -13,7 +15,13 @@ fn default_mathcodes() -> HashMap<u32, u32> {
     ];
     let mut m = HashMap::with_capacity(256);
     for k in 0..=255u32 {
-        let v = if NON_LETTER_OTHER.contains(&k) { 0x8000 } else { 0x7000 + k };
+        let v = if NON_LETTER_OTHER.contains(&k) {
+            0x8000
+        } else if matches!(k, 0x41..=0x5A | 0x61..=0x7A) {
+            0x7100 + k
+        } else {
+            0x7000 + k
+        };
         m.insert(k, v);
     }
     m

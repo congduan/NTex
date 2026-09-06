@@ -988,6 +988,37 @@ mod tests {
         );
     }
 
+    /// em/ex 内部单位（tex.web scan_dimen）：em = quad(cur_font)（fontdimen 6）、
+    /// ex = x_height(cur_font)（fontdimen 5）。修复前 em/ex 不在单位表，
+    /// `1.5em` 的 "em" 字母会泄漏回排版流（demo 列表 "emem" 字面字符 bug）。
+    #[test]
+    fn dimen_em_ex_internal_units() {
+        let run = |src: &str| -> Result<String> {
+            let mut e = Expander::new();
+            e.set_font_loader(Box::new(MockLoader::default()));
+            e.run_source(src)?;
+            Ok(e.output()
+                .iter()
+                .map(|t| t.charcode().and_then(char::from_u32).unwrap_or('\u{FFFD}'))
+                .collect())
+        };
+        // 1.5em = 1.5 × 10pt(655360sp) = 983040sp；且 "em" 不泄漏
+        assert_eq!(
+            run("\\dimen0=1.5em\\count0=\\dimen0\\the\\count0").unwrap(),
+            "983040"
+        );
+        // 1ex = 4.3pt = 281744sp
+        assert_eq!(
+            run("\\dimen0=1ex\\count0=\\dimen0\\the\\count0").unwrap(),
+            "281744"
+        );
+        // 无字体加载器 → 参数缺失按 0 计，"ex" 同样不泄漏
+        assert_eq!(
+            expand("\\dimen0=1ex\\count0=\\dimen0\\the\\count0").unwrap(),
+            "0"
+        );
+    }
+
     #[test]
     fn internal_int_params_assign_and_the() {
         // \defaulthyphenchar=`- 与 \defaultskewchar=256；\the 读回
@@ -3166,6 +3197,17 @@ I changed this one to zero.
             let mut calls = self.calls.borrow_mut();
             calls.push((name.to_owned(), at, scaled));
             Ok(calls.len() as u32 - 1)
+        }
+
+        /// em/ex 内部单位测试用（cmr10 量级固定值，忽略 font 参数——
+        /// EventSink 的 current_font 恒 0）：quad(6)=655360sp(10pt)、
+        /// x_height(5)=281744sp(4.3pt)。
+        fn font_param(&mut self, _font: u32, param: usize) -> Option<i64> {
+            match param {
+                5 => Some(281_744),
+                6 => Some(655_360),
+                _ => None,
+            }
         }
     }
 

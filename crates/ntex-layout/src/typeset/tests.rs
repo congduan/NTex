@@ -202,6 +202,31 @@ mod tests {
         }
     }
 
+    /// tex.web main_control：垂直命令（\vskip）在（非受限）水平模式 →
+    /// end_graf 隐式 \par 后重执行。demo 差异 #4：`{\boldfont 标题}\medskip正文`
+    /// —— \medskip 的 vskip 未断标题段 → 标题与正文并轨同基线。
+    #[test]
+    fn vskip_in_paragraph_ends_it_implicitly() {
+        let main = typeset(r"a\vskip 6pt b").unwrap();
+        assert_eq!(main.len(), 3, "隐式 \\par 后应为 段落盒+glue+段落盒");
+        assert!(matches!(main[0], Node::Box(_)), "首项应为断行后的段落盒");
+        match &main[1] {
+            Node::Glue { width, .. } => assert_eq!(*width, 6 * SP_PER_PT),
+            other => panic!("预期 Glue，得到 {other:?}"),
+        }
+        assert!(matches!(main[2], Node::Box(_)), "末项应为新起的段落盒");
+    }
+
+    /// 同上：\vfill 类无限阶垂直胶水在水平模式同样先隐式 \par（\vfil kind=3）。
+    #[test]
+    fn vfil_in_paragraph_ends_it_implicitly() {
+        let main = typeset(r"a\vfil b").unwrap();
+        assert_eq!(main.len(), 3, "\\vfil 后应为 段落盒+glue+段落盒");
+        assert!(matches!(main[0], Node::Box(_)));
+        assert!(matches!(main[1], Node::Glue { .. }));
+        assert!(matches!(main[2], Node::Box(_)));
+    }
+
     #[test]
     fn vtop_readjusts_height_depth() {
         // tex.web L21083-21087 Readjust：\vtop 的高度取首项高度，depth 相应调整；
@@ -1532,10 +1557,11 @@ mod tests {
             eprintln!("未找到 cmr10.tfm，跳过");
             return;
         };
-        // \textfont0=\twelve（12pt）→ $x$ 的 x 用族 0 的 12pt 字体度量
+        // \textfont1=\twelve（12pt）→ $x$ 的 x 走 fam 1（字母 mathcode x+"7100"），
+        // 用族 1 的 12pt 字体度量（修正后语义：字母默认 cmmi 斜体族）
         let mut ts = Typesetter::with_tfm();
         let main = ts
-            .typeset(r"\font\tenrm=cmr10\font\twelve=cmr10 at 12pt\textfont0=\twelve\tenrm $x$")
+            .typeset(r"\font\tenrm=cmr10\font\twelve=cmr10 at 12pt\textfont1=\twelve\tenrm $x$")
             .unwrap();
         let line = as_box(&main[0]);
         // 行盒含 \mathon/\mathoff 边界节点（tex.web math_node）与行尾 \parfillskip：
@@ -1547,7 +1573,7 @@ mod tests {
             .expect("公式内应有字符 x");
         let (w10, _, _) = fm.char_metrics(b'x' as u32);
         let w12 = xn_over_d(w10, 12 * SP_PER_PT, 10 * SP_PER_PT);
-        assert_eq!(x.dimensions().width, w12, "族 0 字体应为 12pt cmr10");
+        assert_eq!(x.dimensions().width, w12, "族 1 字体应为 12pt cmr10");
     }
 
     #[test]

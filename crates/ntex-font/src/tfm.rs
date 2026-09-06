@@ -31,6 +31,19 @@ impl std::error::Error for TfmError {}
 
 type Result<T> = std::result::Result<T, TfmError>;
 
+/// char_info 表项（TFM 每字符 32 位字；TeXbook 附录 F）：
+/// 维度表索引 + tag 关联信息（tag=1 → lig/kern 起点；tag=2 → 更大变体字符）。
+#[derive(Debug, Clone, Copy)]
+struct CharInfoEntry {
+    width_index: usize,
+    height_index: usize,
+    depth_index: usize,
+    /// tag=1：lig/kern 程序起始索引
+    lig_kern: Option<u16>,
+    /// tag=2：更大变体字符码（list_tag，Op 大算符放大取字形来源）
+    larger: Option<u8>,
+}
+
 /// lig/kern 程序步（TFM lig_kern 表的一个 32 位字；tex.web §10583-10605）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LigKernStep {
@@ -119,8 +132,12 @@ pub struct FontMetrics {
     pub lig_kern_steps: Vec<LigKernStep>,
     /// 字距值表（TFM 字距表，已按当前缩放换算为 sp）。
     pub kern_values: Vec<i64>,
-    /// charcode → lig/kern 程序起始索引（char_info tag=1/2；无程序为 None）。
+    /// charcode → lig/kern 程序起始索引（char_info tag=1；无程序为 None）。
     pub lig_kern_index: Vec<Option<u16>>,
+    /// charcode → 更大变体字符（char_info tag=2 list_tag，TeXbook 附录 F；
+    /// tex.web make_op display 大算符放大 / var_delimiter 定界符放大用；
+    /// cmex10：char 80 (text Σ) → 88 (display Σ) 等）。无变体为 None。
+    pub next_larger: Vec<Option<u8>>,
     /// 全量字体参数（fontdimen；`font_params[i-1]` = TFM 参数 i，已缩放）。
     /// 数学字体用：参数 8+（sup/sub 高度、分式间距、delimiter 等）。
     pub font_params: Vec<i64>,
@@ -231,6 +248,7 @@ impl FontMetrics {
             lig_kern_steps: self.lig_kern_steps.clone(),
             kern_values: self.kern_values.iter().map(|&v| scale(v)).collect(),
             lig_kern_index: self.lig_kern_index.clone(),
+            next_larger: self.next_larger.clone(),
             font_params: self.font_params.iter().map(|&v| scale(v)).collect(),
         }
     }
@@ -298,21 +316,20 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
     // 字符信息表：(ec - bc + 1) 个 32 位字
     // 布局：byte0 = width 索引；byte1 = height(高4位)|depth(低4位)；
     // byte2 = italic(高6位)|tag(低2位)；byte3 = remainder。
-    // tag=1/2 → remainder = lig/kern 程序索引（TeXbook 附录 F）。
-    let mut char_info: Vec<(usize, usize, usize, Option<u16>)> = Vec::with_capacity(count);
+    // tag=1 → remainder = lig/kern 程序索引；tag=2 → remainder = 更大变体
+    // 字符（list_tag，TeXbook 附录 F）。
+    let mut char_info: Vec<CharInfoEntry> = Vec::with_capacity(count);
     for _ in 0..count {
         let w = r.u32()?;
-        let width_index = ((w >> 24) & 0xFF) as usize;
-        let height_index = ((w >> 20) & 0x0F) as usize;
-        let depth_index = ((w >> 16) & 0x0F) as usize;
         let tag = (w >> 8) & 0x03;
         let remainder = (w & 0xFF) as u16;
-        let lig_kern = if tag == 1 || tag == 2 {
-            Some(remainder)
-        } else {
-            None
-        };
-        char_info.push((width_index, height_index, depth_index, lig_kern));
+        char_info.push(CharInfoEntry {
+            width_index: ((w >> 24) & 0xFF) as usize,
+            height_index: ((w >> 20) & 0x0F) as usize,
+            depth_index: ((w >> 16) & 0x0F) as usize,
+            lig_kern: (tag == 1).then_some(remainder),
+            larger: (tag == 2).then_some(remainder as u8),
+        });
     }
 
     // 维度表（fix_word）：widths / heights / depths / italics
@@ -344,14 +361,16 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
     // 字符度量组装
     let mut chars = vec![None; 256];
     let mut lig_kern_index = vec![None; 256];
-    for (i, &(wi, hi, di, lk)) in char_info.iter().enumerate() {
+    let mut next_larger = vec![None; 256];
+    for (i, e) in char_info.iter().enumerate() {
         let charcode = bc as usize + i;
         if charcode < chars.len() {
-            let width = widths.get(wi).map(|&w| scale(w)).unwrap_or(0);
-            let height = heights.get(hi).map(|&h| scale(h)).unwrap_or(0);
-            let depth = depths.get(di).map(|&d| scale(d)).unwrap_or(0);
+            let width = widths.get(e.width_index).map(|&w| scale(w)).unwrap_or(0);
+            let height = heights.get(e.height_index).map(|&h| scale(h)).unwrap_or(0);
+            let depth = depths.get(e.depth_index).map(|&d| scale(d)).unwrap_or(0);
             chars[charcode] = Some((width, height, depth));
-            lig_kern_index[charcode] = lk;
+            lig_kern_index[charcode] = e.lig_kern;
+            next_larger[charcode] = e.larger;
         }
     }
     // 参数：TeX 参数 1=slant 2=space 3=space_stretch 4=space_shrink
@@ -374,6 +393,7 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
         lig_kern_steps,
         kern_values,
         lig_kern_index,
+        next_larger,
         font_params,
     })
 }
