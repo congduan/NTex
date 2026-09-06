@@ -42,6 +42,16 @@
 \abovedisplayshortskip=0pt plus3pt
 \belowdisplayshortskip=7pt plus3pt minus4pt
 
+% ---- plain 数学间距与 mathcode（plain.tex L373-375 / L100 等价手写）----
+% INITEX 把所有 glue 参数清零，\thinmuskip/\medmuskip/\thickmuskip 由 plain.tex
+% 显式赋值；mathcode 同理（INITEX 对非字母非数字一律 \mathcode x=x → 类 0 Ord），
+% plain.tex 把 `= 定为 "303D（类 3 Rel）。无这两块，`E = mc^2` 的 `=` 两侧不会
+% 出现 thickmuskip（官方 plain 格式产物：right219813/right182040）。
+\thinmuskip=3mu
+\medmuskip=4mu plus 2mu minus 4mu
+\thickmuskip=5mu plus 5mu minus 5mu
+\mathcode`\=="303D
+
 % ---- 数学命令（plain.tex mathchardef 摘录）----
 \mathchardef\sum="1350
 \mathchardef\infty="1231

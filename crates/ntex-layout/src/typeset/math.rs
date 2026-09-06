@@ -903,13 +903,20 @@ impl NodeBuilder {
 /// ETRIP P0 \muexpr 校准：mu 数值 → sp（tex.web §685：1mu = em/18）。
 /// `mu_emu` 即 NTex 现有约定下 Glie 字段以 N×65536 存的"伪 mu"数值（N=1 ≈ 1pt）。
 /// 若 mu=0 直接返回 0（避免 fallback em 0 时空转）。
+///
+/// 算术对齐 tex.web `math_glue`/`mu_mult`（§14096-14114）：先取
+/// `cur_mu = em/18`（**整数除法截断**），再 `mu_mult(x) = n*x + xn_over_d(x, f, 65536)`
+/// （n = cur_mu div 65536、f = cur_mu mod 65536）。截断不可省：demo1 对照
+/// TinyTeX 实测 `\thickmuskip=5mu`（em=cmex10 quad=10pt）官方 DVI `right182040`
+/// = 5 × 36408；精确除法会得 182044（差 4 sp，DVI 逐指令对比可见）。
 fn mu_to_sp(mu_emu: i64, em_sp: i64) -> i64 {
     if mu_emu == 0 || em_sp == 0 {
         return mu_emu;
     }
-    // 1mu = em / 18 sp；muskip_params[i].width 以 N×65536 形式存。
-    // =(N × 65536) × em_sp / (18 × 65536) = N × em_sp / 18。
-    mu_emu.saturating_mul(em_sp) / (18 * SP_PER_PT)
+    let cur_mu = em_sp / 18;
+    let n = cur_mu / SP_PER_PT;
+    let f = cur_mu - n * SP_PER_PT;
+    n.saturating_mul(mu_emu) + xn_over_d(mu_emu, f, SP_PER_PT)
 }
 
 /// 数学间距（TeXbook 附录 G 规则 18；text/script 模式；display 对 op 修正）。

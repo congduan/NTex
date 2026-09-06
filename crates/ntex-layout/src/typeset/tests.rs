@@ -1456,11 +1456,13 @@ mod tests {
     }
 
     /// ETRIP P0 \muexpr 校准：layout 端 muskip_params 按 mu 数值存，
-    /// math_to_hlist 内部按当前 style 的 family-2 em/18 转 sp。
+    /// math_to_hlist 内部按当前 style 的 family-2 em/18 转 sp（tex.web
+    /// `math_glue`/`mu_mult`：cur_mu = em/18 **整数截断**，再 round(x·cur_mu/65536)）。
     /// 测试用 `with_metrics`（fn 指针模式，font_param 全 0 → math_em fallback
-    /// 10pt = 10 × 65536 sp），验证 `\thinmuskip=18mu` 触发 Bin 后 medmuskip 节点
-    /// width = 18mu × em/18 = 18 × 10/18 pt = 10pt = 10 × 65536 sp。
-    /// —— 与 etrip.tex L968 `\6\countdef` 同场景：触发面覆盖 Bin→medmuskip 路径。
+    /// 10pt = 655360 sp → cur_mu = 36408），验证 `\thinmuskip=18mu` 触发 Bin 后
+    /// medmuskip 节点 width = 18 × 36408 = 655344 sp。
+    /// 截断值有 TinyTeX 实测铁证：plain 下 `\thickmuskip=5mu`（em=10pt）官方 DVI
+    /// `E = mc^2` 产物为 `right182040` = 5 × 36408（精确除法得 182044，不匹配）。
     #[test]
     fn math_thinmuskip_em_scaled_in_layout() {
         // \thinmuskip=18mu → muskip_params[0].width = 18 * 65536；
@@ -1490,15 +1492,48 @@ mod tests {
             }
         }
         assert_eq!(inserts, 2, "Bin 两侧应插 medmuskip 各一：{line:?}");
-        // 18mu × em/18：em fallback 10pt → 18 × 10pt / 18 = 10pt = 10 × 65536 sp。
+        // tex.web mu_mult：cur_mu = 655360/18 = 36408（截断）；18mu = 18 × 36408
+        // = 655344 sp = 9.99976pt（TeXbook 的 mu 换算本就有截断误差，非精确 10pt）。
         assert_eq!(
-            found_width, 10 * SP_PER_PT,
-            "medmuskip 实际 sp 应为 em 缩放:18mu × 10pt/18 = 10pt"
+            found_width, 655344,
+            "medmuskip 实际 sp 应为 tex.web mu_mult:18mu × cur_mu(36408)"
         );
-        // 3.6mu plus:3.6 × 10 / 18 = 2pt = 2 × 65536 sp
+        // 3.6mu plus：mu 存 235930（3.6 × 65536 = 235929.6 四舍五入）
+        // → round(235930 × 36408 / 65536) = 131069 sp
         assert_eq!(
-            found_stretch, 2 * SP_PER_PT,
-            "medmuskip stretch 应按 mu 数值 em/18 转 sp:3.6mu × 10/18 = 2pt"
+            found_stretch, 131069,
+            "medmuskip stretch 应按 tex.web mu_mult 转 sp:3.6mu × cur_mu(36408)"
+        );
+    }
+
+    /// P1（demo1 对照）：行内公式 `E = mc^2` 的 `=` 两侧须插入 thickmuskip，
+    /// 宽度按 tex.web `math_glue`/`mu_mult`（cur_mu = em/18 截断）换算。
+    /// TinyTeX 实测（plain 格式，cmex10 quad=10pt → cur_mu=36408）：
+    /// `=` 两侧 `right219813`（= E 斜体修正 0.57637pt + 5mu）/`right182040`（= 5mu）。
+    /// 此前引擎 mu→sp 用精确除法得 182044，且 muskip 寄存器缺省为 0（INITEX 语义）
+    /// 导致胶水宽 0、DVI 中完全无间距。
+    #[test]
+    fn math_thickmuskip_inserted_around_rel_with_texweb_mu_mult() {
+        let src = r"\thickmuskip=5mu plus 5mu$a\mathrel=b\mathrel=c$";
+        let main = typeset(src).unwrap();
+        let line = as_box(&main[0]);
+        let mut found = Vec::new();
+        for n in &line.children {
+            if let Node::Glue {
+                name: Some("thickmuskip"),
+                width,
+                stretch,
+                ..
+            } = n
+            {
+                found.push((*width, *stretch));
+            }
+        }
+        assert_eq!(found.len(), 4, "rel 原子两侧各插 thickmuskip：{line:?}");
+        // 5mu → 5 × 36408 = 182040（TinyTeX 官方 DVI 实测值）
+        assert!(
+            found.iter().all(|&(w, s)| w == 182040 && s == 182040),
+            "thickmuskip 应为 182040sp（5mu × cur_mu 36408）：{found:?}"
         );
     }
 
