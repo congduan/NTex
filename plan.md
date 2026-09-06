@@ -19,6 +19,36 @@
 
 ***
 
+## 北极星：Markdown 级编辑体验（2026-09-06 立项）
+
+> 产品总纲：**编辑 LaTeX 像 Markdown 一样简单和高性能**。拆为四个用户可感知指标；
+> 本节是跨里程碑顶层视图，实施仍落在各章节条目（括号引用），完成状态以各章节勾选为准。
+> 排期原则：正确性优先（①）→ 增量可见（③）→ 增量冲高 + 冷启动（②③）→ 放大与生态（②④）。
+
+| 指标 | Markdown 基线 | NTex 现状（2026-09-06） | 差距清单（条目引用） |
+|---|---|---|---|
+| ① 什么文档都能排 | 任意文本即开即排 | plain TeX 子集（ETRIP 口径），`\documentclass` 未通 | LaTeX 兼容战役阶段 A（§11.0）；`\halign`/`\valign` 表格地基 + `\insert` 脚注排版 + 数学矩阵（§6 D 组，**2026-09-06 提升为战役前置**）；`\newcommand`（§3 M1-5）；宏包 CI 回归集 geometry/amsmath/hyperref…（§11） |
+| ② 打开快（冷启动） | ~0ms（无格式加载） | plain 内核毫秒级；latex.ltx 未加载，`.fmt` v1 不含字体表 | **M7 `.fmt` v2 + 项目级 fmt**（§9：latex.ltx <200ms、preamble 缓存）；M2 吞吐结构性 1.01x → IR 重设计/M2-5 arena（§4 M2-6 转决策点）；字体按需备料 + 项目级缓存（§9/§11.0 ②） |
+| ③ 改字快（增量） | 全文"重排"无感（<16ms） | 改正文 4.3x / 改宏体 1.1x（目标 100x）；预览端仍是 250ms 防抖全量重排 | **M5 阶段六全部**（§7：检查点增量维护/槽级归因/副作用边界/纯函数化）；随机编辑 fuzz 进 CI（§7 风险闭环）；**预览三端接线 `IncrementalTypesetter`**（§10 新增条目：wasm/studio/tauri）；vello web（§10 B 档剩余）；M6 并行 ≥3x（§8） |
+| ④ 出错不糊 + 零安装 | 语法错误不挡渲染；零环境依赖 | 单点错误终止全文档；目标机需 TeX Live 备料 | **M1-13 错误恢复**（§6 P0 唯一必修③，`back_input`/`\errhelp`）；SyncTeX 源码映射（§10，与 M1-13 错误定位联动）；结构化诊断 MCP 形态②（§11）；panic 审计收尾（backlog P1，~30 处）；**宏包管理 go.mod 式**（§11，零 TeX Live）；UTF-8 输入层 + TTF/OTF 度量 + HarfBuzz（§11.0 ②③） |
+
+**关键路径**（与 §1 依赖链一致，四指标按此收口）：
+
+```
+正确性闭环：LaTeX 战役阶段 A（含 \halign/\insert/矩阵前置）+ M1-13 错误恢复   ← 指标①④
+  → 增量可见：预览三端接 IncrementalTypesetter + 随机编辑 fuzz 进 CI        ← 指标③（用户可感知）
+  → 增量冲高：M5 阶段六 → 100x；冷启动：M7 .fmt v2 → <200ms               ← 指标②③
+  → 放大：M6 并行；生态：M9（UTF-8/字体/宏包管理/MCP）                     ← 指标②④
+```
+
+**北极星验收画像**（四指标齐备即达成）：
+- `\documentclass{article}` 文档打开 <200ms（M7 + 战役①）；
+- 改 1 字重排 <50ms、预览无感刷新（M5 冲 100x + §10 三端接线）；
+- 表格/脚注/数学/主流宏包文档全链可排（战役 + 宏包回归集）；
+- 任意错误不中断渲染且定位到源码行（M1-13 + SyncTeX）、目标机零 TeX Live（宏包管理）。
+
+***
+
 ## 性能优化 backlog（2026-08-22 评审）
 
 > 来源：高级 Rust 工程师评审结论（热路径实现层欠账 + 工程化闭环），不引入新功能，
@@ -138,6 +168,7 @@
 
 **依赖链**：M0 → M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8 → M9
 （M5 依赖 M2/M3；M7 依赖 M2/M5；M6 可与 M5 部分并行开发）
+**北极星对照**：M5/M7/M8/M9 + LaTeX 兼容战役（§11.0）共同收口四项用户体验指标（见篇首「北极星」章节，2026-09-06 立项）。
 
 ***
 
@@ -537,11 +568,16 @@ P0 —— TRIP 硬差距（M1-13 联动；3401038 起 trip.tex 已全程跑完�
 - [ ] `\showbox`/`\showlists` 等诊断输出格式与 trip.log 参考逐字节对齐——
       **降级**：近似可用即可（~3000 行树形诊断差属 L2），M8 再对齐
 
-P1 —— D 组语义简化点（REVIEW-2026-08-23，偏离规范但可接受）：
-- [ ] `\insert` 只收集不排版（脚注不可用）
+P1 —— D 组语义简化点（REVIEW-2026-08-23，偏离规范但可接受）。
+**2026-09-06 优先级重排（北极星指标①）**：`\halign`（tabular/array/eqnarray 地基，
+未实现 = 表格全不可用）/`\insert`（脚注、浮动体地基）/数学矩阵（amsmath 系地基）三项
+从"可接受简化"**提升为 LaTeX 兼容战役前置**——真实 `\documentclass` 文档必需，
+战役阶段 A（§11.0）撞上时按需提前实施：
+- [ ] `\insert` 只收集不排版（脚注不可用）——**战役前置**（LaTeX 脚注/浮动体地基）
 - [ ] `\badness` 等只读整数单独出现为 no-op（规范应报错）
-- [ ] `\omit` no-op 占位 + `\halign/\valign/\cr/\noalign/\span` 对齐语义未实现
-- [ ] 数学矩阵（`\matrix`/`\eqalign` 等）
+- [ ] `\omit` no-op 占位 + `\halign/\valign/\cr/\noalign/\span` 对齐语义未实现——
+      **战役前置**（表格/对齐环境全靠它）
+- [ ] 数学矩阵（`\matrix`/`\eqalign` 等）——**战役前置**（amsmath 系宏包地基）
 - [ ] `\scriptfont` 未接真实字体
 - [ ] `\vsplit` marks 拆分暂空（`\splitfirstmarks` 等返回空）
 - [ ] `\output` 例程消费判定用 count 启发式（应显式 `\shipout\box255`）
@@ -757,7 +793,12 @@ vs 全量 diff 作 CI 常驻检查，闭环 §7 风险项）；`.aux`/`.toc` 增
   （真字形内嵌 LM OTF）、vello/wgpu web 后端、增量接口（M5 `IncrementalTypesetter`
   暴露 JS）属 B 档后续；C 档（LaTeX `.fmt` 载入）待 `ntex-format` 快照完备；
   详见 `crates/ntex-wasm/README.md`
-- [ ] SyncTeX 源码映射（IDE 点击跳转）
+- [ ] **预览端增量接线**（2026-09-06 立项，北极星指标③：M5 成果用户可感知的前提）：
+  `IncrementalTypesetter` 暴露到三端——① `ntex-wasm` JS 绑定（B 档剩余）② `ntex-studio`
+  （250ms 防抖全量重排 → 增量）③ `ntex-tauri` ui；编辑只重排受影响段，预览刷新 <50ms；
+  前置 = M5 阶段六副作用边界（`\output` 回放/`\write`/`\input` 注入）保守路径可用
+- [ ] SyncTeX 源码映射（IDE 点击跳转）——北极星指标④：编辑器点击跳转/错误波浪线定位；
+  RFC-1 side-table 位置信息为基础，缺 token↔源码坐标导出接口（与 M1-13 错误定位联动）
 
 **验收**：简单文档 L2 一致；WASM 演示在浏览器增量预览流畅。
 
