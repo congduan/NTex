@@ -12,7 +12,9 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use ntex_backend::{Backend, RenderOptions, TinySkiaBackend, VelloBackend};
+#[cfg(feature = "vello")]
+use ntex_backend::VelloBackend;
+use ntex_backend::{Backend, RenderOptions, TinySkiaBackend};
 use ntex_layout::typeset::Typesetter;
 
 fn main() -> ExitCode {
@@ -79,7 +81,17 @@ fn main() -> ExitCode {
     };
     let backend_name = if use_vello { "vello(gpu)" } else { "软光栅" };
     let pngs = if use_vello {
-        VelloBackend::new().render_pngs(&pages, &fonts, &opts)
+        #[cfg(feature = "vello")]
+        {
+            VelloBackend::new().render_pngs(&pages, &fonts, &opts)
+        }
+        // no-default-features 构建（wasm 薄壳链验证等）：GPU 路径未编译进。
+        #[cfg(not(feature = "vello"))]
+        {
+            let _ = &opts;
+            eprintln!("--vello 需要 vello feature（default 开启；本构建为纯软光栅）");
+            return ExitCode::from(2);
+        }
     } else {
         TinySkiaBackend.render_pngs(&pages, &fonts, &opts)
     };

@@ -654,10 +654,8 @@ impl Expander {
                 // `\int_div_truncate` 全线 140(100-1)/2)/100 失真）。
                 // `\else`/`\fi`/`\or` 仍不在此臂：它们属外层条件机，放回由
                 // scan_int 的条件臂/主循环消费（TRIP L82 游离 `\fi` 契约）。
-                if !matches!(self.cond_op(tok), None) {
-                    if self.maybe_eval_cond(tok)? {
-                        continue;
-                    }
+                if self.cond_op(tok).is_some() && self.maybe_eval_cond(tok)? {
+                    continue;
                 }
                 // fi_or_else 臂：运算符位的 get_x_token 对 `\else`/`\fi`/`\or`
                 // 同样经 expand → conditional()（§9897）——帧求值中由 insert_relax

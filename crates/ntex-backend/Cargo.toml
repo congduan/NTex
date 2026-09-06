@@ -11,10 +11,24 @@ rust-version = "1.88"
 [dependencies]
 ntex-layout.workspace = true
 ntex-font.workspace = true
-vello = "0.10"
+# peniko 与 vello 0.10 内部同版（Cargo.lock 0.6.1；glyphs 的 FontData/Blob
+# 类型源）。peniko 是纯数据 crate（无 GPU 依赖），故非 optional——
+# `glyphs.rs`（skrifa cmap 解析）在 wasm 软光栅路径（ntex-wasm，
+# default-features = false）下也编译；其文件查找在无 fs 目标上自然
+# 失败回落方框，且软光栅恒关闭字形通道，wasm 侧不会触发。
+peniko = "0.6"
+# 纯 Rust 字体解析（cmap dump），wasm 兼容。
 # 与 vello 0.10 内部同版本（字形解析），cargo 统一至单一 skrifa。
 skrifa = "0.44"
-pollster = "1.0.1"
+# GPU 路径 optional（feature `vello`，default 开启）：vello 拖 wgpu，wasm32
+# 构建体积/宿主要求不可接受——B 档第一刀（ntex-wasm 实时渲染）走软光栅；
+# native（studio / 本 crate bin / vello 差分测试）经 default feature 照常。
+vello = { version = "0.10", optional = true }
+pollster = { version = "1.0.1", optional = true }
+
+[features]
+default = ["vello"]
+vello = ["dep:vello", "dep:pollster"]
 
 [dev-dependencies]
 ntex-dvi.workspace = true

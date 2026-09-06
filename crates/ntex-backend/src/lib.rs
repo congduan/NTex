@@ -55,7 +55,12 @@ pub use prims::RenderOptions;
 pub use raster::Pixmap;
 
 mod backend;
+// GPU 路径整体门控（feature `vello`，default 开启）：vello 拖 wgpu，wasm32
+// 软光栅路径（ntex-wasm，default-features = false）不编译本模块；`glyphs`
+// 保持常驻（peniko/skrifa 均纯 Rust、wasm 兼容，字形通道仅 vello 后端消费）。
+#[cfg(feature = "vello")]
 mod vello;
 
 pub use backend::{Backend, BackendError, RectPrim, TinySkiaBackend};
+#[cfg(feature = "vello")]
 pub use vello::{build_scene, VelloBackend};

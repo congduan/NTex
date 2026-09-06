@@ -741,13 +741,22 @@ vs 全量 diff 作 CI 常驻检查，闭环 §7 风险项）；`.aux`/`.toc` 增
 - [x] **排版调试 overlay**（2026-09-05）：prims 层独立 `debug` 通道（`RenderOptions::debug` / CLI `--debug`）——版心+盒边界描边（HBox 蓝/VBox 紫红）、基线（青）、glue 自然宽带+stretch/shrink 指示线（fil 阶亮绿）、kern 橙线、penalty 断点标记（禁断深红粗线）；两后端在内容之后绘制，`rects` 通道与差分口径零变化（demo 实测 GPU/软光栅 debug 位图逐字节一致）
 - [x] **实时预览工作台**（2026-09-05，M8 §10 WASM 预览的桌面先行形态）：`crates/ntex-studio`——左侧 TeX 语法高亮编辑器（注释/控制序列/数学/组符分色）+ 右侧 vello GPU 表面渲染。egui-wgpu 0.35 三段式回调桥接（prepare 离屏 Rgba8Unorm 矢量光栅化 → paint 全屏 quad blit），缩放/平移只改 Scene 仿射、始终按显示分辨率重光栅化（放大不糊）；250ms 防抖同步重排，dpi/调试 overlay 开关、翻页、编译错误进状态栏不 panic。**依赖硬约束：eframe 0.35 ↔ vello 0.10 恰共用 wgpu 29**（eframe 0.36 已用 wgpu 30 会分裂，升级前必验）。`ntex-backend::build_scene` 抽为公共 Scene 构建（无头回读与 GUI 共用同一事实源）
 - [ ] WASM 前端：wasm-bindgen + Canvas2D/WebGL 实时预览（接 M5 增量，毫秒级刷新）
-  ——**骨架已建（A 档，2026-09-06）**：`crates/ntex-wasm`（cdylib）——`compile_tex(tex) →
-  DVI 字节 + 转录 + 页数 + 字体清单`，plain 子集、无渲染；TFM 经
+  ——**A 档已建（2026-09-06）**：`crates/ntex-wasm`（cdylib）——`compile_tex(tex) →
+  DVI 字节 + 转录 + 页数 + 字体清单`，plain 子集；TFM 经
   `ntex_layout::set_tfm_source` 注入（内嵌 6 个 CM TFM，7.7 KB）；wasm32 分叉点只有
   三处且全部带注释（`param.rs` 时间固定 1970-01-01、`expand::run` 看门狗整段门控、
   `TfmLoader` 字节源分叉），native 行为逐字节不变（`cargo test --workspace` 全绿、
-  ntex-trip 失败签名与基线一致）。B 档（vello/wgpu web 渲染）另案，C 档（LaTeX `.fmt`
-  载入）待 `ntex-format` 快照完备；详见 `crates/ntex-wasm/README.md`
+  ntex-trip 失败签名与基线一致）。
+  **B 档第一刀已建（2026-09-06）**：`compile_document() → Document` 句柄（页盒树 +
+  字体度量常驻）+ `render_page(index, dpi, debug)` 软光栅渲染（RGBA 回传 JS
+  `putImageData` 上 canvas，翻页/调 dpi 不重排版）；`ntex-backend` vello/wgpu 改
+  feature 门控（default 开、native 零变化），wasm 只编软光栅链（`prims` 事实源 +
+  `Pixmap`，与桌面同代码；wasm 产物 832K）。`www/` 升级实时预览工作台（编辑 250ms
+  防抖重排、翻页/dpi/排版 overlay/DVI 导出）；Chromium 实测 demo 作业编译 ~11ms +
+  渲染 ~9.4ms（A4@144dpi）、编辑防抖与翻页只重渲染（~6ms）正常。字符为占位方框
+  （真字形内嵌 LM OTF）、vello/wgpu web 后端、增量接口（M5 `IncrementalTypesetter`
+  暴露 JS）属 B 档后续；C 档（LaTeX `.fmt` 载入）待 `ntex-format` 快照完备；
+  详见 `crates/ntex-wasm/README.md`
 - [ ] SyncTeX 源码映射（IDE 点击跳转）
 
 **验收**：简单文档 L2 一致；WASM 演示在浏览器增量预览流畅。

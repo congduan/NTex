@@ -17,8 +17,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 
+use peniko::{Blob, FontData};
 use skrifa::prelude::*;
-use vello::peniko::{Blob, FontData};
 
 /// OT1 编码 slot（0..=127）→ Unicode 码位（prims 字形通道用）。
 ///

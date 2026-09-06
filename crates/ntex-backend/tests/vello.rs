@@ -3,6 +3,10 @@
 //! 两后端共享 `prims` 遍历，唯一差异是光栅化（GPU 亚像素 AA vs 整数
 //! 覆盖盒），故断言避开边缘 1-2px，只比对「内部有墨 / 远端无墨」。
 //! 无 GPU 适配器的环境（CI 容器等）自动跳过。
+//!
+//! vello 是 feature 门控的（M8 WASM B 档：`--no-default-features` 组合
+//! 只剩软光栅，供 wasm32 编译），无 vello 时本文件整体跳过。
+#![cfg(feature = "vello")]
 
 use ntex_backend::raster::sp_to_px;
 use ntex_backend::{Backend, Pixmap, RenderOptions, TinySkiaBackend, VelloBackend};

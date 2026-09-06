@@ -54,3 +54,5 @@ tmp_pngcmp.py
 
 # WASM 绑定生成物（wasm-bindgen CLI 产物，见 crates/ntex-wasm/README.md「构建」）
 crates/ntex-wasm/www/pkg/
+crates/ntex-wasm/examples/*.dvi
+crates/ntex-tauri/ui/pkg/

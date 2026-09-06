@@ -1,43 +1,197 @@
-<!DOCTYPE html>
-<!-- NTex WASM（M8-A）最小示例页：编译随包 demo.tex，打印 DVI 长度/页数/字体与转录。
-     先用 wasm-bindgen 生成绑定（见 README「构建」）：
-       wasm-bindgen --out-dir www/pkg --target web \
-           target/wasm32-unknown-unknown/release/ntex_wasm.wasm
-     再起静态服务：cd www && python3 -m http.server 8000 -->
-<html lang="zh">
+<!doctype html>
+<!-- NTex WASM 实时预览工作台（B 档第一刀：软光栅 canvas 渲染）。
+     与 native `ntex-studio` 同交互骨架：左编辑 / 右预览，250ms 防抖重排；
+     翻页/调 dpi/切 overlay 只调 Document.render_page（不重排版）。
+     构建产物见 ../README.md（wasm32-unknown-unknown + wasm-bindgen --target web）。 -->
+<html lang="zh-CN">
 <head>
-<meta charset="utf-8">
-<title>NTex WASM（plain 子集 → DVI）</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NTex WASM — 实时预览工作台</title>
 <style>
-  body { font-family: ui-monospace, monospace; margin: 2rem; background: #111; color: #ddd; }
-  pre { background: #1b1b1b; padding: 1rem; overflow: auto; max-height: 45vh; }
-  h1 { font-size: 1.1rem; } .ok { color: #7f7; } .err { color: #f77; }
+  :root {
+    --bg: #1e1f22; --panel: #27282c; --line: #3a3b40;
+    --ink: #d8dae0; --dim: #8b8e96; --accent: #7aa2f7; --err: #e06c75;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; display: flex; flex-direction: column;
+    background: var(--bg); color: var(--ink);
+    font: 13px/1.45 -apple-system, "PingFang SC", "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 14px; padding: 8px 14px;
+    background: var(--panel); border-bottom: 1px solid var(--line); flex: none;
+  }
+  header h1 { font-size: 14px; margin: 0; font-weight: 600; }
+  header .meta { color: var(--dim); font-size: 12px; }
+  header .grow { flex: 1; }
+  .ctl { display: flex; align-items: center; gap: 6px; color: var(--dim); }
+  button {
+    background: #33353b; color: var(--ink); border: 1px solid var(--line);
+    border-radius: 5px; padding: 3px 10px; cursor: pointer; font-size: 12px;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: default; }
+  input[type=range] { accent-color: var(--accent); }
+  #status { font-size: 12px; min-width: 220px; text-align: right; }
+  #status.err { color: var(--err); }
+  main { flex: 1; display: flex; min-height: 0; }
+  #editorWrap {
+    flex: 0 0 42%; display: flex; flex-direction: column;
+    border-right: 1px solid var(--line); min-width: 0;
+  }
+  #editor {
+    flex: 1; resize: none; border: 0; outline: none; padding: 12px 14px;
+    background: var(--bg); color: var(--ink);
+    font: 12.5px/1.55 "SF Mono", Menlo, Consolas, monospace;
+    white-space: pre; overflow: auto;
+  }
+  #previewWrap { flex: 1; overflow: auto; background: #17181b; min-width: 0; }
+  #previewInner {
+    display: flex; justify-content: center; padding: 24px;
+  }
+  canvas {
+    background: #fff; box-shadow: 0 2px 18px rgba(0,0,0,.5);
+    max-width: none; display: block;
+  }
+  #noPage {
+    color: var(--dim); align-self: center; margin: auto; display: none;
+  }
+  #logWrap {
+    flex: none; border-top: 1px solid var(--line); background: var(--panel);
+    max-height: 26vh; overflow: auto; padding: 6px 0;
+  }
+  #logWrap summary {
+    cursor: pointer; padding: 2px 14px; color: var(--dim); user-select: none;
+  }
+  #log {
+    margin: 6px 14px 2px; padding: 8px 10px; white-space: pre-wrap;
+    font: 11.5px/1.5 Menlo, Consolas, monospace; color: var(--dim);
+    max-height: 18vh; overflow: auto;
+  }
 </style>
 </head>
 <body>
-<h1>NTex WASM — plain 子集编译（无渲染，DVI + log）</h1>
-<pre id="out">加载 wasm …</pre>
-<script type="module">
-import init, { compile_tex, engine_version, embedded_fonts, demo_tex }
-    from './pkg/ntex_wasm.js';
+<header>
+  <h1>NTex WASM — 实时预览工作台</h1>
+  <span class="meta" id="engine">加载引擎中…</span>
+  <span class="grow"></span>
+  <span class="ctl">
+    <button id="prev" title="上一页">‹</button>
+    <span id="pageLabel">– / –</span>
+    <button id="next" title="下一页">›</button>
+  </span>
+  <span class="ctl">
+    <label for="dpi">dpi</label>
+    <input type="range" id="dpi" min="72" max="288" step="12" value="144" />
+    <span id="dpiVal">144</span>
+  </span>
+  <span class="ctl">
+    <label><input type="checkbox" id="debug" /> 排版 overlay</label>
+  </span>
+  <span class="ctl">
+    <button id="downloadDvi" title="导出当前作业的 DVI 字节">DVI ⤓</button>
+  </span>
+  <span id="status"></span>
+</header>
+<main>
+  <div id="editorWrap"><textarea id="editor" spellcheck="false"></textarea></div>
+  <div id="previewWrap"><div id="previewInner"><canvas id="canvas"></canvas><div id="noPage">无页面（作业没有 \shipout 产出）</div></div></div>
+</main>
+<details id="logWrap" open><summary>转录（.log）</summary><pre id="log">—</pre></details>
 
-const out = document.getElementById('out');
-try {
-  await init();
-  const lines = [];
-  lines.push(`引擎：${engine_version()}`);
-  lines.push(`内嵌字体：${embedded_fonts().join(', ')}`);
-  const r = compile_tex(demo_tex());
-  lines.push(`DVI：${r.dvi.length} 字节（首字节 ${r.dvi[0]}，应为 247 = pre 命令码）`);
-  lines.push(`页数：${r.page_count}；字体：${r.fonts.join(', ')}`);
-  lines.push('转录（.log 主体）：\n' + r.transcript);
-  // 下载 DVI（可交 dvipdfmx / B 档渲染器）
-  const url = URL.createObjectURL(new Blob([r.dvi], { type: 'application/x-dvi' }));
-  lines.push(`\n<a href="${url}" download="demo.dvi">下载 demo.dvi</a>`);
-  out.innerHTML = `<span class="ok">编译成功</span>\n${lines.join('\n')}`;
-} catch (e) {
-  out.innerHTML = `<span class="err">编译失败</span>\n${e}`;
-}
+<script type="module">
+  // —— 引擎装载（构建产物 pkg/，见 README「构建」节） ——
+  import init, { compile_document, demo_tex, engine_version } from './pkg/ntex_wasm.js';
+
+  const $ = (id) => document.getElementById(id);
+  const editor = $('editor'), canvas = $('canvas'), ctx = canvas.getContext('2d');
+  const statusEl = $('status'), pageLabel = $('pageLabel'), logEl = $('log');
+  const DEBOUNCE_MS = 250;   // 与 ntex-studio 同口径的编辑防抖
+
+  let doc = null;            // 当前 Document 句柄（页盒树常驻，翻页不重排）
+  let pageNo = 0;            // 0 起当前页
+  let compileTimer = 0;
+
+  function setStatus(text, isErr = false) {
+    statusEl.textContent = text; statusEl.classList.toggle('err', isErr);
+  }
+
+  // —— 编译（防抖）→ 重建 Document；渲染只依赖句柄，不重排版 ——
+  function scheduleCompile() {
+    clearTimeout(compileTimer);
+    compileTimer = setTimeout(compileNow, DEBOUNCE_MS);
+  }
+
+  function compileNow() {
+    const t0 = performance.now();
+    try {
+      doc = compile_document(editor.value);
+    } catch (e) {
+      doc = null; pageNo = 0; updatePageLabel();
+      setStatus(`编译失败：${e.message || e}`, true);
+      showNoPage(); return;
+    }
+    const tCompile = performance.now() - t0;
+    pageNo = Math.min(pageNo, Math.max(0, doc.page_count - 1));
+    logEl.textContent = doc.transcript || '（空转录）';
+    updatePageLabel();
+    const tRender = renderCurrent();
+    setStatus(`编译 ${tCompile.toFixed(1)}ms · 渲染 ${tRender.toFixed(1)}ms · ${doc.page_count} 页`);
+  }
+
+  // —— 渲染当前页：软光栅 RGBA → ImageData 直灌 canvas ——
+  function renderCurrent() {
+    if (!doc || doc.page_count === 0) { showNoPage(); return 0; }
+    const t0 = performance.now();
+    const img = doc.render_page(pageNo, Number($('dpi').value), $('debug').checked);
+    canvas.width = img.width; canvas.height = img.height;
+    // fit-to-width 显示（像素尺寸随 dpi；CSS 等比缩到预览列内）
+    canvas.style.width = '100%';
+    canvas.style.maxWidth = (img.width * 96 / Number($('dpi').value)) + 'px';
+    ctx.putImageData(new ImageData(new Uint8ClampedArray(img.rgba), img.width, img.height), 0, 0);
+    $('noPage').style.display = 'none'; canvas.style.display = 'block';
+    return performance.now() - t0;
+  }
+
+  function showNoPage() { canvas.style.display = 'none'; $('noPage').style.display = 'block'; }
+
+  function updatePageLabel() {
+    const total = doc ? doc.page_count : 0;
+    pageLabel.textContent = total ? `${pageNo + 1} / ${total}` : '– / –';
+    $('prev').disabled = pageNo <= 0;
+    $('next').disabled = pageNo >= total - 1;
+  }
+
+  // —— 事件：编辑防抖重排；翻页/dpi/overlay 只重渲染 ——
+  editor.addEventListener('input', scheduleCompile);
+  $('prev').onclick = () => { if (pageNo > 0) { pageNo--; updatePageLabel(); setStatus(renderStatus()); } };
+  $('next').onclick = () => { if (doc && pageNo < doc.page_count - 1) { pageNo++; updatePageLabel(); setStatus(renderStatus()); } };
+  $('dpi').oninput = () => { $('dpiVal').textContent = $('dpi').value; };
+  $('dpi').onchange = () => setStatus(renderStatus());
+  $('debug').onchange = () => setStatus(renderStatus());
+  function renderStatus() { return `渲染 ${renderCurrent().toFixed(1)}ms`; }
+
+  $('downloadDvi').onclick = () => {
+    if (!doc || doc.dvi.length === 0) { setStatus('无 DVI 可导出（0 页）', true); return; }
+    const blob = new Blob([doc.dvi], { type: 'application/octet-stream' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = 'ntex.dvi'; a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  // —— 启动：装载 wasm → 填 demo → 首次编译 ——
+  (async () => {
+    try {
+      await init();
+      $('engine').textContent = engine_version();
+      editor.value = demo_tex();
+      compileNow();
+    } catch (e) {
+      setStatus(`引擎装载失败：${e.message || e}`, true);
+    }
+  })();
 </script>
 </body>
 </html>

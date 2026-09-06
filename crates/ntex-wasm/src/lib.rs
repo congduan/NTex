@@ -1,14 +1,18 @@
 //! # ntex-wasm — NTex 引擎核心的 WASM 薄壳（M8-A 骨架线）
 //!
 //! 目标：浏览器 / Node 里跑通 **plain 子集**——喂 `.tex` 字符串 + 内嵌 TFM，
-//! NTex 排版，DVI 字节 + log（转录）回传 JS。不做渲染（vello/wgpu web 后端
-//! 是 B 档，另案），不做 LaTeX（`.fmt` 依赖载入战是 C 档）。
+//! NTex 排版，DVI 字节 + log（转录）回传 JS，并可**逐页软光栅渲染到 canvas**
+//! （B 档第一刀）。不做 LaTeX（`.fmt` 依赖载入战是 C 档）。
 //!
 //! 三档路线（与 plan.md M8 一致）：
 //! - **A 档（本 crate）**：引擎核心 WASM 化。`compile_tex()` 全链在 wasm 内完成，
 //!   TFM 度量经 [`ntex_layout::set_tfm_source`] 注入（`fonts/` 内嵌 6 个 CM TFM）。
-//! - **B 档（另案）**：渲染。DVI/盒子树 → vello/wgpu web 后端画到 canvas；
-//!   本 crate 的 DVI/转录返回值即其输入。
+//! - **B 档（第一刀已建）**：渲染。`compile_document()` 返回 [`Document`] 句柄
+//!   （整页盒树 + 字体度量常驻），`render_page()` 走 ntex-backend 软光栅
+//!   （`prims` 事实源 + `Pixmap`，与桌面路径同代码），RGBA 回传 JS
+//!   `putImageData` 上 canvas；翻页/调 dpi 不重排版。vello/wgpu web 后端与
+//!   真字形（内嵌 Latin Modern OTF）属 B 档后续；增量接口（M5
+//!   `IncrementalTypesetter` 暴露给 JS）是「毫秒级刷新」的前置。
 //! - **C 档（待 `.fmt`）**：LaTeX。`.fmt` 快照经 `MemVfs` 喂入 + `import_state`，
 //!   等 `ntex-format` 快照完备度上来后在此薄壳上加 `load_format(bytes)`。
 //!
@@ -18,9 +22,12 @@
 //! 2. 线程看门狗 / 单步计时整段跳过（`ntex-core/src/expand/mod.rs`：单线程 +
 //!    无 `Instant`；死循环防线只剩步数上限 + 宿主页面超时）；
 //! 3. 字体度量来源是注册的 [`ntex_layout::TfmSource`]（内嵌字节），而非文件系统
-//!    查找（`ntex-layout` `TfmLoader` 的 wasm 分叉）。
+//!    查找（`ntex-layout` `TfmLoader` 的 wasm 分叉）；
+//! 4. 渲染为软光栅方框口径：字形通道经 kpsewhich/texlive 定位 Latin Modern
+//!    OTF（ntex-backend `glyphs.rs`），wasm 无文件系统恒回落占位方框（B 档
+//!    后续：内嵌 OTF）。
 //!
-//! 已知缺口（如实记录，A 档不做）：`\write` 到非 16 流 / `\openout` 产出的文件
+//! 已知缺口（如实记录）：`\write` 到非 16 流 / `\openout` 产出的文件
 //! 现留在 `MemVfs` 内不回传——`ntex-io` 的 `MemVfs` 暂无枚举 API（只有 `read`/
 //! `write`/`append`/`get`），补枚举接口属 ntex-io 领地，不在本刀范围。
 
@@ -54,18 +61,21 @@ impl ntex_layout::TfmSource for EmbeddedTfmSource {
     }
 }
 
-/// 一次编译的全部产物（导出给 JS 的 [`CompileResult`] 的 Rust 侧本体；
-/// native 单测直接消费它，绕开 wasm-bindgen 边界）。
+/// 一次编译的全部产物（导出给 JS 的 [`CompileResult`]/[`Document`] 的 Rust
+/// 侧本体；native 单测直接消费它，绕开 wasm-bindgen 边界）。
 #[derive(Debug)]
 pub struct Compiled {
     /// DVI 字节流（`ntex-dvi::write_dvi` 产物，与 native `ntex-dvi` 驱动同构）。
     pub dvi: Vec<u8>,
     /// 转录文本（`\message`/`\show`/`\write16`/错误上下文——即 TeX 的 .log 主体）。
     pub transcript: String,
-    /// `\shipout` 页数。
-    pub pages: usize,
+    /// 逐页整页盒（`\shipout` 产物，与 `ntex_dvi::write_dvi` 输入同源）——
+    /// B 档渲染的事实源（直接走盒树渲染，不经 DVI 反解析）。
+    pub pages: Vec<ntex_layout::node::BoxNode>,
+    /// 排版字体度量表（`FontId` 下标引用；渲染字形度量/占位方框尺寸用）。
+    pub font_metrics: Vec<ntex_font::FontMetrics>,
     /// 用到的字体名（DVI 字体表，id 0 的 nullfont 占位已剔除）。
-    pub fonts: Vec<String>,
+    pub font_names: Vec<String>,
 }
 
 /// 排版管线（目标无关：wasm 与 native 单测同路径）。
@@ -88,12 +98,13 @@ fn compile_pipeline(tex: &str) -> ntex_core::error::Result<Compiled> {
         ntex_dvi::write_dvi(&pages, &fonts)
     };
     // 字体表首是 nullfont 占位（id 0，见 ntex-layout TfmLoader 注释），不回传。
-    let font_names = fonts.into_iter().skip(1).map(|f| f.name).collect();
+    let font_names = fonts.iter().skip(1).map(|f| f.name.clone()).collect();
     Ok(Compiled {
         dvi,
         transcript,
-        pages: pages.len(),
-        fonts: font_names,
+        pages,
+        font_metrics: fonts,
+        font_names,
     })
 }
 
@@ -109,8 +120,8 @@ pub fn compile_tex(tex: &str) -> Result<CompileResult, JsError> {
         Ok(compiled) => Ok(CompileResult {
             dvi: compiled.dvi,
             transcript: compiled.transcript,
-            pages: compiled.pages as u32,
-            fonts: compiled.fonts,
+            pages: compiled.pages.len() as u32,
+            fonts: compiled.font_names,
         }),
         Err(e) => Err(JsError::new(&e.to_string())),
     }
@@ -149,6 +160,142 @@ impl CompileResult {
     #[wasm_bindgen(getter)]
     pub fn fonts(&self) -> Vec<String> {
         self.fonts.clone()
+    }
+}
+
+// ---------- B 档第一刀：渲染句柄（软光栅 → RGBA 上 canvas） ----------
+
+/// 软光栅渲染一页（目标无关：wasm 导出面与 native 单测同路径）。
+///
+/// 页面尺寸/边距取 [`ntex_backend::RenderOptions::default`]（A4 + 72pt 四边，
+/// 同 ntex-pdf 与桌面 `ntex-backend` 驱动的默认口径）；`dpi`/`debug` 由参数
+/// 覆盖。字符为占位方框口径（软光栅；真字形属 B 档后续，见模块文档偏差 4）。
+fn render_page_core(
+    pages: &[ntex_layout::node::BoxNode],
+    fonts: &[ntex_font::FontMetrics],
+    index: u32,
+    dpi: f64,
+    debug: bool,
+) -> Result<ntex_backend::Pixmap, String> {
+    let page = pages
+        .get(index as usize)
+        .ok_or_else(|| format!("页码越界：请求第 {index} 页（0 起），共 {} 页", pages.len()))?;
+    use ntex_backend::Backend as _;
+    let opts = ntex_backend::RenderOptions {
+        dpi,
+        debug,
+        // 软光栅不支持字形通道（后端内部本就强制关闭，此处显式声明口径）。
+        glyphs: false,
+        ..Default::default()
+    };
+    let mut pages = ntex_backend::TinySkiaBackend
+        .render(std::slice::from_ref(page), fonts, &opts)
+        .map_err(|e| format!("渲染第 {index} 页失败：{e}"))?;
+    match pages.pop() {
+        Some(pm) => Ok(pm),
+        None => Err(format!("渲染第 {index} 页失败：后端未返回像素")),
+    }
+}
+
+/// 编译产物句柄：持有整页盒树与字体度量常驻，可反复按页/按 dpi/按开关渲染
+/// （**不重排版**）——实时预览的 JS 侧锚点：编辑防抖后重建 Document，
+/// 翻页/调 dpi/切 overlay 只调 [`Document::render_page`]。
+#[wasm_bindgen]
+pub struct Document {
+    pages: Vec<ntex_layout::node::BoxNode>,
+    font_metrics: Vec<ntex_font::FontMetrics>,
+    font_names: Vec<String>,
+    transcript: String,
+    dvi: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl Document {
+    /// `\shipout` 页数。
+    #[wasm_bindgen(getter)]
+    pub fn page_count(&self) -> u32 {
+        self.pages.len() as u32
+    }
+
+    /// 转录文本（TeX .log 主体：`\message`/`\show`/`\write16`/错误上下文）。
+    #[wasm_bindgen(getter)]
+    pub fn transcript(&self) -> String {
+        self.transcript.clone()
+    }
+
+    /// 用到的字体名清单。
+    #[wasm_bindgen(getter)]
+    pub fn fonts(&self) -> Vec<String> {
+        self.font_names.clone()
+    }
+
+    /// DVI 字节（交 dvipdfmx 类驱动或下载；与 `compile_tex` 产物同构）。
+    #[wasm_bindgen(getter)]
+    pub fn dvi(&self) -> Vec<u8> {
+        self.dvi.clone()
+    }
+
+    /// 渲染第 `index` 页（0 起）→ RGBA8 像素（白底、行主序、每像素 4 字节）。
+    ///
+    /// JS 侧：`const img = doc.render_page(0, 144, false);` →
+    /// `new ImageData(new Uint8ClampedArray(img.rgba), img.width, img.height)`
+    /// → `ctx.putImageData(...)`。`dpi` 任意正数（A4@72dpi ≈ 595×842、
+    /// @144dpi ≈ 1191×1684）；`debug` 叠加排版调试 overlay（盒边界/glue/
+    /// 断点标记，与 native `ntex-backend --debug` 同口径）。
+    pub fn render_page(&self, index: u32, dpi: f64, debug: bool) -> Result<PageImage, JsError> {
+        render_page_core(&self.pages, &self.font_metrics, index, dpi, debug)
+            .map(|pm| PageImage {
+                width: pm.width(),
+                height: pm.height(),
+                rgba: pm.data().to_vec(),
+            })
+            .map_err(|e| JsError::new(&e))
+    }
+}
+
+/// 一页渲染结果（JS 视图）：`rgba` 为 RGBA8 行主序字节，直接灌 `ImageData`。
+#[wasm_bindgen]
+pub struct PageImage {
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl PageImage {
+    /// 页宽（px）。
+    #[wasm_bindgen(getter)]
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// 页高（px）。
+    #[wasm_bindgen(getter)]
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// 像素字节（RGBA8 行主序；JS 侧为 `Uint8Array`，长度 = width×height×4）。
+    #[wasm_bindgen(getter)]
+    pub fn rgba(&self) -> Vec<u8> {
+        self.rgba.clone()
+    }
+}
+
+/// 编译 plain 子集 TeX 源码 → 渲染句柄（B 档入口；引擎报错抛 `JsError`，
+/// 消息含 TeX 式错误上下文）。可恢复的 TeX 错误（缺字体等）不抛——作业
+/// 继续、转录含错误行，页面按实际 `\shipout` 产出。
+#[wasm_bindgen]
+pub fn compile_document(tex: &str) -> Result<Document, JsError> {
+    match compile_pipeline(tex) {
+        Ok(c) => Ok(Document {
+            pages: c.pages,
+            font_metrics: c.font_metrics,
+            font_names: c.font_names,
+            transcript: c.transcript,
+            dvi: c.dvi,
+        }),
+        Err(e) => Err(JsError::new(&e.to_string())),
     }
 }
 
@@ -203,9 +350,9 @@ mod tests {
     fn embedded_demo_compiles_to_dvi() {
         let compiled = compile_pipeline(DEMO_TEX).expect("示例应能编译");
         assert!(
-            compiled.pages >= 1,
+            !compiled.pages.is_empty(),
             "应产出至少一页，实得 {}",
-            compiled.pages
+            compiled.pages.len()
         );
         assert_eq!(compiled.dvi[0], 247, "DVI pre 命令码");
         assert_eq!(compiled.dvi[1], 2, "DVI 格式版本");
@@ -214,10 +361,63 @@ mod tests {
             "post_post 应以 4×223 填充结尾"
         );
         assert!(
-            compiled.fonts.iter().any(|name| name == "cmr10"),
+            compiled.font_names.iter().any(|name| name == "cmr10"),
             "字体表应含 cmr10，实得 {:?}",
-            compiled.fonts
+            compiled.font_names
         );
+    }
+
+    /// 统计非白像素数（渲染有墨验证；alpha=0 或任一通道 ≥250 视为白）。
+    fn ink_pixels(pm: &ntex_backend::Pixmap) -> usize {
+        (0..pm.height())
+            .flat_map(|y| (0..pm.width()).map(move |x| (x, y)))
+            .filter(|&(x, y)| pm.pixel_nonwhite(x, y))
+            .count()
+    }
+
+    /// 渲染管线（B 档第一刀）：demo → 盒树 → 软光栅。首两页 72dpi 为
+    /// A4（595×842）白底有墨；144dpi 尺寸翻倍；越界页码报错不 panic。
+    #[test]
+    fn render_pipeline_paints_demo_pages() {
+        let compiled = compile_pipeline(DEMO_TEX).expect("示例应能编译");
+        assert!(
+            compiled.pages.len() >= 2,
+            "随包示例应 ≥2 页（第三段溢出 \\vsize 触发分页）"
+        );
+        let pm = render_page_core(&compiled.pages, &compiled.font_metrics, 0, 72.0, false)
+            .expect("第 0 页应可渲染");
+        assert_eq!((pm.width(), pm.height()), (595, 842), "A4@72dpi");
+        // 首段文字（占位方框口径）必然落墨；demo 首页数百字符 × 每字符 3 矩形。
+        let ink = ink_pixels(&pm);
+        assert!(ink > 1_000, "首页应有可观墨迹，实得 {ink} px");
+        let pm2 = render_page_core(&compiled.pages, &compiled.font_metrics, 1, 72.0, false)
+            .expect("第 1 页应可渲染");
+        assert!(ink_pixels(&pm2) > 0, "第 1 页应有墨");
+        // dpi 翻倍 → 像素尺寸翻倍（1191×1684）。
+        let pm144 = render_page_core(&compiled.pages, &compiled.font_metrics, 0, 144.0, false)
+            .expect("144dpi 应可渲染");
+        assert_eq!((pm144.width(), pm144.height()), (1191, 1684), "A4@144dpi");
+        // 越界：可恢复错误消息（不 panic——引擎契约）。
+        let err = render_page_core(&compiled.pages, &compiled.font_metrics, 99, 72.0, false)
+            .expect_err("越界页码应报错");
+        assert!(err.contains("越界"), "错误消息应含上下文：{err}");
+    }
+
+    /// debug overlay：独立通道叠加后墨迹严格增加，且 dpi=0 非法配置报错。
+    #[test]
+    fn render_pipeline_debug_overlay_and_bad_dpi() {
+        let compiled = compile_pipeline(DEMO_TEX).expect("示例应能编译");
+        let plain = render_page_core(&compiled.pages, &compiled.font_metrics, 0, 72.0, false)
+            .expect("应可渲染");
+        let dbg = render_page_core(&compiled.pages, &compiled.font_metrics, 0, 72.0, true)
+            .expect("debug 应可渲染");
+        assert!(
+            ink_pixels(&dbg) > ink_pixels(&plain),
+            "overlay 应增加墨迹（版心描边等）"
+        );
+        let err = render_page_core(&compiled.pages, &compiled.font_metrics, 0, 0.0, false)
+            .expect_err("dpi=0 应报错");
+        assert!(err.contains("渲染"), "错误消息应含上下文：{err}");
     }
 
     /// 内嵌 TFM 能被 ntex-font 解析、设计字号非零（度量链的根）。
@@ -242,7 +442,7 @@ mod tests {
             "转录应含 TeX 式缺字体错误：{:?}",
             compiled.transcript
         );
-        assert_eq!(compiled.pages, 0, "无 \\shipout，不应有页面");
+        assert_eq!(compiled.pages.len(), 0, "无 \\shipout，不应有页面");
         assert!(compiled.dvi.is_empty());
     }
 
@@ -250,7 +450,7 @@ mod tests {
     #[test]
     fn empty_input_yields_no_pages() {
         let compiled = compile_pipeline("\\end").expect("空作业不应报错");
-        assert_eq!(compiled.pages, 0);
+        assert_eq!(compiled.pages.len(), 0);
         assert!(compiled.dvi.is_empty());
     }
 }

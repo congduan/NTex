@@ -21,6 +21,10 @@ ntex-layout.workspace = true
 ntex-font.workspace = true
 ntex-io.workspace = true
 ntex-dvi.workspace = true
+# B 档第一刀（实时渲染）：软光栅路径（prims + Pixmap + glyphs 均纯 Rust，
+# wasm 兼容）。vello/wgpu web 后端仍另案——default-features = false 把
+# feature `vello`（拖 wgpu）关掉，wasm32 体积与宿主要求都不可行。
+ntex-backend = { path = "../ntex-backend", version = "0.1.0", default-features = false }
 
 [lints]
 workspace = true
