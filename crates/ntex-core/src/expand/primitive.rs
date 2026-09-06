@@ -292,7 +292,13 @@ impl Expander {
                             .map(|n| format!("#{n}"))
                             .collect();
                         let body = detok_tokens(&m.value.body, &self.intern);
-                        format!("\\{name}=macro:{params}->{body}.")
+                        // 同 meaning_text：protected 前缀（tex.web print_meaning）
+                        let head = if m.value.protected {
+                            "\\protected macro:"
+                        } else {
+                            "macro:"
+                        };
+                        format!("\\{name}={head}{params}->{body}.")
                     }
                     EqSlot::Char { catcode, charcode } => {
                         let ch = char::from_u32(charcode).unwrap_or('\u{FFFD}');
@@ -428,7 +434,22 @@ impl Expander {
                             .map(|n| format!("#{n}"))
                             .collect();
                         let body = detok_tokens(&m.value.body, &self.intern);
-                        format!("macro:{params}->{body}")
+                        // tex.web print_meaning（e-TeX）：protected 宏前缀
+                        // `\protected`（长貌 `\long` 前缀需 MacroDef 记录 long
+                        // 位，暂缺，维持现状）。expl3 `\cs_generate_variant`
+                        // 的变体构造器选型（`\__cs_generate_variant:N`：
+                        // meaning 前缀含 "pr" → `\cs_new_protected:Npe`，否则
+                        // `\cs_new:Npe`）读的正是此前缀——缺它则全部变体
+                        // 降级为非保护宏：`\tl_const:Ne` 在 `\expanded` 内被
+                        // 展开，`\char_generate:nn` 查表守卫 `\exp_not:N \or:`
+                        // 残留进 `\c__char_*_tl`，latex.ltx l.9386 触发
+                        // Illegal parameter number。
+                        let head = if m.value.protected {
+                            "\\protected macro:"
+                        } else {
+                            "macro:"
+                        };
+                        format!("{head}{params}->{body}")
                     }
                     EqSlot::Char { catcode, charcode } => {
                         meaning(Token::char(catcode, charcode), &self.intern)

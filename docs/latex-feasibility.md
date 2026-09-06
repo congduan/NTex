@@ -2739,3 +2739,80 @@ extra-} 每条定义**，即 §33.3 的主簇（expl3 `\token_if_*` 区 34 条�
 - **主簇改判的教训（续 §33.5）**：本轮最初沿简报候选 1（生成器使用形态）勘察
   白费三步——判别式的正确找法是"**最小可变体**"：把同一条定义的体逐成分替换
   （去 `\exp_not:N`、换条件、换操作数），一次一个变量，其余不动。
+
+## 35. 第二十八刀：l.9386 Illegal parameter number 根治——`\meaning` 丢 `\protected` 前缀致 expl3 变体全降级
+
+### 35.1 靶与铁证
+
+靶子：latex.ltx 5 错中的 `! Illegal parameter number in definition of.`
+（l.9386 `\tl_const:Ne \c_catcode_other_space_tl {\char_generate:nn {`\  } { 12 } }`）。
+上轮遗留铁证 `/tmp/r28/trace.txt`（NTEX_IPN_TRACE，插桩已还原）：错误点扫描位停在
+`\c__char_xxxii_tl` 查表体 arm 6 的 `char Some(0) cat Some(Parameter)`，表内臂
+`\exp_not:N \or:` 成对残留、半数臂 charcode 0（未施 lccode）。
+
+### 35.2 机制链（tex.web 直译 + pdflatex 逐级探针定案）
+
+`\char_generate:nn` 在无 `\Ucharcat` 引擎上的实现是一张 16 臂 `\ifcase` 表
+（expl3-code l.9330-9364）：`\lowercase` 把各 catcode 的 `^^@` 统一改写成 char 32，
+存入 `\c__char_<roman>_tl`；使用点 `\ifcase 13-#2` 选臂。真 TeX 链路：
+
+1. `\exp_not:o` ≙ `\unexpanded\expandafter{<tl>}`——`\expandafter` 只拼接不执行，
+   宏体里的字面 `\exp_not:N \or:` 原样进入 `\unexpanded` 的 general text
+   （实证：`\edef\one{\unexpanded\expandafter{\tmptl}}` → `\noexpand \relax A\noexpand \or B`）。
+2. **`\expanded` 把 `\unexpanded` 的产出重新推回展开流**，字面 `\noexpand` 在此被执行
+   → 标记下一 token → 存表时标记剥落（实证：`\edef\five{\expanded{\unexpanded{\noexpand\relax A\noexpand\or B}}}`
+   → `\relax A\or B` 全裸）。
+3. 变体保护的关键：`\tl_const:Ne` 是 **protected** 宏，外层 `\expanded` 在它面前止步，
+   字面守卫被推迟到 Ne 变体自己的 `\expanded`→`\cs_gset_nopar:Npe` 级才执行。
+
+判据（expl3-code l.2822-2836 `\__cs_generate_variant:N`）：变体构造器取
+`\cs_new_protected:Npe` 还是 `\cs_new:Npe`，看 `\token_to_meaning:N <base>`
+的 `ma`/`pr` 串切分里前缀段是否含 `pr`（= `\protected` 前缀）。
+
+**NTex 缺陷**：`meaning_text`/`show_meaning` 对宏一律输出 `macro:...`，从不输出
+`\protected` 前缀 → 变体生成器全部走非保护分支 → `\tl_const:Ne` 未受保护，
+在外层 `\expanded` 内被就地展开，链条塌掉一级 → 字面 `\exp_not:N \or:` 直达
+`\unexpanded{#2}` 的 raw-append 存进表 → 使用点 `\ifcase` 的臂分隔符被守卫遮蔽，
+处理位不终结 → 全部臂灌进 `\tl_const:Ne` 体扫描 → arm 6 的 `#` 判定炸出 IPN。
+
+第二处（独立成立）：`case_convert_tokens` 只对 Letter/Other 施 lccode/uccode，
+tex.web change_case（@1288）的判据是"字符 token"（含 active char），与 catcode 无关
+——表臂 cat 3/4/6/7/8/1/2 全部残留 char 0（trace 半残臂的直接来源）。
+
+### 35.3 修复
+
+- `expand/primitive.rs`：`meaning_text` 与 `show_meaning` 的 Macro 臂补
+  `\protected macro:` 前缀（tex.web print_meaning；`\long` 前缀需 MacroDef 记录
+  long 位，暂缺维持现状，变体判据不依赖它）。
+- `expand/primitive_codes.rs`：`case_convert_tokens` 去 `matches!(cc, Letter|Other)`
+  闸，一切字符 token（含 cat 6/10/13）施 lccode/uccode。
+
+### 35.4 验证（诚实记录）
+
+- cargo test -p ntex-core：332→**334 全绿**（新增 `meaning_protected_prefix`、
+  `lowercase_converts_all_char_catcodes` 两回归测）。ntex-trip 4 测全绿。
+- latex.ltx 加载：l.9386 IPN 及其级联（Too many }'s l.398、Missing number l.11835）
+  **全部消失**，加载自 l.9386 推进 4500+ 行至 **l.13899** 新下游停点
+  `pass1 ERROR: 胶水上下文需要 \skip/\muskip 寄存器`
+  （`\skip_const:Nn \c_zero_skip {\c_zero_dim}`——glue 扫描缺 `<dimen>` 臂，
+  tex.web scan_glue 的 S=scan_dimen 分支，属下一刀靶）。
+- **错误 5→0 未达成**（新下游停点中止加载，m4.tex 端到端对拍随之不可达）；
+  本刀交付的是机制层根治 + 错误簇清零，收官判据留给胶水臂补齐后复核。
+- 插桩（NTEX_IPN_TRACE）已全部还原，工作树无残留。
+
+### 35.5 踩坑
+
+- **`\unexpanded` 的保护是一级的**：产出 raw-append 进当前收集，但收集结果再入流时
+  字面 `\noexpand` 照常执行（probe4 vs probe5 的差别全在有没有 `\expanded` 夹层）。
+  NTex 标记位模型与此兼容，前提是变体保护链不断。
+- **变体保护判据在 `\meaning` 文本里**：engine 侧任何 `\meaning` 格式偏差都会
+  改变 expl3 的宏观行为（本刀=宏保护性丢失），排查时先对拍 pdflatex 的
+  `\meaning` 四态（`macro:`/`\long macro:`/`\protected macro:`/`\protected\long macro:`）。
+- **`\show` 打印不显保护标记**：被标记后存表的是裸 token（probe1/2 的 `\myor`），
+  而 `\unexpanded` raw-append 保留字面 `\noexpand`（probe4）——两种"守卫"形态
+  勿混为一谈。
+
+### 35.6 靶 B（\dump 探路）取消另派
+
+本刀原配靶 B（`\dump` 原语探路）经主控决定**取消**：收官优先，dump 另派专刀。
+本节只记本条。

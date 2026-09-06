@@ -889,6 +889,38 @@ mod tests {
     }
 
     #[test]
+    fn meaning_protected_prefix() {
+        // tex.web print_meaning（e-TeX）：protected 宏 `\protected macro:`。
+        // expl3 `\cs_generate_variant`（\__cs_generate_variant:N 读 meaning
+        // 前缀选 `\cs_new_protected:Npe`/`\cs_new:Npe`）依赖此前缀：缺它则
+        // 全部变体降级非保护，`\tl_const:Ne` 在 `\expanded` 内被展开，
+        // latex.ltx l.9386 `\char_generate:nn` 查表守卫残留 → Illegal
+        // parameter number（第二十八刀）。
+        assert_eq!(
+            expand("\\protected\\def\\x{a}\\meaning\\x").unwrap(),
+            "\\protected macro:->a"
+        );
+        // 非保护宏无前缀
+        assert_eq!(expand("\\def\\y{b}\\meaning\\y").unwrap(), "macro:->b");
+    }
+
+    #[test]
+    fn lowercase_converts_all_char_catcodes() {
+        // tex.web change_case：判据是"字符 token"，与 catcode 无关。
+        // 只认 Letter|Other 曾把 expl3 `\char_generate:nn` 查表的 `^^@`
+        // 非 Letter/Other 臂改得半残（cat 6 臂残留 char 0 → latex.ltx
+        // l.9386 Illegal parameter number 级联源之一）。
+        // cat 6 参数符：## 在 general text 扫描存两个 # token，lccode 35→65
+        // 转换后 `\if` 按字符码比对命中 A。（cat 13 active char 在本引擎
+        // 以 cs 形式表示，属 token 表示层另一刀，不在本判据覆盖内。）
+        let cat6 = expand(
+            "\\lccode`\\#=65\\relax\\lowercase{\\toks0{##}}\\if A\\the\\toks0 YES\\else NO\\fi",
+        )
+        .unwrap();
+        assert!(cat6.contains("YES") && !cat6.contains("NO"), "{cat6:?}");
+    }
+
+    #[test]
     fn mathchardef_binds_cs() {
         // \the\cs 返回十进制数学字符码
         assert_eq!(expand("\\mathchardef\\x=100\\the\\x").unwrap(), "100");

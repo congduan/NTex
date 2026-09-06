@@ -179,7 +179,15 @@ impl Expander {
         let mut out = Vec::with_capacity(toks.len());
         for tok in toks {
             if let (Some(ch), Some(cc)) = (tok.charcode(), tok.catcode()) {
-                if matches!(cc, Catcode::Letter | Catcode::Other) && ch <= 0xff {
+                // tex.web change_case（@1288）：判据是"字符 token"
+                // （`info(p)<cs_token_flag+single_base`，含 active char），
+                // **与 catcode 无关**——Letter/Other 之外，space（cat 10）、
+                // `#`（cat 6）、`$`/`&`/`^`/`_`/`{`/`}` 等一律施 lccode/uccode。
+                // 只认 Letter|Other 曾把 expl3 `\char_generate:nn` 查表
+                // （l.9331-9352 的 `^^@` 全 catcode 臂）改得半残：cat 6 臂
+                // 残留 char 0，l.9386 `\tl_const:Ne \c_catcode_other_space_tl`
+                // 触发 Illegal parameter number。
+                if ch <= 0xff {
                     let nv = table[ch as usize];
                     if nv != 0 && nv != ch as i64 {
                         out.push(Token::char(cc, nv as u32));
