@@ -4,7 +4,7 @@ const steps = [
   { idx: '01', title: 'TeX VM', desc: '8B token 流 + 不可变状态快照 + 字节码求值' },
   { idx: '02', title: '增量缓存', desc: 'Salsa 式求值图，改 1 处只重算受影响段落' },
   { idx: '03', title: '布局引擎', desc: 'Knuth-Plass 折行 / 断页 / 数学 / 断字，并行' },
-  { idx: '04', title: '渲染后端', desc: 'DVI→PDF 直出 · 未来 Skia / WASM' },
+  { idx: '04', title: '渲染后端', desc: 'DVI→PDF 直出 · vello GPU 渲染 · WASM 骨架已落地' },
 ]
 </script>
 

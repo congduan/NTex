@@ -19,8 +19,8 @@
           </a>
         </div>
         <div class="hero-stats">
-          <div><b>12k+</b>行 Rust</div>
-          <div><b>250+</b>测试用例</div>
+          <div><b>49k+</b>行 Rust</div>
+          <div><b>620+</b>测试用例</div>
           <div><b>字节级</b>DVI 一致性</div>
         </div>
       </div>
