@@ -71,8 +71,35 @@ impl Expander {
         let tok = item.0;
         if let Some(csid) = tok.csid() {
             match self.eqtb.slot(csid).clone() {
-                EqSlot::Alias(target) => {
-                    out.push((Token::control_sequence(target), false));
+                EqSlot::Alias(ref target) => {
+                    // tex.web：`\let` 在 eqtb 层**复制含义**（eq_type/eq_chr/equivalency
+                    // 整体搬），别名即原义——展开 `\A` 就是展开 `\B` 的含义。此处必须
+                    // 沿别名链解引用到最终含义再分派（宏/可展开原语 → 就地展开），
+                    // 不得把目标 token 原样回填：expl3 全篇 `\cs_new_eq:NN` 两级别名链
+                    // （`\__int_eval:w → \tex_numexpr:D → \numexpr`、
+                    //  `\int_value:w → \tex_number:D → \number`、`\__int_sep: →
+                    // \tex_let:D → \let`）依赖此语义——`\exp_after:wN X \int_value:w`
+                    // （l3int `\int_div_truncate:nn`，l.6652）的 `\number` 若不就地
+                    // 求值，`\expandafter` 的展开产物只剩 `\__int_sep:`，外层表达式
+                    // 在终结符处提前收口、`\__int_div_truncate:NwNw` 的体整段残留
+                    // （`\c_sys_engine_version_str` = `140(100-1)/2)/100\__int_eval_end:`
+                    //   失真，l.8073 起 cascading 到 l.9386/l.9468 区）。
+                    let target = *target;
+                    let mut id = target;
+                    let mut depth = 0;
+                    while let EqSlot::Alias(next) = self.eqtb.slot(id) {
+                        id = *next;
+                        depth += 1;
+                        if depth > 100 {
+                            return Err(Error::invalid_input("\\let 别名环"));
+                        }
+                    }
+                    match self.eqtb.slot(id).clone() {
+                        EqSlot::Macro(_) | EqSlot::Primitive(_) => {
+                            self.expand_once((Token::control_sequence(id), item.1), out)?
+                        }
+                        _ => out.push((Token::control_sequence(id), item.1)),
+                    }
                 }
                 EqSlot::Macro(m) => {
                     let def = m.value.clone();
@@ -430,13 +457,68 @@ impl Expander {
         Ok(value)
     }
 
+    /// 表达式因子位的 get_x_token 前瞻：把可展开项（宏/`\number`/`\romannumeral`/
+    /// `\expandafter` 等）就地展开、条件开始就地步进、跳过区就地推进，直到
+    /// 不可展开 token 放回并返回——etex.web scan_expr 的取 token 循环同为
+    /// get_x_token，`( <expr> )` 因子臂因此必须对**展开产物**判定。
+    ///
+    /// expl3 `\int_div_truncate:nn`（l.6652）的
+    /// `\exp_after:wN \__int_div_truncate:NwNw \int_value:w ...` 让
+    /// `\__int_div_truncate:NwNw` 在因子位展开出 `( ... )`（l.6670）——缺此前瞻
+    /// 则 `(` 落进 scan_int 的十进制循环报 "Missing number, treated as zero"，
+    /// 收尾再报 "Missing ) inserted for expression"（l.8023
+    /// `\c_sys_engine_version_str` 的 pdftex 分支，2+1 条 + 下游级联）。
+    fn expr_peek_factor_token(&mut self) -> Result<Option<Token>> {
+        loop {
+            self.skip_spaces()?;
+            let Some((tok, _)) = self.fetch()? else {
+                return Ok(None);
+            };
+            // 条件机跳过区：同 scan_int 符号循环（scan.rs 同款臂）——
+            // `\else` 之后假分支 token 不得被表达式吸收。
+            if self.is_skipping() {
+                if let Some(op) = self.cond_op(tok) {
+                    self.step_conditional(op, tok)?;
+                }
+                continue;
+            }
+            if let Some(csid) = tok.csid() {
+                if matches!(self.eqtb.slot(csid), EqSlot::Undefined) {
+                    let _ = self.sink.write16(format!(
+                        "! Undefined control sequence.\n\\{}\n",
+                        self.intern.name(csid)
+                    ));
+                    continue;
+                }
+                if self.maybe_eval_cond(tok)? {
+                    continue;
+                }
+                let expandable = match self.eqtb.slot(csid).clone() {
+                    EqSlot::Macro(_) => true,
+                    EqSlot::Primitive(p) if p.is_expandable() => true,
+                    _ => false,
+                };
+                if expandable {
+                    let mut expansion = Vec::new();
+                    self.expand_once((tok, false), &mut expansion)?;
+                    if !expansion.is_empty() {
+                        self.stack.push(InputFrame::TokenList {
+                            items: Arc::from(expansion),
+                            pos: 0,
+                        });
+                    }
+                    continue;
+                }
+            }
+            return Ok(Some(tok));
+        }
+    }
+
     /// 整数因子：`(` <表达式> `)`（TeX 括号子表达式）或 [`Self::scan_number`]。
     fn expr_factor(&mut self) -> Result<i64> {
-        self.skip_spaces()?;
-        let tok = self
-            .fetch()?
-            .ok_or_else(|| Error::invalid_input("\\numexpr 表达式未闭合"))?;
-        let (t, _) = tok;
+        let Some(t) = self.expr_peek_factor_token()? else {
+            return Err(Error::invalid_input("\\numexpr 表达式未闭合"));
+        };
         if t.charcode() == Some(b'(' as u32) {
             let v = self.eval_int_expression()?;
             let close = self.fetch()?;
@@ -495,6 +577,7 @@ impl Expander {
     /// 关系符位读到表达式里的 `+`）。
     fn peek_int_op(&mut self, absorb_relax: bool) -> Result<Option<u8>> {
         loop {
+            self.skip_spaces()?;
             let Some((tok, noexpand)) = self.fetch()? else {
                 return Ok(None);
             };
@@ -532,9 +615,24 @@ impl Expander {
                     }
                     return Ok(None); // \relax 吸收
                 }
+                // 条件开始（`\if*`）在运算符位**就地求值**（tex.web get_x_token →
+                // expand → conditional()：条件连同操作数就地消费、不产 token，取
+                // token 循环随后拿分支首 token）。expl3 `\__int_div_truncate:NwNw`
+                // 的体（l.6660）在表达式里嵌
+                //   `#1#2 \if_meaning:w - #1 + \else: - \fi: ( ... ) / 2`
+                // ——运算符位遇 `\if_meaning:w` 必须求值并落到分支 token（`-`），
+                // 否则表达式在条件处提前收口、`( ... ) / 2` 残留流中
+                // （`\c_sys_engine_version_str` 的 "Missing ) inserted" +
+                // `\int_div_truncate` 全线 140(100-1)/2)/100 失真）。
+                // `\else`/`\fi`/`\or` 仍不在此臂：它们属外层条件机，放回由
+                // scan_int 的条件臂/主循环消费（TRIP L82 游离 `\fi` 契约）。
+                if !matches!(self.cond_op(tok), None) {
+                    if self.maybe_eval_cond(tok)? {
+                        continue;
+                    }
+                }
                 // get_x_token 展开臂：宏（非 protected 抑制面）与可展开原语展开
                 // 一次后重探。`\noexpand` 冻结的 token 不展开（e-TeX 语义）。
-                // 条件原语不在此臂（与数字循环同限：游离 `\fi` 属外层条件，放回）。
                 if !noexpand {
                     let expandable = match self.eqtb.slot(id).clone() {
                         EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
@@ -592,11 +690,9 @@ impl Expander {
     /// dimen/glue 表达式 `*`/`/` 的 number 因子：`( <int expr> )` 或 [`Self::scan_number`]
     /// （etrip L854：`\dimexpr(#3sp)*(#4)/(#5)` 的括号乘数）。
     fn expr_number_factor(&mut self) -> Result<i128> {
-        self.skip_spaces()?;
-        let tok = self
-            .fetch()?
-            .ok_or_else(|| Error::invalid_input("表达式缺少数字因子"))?;
-        let (t, _) = tok;
+        let Some(t) = self.expr_peek_factor_token()? else {
+            return Err(Error::invalid_input("表达式缺少数字因子"));
+        };
         if t.charcode() == Some(b'(' as u32) {
             let v = self.eval_int_expression()?;
             let close = self.fetch()?;
@@ -651,11 +747,9 @@ impl Expander {
 
     /// 尺寸表达式项：`( <expr> )` 括号或 [`Self::scan_dimen`]。
     fn dimen_expr_term(&mut self) -> Result<i64> {
-        self.skip_spaces()?;
-        let tok = self
-            .fetch()?
-            .ok_or_else(|| Error::invalid_input("\\dimexpr 表达式未闭合"))?;
-        let (t, _) = tok;
+        let Some(t) = self.expr_peek_factor_token()? else {
+            return Err(Error::invalid_input("\\dimexpr 表达式未闭合"));
+        };
         if t.charcode() == Some(b'(' as u32) {
             let v = self.eval_dimen_expression()?;
             let close = self.fetch()?;
@@ -778,10 +872,9 @@ impl Expander {
     /// 括号内嵌套同一单位上下文（`\muexpr(5muminus1mu)`、`\glueexpr(\muexpr...)` 由
     /// 前导量分支报 "Incompatible glue units"）。
     fn glue_expr_term(&mut self, mu: bool) -> Result<Glue> {
-        let tok = self
-            .fetch()?
-            .ok_or_else(|| Error::invalid_input("\\glueexpr 表达式未闭合"))?;
-        let (t, _) = tok;
+        let Some(t) = self.expr_peek_factor_token()? else {
+            return Err(Error::invalid_input("\\glueexpr 表达式未闭合"));
+        };
         if t.charcode() == Some(b'(' as u32) {
             let v = self.eval_glue_expression(mu)?;
             let close = self

@@ -2406,3 +2406,119 @@ Fi/Else/Or 臂不动。
   回放法安全：fetch 会推进 pos / 触发惰性跳过，转储本身改变状态。
 - **worktree 冷构建对拍**：`git worktree add` 后 fixtures 不随迁
   （fixtures/ 在 .gitignore 之外但未入库的子目录需手拷，§16 有前科）。
+
+## 32. 2026-09-06 第二十五轮：数字扫描跳过区臂 + e-TeX 表达式三处机制缺口——主簇根因改判为表达式扫描
+
+### 32.1 起点与简报靶子的改判
+
+HEAD=08a97c6，探针终态 **87**（34 `\use_ii:nn` extra-} + 28 Missing number +
+2 Missing endcsname 为主簇）。简报靶 = §31.5 留下的 p-form 真臂时序
+（`\number` 取走 `\exp_end:`(0) 后 `\c_true_bool \c_false_bool` 残留）。
+
+本轮先对拍真实机制（VM 无真实 TeX，取 tex.web 本地拷贝 + GitHub 拉 l3basics.dtx/
+l3prg.dtx 原文），把生成条件体的两条臂拆清（l3basics `\@@_generate_*_form`）：
+
+- **fast 臂**（`\@@_generate_conditional_fast:nw` 命中、`#8 = \use_i:nn`）：
+  体 = `<test> \__prg_p_true:w \fi: \c_false_bool` → 展开为 `\fi: \c_true_bool`，
+  由体首 `\fi:` 闭合条件帧、bool 常量作值。**本引擎此前已对**（mech 复刻
+  FAST-TRUE=1/FAST-FALSE=0）。
+- **normal 臂**（`#8 = \use_i_ii:nnn`，test 不以
+  `\prg_return_true: \else: \prg_return_false: \fi:` 收尾或含嵌套时）：
+  体 = `<test> \prg_return_true: \else: \prg_return_false: \fi: \exp_end:
+  \c_true_bool \c_false_bool`——`\exp_end:` 是给 `\prg_return_*:` 的 `\exp:w`
+  收口用的**哨兵数**，其后两个 bool 常量是 `\use_i:nn`/`\use_ii:nn` 的两个
+  实参（l3basics 原文："the logic-returning functions expect two arguments to
+  be present after `\exp_end:`"）。真臂 → `\c_true_bool`(chardef 1)，
+  假臂 → `\c_false_bool`(chardef 0)。
+
+§31.5"真臂取 1 须在别处闭合"的疑问就此闭合：自洽性在 **`\else:`/`\fi:` 由
+`\exp:w` 的数字扫描展开消费**（即第 24 轮符号循环 Fi/Else/Or 臂的同一机制）。
+
+### 32.2 本轮四处机制修复（全部 tex.web 直译）
+
+| # | 位置 | tex.web 依据 | 复现 |
+|---|---|---|---|
+| 1 | `scan.rs` `scan_number_inner` 符号循环头部补 `is_skipping` 臂 | fi_or_else 臂在 expand 内**同步** `pass_text` 到 `\fi` 后弹帧（§9897），假分支 token 到不了数字扫描的取 token 位；本引擎惰性 Skipping 帧由各取 token 位自行问 `is_skipping()`（十进制循环已有同款臂） | `\number\ifnum1=1\prg_return_true:\else\prg_return_false:\fi\exp_end:\c_true_bool\c_false_bool` 旧 0 → 新 1 |
+| 2 | `expr.rs` 新增 `expr_peek_factor_token`，四处因子位（int/dimen/glue/number）改用 | etex.web `scan_expr` 取 token 循环同为 get_x_token——`( <expr> )` 因子臂须对**展开产物**判定 | `\numexpr\paren*4`（`\def\paren{(2+3)}`）旧 `0(2+3)*4` → 新 20 |
+| 3 | `peek_int_op` 头部补 `skip_spaces` | 因子后的空格由 scan_int 的 trailing-space 规则吸收，`) / 2` 的空格不得充当终结符 | `\__int_div_truncate:NwNw` 体含空格：`(140-(100-1)/2)` 旧 41+残留 `/ 2)` → 新正确 |
+| 4 | `expand_once` 的 `EqSlot::Alias` 臂改为**沿链解引用后按目标含义展开** | tex.web `\let` 在 eqtb 层复制含义（别名即原义）；expl3 全篇 `\cs_new_eq:NN` 两级别名链（`\__int_eval:w → \tex_numexpr:D → \numexpr`、`\__int_sep: → \tex_let:D → \let`） | `\expandafter X \int_value:w` 的 `\number` 须就地求值 |
+
+另在 `peek_int_op` 补条件开始（`\if*`）就地求值臂（同 get_x_token → expand →
+conditional()）；`\else`/`\fi`/`\or` 仍维持放回（TRIP L82 游离 `\fi` 契约）。
+
+### 32.3 主簇根因改判（下一轮靶，证据链已闭合）
+
+probe 终态 86 的**主簇不是独立的真臂时序问题，而是 l.8073 一处表达式失真的
+下游级联**。链条（转录顺序 = 实际执行顺序）：
+
+1. **l.8023-8073 `\str_const:Ne \c_sys_engine_version_str`**：pdftex 分支的
+   `\int_div_truncate:nn {\tex_pdftexversion:D}{100}`（l.6652）→
+   `\__int_div_truncate:NwNw` 的体（l.6660-6672）在 e-TeX 表达式里嵌
+   `\if_meaning:w`（`#1#2 \if_meaning:w - #1 + \else: - \fi: (...) / 2`）。
+   实测该常量被定义成 `140(100-1)/2)/100\__int_eval_end:.0(...)*100\__int_eval_end:
+   .\tex_pdftexversion:D`（应为 `1.40.25`）→ 2× "Missing number(`(`)" +
+   3× "Missing ) inserted for expression"。
+2. **l.9386 `\tl_const:Ne \c_catcode_other_space_tl {\char_generate:nn ...}`**：
+   "Illegal parameter number in definition of" + "Too many }'s"——组/参数扫描
+   失衡沿失衡态传播。
+3. **l.9468-9530 `\token_if_*` 生成条件区**：34× `\use_ii:nn` extra-} +
+   27× Missing number + 2× Missing endcsname（即 §31.5 的主簇本体）。
+
+**机制级最小复现已锁**（/tmp/r25/mech19.tex，与真实 expl3 同构：
+2 级 `\let` 别名链 + `\__int_sep:`=`\let` + 体含 `\if_meaning:w`）：
+
+```tex
+\let\texnumD\number \let\iv\texnumD   % \int_value:w 同构
+\let\texnumE\numexpr \let\ev\texnumE  % \__int_eval:w 同构
+\let\texlet\let \let\sep\texlet       % \__int_sep: = \let（不是 \relax！）
+\long\def\auxb#1#2\sep#3#4\sep{\if_meaning:w0#1 0\else:(#1#2\if_meaning:w-#1+
+  \else:-\fi:(\if_meaning:w-#3-\fi:#3#4-1)/2)\fi:/#3#4}
+\edef\ga{\iv\ev\expandafter\auxb \iv\ev 140 \expandafter\sep \iv\ev 100 \sep \eend}
+```
+
+本引擎 → `140(100-1)/2)/100`（应 1）。剩余待解的两处（已定位到行）：
+
+- **数字扫描内部量分派不 deref 别名**：`scan_number_inner` 的大 match 无
+  `EqSlot::Alias` 臂（`_ => {}` 落空）→ `\number \ev 140` 报 Missing number 取 0。
+  tex.web 口径别名即原义，分派前应沿链解引用再进 `scan_something_internal`。
+- **表达式因子/运算符位对 `\if_meaning:w` 的求值时序**：第 2、4 处修复后仍差
+  一步——`\expandafter\auxb` 展开后 `\auxb` 的实参扫描把未展开的
+  `\if_meaning:w`-序列当数据吞进 `#2`，条件机的帧归属随之错位。tex.web 侧
+  `\ifx` 操作数用 `get_token`（不展开，数据语义）而 `\if_meaning:w` 自身在
+  expand 位被消费——需按"条件在 expand 位消费、其操作数是数据"重排
+  `peek_int_op`/`expr_peek_factor_token` 的消费顺序。
+
+### 32.4 验证（诚实记录）
+
+| 门 | 结果 |
+|---|---|
+| latex_probe --initex（/tmp/r21/w2，未插桩） | **87 → 86**（主簇未落清——简报"进 <30"未达） |
+| `cargo test -p ntex-core` | **328 绿**（325 既有 + 3 新增回归测：`number_scan_skips_false_branch_of_nested_romannumeral`、`expr_factor_expands_before_paren_dispatch`、`expr_operator_peek_skips_spaces_and_evals_cond`） |
+| TRIP | `组未闭合（缺少 }）groups=[SemiSimple, MathLeft, MathLeft, Align]`——与 HEAD 基线逐字节一致（stash 前后各跑一次对拍） |
+| 插桩还原 | 探针一律写 /tmp/r25（复制体），w2 harness 的 `expl3-code.tex` 未动（`cmp` 通过） |
+
+计数未显著下降的判读：4 处修复各自由机制级复刻验证为**真修**（旧值 → 新值
+对照见 §32.2 表），但都落在主簇的**上游**——上游解锁后 l.8073 的失真表达式
+得以走到下一层、在 l.9386/l.9468 暴露为新的失败形态（"Missing )" 1→3）。
+主簇的实质门闩是 §32.3 的两处表达式扫描语义，非本轮靶的真臂时序。
+
+### 32.5 本轮踩坑
+
+- **探针插桩点必须是顶层**：`expl3-code.tex` 全篇是 `\cs_new...{...}` 序列，
+  插进定义体/组内会被当 token 吸收（write16 不触发且无报错）。已验证的顶层
+  插入点：l.2994（`\__cs_generate_variant:wwNN` 前）、l.8074
+  （`\sys_load_backend:n` 前）。二分定位"执行到哪"时只信顶层点。
+- **机制级复刻必须带齐 expl3 的三件套**，否则失败形态是假的（本轮误判 3 次）：
+  1. catcode `\:`/`\_` = 11——`\if_meaning:w` 否则解析成 `\if_meaning` + `:w`，
+     错误形态变成"残留 `:` 字符"；
+  2. `\let\else:\else \let\fi:\fi \let\if_meaning:w\ifx` 等别名——`\else:` 未定义
+     时 NTex 的 edef `\if` 配对检查直接报"缺 \fi"；
+  3. `\__int_sep:` 是 **`\let`**（`\cs_new_eq:NN \__kernel_int_sep: \tex_let:D`，
+     l.4729）不是 `\relax`——用 `\relax` 当分隔符的复刻会在表达式收口位
+     提前失败（`\relax` 被运算符前瞻吸收）。
+- **`\__kernel_int_sep: = \let`** 本身是 l3kernel 的设计：分隔符必须是
+  不可展开且非 `\relax` 的 token，才能既终结 `\numexpr` 又留在流里给
+  宏实参扫描当定界符。
+- **仓库工作树非本会话独占**：`mod.rs`/`sink.rs`/`ntex-layout/*` 有并行会话的
+  "输出例程刀 1"改动在场——本刀提交只取 `expr.rs`/`scan.rs`/`tests.rs` 三文件
+  （TRIP 对拍时 `git stash` 会连他人改动一起藏起，对拍结论不受影响）。

@@ -56,6 +56,25 @@ impl Expander {
         loop {
             self.skip_spaces()?;
             let Some((tok, _)) = self.fetch()? else { break };
+            // 条件机跳过区（tex.web pass_text 语义）：fi_or_else 臂在 expand 内
+            // **同步** `while cur_chr<>fi_code do pass_text` 后弹帧——假分支 token
+            // 根本到不了数字扫描的后续取 token 位。本引擎把跳过留给惰性
+            // Skipping 帧（主循环逐 token 丢弃），所以数字扫描的每个取 token 位
+            // 都必须先问 is_skipping()（十进制循环既有同款臂，见下方数字分支）。
+            // 缺此臂时嵌套 romannumeral（`\exp_after:wN X \exp:w` 的 f-前瞻）会把
+            // 假分支的宏就地展开：2026 l3kernel 生成条件体 normal 臂
+            // `<test> \prg_return_true: \else: \prg_return_false: \fi: \exp_end:
+            // \c_true_bool \c_false_bool` 中 `\prg_return_false:` 的
+            // `\exp_after:wN\use_ii:nn\exp:w` 被展开，其 `\exp:w` 又把
+            // `\exp_end:`（chardef 0）当数吃掉、`\use_ii:nn` 反手吞掉真臂的
+            // `\c_true_bool`/`\c_false_bool`——真臂取到 0、残留 token 级联成
+            // `\use_ii:nn extra }` 主簇（expl3 l.7952 区 34 条）。
+            if self.is_skipping() {
+                if let Some(op) = self.cond_op(tok) {
+                    self.step_conditional(op, tok)?;
+                }
+                continue;
+            }
             if tok.charcode() == Some(b'-' as u32) {
                 neg = !neg;
                 continue;

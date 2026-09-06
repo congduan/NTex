@@ -353,6 +353,106 @@ mod tests {
         );
     }
 
+    /// 第二十五刀：数字扫描**符号循环的 is_skipping 臂**——条件机处于跳过区
+    /// （`\else` 之后）时，嵌套 romannumeral（`\exp_after:wN X \exp:w` 的
+    /// f-前瞻）不得展开假分支的宏。tex.web 的 get_x_token 在 fi_or_else 臂内
+    /// **同步** `while cur_chr<>fi_code do pass_text` 后弹帧，假分支 token 到不了
+    /// 数字扫描的取 token 位；本引擎是惰性 Skipping 帧，数字扫描必须自己问
+    /// is_skipping()（tex.web pass_text：只计数 `\if*`、只推进 `\else`/`\fi`）。
+    ///
+    /// 2026 l3kernel 生成条件体 **normal 臂**（l3basics `\@@_generate_p_form`：
+    /// `#8 = \use_i_ii:nnn` 路径）：
+    /// ```tex
+    /// \cs_new:Npn \foo_p:n #1 { <test> \prg_return_true: \else:
+    ///   \prg_return_false: \fi: \exp_end: \c_true_bool \c_false_bool }
+    /// ```
+    /// `\prg_return_true:` = `\exp_after:wN \use_i:nn \exp:w`——`\exp:w` 在
+    /// `\number` 的嵌套数字扫描里展开，遇 `\else:`（真分支 → else 臂）应就地
+    /// 跳过假分支、`\fi:` 弹帧，再以 `\exp_end:`（chardef 0）收口，最后
+    /// `\use_i:nn` 取 `\c_true_bool`(=1)/`\c_false_bool`(=0) 交回外层扫描。
+    /// 缺 is_skipping 臂则假分支的 `\prg_return_false:` 被展开，其 `\exp:w`
+    /// 吃掉 `\exp_end:`、`\use_ii:nn` 反手吞掉真臂两个 bool 常量 → 真臂取 0
+    /// + 残留 token 级联（expl3 l.7952 区 34 条 `\use_ii:nn extra }` 主簇）。
+    #[test]
+    fn number_scan_skips_false_branch_of_nested_romannumeral() {
+        let src = concat!(
+            "\\catcode`\\_=11 \\catcode`\\:=11 %\n",
+            "\\chardef\\exp_end:=0 \\chardef\\c_true_bool=1 \\chardef\\c_false_bool=0 %\n",
+            "\\long\\def\\use_i:nn#1#2{#1}\\long\\def\\use_ii:nn#1#2{#2} %\n",
+            "\\def\\prg_return_true:{\\expandafter\\use_i:nn\\romannumeral} %\n",
+            "\\def\\prg_return_false:{\\expandafter\\use_ii:nn\\romannumeral} %\n",
+            // normal 臂：真/假两支
+            "\\edef\\ga{\\number\\ifnum1=1\\prg_return_true:\\else\\prg_return_false:\\fi",
+            "\\exp_end:\\c_true_bool\\c_false_bool} %\n",
+            "\\edef\\gb{\\number\\ifnum1=2\\prg_return_true:\\else\\prg_return_false:\\fi",
+            "\\exp_end:\\c_true_bool\\c_false_bool} %\n",
+            // fast 臂（`\__prg_p_true:w` 形态）作对照
+            "\\def\\prgp_true:w#1\\fi\\c_false_bool{\\fi\\c_true_bool} %\n",
+            "\\edef\\gc{\\number\\ifnum1=1\\prgp_true:w\\fi\\c_false_bool} %\n",
+            "\\immediate\\write16{GA=\\ga,GB=\\gb,GC=\\gc}"
+        );
+        let (_r, transcript) = run_transcript(src);
+        assert!(
+            transcript.contains("GA=1,GB=0,GC=1"),
+            "normal 臂真支应取 \\c_true_bool(1)：{transcript}"
+        );
+        assert!(
+            !transcript.contains("Missing number") && !transcript.contains("Extra"),
+            "真臂时序偏差（假分支宏被展开）：{transcript}"
+        );
+    }
+
+    /// 表达式**因子位**的 get_x_token 前瞻：`( <expr> )` 因子臂必须对**展开
+    /// 产物**判定（etex.web scan_expr 取 token 循环同为 get_x_token）。expl3
+    /// `\int_div_truncate:nn` 让 `\__int_div_truncate:NwNw` 在因子位展开出
+    /// `( ... )`；旧实现因子位直读一个 token、非 `(` 即进 scan_int，`(` 落入
+    /// 十进制循环 → "Missing number, treated as zero" + "Missing ) inserted"。
+    #[test]
+    fn expr_factor_expands_before_paren_dispatch() {
+        let src = concat!(
+            "\\def\\paren{(2+3)} %\n",
+            "\\edef\\ga{\\number\\numexpr\\paren*4\\relax} %\n",
+            "\\immediate\\write16{GA=\\ga}"
+        );
+        let (_r, transcript) = run_transcript(src);
+        assert!(
+            transcript.contains("GA=20"),
+            "因子位宏展开产物中的 `(` 应按括号因子处理：{transcript}"
+        );
+    }
+
+    /// 表达式**运算符前瞻**须跳过空格（`skip_spaces`）——expl3
+    /// `\__int_div_truncate:NwNw` 的体含空格：
+    /// `( #1#2 ... ( #3#4 - 1 ) / 2 ) / #3#4`。`)` 之后的空格若不跳过，
+    /// 乘/除层前瞻把空格当终结符、`/ 2` 残留流中（值 41 + "Missing )"）。
+    /// 同时运算符位的 `\if_meaning:w` 条件开始按 get_x_token 就地求值。
+    #[test]
+    fn expr_operator_peek_skips_spaces_and_evals_cond() {
+        // expl3-code l.6652-6673 `\int_div_truncate:nn`/`\__int_div_truncate:NwNw`
+        // 机制级复刻（`\__int_sep:` = `\let`，两级别名链同 expl3）。
+        let src = concat!(
+            "\\catcode`\\_=11 \\catcode`\\:=11 %\n",
+            "\\let\\texnumD\\number \\let\\iv\\texnumD %\n",
+            "\\let\\texnumE\\numexpr \\let\\ev\\texnumE %\n",
+            "\\let\\texlet\\let \\let\\sep\\texlet \\let\\eend\\relax %\n",
+            "\\long\\def\\auxb#1#2\\sep#3#4\\sep",
+            "{\\if_meaning:w0#1 0\\else:(#1#2\\if_meaning:w-#1+\\else:-\\fi:",
+            "(\\if_meaning:w-#3-\\fi:#3#4-1)/2)\\fi:/#3#4} %\n",
+            "\\edef\\ga{\\iv\\ev\\expandafter\\auxb \\iv\\ev 140 \\expandafter\\sep ",
+            "\\iv\\ev 100 \\sep \\eend} %\n",
+            "\\immediate\\write16{GA=\\ga}"
+        );
+        let (_r, transcript) = run_transcript(src);
+        assert!(
+            transcript.contains("GA=1"),
+            "含空格/内嵌条件的表达式应得 1：{transcript}"
+        );
+        assert!(
+            !transcript.contains("Missing )") && !transcript.contains("Missing number"),
+            "表达式在空格/条件处提前收口：{transcript}"
+        );
+    }
+
     #[test]
     fn ifx_noexpand_macro_is_unequal() {        // tex.web l.7506-7516（no_expand_flag=257）：`\noexpand` 标记的 cs 在
         // `\ifx` 比较时，若原含义**可展开**则被替换为 (relax,257)——与原含义
