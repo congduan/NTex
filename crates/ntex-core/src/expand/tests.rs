@@ -288,9 +288,73 @@ mod tests {
         assert_eq!(expand(src).unwrap(), "AYYB");
     }
 
+    /// 数字扫描**符号循环**的 `\else`/`\fi`/`\or` 须按 tex.web expand 的
+    /// fi_or_else 臂（§9897 @<Terminate the current conditional and skip to
+    /// \fi@>）推进条件机：栈顶帧已完成求值（if_limit=else_code）→ `\fi` 就地
+    /// 弹帧、扫描继续；栈顶帧求值中（if_limit=if_code）→ insert_relax 门
+    /// （token 放回 + 前插 `\relax`）；无帧 → 维持旧"放回 + Missing number"
+    /// 恢复。expl3-code l.1888-1893 `\cs_to_str:N` 是依赖此语义的真实样例：
+    ///
+    /// ```tex
+    /// \cs_gset:Npn \cs_to_str:N { \tex_romannumeral:D
+    ///   \if:w \token_to_str:N \ \__cs_to_str:w \fi:
+    ///   \exp_after:wN \__cs_to_str:N \token_to_str:N }
+    /// \cs_gset:Npn \__cs_to_str:N #1 { \c_zero_int }
+    /// \cs_gset:Npn \__cs_to_str:w #1 \__cs_to_str:N
+    ///   { - \int_value:w \fi: \exp_after:wN \c_zero_int }
+    /// ```
+    ///
+    /// `\if:w` 真臂里 `\number` 的嵌套数字扫描在符号循环遇到 `\fi:`（闭合
+    /// `\if:w` 帧后须继续到 `\expandafter`/`\c_zero_int` 取 0 终止）；旧实现
+    /// 符号循环把 `\fi:` 放回，落入十进制数字循环错位弹帧 → Missing number
+    /// + `\string` 产物错位（expl3 sys/bool 区 40 条 Missing number 同族）。
     #[test]
-    fn ifx_noexpand_macro_is_unequal() {
-        // tex.web l.7506-7516（no_expand_flag=257）：`\noexpand` 标记的 cs 在
+    fn number_scan_sign_loop_steps_fi_of_completed_frame() {
+        // l3kernel `\cs_to_str:N` 机制级复刻（`\if:w X` 取 cat 12 vs cat 12 同真）。
+        let src = concat!(
+            "\\catcode`\\_=11 \\catcode`\\:=11 %\n",
+            "\\let\\fi:\\fi \\let\\if:w\\if %\n",
+            "\\chardef\\c_zero_int=0 %\n",
+            "\\long\\def\\__cs_to_str:N#1{\\c_zero_int} %\n",
+            "\\long\\def\\__cs_to_str:w#1\\__cs_to_str:N",
+            "{-\\number\\fi:\\expandafter\\c_zero_int} %\n",
+            "\\def\\cs_to_str:N#1{\\romannumeral",
+            "\\if:w -\\__cs_to_str:w\\fi:",
+            "\\expandafter\\__cs_to_str:N\\string#1} %\n",
+            "\\edef\\t{\\cs_to_str:N\\abc}\\t"
+        );
+        let (r, transcript) = run_transcript(src);
+        r.unwrap();
+        assert!(
+            !transcript.contains("Missing number"),
+            "数字扫描符号循环未推进条件机：{transcript}"
+        );
+        assert!(
+            !transcript.contains("Extra \\fi"),
+            "\\fi 帧归属错位：{transcript}"
+        );
+    }
+
+    /// 符号循环遇**无帧可归属**的游离 `\else`/`\fi` 维持旧放回语义（TRIP L82
+    /// `\ifnum'\ifnum10=10 12="\fi` 契约：radix 循环/符号循环的游离终结符须
+    /// 留给外层条件机闭合，Missing number 恢复后由 skip_ahead 消费）。
+    #[test]
+    fn number_scan_sign_loop_keeps_free_fi_for_outer_machine() {
+        // 外层 \ifnum 操作数扫描中（栈顶帧 Evaluating=insert_relax 门）遇 `\fi`：
+        // token 放回、本扫描按 Missing number 收场，`\fi` 由外层 skip_ahead 闭合。
+        let src = concat!(
+            "\\count0=\\number\\fi 7 %\n",
+            "\\count1=5 "
+        );
+        let (_r, transcript) = run_transcript(src);
+        assert!(
+            transcript.contains("Missing number"),
+            "游离 \\fi 应触发 Missing number 恢复：{transcript}"
+        );
+    }
+
+    #[test]
+    fn ifx_noexpand_macro_is_unequal() {        // tex.web l.7506-7516（no_expand_flag=257）：`\noexpand` 标记的 cs 在
         // `\ifx` 比较时，若原含义**可展开**则被替换为 (relax,257)——与原含义
         // 不等；不可展开 cs / 字符 token 含义原样保留（相等）。expl3 全族
         // "宏还是寄存器" 判别 `\exp_after:wN \if_meaning:w \exp_not:N #1 #1`

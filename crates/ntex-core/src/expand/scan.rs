@@ -78,6 +78,29 @@ impl Expander {
                 if self.maybe_eval_cond(tok)? {
                     continue;
                 }
+                // tex.web expand 的 fi_or_else 臂（§9897 @<Terminate the current
+                // conditional...@>）：符号循环的 get_x_token 对 `\else`/`\fi`/`\or`
+                // 同样经 expand 处理——栈顶帧 Evaluating（if_limit=if_code，外层
+                // 条件操作数扫描中）走 insert_relax 门（token 放回 + 前插
+                // frozen `\relax`，本扫描按 Missing number 收场、`\fi` 留给外层
+                // 条件机闭合）；栈顶帧已完成求值（if_limit=else_code）则就地
+                // 跳过/弹帧。expl3 生成条件体的 test 段自带 `\else:`/`\fi:`
+                // （`\cs_if_exist_p:N` 的
+                //   `\if_meaning:w #1\scan_stop: \use_i:nnnn \else: \fi: \if_cs_exist:N #1`），
+                // 在 `\number<谓词>` 中求值时这些终结符从符号循环到达——放回
+                // 则落入十进制数字循环错位弹帧，`\use:n` 级联 Missing number
+                // （l3kernel l.7952 sys 区 40 条的根因）。仅当无帧可归属时维持
+                // 旧"放回 + Missing number"恢复（游终结符，行为不变）。
+                if let Some(op) = self.cond_op(tok) {
+                    if matches!(op, CondOp::Fi | CondOp::Else | CondOp::Or)
+                        && self.cond_stack.is_empty()
+                    {
+                        self.unread(tok);
+                        break;
+                    }
+                    self.step_conditional(op, tok)?;
+                    continue;
+                }
                 // tex.web scan_int 符号循环的 get_x_token 语义：宏/可展开原语
                 // 展开后重新进入符号处理（trip.tex L103 `\tracingoutput\on`：
                 // \on 宏展开为 1 作为参数值——缺此分支则报 Missing number 并把

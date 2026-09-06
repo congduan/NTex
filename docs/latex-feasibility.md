@@ -2314,3 +2314,95 @@ banner 两行；共享 target 目录会交付陈旧二进制，见 §22）。即
   原语本身（get_next 不展开）——expl3 惯用法必须带 `\expandafter`
   （`\expandafter\ifx\noexpand#1#1`）。写回归测时若漏掉 `\expandafter`
   会把"修复无效"误判出来。
+
+## 31. 2026-09-06 第二十四轮：数字扫描符号循环的 `\else`/`\fi`/`\or` 条件机推进——`\cs_to_str:N` 族首个根因落地
+
+### 31.1 起点与靶子
+
+HEAD=1ac7dd9，探针终态 **97**（40 Missing number + 32 `\use_ii:nn` extra-} +
+6 Undefined + 其余零头）。本轮靶子 = §30.6 留下的 `\prg_return_true:`/`\false:`
+romannumeral 新语义（"数字扫描中段内部量"）。
+
+### 31.2 定位：`NTEX_MISSING_NUM_TRACE` 帧转储（Rust 侧，零 tex 探针）
+
+在 `report_missing_number` 挂 env 开关转储最深 6 帧的 pos 后 token（**直接读帧
+内切片，不消费**——比 §30.2 的 fetch-回放法干净，且不碰 expl3-code.tex，无
+§30.8 探针污染问题），再在 scan_number_inner 四个循环出口（符号/反引号尾随/
+radix/十进制）挂出口标签。一轮跑出 97 条的完整失败链：
+
+```
+[num-scan] backquote-trail stop at \c_false_bool   ← 最内层：romannumeral f-前瞻（正确）
+[num-scan] sign-loop stop at \fi:                  ← 中层：\number 谓词扫描符号循环
+[num-scan] decimal-loop stop at \use:n             ← 外层：十进制循环错位弹帧后撞上 \use:n
+[missing-num] #0 \use:n … #3 { \__bool_if_p_aux:w } \group_align_safe_begin: …（\__bool_if_p:n 体耗尽）
+```
+
+**根因**：符号循环只经 `maybe_eval_cond` 处理条件**开始**（`\if*`）；
+`\else`/`\fi`/`\or` 被当普通终结符放回 → 十进制数字循环随后拾起并以
+`cond_stack 非空` 为由 `step_conditional` **错位弹帧**（弹掉的是外层条件帧）→
+扫描撞上 `\use:n` → Missing number + `\__prg_*_true:w` 定界串失衡 →
+`\use_ii:nn` extra-} 级联。
+
+tex.web 依据：`expand` 的 fi_or_else 臂（§9897
+`@<Terminate the current conditional and skip to \fi@>`）——get_x_token 对
+`\else`/`\fi`/`\or` **同样走 expand**：栈顶帧 `if_limit=if_code`（本引擎
+`CondState::Evaluating`，外层条件操作数扫描中）→ `insert_relax`（token 放回
++ 前插 frozen `\relax`，本扫描按 Missing number 收场、`\fi` 留给外层条件机）；
+帧已完成求值 → skip/弹帧。
+
+### 31.3 修复（scan.rs 符号循环一处，cond.rs 零改动）
+
+`maybe_eval_cond` 之后补 Fi/Else/Or 臂：`cond_stack` 非空 → `step_conditional`
+（insert_relax 门/跳过/弹帧全是 cond.rs 既有机器）；`cond_stack` 空 → 维持旧
+"放回 + Missing number"（游终结符，TRIP L82 契约）。radix（`"`/`'`）循环
+**未触碰**（L82 的 `\fi` 放回在 radix 循环，见 §22/§29）；十进制循环既有
+Fi/Else/Or 臂不动。
+
+依赖此语义的真实 l3kernel 样例 = expl3-code **l.1888-1893 `\cs_to_str:N`**
+（`\romannumeral \if:w … \__cs_to_str:w \fi: \exp_after:wN \__cs_to_str:N
+\token_to_str:N`，`\__cs_to_str:w` 体 `- \int_value:w \fi: \exp_after:wN
+\c_zero_int`）：`\if:w` 真臂里 `\number` 的嵌套数字扫描在**符号循环**遇
+`\fi:`——弹掉 `\if:w` 帧后须继续到 `\expandafter`/`\c_zero_int`（首 token 位
+内部量）取 0 终止，随后 `\number` 产物 `0` 作外层数字、`\string` 产物全名
+留在流中（`\cs_to_str:N\abc` → `abc`）。
+
+### 31.4 验证
+
+| 门 | 结果 |
+|---|---|
+| latex_probe --initex（/tmp/r21/w2，无 patch1） | **97 → 87**（Missing number 40→28；l.9468-9530 token 区每点 2→1） |
+| `cargo test -p ntex-core` | **325 绿**（323 既有 + 2 新增） |
+| TRIP | `组未闭合（缺少 }）groups=[SemiSimple, MathLeft, MathLeft, Align]`——与 HEAD 基线对拍一致（worktree + 独立 CARGO_TARGET_DIR 冷构建，见 §30.7 方法） |
+
+新增回归测：`number_scan_sign_loop_steps_fi_of_completed_frame`（`\cs_to_str:N`
+机制级复刻，断言无 Missing number / 无 Extra \fi；**最小复现必须
+`\let\if:w\if`**——expl3 别名在 initex 初表未注册，漏了会呈现"修复无效"假象）、
+`number_scan_sign_loop_keeps_free_fi_for_outer_machine`（游离 `\fi` 契约锁）。
+
+### 31.5 剩余 87 条的定性（下一轮靶子）
+
+- **34 `\use_ii:nn` extra-} + 28 Missing number**：与 §30.6 假设的"中段**内部量**"
+  不同——帧转储显示十进制循环撞的是 `\use:n`/`}`，属**生成 p-form 真臂**
+  （`<test> \exp_end: \c_true_bool \c_false_bool`）的**真分支侧**：`\number`
+  取走 `\exp_end:`（0）后 `\c_true_bool \c_false_bool` 残留在流，
+  `\__bool_choose:NNN` 的 `#3`（应为 `)`/`&`/`|`）拿到 bool 常量 →
+  `\use:c{__bool_<名>_…}` 造名失衡 → 2 条 `Missing endcsname inserted`
+  与 extra-} 同链。假分支侧（`\c_false_bool` 直接作数）本已自洽。
+  tex.web 口径下 `\exp_end:`（chardef 0）是首 token 位内部量、值恒 0——
+  2026 l3kernel 若真依赖"真臂取 1"，则其自洽性必须在**别处**闭合
+  （候选：`\number` 前的 romannumeral f-前瞻截停位、或 `\__bool_p:Nw` 的
+  `\int_value:w` 展开时序），下一轮先对拍真实 TeX 的 `\showthe\numexpr` 级
+  最小样例再动手。
+- **6 Undefined control sequence**：l.301/302（`^^J`，既有）+ l.10024 区 3 条
+  （prop 模块级联，随上链消除）。
+- **3 Illegal parameter number / 3 Extra \fi / l.398 Missing )**：既有零头。
+
+### 31.6 本轮踩坑
+
+- **`expand()` 双轨断言会掩盖错误恢复差异**：`run_transcript`（断言 write16
+  消息）与 `expand`（断言 token 输出）必须并用——`\cs_to_str:N` 复刻在
+  修复前后**输出相同**（都是 `abc`），差异只在 Missing number 消息。
+- **帧转储直接读帧内切片**（`InputFrame` 各变体的 `pos` 后 slice）比 fetch-
+  回放法安全：fetch 会推进 pos / 触发惰性跳过，转储本身改变状态。
+- **worktree 冷构建对拍**：`git worktree add` 后 fixtures 不随迁
+  （fixtures/ 在 .gitignore 之外但未入库的子目录需手拷，§16 有前科）。
