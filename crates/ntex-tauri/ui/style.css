@@ -1,0 +1,71 @@
+/* NTex Studio（Tauri 壳）暗色主题：与 ntex-studio 工作台观感对齐。 */
+:root {
+  --bg: #1d2129; --bg2: #15181f; --panel: #22272f; --line: #2e3440;
+  --fg: #d8dee9; --dim: #7f8a99; --accent: #4f9cf9;
+  --ok: #56d364; --err: #f85149; --warn: #e3b341;
+  --mono: "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg2); color: var(--fg); font: 13px/1.5 -apple-system, "PingFang SC", "Segoe UI", sans-serif; }
+#app { display: flex; flex-direction: column; height: 100vh; }
+
+/* 顶栏 */
+header { display: flex; align-items: center; gap: 16px; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.brand { font-weight: 700; font-size: 15px; letter-spacing: 0.5px; }
+.brand span { color: var(--accent); margin-left: 4px; }
+.brand em { font-style: normal; font-weight: 400; font-size: 11px; color: var(--dim); margin-left: 10px; }
+.toolbar { display: flex; align-items: center; gap: 14px; flex: 1; }
+.toolbar label { color: var(--dim); }
+.toolbar select { background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; }
+.chk { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+.spacer { flex: 1; }
+.status { font-size: 15px; }
+.status.idle { color: var(--dim); } .status.busy { color: var(--warn); } .status.ok { color: var(--ok); } .status.err { color: var(--err); }
+#timing { color: var(--dim); font-size: 12px; min-width: 90px; text-align: right; font-family: var(--mono); }
+
+/* 主区 */
+main { display: flex; flex: 1; min-height: 0; }
+section { display: flex; flex-direction: column; min-width: 0; }
+#editor-pane { flex: 0 0 46%; }
+#preview-pane { flex: 1; }
+#divider { flex: 0 0 5px; cursor: col-resize; background: var(--line); }
+#divider:hover { background: var(--accent); }
+
+.pane-title { display: flex; align-items: center; justify-content: space-between; padding: 5px 12px; font-size: 11.5px; color: var(--dim); background: var(--panel); border-bottom: 1px solid var(--line); }
+.pane-title .hint { opacity: 0.75; }
+.pane-title nav { display: flex; gap: 4px; }
+.pane-title button { background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; width: 26px; height: 22px; cursor: pointer; font-size: 14px; line-height: 1; }
+.pane-title button:hover { border-color: var(--accent); }
+.page-label { color: var(--fg); font-family: var(--mono); margin-left: 6px; }
+
+/* 编辑器：行号 + 高亮叠层 */
+.editor-wrap { display: flex; flex: 1; min-height: 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.55; }
+#gutter { margin: 0; padding: 10px 8px 10px 12px; color: var(--dim); text-align: right; background: var(--bg2); border-right: 1px solid var(--line); overflow: hidden; white-space: pre; user-select: none; min-width: 44px; }
+.editor-stack { position: relative; flex: 1; min-width: 0; }
+#hl, #editor { position: absolute; inset: 0; margin: 0; padding: 10px 12px; font: inherit; line-height: inherit; white-space: pre; overflow: auto; tab-size: 2; }
+#hl { pointer-events: none; overflow: hidden; color: var(--fg); }
+#editor { background: transparent; color: transparent; caret-color: var(--accent); border: 0; outline: none; resize: none; }
+#editor::placeholder { color: var(--dim); }
+#editor::selection { background: rgba(79, 156, 249, 0.30); }
+
+/* TeX 语法高亮 */
+.tk-cm { color: #6a737d; font-style: italic; }   /* % 注释 */
+.tk-cs { color: #4f9cf9; }                        /* \controlsequence */
+.tk-math { color: #e3b341; }                      /* $ 数学定界 */
+.tk-spec { color: #c886f8; }                      /* {} # & ^ _ ~ */
+.tk-num { color: #56d364; }                       /* 数字 */
+
+/* 预览 */
+#preview-scroll { flex: 1; overflow: auto; background: var(--bg2); display: flex; justify-content: center; padding: 14px; }
+#preview { background: #fff; box-shadow: 0 2px 14px rgba(0,0,0,0.45); max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; cursor: zoom-in; }
+#preview.zoom100 { max-width: none; max-height: none; cursor: zoom-out; }
+#error-bar { padding: 8px 12px; background: rgba(248, 81, 73, 0.12); border-top: 1px solid var(--err); color: var(--err); font-family: var(--mono); font-size: 12px; white-space: pre-wrap; max-height: 96px; overflow: auto; }
+
+/* log 面板 */
+#log-pane { border-top: 1px solid var(--line); background: var(--panel); }
+#log-pane.collapsed #log { display: none; }
+#log-pane.collapsed #log-toggle { transform: rotate(-90deg); }
+#log-toggle { background: none; border: 0; color: var(--dim); cursor: pointer; font-size: 12px; padding: 0 6px; }
+#log { margin: 0; padding: 8px 14px 12px; height: 130px; overflow: auto; font-family: var(--mono); font-size: 11.5px; line-height: 1.5; color: #9aa7b6; white-space: pre-wrap; }
+#log .err-line { color: var(--err); }

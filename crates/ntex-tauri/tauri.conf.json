@@ -1,0 +1,23 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "NTex Studio",
+  "version": "0.1.0",
+  "identifier": "dev.ntex.studio",
+  "build": {
+    "frontendDist": "ui"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "NTex Studio — TeX 实时预览（wasm 渲染）",
+        "width": 1380,
+        "height": 900,
+        "minWidth": 860,
+        "minHeight": 560
+      }
+    ]
+  },
+  "bundle": {
+    "active": false
+  }
+}

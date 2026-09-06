@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NTex Studio — TeX 实时预览（wasm 渲染）</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <header>
+      <div class="brand">NTex<span>Studio</span><em id="engine-info">wasm 加载中…</em></div>
+      <div class="toolbar">
+        <label title="渲染分辨率（A4@72dpi ≈ 595×842）">dpi
+          <select id="dpi">
+            <option value="72">72</option>
+            <option value="96" selected>96</option>
+            <option value="144">144</option>
+            <option value="288">288</option>
+          </select>
+        </label>
+        <label class="chk" title="排版调试 overlay：盒边界/glue/断点标记（与 ntex-backend --debug 同口径）">
+          <input type="checkbox" id="debug" /> debug overlay
+        </label>
+        <span class="spacer"></span>
+        <span id="status" class="status idle" title="排版状态">●</span>
+        <span id="timing"></span>
+      </div>
+    </header>
+
+    <main>
+      <section id="editor-pane">
+        <div class="pane-title">
+          <span>plain TeX（内嵌 CM TFM：cmr10 / cmbx10 / cmti10 / …）</span>
+          <span class="hint">Cmd/Ctrl+S 立即重排 · 草稿自动保存</span>
+        </div>
+        <div class="editor-wrap">
+          <pre id="gutter" aria-hidden="true">1</pre>
+          <div class="editor-stack">
+            <pre id="hl" aria-hidden="true"><code id="hlcode"></code></pre>
+            <textarea id="editor" spellcheck="false" wrap="off"
+              placeholder="输入 plain TeX 源码，右侧实时预览（占位方框口径，真字形属 B 档后续）…"></textarea>
+          </div>
+        </div>
+      </section>
+
+      <div id="divider" title="拖动调整分栏"></div>
+
+      <section id="preview-pane">
+        <div class="pane-title">
+          <span>预览 <b id="page-label" class="page-label">– / –</b></span>
+          <nav>
+            <button id="prev-page" title="上一页（可拖动分栏）">‹</button>
+            <button id="next-page" title="下一页">›</button>
+          </nav>
+        </div>
+        <div id="preview-scroll"><canvas id="preview" width="10" height="10"></canvas></div>
+        <div id="error-bar" hidden></div>
+      </section>
+    </main>
+
+    <footer id="log-pane">
+      <div class="pane-title">
+        <span>log / 转录</span>
+        <button id="log-toggle" title="折叠/展开">▾</button>
+      </div>
+      <pre id="log">（等待编译…）</pre>
+    </footer>
+  </div>
+  <script type="module" src="main.js?v=2"></script>
+</body>
+</html>

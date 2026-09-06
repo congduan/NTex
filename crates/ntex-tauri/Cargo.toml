@@ -1,0 +1,18 @@
+[package]
+name = "ntex-tauri"
+description = "NTex Tauri 壳（M8）：静态前端 + ntex-wasm 软光栅实时预览（wasm 渲染形态）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Tauri 2.x 自身 MSRV 高于 workspace 的 1.80，故不声明 rust-version
+# （native 构建由 rustup 1.98 / Homebrew 1.94 均可承担）。
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+[lints]
+workspace = true

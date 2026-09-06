@@ -1,7 +1,7 @@
 # NTex 开发常用命令。
 # 质量门禁：`make check` = fmt + lint + test 三件套全绿。
 
-.PHONY: fmt lint test check fixtures fixture-extras trip diff bench
+.PHONY: fmt lint test check fixtures fixture-extras trip diff bench tauri-wasm tauri
 
 fmt:
 	cargo fmt --all -- --check
@@ -33,3 +33,16 @@ diff:
 # 基准（stub 驱动验证管路；真实引擎接入后提供数字）
 bench:
 	cargo run -p ntex-bench -- --driver stub
+
+# 构建 ntex-wasm 并生成 Tauri 前端绑定（wasm-bindgen 版本须与 Cargo.lock 一致，
+# 见 crates/ntex-wasm/README.md「构建」）。注意：Homebrew rust 不带 wasm32 std，
+# 须前置 rustup 工具链路径。
+tauri-wasm:
+	PATH="$$HOME/.cargo/bin:$$PATH" cargo build -p ntex-wasm --target wasm32-unknown-unknown --release
+	wasm-bindgen --out-dir crates/ntex-tauri/ui/pkg --target web \
+		target/wasm32-unknown-unknown/release/ntex_wasm.wasm
+
+# Tauri 实时预览工作台（wasm 渲染形态）：排版+软光栅全在前端 WASM 内，
+# Tauri 仅桌面壳；先 make tauri-wasm 再启动。
+tauri: tauri-wasm
+	cargo run -p ntex-tauri

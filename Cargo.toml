@@ -23,6 +23,7 @@ members = [
     "crates/ntex-backend",
     "crates/ntex-studio",
     "crates/ntex-wasm",
+    "crates/ntex-tauri",
 ]
 
 [workspace.package]
