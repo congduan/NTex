@@ -1,0 +1,18 @@
+% NTex WASM（M8-A）随包示例：plain 子集 + 显式 \font（无 .fmt 依赖，C 档前提）。
+% 与仓库根 demo.tex 同风格；本文件经 include_str! 进二进制（demo_tex() 与冒烟入口）。
+\tolerance 10000
+\parindent 20pt
+\parskip 6pt plus 2pt
+\topskip 12pt
+\maxdepth 4pt
+\vsize 170pt
+\hsize 350pt
+\font\cmr=cmr10
+\font\bf=cmbx10
+\font\it=cmti10
+\cmr This is the WASM smoke document. It is typeset entirely inside the engine: the host hands over a plain TeX string, NTex loads the embedded TFM metrics for cmr10, breaks the paragraph into lines with Knuth--Plass, ships the pages out, and hands the DVI bytes plus the transcript back to JavaScript. No file system is involved at any point, because the browser has none.
+\par
+\bf Bold text comes from cmbx10, and {\it italic text} from cmti10, both loaded through the same embedded font source. Switching families mid-paragraph exercises the font selector control sequences and the interword glue that each TFM supplies, so the line breaker sees three different sets of metrics inside one job.
+\par
+\cmr The third paragraph is long enough to overflow the page target of 170pt set by \vsize, so the page builder fires up the current page at a feasible break and starts a fresh one. That is the same automatic pagination the native driver exercises, which makes this document a usable acceptance anchor for the WASM skeleton line.
+\end

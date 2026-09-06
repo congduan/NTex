@@ -741,6 +741,13 @@ vs 全量 diff 作 CI 常驻检查，闭环 §7 风险项）；`.aux`/`.toc` 增
 - [x] **排版调试 overlay**（2026-09-05）：prims 层独立 `debug` 通道（`RenderOptions::debug` / CLI `--debug`）——版心+盒边界描边（HBox 蓝/VBox 紫红）、基线（青）、glue 自然宽带+stretch/shrink 指示线（fil 阶亮绿）、kern 橙线、penalty 断点标记（禁断深红粗线）；两后端在内容之后绘制，`rects` 通道与差分口径零变化（demo 实测 GPU/软光栅 debug 位图逐字节一致）
 - [x] **实时预览工作台**（2026-09-05，M8 §10 WASM 预览的桌面先行形态）：`crates/ntex-studio`——左侧 TeX 语法高亮编辑器（注释/控制序列/数学/组符分色）+ 右侧 vello GPU 表面渲染。egui-wgpu 0.35 三段式回调桥接（prepare 离屏 Rgba8Unorm 矢量光栅化 → paint 全屏 quad blit），缩放/平移只改 Scene 仿射、始终按显示分辨率重光栅化（放大不糊）；250ms 防抖同步重排，dpi/调试 overlay 开关、翻页、编译错误进状态栏不 panic。**依赖硬约束：eframe 0.35 ↔ vello 0.10 恰共用 wgpu 29**（eframe 0.36 已用 wgpu 30 会分裂，升级前必验）。`ntex-backend::build_scene` 抽为公共 Scene 构建（无头回读与 GUI 共用同一事实源）
 - [ ] WASM 前端：wasm-bindgen + Canvas2D/WebGL 实时预览（接 M5 增量，毫秒级刷新）
+  ——**骨架已建（A 档，2026-09-06）**：`crates/ntex-wasm`（cdylib）——`compile_tex(tex) →
+  DVI 字节 + 转录 + 页数 + 字体清单`，plain 子集、无渲染；TFM 经
+  `ntex_layout::set_tfm_source` 注入（内嵌 6 个 CM TFM，7.7 KB）；wasm32 分叉点只有
+  三处且全部带注释（`param.rs` 时间固定 1970-01-01、`expand::run` 看门狗整段门控、
+  `TfmLoader` 字节源分叉），native 行为逐字节不变（`cargo test --workspace` 全绿、
+  ntex-trip 失败签名与基线一致）。B 档（vello/wgpu web 渲染）另案，C 档（LaTeX `.fmt`
+  载入）待 `ntex-format` 快照完备；详见 `crates/ntex-wasm/README.md`
 - [ ] SyncTeX 源码映射（IDE 点击跳转）
 
 **验收**：简单文档 L2 一致；WASM 演示在浏览器增量预览流畅。
@@ -832,7 +839,7 @@ LaTeX 兼容战役（进行中）
 | `ntex-incremental`（不单建）| 增量计算：段级重算 / 可回滚检查点 / 依赖追踪 / 失效传播——落在 `ntex-core/src/incremental/`（expand 层）+ `ntex-layout` `IncrementalTypesetter`（排版层），同 RFC-4 字节码入 core 先例 | ✅ 已落地（M5 阶段一\~五，见 §7）                            |
 | `ntex-io`                | VFS、aux 增量                                                                                                                | ✅ 已建（RFC-3：Vfs trait + LocalVfs/MemVfs + 读写原语）        |
 | `ntex-backend`           | 渲染后端：`Backend` trait + 软光栅 + vello GPU（wgpu 无头纹理回读，M8）+ PNG 导出；与软光栅共享 prims 遍历可差分                          | ✅ 已建（2026-09-05，M8）                                  |
-| `ntex-cli` / `ntex-wasm` | 命令行 / WASM 前端                                                                                                             | 未建（M9）                                                |
+| `ntex-cli` / `ntex-wasm` | 命令行 / WASM 前端                                                                                                             | `ntex-wasm` **骨架已建**（2026-09-06，M8 A 档：引擎核心 plain 子集 → DVI + log；渲染另案 B 档）；`ntex-cli` 未建（M9）                                                |
 | `ntex-mcp`              | **MCP server（stdio JSON-RPC）**：tex→PDF / 宏展开诊断 / 增量会话（M9 生态，复用 ntex-cli 库化接口 + ntex-io MemVfs）                       | 未建（M9）                                                |
 
 ***

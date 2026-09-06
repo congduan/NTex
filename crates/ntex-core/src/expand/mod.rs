@@ -17,8 +17,13 @@
 //! - 空行 → `\par` 已实现（`scan_token` 行状态机，A2）。
 
 use std::collections::{BTreeMap, HashMap};
+// 原子量/Mutex 仅线程看门狗用（M8-A WASM 骨架线：wasm32 下看门狗整段门控，
+// 随之不导入，免 wasm 构建出现 unused import 警告）。
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::Mutex;
+use std::sync::{Arc, OnceLock};
 
 use crate::bytecode::{compile, Bytecode};
 use crate::catcode::{Catcode, CatcodeTable};
@@ -422,6 +427,11 @@ pub struct FmtState {
 /// `run()` 主循环每步更新心跳与状态快照；独立线程每 2s 检查心跳，
 /// 停更超过 10s（单步内部死循环 / layout 侧死循环导致 process_one 不返回）
 /// 即打印最后状态并退出（one-shot）。不参与 `.fmt` 序列化。
+///
+/// WASM（M8-A）：整段随看门狗门控——单线程环境看门狗线程无意义，
+/// 且 `std::thread::spawn`/`sleep`/`SystemTime::now` 在 wasm32-unknown-unknown
+/// 上不可用（panic），见 [`Expander::run`] 注释。
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Default)]
 struct WatchdogShared {
     /// 主循环最后心跳（UNIX 毫秒）。
@@ -435,6 +445,10 @@ struct WatchdogShared {
 }
 
 /// 当前 UNIX 毫秒（线程看门狗心跳用）。
+///
+/// WASM（M8-A）：随看门狗整段门控——wasm32-unknown-unknown 的 std 无 OS 时钟
+/// （`SystemTime::now` 直接 panic），单线程环境本就看门狗无意义（见 `run()`）。
+#[cfg(not(target_arch = "wasm32"))]
 fn now_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -479,6 +493,8 @@ pub struct Expander {
     intern: InternTable,
     eqtb: Eqtb,
     /// 线程看门狗共享状态（挂死诊断；不参与 .fmt 序列化，run 时创建）。
+    /// WASM（M8-A）：随看门狗整段门控（单线程环境无诊断线程）。
+    #[cfg(not(target_arch = "wasm32"))]
     watchdog: Option<Arc<WatchdogShared>>,
     catcodes: CatcodeTable,
     /// `\sfcode` 表（M3-4 词间距 spacefactor；TeX 默认全 1000，plain 对
@@ -692,6 +708,7 @@ impl Expander {
             font_names: Vec::new(),
             font_loads: Vec::new(),
             font_cs_names: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
             watchdog: None,
             output_toks: None,
             output_active: false,
@@ -889,15 +906,30 @@ impl Expander {
     ///
     /// 输出例程（M3-5-3）在 token 边界注入：fire_up（发生在 sink 调用内）把页面
     /// 放入 box255 并置 pending；本循环在每次取 token 前检查并注入例程 token 帧。
+    ///
+    /// WASM（M8-A 骨架线）：native 专属的诊断设施——线程看门狗（`std::thread::
+    /// spawn`+`sleep`）与 `Instant` 单步计时——整段 cfg 门控跳过。原因有二：
+    /// ① 单线程环境（wasm32-unknown-unknown 无线程）诊断线程本就无法工作；
+    /// ② wasm32 的 std 无 OS 时钟（`Instant::now`/`SystemTime::now` 直接 panic）。
+    /// 浏览器宿主自带的页面级超时（Chrome "page unresponsive"）承担同等职责。
+    /// 与 native 的差异：挂死只剩步数上限（下方 `steps > 10_000_000`，无时钟
+    /// 依赖，两目标一致）这一道防线 + 宿主超时。native 路径逐行未动。
     pub fn run(&mut self) -> Result<()> {
         let mut steps = 0u64;
+        #[cfg(not(target_arch = "wasm32"))]
         let mut step_start = std::time::Instant::now();
         // 线程看门狗：独立执行上下文，主线程卡在单步内部（process_one 不返回）
         // 或 layout 侧死循环时仍能打印最后状态（TRIP L338 挂死定位）。
+        #[cfg(not(target_arch = "wasm32"))]
         let wd = Arc::new(WatchdogShared::default());
-        self.watchdog = Some(wd.clone());
         // 起始心跳：心跳改每 64 步刷新后，首轮慢启动（64 步内）不算挂死
-        wd.heartbeat_ms.store(now_millis(), Ordering::Relaxed);
+        //（cfg 只能挂块语句，裸赋值/方法调用表达式语句不支持——故并作一块）。
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.watchdog = Some(wd.clone());
+            wd.heartbeat_ms.store(now_millis(), Ordering::Relaxed);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         {
             let wd = wd.clone();
             std::thread::spawn(move || loop {
@@ -928,11 +960,13 @@ impl Expander {
             // 心跳 + last_tok（每 64 步）+ 状态快照（每 5000 步，卡死时保留最后状态）。
             // 看门狗线程 2s 轮询 + 10s 阈值，心跳 16Hz 绰绰有余；每步 clock_gettime +
             // mutex 写是纯诊断税（P1 实测占展开吞吐 ~10%），长文档上白付。
+            #[cfg(not(target_arch = "wasm32"))]
             if steps & 63 == 0 {
                 wd.heartbeat_ms.store(now_millis(), Ordering::Relaxed);
                 *wd.last_tok.lock().unwrap_or_else(|p| p.into_inner()) =
                     self.last_tok.clone().unwrap_or_default();
             }
+            #[cfg(not(target_arch = "wasm32"))]
             if steps % 5000 == 0 {
                 let state = format!(
                     "steps={steps} last_tok={:?} stack={}",
@@ -941,8 +975,12 @@ impl Expander {
                 );
                 *wd.state.lock().unwrap_or_else(|p| p.into_inner()) = state;
             }
+            // 步数上限：无时钟依赖（wasm32 同样生效），是 wasm 侧唯一的应用层死循环防线。
             if steps > 10_000_000 {
-                wd.done.store(true, Ordering::Relaxed);
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    wd.done.store(true, Ordering::Relaxed);
+                }
                 return Err(Error::invalid_input(format!(
                     "处理步骤超限（疑似死循环）；输入栈深 {}：{}",
                     self.stack.len(),
@@ -950,6 +988,7 @@ impl Expander {
                 )));
             }
             // 诊断：定期进度日志（stderr 实时可见，进程被 SIGKILL 也不丢）
+            #[cfg(not(target_arch = "wasm32"))]
             if steps % 50_000 == 0 {
                 eprintln!(
                     "[watchdog] steps={steps} elapsed={:.1}s last_tok={:?} stack={}",
@@ -961,6 +1000,7 @@ impl Expander {
             // 诊断：单步耗时看门狗——检查放 step **之前**（卡在单步内部时永远到不了
             // step 之后的检查点）。超时 dump 当前状态（TRIP L338 `\halign` 内挂死）。
             // 与心跳同频检查（每次循环省一次 clock_gettime；检测粒度 64 步）。
+            #[cfg(not(target_arch = "wasm32"))]
             if steps & 63 == 0 && step_start.elapsed().as_secs() >= 5 {
                 eprintln!(
                     "[watchdog] 单步超时 5s steps={steps} last_tok={:?} stack={}",
@@ -988,13 +1028,19 @@ impl Expander {
                 Ok(false) => break,
                 Ok(true) => {}
                 Err(e) => {
-                    wd.done.store(true, Ordering::Relaxed);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        wd.done.store(true, Ordering::Relaxed);
+                    }
                     self.report_error_context();
                     return Err(e);
                 }
             }
         }
-        wd.done.store(true, Ordering::Relaxed);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            wd.done.store(true, Ordering::Relaxed);
+        }
         self.report_incomplete_conditions();
         Ok(())
     }

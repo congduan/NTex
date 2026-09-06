@@ -134,6 +134,13 @@ pub const MISC_INTS: usize = 65;
 /// 系统时间 → (日, 月, 年, 自午夜分钟数)（tex.web `date_and_time`；\day/\month/\year/\time）。
 /// 公历转换用 Howard Hinnant 的 days-from-civil 逆算法（无外部依赖）。
 fn system_date_time() -> [i64; 4] {
+    // WASM（M8-A 骨架线）：wasm32-unknown-unknown 的 std 无 OS 时钟（SystemTime::now()
+    // 直接 panic），而 js-sys Date 会把 wasm-bindgen 系依赖引进 ntex-core——取固定值。
+    // 偏差：wasm 侧 \day/\month/\year/\time 不反映宿主时钟，恒为 1970-01-01 00:00
+    // （换确定性：同输入同输出）；接真实时钟留给 B 档（js-sys 只进 ntex-wasm）。
+    #[cfg(target_arch = "wasm32")]
+    let secs: i64 = 0;
+    #[cfg(not(target_arch = "wasm32"))]
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)

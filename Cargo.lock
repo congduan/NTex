@@ -2139,6 +2139,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ntex-wasm"
+version = "0.1.0"
+dependencies = [
+ "ntex-core",
+ "ntex-dvi",
+ "ntex-font",
+ "ntex-io",
+ "ntex-layout",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "num-traits"
 version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"

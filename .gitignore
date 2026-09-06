@@ -51,3 +51,6 @@ tmp_pngcmp.py
 # 备料字体暂存（环境只读主目录；正式入库字体经 make fixtures 流程）
 /.local-fonts/
 /demo-multi.*
+
+# WASM 绑定生成物（wasm-bindgen CLI 产物，见 crates/ntex-wasm/README.md「构建」）
+crates/ntex-wasm/www/pkg/

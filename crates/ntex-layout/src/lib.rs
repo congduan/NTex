@@ -31,3 +31,6 @@ pub use node::{
     LeadersKind, Node, GLUE_ORDER_FIL,
 };
 pub use typeset::{IncrementalStats, IncrementalTypesetter, MetricsFn, SpaceFn, Typesetter};
+// M8-A WASM 骨架线：TFM 字节源缝（宿主注入 TFM 字节；默认空 → native 走文件系统不变，
+// 详见 typeset/wasm_fonts.rs 模块注释）
+pub use typeset::{clear_tfm_source, registered_tfm_bytes, set_tfm_source, TfmSource};

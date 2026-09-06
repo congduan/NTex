@@ -1431,6 +1431,9 @@ impl NodeBuilder {
 // ---------- Typesetter 段（TfmLoader + Typesetter + FinishOutput） ----------
 include!("typesetter.rs");
 
+// M8-A WASM 骨架线：TFM 字节源缝（宿主注入；默认空 → native 走文件系统不变）
+include!("wasm_fonts.rs");
+
 // 方法分片（include! 嵌入，原 impl 按域拆分）
 include!("paragraph.rs");
 include!("paging.rs");

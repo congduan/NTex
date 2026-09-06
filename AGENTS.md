@@ -71,6 +71,7 @@ cargo run -p ntex-studio [文件.tex]   # TFM 查找依赖运行目录，请在�
 | `ntex-bench` | 基准框架 |
 | `ntex-backend` | 渲染后端（M8）：`Backend` trait + 软光栅 + vello 0.10 GPU 实现（wgpu 29 无头纹理回读、area 亚像素 AA；与软光栅共享 prims 矩形遍历，位图可差分）+ 自研 PNG 导出；`build_scene(prims)->Scene` 为公共 Scene 构建（无头回读与 GUI 表面渲染共用）；**字形通道**（`glyphs.rs`，`RenderOptions::glyphs`，默认关）：OT1→Unicode→Latin Modern OpenType 轮廓（kpsewhich/texlive 定位，vello glyph run 绘制，位置/宽度仍按 TFM；缺字体逐字符回落方框；软光栅不支持，强制关闭） |
 | `ntex-studio` | 实时预览工作台（M5+ 预览器先行形态）：eframe/egui-wgpu 0.35 + vello 表面渲染（离屏 Rgba8Unorm → blit 上屏），TeX 语法高亮编辑器、250ms 防抖同步重排、缩放/平移/翻页、dpi 与调试 overlay 与真字形开关（字形解析缓存跨重排复用）。**依赖硬约束：eframe 0.35 ↔ vello 0.10 恰好共用 wgpu 29**（升 eframe 大版本前必验对齐，0.36 已用 wgpu 30 会分裂） |
+| `ntex-wasm` | WASM 薄壳（M8-A 骨架，2026-09-06）：浏览器/Node 内跑 plain 子集 → DVI 字节 + 转录回传 JS；TFM 经 `ntex_layout::set_tfm_source` 注入（内嵌 6 个 CM TFM）。wasm32 分叉仅三处（`param.rs` 时间固定 / `expand::run` 看门狗门控 / `TfmLoader` 字节源），native 行为零改动；wasm-bindgen 依赖只进本 crate。三档路线见 `crates/ntex-wasm/README.md`（B 档渲染、C 档 `.fmt`） |
 
 常用源文件布局：
 - `crates/ntex-core/src/expand/`：展开引擎拆分目录——`builtins.rs`（原语注册）、`primitive.rs`

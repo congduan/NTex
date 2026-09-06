@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<!-- NTex WASM（M8-A）最小示例页：编译随包 demo.tex，打印 DVI 长度/页数/字体与转录。
+     先用 wasm-bindgen 生成绑定（见 README「构建」）：
+       wasm-bindgen --out-dir www/pkg --target web \
+           target/wasm32-unknown-unknown/release/ntex_wasm.wasm
+     再起静态服务：cd www && python3 -m http.server 8000 -->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>NTex WASM（plain 子集 → DVI）</title>
+<style>
+  body { font-family: ui-monospace, monospace; margin: 2rem; background: #111; color: #ddd; }
+  pre { background: #1b1b1b; padding: 1rem; overflow: auto; max-height: 45vh; }
+  h1 { font-size: 1.1rem; } .ok { color: #7f7; } .err { color: #f77; }
+</style>
+</head>
+<body>
+<h1>NTex WASM — plain 子集编译（无渲染，DVI + log）</h1>
+<pre id="out">加载 wasm …</pre>
+<script type="module">
+import init, { compile_tex, engine_version, embedded_fonts, demo_tex }
+    from './pkg/ntex_wasm.js';
+
+const out = document.getElementById('out');
+try {
+  await init();
+  const lines = [];
+  lines.push(`引擎：${engine_version()}`);
+  lines.push(`内嵌字体：${embedded_fonts().join(', ')}`);
+  const r = compile_tex(demo_tex());
+  lines.push(`DVI：${r.dvi.length} 字节（首字节 ${r.dvi[0]}，应为 247 = pre 命令码）`);
+  lines.push(`页数：${r.page_count}；字体：${r.fonts.join(', ')}`);
+  lines.push('转录（.log 主体）：\n' + r.transcript);
+  // 下载 DVI（可交 dvipdfmx / B 档渲染器）
+  const url = URL.createObjectURL(new Blob([r.dvi], { type: 'application/x-dvi' }));
+  lines.push(`\n<a href="${url}" download="demo.dvi">下载 demo.dvi</a>`);
+  out.innerHTML = `<span class="ok">编译成功</span>\n${lines.join('\n')}`;
+} catch (e) {
+  out.innerHTML = `<span class="err">编译失败</span>\n${e}`;
+}
+</script>
+</body>
+</html>

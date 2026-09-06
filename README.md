@@ -54,12 +54,13 @@ crates/
   ntex-trip        TRIP/ETRIP 一致性测试框架
   ntex-diff        差分测试工具（参考引擎 vs 本引擎）
   ntex-bench       基准框架
+  ntex-wasm        WASM 薄壳（M8 A 档骨架）：浏览器/Node 跑 plain 子集 → DVI + log
 fixtures/          测试 fixtures（diff 示例 / trip 获取脚本）
 scripts/           辅助脚本（如 fetch-trip-fixtures.sh）
 docs（RFC）        RFC-1 token 表示 / RFC-4 字节码指令集
 ```
 
-后续里程碑按计划加入：`ntex-incremental`（增量计算，M5）、`ntex-backend`（Skia/WebGPU，M8）、`ntex-cli` / `ntex-wasm`（M9）。
+后续里程碑按计划加入：`ntex-incremental`（增量计算，M5）、`ntex-backend`（Skia/WebGPU，M8）、`ntex-cli`（M9）、`ntex-wasm`（**骨架已建**，M8 A 档：浏览器/Node 内跑 plain 子集 → DVI + log；`crates/ntex-wasm/README.md`）。
 
 ## 快速开始
 

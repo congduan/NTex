@@ -11,9 +11,29 @@ impl FontLoader for TfmLoader {
         if at.is_some() && scaled.is_some() {
             return Err(Error::invalid_input("\\font 的 at 与 scaled 不能同时给出"));
         }
-        let path = ntex_font::find_tfm(name)
-            .ok_or_else(|| Error::invalid_input(format!("找不到 TFM 文件：{name}")))?;
-        let bytes = std::fs::read(&path).map_err(|e| Error::io("读取 TFM", path, e))?;
+        // TFM 字节来源（M8-A WASM 骨架线分叉）：
+        // ① 宿主注册的 [`crate::TfmSource`]（wasm32 无文件系统，唯一来源；native 可
+        //    显式 opt-in）；未注册 → None 回落 ②。
+        // ② native 文件系统（`find_tfm` + `std::fs::read`，原路径，native 默认走这里
+        //    ——注册表为空时行为与历史版本逐字节一致）；wasm32 下 `std::fs` 不可用，
+        //    直接报"找不到字体"。
+        let bytes: Vec<u8> = match crate::registered_tfm_bytes(name) {
+            Some(bytes) => bytes,
+            None => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let path = ntex_font::find_tfm(name)
+                        .ok_or_else(|| Error::invalid_input(format!("找不到 TFM 文件：{name}")))?;
+                    std::fs::read(&path).map_err(|e| Error::io("读取 TFM", path, e))?
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    return Err(Error::invalid_input(format!(
+                        "找不到 TFM 字节：{name}（wasm 无文件系统，宿主须 set_tfm_source 注册字体源）"
+                    )));
+                }
+            }
+        };
         let mut fm = ntex_font::parse_tfm(&bytes)
             .map_err(|e| Error::invalid_input(format!("解析 {name}: {e}")))?;
         fm.name = name.to_owned(); // DVI fnt_def 的字体名

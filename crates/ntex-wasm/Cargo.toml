@@ -1,0 +1,26 @@
+[package]
+name = "ntex-wasm"
+description = "NTex WASM 骨架（M8-A）：浏览器/Node 内跑引擎核心（plain 子集）→ DVI + log"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# cdylib：wasm 产物（wasm-bindgen CLI 再生成 JS/TS 绑定）；
+# rlib：native 单测（cargo test --workspace）能链接本 crate——「内嵌 TFM → 排版 → DVI」
+#       全链测试在 native 上跑（与 wasm 同路径，见 README「验证边界」）。
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# wasm-bindgen 只进本 crate（workspace 约定）：ntex-core/layout 等保持无 JS 依赖，
+# 以便同一路径继续服务 native 后端与未来的非 Web 嵌入（见 README 三档路线）。
+wasm-bindgen = "0.2"
+ntex-core.workspace = true
+ntex-layout.workspace = true
+ntex-font.workspace = true
+ntex-io.workspace = true
+ntex-dvi.workspace = true
+
+[lints]
+workspace = true
