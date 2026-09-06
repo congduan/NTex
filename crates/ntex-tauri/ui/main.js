@@ -64,7 +64,10 @@ function compileNow() {
     const doc = compile_document(editor.value); // 同步：release wasm 下 demo 量级 ~几十 ms
     state.doc?.free?.();
     state.doc = doc;
-    state.page = Math.min(state.page, doc.page_count - 1);
+    // 钳到 [0, page_count-1]：0 页作业会把上界压成 -1，须同时钳下界，
+    // 否则 -1 经 wasm-bindgen 转 u32 回绕成 4294967295（与 www/index.html、
+    // site Demo.vue 同口径）。
+    state.page = Math.max(0, Math.min(state.page, doc.page_count - 1));
     errorBar.hidden = true;
     renderPage();
     setStatus('ok', `${doc.page_count} 页 · ${(performance.now() - t0).toFixed(0)} ms`);
