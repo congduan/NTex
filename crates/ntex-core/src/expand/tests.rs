@@ -330,8 +330,8 @@ mod tests {
             "数字扫描符号循环未推进条件机：{transcript}"
         );
         assert!(
-            !transcript.contains("Extra \\fi"),
-            "\\fi 帧归属错位：{transcript}"
+            transcript.matches("Extra \\fi").count() <= 1,
+            "\\fi 不得翻倍（因子位放回至多一次 Extra \\fi）：{transcript}"
         );
     }
 
@@ -430,8 +430,18 @@ mod tests {
     fn expr_operator_peek_skips_spaces_and_evals_cond() {
         // expl3-code l.6652-6673 `\int_div_truncate:nn`/`\__int_div_truncate:NwNw`
         // 机制级复刻（`\__int_sep:` = `\let`，两级别名链同 expl3）。
+        //
+        // 第二十六刀勘误：本测旧版两处失真致门禁**假阳性**——
+        // (a) 缺 `\let\if_meaning:w\ifx` 别名组（§32.5 三件套：初表全 cat12 下
+        //     `\if_meaning:w` 未定义，条件体根本不执行，错误形态是
+        //     "Undefined control sequence \if_meaning:w"）；
+        // (b) 断言 `contains("GA=1")` 被 `GA=10(140-1+-(-1-100-1)/2)/100` 的
+        //     **前缀**满足——同构源 /tmp/r25/mech19.tex 在探针路径（Typesetter
+        //     + write16）与裸 Expander 均实测 `140(100-1)/2)/100`（真 TeX = 1），
+        //     而本测长年绿。现改为输出行**逐行相等**断言。
         let src = concat!(
             "\\catcode`\\_=11 \\catcode`\\:=11 %\n",
+            "\\let\\if_meaning:w\\ifx \\let\\else:\\else \\let\\fi:\\fi \\let\\or:\\or %\n",
             "\\let\\texnumD\\number \\let\\iv\\texnumD %\n",
             "\\let\\texnumE\\numexpr \\let\\ev\\texnumE %\n",
             "\\let\\texlet\\let \\let\\sep\\texlet \\let\\eend\\relax %\n",
@@ -443,13 +453,104 @@ mod tests {
             "\\immediate\\write16{GA=\\ga}"
         );
         let (_r, transcript) = run_transcript(src);
-        assert!(
-            transcript.contains("GA=1"),
-            "含空格/内嵌条件的表达式应得 1：{transcript}"
+        let ga = transcript
+            .lines()
+            .find(|l| l.starts_with("GA="))
+            .unwrap_or_else(|| panic!("缺 GA 输出行：{transcript}"));
+        assert_eq!(
+            ga, "GA=1",
+            "含空格/内嵌条件的表达式应得 1（真 TeX 对照）：{transcript}"
         );
         assert!(
             !transcript.contains("Missing )") && !transcript.contains("Missing number"),
             "表达式在空格/条件处提前收口：{transcript}"
+        );
+    }
+
+    /// 表达式因子位对**已求值条件的 `\fi`** 的消费（第二十六刀主修）。
+    ///
+    /// `\numexpr 140\if_meaning:w-1+\else:-\fi:(100-1)/2\relax`：`\if_meaning:w`
+    /// 在数字扫描的十进制循环就地求值（`\ifx - 1` 假 → skip_ahead 同步吃
+    /// `+`/`\else:`、帧留栈等 `\fi`），`-` 落回运算符位、`\fi:` 落到**因子位**。
+    /// 旧实现因子位不消费 `\fi`：被当因子放回 scan_number、帧由符号循环弹出、
+    /// `( … )` 撞十进制循环报 "Missing number" → 表达式在 `-` 后收 0、外层 `(`
+    /// 配不上 `)` 再报 "Missing )" → 值失真为 `140(100-1)/2)/100`。
+    /// T1/T2/T3 对照值取自 pdfTeX 1.40.29（TeX Live 2026）实测。
+    #[test]
+    fn expr_factor_consumes_fi_after_evaluated_cond() {
+        let src = concat!(
+            // §32.5 三件套：catcode `:`/`_` = 11 + `\else:`/`\fi:` 别名组
+            "\\catcode`\\_=11 \\catcode`\\:=11 %\n",
+            "\\let\\if_meaning:w\\ifx \\let\\else:\\else \\let\\fi:\\fi %\n",
+            "\\immediate\\write16{T1=\\number\\numexpr ",
+            "140\\if_meaning:w-1+\\else:-\\fi:(100-1)/2\\relax} %\n",
+            "\\immediate\\write16{T2=\\number\\numexpr ",
+            "140\\if_meaning:w-1+\\else:-\\fi: 2\\relax} %\n",
+            "\\immediate\\write16{T3=\\number\\numexpr",
+            "(\\if_meaning:w-1-\\fi: 100-1)/2\\relax}"
+        );
+        let (_r, transcript) = run_transcript(src);
+        for (tag, want) in [("T1=", "90"), ("T2=", "138"), ("T3=", "50")] {
+            let line = transcript
+                .lines()
+                .find(|l| l.starts_with(tag))
+                .unwrap_or_else(|| panic!("缺 {tag} 输出行：{transcript}"));
+            assert_eq!(line, format!("{tag}{want}"), "真 TeX 对照：{transcript}");
+        }
+        assert!(!transcript.contains("! "), "零错误契约：{transcript}");
+    }
+
+    /// 因子位**游离** `\fi` 的放回契约（TRIP L82 同族，第二十六刀补因子位侧）。
+    /// 无帧可归属时 `\fi` 须原样留给外层条件机：本扫描按 Missing number 收场，
+    /// 残留的单枚 `\fi` 由主循环报一次 "Extra \fi"（与 HEAD 行为一致）；若因子
+    /// 位取 token 自放回（调用方 expr_factor 还会再放回）则 token 翻倍、
+    /// "Extra \fi" 变两次。
+    #[test]
+    fn expr_factor_keeps_free_fi_single() {
+        let src = concat!(
+            "\\count0=\\numexpr\\fi 7\\relax %\n",
+            "\\immediate\\write16{C=\\count0}"
+        );
+        let (_r, transcript) = run_transcript(src);
+        assert!(
+            transcript.contains("Missing number"),
+            "游离 \\fi 应触发 Missing number 恢复：{transcript}"
+        );
+        assert!(
+            transcript.matches("Extra \\fi").count() <= 1,
+            "\\fi 不得翻倍（因子位放回至多一次 Extra \\fi）：{transcript}"
+        );
+        let line = transcript
+            .lines()
+            .find(|l| l.starts_with("C="))
+            .unwrap_or_else(|| panic!("缺 C= 输出行：{transcript}"));
+        assert_eq!(line, "C=0", "Missing number 恢复取 0：{transcript}");
+    }
+
+    /// 数字扫描的**别名即原义**（tex.web §24.4：`\let` 在 eqtb 层复制含义）。
+    /// 本引擎 Alias 槽保留于宏/未定义目标（`let_to`），数字扫描的符号循环
+    /// expandable 检查与内部量分派、表达式因子/运算符位展开检查此前都不追链：
+    /// `\number\宏别名` 落成 Missing number 取 0、别名 token 留流。
+    #[test]
+    fn number_scan_derefs_alias_to_target_meaning() {
+        let src = concat!(
+            "\\def\\mymac{140} %\n",
+            "\\let\\alias\\mymac %\n",
+            "\\immediate\\write16{AL=\\number\\alias} %\n",
+            "\\def\\tmpa{5} \\let\\iv\\tmpa %\n",
+            "\\immediate\\write16{EV=\\number\\numexpr 1+\\iv\\relax}"
+        );
+        let (_r, transcript) = run_transcript(src);
+        for (tag, want) in [("AL=", "140"), ("EV=", "6")] {
+            let line = transcript
+                .lines()
+                .find(|l| l.starts_with(tag))
+                .unwrap_or_else(|| panic!("缺 {tag} 输出行：{transcript}"));
+            assert_eq!(line, format!("{tag}{want}"), "真 TeX 对照：{transcript}");
+        }
+        assert!(
+            !transcript.contains("Missing number"),
+            "宏别名不得落成 Missing number：{transcript}"
         );
     }
 
@@ -4102,4 +4203,5 @@ ab5c}").unwrap();
         );
         assert_eq!(expand(r"\the\pdfoutput|\the\pdftexversion").unwrap(), "0|140");
     }
+
 }

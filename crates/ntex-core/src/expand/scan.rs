@@ -29,6 +29,24 @@ impl Expander {
         }
     }
 
+    /// 沿 `\let` 别名链解引用到末端槽（tex.web 口径：`\let` 在 eqtb 层复制含义，
+    /// 别名即原义）。本引擎的 [`crate::eqtb::EqSlot::Alias`] 只在目标是**宏/未
+    /// 定义** cs 时保留（`let_to`：原语/寄存器/字符等在定义时压缩为直接含义），
+    /// 故各取 token 位在判定"是否可展开 / 是否内部量"前必须先追链，否则
+    /// `\number\宏别名` 落成 Missing number（tex.web 的 scan_int 经 get_x_token
+    /// 展开宏）。带环保护（上限 100，同 fetch_non_filler /
+    /// scan_group_contents_expanding 的同名守卫）。
+    pub(crate) fn deref_alias_chain(&self, csid: u32) -> u32 {
+        let mut id = csid;
+        for _ in 0..100 {
+            match self.eqtb.slot(id) {
+                EqSlot::Alias(next) => id = *next,
+                _ => return id,
+            }
+        }
+        id
+    }
+
     /// 扫描十进制整数；支持 `\count<idx>` 寄存器引用（M1 简化版）。
     fn scan_number(&mut self) -> Result<i64> {
         // 默认跳过可选 `=`（赋值上下文）；scan_register_index 等内部扫描不跳
@@ -97,6 +115,13 @@ impl Expander {
                 if self.maybe_eval_cond(tok)? {
                     continue;
                 }
+                // 别名即原义：宏别名须按目标含义展开（tex.web scan_int 符号循环
+                // 的 get_x_token；Alias 槽只指向宏/未定义，见 deref_alias_chain）。
+                let expandable = match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
+                    EqSlot::Macro(_) => true,
+                    EqSlot::Primitive(p) if p.is_expandable() => true,
+                    _ => false,
+                };
                 // tex.web expand 的 fi_or_else 臂（§9897 @<Terminate the current
                 // conditional...@>）：符号循环的 get_x_token 对 `\else`/`\fi`/`\or`
                 // 同样经 expand 处理——栈顶帧 Evaluating（if_limit=if_code，外层
@@ -137,11 +162,6 @@ impl Expander {
                 // \expanded 内把它挡成不可展开 → "Missing number, treated as
                 // zero"，quark 模块 `\__quark_module_name:N` 全灭（expl3
                 // l.3782 起 invalid-function bail out，§24）。
-                let expandable = match self.eqtb.slot(csid).clone() {
-                    EqSlot::Macro(_) => true,
-                    EqSlot::Primitive(p) if p.is_expandable() => true,
-                    _ => false,
-                };
                 if expandable {
                     let mut expansion = Vec::new();
                     self.expand_once((tok, false), &mut expansion)?;
@@ -176,11 +196,12 @@ impl Expander {
             let val: i64 = code;
             while let Some((tok, _)) = self.fetch()? {
                 if let Some(csid) = tok.csid() {
-                    let expandable = match self.eqtb.slot(csid).clone() {
-                        EqSlot::Macro(_) => true,
-                        EqSlot::Primitive(p) if p.is_expandable() => true,
-                        _ => false,
-                    };
+                    let expandable =
+                        match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
+                            EqSlot::Macro(_) => true,
+                            EqSlot::Primitive(p) if p.is_expandable() => true,
+                            _ => false,
+                        };
                     if expandable {
                         let mut expansion = Vec::new();
                         self.expand_once((tok, false), &mut expansion)?;
@@ -252,6 +273,12 @@ impl Expander {
         }
         // 寄存器引用：\count<idx> 或 \count\cs（\newcount 分配的 cs）
         if let Some(csid) = self.peek_csid()? {
+            // 别名即原义（tex.web §24.4：`\let` 复制含义）：分派前沿链解引用——
+            // expl3 全篇 `\cs_new_eq:NN` 别名（`\__int_eval:w → \tex_numexpr:D`
+            // 等）以 Alias 槽落 eqtb 时，`\number\别名` 须直达目标的内部量臂，
+            // 否则落空（旧 `_ => {}`）→ Missing number 取 0、原 token 留流
+            // （l.8073 表达式失真的机制级复刻 mech19 同款）。
+            let csid = self.deref_alias_chain(csid);
             let slot = self.eqtb.slot(csid).clone();
             match slot {
                 // e-TeX（M4-5）：\numexpr 可在任意整数上下文求值

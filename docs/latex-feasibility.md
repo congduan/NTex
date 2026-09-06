@@ -2522,3 +2522,115 @@ probe 终态 86 的**主簇不是独立的真臂时序问题，而是 l.8073 一
 - **仓库工作树非本会话独占**：`mod.rs`/`sink.rs`/`ntex-layout/*` 有并行会话的
   "输出例程刀 1"改动在场——本刀提交只取 `expr.rs`/`scan.rs`/`tests.rs` 三文件
   （TRIP 对拍时 `git stash` 会连他人改动一起藏起，对拍结论不受影响）。
+
+## 33. 2026-09-06 第二十六轮：表达式因子/运算符位的 fi_or_else 消费 + 数字扫描别名解引用——l.8073 根治、主簇改判独立
+
+### 33.1 起点、真 TeX 地面真值与靶子改判
+
+HEAD=1026f00，探针终态 **86**（32 `\use_ii:nn` extra-} + 27 Missing number +
+3 Missing ) 为主簇）。本轮先建**地面真值**（VM 有 TinyTeX pdftex
+1.40.29，直接实测，不再纸面推演）：
+
+- `/tmp/r25/mech19.tex` 真实 TeX 输出 **`FULL-DIV=1`，0 错误**；
+- 实参扫描两引擎逐 token 一致（`#1=[1] #2=[40] #3=[1] #4=[00]`——
+  `\expandafter` 在运算符位把 `\sep` 放回、内层 `\number\numexpr 100` 产
+  `100` 后 `\sep` 归位，故 `#1#2`=`1``40`）；
+- `\if_meaning:w`（=`\ifx`）在表达式内的**机制级最小复现**（/tmp/r26/micro3）：
+  | 样例 | 真 TeX | NTex（改前） |
+  |---|---|---|
+  | T1 `\numexpr 140\ifx-1+\else:-\fi:(100-1)/2\relax` | **90** | `140(100-1)/2` |
+  | T2 `\numexpr 140\ifx-1+\else:-\fi: 2\relax` | 138 | 138（**假阳性**：`140+(-2)`） |
+  | T3 `\numexpr(\ifx-1-\fi: 100-1)/2\relax` | 50 | 50（巧合一致） |
+
+- **e-TeX `\numexpr` 除法是舍入不是截断**（实测 `91/100=1`、`99/2=50`、
+  `-91/100=-1`；NTex 已一致）。这是 mech19 出 `1` 的前提：
+  `\__int_div_truncate:NwNw` 的体 `( #1#2 - ( #3#4-1 )/2 ) / #3#4` 正是
+  用**舍入除法**实现截断（`(140-99/2)/100` → `(140-50)/100` → `90/100`
+  舍入 = 1 = `140/100` 截断）；截断引擎会算出 0。
+- 简报靶 #1（`scan_number_inner` 缺 `EqSlot::Alias` 臂）**对 mech19 不成立**：
+  本引擎 `\let` 在定义时**压缩别名链**（`let_to`：Alias(t2)→指向 t2 的目标；
+  原语/寄存器/字符/字体/流直接复制含义），Alias 槽只对**宏/未定义**目标保留。
+  mech19 的 `\iv`/`\ev` 经两级 `\let` 后已是 `Primitive(Number/NumExpr)` 的
+  直接拷贝，`\number\ev 140` 实测本来就通（/tmp/r26/micro1 M2/M3=140）。
+  该缺口对**宏别名**真实存在（`\def\a{140}\let\b\a\number\b` 落 Missing
+  number），本轮一并补上（见 §33.2）。
+
+### 33.2 真根因与修复（全部 tex.web 直译）
+
+**真根因（一处机制、两个位点）**：`\if_meaning:w` 在数字扫描的**十进制循环**
+就地求值（22 刀契约：`\ifnum0\ifdefined…` 惯用法；`\ifx - 1` 假 →
+`skip_ahead` 同步吃 `+`/`\else:`、帧留栈 Processing 等 `\fi`），随后
+`\fi:` 落到表达式**因子位**（`-` 成为运算符之后）与**运算符位**——
+`expr_peek_factor_token`/`peek_int_op` 都不消费 fi_or_else：`\fi` 被当因子
+放回 `scan_number`，帧由符号循环弹出，`( … )` 撞十进制循环报
+"Missing number"→表达式在 `-` 后收 0、外层 `(` 配不上 `)` 再报
+"Missing )"，值失真为 `140(100-1)/2)/100`。tex.web 侧这些位点全是
+get_x_token，`\fi` 经 expand→conditional()（§9897）就地闭合后继续取 token。
+
+| # | 位置 | 修复 | 对照 |
+|---|---|---|---|
+| 1 | `expr.rs expr_peek_factor_token` | 补 fi_or_else 臂：`Fi\|Else\|Or` 且 `cond_stack` 非空 → `step_conditional` 后继续取 token；**游离**终结符（栈空）维持放回（TRIP L82 契约） | T1 `140(100-1)/2` → `90` |
+| 2 | `expr.rs peek_int_op` | 同款臂（栈空 → 放回 + 表达式收口） | 同上 |
+| 3 | `scan.rs scan_number_inner` 十进制循环 expandable 检查、反引号后续展开检查、内部量分派（`peek_csid` 后） | 新增 `deref_alias_chain` 助手（上限 100，同 fetch_non_filler），三处追链后再判定 | `\number\宏别名`：Missing number→`140` |
+| 4 | `expr.rs expr_peek_factor_token`/`peek_int_op` 的 expandable 检查 | 同款追链（`peek_int_op` 的 `\relax` 链检查已有，展开检查没有） | `\numexpr 1+\宏别名`：→`6` |
+
+`insert_relax` 门（栈顶帧 Evaluating）由 `step_conditional` 内部处理，token
+放回 + frozen `\relax` 前插，表达式按 Missing number 收场——tex.web 同款，
+无需表达式侧特判。
+
+### 33.3 探针结果与主簇改判（§32.3 级联理论证伪）
+
+latex.ltx --initex（/tmp/r21/w2，未插桩，`cmp expl3-code.tex .orig` 通过）：
+**86 → 81**。
+
+- **消失的 5 条 = l.8023-8073 全链**：`Missing ) inserted for expression`
+  3→0（pdftex/luatex 分支 + `\int_mod` 级联）、`Missing number` 27→25。
+  `\c_sys_engine_version_str` 一线的表达式失真**已根治**（机制级标尺
+  mech19 = `1` 逐字符对拍）。
+- **32×`\use_ii:nn` extra-} + 25×Missing number 的 l.9468+ 主簇纹丝不动**——
+  §32.3"主簇是 l.8073 失真的下游级联"**证伪**。主簇有自己的上游：
+  `\prg_new_conditional:Npnn` 生成器在 **l.2329**（`\cs_if_eq:NN`）首次
+  使用**无错**，从 **l.9468**（`\token_if_group_begin:N`）起**每条**
+  `\token_if_*` 定义都报同一签名（1×"Missing number(``}``)" 于定义收口
+  `}` + 2×"Argument of \use_ii:nn has an extra }"），直至 l.10298 输入栈
+  超限收场（该终止为既有）。l.2329 与 l.9468 两个调用点之间的差异
+  （`{ p , T , F , TF }` forms 列表经 `\tl_to_str:n`、`\@@_generate_conditional_test:w`
+  分派 fast/normal 臂、`\use:c { @@_generate_#8_form:wNNnnnnN }` 造名）
+  是下一轮的勘察入口；l.9386 `\char_generate:nn` 的 Illegal parameter number
+  （1 条）与此簇无关（`\c_catcode_other_space_tl` 首次使用在 l.12219）。
+
+### 33.4 验证（诚实记录）
+
+| 门 | 结果 |
+|---|---|
+| mech19.tex（机制级标尺） | **`FULL-DIV=1`，0 错误**——与真 TeX 逐字符一致 |
+| micro3 T1/T2/T3 | **90/138/50**——与真 TeX 一致（改前 140(100-1)/2 / 138 假阳性 / 50 巧合） |
+| `cargo test -p ntex-core` | **330 绿**（328 既有 + 新增 `expr_factor_consumes_fi_after_evaluated_cond`、`number_scan_derefs_alias_to_target_meaning`；`expr_operator_peek_skips_spaces_and_evals_cond` 去·假阳性化，见 §33.5） |
+| latex_probe --initex | **86 → 81**（简报"主簇落到 <30"未达——§32.3 级联前提证伪，见 §33.3） |
+| TRIP | 与 HEAD 基线**逐字节一致**（44472B，仅 tempdir 名非确定；基线二进制取 target/debug/ntex-trip 17:07 构建=HEAD 先于本轮编辑，未走 worktree 冷构建——本轮编辑均先于 18:00，17:15 的探针二进制实测仍报改前失真可佐证） |
+| 插桩还原 | 诊断用临时 `dual_run`/`tmp_disk_mech19` 已全部移除；`git status` 仅剩 expr.rs/scan.rs/tests.rs 三文件 |
+
+### 33.5 本轮踩坑
+
+- **二十五刀的 `expr_operator_peek_skips_spaces_and_evals_cond` 是假阳性门**，
+  两处失真叠加：① 源码缺 `\let\if_meaning:w\ifx` 别名组（初表全 cat12 下
+  `\if_meaning:w` 劈成 `\if`+`_meaning:w`，`\let\if` 反把 **`\if` 定义成
+  `_` 的字符别名**——§32.5 三件套自己写了却没进测试）；② 断言
+  `transcript.contains("GA=1")` 被真实输出 `GA=10(140-1+-(-1-100-1)/2)/100`
+  的**前缀**满足。该测长年绿、mech19 同构源实际一直错。教训：
+  **write16 断言必须锚定行首并逐行相等**（`lines().find(starts_with)` +
+  `assert_eq!`），`contains` 只配锁"有/无"不配锁"值"。
+- **harness 分裂的假象**：单测（VecSink）过而探针（Typesetter）败时，先怀疑
+  路径分裂、后证明**同 harness 同源也败**（磁盘读入 mech19 走 run_transcript
+  同样 140(100-1)/2)/100）——真因是断言假阳性，不是 sink 差异。对照实验要
+  做到"同字节、同助手"再下结论。
+- **`\let` 别名链在定义时压缩**：Alias 槽只对宏/未定义目标保留。给扫描位
+  补 deref 时，别用"expl3 两级别名链"当复现——`\let\iv\texnumD` 两步后
+  就是直接含义拷贝；宏别名（`\let\b\a`，a 为宏）才是唯一走 Alias 的路径。
+- **探针 A/B 计数须防管道截断**：`probe | grep | head` 会在 transcript 写盘
+  后因 SIGPIPE 提前退出，紧随的 `grep -c` 计到旧文件（本轮 81/86 首测即此
+  坑）。改 `>out 2>&1` 落盘再计数、A/B 各自拷贝 transcript。
+- **真 TeX 除法舍入是 expl3 截断补偿的地基**：`\int_div_truncate` /
+  `\int_mod` 全族用舍入除法构造截断语义；若引擎截断/舍入与 e-TeX 不符，
+  这族函数全体失真且**无错误消息**（静默错值），对拍时优先锁
+  `91/100=1`、`99/2=50`、`-91/100=-1` 三个锚点。

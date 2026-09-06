@@ -493,7 +493,35 @@ impl Expander {
                 if self.maybe_eval_cond(tok)? {
                     continue;
                 }
-                let expandable = match self.eqtb.slot(csid).clone() {
+                // tex.web expand 的 fi_or_else 臂（§9897）：因子位的 get_x_token
+                // 对 `\else`/`\fi`/`\or` 同样经 expand → conditional() 处理——栈顶
+                // 帧求值中（if_limit=if_code）由 insert_relax 门拦截（token 放回 +
+                // frozen `\relax` 前插）；帧已完成求值则就地闭合/转臂。
+                //
+                // expl3 `\__int_div_truncate:NwNw`（l.6660-6674）的体在表达式里嵌
+                //   `#1#2 \if_meaning:w - #1 + \else: - \fi: ( … ) / 2`
+                // ——`\if_meaning:w` 由数字扫描的十进制循环就地求值（假分支同步
+                // skip_ahead、帧留栈等 `\fi`），其 `\fi:` 随即落到**因子位**：
+                // 不消费则被当因子放回 scan_number，帧由符号循环弹出、`( … )` 撞
+                // 十进制循环报 "Missing number" → 表达式在 `-` 后收 0、外层 `(` 配
+                // 不上 `)` 再报 "Missing )"，值失真为 `140(100-1)/2)/100`
+                // （l.8023 `\c_sys_engine_version_str` pdftex 分支 +
+                // `\int_div_truncate` 全线）。游离终结符（无帧可归属）维持放回
+                // （TRIP L82 游离 `\fi` 契约）。
+                if let Some(op) = self.cond_op(tok) {
+                    if matches!(op, CondOp::Fi | CondOp::Else | CondOp::Or) {
+                        // 游离终结符按因子位契约原样返回（调用方 expr_factor 负责
+                        // unread——此处不得自放回，否则 token 翻倍）。
+                        if self.cond_stack.is_empty() {
+                            return Ok(Some(tok));
+                        }
+                        self.step_conditional(op, tok)?;
+                        continue;
+                    }
+                }
+                // 别名即原义：宏别名按目标含义展开（tex.web get_x_token；Alias 槽
+                // 只指向宏/未定义，见 scan.rs deref_alias_chain）。
+                let expandable = match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
                     EqSlot::Macro(_) => true,
                     EqSlot::Primitive(p) if p.is_expandable() => true,
                     _ => false,
@@ -631,14 +659,35 @@ impl Expander {
                         continue;
                     }
                 }
+                // fi_or_else 臂：运算符位的 get_x_token 对 `\else`/`\fi`/`\or`
+                // 同样经 expand → conditional()（§9897）——帧求值中由 insert_relax
+                // 门拦截，帧已完成则就地闭合/转臂后继续前瞻。expl3
+                // `\__int_div_truncate:NwNw` 体内嵌
+                //   `… \if_meaning:w - #1 + \else: - \fi: ( … ) / 2`
+                // 的 `\fi:` 若在此被当终结符放回，表达式提前收口、`( … ) / 2`
+                // 残留流中（同 expr_peek_factor_token 臂注）。游离终结符（无帧可
+                // 归属）维持"放回 + 表达式收口"（TRIP L82 契约）。
+                if let Some(op) = self.cond_op(tok) {
+                    if matches!(op, CondOp::Fi | CondOp::Else | CondOp::Or) {
+                        if self.cond_stack.is_empty() {
+                            self.unread(tok);
+                            return Ok(None);
+                        }
+                        self.step_conditional(op, tok)?;
+                        continue;
+                    }
+                }
                 // get_x_token 展开臂：宏（非 protected 抑制面）与可展开原语展开
                 // 一次后重探。`\noexpand` 冻结的 token 不展开（e-TeX 语义）。
                 if !noexpand {
-                    let expandable = match self.eqtb.slot(id).clone() {
-                        EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
-                        EqSlot::Primitive(p) => p.is_expandable(),
-                        _ => false,
-                    };
+                    let expandable =
+                        match self.eqtb.slot(self.deref_alias_chain(id)).clone() {
+                            EqSlot::Macro(m) => {
+                                !(m.value.protected && self.suppress_expansion > 0)
+                            }
+                            EqSlot::Primitive(p) => p.is_expandable(),
+                            _ => false,
+                        };
                     if expandable {
                         let mut expansion = Vec::new();
                         self.expand_once((tok, false), &mut expansion)?;
