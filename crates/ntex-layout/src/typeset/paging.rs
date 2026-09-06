@@ -19,10 +19,17 @@ impl NodeBuilder {
         if self.output_defined {
             self.pending_pages.push_back(p);
         } else {
-            self.trace_shipout(&p);
-            self.shipped.push(p);
-            self.write_flush_pending = true;
+            self.ship_page(p);
         }
+    }
+
+    /// 页面真正输出（tex.web `ship_out`）：转录标题 + 入 shipped 队列 + flush 标记。
+    /// `page_shipped` 供引擎清零 `\deadcycles`（tex.web ship_out `dead_cycles:=0`）。
+    fn ship_page(&mut self, p: BoxNode) {
+        self.trace_shipout(&p);
+        self.shipped.push(p);
+        self.write_flush_pending = true;
+        self.page_shipped = true;
     }
 
     /// 结束开放段落：Knuth-Plass 折行成行 hbox 并追加到上层列表（行间插 interline glue）。

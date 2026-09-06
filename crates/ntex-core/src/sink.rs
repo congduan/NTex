@@ -240,6 +240,23 @@ pub trait TokenSink: std::fmt::Debug {
     }
     /// 丢弃所有待输出例程处理的页面（例程不消费 box255 时）。
     fn discard_pending_pages(&mut self) {}
+    /// `fire_up` 记录的最佳断点惩罚（输出例程刀 1，tex.web
+    /// `@<Set the value of |output_penalty|@>`）。`None` = 最佳断点非惩罚节点
+    /// （胶水/kern 自然断页）→ 引擎侧写 `\outputpenalty := inf_penalty`(10000)。
+    /// 在例程点火（`maybe_inject_output`）前查询并全局写入 `\outputpenalty`。
+    fn output_break_penalty(&mut self) -> Option<i64> {
+        None
+    }
+    /// 自上次查询以来是否真正 shipout 过页面（`\shipout\box255` 例程产出，或
+    /// 无例程直通）。输出例程刀 1：`dead_cycles` 清零依据（tex.web ship_out
+    /// L12707 `dead_cycles:=0`）——查询即取走（take 语义）。
+    fn take_page_shipped(&mut self) -> bool {
+        false
+    }
+    /// tex.web `@<Perform the default output routine@>`（dead cycles 分支）：
+    /// 待处理页面不经用户例程直接 shipout（`\output` 例程从不 ship 时，
+    /// `dead_cycles >= max_dead_cycles` 触发）。
+    fn default_output_routine(&mut self) {}
     /// `\box<n>`：取盒子寄存器（`\shipout` 前缀时封装为页面，否则作为节点追加）。
     fn box_register(&mut self, _idx: usize) -> Result<()> {
         Ok(())

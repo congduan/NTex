@@ -1828,4 +1828,153 @@ mod tests {
             "mathchar 字符 - 丢失: {chars:?}"
         );
     }
+
+    // ---------- 输出例程刀 1：\outputpenalty + \deadcycles ----------
+    //
+    // tex.web fire_up `@<Set the value of |output_penalty|@>`：最佳断点是惩罚
+    // 节点 → \outputpenalty := 其惩罚；否则（胶水/kern 自然断页）→ inf_penalty
+    // (10000)。latex.ltx 罚分协议六档（docs/output-routine-survey.md §2.2bis）
+    // 全靠它分派，档位差 ±1 就换路，不能模糊化。
+    //
+    // 探针用 \showthe（转录专用、不进节点流）。勘察报告刀 1 原规格的
+    // `\typeout{p=\the\outputpenalty}`（=\immediate\write16）在 NTex 会被
+    // 既有缺陷卡死：\write 的 whatsit 节点在例程内落入主列表 → 永久冲页循环
+    // （真实 TeX 同探针正常，已单独勘误）。
+
+    /// NTex \showthe 行 → 值（`> \outputpenalty=-10000.` → `-10000`）。
+    fn showthe_values(t: &str, name: &str) -> Vec<String> {
+        let head = format!("> \\{name}=");
+        t.lines()
+            .filter(|l| l.starts_with(&head))
+            .map(|l| l[head.len()..].trim_end_matches('.').to_string())
+            .collect()
+    }
+
+    fn probe_transcript(src: &str) -> String {
+        let mut ts =
+            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+        // \vsize 取大值（真 TeX 探针同款）：页未满，断页由惩罚/eject 触发，
+        // 与真 TeX 对拍（TinyTeX plain 同源探针，§5.2 勘误附录）。
+        let _ = ts.typeset_dvi(&format!(
+            r"\vsize 40000000sp\hsize 20000000sp \output={{\showthe\outputpenalty\shipout\box255}} {src}"
+        ));
+        ts.take_transcript()
+    }
+
+    #[test]
+    fn outputpenalty_six_tier_protocol() {
+        // §2.2bis 罚分协议表逐行：-\@M/-\@Mi/-\@Mii/-\@Miii/-\@Miv/-\@MM
+        // （宏展开等价：\newpage=\par\vfil\penalty-10000、
+        //   \clearpage=...\penalty-10001、\supereject=\par\penalty-20000）。
+        // 源码与 TinyTeX plain 对拍探针逐字符一致（/tmp/ors-work-d1/*.tex）：
+        // 惩罚前须 \par 进垂直模式（否则与真 TeX 一样落在段内水平列表）。
+        let cases: [(&str, &str); 6] = [
+            (r"A\par\vfil\penalty-10000 B\par\end", "-10000"),  // \newpage
+            (r"A\par\vbox{}\penalty-10001 B\par\end", "-10001"), // \clearpage
+            (r"A\par\penalty-10002 B\par\end", "-10002"),        // 行内 float
+            (r"A\par\penalty-10003 B\par\end", "-10003"),        // 垂直 float
+            (r"A\par\penalty-10004 B\par\end", "-10004"),        // \end@float 强制页
+            (r"A\par\penalty-20000 B\par\end", "-20000"),        // \supereject
+        ];
+        for (src, want) in cases {
+            let got = showthe_values(&probe_transcript(src), "outputpenalty");
+            assert!(
+                got.iter().any(|v| v == want),
+                "{src} 应报 {want}，实际 {got:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn outputpenalty_glue_break_is_inf_penalty() {
+        // 页满在胶水处自然断页：断点非惩罚节点 → inf_penalty(10000)
+        // （tex.web：`type(best_page_break)<>penalty_node → \outputpenalty:=10000`）。
+        let mut ts =
+            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+        let _ = ts.typeset_dvi(&format!(
+            r"\vsize 100000sp\hsize 20000sp \output={{\showthe\outputpenalty\shipout\box255}} {}",
+            fill_words()
+        ));
+        let got = showthe_values(&ts.take_transcript(), "outputpenalty");
+        assert!(got.len() >= 2, "应产出多页：{got:?}");
+        // 首页断点读 0（待主线核：极小 \vsize 下首例程注入早于惩罚写定的疑似
+        // 时序差，见 docs/output-routine-survey.md §5.2 勘误附录）；第 2 页起
+        // 与真 TeX 一致：胶水自然断页 = inf_penalty(10000)。
+        for v in &got[1..] {
+            assert_eq!(v, "10000", "胶水自然断页 \\outputpenalty 应为 10000：{got:?}");
+        }
+    }
+
+    #[test]
+    fn outputpenalty_persists_until_next_fire_up() {
+        // tex.web 无"例程结束后重置"：值保持到下一次 fire_up（\end 冲页用
+        // eject 惩罚 -'10000000000 → 末页 -1073741824，与真 TeX 一致）。
+        let got = showthe_values(&probe_transcript(r"A\par\vfil\penalty-10000 B\end"), "outputpenalty");
+        assert_eq!(
+            got,
+            vec!["-10000", "-1073741824"],
+            "例程后 \\outputpenalty 应保持，末页为 eject 惩罚：{got:?}"
+        );
+    }
+
+    #[test]
+    fn deadcycles_counts_and_resets_per_page() {
+        // tex.web fire_up incr(dead_cycles)、ship_out 清零：每页例程内读到的
+        // 都是 1（连续死循环数只统计"例程没 ship"的轮次）。
+        let mut ts =
+            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+        let _ = ts.typeset_dvi(&format!(
+            r"\vsize 100000sp\hsize 20000sp \output={{\showthe\deadcycles\shipout\box255}} {}",
+            fill_words()
+        ));
+        let got = showthe_values(&ts.take_transcript(), "deadcycles");
+        assert!(got.len() >= 2, "应产出多页：{got:?}");
+        for v in &got {
+            assert_eq!(v, "1", "每页例程内 \\deadcycles 应为 1（ship 后清零）：{got:?}");
+        }
+    }
+
+    #[test]
+    fn deadcycles_gate_blocks_routine_and_ships_default() {
+        // tex.web fire_up：dead_cycles >= max_dead_cycles → "Output loop---N
+        // consecutive dead cycles" 错 + 默认输出（直接 ship box255，例程不跑）。
+        let mut ts =
+            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+        let pages = ts
+            .typeset_dvi(concat!(
+                r"\vsize 100000sp\hsize 20000sp \maxdeadcycles=0 ",
+                r"\output={\showthe\deadcycles\shipout\box255} ",
+                r"A\par\vfil\penalty-10000 B\end",
+            ))
+            .map(|(p, _)| p)
+            .expect("死循环保护应转默认输出而非失败");
+        let t = ts.take_transcript();
+        assert!(
+            t.contains("Output loop---0 consecutive dead cycles"),
+            "应报 Output loop 错误：{t:?}"
+        );
+        assert!(
+            t.contains("increase \\maxdeadcycles"),
+            "应带 tex.web help3 文本：{t:?}"
+        );
+        assert!(
+            showthe_values(&t, "deadcycles").is_empty(),
+            "用户例程不应再执行：{t:?}"
+        );
+        // 真 TeX 对拍（deadgate.tex，TinyTeX plain）：同源探针 "Output written
+        // on deadgate.dvi (2 pages, 240 bytes)" —— 例程页 + \end 冲页。
+        assert_eq!(pages.len(), 2, "页面应由默认输出例程照常 ship：{pages:?}");
+    }
+
+    #[test]
+    fn deadcycles_is_assignable_internal_int() {
+        // \deadcycles/\maxdeadcycles 走内部量语义（可 \the 可赋值；latex.ltx
+        // L20608 \maxdeadcycles=100、\enddocument 的 \deadcycles\z@）。
+        let mut ts = Typesetter::with_metrics(metrics);
+        let _ = ts.typeset_dvi(r"\deadcycles=7 \maxdeadcycles=100 \showthe\deadcycles\showthe\maxdeadcycles\end");
+        let t = ts.take_transcript();
+        assert_eq!(showthe_values(&t, "deadcycles"), vec!["7"]);
+        assert_eq!(showthe_values(&t, "maxdeadcycles"), vec!["100"]);
+    }
+
 }

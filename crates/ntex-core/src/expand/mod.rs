@@ -47,6 +47,15 @@ type FontLoad = (String, Option<i64>, Option<i64>);
 /// 入口检查同一上限（防御单步内的无界递归——主循环 10M 步看门狗够不到）。
 const MAX_INPUT_STACK: usize = 5000;
 
+/// `Params.misc` 下标（与 `free::int_param_index` 对齐）：`\deadcycles`、
+/// `\maxdeadcycles`、`\outputpenalty`（输出例程刀 1 的 fire_up 点火侧语义）。
+const DEAD_CYCLES_IDX: usize = 25;
+const MAX_DEAD_CYCLES_IDX: usize = 43;
+const OUTPUT_PENALTY_IDX: usize = 62;
+/// tex.web `inf_penalty`：非惩罚节点断点（胶水/kern 自然断页）时
+/// `\outputpenalty` 的值（`@<Set the value of |output_penalty|@>`）。
+const INF_PENALTY: i64 = 10_000;
+
 /// 输入帧：token 来源栈（LIFO，栈顶为当前帧）。
 ///
 /// `Clone`（M5 阶段二）：段级回滚还原 [`ControlState::stack`]，需要克隆悬挂
@@ -1417,6 +1426,47 @@ impl Expander {
             return Ok(false);
         }
         self.output_prev_count = count;
+        // ---- 输出例程刀 1（G1/G4）：tex.web fire_up 的点火侧语义 ----
+        // ship_out 清零（tex.web L12707）：上一例程若真出了页，连续死循环计数归零。
+        if self.sink.take_page_shipped() && self.params.misc[DEAD_CYCLES_IDX] != 0 {
+            self.params.misc[DEAD_CYCLES_IDX] = 0;
+            self.sink
+                .param_changed(ParamKind::MiscInt(DEAD_CYCLES_IDX), ParamValue::Number(0))?;
+        }
+        // @<Set the value of |output_penalty|@>：最佳断点是惩罚节点 → 其惩罚值，
+        // 否则 inf_penalty。geq_word_define = 全局赋值（不进 save_stack），
+        // 例程内 \outputpenalty=... 的覆盖到下一次断页被重写，与 tex.web 一致。
+        let bp = self.sink.output_break_penalty().unwrap_or(INF_PENALTY);
+        self.params.misc[OUTPUT_PENALTY_IDX] = bp;
+        self.sink.param_changed(
+            ParamKind::MiscInt(OUTPUT_PENALTY_IDX),
+            ParamValue::Number(bp),
+        )?;
+        // fire_up：dead_cycles >= max_dead_cycles → "Output loop" 错并转默认输出
+        // （直接 ship box255），不再点火用户例程——打破"例程永不 ship"死循环。
+        if self.params.misc[DEAD_CYCLES_IDX] >= self.params.misc[MAX_DEAD_CYCLES_IDX] {
+            let dead = self.params.misc[DEAD_CYCLES_IDX];
+            self.sink
+                .report_error(&format!("Output loop---{dead} consecutive dead cycles"));
+            self.sink.report_help(
+                "I've concluded that your \\output is awry; it never does a\n\
+                 \\shipout, so I'm shipping \\box255 out myself. Next time\n\
+                 increase \\maxdeadcycles if you want me to be more patient!",
+            );
+            self.sink.default_output_routine();
+            self.params.misc[DEAD_CYCLES_IDX] = 0;
+            self.sink
+                .param_changed(ParamKind::MiscInt(DEAD_CYCLES_IDX), ParamValue::Number(0))?;
+            self.output_prev_count = usize::MAX;
+            return Ok(false);
+        }
+        // @<Fire up the user's output routine and |return|@>：incr(dead_cycles)
+        // （例程 ship 时由 take_page_shipped 分支清零）。
+        self.params.misc[DEAD_CYCLES_IDX] += 1;
+        self.sink.param_changed(
+            ParamKind::MiscInt(DEAD_CYCLES_IDX),
+            ParamValue::Number(self.params.misc[DEAD_CYCLES_IDX]),
+        )?;
         let toks = self.output_toks.clone().expect("已检查 is_some");
         self.sink.take_output_pending();
         self.output_active = true;

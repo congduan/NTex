@@ -182,6 +182,8 @@ struct SideEffects {
     output_defined: bool,
     pending_pages: std::collections::VecDeque<BoxNode>,
     write_flush_pending: bool,
+    /// 页面 shipout 过（`dead_cycles` 清零依据；输出例程刀 1）。
+    page_shipped: bool,
     math_style: MathStyle,
     pending_script: Option<bool>,
     sqrt_pending: bool,

@@ -52,6 +52,17 @@ pub struct PageBuilder {
     has_box: bool,
     /// 最佳断点（`page` 下标；= page.len() 表示"触发节点处"即页末端）。
     best: Option<usize>,
+    /// 最佳断点是否惩罚节点及其惩罚值（tex.web `fire_up` 的
+    /// `@<Set the value of |output_penalty|@>`：`type(best_page_break)=penalty_node`
+    /// → `\outputpenalty := penalty(best_page_break)`；否则（胶水/kern 断点）
+    /// → `\outputpenalty := inf_penalty`(10000)。输出例程点火前由引擎经
+    /// TokenSink 查询写入 [`Primitive::OutputPenalty`](ntex_core::eqtb)。
+    best_penalty: Option<i64>,
+    /// `fire_up` 已为最近产出的页面写定的 `\outputpenalty` 值（tex.web
+    /// `@<Set the value of |output_penalty|@>` 在 fire_up 入口执行，先于
+    /// `start_new_page` 重置）——引擎在例程点火前经 [`Self::take_output_penalty`]
+    /// 取走（take 语义，防例程延后注入时读到陈旧断点）。
+    fired_penalty: Option<i64>,
     /// 最佳断点成本（`least_page_cost`）。
     best_cost: i64,
     /// 最佳断点时的目标高度（`best_size`，fire_up 打包用）。
@@ -94,6 +105,8 @@ impl PageBuilder {
             max_depth: 0,
             has_box: false,
             best: None,
+            best_penalty: None,
+            fired_penalty: None,
             best_cost: AWFUL_BAD,
             best_size: 0,
             last_is_box: false,
@@ -241,7 +254,7 @@ impl PageBuilder {
                 }
                 // 胶水是断点 iff 前驱节点 precedes_break（tex.web：type < math_node，
                 // 含盒子/规则/胶水/kern——非 penalty/mark/insert 即可断）
-                if self.precedes_break() && self.try_break(0) == Some(Outcome::FireUp) {
+                if self.precedes_break() && self.try_break(0, false) == Some(Outcome::FireUp) {
                     return Outcome::FireUp;
                 }
                 contrib.remove(0);
@@ -268,7 +281,7 @@ impl PageBuilder {
                 }
                 // kern 仅在后继为胶水时才是断点（tex.web §498，需前瞻贡献）
                 let followed_by_glue = matches!(contrib.get(1), Some(Node::Glue { .. }));
-                if followed_by_glue && self.try_break(0) == Some(Outcome::FireUp) {
+                if followed_by_glue && self.try_break(0, false) == Some(Outcome::FireUp) {
                     return Outcome::FireUp;
                 }
                 contrib.remove(0);
@@ -283,7 +296,7 @@ impl PageBuilder {
                     contrib.remove(0);
                     return Outcome::Continue;
                 }
-                if penalty < INF_PENALTY && self.try_break(penalty) == Some(Outcome::FireUp) {
+                if penalty < INF_PENALTY && self.try_break(penalty, true) == Some(Outcome::FireUp) {
                     return Outcome::FireUp;
                 }
                 contrib.remove(0);
@@ -353,7 +366,9 @@ impl PageBuilder {
 
     /// 尝试在触发节点处断页（tex.web §552-577）：
     /// 计算 badness 与成本 `c`，更新最佳断点；`c=awful` 或强制断点 → fire_up。
-    fn try_break(&mut self, pi: i64) -> Option<Outcome> {
+    /// `at_penalty`：断点是否惩罚节点（`\outputpenalty` 的取值依据，见
+    /// [`Self::output_break_penalty`]；胶水/kern 断点为 false）。
+    fn try_break(&mut self, pi: i64, at_penalty: bool) -> Option<Outcome> {
         let b = self.badness_now();
         let c = if b < AWFUL_BAD {
             if pi <= EJECT_PENALTY {
@@ -373,6 +388,7 @@ impl PageBuilder {
         if c <= self.best_cost {
             // 触发节点尚未入页：断点位置 = 页末端
             self.best = Some(self.page.len());
+            self.best_penalty = if at_penalty { Some(pi) } else { None };
             self.best_size = self.goal;
             self.best_cost = c;
         }
@@ -442,8 +458,19 @@ impl PageBuilder {
         }
     }
 
+    /// 取走 `fire_up` 为最近产出页面写定的 `\outputpenalty` 值（tex.web
+    /// `@<Set the value of |output_penalty|@>`）：最佳断点是惩罚节点 → 其惩罚值
+    /// （如 `\newpage` 的 -10000、`\clearpage` 的 -10001、`\supereject` 的
+    /// -20000）；胶水/kern 断点（页满自然断）与无记录 → `inf_penalty`(10000)。
+    pub fn take_output_penalty(&mut self) -> Option<i64> {
+        self.fired_penalty.take()
+    }
+
     /// `fire_up`（tex.web §709+）：按最佳断点打包页面、余下退回贡献、重置页面。
     fn fire_up(&mut self, contrib: &mut Vec<Node>) -> BoxNode {
+        // tex.web fire_up 入口：先写 \outputpenalty（最佳断点的惩罚值），再打包
+        // 页面并 start_new_page（后者会重置断点记录，故必须在此捕获）。
+        self.fired_penalty = Some(self.best_penalty.unwrap_or(INF_PENALTY));
         let cut = self.best.unwrap_or(self.page.len());
         let page = self.package(cut);
         // 余下节点 [cut..] 拼回贡献列表前端（触发节点之前）
@@ -616,6 +643,7 @@ impl PageBuilder {
         self.stretch = [0; 4];
         self.shrink = 0;
         self.best = None;
+        self.best_penalty = None;
         self.best_cost = AWFUL_BAD;
         self.best_size = self.goal;
         self.last_is_box = false;
@@ -640,6 +668,7 @@ impl PageBuilder {
         self.stretch = [0; 4];
         self.shrink = 0;
         self.best = None;
+        self.best_penalty = None;
         self.best_cost = AWFUL_BAD;
         self.best_size = 0;
         self.last_is_box = false;

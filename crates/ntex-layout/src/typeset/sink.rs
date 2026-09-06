@@ -999,6 +999,24 @@ impl TokenSink for NodeBuilder {
         self.pending_pages.clear();
     }
 
+    // ---------- 输出例程刀 1：\outputpenalty + \deadcycles ----------
+
+    fn output_break_penalty(&mut self) -> Option<i64> {
+        self.page.take_output_penalty()
+    }
+
+    fn take_page_shipped(&mut self) -> bool {
+        std::mem::take(&mut self.page_shipped)
+    }
+
+    fn default_output_routine(&mut self) {
+        // tex.web @<Perform the default output routine@>：待处理页面不经用户
+        // 例程直接 shipout（dead cycles 分支——`\output` 例程从不 ship 时）。
+        while let Some(p) = self.pending_pages.pop_front() {
+            self.ship_page(p);
+        }
+    }
+
     /// `\box<n>`（M3-5-3）：取出盒子寄存器；`\shipout` 前缀时封装为页面，
     /// 否则作为节点追加到当前列表。void 盒子报错（TeX "Box n is void"）。
     /// box255 = 待输出例程处理页面的队首。
@@ -1032,9 +1050,7 @@ impl TokenSink for NodeBuilder {
         };
         if self.shipout_next {
             self.shipout_next = false;
-            self.trace_shipout(&b);
-            self.shipped.push(b);
-            self.write_flush_pending = true;
+            self.ship_page(b);
         } else {
             self.append(Node::Box(b));
         }

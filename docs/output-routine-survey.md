@@ -521,3 +521,65 @@ latex.ltx 侧：`/tmp/latexsurvey/tex/latex/base/latex.ltx`（2026-06-01，22838
    `\box_if_horizontal:NTF`），不构成第一优先。
 6. 探针/转录污染教训（继承）：`\write16` 探针会改错误计数；本轮对拍一律用
    `\typeout`（转录）+ log 窗口切片，不碰 fixtures/。
+
+---
+
+## 5.bis 刀 1 实测记录（2026-09-06，✅ 完成）
+
+**改动面**：`page.rs`（`best_penalty`/`fired_penalty` 断点惩罚记录）+
+`TokenSink` 三个新方法（`output_break_penalty`/`take_page_shipped`/
+`default_output_routine`）+ `maybe_inject_output` 点火侧语义（§2.2bis 的
+引擎侧承担部分：只负责把断点惩罚交予例程 + 死循环保护，六档分派全在宏层）。
+原语注册早已在（misc 62/25/43），无需新增原语。
+
+### 5.bis.1 真 TeX 对拍（TinyTeX，tex 3.141592653 / TeX Live 2026，/tmp/ors-work-d1）
+
+对拍探针（plain 格式，与 NTex 同源）：
+
+```tex
+\output={\showthe\outputpenalty\shipout\box255}
+A\par\vfil\penalty-10000 B\par\end
+```
+
+| 触发（§2.2bis 档位） | 真 TeX log | NTex 转录 |
+|---|---|---|
+| `\par\vfil\penalty-10000`（-\@M / \newpage） | `> -10000.` | `-10000` ✅ |
+| `\par\vbox{}\penalty-10001`（-\@Mi / \clearpage） | `> -10001.` | `-10001` ✅ |
+| `\par\penalty-10002`（-\@Mii / 行内 float） | `> -10002.` | `-10002` ✅ |
+| `\par\penalty-10003`（-\@Miii / 垂直 float） | `> -10003.` | `-10003` ✅ |
+| `\par\penalty-10004`（-\@Miv / \end@float 强制页） | `> -10004.` | `-10004` ✅ |
+| `\par\penalty-20000`（-\@MM / \supereject） | `> -20000.` | `-20000` ✅ |
+| 页满在**胶水**处自然断页（多页） | `> 10000.`（重复） | `10000`（第 2 页起）✅ |
+| `\end` 冲页（eject 惩罚 -'10000000000） | `> -1073741824.` | `-1073741824` ✅ |
+| `\deadcycles`（每页例程内读，ship 后清零） | `> 1.`（每页） | `1`（每页）✅ |
+| `\maxdeadcycles=0` 死循环分支 | `! Output loop---0 consecutive dead cycles.` + help3 三行，照常 ship **2 页** | 同文本 + 2 页 ✅ |
+
+LaTeX 层对拍（`\documentclass{article}` + 勘察报告刀 1 原探针
+`\output={\typeout{p=\the\outputpenalty}\shipout\box255}`，
+`A\newpage B\clearpage C\newpage D\end{document}`）：真 TeX log 给
+`p=-10000`×4、`p=-10001`×2 —— 印证 §2.2bis：`\newpage` 走 -10000 正常臂、
+`\clearpage` 的 `\penalty-\@Mi` 走 `\@doclearpage` 臂。
+
+**勘误（简报 → tex.web 实证）**：简报称"例程结束后重置"。tex.web `fire_up`
+**无此重置**——`\outputpenalty` 是 `geq_word_define`（全局）且保持到下一次
+fire_up；被重置的是**断点节点的 penalty**（`penalty(best_page_break):=inf_penalty`，
+NTex 以"新空页丢弃触发节点"等效实现）。NTex 按 tex.web 实现。
+
+### 5.bis.2 已知偏差（待主线核 / 后续刀）
+
+1. **`\write`（`\typeout`）在输出例程内挂死**（既有缺陷，非本刀引入）：`\write`
+   的 whatsit 节点在例程内落入主列表 → 页面构建器材料永不清空 → `\end` 冲页
+   循环无限（`layout-watchdog` 200 万节点实测复现，真实 TeX 同探针正常）。
+   因此 NTex 侧对拍探针改用 `\showthe`（转录专用、不进节点流）。**建议列为
+   独立刀**（`\@outputpage` 的页眉页脚路径离不开例程内 `\write`）。
+2. **极小 `\vsize` + 页满胶水断页场景下，首页例程读到 `\outputpenalty`=0**
+   （应为 10000；第 2 页起正确）。疑似首次例程注入早于 `fired_penalty` 写定
+   的时序差，非六档协议路径（页未满时惩罚先触发），已锁在单测注释里。
+3. **多页排队时 `\outputpenalty` 取最后一次 fire_up 的值**：NTex 的例程是
+   延迟注入（token 边界），一帧内连断多页时队列各页共享最后一次记录；tex.web
+   逐页 fire_up 逐页写。sample2e 单页断点场景不受影响，`\@specialoutput`
+   五档分派不受影响。
+4. **TRIP 基线**：`cargo run -p ntex-trip -- --driver ntex --test trip` 在
+   HEAD 9dec0b7（本刀前）即失败于 pass2 `组未闭合（缺少 }）：groups=[SemiSimple,
+   MathLeft, MathLeft, Align]`（载入战主线 9dec0b7 既有）；本刀改动下输出与
+   基线**逐字节一致**（diff 为空）。

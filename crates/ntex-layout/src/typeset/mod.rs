@@ -567,6 +567,9 @@ struct NodeBuilder {
     pending_pages: VecDeque<BoxNode>,
     /// RFC-3：页面真正输出（`\shipout` 边界）时置位，通知引擎 flush 延迟写流。
     write_flush_pending: bool,
+    /// 输出例程刀 1：页面真正 shipout 过（自上次 [`TokenSink::take_page_shipped`]
+    /// 查询以来）——`dead_cycles` 清零依据（tex.web ship_out `dead_cycles:=0`）。
+    page_shipped: bool,
     /// 数学列表栈（M4-1）：数学模式期间一层；`{...}` 数学组/脚本字段压层。
     math: Vec<MathLevel>,
     /// 当前数学样式（进入 Math=Text、DisplayMath=Display；`\displaystyle` 等修改）。
@@ -726,6 +729,7 @@ impl NodeBuilder {
             output_defined: false,
             pending_pages: VecDeque::new(),
             write_flush_pending: false,
+            page_shipped: false,
             math: Vec::new(),
             math_style: MathStyle::Text,
             pending_script: None,
@@ -926,6 +930,7 @@ impl NodeBuilder {
             output_defined: self.output_defined,
             pending_pages: self.pending_pages.clone(),
             write_flush_pending: self.write_flush_pending,
+            page_shipped: self.page_shipped,
             math_style: self.math_style,
             pending_script: self.pending_script,
             sqrt_pending: self.sqrt_pending,

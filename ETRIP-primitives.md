@@ -288,3 +288,25 @@ M4 数学 + e-TeX 验收时已实现的 e-TeX 原语：
   expand_once` 与 `primitive_expand.rs dispatch_expandable` 分支，否则展开空转
   OOM（expr.rs fuzz 挂死修复注释）；只读整数作数字操作数需同时入
   `scan.rs` number_cs 白名单 + `scan_number_inner` 读取臂。
+
+## 输出例程刀 1：`\outputpenalty` + `\deadcycles`/`\maxdeadcycles` 接线（2026-09-06）
+
+> 原语本体早已注册（E 组冲刺批次：misc 62/25/43 内部整数参数，可 `\the` 可赋值）。
+> 本刀补齐的是 **fire_up 点火侧语义**（tex.web `fire_up`，reference/tex.web
+> L19718/L19737/L19731/L19916），使 latex.ltx 罚分协议六档
+> （docs/output-routine-survey.md §2.2bis）可分派。
+
+| 原语 | 接线语义 | 落点 |
+|---|---|---|
+| `\outputpenalty` | `fire_up` 入口写定：最佳断点是惩罚节点 → 其惩罚值；胶水/kern 断点 → `inf_penalty`(10000)。**全局**赋值（tex.web `geq_word_define`，不进 save_stack）；tex.web 无"例程结束后重置"——值保持到下一次 fire_up（`\end` 冲页的 eject 惩罚 -'10000000000 → -1073741824，真 TeX 实测同） | `page.rs` `best_penalty`/`fired_penalty` → `TokenSink::output_break_penalty`（take 语义）→ `maybe_inject_output` 写 misc[62] |
+| `\deadcycles` | 例程点火时 +1（tex.web `incr(dead_cycles)`）；页面真正 shipout 时清零（tex.web ship_out L12707）——引擎经 `TokenSink::take_page_shipped` 查询 | `maybe_inject_output` + NodeBuilder `ship_page` |
+| `\maxdeadcycles` | misc 43，plain 默认 25（latex.ltx 置 100）；`deadcycles >= maxdeadcycles` 时例程**不点火** | `maybe_inject_output` |
+
+- **死循环分支**：报 `! Output loop---N consecutive dead cycles.` + tex.web help3
+  三行，随后转默认输出（`TokenSink::default_output_routine`：待处理页面直通
+  shipout，用户例程不再执行）并清零 `\deadcycles`。真 TeX 对拍（deadgate.tex，
+  `\maxdeadcycles=0`）：同错误文本 + 同样 ship 2 页。
+- **新 TokenSink 三个查询/命令**：`output_break_penalty`、`take_page_shipped`、
+  `default_output_routine`（ntex-core/src/sink.rs，默认实现为 no-op）。
+- 回归：ntex-layout `outputpenalty_*`/`deadcycles_*` 6 测 + ntex-core 328 测 +
+  ntex-layout 165 测全绿；TRIP 输出与 HEAD 基线逐字节一致。
