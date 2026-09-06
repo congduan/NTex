@@ -583,3 +583,58 @@ NTex 以"新空页丢弃触发节点"等效实现）。NTex 按 tex.web 实现�
    HEAD 9dec0b7（本刀前）即失败于 pass2 `组未闭合（缺少 }）：groups=[SemiSimple,
    MathLeft, MathLeft, Align]`（载入战主线 9dec0b7 既有）；本刀改动下输出与
    基线**逐字节一致**（diff 为空）。
+
+---
+
+## 5.bis.3 刀 2 实测记录（2026-09-07，✅ 完成）
+
+**实际现状（简报假设证伪一处）**：G2 的判定成立——`\unvbox\@cclv`/`\vsplit\@cclv
+to\z@`/`\ifvoid\@cclv`/`\ht\@cclv` 在改动前全部恒 void；但「255 不在寄存器文件」
+的表述不准：`\box255`（M3-5-3）**本就感知队列**（`box_register(255)` →
+`pending_pages.pop_front()`），炸的是其余访问点（`take_or_clone_box`/`copy_box`/
+`box_register_kind`/`box_dim`/`set_box_dim`/`vsplit`/`showbox` 只读 `boxes`）。
+
+**裁决（tex.web 实证，reference/tex.web）**：`box(255)` 就是普通寄存器——fire_up
+`@<Break the current page at node |p|, put it in box~255...@>` 直接
+`box(255):=vpackage(...)`（同层裸写，不入 save stack）；例程结束
+`@<Ensure that box 255 is empty after output@>` 检查；unpackage/vsplit 对
+void 盒**静默**（`if p=null then return` / `vsplit:=null; return`）。因此
+NTex 采用**统一访问面路由**而非「255 进寄存器文件」：`pending_pages` 队列即
+寄存器 255 的物理存储、队首即寄存器内容（延迟注入使多页排队，tex.web 里
+fire_up 覆写 box(255) ≙ push_back）。三个助手：`box_view`（读）、
+`take_box_at`（取走=裸写，无组级日志——若入日志，例程组回滚会把已消费页塞回
+队列导致重复输出）、`write_box`（写半边，`store_box` 与 group_end 回滚共用，
+`\setbox255` 走 eq_save 语义）。
+
+**真 TeX 对拍**（TinyTeX 2026 plain，/tmp/knife2/p*.tex）：
+
+| 探针 | 真 TeX | NTex |
+|---|---|---|
+| 页在：`\ifvoid/\ifvbox/\ifhbox255` | `N / Y / N` | 同 ✅ |
+| `\ht255`/`\dp255`/`\wd255` | `30.0pt`/`1.94444pt`/`100.0pt` | 结构一致（维度值随度量源）✅ |
+| `\setbox2=\vbox{\unvbox255}` 后 shipout | 盒树子节点与直通 `\shipout\box255` 同形 | 同（子节点逐项相等）✅ |
+| `\setbox0=\vsplit255 to 10pt`（页在） | `\ht0`=10.0pt（exactly）、余量留 255 | `\ht0+\dp0`=10.0pt、余量非 void ✅ |
+| `\setbox255=\vbox{\box255\vfil}` | `\ht255`=31.94444pt=30.0+1.94444 | 页 = vbox{原页整体， vfil} ✅ |
+| void 255 的 `\vsplit255 to 10pt` | 静默：box0 void、`\ht0`=0、255 保持 void | 同（改动前为硬错 `InvalidInput`）✅ |
+| void 255 的 `\ifvoid255`/`\ht255` | `Y` / `0.0pt` | 同 ✅ |
+
+**发现未修（本刀不动，留独立刀）**：
+1. **例程帧末 token 的参数扫描前瞻提前触发 end_group**（ntex-core
+   expand/mod.rs，本刀禁碰）：`...\shipout\box<n>` 裸尾时，`<n>` 的数字扫描
+   fetch 到帧外 → 帧弹出 + `end_group`（组级回滚）先于 `\box<n>` 落地——
+   本例程 `\setbox` 的回滚反噬（NTex 侧观测为 dead cycles→默认输出）。
+   例程体补 `\relax` 即规避（单测已注释）；tex.web `end_token_list` 在
+   token 真正消耗完后才收帧。
+2. **unpackage 的 void→静默返回未实现**：`\unhbox234`（void）NTex 报
+   "! Incompatible list can't be unboxed."，tex.web `unpackage` 是
+   `if p=null then return`。TRIP l.396/l.425 参考行因类型不符（`\unhcopy3`/
+   `\unhbox10`）同样报错，故逐字对齐未破；改语义须连 TRIP 对照一起核。
+3. **fire_up 前后的 box255 空检查未接**：tex.web 「\box255 is not void」
+   （fire_up 前）与「Output routine didn't use all of \box255」（例程后）
+   在延迟注入架构下无对应点（前者与队列语义冲突，后者需例程结束 hook）。
+4. **`output_prev_count` 未在队列清空时即时复位**：`maybe_inject_output`
+   的「例程未消费→丢弃」判据在「消费完恰好一页 + 输入立即结束」时误判
+   （单测以单页文档规避；多页页数不变性待引擎侧修）。
+5. TRIP：pass2 既有失败不变（同 `组未闭合` groups）；pass1 delta 39 行全部
+   落在 `\setbox 254=\box255`/`\ifvoid 254`/`\box255` 消费路径（即本刀修复的
+   语义——take 真正取走页，`\ifvoid254` 由真变假）；ETRIP 逐字节一致。

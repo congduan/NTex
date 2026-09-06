@@ -667,6 +667,21 @@ struct NodeBuilder {
     record_main: Option<Vec<Node>>,
 }
 
+/// 盒子寄存器 255（tex.web `box(255)`）：页面构建器完成页的投递寄存器——
+/// tex.web fire_up @<Break the current page at node |p|, put it in box~255...@>
+/// 直接 `box(255):=vpackage(link(page_head),best_size,exactly,page_max_depth)`
+/// （同层裸写，例程负责消费，例程结束检查 @<Ensure that box 255 is empty after
+/// output@>）。NTex 输出例程延迟到 token 边界执行（tex.web 在 fire_up 内同步
+/// 执行且 `build_page` 在 output_active 期间停摆，任一时刻至多一页在飞），
+/// 一帧内连续断页的多页排队 [`NodeBuilder::pending_pages`]——**队列即寄存器
+/// 255 的物理存储，队首即寄存器内容**（tex.web 每次 fire_up 覆写 box(255)
+/// ≙ NTex 每页 push_back，后页排在队首之后）。全部寄存器访问路径（读/取/存/
+/// 判型/维度/拆分/showbox）经 [`NodeBuilder::box_view`]/[`NodeBuilder::take_box_at`]
+/// /[`NodeBuilder::write_box`] 统一路由，255 与普通寄存器同语义——latex.ltx
+/// `\@cclv=\chardef 255`（L325）正是普通寄存器号：`\box`×3、`\unvbox`×2、
+/// `\vsplit to\z@`×1、`\setbox`×1（L20914 存回）+ `\ifvoid/\ifvbox`。
+const PAGE_BOX: usize = 255;
+
 /// 断字候选字符：ASCII 字母（catcode 11 的近似；ligature/非字母不参与断字 run）。
 fn is_alpha(charcode: u32) -> bool {
     charcode < 128 && (charcode as u8).is_ascii_alphabetic()
@@ -841,15 +856,11 @@ impl NodeBuilder {
     /// `\unhbox`/`\unvbox`/`\unhcopy`/`\unvcopy` 共用；void 盒子报错。
     fn take_or_clone_box(&mut self, idx: usize, copy: bool) -> Result<BoxNode> {
         if copy {
-            self.boxes
-                .get(idx)
-                .and_then(|s| s.as_ref())
+            self.box_view(idx)
                 .cloned()
                 .ok_or_else(|| Error::invalid_input(format!("盒子 {idx} 为空（void）")))
         } else {
-            self.boxes_mut()
-                .get_mut(idx)
-                .and_then(|s| s.take())
+            self.take_box_at(idx)
                 .ok_or_else(|| Error::invalid_input(format!("盒子 {idx} 为空（void）")))
         }
     }
@@ -942,6 +953,45 @@ impl NodeBuilder {
     /// 前必须解共享，语义与整份深克隆一致）。
     fn boxes_mut(&mut self) -> &mut Vec<Option<BoxNode>> {
         std::rc::Rc::make_mut(&mut self.boxes)
+    }
+
+    /// 读盒子寄存器（255 → 待输出页队首，见 [PAGE_BOX]）。
+    fn box_view(&self, idx: usize) -> Option<&BoxNode> {
+        if idx == PAGE_BOX {
+            self.pending_pages.front()
+        } else {
+            self.boxes.get(idx).and_then(|s| s.as_ref())
+        }
+    }
+
+    /// 取走盒子寄存器内容（`\box`/`\unhbox`/`\unvbox`/`\vsplit` 的取走语义；
+    /// tex.web 对应 `box(cur_val):=null`（begin_box）/`box(n):=null`（unpackage）
+    /// /`box(n):=vpack(...)`（vsplit）的**同层裸写**——不入 save stack，组结束
+    /// 不回滚。255 → 弹队首：页被例程消费后不再复活（若入组级日志，例程组的
+    /// 回滚会把已消费页塞回队列导致重复输出）。
+    fn take_box_at(&mut self, idx: usize) -> Option<BoxNode> {
+        if idx == PAGE_BOX {
+            self.pending_pages.pop_front()
+        } else {
+            self.boxes_mut().get_mut(idx).and_then(|s| s.take())
+        }
+    }
+
+    /// 写盒子寄存器（`\setbox` 的写半边与组结束回滚共用）。255 → 替换队首，
+    /// 队列空时压入成为待输出页（tex.web：例程 `\setbox\@cclv\vbox{\box\@cclv\vfil}`
+    /// L20914 存回 255，页即被改写；`None` = 清空寄存器）。
+    fn write_box(&mut self, idx: usize, value: Option<BoxNode>) {
+        if idx == PAGE_BOX {
+            match value {
+                Some(b) if !self.pending_pages.is_empty() => self.pending_pages[0] = b,
+                Some(b) => self.pending_pages.push_front(b),
+                None => {
+                    self.pending_pages.pop_front();
+                }
+            }
+        } else if let Some(slot) = self.boxes_mut().get_mut(idx) {
+            *slot = value;
+        }
     }
 
     /// 排版副作用字段快照（M5 阶段五，`typeset::incremental` 的复用判定用）：
@@ -1068,13 +1118,11 @@ impl NodeBuilder {
     /// 存入盒子寄存器（TeX 寄存器组级保存）：组内记录旧值，组结束回滚。
     /// 返回旧值（`\box` 取走语义：读旧值 + 清空由调用方按返回值使用）。
     fn store_box(&mut self, idx: usize, value: Option<BoxNode>) -> Option<BoxNode> {
-        let old = self.boxes.get(idx).cloned().flatten();
+        let old = self.box_view(idx).cloned();
         if !self.groups.is_empty() && !self.setbox_global {
             self.box_saves.push((self.groups.len(), idx, old.clone()));
         }
-        if let Some(slot) = self.boxes_mut().get_mut(idx) {
-            *slot = value;
-        }
+        self.write_box(idx, value);
         old
     }
 

@@ -363,12 +363,20 @@ impl TokenSink for NodeBuilder {
 
     /// `\vsplit<n> to/spread <dimen>`（ETRIP）：拆分盒子寄存器 n 顶部。
     /// 寄存器 n 保留余量；结果按 `\setbox` 目标路由，否则追加。
+    /// 寄存器 255 = 待输出页队首（[PAGE_BOX]）：latex.ltx `\@doclearpage` 的
+    /// `\vsplit\@cclv to\z@` 从页顶取走 discardables。
+    /// tex.web vsplit @<Dispense with trivial cases...@>：void 盒 → 结果 void、
+    /// 静默（"The extracted box is void if and only if the original box was
+    /// void"）；真 TeX 实测 `\vsplit255 to 10pt` void → `\ifvoid0`=Y、`\ht0`=0、
+    /// 255 保持 void、无错误信息。
     fn vsplit(&mut self, idx: usize, to: Option<i64>, spread: Option<i64>) -> Result<()> {
-        let b = self
-            .boxes_mut()
-            .get_mut(idx)
-            .and_then(|s| s.take())
-            .ok_or_else(|| Error::invalid_input("\\vsplit 盒子为空（void）"))?;
+        let Some(b) = self.take_box_at(idx) else {
+            // void 盒：cur_box=null（tex.web）→ `\setbox` 目标存空、裸调用不产节点
+            if let Some(t) = self.setbox_target.take() {
+                self.store_box(t, None);
+            }
+            return Ok(());
+        };
         let natural = b.height + b.depth;
         let target = match (to, spread) {
             (Some(t), _) => t,
@@ -376,7 +384,9 @@ impl TokenSink for NodeBuilder {
             _ => natural,
         };
         let (result, remainder) = split_vbox(b, target);
-        self.store_box(idx, Some(remainder));
+        // 余量写回寄存器：tex.web `box(n):=vpack(q,natural)` 同层裸写（无组级
+        // 日志——例程内 `\vsplit\@cclv to\z@` 的余量在例程组结束时不回滚）
+        self.write_box(idx, Some(remainder));
         if let Some(t) = self.setbox_target.take() {
             self.store_box(t, Some(result));
         } else {
@@ -638,9 +648,10 @@ impl TokenSink for NodeBuilder {
             .is_some_and(|(lvl, _, _)| *lvl > cur_level)
         {
             let (_, idx, old) = self.box_saves.pop().expect("last 已检查");
-            if let Some(slot) = self.boxes_mut().get_mut(idx) {
-                *slot = old;
-            }
+            // 经 write_box 路由：寄存器 255 的回滚落在页面队列队首（trip.tex
+            // 第二例程 `\setbox255\copy255` ——「at end of group, \box255 reverts
+            // to former value」tex.web eq_restore 语义）
+            self.write_box(idx, old);
         }
         // 数学模式关**非数学模式打开的、非 box 的**组：TeX 报 Missing $ inserted
         // 并先关数学再关组（tex.web：数学模式的组结束 → 插 $ 结束数学；etrip
@@ -1021,30 +1032,17 @@ impl TokenSink for NodeBuilder {
 
     /// `\box<n>`（M3-5-3）：取出盒子寄存器；`\shipout` 前缀时封装为页面，
     /// 否则作为节点追加到当前列表。void 盒子报错（TeX "Box n is void"）。
-    /// box255 = 待输出例程处理页面的队首。
+    /// 寄存器 255 = 待输出例程处理页面的队首（[PAGE_BOX]，tex.web `box(255)`）。
     fn box_register(&mut self, idx: usize) -> Result<()> {
         // `\setbox5=\box3`：把寄存器 3 移入目标 5（\box3 变 void；tex.web set_box 赋值语义）
         if let Some(target) = self.setbox_target.take() {
             // `\setbox0=\lastbox`：优先取 \lastbox 摘下的盒子
-            let b = self
-                .lastbox_hold
-                .take()
-                .or_else(|| self.store_box(idx, None));
+            let b = self.lastbox_hold.take().or_else(|| self.take_box_at(idx));
             self.store_box(target, b);
             return Ok(());
         }
         // `\box0` 紧跟在 `\lastbox` 后：取摘下的盒子（TeX 语义）
-        let b = self
-            .lastbox_hold
-            .take()
-            .or_else(|| {
-                if idx == 255 {
-                    self.pending_pages.pop_front()
-                } else {
-                    // 取走（\box 用后清空）也是组级改动——组内记日志供回滚
-                    self.store_box(idx, None)
-                }
-            });
+        let b = self.lastbox_hold.take().or_else(|| self.take_box_at(idx));
         let Some(b) = b else {
             // TeX：\box 取 void 盒子 → 空 hbox 节点（tex.web：仍产生节点；TRIP L104 前 \copy200 void）
             self.append(Node::Box(crate::node::BoxNode::new_hbox(Vec::new())));
@@ -1380,8 +1378,11 @@ impl TokenSink for NodeBuilder {
     }
 
     /// 盒子寄存器种类（0=void、1=hbox、2=vbox）；`\ifvoid`/`\ifhbox`/`\ifvbox` 用。
+    /// 寄存器 255 = 待输出页队首（[PAGE_BOX]）：页面为 vbox → `\ifvbox255`=真、
+    /// 页队列空 → `\ifvoid255`=真（真 TeX 实测：页在 `VB:Y|HB:N|VOID:N`，
+    /// 页尽 `VOID:Y`）。
     fn box_register_kind(&self, idx: usize) -> i64 {
-        match self.boxes.get(idx).and_then(|s| s.as_ref()) {
+        match self.box_view(idx) {
             None => 0,
             Some(b) => match b.kind {
                 crate::node::BoxKind::HBox => 1,
@@ -1450,12 +1451,14 @@ impl TokenSink for NodeBuilder {
     }
 
     /// `\copy<n>`：复制盒子寄存器为节点追加到当前列表（原寄存器保留）。
+    /// 寄存器 255 = 待输出页队首（[PAGE_BOX]）——trip.tex 第二例程
+    /// `\setbox255\copy255` 即复制当前页。
     fn copy_box(&mut self, idx: usize) -> Result<()> {
         let b = if let Some(h) = self.lastbox_hold.take() {
             // `\copy0` 紧跟在 `\lastbox` 后：复制摘下的盒子
             h.clone()
         } else {
-            let Some(b) = self.boxes.get(idx).and_then(|s| s.as_ref()) else {
+            let Some(b) = self.box_view(idx) else {
                 // TeX：\copy 取 void 盒子 → **空 hbox 节点**（tex.web copy_scan_box：
                 // void → null box，仍产生节点触发 freeze/interline；TRIP L104 `\copy200`）
                 self.append(Node::Box(crate::node::BoxNode::new_hbox(Vec::new())));
@@ -1515,8 +1518,10 @@ impl TokenSink for NodeBuilder {
     }
 
     /// `\wd/\ht/\dp<n>`：盒子寄存器维度（void 为 0）。
+    /// 寄存器 255 = 待输出页队首（[PAGE_BOX]）：latex.ltx `\@specialoutput` 的
+    /// `\@pageht \ht\@holdpg` 型查询与页尺寸记账（`\ht\@cclv`）同语义。
     fn box_dim(&self, idx: usize, dim: u8) -> i64 {
-        let Some(b) = self.boxes.get(idx).and_then(|s| s.as_ref()) else {
+        let Some(b) = self.box_view(idx) else {
             return 0;
         };
         match dim {
@@ -1527,8 +1532,15 @@ impl TokenSink for NodeBuilder {
     }
 
     /// `\wd/\ht/\dp<n>=<dimen>`：设置盒子寄存器维度。
+    /// 255 → 改待输出页队首（`\dp\@cclv=...` 型改写落在页面上）；void 忽略。
     fn set_box_dim(&mut self, idx: usize, dim: u8, value: i64) -> Result<()> {
-        let Some(b) = self.boxes_mut().get_mut(idx).and_then(|s| s.as_mut()) else {
+        let idx255 = idx == PAGE_BOX;
+        let slot = if idx255 {
+            self.pending_pages.front_mut()
+        } else {
+            self.boxes_mut().get_mut(idx).and_then(|s| s.as_mut())
+        };
+        let Some(b) = slot else {
             // void 盒子无维度可设：忽略（TeX 恢复语义，TRIP halign 模板场景）
             return Ok(());
         };
@@ -1727,7 +1739,7 @@ impl TokenSink for NodeBuilder {
 
     /// `\showbox<n>`：把盒子寄存器内容格式化到转录（TeX show_box 风格）。
     fn showbox(&mut self, idx: usize) -> Result<()> {
-        let Some(b) = self.boxes.get(idx).and_then(|s| s.as_ref()) else {
+        let Some(b) = self.box_view(idx) else {
             // TeX：\showbox 空盒 → 显示 void 并恢复（TRIP 中 box 状态差异不致命）
             let out = format!("> \\box{idx}=\nvoid\n! OK.\n");
             self.transcript.push_str(&out);

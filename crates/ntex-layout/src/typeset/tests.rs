@@ -2098,4 +2098,192 @@ mod tests {
         assert_eq!(showthe_values(&t, "maxdeadcycles"), vec!["100"]);
     }
 
+    // ---------- 输出例程刀 2：box255 寄存器化 ----------
+    //
+    // tex.web 裁决：box(255) 就是普通盒子寄存器——fire_up
+    // @<Break the current page at node |p|, put it in box~255...@> 直接
+    // `box(255):=vpackage(link(page_head),best_size,exactly,page_max_depth)`
+    // （同层裸写），例程负责消费，例程结束 @<Ensure that box 255 is empty
+    // after output@> 检查。NTex 例程延迟到 token 边界注入 → pending_pages
+    // 队列即 255 的物理存储、队首即寄存器内容（PAGE_BOX 注释）；本刀把
+    // \box/\copy/\unhbox/\unvbox/\vsplit/\ifvoid/\ifhbox/\ifvbox/\ht/\wd/\dp/
+    // \setbox/\showbox 全部寄存器访问路径统一路由（此前只有 \box255 感知队列，
+    // `\unvbox\@cclv`×2、`\vsplit\@cclv to\z@`×1、`\ifvoid\@cclv`、`\ht\@cclv`
+    // 恒 void——latex.ltx `\@doclearpage`/`\@specialoutput` 必炸）。
+    //
+    // 真 TeX 对照（TinyTeX 2026 plain，/tmp/knife2/p*.tex；探针与真实 TeX
+    // 同源，例程内经 \showthe 转录——刀 1 既定纪律，\write 在例程内挂死是
+    // 既有缺陷）：
+    //   P1 页在：`\ifvoid255`=N、`\ifvbox255`=Y、`\ifhbox255`=N、
+    //            `\ht255`=30.0pt、`\dp255`=1.94444pt、`\wd255`=100.0pt(=\hsize)
+    //   P2 `\setbox2=\vbox{\unvbox255}` → shipout 盒树子节点与直通
+    //      `\shipout\box255` 逐项同形
+    //   P3 `\setbox0=\vsplit255 to 10pt` → `\ht0`=10.0pt（exactly）、余量留 255
+    //   P4 `\setbox255=\vbox{\box255\vfil}` → `\ht255`=31.94444pt
+    //      （=30.0+1.94444 自然高；latex.ltx L20914 同形）
+    //   P5 void 255：`\ifvoid255`=Y、`\ht255`=0.0pt、`\vsplit255 to 10pt` 静默
+    //      （box0 void、255 保持 void、无错误信息）
+    //
+    // 例程体末尾 `\relax`：引擎例程帧末 token 的参数扫描前瞻会提前触发
+    // end_group（既有 quirk，expand/mod.rs 禁碰）——`...\shipout\box<n>` 裸尾
+    // 会让本例程 `\setbox` 的组级回滚先于 ship 落地（预存问题，与本刀无关）。
+
+    /// NTex \showthe 行 → 数值（`> \dimen=30.0pt.` → `30.0`；\showthe 印 cs 名
+    /// 不带寄存器号，故每个探针借道一个 \dimen/\count 寄存器、按序断言）。
+    fn showthe_dimens(t: &str, name: &str) -> Vec<f64> {
+        let head = format!("> \\{name}=");
+        t.lines()
+            .filter(|l| l.starts_with(&head))
+            .map(|l| {
+                l[head.len()..]
+                    .trim_end_matches('.')
+                    .trim_end_matches("pt")
+                    .trim_end_matches('.')
+                    .parse::<f64>()
+                    .unwrap_or(f64::NAN)
+            })
+            .collect()
+    }
+
+    /// NTex vpack 的占位简化（node.rs vpack）：打包时剥前导 discardable 节点。
+    /// `\vbox{\unvbox255}` 的对照基准须先剥默认页的前导 glue 再比较。
+    fn strip_leading_discardables(children: &[Node]) -> &[Node] {
+        let n = children.iter().take_while(|c| c.is_discardable()).count();
+        &children[n..]
+    }
+
+    #[test]
+    fn box255_void_reads_void_and_vsplit_is_silent() {
+        // P5 对照 + 简报探针第 3/4 条：页队列空时 255 与普通 void 寄存器同语义；
+        // tex.web vsplit @<Dispense with trivial cases of void or bad boxes@>：
+        // void → 结果 void、静默（改动前此处报 "\vsplit 盒子为空（void）" 硬错）。
+        let mut ts =
+            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+        let res = ts.typeset_dvi(concat!(
+            r"\output={\shipout\box255} ",
+            r"\setbox0=\vsplit255 to 655360sp ",
+            r"\dimen0=\ht0\showthe\dimen0 ",
+            r"\ifvoid0\count0=1\else\count0=0\fi\showthe\count0 ",
+            r"\ifvoid255\count1=1\else\count1=0\fi\showthe\count1 ",
+            r"aa bb cc\par dd ee ff\par\end",
+        ));
+        let t = ts.take_transcript();
+        let pages = res.expect("void \\vsplit255 应静默而非硬错").0;
+        assert_eq!(pages.len(), 1, "后续材料照常出页：{t:?}");
+        assert_eq!(showthe_dimens(&t, "dimen"), vec![0.0], "\\ht0 应为 0：{t:?}");
+        assert_eq!(
+            showthe_values(&t, "count"),
+            vec!["1", "1"],
+            "box0 与 255 均应 void：{t:?}"
+        );
+    }
+
+    #[test]
+    fn box255_page_reads_dims_kind_and_vsplit() {
+        // P1/P3 对照（简报探针第 1/2/4 条）：页在 → 非 void 的 vbox，\ht/\wd 可读；
+        // `\vsplit255 to 10pt` 从页顶切出恰好 10pt（结果 ht+dp = to 值，
+        // tex.web vpackage(exactly)），余量留在 255。latex.ltx `\@doclearpage`
+        // 的 `\setbox\@tempboxa\vsplit\@cclv to\z@` 走的正是这条路。
+        let mut ts =
+            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+        ts.typeset_dvi(concat!(
+            r"\vsize 2000000sp\hsize 10000000sp ",
+            r"\output={\dimen0=\ht255\showthe\dimen0\dimen1=\wd255\showthe\dimen1",
+            r"\ifvoid255\count0=1\else\count0=0\fi\showthe\count0",
+            r"\ifvbox255\count1=1\else\count1=0\fi\showthe\count1",
+            r"\setbox0=\vsplit255 to 655360sp\dimen2=\ht0\dimen3=\dp0",
+            r"\showthe\dimen2\showthe\dimen3",
+            r"\ifvoid255\count2=1\else\count2=0\fi\showthe\count2",
+            r"\shipout\box255\relax} ",
+            r"aa bb cc\par dd ee ff\par\end",
+        ))
+        .unwrap();
+        let t = ts.take_transcript();
+        let dims = showthe_dimens(&t, "dimen");
+        let counts = showthe_values(&t, "count");
+        assert_eq!(counts.len(), 3, "应有三组判型探针：{t:?}");
+        assert_eq!(
+            &counts[..2],
+            &["0", "1"],
+            r"\ifvoid255 假（页在）、\ifvbox255 真（页面是 vbox）：{t:?}"
+        );
+        assert_eq!(counts[2], "0", "vsplit 后余量留在 255（非 void）：{t:?}");
+        assert!(
+            dims.len() >= 2 && dims[0] > 0.0 && dims[1] > 0.0,
+            r"页在时 \ht255/\wd255 应 >0（真 TeX：ht=30.0pt、wd=100.0pt=\hsize）：{dims:?} {t:?}"
+        );
+        let (ht, dp) = (dims[2], dims[3]);
+        assert!(
+            (ht + dp - 10.0).abs() < 1e-4,
+            r"\vsplit255 to 10pt 的结果应为恰好 10pt（真 TeX SPLIT-HT:10.0pt）：ht={ht} dp={dp}：{t:?}"
+        );
+    }
+
+    #[test]
+    fn box255_unvbox_preserves_page_children() {
+        // P2 对照（latex.ltx `\@specialoutput` 的 `\global\setbox\@holdpg
+        // \vbox{\unvbox\@cclv}` 同形）：页内容经 \unvbox255 原样回流用户 vbox
+        // （真 TeX 盒树：`\vbox(22.0+1.94444)x100.0` 内子节点与直通
+        // `\shipout\box255` 逐项同形；改动前恒报
+        // "Incompatible list can't be unboxed."——255 不在寄存器文件）。
+        let src = r"\vsize 2000000sp\hsize 10000000sp aa bb cc\par dd ee ff\par\end";
+        let default = paginated(src).unwrap();
+        let with = paginated(&format!(
+            r"\output={{\setbox2=\vbox{{\unvbox255}}\shipout\box2\relax}} {src}"
+        ))
+        .unwrap();
+        assert_eq!(with.len(), default.len(), "例程不改变页数");
+        for (p, d) in with.iter().zip(&default) {
+            assert_eq!(
+                &p.children,
+                strip_leading_discardables(&d.children),
+                "\\unvbox255 应原样回流页内容"
+            );
+        }
+    }
+
+    #[test]
+    fn box255_setbox_stores_back_into_page_queue() {
+        // P4 对照（latex.ltx L20914 `\setbox\@cclv\vbox{\box\@cclv\vfil}` 同形）：
+        // 体内 \box255 弹出原页 → 追加 \vfil → 结果存回 255（write_box 替换队首）
+        // → \shipout\box255 输出改写后页面。
+        // 组级语义逐事件对齐 tex.web：take 是裸写（不入 save stack）、\setbox 记
+        // eq_save（例程组结束时回滚到 null——页已 ship、队列空 → 回滚为无操作）。
+        let src = r"\vsize 2000000sp\hsize 10000000sp aa bb cc\par dd ee ff\par\end";
+        let default = paginated(src).unwrap();
+        let with = paginated(&format!(
+            r"\output={{\setbox255=\vbox{{\box255\vfil}}\shipout\box255\relax}} {src}"
+        ))
+        .unwrap();
+        assert_eq!(with.len(), default.len(), "例程不改变页数");
+        for (p, d) in with.iter().zip(&default) {
+            // 改写后页面 = vbox{ 原页整体 , \vfil }（真 TeX NEW-HT:31.94444pt
+            // = 30.0 + 1.94444 —— 原页作为整体盒嵌套，高度为其自然高）
+            assert_eq!(p.children.len(), 2, "应为 [原页, vfil]：{p:?}");
+            assert_eq!(&p.children[0], &Node::Box(d.clone()), "原页应整体嵌套");
+            match p.children.last() {
+                Some(Node::Glue {
+                    stretch_order: GLUE_ORDER_FIL,
+                    ..
+                }) => {}
+                other => panic!("末尾应为 \\vfil 胶水，得到 {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn box255_copy_reads_page_queue() {
+        // \copy255 走队列（trip.tex 第二例程 `\setbox255\copy255` 的通路）：
+        // 复制当前页输出 —— 与默认直通逐页一致（改动前 \copy255 恒 void →
+        // 空 hbox，页被吞）。
+        let src = r"\vsize 2000000sp\hsize 10000000sp aa bb cc\par dd ee ff\par\end";
+        let default = paginated(src).unwrap();
+        let with = paginated(&format!(
+            r"\output={{\setbox1=\copy255\shipout\box1\relax}} {src}"
+        ))
+        .unwrap();
+        assert_eq!(with.len(), default.len(), "例程不改变页数");
+        assert_eq!(with, default, "\\copy255 应复制当前页并原样输出");
+    }
+
 }
