@@ -2,6 +2,8 @@
 <!-- NTex WASM 实时预览工作台（B 档第一刀：软光栅 canvas 渲染）。
      与 native `ntex-studio` 同交互骨架：左编辑 / 右预览，250ms 防抖重排；
      翻页/调 dpi/切 overlay 只调 Document.render_page（不重排版）。
+     真字形：启动后异步注入 fonts/ 下 LM OpenType（cmr 系三映射）→ set_glyphs，
+     未就绪/失败回落方框，不阻塞首排（与 site Demo / tauri ui 同口径）。
      构建产物见 ../README.md（wasm32-unknown-unknown + wasm-bindgen --target web）。 -->
 <html lang="zh-CN">
 <head>
@@ -91,6 +93,11 @@
     <label><input type="checkbox" id="debug" /> 排版 overlay</label>
   </span>
   <span class="ctl">
+    <label title="LM OpenType 轮廓渲染；字体未注入时回落方框">
+      <input type="checkbox" id="glyphs" checked /> <span id="glyphsLabel">真字形</span>
+    </label>
+  </span>
+  <span class="ctl">
     <button id="downloadDvi" title="导出当前作业的 DVI 字节">DVI ⤓</button>
   </span>
   <span id="status"></span>
@@ -103,7 +110,7 @@
 
 <script type="module">
   // —— 引擎装载（构建产物 pkg/，见 README「构建」节） ——
-  import init, { compile_document, demo_tex, engine_version } from './pkg/ntex_wasm.js';
+  import init, { compile_document, demo_tex, engine_version, set_glyph_font } from './pkg/ntex_wasm.js';
 
   const $ = (id) => document.getElementById(id);
   const editor = $('editor'), canvas = $('canvas'), ctx = canvas.getContext('2d');
@@ -113,6 +120,16 @@
   let doc = null;            // 当前 Document 句柄（页盒树常驻，翻页不重排）
   let pageNo = 0;            // 0 起当前页
   let compileTimer = 0;
+  let fontsReady = false;    // LM OTF 注入完成前真字形回落方框
+
+  // TFM 名 → LM OpenType（cmr 系三映射，与 site Demo / tauri ui 同口径）
+  const GLYPH_FONTS = {
+    cmr10: 'fonts/lmroman10-regular.otf',
+    cmbx10: 'fonts/lmroman10-bold.otf',
+    cmti10: 'fonts/lmroman10-italic.otf',
+  };
+
+  function glyphsOn() { return fontsReady && $('glyphs').checked; }
 
   function setStatus(text, isErr = false) {
     statusEl.textContent = text; statusEl.classList.toggle('err', isErr);
@@ -134,6 +151,7 @@
       showNoPage(); return;
     }
     const tCompile = performance.now() - t0;
+    doc.set_glyphs(glyphsOn());   // 句柄每次重建，须重设；未就绪时为 false（方框）
     pageNo = Math.min(pageNo, Math.max(0, doc.page_count - 1));
     logEl.textContent = doc.transcript || '（空转录）';
     updatePageLabel();
@@ -171,6 +189,10 @@
   $('dpi').oninput = () => { $('dpiVal').textContent = $('dpi').value; };
   $('dpi').onchange = () => setStatus(renderStatus());
   $('debug').onchange = () => setStatus(renderStatus());
+  $('glyphs').onchange = () => {
+    if (doc && doc.page_count > 0) doc.set_glyphs(glyphsOn());
+    setStatus(renderStatus());
+  };
   function renderStatus() { return `渲染 ${renderCurrent().toFixed(1)}ms`; }
 
   $('downloadDvi').onclick = () => {
@@ -181,13 +203,33 @@
     URL.revokeObjectURL(a.href);
   };
 
-  // —— 启动：装载 wasm → 填 demo → 首次编译 ——
+  // —— 真字形：异步注入字体（不阻塞首排，就绪后重渲染） ——
+  async function loadGlyphFonts() {
+    try {
+      await Promise.all(Object.entries(GLYPH_FONTS).map(async ([tfm, url]) => {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+        set_glyph_font(tfm, new Uint8Array(await res.arrayBuffer()));
+      }));
+      fontsReady = true;
+      if (doc && doc.page_count > 0 && glyphsOn()) {
+        doc.set_glyphs(true); setStatus(renderStatus());
+      }
+    } catch (e) {
+      $('glyphs').disabled = true; $('glyphs').checked = false;
+      $('glyphsLabel').textContent = '真字形（未就绪）';
+      console.warn('字体注入失败，回落方框：', e);
+    }
+  }
+
+  // —— 启动：装载 wasm → 填 demo → 首次编译；字体注入并行进行 ——
   (async () => {
     try {
       await init();
       $('engine').textContent = engine_version();
       editor.value = demo_tex();
       compileNow();
+      loadGlyphFonts();
     } catch (e) {
       setStatus(`引擎装载失败：${e.message || e}`, true);
     }

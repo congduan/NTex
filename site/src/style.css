@@ -711,14 +711,21 @@ nav {
   background: #08090c;
 }
 
+/* 显示宽由 Demo.vue 行内 style 控制（96dpi 基准 × zoom），flex:none 防收缩、
+   超宽交给容器 overflow:auto 滚动；cursor/touch-action 配合拖拽平移 */
 .live-preview canvas {
   background: #fff;
   border-radius: 3px;
   box-shadow: 0 4px 30px rgba(0, 0, 0, 0.55);
-  width: 100%;
-  max-width: none;
+  flex: none;
   height: auto;
   display: block;
+  cursor: grab;
+  touch-action: none;
+}
+
+.live-preview canvas:active {
+  cursor: grabbing;
 }
 
 .live-hint {

@@ -124,7 +124,8 @@ export class Document {
      * `new ImageData(new Uint8ClampedArray(img.rgba), img.width, img.height)`
      * → `ctx.putImageData(...)`。`dpi` 任意正数（A4@72dpi ≈ 595×842、
      * @144dpi ≈ 1191×1684）；`debug` 叠加排版调试 overlay（盒边界/glue/
-     * 断点标记，与 native `ntex-backend --debug` 同口径）。
+     * 断点标记，与 native `ntex-backend --debug` 同口径）；字形口径由
+     * [`Document::set_glyphs`] 控制（默认方框）。
      * @param {number} index
      * @param {number} dpi
      * @param {boolean} debug
@@ -136,6 +137,16 @@ export class Document {
             throw takeFromExternrefTable0(ret[1]);
         }
         return PageImage.__wrap(ret[0]);
+    }
+    /**
+     * 切换真字形轮廓渲染（on = true）与占位方框口径（on = false）。
+     *
+     * 只影响后续 [`Document::render_page`] 调用（不重排版/不重编译）；
+     * 字体未注册时开启亦安全——逐字符回落方框（引擎契约）。
+     * @param {boolean} on
+     */
+    set_glyphs(on) {
+        wasm.document_set_glyphs(this.__wbg_ptr, on);
     }
     /**
      * 转录文本（TeX .log 主体：`\message`/`\show`/`\write16`/错误上下文）。
@@ -301,6 +312,27 @@ export function engine_version() {
         wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
     }
 }
+
+/**
+ * 注入轮廓字体字节（OTF/TTF；`tex_name` 为 TeX 排版字体名如 `cmr10`）。
+ *
+ * wasm 无文件系统，前端 fetch Latin Modern OTF 后经此注册（进程级表，
+ * 见 ntex-backend `glyphs.rs::register_font_bytes`）；此后
+ * [`Document::set_glyphs`]（true）渲染即走真字形轮廓，未注册字体逐字符
+ * 回落占位方框。坏字节返回 false 不 panic（引擎契约）。Latin Modern
+ * 与 CM 同源（度量一致），文件来源/许可见各前端 `fonts/` 目录 README。
+ * @param {string} tex_name
+ * @param {Uint8Array} bytes
+ * @returns {boolean}
+ */
+export function set_glyph_font(tex_name, bytes) {
+    const ptr0 = passStringToWasm0(tex_name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.set_glyph_font(ptr0, len0, ptr1, len1);
+    return ret !== 0;
+}
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
@@ -376,6 +408,13 @@ function getUint8ArrayMemory0() {
         cachedUint8ArrayMemory0 = new Uint8Array(wasm.memory.buffer);
     }
     return cachedUint8ArrayMemory0;
+}
+
+function passArray8ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 1, 1) >>> 0;
+    getUint8ArrayMemory0().set(arg, ptr / 1);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
 }
 
 function passStringToWasm0(arg, malloc, realloc) {

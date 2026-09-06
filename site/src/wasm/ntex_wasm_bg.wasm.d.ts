@@ -1,0 +1,33 @@
+/* tslint:disable */
+/* eslint-disable */
+export const memory: WebAssembly.Memory;
+export const __wbg_compileresult_free: (a: number, b: number) => void;
+export const __wbg_document_free: (a: number, b: number) => void;
+export const __wbg_pageimage_free: (a: number, b: number) => void;
+export const compile_document: (a: number, b: number) => [number, number, number];
+export const compile_tex: (a: number, b: number) => [number, number, number];
+export const compileresult_dvi: (a: number) => [number, number];
+export const compileresult_fonts: (a: number) => [number, number];
+export const compileresult_page_count: (a: number) => number;
+export const compileresult_transcript: (a: number) => [number, number];
+export const demo_tex: () => [number, number];
+export const document_dvi: (a: number) => [number, number];
+export const document_fonts: (a: number) => [number, number];
+export const document_page_count: (a: number) => number;
+export const document_render_page: (a: number, b: number, c: number, d: number) => [number, number, number];
+export const document_set_glyphs: (a: number, b: number) => void;
+export const document_transcript: (a: number) => [number, number];
+export const embedded_font_bytes: (a: number, b: number) => [number, number];
+export const embedded_fonts: () => [number, number];
+export const engine_version: () => [number, number];
+export const pageimage_height: (a: number) => number;
+export const pageimage_rgba: (a: number) => [number, number];
+export const pageimage_width: (a: number) => number;
+export const set_glyph_font: (a: number, b: number, c: number, d: number) => number;
+export const __wbindgen_externrefs: WebAssembly.Table;
+export const __wbindgen_malloc: (a: number, b: number) => number;
+export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+export const __externref_table_dealloc: (a: number) => void;
+export const __wbindgen_free: (a: number, b: number, c: number) => void;
+export const __externref_drop_slice: (a: number, b: number) => void;
+export const __wbindgen_start: () => void;
