@@ -2634,3 +2634,108 @@ latex.ltx --initex（/tmp/r21/w2，未插桩，`cmp expl3-code.tex .orig` 通过
   `\int_mod` 全族用舍入除法构造截断语义；若引擎截断/舍入与 e-TeX 不符，
   这族函数全体失真且**无错误消息**（静默错值），对拍时优先锁
   `91/100=1`、`99/2=50`、`-91/100=-1` 三个锚点。
+
+## 34. 2026-09-06 第二十七轮：`\token_if_*` 生成条件区主簇根治——组定界别名 cs 在 token 列表扫描被归一成字面花括号
+
+### 34.1 起点、靶子与判别路径
+
+HEAD=f480973，探针终态 **81**（32×`\use_ii:nn` extra-} + 25×Missing number 主簇 +
+6 Undefined + 3 Illegal parameter number + 3 `\use_i:nn` extra-} + 3 Extra \fi +
+2 `\use_none:nnnn` extra-} + 2 Missing endcsname + …）。简报四候选逐一判别：
+
+1. **"l.9468 区使用形态不同"** —— **证伪**。同签名的 `\prg_new_conditional:Npnn`
+   在 l.3307-4596（`\quark_if_*`/`\tl_if_empty:*`/`\tl_if_head_eq_catcode:nN`，
+   后者同样用 `\if_catcode:w` + `\exp_not:N`）全部无错；l.9468 起每条都错。
+   差异不在生成器使用形态，而在**体内引用了 `\c_group_begin_token` 等
+   `\let` 到字符 token 的 cs**（见 34.2）。
+2. **"l.9386 `\char_generate:nn` 的 Illegal parameter number 污染后续"** ——
+   **证伪**（doc §33.3 判断成立）。python 精确改写 l.9386 为
+   `\tl_const:Nn \c_catcode_other_space_tl { }` → **81 → 79**（只消掉它自己和
+   紧随的 Too many }'s），主簇 57 条纹丝不动。
+3. **"`\use_ii:nn` 本身还有第三处调用点漏"** —— **证伪**。`\use_ii:nn` 是
+   `\__prg_generate_p_form:wNNnnnnN` 的 else 臂选择器，报错是**下游症状**，
+   不是独立根因。
+4. **"l.9468 是陈旧锚点"** —— 部分成立但不影响定位：错误锚在 l.9468
+   （`\token_if_group_end:N` 体的收口 `}`），首个失败定义是 l.9459
+   `\token_if_group_begin:N`，级联沿后续每条 `\token_if_*` 传播。
+
+### 34.2 判别实验（/tmp/r27/vary.py：逐轮改写 expl3-code.tex.orig 的 l.9461 体 → 探针计数）
+
+| l.9461 体 | 错误数 |
+|---|---|
+| `\if_catcode:w \exp_not:N #1 \c_group_begin_token`（原样） | **81** |
+| `\if_meaning:w #1#2`（`\cs_if_eq:NN` 同款） | 11（该变体提前 bail，错误移到下一条 `\token_if_group_end:N`） |
+| `\if_catcode:w #1 \c_group_begin_token`（去 `\exp_not:N`） | 81 |
+| `\if_catcode:w #1 \scan_stop:` / `#1 a` / `a b` / `#1 #1` | 11 |
+| `\if_odd:w 1 \else: \fi:` | 11 |
+| **`\if_catcode:w a \c_group_begin_token`（无参数字符）** | **81** |
+| **`\if_meaning:w #1 \c_group_begin_token`** | **81** |
+| **`\scan_stop: \c_group_begin_token`（无条件、无 `#`）** | **81** |
+| `\c_group_begin_token \if_catcode:w a b` | 81 |
+
+**结论：判别式是"体内是否出现 `\c_group_begin_token`"，与 `\if*`、`#`、
+`\exp_not:N` 全无关。** `\c_group_begin_token` 由 l.9456
+`\tex_global:D \tex_let:D \c_group_begin_token {` 造出——cs 绑定字符 token。
+
+### 34.3 真根因（tex.web 直译）：token 列表扫描的组判定看 `cur_tok`，不是 `cur_cmd`
+
+tex.web `scan_toks`（§1338）与 e-TeX `scan_general_text` 收集 token 列表时，
+组起止判定是 `cur_tok<right_brace_limit`——**cs token 永不小于该界**
+（`cur_tok = cs_token_flag+cs`）。`\let\bg={` 型 cs 经 `get_token` 取出仍是
+cs token，"组性"只体现在 `cur_cmd = eq_type = left_brace`（§1223 `\let` 直接
+存 `cur_cmd/cur_chr`），**在 token 列表扫描里它是数据**。`cur_cmd` 判定只在
+`scan_left_brace`（L8194，开括号搜索）这类"要一个花括号"的上下文成立。
+
+本引擎 `scan.rs scan_group_contents_expanding`（`\use:e`/e 型体、
+`\unexpanded`/`\detokenize` 的 general text 走此路径）把组定界别名 cs 经
+`resolve_group_char` 归一成**字面 `{` 字符 token**：组深 +1 永不闭合 →
+`\__prg_generate_conditional_test:w`（定界实参扫描）吞到定义体外 →
+体内 `\prg_return_false:` 的 `\exp:w`（romannumeral）在错位状态里把
+`\exp_end:`（chardef 0）当数吃 → **1×Missing number + 2×`\use_ii:nn`
+extra-} 每条定义**，即 §33.3 的主簇（expl3 `\token_if_*` 区 34 条定义 ×3
+≈ 57 错）。修复 = **删去该扫描内两处归一**（开括号位的 match 臂保留——
+它对应 `scan_left_brace` 的 `cur_cmd` 判定，tex.web 正确）；
+`scan_group_contents`（`\toks` 类赋值，TRIP 依赖）与 `fetch_non_filler`
+（`scan_left_brace` filler）的归一**保留不动**。
+
+### 34.4 验证（诚实记录）
+
+| 门 | 结果 |
+|---|---|
+| latex_probe --initex（/tmp/r21/w2 同目录条件） | **81 → 5**（简报"预期 <25 甚至个位数"达成）。剩余：1×Illegal parameter number（l.9386 `\char_generate:nn`）+ 1×Too many }'s + 1×Missing number + 2×Undefined；加载推进到 l.11835（原 l.10298 输入栈超限收场消失） |
+| `cargo test -p ntex-core` | **332 绿**（331 既有 + 新增 `group_delimiter_alias_is_data_in_token_list_scan`：`\let\bg={\def\f#1{[#1]}\edef\x{\f\bg}\meaning\x}` → `macro:->[\bg]`） |
+| TRIP | 终态签名与 HEAD 基线一致：`组未闭合（缺少 }）groups=[SemiSimple, MathLeft, MathLeft, Align]`（§30.7/§32.4 同款）。**本轮未做 worktree 冷构建逐字节对拍**（时间盒已过 + 简报禁 stash 对比），留给主控复核 |
+| 插桩还原 | 未插桩 expl3-code.tex（变体一律在 /tmp/r27 拷贝体上做，`expl3-code.tex` 未动） |
+
+### 34.5 下一轮靶（证据链已备好）
+
+1. **`EqSlot::Char` 混装 `char_given` 与 `\let` 到字符**（本轮实锤的第二处 tex.web
+   偏差）：`\chardef\cb=123` 与 `\let\bg={` 在本引擎同为 `EqSlot::Char`，数字扫描
+   内部量分派（scan.rs `EqSlot::Register(Count,_) | EqSlot::Char` 臂）把两者都当
+   内部整数。**真 pdftex 实测**（`/tmp/r27/m/x1.tex`）`\ifnum\bg=123`（`\bg`=`\let` 到
+   `{`）→ `! Missing number, treated as zero. <to be read again> \bg`；本引擎静默
+   取 123。修法：拆出 `char_given` 槽（`\chardef`/`\mathchardef` 专用），数字位只认它；
+   `\ifx` 的 MeaningKey 亦须区分（tex.web 比较的是 `eq_type`，两者不等）。
+2. l.9386 `\char_generate:nn` 在 e 型定义体扫描内报 "Illegal parameter number in
+   definition of"（`<to be read again> \exp_not:N`）+ Too many }'s：定界串/参数位
+   在 e 型扫描的 `#` 处理（tex.web scan_toks `if macro_def then` 门）待对齐。
+3. `scan_group_contents`（`\toks` 类）的 `resolve_group_char` 归一与测试
+   `scan_left_brace_expandable_filler` 第二断言（`\everyjob\f`、`\f={\bgroup y\egroup}`
+   期望 `y`）是**引擎自设行为**：真 pdftex 同源输入报 runaway（`\egroup` 不配平）。
+   本轮因 TRIP 依赖未动，标记为与 tex.web 的已知偏差（记录在案，待专项裁决）。
+
+### 34.6 本轮踩坑
+
+- **探针变体 harness 的 sed 会吃反斜杠**：`sed "9461s/.*/    \\if_catcode:w …/"`
+  的替换段把 `\i`/`\e`/`\c` 当普通字符剥掉（文件字节数 -4 可作自检信号），
+  得出 11 错的假结论。变体一律用 python `split('\n')` 改写下标。
+- **探针目录状态参与结果**：`texsys.aux` 在场与否会翻转失败形态
+  （有 = 81 错主簇；无 = 在第二条 `\token_if_*` 处 `\use_i:nn`/conditional-form-unknown
+  提前 bail 收场，11 错）。A/B 计数必须复制整目录状态
+  （`latex.ltx`/`expl3.ltx`/`texsys.cfg`/`texsys.aux`/`tripos`）。
+- **initex 初表的 `{`/`}` 是 cat 12**：机制级微复现（`latex_probe --initex` 跑小文件）
+  必须先 `\catcode`\{=1 \catcode`\}=2 \catcode`\#=6`，否则 `\def\a{X}` 直接报
+  "参数文本未闭合（缺少 {）"（真 INITEX 语义，非引擎缺陷）。
+- **主簇改判的教训（续 §33.5）**：本轮最初沿简报候选 1（生成器使用形态）勘察
+  白费三步——判别式的正确找法是"**最小可变体**"：把同一条定义的体逐成分替换
+  （去 `\exp_not:N`、换条件、换操作数），一次一个变量，其余不动。

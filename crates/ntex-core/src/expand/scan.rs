@@ -1118,7 +1118,14 @@ impl Expander {
                 .fetch()?
                 .ok_or_else(|| Error::invalid_input("扫描到输入末尾"))?
                 .0;
-            let open = self.resolve_group_char(open);
+            // tex.web scan_general_text → scan_toks：token 位的组判定看 **cur_tok**
+            //（`cur_tok<right_brace_limit`）；`\let\bg={` 型 cs 经 get_token 仍是
+            // cs token（组性只体现在 cur_cmd=eq_type），不得在此归一成字符 token——
+            // 否则 e 型体（\use:e 的体经本扫描）里 `\c_group_begin_token` 撑起
+            // 永不闭合的组深 → 组平衡崩塌（expl3 `\token_if_*` 生成条件区
+            // 32×extra-} + 25×Missing number，第二十七轮）。组定界别名只在
+            // **开括号位**归一（下方 match 臂 = tex.web scan_left_brace 的
+            // cur_cmd 判定）。
             // 组开始：转平衡组收集
             if open.catcode() == Some(Catcode::BeginGroup) {
                 self.unread(open);
@@ -1191,7 +1198,9 @@ impl Expander {
         }
         let mut depth = 0usize;
         while let Some((fetched, _)) = self.fetch()? {
-            let t = self.resolve_group_char(fetched);
+            // cur_tok 判定（tex.web scan_toks）：组定界别名 cs 在组内是数据
+            //（`\def\f#1{[#1]}\edef\x{\f\bg}` 真 TeX 存 `\bg`）。
+            let t = fetched;
             match t.catcode() {
                 Some(Catcode::BeginGroup) => {
                     depth += 1;

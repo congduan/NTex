@@ -722,6 +722,25 @@ mod tests {
     }
 
     #[test]
+    fn group_delimiter_alias_is_data_in_token_list_scan() {
+        // 第二十七轮（tex.web scan_toks/scan_general_text）：token 列表里的组
+        // 判定看 **cur_tok**——`\let\bg={` 型 cs 经 get_token 仍是 cs token
+        // （组性只体现在 cur_cmd=eq_type），不得归一成字符 token。此前 e 型体
+        // （expl3 `\use:e` 生成条件体）把 `\c_group_begin_token` 归一成字面
+        // `{`，组深 +1 永不闭合 → 组平衡崩塌：expl3 `\token_if_*` 生成条件区
+        // 每条定义 1×Missing number + 2×`\use_ii:nn extra }`（57 错主簇）。
+        // 开括号位（scan_left_brace 的 cur_cmd 判定）归一不受影响——真 TeX
+        // `\let\bgroup={\everyjob\bgroup y` 合法收 `y`，但 `\egroup` 不配平。
+        assert_eq!(
+            expand("\\let\\bg={\\def\\f#1{[#1]}\\edef\\x{\\f\\bg}\\meaning\\x}").unwrap(),
+            "macro:->[\\bg]"
+        );
+        // 对照：真 TeX 数字上下文 `\let` 别名不是内部量（char_given 才是）——
+        // `\ifnum\bg=1` 报 Missing number（本测只锁 token 位数据性，数字位
+        // 内部量分派的 char_given/let 区分是下一轮靶）。
+    }
+
+    #[test]
     fn scan_left_brace_expandable_filler() {
         // tex.web scan_left_brace（L8194-8206）：toks 值扫描的 `{` 入口是
         // get_x_token（可展开 filler）——latex.ltx L727
