@@ -959,8 +959,9 @@ mod tests {
         // 脚本字阶缩放：宽 7/10 × (1000+50)；高 7/10 × 6000
         assert_eq!(sup.children[0].dimensions().width, xn_over_d(1050, 7, 10));
         assert_eq!(sup.children[0].dimensions().height, 4200);
-        // fn 指针模式 x_height=0 → 上标提升量 0（M4-3 用 fontdimen 精化）
-        assert_eq!(sup.shift, 0);
+        // tex.web make_scripts：shift_up ≥ depth(sup 盒)+x_height/4。fn 指针模式
+        // family-2 无字体（sup2=0、x_height=0）→ 退为 depth(sup)=1050
+        assert_eq!(sup.shift, -1050);
     }
 
     #[test]
@@ -1015,7 +1016,8 @@ mod tests {
         assert_eq!(sub.children.len(), 2, "y + z 上标盒");
         let z = &sub.children[1];
         let zw = z.dimensions().width;
-        assert_eq!(zw, xn_over_d(1000 + b'z' as i64, 5, 10));
+        // 嵌套上标盒同样是 script 盒：宽含 \scriptspace（tex.web make_scripts）
+        assert_eq!(zw, xn_over_d(1000 + b'z' as i64, 5, 10) + 32768);
     }
 
     #[test]
@@ -1535,6 +1537,34 @@ mod tests {
             found.iter().all(|&(w, s)| w == 182040 && s == 182040),
             "thickmuskip 应为 182040sp（5mu × cur_mu 36408）：{found:?}"
         );
+    }
+
+    /// P2（demo1 对照）：上标抬升量按 tex.web make_scripts —— clr 取
+    /// family-2（math symbols）字体的 sup1/sup2（fontdimen 13/14），再与
+    /// depth(sup 盒)+x_height/4 竞争；nucleus 为单字符时基准 0。
+    /// TinyTeX 实测：plain 下 `mc^2` 的 `2` → `down-237825` =
+    /// -\sup2（cmex10 fontdimen 14 = 0.362890em × 10pt）。修前用
+    /// current_font 的 fontdimen 11（denom1，cmr10 无 → 回退 x_height
+    /// 4.30554pt = 282168）——机制错位。
+    #[test]
+    fn math_sup_shift_uses_mathsy_sup2() {
+        let mut ts = Typesetter::with_tfm();
+        let src = concat!(
+            "\\font\\tenrm=cmr10 \\font\\tenmi=cmmi10 \\font\\tensy=cmsy10 \\font\\tenex=cmex10 ",
+            "\\textfont0=\\tenrm \\textfont1=\\tenmi \\textfont2=\\tensy \\textfont3=\\tenex ",
+            "\\tenrm $mc^2$"
+        );
+        let main = ts.typeset(src).unwrap();
+        let line = as_box(&main[0]);
+        let shifts: Vec<i64> = line
+            .children
+            .iter()
+            .filter_map(|n| match n {
+                Node::Box(b) => Some(b.shift),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(shifts, vec![-237825], "上标盒 shift 应为 -\\sup2：{line:?}");
     }
 
     /// P4（demo1 对照）：sub/sup 盒宽须加 \scriptspace（tex.web make_scripts

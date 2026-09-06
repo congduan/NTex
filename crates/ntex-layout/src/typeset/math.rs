@@ -449,18 +449,47 @@ impl NodeBuilder {
                 // （盒宽加大但字形不移动）；分式规则宽 = max(分子,分母盒宽)，
                 // demo1 对照：官方 `{1\over n^2}` 规则宽 687373 vs 修前 654605，
                 // 差 32768 = \scriptspace(0.5pt)。
+                // 垂直位移按 make_scripts 公式（见 script_shifts）；
+                // sub+sup 同时出现的清空/合并盒（4×rule_thickness 判定 + vpack）
+                // 本引擎仍用两个独立盒表达，未覆盖。
+                let (mut shift_up, mut shift_down) = self.script_base_shifts(&out, style);
                 if let Some(sup_atoms) = sup {
                     let nodes = self.math_to_hlist(sup_atoms, s_style);
                     let mut b = BoxNode::new_hbox(nodes);
                     b.width += self.params.scriptspace;
-                    b.shift = -self.script_rise(style);
+                    let kind = style.size_kind();
+                    // clr：display→sup1（mathsy 13），其余（本引擎无 cramped 样式）
+                    // →sup2（mathsy 14）；再与 depth(sup)+x_height/4 取大
+                    let clr = if style == MathStyle::Display {
+                        self.mathsy_param(kind, 13)
+                    } else {
+                        self.mathsy_param(kind, 14)
+                    };
+                    if shift_up < clr {
+                        shift_up = clr;
+                    }
+                    let clr2 = b.depth + self.mathsy_x_height(kind) / 4;
+                    if shift_up < clr2 {
+                        shift_up = clr2;
+                    }
+                    b.shift = -shift_up;
                     out.push(Node::Box(b));
                 }
                 if let Some(sub_atoms) = sub {
                     let nodes = self.math_to_hlist(sub_atoms, s_style);
                     let mut b = BoxNode::new_hbox(nodes);
                     b.width += self.params.scriptspace;
-                    b.shift = self.script_drop();
+                    let kind = style.size_kind();
+                    // 无上标时下限 sub1（mathsy 16），且不低于 height(sub)-4/5·x_height
+                    let sub1 = self.mathsy_param(kind, 16);
+                    if shift_down < sub1 {
+                        shift_down = sub1;
+                    }
+                    let clr = b.height - (self.mathsy_x_height(kind) * 4) / 5;
+                    if shift_down < clr {
+                        shift_down = clr;
+                    }
+                    b.shift = shift_down;
                     out.push(Node::Box(b));
                 }
                 out
@@ -862,19 +891,45 @@ impl NodeBuilder {
     }
 
     /// 上标提升量（M4-3）：fontdimen sup1（参数 11，无上标时 sup2/3）；回退 x_height×字阶。
-    fn script_rise(&self, style: MathStyle) -> i64 {
-        let sup1 = self.fonts.font_param(self.current_font, 11);
-        if sup1 != 0 {
-            return sup1;
-        }
-        let xh = self.fonts.x_height(self.current_font);
-        let (num, den) = style.scale();
-        xn_over_d(xh, num, den)
+    /// family-2（math symbols）字体在指定字阶槽的 fontdimen（tex.web
+    /// `mathsy(n)`；缺字体/缺参数回 0，与 TeX nullfont 参数为 0 同义）。
+    fn mathsy_param(&self, kind: usize, idx: usize) -> i64 {
+        self.math_fonts
+            .get(2)
+            .and_then(|s| s.get(kind).copied().flatten())
+            .map(|f| self.fonts.font_param(f, idx))
+            .unwrap_or(0)
     }
 
-    /// 下标下降量（M4-1 近似：0.5pt；M4-3 用 fontdimen sub_drop）。
-    fn script_drop(&self) -> i64 {
-        0
+    /// family-2 字体的 x_height（tex.web `math_x_height(cur_size)`）。
+    fn mathsy_x_height(&self, kind: usize) -> i64 {
+        self.math_fonts
+            .get(2)
+            .and_then(|s| s.get(kind).copied().flatten())
+            .map(|f| self.fonts.x_height(f))
+            .unwrap_or(0)
+    }
+
+    /// tex.web §14884 make_scripts 开头的 nucleus 基准位移：
+    /// nucleus 是单字符节点 → (0,0)；否则 hpack(natural) 后
+    /// `shift_up = height - sup_drop(t)`、`shift_down = depth + sub_drop(t)`，
+    /// 其中 t = 脚本字阶（cur_style<script_style → script_size，否则
+    /// script_script_size；对应 fontdimen 18/19）。
+    fn script_base_shifts(&self, base_nodes: &[Node], style: MathStyle) -> (i64, i64) {
+        if base_nodes.len() == 1 && matches!(base_nodes[0], Node::Char { .. }) {
+            return (0, 0);
+        }
+        let w = hbox_dimensions(base_nodes).width;
+        let packed = hpack(base_nodes, w);
+        // sup_drop/sub_drop 的字阶：display/text 用 script 槽，script 系用
+        // scriptscript 槽（tex.web `t:=script_size/script_script_size`）
+        let t_kind = match style {
+            MathStyle::Display | MathStyle::Text => 1,
+            MathStyle::Script | MathStyle::ScriptScript => 2,
+        };
+        let sup_drop = self.mathsy_param(t_kind, 18);
+        let sub_drop = self.mathsy_param(t_kind, 19);
+        (packed.height - sup_drop, packed.depth + sub_drop)
     }
 
     /// ETRIP P0 \muexpr 校准：取当前 style 的 1em（sp）—— tex.web §685 ÷18 即 1mu。
