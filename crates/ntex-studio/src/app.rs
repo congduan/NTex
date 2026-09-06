@@ -274,14 +274,20 @@ impl eframe::App for Studio {
                     let job = editor::tex_layout(buf.as_str(), wrap_width);
                     ui.ctx().fonts_mut(|f| f.layout_job(job))
                 };
-                let res = ui.add(
-                    egui::TextEdit::multiline(&mut self.source)
-                        .code_editor()
-                        .desired_width(f32::INFINITY)
-                        // 尽量高，近似填满面板（egui 以行数定高）。
-                        .desired_rows(200)
-                        .layouter(&mut layouter),
-                );
+                // egui 0.35 的 multiline TextEdit 不再内置滚动（desired_rows 仅为
+                // 最小高度），需外层 ScrollArea 提供视口与滚动；TextEdit 自然高度
+                // 随内容增长，宽度 auto_shrink(false) 填满面板。
+                let res = egui::ScrollArea::vertical()
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.source)
+                                .code_editor()
+                                .desired_width(f32::INFINITY)
+                                .layouter(&mut layouter),
+                        )
+                    })
+                    .inner;
                 if res.changed() {
                     self.dirty = true;
                     self.last_edit = Instant::now();
