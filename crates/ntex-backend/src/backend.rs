@@ -75,20 +75,25 @@ impl Backend for TinySkiaBackend {
         opts: &RenderOptions,
     ) -> Result<Vec<Pixmap>, BackendError> {
         validate_options(opts).map_err(BackendError)?;
-        // 软光栅不支持字形通道：强制关闭（字符走占位方框，差分口径不变）。
-        let opts = RenderOptions {
-            glyphs: false,
-            ..opts.clone()
-        };
         let mut cache = GlyphCache::new();
         pages
             .iter()
             .map(|page| {
-                let prims = collect_page(page, fonts, &opts, &mut cache);
+                let prims = collect_page(page, fonts, opts, &mut cache);
                 let mut pm = Pixmap::new(prims.width, prims.height);
                 pm.fill(255, 255, 255);
-                // overlay 在内容之后绘制（独立通道，仅 debug 开启时非空）。
-                for r in prims.rects.iter().chain(&prims.debug) {
+                // 绘制顺序：内容矩形（rules + 缺字体字符的方框回落）→
+                // 真字形轮廓 → debug overlay（最上层，独立通道）。
+                for r in &prims.rects {
+                    pm.fill_rect(r.x, r.y, r.w, r.h, r.color);
+                }
+                for g in &prims.glyphs {
+                    if let Some(font) = prims.glyph_fonts.get(g.font as usize) {
+                        let paths = font.outline_paths(g.gid, g.size, g.x, g.y);
+                        pm.fill_polygon(&paths, (0, 0, 0));
+                    }
+                }
+                for r in &prims.debug {
                     pm.fill_rect(r.x, r.y, r.w, r.h, r.color);
                 }
                 Ok(pm)

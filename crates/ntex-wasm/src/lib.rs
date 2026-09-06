@@ -23,9 +23,10 @@
 //!    无 `Instant`；死循环防线只剩步数上限 + 宿主页面超时）；
 //! 3. 字体度量来源是注册的 [`ntex_layout::TfmSource`]（内嵌字节），而非文件系统
 //!    查找（`ntex-layout` `TfmLoader` 的 wasm 分叉）；
-//! 4. 渲染为软光栅方框口径：字形通道经 kpsewhich/texlive 定位 Latin Modern
-//!    OTF（ntex-backend `glyphs.rs`），wasm 无文件系统恒回落占位方框（B 档
-//!    后续：内嵌 OTF）。
+//! 4. 字形通道：TFM 度量内嵌（见上），轮廓字体经 [`set_glyph_font`] 由宿主
+//!    注入 Latin Modern OTF 字节（进程级注册表，ntex-backend `glyphs.rs`；
+//!    Tauri/浏览器前端 fetch 后注册，wasm 无文件系统）；未注入的字体逐字符
+//!    回落占位方框口径（渲染仍可用）。
 //!
 //! 已知缺口（如实记录）：`\write` 到非 16 流 / `\openout` 产出的文件
 //! 现留在 `MemVfs` 内不回传——`ntex-io` 的 `MemVfs` 暂无枚举 API（只有 `read`/
@@ -168,14 +169,16 @@ impl CompileResult {
 /// 软光栅渲染一页（目标无关：wasm 导出面与 native 单测同路径）。
 ///
 /// 页面尺寸/边距取 [`ntex_backend::RenderOptions::default`]（A4 + 72pt 四边，
-/// 同 ntex-pdf 与桌面 `ntex-backend` 驱动的默认口径）；`dpi`/`debug` 由参数
-/// 覆盖。字符为占位方框口径（软光栅；真字形属 B 档后续，见模块文档偏差 4）。
+/// 同 ntex-pdf 与桌面 `ntex-backend` 驱动的默认口径）；`dpi`/`debug`/`glyphs`
+/// 由参数覆盖。`glyphs = true` 走真字形轮廓填充（字体需先经
+/// [`set_glyph_font`] 注册，未注册字体回落占位方框，见模块文档偏差 4）。
 fn render_page_core(
     pages: &[ntex_layout::node::BoxNode],
     fonts: &[ntex_font::FontMetrics],
     index: u32,
     dpi: f64,
     debug: bool,
+    glyphs: bool,
 ) -> Result<ntex_backend::Pixmap, String> {
     let page = pages
         .get(index as usize)
@@ -184,8 +187,7 @@ fn render_page_core(
     let opts = ntex_backend::RenderOptions {
         dpi,
         debug,
-        // 软光栅不支持字形通道（后端内部本就强制关闭，此处显式声明口径）。
-        glyphs: false,
+        glyphs,
         ..Default::default()
     };
     let mut pages = ntex_backend::TinySkiaBackend
@@ -207,6 +209,9 @@ pub struct Document {
     font_names: Vec<String>,
     transcript: String,
     dvi: Vec<u8>,
+    /// 是否走真字形轮廓渲染（默认关 = 占位方框口径，兼容既有前端；
+    /// 字体经 [`set_glyph_font`] 注册后 JS 调 [`Document::set_glyphs`] 开启）。
+    use_glyphs: bool,
 }
 
 #[wasm_bindgen]
@@ -215,6 +220,14 @@ impl Document {
     #[wasm_bindgen(getter)]
     pub fn page_count(&self) -> u32 {
         self.pages.len() as u32
+    }
+
+    /// 切换真字形轮廓渲染（on = true）与占位方框口径（on = false）。
+    ///
+    /// 只影响后续 [`Document::render_page`] 调用（不重排版/不重编译）；
+    /// 字体未注册时开启亦安全——逐字符回落方框（引擎契约）。
+    pub fn set_glyphs(&mut self, on: bool) {
+        self.use_glyphs = on;
     }
 
     /// 转录文本（TeX .log 主体：`\message`/`\show`/`\write16`/错误上下文）。
@@ -241,15 +254,23 @@ impl Document {
     /// `new ImageData(new Uint8ClampedArray(img.rgba), img.width, img.height)`
     /// → `ctx.putImageData(...)`。`dpi` 任意正数（A4@72dpi ≈ 595×842、
     /// @144dpi ≈ 1191×1684）；`debug` 叠加排版调试 overlay（盒边界/glue/
-    /// 断点标记，与 native `ntex-backend --debug` 同口径）。
+    /// 断点标记，与 native `ntex-backend --debug` 同口径）；字形口径由
+    /// [`Document::set_glyphs`] 控制（默认方框）。
     pub fn render_page(&self, index: u32, dpi: f64, debug: bool) -> Result<PageImage, JsError> {
-        render_page_core(&self.pages, &self.font_metrics, index, dpi, debug)
-            .map(|pm| PageImage {
-                width: pm.width(),
-                height: pm.height(),
-                rgba: pm.data().to_vec(),
-            })
-            .map_err(|e| JsError::new(&e))
+        render_page_core(
+            &self.pages,
+            &self.font_metrics,
+            index,
+            dpi,
+            debug,
+            self.use_glyphs,
+        )
+        .map(|pm| PageImage {
+            width: pm.width(),
+            height: pm.height(),
+            rgba: pm.data().to_vec(),
+        })
+        .map_err(|e| JsError::new(&e))
     }
 }
 
@@ -294,9 +315,22 @@ pub fn compile_document(tex: &str) -> Result<Document, JsError> {
             font_names: c.font_names,
             transcript: c.transcript,
             dvi: c.dvi,
+            use_glyphs: false,
         }),
         Err(e) => Err(JsError::new(&e.to_string())),
     }
+}
+
+/// 注入轮廓字体字节（OTF/TTF；`tex_name` 为 TeX 排版字体名如 `cmr10`）。
+///
+/// wasm 无文件系统，前端 fetch Latin Modern OTF 后经此注册（进程级表，
+/// 见 ntex-backend `glyphs.rs::register_font_bytes`）；此后
+/// [`Document::set_glyphs`]（true）渲染即走真字形轮廓，未注册字体逐字符
+/// 回落占位方框。坏字节返回 false 不 panic（引擎契约）。Latin Modern
+/// 与 CM 同源（度量一致），文件来源/许可见各前端 `fonts/` 目录 README。
+#[wasm_bindgen]
+pub fn set_glyph_font(tex_name: &str, bytes: &[u8]) -> bool {
+    ntex_backend::glyphs::register_font_bytes(tex_name, bytes)
 }
 
 /// 引擎版本与能力描述（一行；JS 侧显示用）。
@@ -384,22 +418,50 @@ mod tests {
             compiled.pages.len() >= 2,
             "随包示例应 ≥2 页（第三段溢出 \\vsize 触发分页）"
         );
-        let pm = render_page_core(&compiled.pages, &compiled.font_metrics, 0, 72.0, false)
-            .expect("第 0 页应可渲染");
+        let pm = render_page_core(
+            &compiled.pages,
+            &compiled.font_metrics,
+            0,
+            72.0,
+            false,
+            false,
+        )
+        .expect("第 0 页应可渲染");
         assert_eq!((pm.width(), pm.height()), (595, 842), "A4@72dpi");
         // 首段文字（占位方框口径）必然落墨；demo 首页数百字符 × 每字符 3 矩形。
         let ink = ink_pixels(&pm);
         assert!(ink > 1_000, "首页应有可观墨迹，实得 {ink} px");
-        let pm2 = render_page_core(&compiled.pages, &compiled.font_metrics, 1, 72.0, false)
-            .expect("第 1 页应可渲染");
+        let pm2 = render_page_core(
+            &compiled.pages,
+            &compiled.font_metrics,
+            1,
+            72.0,
+            false,
+            false,
+        )
+        .expect("第 1 页应可渲染");
         assert!(ink_pixels(&pm2) > 0, "第 1 页应有墨");
         // dpi 翻倍 → 像素尺寸翻倍（1191×1684）。
-        let pm144 = render_page_core(&compiled.pages, &compiled.font_metrics, 0, 144.0, false)
-            .expect("144dpi 应可渲染");
+        let pm144 = render_page_core(
+            &compiled.pages,
+            &compiled.font_metrics,
+            0,
+            144.0,
+            false,
+            false,
+        )
+        .expect("144dpi 应可渲染");
         assert_eq!((pm144.width(), pm144.height()), (1191, 1684), "A4@144dpi");
         // 越界：可恢复错误消息（不 panic——引擎契约）。
-        let err = render_page_core(&compiled.pages, &compiled.font_metrics, 99, 72.0, false)
-            .expect_err("越界页码应报错");
+        let err = render_page_core(
+            &compiled.pages,
+            &compiled.font_metrics,
+            99,
+            72.0,
+            false,
+            false,
+        )
+        .expect_err("越界页码应报错");
         assert!(err.contains("越界"), "错误消息应含上下文：{err}");
     }
 
@@ -407,17 +469,92 @@ mod tests {
     #[test]
     fn render_pipeline_debug_overlay_and_bad_dpi() {
         let compiled = compile_pipeline(DEMO_TEX).expect("示例应能编译");
-        let plain = render_page_core(&compiled.pages, &compiled.font_metrics, 0, 72.0, false)
-            .expect("应可渲染");
-        let dbg = render_page_core(&compiled.pages, &compiled.font_metrics, 0, 72.0, true)
-            .expect("debug 应可渲染");
+        let plain = render_page_core(
+            &compiled.pages,
+            &compiled.font_metrics,
+            0,
+            72.0,
+            false,
+            false,
+        )
+        .expect("应可渲染");
+        let dbg = render_page_core(
+            &compiled.pages,
+            &compiled.font_metrics,
+            0,
+            72.0,
+            true,
+            false,
+        )
+        .expect("debug 应可渲染");
         assert!(
             ink_pixels(&dbg) > ink_pixels(&plain),
             "overlay 应增加墨迹（版心描边等）"
         );
-        let err = render_page_core(&compiled.pages, &compiled.font_metrics, 0, 0.0, false)
-            .expect_err("dpi=0 应报错");
+        let err = render_page_core(
+            &compiled.pages,
+            &compiled.font_metrics,
+            0,
+            0.0,
+            false,
+            false,
+        )
+        .expect_err("dpi=0 应报错");
         assert!(err.contains("渲染"), "错误消息应含上下文：{err}");
+    }
+
+    /// 字形注入全链路：注册 LM OTF → glyphs=true 渲染 → 实心字形墨迹
+    /// 显著多方框口径（demo 正文为 cmr10；见 ntex-backend `glyphs.rs` 测试）。
+    /// 字体字节复用 ntex-backend 的入库 fixture（tests/data/README 同源）。
+    #[test]
+    fn glyph_font_injection_paints_outlines() {
+        const LM_ROMAN: &[u8] =
+            include_bytes!("../../ntex-backend/tests/data/lmroman10-regular.otf");
+        assert!(
+            set_glyph_font("cmr10-glyph-test", LM_ROMAN),
+            "合法 OTF 应注册成功"
+        );
+        assert!(
+            !set_glyph_font("cmr10-glyph-test-bad", &[0u8; 8]),
+            "坏字节应拒绝"
+        );
+
+        let compiled = compile_pipeline(DEMO_TEX).expect("示例应能编译");
+        let boxes = render_page_core(
+            &compiled.pages,
+            &compiled.font_metrics,
+            0,
+            96.0,
+            false,
+            false,
+        )
+        .expect("方框口径应可渲染");
+        // 用注入名替换排版字体名再渲染（compile 用 "cmr10"，注册名带后缀
+        // 避免污染其它测试的环境查找；直接重注册到真名即可命中）。
+        assert!(set_glyph_font("cmr10", LM_ROMAN));
+        let outlines = render_page_core(
+            &compiled.pages,
+            &compiled.font_metrics,
+            0,
+            96.0,
+            false,
+            true,
+        )
+        .expect("字形口径应可渲染");
+        // 判据：两口径墨迹均非零，且像素差异显著——若注入未生效（glyphs
+        // 静默回落方框）两图将完全一致，diff=0 即可捕获回归。
+        // （不做大小比较：空心方框描边的墨迹本可与实心字形相当。）
+        assert!(ink_pixels(&outlines) > 0 && ink_pixels(&boxes) > 0);
+        let diff = outlines
+            .data()
+            .iter()
+            .zip(boxes.data().iter())
+            .filter(|(a, b)| a != b)
+            .count();
+        assert!(
+            diff > 5000,
+            "字形/方框两口径应有显著像素差异（实测 {diff} 字节；疑似注入未生效）"
+        );
     }
 
     /// 内嵌 TFM 能被 ntex-font 解析、设计字号非零（度量链的根）。

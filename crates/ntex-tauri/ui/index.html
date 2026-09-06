@@ -19,6 +19,9 @@
             <option value="288">288</option>
           </select>
         </label>
+        <label class="chk" title="真字形轮廓：fetch Latin Modern OTF 注入 wasm 后走软光栅填充（未注入字体回落方框）">
+          <input type="checkbox" id="glyphs" checked /> 真字形
+        </label>
         <label class="chk" title="排版调试 overlay：盒边界/glue/断点标记（与 ntex-backend --debug 同口径）">
           <input type="checkbox" id="debug" /> debug overlay
         </label>
@@ -39,7 +42,7 @@
           <div class="editor-stack">
             <pre id="hl" aria-hidden="true"><code id="hlcode"></code></pre>
             <textarea id="editor" spellcheck="false" wrap="off"
-              placeholder="输入 plain TeX 源码，右侧实时预览（占位方框口径，真字形属 B 档后续）…"></textarea>
+              placeholder="输入 plain TeX 源码，右侧实时预览（真字形需字体注入成功，失败回落方框）…"></textarea>
           </div>
         </div>
       </section>
@@ -67,6 +70,6 @@
       <pre id="log">（等待编译…）</pre>
     </footer>
   </div>
-  <script type="module" src="main.js?v=2"></script>
+  <script type="module" src="main.js?v=3"></script>
 </body>
 </html>

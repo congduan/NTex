@@ -2,7 +2,7 @@
 // compile_document() 产出页树句柄（Document），render_page() 走软光栅出
 // RGBA 纹理，putImageData 上 canvas；翻页/调 dpi/debug 不重排版（B 档第一刀）。
 // 引擎不进 Tauri Rust 进程：本文件是纯静态 ES module，无任何 IPC。
-import init, { compile_document, demo_tex, engine_version } from './pkg/ntex_wasm.js';
+import init, { compile_document, demo_tex, engine_version, set_glyph_font } from './pkg/ntex_wasm.js';
 
 const $ = (id) => document.getElementById(id);
 const editor = $('editor'), hlcode = $('hlcode'), gutter = $('gutter'), hl = $('hl');
@@ -14,16 +14,40 @@ const DEBOUNCE_MS = 250;        // 与 ntex-studio 工作台同参数
 const DRAFT_KEY = 'ntex-tauri-draft';
 const HIGHLIGHT_LIMIT = 200_000; // 超长文档跳过高亮（叠层全量重排的护栏）
 
-const state = { doc: null, page: 0, dpi: 96, debug: false, inflight: false, dirty: false, timer: 0 };
+const state = {
+  doc: null, page: 0, dpi: 96, debug: false, glyphs: true, fontsReady: false,
+  inflight: false, dirty: false, timer: 0,
+};
 
 /* ---------- 引擎 ---------- */
 
+// 真字形：fetch Latin Modern OTF 注入 wasm（进程级注册表；映射见 ui/fonts/README.md）。
+const GLYPH_FONTS = [
+  ['cmr10', 'fonts/lmroman10-regular.otf'],
+  ['cmbx10', 'fonts/lmroman10-bold.otf'],
+  ['cmti10', 'fonts/lmroman10-italic.otf'],
+];
+
+async function loadFonts() {
+  const results = await Promise.all(GLYPH_FONTS.map(async ([name, url]) => {
+    try {
+      const bytes = await (await fetch(url)).arrayBuffer();
+      return set_glyph_font(name, new Uint8Array(bytes));
+    } catch { return false; }
+  }));
+  state.fontsReady = results.some(Boolean);
+  if (!state.fontsReady) $('engine-info').textContent += ' · 字体加载失败（方框口径）';
+}
+
 async function boot() {
   await init();
-  $('engine-info').textContent = `${engine_version()} · wasm 软光栅（方框口径）`;
+  $('engine-info').textContent = `${engine_version()} · wasm 软光栅`;
+  const fonts = loadFonts(); // 并行注入，不阻塞首屏（方框 → 字形就绪后重渲染）
   editor.value = localStorage.getItem(DRAFT_KEY) ?? demo_tex();
   refreshOverlay();
   compileNow();
+  await fonts;
+  renderPage(); // 字形就绪：按当前开关重渲染（不重排版）
 }
 
 function schedule() {
@@ -58,6 +82,7 @@ function compileNow() {
 
 function renderPage() {
   if (!state.doc || state.doc.page_count === 0) { pageLabel.textContent = '– / –'; return; }
+  state.doc.set_glyphs(state.glyphs && state.fontsReady); // 口径同步：所有渲染路径共用
   const img = state.doc.render_page(state.page, state.dpi, state.debug);
   canvas.width = img.width;
   canvas.height = img.height;
@@ -133,6 +158,11 @@ function saveDraft() {
 
 $('dpi').addEventListener('change', (e) => { state.dpi = Number(e.target.value); renderPage(); });
 $('debug').addEventListener('change', (e) => { state.debug = e.target.checked; renderPage(); });
+$('glyphs').addEventListener('change', (e) => {
+  state.glyphs = e.target.checked;
+  if (state.glyphs && !state.fontsReady) loadFonts().then(renderPage); // 迟到重试
+  else renderPage();
+});
 $('prev-page').addEventListener('click', () => { if (state.page > 0) { state.page--; renderPage(); } });
 $('next-page').addEventListener('click', () => {
   if (state.doc && state.page < state.doc.page_count - 1) { state.page++; renderPage(); }

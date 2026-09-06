@@ -1,8 +1,8 @@
 //! 软光栅化与像素缓冲（纯 Rust，无第三方依赖）。
 //!
 //! 像素格式：RGBA8（预乘 alpha，与 tiny-skia `PremultipliedColorU8` 一致），
-//! 行主序、每像素 4 字节。填充走整数覆盖盒，裁剪到页面边界；亚像素 AA
-//! 属 M9 字形渲染范围。
+//! 行主序、每像素 4 字节。矩形填充走整数覆盖盒、裁剪到页面边界；字形轮廓
+//! 走 [`Pixmap::fill_polygon`]（扫描线 AA，M8 真字形）。
 
 /// 8 位 RGBA 像素缓冲（预乘 alpha）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,6 +93,103 @@ impl Pixmap {
         self.fill_rect(lo, y, hi - lo, 1.0, color);
     }
 
+    /// 填充多边形轮廓组（nonzero 绕组；真字形软光栅化用，M8）。
+    ///
+    /// 输入为页面坐标闭合子路径（`glyphs::GlyphFont::outline_paths` 产出，
+    /// y 向下）；抗锯齿 = 每像素行 4 条子扫描线 + 水平向精确覆盖长度，
+    /// 覆盖率（0..=1）作 alpha 与既有像素做 source-over 合成（预乘语义）。
+    /// 空组/退化轮廓/越界 bbox 一律安全无操作（引擎契约：不 panic）。
+    pub fn fill_polygon(&mut self, contours: &[Vec<[f32; 2]>], color: (u8, u8, u8)) {
+        // 边收集：(ymin, ymax, x@ymin, dx/dy, 绕组方向)；同时累计 bbox。
+        let mut edges: Vec<(f32, f32, f32, f32, i32)> = Vec::new();
+        let (mut bx0, mut by0, mut bx1, mut by1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for c in contours {
+            if c.len() < 3 {
+                continue;
+            }
+            for i in 0..c.len() {
+                let a = c[i];
+                let b = c[(i + 1) % c.len()];
+                for p in [a, b] {
+                    if !p[0].is_finite() || !p[1].is_finite() {
+                        return;
+                    }
+                    bx0 = bx0.min(p[0]);
+                    bx1 = bx1.max(p[0]);
+                    by0 = by0.min(p[1]);
+                    by1 = by1.max(p[1]);
+                }
+                if a[1] == b[1] {
+                    continue; // 水平边不参与扫描线
+                }
+                let (ymin, ymax, xa, xb) = if a[1] < b[1] {
+                    (a[1], b[1], a[0], b[0])
+                } else {
+                    (b[1], a[1], b[0], a[0])
+                };
+                let dir = if a[1] < b[1] { 1 } else { -1 };
+                edges.push((ymin, ymax, xa, (xb - xa) / (ymax - ymin), dir));
+            }
+        }
+        if edges.is_empty() {
+            return;
+        }
+        // bbox 裁剪到页面（覆盖列区间 [x_lo, x_hi)、行区间 [y_lo, y_hi)）。
+        let x_lo = bx0.floor().max(0.0) as u32;
+        let y_lo = by0.floor().max(0.0) as u32;
+        let x_hi = ((bx1.ceil().max(0.0) as u64).min(self.width as u64)) as u32;
+        let y_hi = ((by1.ceil().max(0.0) as u64).min(self.height as u64)) as u32;
+        if x_hi <= x_lo || y_hi <= y_lo {
+            return;
+        }
+        let w = self.width as usize;
+        let mut cover = vec![0.0f32; (x_hi - x_lo) as usize];
+        let mut xs: Vec<(f32, i32)> = Vec::new();
+        for py in y_lo..y_hi {
+            cover.fill(0.0);
+            for k in 0..4u32 {
+                let ys = py as f32 + (k as f32 + 0.5) / 4.0;
+                xs.clear();
+                for &(ymin, ymax, x0, slope, dir) in &edges {
+                    if ys >= ymin && ys < ymax {
+                        xs.push((x0 + (ys - ymin) * slope, dir));
+                    }
+                }
+                if xs.len() < 2 {
+                    continue;
+                }
+                xs.sort_by(|p, q| p.0.total_cmp(&q.0));
+                // nonzero 绕组：winding 0↔非0 转换处开/闭填充区间。
+                let (mut winding, mut fill_from) = (0i32, None);
+                for &(x, dir) in &xs {
+                    let prev = winding;
+                    winding += dir;
+                    if prev == 0 && winding != 0 {
+                        fill_from = Some(x);
+                    } else if prev != 0 && winding == 0 {
+                        if let Some(a) = fill_from.take() {
+                            add_span(&mut cover, x_lo, a, x);
+                        }
+                    }
+                }
+            }
+            // 覆盖率 → alpha 合成（预乘 source-over；底不透明故 alpha 恒 255）。
+            let (cr, cg, cb) = color;
+            for (i, &c) in cover.iter().enumerate() {
+                if c <= 0.0 {
+                    continue;
+                }
+                let a = (c * 0.25).min(1.0);
+                let idx = (py as usize * w + x_lo as usize + i) * 4;
+                let d = &mut self.data[idx..idx + 4];
+                for (dst, src) in d.iter_mut().zip([cr, cg, cb]) {
+                    *dst = (src as f32 * a + *dst as f32 * (1.0 - a)).round() as u8;
+                }
+                d[3] = 255;
+            }
+        }
+    }
+
     /// 某像素是否非白（测试用；alpha=0 视为白）。
     pub fn pixel_nonwhite(&self, x: u32, y: u32) -> bool {
         if x >= self.width || y >= self.height {
@@ -110,6 +207,27 @@ impl Pixmap {
 /// （~1..=2400）内误差远小于 1px。
 pub fn sp_to_px(sp: i64, dpi: f64) -> f64 {
     sp as f64 / 65_536.0 * dpi / 72.0
+}
+
+/// 将填充区间 `[a, b)`（页面绝对坐标）的水平覆盖长度累加进行覆盖表
+/// （`cover` 下标 = 像素 x − `ox`；与像素列求交，越界部分自然丢弃）。
+fn add_span(cover: &mut [f32], ox: u32, a: f32, b: f32) {
+    let ox = ox as f32;
+    let (a, b) = (a - ox, b - ox);
+    // 部分有序显式比较：b ≤ a 或含 NaN（不可比）一律跳过。
+    if b.partial_cmp(&a) != Some(std::cmp::Ordering::Greater) {
+        return;
+    }
+    let i1 = (b.ceil().max(0.0)) as usize;
+    let mut i = (a.floor().max(0.0)) as usize;
+    while i < i1 && i < cover.len() {
+        let l = a.max(i as f32);
+        let r = b.min((i + 1) as f32);
+        if r > l {
+            cover[i] += r - l;
+        }
+        i += 1;
+    }
 }
 
 #[cfg(test)]
@@ -131,5 +249,43 @@ mod tests {
         pm.fill_rect(-3.0, -3.0, 6.0, 6.0, (0, 0, 0));
         assert!(pm.pixel_nonwhite(0, 0));
         assert!(!pm.pixel_nonwhite(3, 0));
+    }
+
+    #[test]
+    fn fill_polygon_triangle_interior_only() {
+        let mut pm = Pixmap::new(20, 20);
+        pm.fill(255, 255, 255);
+        // 直角三角形 (2,2)-(12,2)-(2,12)：内部有墨，外部白。
+        pm.fill_polygon(&[vec![[2.0, 2.0], [12.0, 2.0], [2.0, 12.0]]], (0, 0, 0));
+        assert!(pm.pixel_nonwhite(3, 3));
+        assert!(pm.pixel_nonwhite(6, 4)); // 斜边内侧
+        assert!(!pm.pixel_nonwhite(15, 15));
+        assert!(!pm.pixel_nonwhite(1, 1)); // 顶点外
+    }
+
+    #[test]
+    fn fill_polygon_nonzero_hole() {
+        // 外方顺时针 + 内方逆时针（绕组相消）：中心为孔，环带有墨。
+        let mut pm = Pixmap::new(20, 20);
+        pm.fill(255, 255, 255);
+        pm.fill_polygon(
+            &[
+                vec![[2.0, 2.0], [14.0, 2.0], [14.0, 14.0], [2.0, 14.0]],
+                vec![[6.0, 6.0], [6.0, 10.0], [10.0, 10.0], [10.0, 6.0]],
+            ],
+            (0, 0, 0),
+        );
+        assert!(pm.pixel_nonwhite(4, 4)); // 环带内
+        assert!(!pm.pixel_nonwhite(8, 8)); // 孔内（绕组 0）
+    }
+
+    #[test]
+    fn fill_polygon_degenerate_inputs_noop() {
+        let mut pm = Pixmap::new(8, 8);
+        pm.fill(255, 255, 255);
+        pm.fill_polygon(&[], (0, 0, 0)); // 空组
+        pm.fill_polygon(&[vec![[1.0, 1.0], [2.0, 2.0]]], (0, 0, 0)); // 退化段
+        pm.fill_polygon(&[vec![[f32::NAN, 0.0], [4.0, 0.0], [4.0, 4.0]]], (0, 0, 0)); // NaN
+        assert!(!pm.pixel_nonwhite(3, 3));
     }
 }

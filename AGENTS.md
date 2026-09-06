@@ -44,7 +44,7 @@ make fixture-extras  # 获取补充对照 fixtures（pdftex expanded.{tex,txt} �
 # 端到端演示
 cargo run -p ntex-dvi -- demo.tex   # → demo.dvi
 cargo run -p ntex-pdf -- demo.dvi   # → demo.pdf
-cargo run -p ntex-backend -- demo.tex demo 144 --vello  # → demo-01.png…（vello GPU + 真字形；--no-glyphs 回落方框，去掉 --vello 走软光栅）
+cargo run -p ntex-backend -- demo.tex demo 144 --vello  # → demo-01.png…（vello GPU + 真字形；--no-glyphs 回落方框，去掉 --vello 走软光栅，同样支持 --glyphs）
 cargo run -p ntex-backend -- demo.tex demo 144 --debug  # → demo-01-debug.png…（排版调试 overlay：盒边界/glue/断点标记，独立通道不影响正常渲染）
 
 # 实时预览工作台（左 TeX 编辑 / 右 vello GPU 渲染，250ms 防抖重排）
@@ -70,10 +70,10 @@ make tauri   # Tauri 桌面壳（wasm 渲染形态）：先构建 ntex-wasm→ui
 | `ntex-trip` | TRIP/ETRIP 一致性测试框架（`--test trip|etrip|both`，ntex in-process 驱动） |
 | `ntex-diff` | 差分测试工具（参考引擎 vs 本引擎） |
 | `ntex-bench` | 基准框架 |
-| `ntex-backend` | 渲染后端（M8）：`Backend` trait + 软光栅 + vello 0.10 GPU 实现（wgpu 29 无头纹理回读、area 亚像素 AA；与软光栅共享 prims 矩形遍历，位图可差分）+ 自研 PNG 导出；`build_scene(prims)->Scene` 为公共 Scene 构建（无头回读与 GUI 表面渲染共用）；**字形通道**（`glyphs.rs`，`RenderOptions::glyphs`，默认关）：OT1→Unicode→Latin Modern OpenType 轮廓（kpsewhich/texlive 定位，vello glyph run 绘制，位置/宽度仍按 TFM；缺字体逐字符回落方框；软光栅不支持，强制关闭） |
+| `ntex-backend` | 渲染后端（M8）：`Backend` trait + 软光栅 + vello 0.10 GPU 实现（wgpu 29 无头纹理回读、area 亚像素 AA；与软光栅共享 prims 矩形遍历，位图可差分）+ 自研 PNG 导出；`build_scene(prims)->Scene` 为公共 Scene 构建（无头回读与 GUI 表面渲染共用）；**字形通道**（`glyphs.rs`，`RenderOptions::glyphs`，默认关）：OT1→Unicode→Latin Modern OpenType 轮廓，双通道绘制（vello glyph run / 软光栅扫描线填充 `fill_polygon`：nonzero + 4x 垂直超采样 AA），位置/宽度仍按 TFM；字体字节 = kpsewhich/texlive 定位或 `register_font_bytes` 进程级注入（wasm 前端 fetch 后注册，同名覆盖环境）；缺字体逐字符回落方框 |
 | `ntex-studio` | 实时预览工作台（M5+ 预览器先行形态）：eframe/egui-wgpu 0.35 + vello 表面渲染（离屏 Rgba8Unorm → blit 上屏），TeX 语法高亮编辑器、250ms 防抖同步重排、缩放/平移/翻页、dpi 与调试 overlay 与真字形开关（字形解析缓存跨重排复用）。**依赖硬约束：eframe 0.35 ↔ vello 0.10 恰好共用 wgpu 29**（升 eframe 大版本前必验对齐，0.36 已用 wgpu 30 会分裂） |
-| `ntex-wasm` | WASM 薄壳（M8-A 骨架 + **B 档第一刀**，2026-09-06）：浏览器/Node 内跑 plain 子集 → DVI 字节 + 转录回传 JS；TFM 经 `ntex_layout::set_tfm_source` 注入（内嵌 6 个 CM TFM）。**实时预览**：`compile_document() → Document` 句柄（页盒树常驻）+ `render_page()` 软光栅（ntex-backend `prims`+`Pixmap`，vello 经 feature 门控不进 wasm）→ RGBA `putImageData` 上 canvas；`www/` 工作台（250ms 防抖、翻页/dpi/overlay/DVI 导出）。wasm32 分叉仅三处（`param.rs` 时间固定 / `expand::run` 看门狗门控 / `TfmLoader` 字节源），native 行为零改动；wasm-bindgen 依赖只进本 crate。三档路线见 `crates/ntex-wasm/README.md`（B 档剩余：vello web、真字形、增量接口；C 档 `.fmt`） |
-| `ntex-tauri` | Tauri 2 纯壳工作台（M8 wasm 渲染形态，2026-09-06）：桌面窗口 + 静态前端 `ui/`，排版与渲染**全部在前端 WASM 内**（复用 ntex-wasm B 档 `compile_document`/`render_page`，RGBA 纹理 `putImageData` 上 canvas），Rust 侧零命令零 IPC、引擎不进 Tauri 进程；编辑器带 TeX 高亮叠层/行号、250ms 防抖、翻页/dpi/debug overlay/缩放、log 面板与草稿保存。`make tauri` = 构建 wasm 绑定（wasm-bindgen 版本须与 Cargo.lock 一致）+ 开窗；`ui/pkg/` 为生成物不入库 |
+| `ntex-wasm` | WASM 薄壳（M8-A 骨架 + **B 档第一刀**，2026-09-06）：浏览器/Node 内跑 plain 子集 → DVI 字节 + 转录回传 JS；TFM 经 `ntex_layout::set_tfm_source` 注入（内嵌 6 个 CM TFM）。**实时预览**：`compile_document() → Document` 句柄（页盒树常驻）+ `render_page()` 软光栅（ntex-backend `prims`+`Pixmap`，vello 经 feature 门控不进 wasm）→ RGBA `putImageData` 上 canvas；**真字形**：`set_glyph_font(name, bytes)` 注入 LM OTF（进程级注册表）+ `Document::set_glyphs(true)` 切轮廓渲染（未注入回落方框）。`www/` 工作台（250ms 防抖、翻页/dpi/overlay/DVI 导出）。wasm32 分叉仅三处（`param.rs` 时间固定 / `expand::run` 看门狗门控 / `TfmLoader` 字节源），native 行为零改动；wasm-bindgen 依赖只进本 crate。三档路线见 `crates/ntex-wasm/README.md`（B 档剩余：vello web、增量接口；C 档 `.fmt`） |
+| `ntex-tauri` | Tauri 2 纯壳工作台（M8 wasm 渲染形态，2026-09-06）：桌面窗口 + 静态前端 `ui/`，排版与渲染**全部在前端 WASM 内**（复用 ntex-wasm B 档 `compile_document`/`render_page`，RGBA 纹理 `putImageData` 上 canvas），Rust 侧零命令零 IPC、引擎不进 Tauri 进程；编辑器带 TeX 高亮叠层/行号、250ms 防抖、翻页/dpi/debug overlay/缩放/真字形开关（默认开，`ui/fonts/` LM OTF fetch 注入，失败回落方框）、log 面板与草稿保存。`make tauri` = 构建 wasm 绑定（wasm-bindgen 版本须与 Cargo.lock 一致）+ 开窗；`ui/pkg/` 为生成物不入库 |
 
 常用源文件布局：
 - `crates/ntex-core/src/expand/`：展开引擎拆分目录——`builtins.rs`（原语注册）、`primitive.rs`

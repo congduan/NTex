@@ -6,18 +6,22 @@
 //!   度量一致；光学尺寸取名字中的设计字号）；
 //! - OT1 编码 slot → Unicode（数据源：latex base `ot1enc.def` 的
 //!   symbol/accent slot 声明 + cmr 常识位）→ skrifa cmap 查字形 id；
-//! - 字形绘制由 vello glyph run 完成（见 `vello.rs::append_prims`），
-//!   软光栅后端不支持字形通道（自动回落占位方框口径）。
+//! - 字形绘制双通道：vello glyph run（`vello.rs::append_prims`）与软光栅
+//!   轮廓填充（[`GlyphFont::outline_paths`] → `raster::fill_polygon`）；
+//! - 字体字节来源：`kpsewhich`/texlive 文件系统之外，
+//!   [`register_font_bytes`] 提供进程级注入（wasm 前端 fetch OTF 字节后
+//!   注入，无文件系统依赖；native 亦可用于测试与打包分发）。
 //!
 //! 环境依赖：`kpsewhich`（或 `/usr/local/texlive/*/…/lm` 目录）提供 LM
-//! 字体文件；不可用时逐字体回落方框，不报错不 panic（引擎契约）。
+//! 字体文件；未注册且环境不可用时逐字体回落方框，不报错不 panic（引擎契约）。
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 
 use peniko::{Blob, FontData};
+use skrifa::outline::{DrawSettings, OutlinePen};
 use skrifa::prelude::*;
 
 /// OT1 编码 slot（0..=127）→ Unicode 码位（prims 字形通道用）。
@@ -108,6 +112,8 @@ fn lm_file_name(tex_name: &str) -> Option<String> {
 
 /// 已解析的字形字体（共享只读）。
 pub struct GlyphFont {
+    /// 原始字体字节（软光栅轮廓提取用；与 FontData/Blob 内部 Arc 同源共享）。
+    bytes: Arc<[u8]>,
     /// vello glyph run 绘制句柄（Blob 内部 Arc，clone 零拷贝）。
     font: FontData,
     /// Unicode 码位 → 字形 id（BMP 全量预填，一次解析常驻查询）。
@@ -118,7 +124,8 @@ impl GlyphFont {
     /// 解析 OTF 字节：skrifa 校验格式 + dump cmap（BMP 全量，~6.5 万次
     /// 二分查找，毫秒级一次性成本；数学字体扩展无需再改）。
     fn load(bytes: Vec<u8>) -> Option<Self> {
-        let font_ref = skrifa::FontRef::new(&bytes).ok()?;
+        let bytes: Arc<[u8]> = bytes.into();
+        let font_ref = skrifa::FontRef::new(bytes.as_ref()).ok()?;
         let charmap = font_ref.charmap();
         let mut map = HashMap::new();
         for ch in 0u32..=0xFFFF {
@@ -127,7 +134,9 @@ impl GlyphFont {
             }
         }
         Some(Self {
-            font: FontData::new(Blob::from(bytes), 0),
+            // Blob 仅支持 From<Vec<u8>>（多一次拷贝，注册期一次性成本）。
+            font: FontData::new(Blob::from(bytes.to_vec()), 0),
+            bytes,
             map,
         })
     }
@@ -140,6 +149,146 @@ impl GlyphFont {
     /// vello 绘制句柄。
     pub fn font_data(&self) -> &FontData {
         &self.font
+    }
+
+    /// 提取字形轮廓为页面坐标多边形组（软光栅填充用；vello 走 glyph run
+    /// 不经此路）。
+    ///
+    /// `(ox, oy)` = 基线原点（px，y 向下，同 `RectPrim` 坐标系）；
+    /// `size_px` = em 的像素数（skrifa unhinted 按 ppem 缩放）；
+    /// 字体坐标 y 向上，收集时翻转到页面系。缺字形/解析失败返回空组
+    ///（调用方按占位方框口径回落，由 prims 层保证）。
+    pub(crate) fn outline_paths(
+        &self,
+        gid: u32,
+        size_px: f64,
+        ox: f64,
+        oy: f64,
+    ) -> Vec<Vec<[f32; 2]>> {
+        let Ok(font_ref) = skrifa::FontRef::new(self.bytes.as_ref()) else {
+            return Vec::new();
+        };
+        let Some(glyph) = font_ref.outline_glyphs().get(GlyphId::new(gid)) else {
+            return Vec::new();
+        };
+        let mut pen = PathPen::new(ox, oy);
+        if glyph
+            .draw(
+                DrawSettings::unhinted(Size::new(size_px as f32), LocationRef::default()),
+                &mut pen,
+            )
+            .is_err()
+        {
+            return Vec::new();
+        }
+        pen.finish()
+    }
+}
+
+/// skrifa 轮廓 → 页面坐标多边形收集器（`OutlinePen` 实现）。
+///
+/// 贝塞尔按控制多边形折线长自适应展平（~1.25px/段，4..=32 夹断）；
+/// 子路径在 `close`/下一段 `move_to` 时收束（不足 3 点的退化段丢弃）。
+struct PathPen {
+    contours: Vec<Vec<[f32; 2]>>,
+    cur: Vec<[f32; 2]>,
+    ox: f32,
+    oy: f32,
+}
+
+impl PathPen {
+    fn new(ox: f64, oy: f64) -> Self {
+        Self {
+            contours: Vec::new(),
+            cur: Vec::new(),
+            ox: ox as f32,
+            oy: oy as f32,
+        }
+    }
+
+    /// 字体坐标 → 页面坐标（y 翻转 + 基线平移）。
+    fn map(&self, x: f32, y: f32) -> [f32; 2] {
+        [self.ox + x, self.oy - y]
+    }
+
+    /// 曲线细分段数：`a → pts` 折线长 / 1.25px。
+    fn segments(a: [f32; 2], pts: &[[f32; 2]]) -> usize {
+        let mut len = 0.0f32;
+        let mut prev = a;
+        for p in pts {
+            len += (p[0] - prev[0]).hypot(p[1] - prev[1]);
+            prev = *p;
+        }
+        ((len / 1.25).ceil() as usize).clamp(4, 32)
+    }
+
+    fn end_contour(&mut self) {
+        if self.cur.len() >= 3 {
+            self.contours.push(std::mem::take(&mut self.cur));
+        } else {
+            self.cur.clear();
+        }
+    }
+
+    fn finish(mut self) -> Vec<Vec<[f32; 2]>> {
+        self.end_contour();
+        self.contours
+    }
+}
+
+impl OutlinePen for PathPen {
+    fn move_to(&mut self, x: f32, y: f32) {
+        self.end_contour();
+        self.cur.push(self.map(x, y));
+    }
+
+    fn line_to(&mut self, x: f32, y: f32) {
+        if !self.cur.is_empty() {
+            self.cur.push(self.map(x, y));
+        }
+    }
+
+    fn quad_to(&mut self, cx: f32, cy: f32, x: f32, y: f32) {
+        let Some(&a) = self.cur.last() else { return };
+        let c = self.map(cx, cy);
+        let b = self.map(x, y);
+        let n = Self::segments(a, &[c, b]);
+        for i in 1..=n {
+            let t = i as f32 / n as f32;
+            let u = 1.0 - t;
+            let p = [
+                u * u * a[0] + 2.0 * u * t * c[0] + t * t * b[0],
+                u * u * a[1] + 2.0 * u * t * c[1] + t * t * b[1],
+            ];
+            self.cur.push(p);
+        }
+    }
+
+    fn curve_to(&mut self, c1x: f32, c1y: f32, c2x: f32, c2y: f32, x: f32, y: f32) {
+        let Some(&a) = self.cur.last() else { return };
+        let c1 = self.map(c1x, c1y);
+        let c2 = self.map(c2x, c2y);
+        let b = self.map(x, y);
+        let n = Self::segments(a, &[c1, c2, b]);
+        for i in 1..=n {
+            let t = i as f32 / n as f32;
+            let u = 1.0 - t;
+            let p = [
+                u * u * u * a[0]
+                    + 3.0 * u * u * t * c1[0]
+                    + 3.0 * u * t * t * c2[0]
+                    + t * t * t * b[0],
+                u * u * u * a[1]
+                    + 3.0 * u * u * t * c1[1]
+                    + 3.0 * u * t * t * c2[1]
+                    + t * t * t * b[1],
+            ];
+            self.cur.push(p);
+        }
+    }
+
+    fn close(&mut self) {
+        self.end_contour();
     }
 }
 
@@ -178,6 +327,30 @@ fn glob_lm_candidates(file: &str) -> Vec<PathBuf> {
     out
 }
 
+/// 进程级字体字节注册表：[`register_font_bytes`] 写入，
+/// [`GlyphCache::resolve`] 优先于文件系统查找命中。
+static REGISTRY: LazyLock<Mutex<HashMap<String, Arc<GlyphFont>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// 注册字体字节（`tex_name` 为 TeX 排版字体名如 `cmr10`，OTF/TTF 均可）。
+///
+/// 解析失败（坏格式）返回 `false`；成功后两后端（软光栅/vello）按名字即刻
+/// 可用。wasm 前端 fetch OTF 字节后经此注入（无 kpsewhich/文件系统）；
+/// native 端用于测试与打包分发场景，同名覆盖环境字体。
+pub fn register_font_bytes(tex_name: &str, bytes: &[u8]) -> bool {
+    let Some(font) = GlyphFont::load(bytes.to_vec()) else {
+        return false;
+    };
+    match REGISTRY.lock() {
+        Ok(mut m) => {
+            m.insert(tex_name.to_owned(), Arc::new(font));
+            true
+        }
+        // 锁毒化：持锁线程已 panic，注册失败按环境回落处理（不传播错误）。
+        Err(_) => false,
+    }
+}
+
 /// 跨页/跨渲染的字形字体缓存（TeX 字体名 → 解析结果；None = 环境无此字体，
 /// 后续同名不再重试）。
 #[derive(Default)]
@@ -190,16 +363,21 @@ impl GlyphCache {
         Self::default()
     }
 
-    /// 按名字解析（命中缓存直接返回；找不到文件/格式坏返回 None）。
+    /// 按名字解析（命中缓存直接返回；注册表 → kpsewhich/texlive 均未命中
+    /// 返回 None，字符走方框口径）。
     pub(crate) fn resolve(&mut self, tex_name: &str) -> Option<Arc<GlyphFont>> {
         if let Some(hit) = self.resolved.get(tex_name) {
             return hit.clone();
         }
-        let loaded = lm_file_name(tex_name)
-            .and_then(|file| locate_font(&file))
-            .and_then(|path| std::fs::read(path).ok())
-            .and_then(GlyphFont::load)
-            .map(Arc::new);
+        // 注册表优先（显式注入覆盖环境查找），未注册再走文件系统定位。
+        let registered = REGISTRY.lock().ok().and_then(|m| m.get(tex_name).cloned());
+        let loaded = registered.or_else(|| {
+            lm_file_name(tex_name)
+                .and_then(|file| locate_font(&file))
+                .and_then(|path| std::fs::read(path).ok())
+                .and_then(GlyphFont::load)
+                .map(Arc::new)
+        });
         self.resolved.insert(tex_name.to_owned(), loaded.clone());
         loaded
     }
@@ -258,5 +436,48 @@ mod tests {
         );
         // 未知族回落。
         assert_eq!(lm_file_name("unknown10"), None);
+    }
+
+    /// tests/data/lmroman10-regular.otf：texlive 2024 basic（GUST Font
+    /// License，可再分发）；入库供字形层测试脱离环境依赖。
+    const LM_ROMAN: &[u8] = include_bytes!("../tests/data/lmroman10-regular.otf");
+
+    #[test]
+    fn register_bytes_then_resolve_and_outline() {
+        // 坏字节注册失败，不 panic。
+        assert!(!register_font_bytes("bad-font", &[0u8; 16]));
+        // 正常注册（用独立名避免污染其余测试的环境查找路径）。
+        assert!(register_font_bytes("cmr-outline-test", LM_ROMAN));
+        let mut cache = GlyphCache::new();
+        let font = cache
+            .resolve("cmr-outline-test")
+            .expect("注册表命中（优先于文件系统）");
+
+        // 'A'（U+0041）→ gid → 100px em 轮廓：约 2~3 个闭合子路径（外轮廓
+        // + 三角孔），bbox 顶部在基线上方 ~0.65..0.75em。
+        let gid = font.glyph_id(0x41).expect("cmap 有 'A'");
+        let paths = font.outline_paths(gid, 100.0, 200.0, 150.0);
+        assert!(!paths.is_empty(), "'A' 应有轮廓");
+        assert!(paths.len() >= 2, "'A' 应含内孔（非零绕组用）");
+        let top = paths
+            .iter()
+            .flat_map(|c| c.iter().map(|p| p[1]))
+            .fold(f32::MAX, f32::min);
+        // 基线 y=150，cap 高度 ≈ 0.7em → 顶 ≈ 80±10。
+        assert!(
+            (70.0..=95.0).contains(&top),
+            "'A' 顶部 y={top} 应在基线上方 ~0.7em"
+        );
+
+        // 软光栅填充：'A' 干线内部有墨、基线下方（无 descender）保持白。
+        let mut pm = crate::raster::Pixmap::new(400, 300);
+        pm.fill(255, 255, 255);
+        pm.fill_polygon(&paths, (0, 0, 0));
+        let ink = (0..pm.height())
+            .flat_map(|y| (0..pm.width()).map(move |x| (x, y)))
+            .filter(|&(x, y)| pm.pixel_nonwhite(x, y))
+            .count();
+        assert!(ink > 200, "'A'@100px 墨迹应显著（实测 {ink} px）");
+        assert!(!pm.pixel_nonwhite(200, 155), "基线下方应无墨");
     }
 }
