@@ -13,8 +13,29 @@ impl Fonts {
     }
 }
 
+/// tex.web `half(x)`：奇数取 (x+1) div 2（Pascal div 向零截断），偶数取 x div 2。
+fn half(x: i64) -> i64 {
+    if x % 2 != 0 {
+        (x + 1) / 2
+    } else {
+        x / 2
+    }
+}
+
 impl NodeBuilder {
     // ---------- M4-1 数学模式 ----------
+    /// tex.web `new_param_glue`：按参数 glue 追加节点（display 上下间距用）。
+    fn append_param_glue(&mut self, g: ntex_core::Glue) {
+        self.append(Node::Glue {
+            name: None,
+            width: g.width,
+            stretch: g.stretch,
+            shrink: g.shrink,
+            stretch_order: g.stretch_order,
+            shrink_order: g.shrink_order,
+        });
+    }
+
     /// 数学专用原语在非数学模式：TeX 报 "You can't use \x in <mode> mode." 并恢复
     /// （ETRIP：错误入转录继续，不再致命终止）。
     fn math_mode_error(&mut self, prim: &str) -> Result<()> {
@@ -43,24 +64,12 @@ impl NodeBuilder {
         Ok(())
     }
 
-    /// M4-4 进入显示数学：先插 `\predisplaypenalty` + `\abovedisplayskip`（或短变体），
-    /// 再进入 DisplayMath 模式（公式原子收集，退出时经 [`Self::close_math`] 落垂直列表）。
+    /// M4-4 进入显示数学：只切模式（公式原子收集，退出时经 [`Self::close_math`]
+    /// 按 tex.web finish_display 的顺序落垂直列表）。
+    /// tex.web 的 `\predisplaypenalty` + 上间距**不在进入时**追加——那是
+    /// finish_display（退出）里的 `@<Append the glue or equation number preceding
+    /// the display@>`：长短 skip 的裁决要用公式自然宽（退出时才可知）。
     fn enter_display_math(&mut self) -> Result<()> {
-        self.append(Node::Penalty {
-            penalty: self.params.predisplaypenalty,
-        });
-        let above = if self.display_short {
-            self.params.abovedisplayshortskip
-        } else {
-            self.params.abovedisplayskip
-        };
-        self.append(Node::Glue {
-            name: None,            width: above.width,
-            stretch: above.stretch,
-            shrink: above.shrink,
-            stretch_order: 0,
-            shrink_order: 0,
-        });
         self.enter_math(Mode::DisplayMath)
     }
 
@@ -97,6 +106,32 @@ impl NodeBuilder {
             nodes.push(Node::MathOff { surrounded: ms });
         }
         if was_display {
+            // tex.web finish_display：公式先收为自然宽盒，取 z=\displaywidth（≈\hsize）、
+            // s=\displayindent、d=half(z-公式自然宽)，再按 d+s 与 \predisplaysize 的
+            // 比较裁决长/短 display skip（短行 + 窄公式 → 短 skip）。
+            let formula_width = hbox_dimensions(&nodes).width;
+            let z = self.params.hsize;
+            let s = self.params.displayindent;
+            let d = half(z - formula_width);
+            // tex.web：`(d+s<=pre_display_size) or l` → 长 skip（ clearance 不足），
+            // 否则短 skip；eqno/leqno（l 臂）本刀不做，恒按无公式编号。
+            let long = d + s <= self.predisplay_size;
+            let above = if long {
+                self.params.abovedisplayskip
+            } else {
+                self.params.abovedisplayshortskip
+            };
+            let below = if long {
+                self.params.belowdisplayskip
+            } else {
+                self.params.belowdisplayshortskip
+            };
+            // 顺序照 tex.web：penalty(\predisplaypenalty) → 上 glue → 公式盒 →
+            // penalty(\postdisplaypenalty) → 下 glue。
+            self.append(Node::Penalty {
+                penalty: self.params.predisplaypenalty,
+            });
+            self.append_param_glue(above);
             // 公式盒 = `\hbox to \hsize`（两侧 \hfil 居中；displaywidth≈\hsize）
             let mut line: Vec<Node> = Vec::with_capacity(nodes.len() + 2);
             line.push(Node::Glue {
@@ -114,23 +149,15 @@ impl NodeBuilder {
                 stretch_order: GLUE_ORDER_FIL,
                 shrink_order: 0,
             });
-            self.append(Node::Box(hpack(&line, self.params.hsize)));
-            // \belowdisplayskip（或短变体）+ \postdisplaypenalty
-            let below = if self.display_short {
-                self.params.belowdisplayshortskip
-            } else {
-                self.params.belowdisplayskip
-            };
-            self.append(Node::Glue {
-            name: None,                width: below.width,
-                stretch: below.stretch,
-                shrink: below.shrink,
-                stretch_order: 0,
-                shrink_order: 0,
-            });
+            // tex.web finish_display 用 append_to_vlist(b) 落公式盒：先按
+            // prev_depth 插行间 glue（baselineskip/lineskip），再落盒——
+            // 公式前后的 12pt 行距由此而来。走 `append` 会漏掉这段 glue
+            // （P5：display 前垂直跳缺 interline glue）。
+            self.push_box(Node::Box(hpack(&line, self.params.hsize)));
             self.append(Node::Penalty {
                 penalty: self.params.postdisplaypenalty,
             });
+            self.append_param_glue(below);
             // 后续文字续排：无 parskip/缩进（TeX 公式仍在段内）
             self.after_display = true;
         } else {

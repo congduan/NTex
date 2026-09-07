@@ -631,8 +631,10 @@ struct NodeBuilder {
     setbox_global: bool,
     /// ETRIP 冲刺：盒子规格（`\hbox to/spread <dimen>`）：(to, spread)，随下一个盒子组生效。
     pending_box_spec: Option<(Option<i64>, Option<i64>)>,
-    /// M4-4 显示数学：本次公式用短间距（前一段末行短于 `\displaywidth`）。
-    display_short: bool,
+    /// M4-4 显示数学：tex.web `pre_display_size`（进入显示时由上一段末行算出：
+    /// 2em + 末行可见材料自然宽；空段落 = -max_dimen）。`close_math` 退出时与
+    /// `d+s = half(\displaywidth-公式宽)+\displayindent` 比较，裁决长/短 display skip。
+    predisplay_size: i64,
     /// M4-4 显示数学：公式刚闭合，后续文字续排（不开新段：无 parskip/缩进）。
     after_display: bool,
     /// ETRIP 冲刺：数学间距参数（\\thinmuskip/\\medmuskip/\\thickmuskip =
@@ -788,7 +790,7 @@ impl NodeBuilder {
             setbox_target: None,
             setbox_global: false,
             pending_box_spec: None,
-            display_short: false,
+            predisplay_size: 0,
             after_display: false,
             // 默认数学间距（TeXbook p.170）：thin=3mu、med=4mu±2mu∓4mu、thick=5mu±5mu
             // ——按 mu 数值存（1mu=1pt 数值=N×65536）；math_to_hlist 内部按当前 style em/18 转 sp。
@@ -1042,7 +1044,7 @@ impl NodeBuilder {
             setbox_target: self.setbox_target,
             setbox_global: self.setbox_global,
             pending_box_spec: self.pending_box_spec,
-            display_short: self.display_short,
+            predisplay_size: self.predisplay_size,
             after_display: self.after_display,
             muskip_params: self.muskip_params,
             muskip_is_mu: self.muskip_is_mu,
@@ -1102,7 +1104,7 @@ impl NodeBuilder {
         self.setbox_target = s.setbox_target;
         self.setbox_global = s.setbox_global;
         self.pending_box_spec = s.pending_box_spec;
-        self.display_short = s.display_short;
+        self.predisplay_size = s.predisplay_size;
         self.after_display = s.after_display;
         self.muskip_params = s.muskip_params;
         self.muskip_is_mu = s.muskip_is_mu;
@@ -1241,6 +1243,13 @@ impl NodeBuilder {
         }
     }
 
+    /// 垂直列表中不阻断行间胶水的节点（tex.web `prev_depth` 语义：该状态量
+    /// 仅由 `append_to_vlist` 落盒时更新，penalty/glue/kern 等可丢弃材料与
+    /// 迁移材料（mark/insert/adjust/whatsit）都不改写它）。
+    fn push_box_discardable(n: &Node) -> bool {
+        !matches!(n, Node::Box(_) | Node::Rule { .. })
+    }
+
     fn push_box(&mut self, node: Node) {
         if self.mode() == Mode::Vertical {
             // 分页模式下顶层前驱盒子的深度/类型：页面构建器里的盒子，或
@@ -1259,14 +1268,19 @@ impl NodeBuilder {
                     ),
                 }
             } else {
-                // 行间惩罚节点（折行插入的 interline penalty）不阻断行间胶水：
-                // Box → Penalty → Box 场景仍按"前驱是 Box"插 baselineskip glue
+                // tex.web prev_depth 是状态量：只有盒子经 append_to_vlist 才更新，
+                // 其间夹的可丢弃材料（interline penalty、\vskip/\parskip 胶、kern）
+                // 都不改写它——Box → Penalty/Glue → Box 仍按"前驱是 Box"插
+                // baselineskip glue。显示公式的盒前正是
+                // `\predisplaypenalty + \abovedisplayskip`，必须穿透才算得出
+                // 上一行深度（P5：display 垂直结构对齐 tex.web）。
                 match self
                     .lists
                     .last()
-                    .and_then(|l| l.iter().rev().find(|n| !matches!(n, Node::Penalty { .. })))
+                    .and_then(|l| l.iter().rev().find(|n| !Self::push_box_discardable(n)))
                 {
                     Some(Node::Box(prev)) => (true, prev.depth),
+                    Some(Node::Rule { depth, .. }) => (true, *depth),
                     _ => (false, 0),
                 }
             };

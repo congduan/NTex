@@ -199,7 +199,7 @@ struct SideEffects {
     setbox_target: Option<usize>,
     setbox_global: bool,
     pending_box_spec: Option<(Option<i64>, Option<i64>)>,
-    display_short: bool,
+    predisplay_size: i64,
     after_display: bool,
     muskip_params: [ntex_core::Glue; 3],
     muskip_is_mu: [bool; 3],

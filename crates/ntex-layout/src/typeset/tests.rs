@@ -142,13 +142,19 @@ mod tests {
         assert_eq!(main.len(), 1);
         let v = as_box(&main[0]);
         assert_eq!(v.kind, BoxKind::VBox);
-        assert_eq!(v.children.len(), 3);
+        // tex.web：\vskip 不改写 prev_depth，故 \hbox{b} 落盒仍按前驱盒插行间
+        // glue（d = baselineskip 12pt - depth 1500 - height 6000 = 778932）
+        assert_eq!(v.children.len(), 4, "盒+\\vskip+行间glue+盒：{v:?}");
         assert!(matches!(v.children[0], Node::Box(_)));
         match &v.children[1] {
             Node::Glue { width, .. } => assert_eq!(*width, 10 * SP_PER_PT),
             other => panic!("预期 Glue，得到 {other:?}"),
         }
-        assert!(matches!(v.children[2], Node::Box(_)));
+        match &v.children[2] {
+            Node::Glue { width, .. } => assert_eq!(*width, 12 * SP_PER_PT - 1500 - 6000, "行间 glue"),
+            other => panic!("预期行间 Glue，得到 {other:?}"),
+        }
+        assert!(matches!(v.children[3], Node::Box(_)));
     }
 
     #[test]
@@ -208,23 +214,35 @@ mod tests {
     #[test]
     fn vskip_in_paragraph_ends_it_implicitly() {
         let main = typeset(r"a\vskip 6pt b").unwrap();
-        assert_eq!(main.len(), 3, "隐式 \\par 后应为 段落盒+glue+段落盒");
+        // tex.web：\vskip 不改写 prev_depth → 末段落盒落盒仍插行间 glue
+        // （baselineskip 12pt - depth 1500 - height 6000 = 778932）
+        assert_eq!(main.len(), 4, "隐式 \\par 后应为 段落盒+glue+行间glue+段落盒");
         assert!(matches!(main[0], Node::Box(_)), "首项应为断行后的段落盒");
         match &main[1] {
             Node::Glue { width, .. } => assert_eq!(*width, 6 * SP_PER_PT),
             other => panic!("预期 Glue，得到 {other:?}"),
         }
-        assert!(matches!(main[2], Node::Box(_)), "末项应为新起的段落盒");
+        match &main[2] {
+            Node::Glue { width, .. } => assert_eq!(*width, 12 * SP_PER_PT - 1500 - 6000, "行间 glue"),
+            other => panic!("预期行间 Glue，得到 {other:?}"),
+        }
+        assert!(matches!(main[3], Node::Box(_)), "末项应为新起的段落盒");
     }
 
     /// 同上：\vfill 类无限阶垂直胶水在水平模式同样先隐式 \par（\vfil kind=3）。
     #[test]
     fn vfil_in_paragraph_ends_it_implicitly() {
         let main = typeset(r"a\vfil b").unwrap();
-        assert_eq!(main.len(), 3, "\\vfil 后应为 段落盒+glue+段落盒");
+        // 行间 glue（tex.web append_to_vlist）：baselineskip 12pt - depth 1500
+        // - height 6000 = 778932（\vfil 不改写 prev_depth）
+        assert_eq!(main.len(), 4, "\\vfil 后应为 段落盒+glue+行间glue+段落盒");
         assert!(matches!(main[0], Node::Box(_)));
         assert!(matches!(main[1], Node::Glue { .. }));
-        assert!(matches!(main[2], Node::Box(_)));
+        match &main[2] {
+            Node::Glue { width, .. } => assert_eq!(*width, 12 * SP_PER_PT - 1500 - 6000),
+            other => panic!("预期行间 Glue，得到 {other:?}"),
+        }
+        assert!(matches!(main[3], Node::Box(_)));
     }
 
     #[test]
@@ -1197,8 +1215,12 @@ mod tests {
 
     #[test]
     fn math_display_formula() {
-        // $$x$$（垂直模式，无前驱）：predisplaypenalty + abovedisplayskip +
-        // 居中公式盒 + belowdisplayskip + postdisplaypenalty
+        // $$x$$（垂直模式，无前驱）：predisplaypenalty + 上间距 + 居中公式盒 +
+        // postdisplaypenalty + 下间距（tex.web finish_display 顺序：postdisplaypenalty
+        // 在下间距**之前**）。
+        // 空段（tex.web head=tail 臂）pre_display_size = -max_dimen，d+s > 它 →
+        // 短间距（abovedisplayshortskip = 0pt plus 3pt / belowdisplayshortskip =
+        // 7pt plus 3pt minus 4pt）。
         let main = typeset(r"$$x$$").unwrap();
         assert_eq!(main.len(), 5, "显示公式 = 前后 penalty + 上下间距 + 公式盒：{main:?}");
         match &main[0] {
@@ -1207,11 +1229,11 @@ mod tests {
         }
         match &main[1] {
             Node::Glue { width, stretch, shrink, .. } => {
-                assert_eq!(*width, 12 * SP_PER_PT, "abovedisplayskip");
+                assert_eq!(*width, 0, "abovedisplayshortskip 宽 0（短间距）");
                 assert_eq!(*stretch, 3 * SP_PER_PT);
-                assert_eq!(*shrink, 9 * SP_PER_PT);
+                assert_eq!(*shrink, 0);
             }
-            other => panic!("预期 abovedisplayskip，得到 {other:?}"),
+            other => panic!("预期 abovedisplayshortskip，得到 {other:?}"),
         }
         let boxed = as_box(&main[2]);
         // 公式盒 = \hbox to \hsize 居中（两侧 \hfil），中为 x
@@ -1219,29 +1241,8 @@ mod tests {
         assert_eq!(boxed.children.len(), 3, "hfil + x + hfil");
         assert_eq!(as_char(&boxed.children[1]), b'x' as u32);
         match &main[3] {
-            Node::Glue { width, .. } => assert_eq!(*width, 12 * SP_PER_PT, "belowdisplayskip"),
-            other => panic!("预期 belowdisplayskip，得到 {other:?}"),
-        }
-        match &main[4] {
             Node::Penalty { penalty } => assert_eq!(*penalty, 0, "postdisplaypenalty 默认 0"),
             other => panic!("预期 postdisplaypenalty，得到 {other:?}"),
-        }
-    }
-
-    #[test]
-    fn math_display_short_skip_after_short_line() {
-        // 段中 $$：前段末行自然宽度 < \hsize → 短间距
-        // （abovedisplayshortskip = 0pt plus 3pt、belowdisplayshortskip = 7pt plus 3pt minus 4pt）
-        let main = typeset(r"\hsize 10000sp a $$x$$").unwrap();
-        // [行(a), penalty, above-glue, 公式盒, below-glue, penalty]
-        assert_eq!(main.len(), 6, "段中短行公式：{main:?}");
-        match &main[2] {
-            Node::Glue { width, stretch, shrink, .. } => {
-                assert_eq!(*width, 0, "abovedisplayshortskip 宽 0");
-                assert_eq!(*stretch, 3 * SP_PER_PT);
-                assert_eq!(*shrink, 0);
-            }
-            other => panic!("预期 abovedisplayshortskip，得到 {other:?}"),
         }
         match &main[4] {
             Node::Glue { width, .. } => assert_eq!(*width, 7 * SP_PER_PT, "belowdisplayshortskip"),
@@ -1250,10 +1251,40 @@ mod tests {
     }
 
     #[test]
+    fn math_display_short_skip_after_short_line() {
+        // 段中 $$：d+s = half(\displaywidth-公式宽) > pre_display_size（末行自然宽
+        // + 2em）→ 短间距（abovedisplayshortskip = 0pt plus 3pt、
+        // belowdisplayshortskip = 7pt plus 3pt minus 4pt）。
+        // 10000sp 下 d = half(10000-1120) = 4440 > 1097 = 末行宽(a) → 短间距。
+        let main = typeset(r"\hsize 10000sp a $$x$$").unwrap();
+        // [行(a), penalty, 上短间距, 行间glue, 公式盒, penalty, 下短间距]
+        assert_eq!(main.len(), 7, "段中短行公式：{main:?}");
+        match &main[2] {
+            Node::Glue { width, stretch, shrink, .. } => {
+                assert_eq!(*width, 0, "abovedisplayshortskip 宽 0");
+                assert_eq!(*stretch, 3 * SP_PER_PT);
+                assert_eq!(*shrink, 0);
+            }
+            other => panic!("预期 abovedisplayshortskip，得到 {other:?}"),
+        }
+        match &main[6] {
+            Node::Glue { width, .. } => assert_eq!(*width, 7 * SP_PER_PT, "belowdisplayshortskip"),
+            other => panic!("预期 belowdisplayshortskip，得到 {other:?}"),
+        }
+        // tex.web append_to_vlist：公式盒落盒前按 prev_depth 插行间 glue
+        // （baselineskip 12pt - depth 1500 - height 6000 = 778932）
+        match &main[3] {
+            Node::Glue { width, .. } => assert_eq!(*width, 12 * SP_PER_PT - 1500 - 6000, "行间 glue"),
+            other => panic!("预期行间 Glue，得到 {other:?}"),
+        }
+    }
+
+    #[test]
     fn math_display_long_skip_after_full_line() {
-        // 段中 $$：前段末行自然宽度 ≥ \hsize（过满）→ 长间距（abovedisplayskip）
+        // 段中 $$：\hsize 极窄 → d = half(500-1120) = -310 <= pre_display_size
+        // （clearance 不足）→ 长间距（abovedisplayskip 12pt）。
         let main = typeset(r"\hsize 500sp a $$x$$").unwrap();
-        assert_eq!(main.len(), 6, "段中满行公式：{main:?}");
+        assert_eq!(main.len(), 7, "段中满行公式：{main:?}");
         match &main[2] {
             Node::Glue { width, .. } => assert_eq!(*width, 12 * SP_PER_PT, "abovedisplayskip"),
             other => panic!("预期 abovedisplayskip，得到 {other:?}"),
@@ -1262,13 +1293,15 @@ mod tests {
 
     #[test]
     fn math_display_skips_configurable() {
-        // \abovedisplayskip/\belowdisplayskip 可赋值（无 = 形式，同现有测试风格）
-        let main = typeset(r"\abovedisplayskip 5pt\belowdisplayskip 3pt$$x$$").unwrap();
-        match &main[1] {
+        // \abovedisplayskip/\belowdisplayskip 可赋值（无 = 形式，同现有测试风格）。
+        // 公式盒取超宽（\hbox to 30000sp）→ d < 0 <= pre_display_size → 长间距被选中。
+        let main =
+            typeset(r"\abovedisplayskip 5pt\belowdisplayskip 3pt\hsize 500sp a $$x$$").unwrap();
+        match &main[2] {
             Node::Glue { width, .. } => assert_eq!(*width, 5 * SP_PER_PT),
             other => panic!("abovedisplayskip 应生效：{other:?}"),
         }
-        match &main[3] {
+        match &main[6] {
             Node::Glue { width, .. } => assert_eq!(*width, 3 * SP_PER_PT),
             other => panic!("belowdisplayskip 应生效：{other:?}"),
         }
@@ -1278,15 +1311,16 @@ mod tests {
     fn math_display_paragraph_continues_after_formula() {
         // 段中公式：ab $$x$$ cd → 行(ab) + 公式垂直元素 + 行(cd)，续排无 parskip/缩进
         let main = typeset(r"ab $$x$$ cd").unwrap();
-        assert_eq!(main.len(), 7, "公式前后文字各成行：{main:?}");
+        // [行(ab), penalty, 上间距, 行间glue, 公式盒, penalty, 下间距, 行间glue, 行(cd)]
+        assert_eq!(main.len(), 9, "公式前后文字各成行：{main:?}");
         let l1 = as_box(&main[0]);
         assert_eq!(as_char(&l1.children[0]), b'a' as u32);
         assert!(matches!(main[1], Node::Penalty { .. }));
         assert!(matches!(main[2], Node::Glue { .. }));
-        assert!(matches!(main[3], Node::Box(_)), "公式盒");
-        assert!(matches!(main[4], Node::Glue { .. }));
-        assert!(matches!(main[5], Node::Penalty { .. }));
-        let l3 = as_box(&main[6]);
+        assert!(matches!(main[4], Node::Box(_)), "公式盒");
+        assert!(matches!(main[5], Node::Penalty { .. }), "postdisplaypenalty 先于下间距");
+        assert!(matches!(main[6], Node::Glue { .. }));
+        let l3 = as_box(&main[8]);
         assert_eq!(as_char(&l3.children[0]), b'c' as u32, "公式后续文字续排");
         assert_eq!(as_char(&l3.children[1]), b'd' as u32);
     }

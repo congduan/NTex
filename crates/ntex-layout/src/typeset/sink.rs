@@ -49,6 +49,9 @@ impl TokenSink for NodeBuilder {
                             shrink_order: 0,
                         });
                     }
+                    // tex.web：段首 `$$` 走 head=tail 臂（`\noindent$$`），w := -max_dimen
+                    // → close_math 裁决取长 skip。
+                    self.predisplay_size = -ntex_core::register::MAX_DIMEN;
                     self.enter_display_math()
                 } else {
                     // 行内数学：开段（TeX new_graf）
@@ -72,9 +75,15 @@ impl TokenSink for NodeBuilder {
             Mode::Horizontal => {
                 if display {
                     // M4-4 显示数学：TeX $$ 在水平模式先 \par 收尾段落，公式作垂直元素。
-                    // short 判定：末行自然宽度（未拉伸）< \displaywidth（≈\hsize）。
+                    // pre_display_size（tex.web §1193）：末行非空 = 2em + 末行可见材料
+                    // 自然宽（close_paragraph 返回值即末行自然宽，\parfillskip 自然宽 0）；
+                    // 列表为空 = -max_dimen。长/短 skip 的裁决在 close_math 退出时做
+                    // （那时公式自然宽才可知）。
                     let last_natural = self.close_paragraph();
-                    self.display_short = last_natural.is_some_and(|w| w < self.params.hsize);
+                    self.predisplay_size = match last_natural {
+                        Some(w) => w + 2 * self.fonts.font_param(self.current_font, 6),
+                        None => -ntex_core::register::MAX_DIMEN,
+                    };
                     self.enter_display_math()
                 } else {
                     self.enter_math(Mode::Math)
