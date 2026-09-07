@@ -591,6 +591,9 @@ impl IncrementalTypesetter {
         builder.muskip_params = self.expander.muskip_registers();
         builder.muskip_is_mu = [true; 3];
         builder.sync_params(self.expander.params_ref());
+        // \sfcode 默认（大写 999）与全量路径 install_builder 同源，否则增量
+        // 段与全量段的大写-标点空格因子钳制不一致（见 init_sfcodes 文档）。
+        init_sfcodes(&mut builder);
         self.expander.set_sink(Box::new(builder));
     }
 

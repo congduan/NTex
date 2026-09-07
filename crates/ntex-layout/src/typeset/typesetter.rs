@@ -124,6 +124,19 @@ pub struct Typesetter {
     last_current_font: u32,
 }
 
+/// INITEX/plain 大写字母 `\sfcode=999`（tex.web §4852 `for k:="A" to "Z" ...
+/// sf_code(k):=999`；小写保持 1000，标点默认已在 NodeBuilder 表内）。
+/// 缺它则大写后的空格因子不被钳制："LaTeX." 误得句末胶水（+extra_space、
+/// stretch×3、shrink÷3）、"TeX," 误得 sf1250 胶水、"TeX}" 后丢 sf999
+/// 混合胶水——demo1 首行自然宽 +1.11pt、收缩总 −0.96pt，glue set
+/// 0.705→0.809，词间空格 w167106 → w159540（官方对照实测）。
+/// 全量与增量两条 install 路径都必须套用（增量镜像见 incremental.rs）。
+fn init_sfcodes(builder: &mut NodeBuilder) {
+    for k in b'A'..=b'Z' {
+        builder.sfcodes[k as usize] = 999;
+    }
+}
+
 impl Typesetter {
     /// 创建排版器（字符维度/词间距默认全零，M3-4 TFM 前占位）。
     pub fn new() -> Self {
@@ -291,6 +304,7 @@ impl Typesetter {
 // 字段永为 mu 数值（expander 端 scan_glue_mu 路径按 1mu=65536 单位存）。
         builder.muskip_params = self.expander.muskip_registers();
         builder.muskip_is_mu = [true; 3];
+        init_sfcodes(&mut builder);
         self.expander.set_sink(Box::new(builder));
         if let Some(b) = self
             .expander
