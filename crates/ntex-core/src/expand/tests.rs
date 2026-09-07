@@ -1424,4 +1424,5 @@ I changed this one to zero.
     mod tests_expr { include!("tests_expr.rs"); }
     mod tests_cond { include!("tests_cond.rs"); }
     mod tests_io_write { include!("tests_io_write.rs"); }
+    mod tests_insert_alloc { include!("tests_insert_alloc.rs"); }
 }

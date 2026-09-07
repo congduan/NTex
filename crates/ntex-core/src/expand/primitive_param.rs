@@ -168,6 +168,25 @@ impl Expander {
                     // cs：可展开（宏/展开原语）→ 展开压栈后重判（TeX get_x_token）
                     if let Some(csid) = tok.csid() {
                         let slot = self.eqtb.slot(csid).clone();
+                        // <internal integer> 直接作值起点（tex.web scan_int 的
+                        // internal integer 臂：\countdef'd cs、\count<n> 等）。
+                        // 不认这个臂 → `\escapechar\m@ne` 被判成"单独出现 no-op"，
+                        // \m@ne 回流后当赋值目标吞掉后续 token——plain.tex \newif
+                        // 因此把 \m@ne(\count22) 抹成 0，\newinsert 分配器失步。
+                        let internal_integer = match &slot {
+                            EqSlot::Register(..) => true,
+                            EqSlot::Primitive(
+                                Primitive::Count
+                                | Primitive::Dimen
+                                | Primitive::Skip
+                                | Primitive::Muskip,
+                            ) => true,
+                            _ => false,
+                        };
+                        if internal_integer {
+                            self.unread(tok);
+                            break;
+                        }
                         let expandable = match &slot {
                             EqSlot::Macro(m) => {
                                 !(m.value.protected && self.suppress_expansion > 0)
