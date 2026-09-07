@@ -385,8 +385,7 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
             let height = heights.get(e.height_index).map(|&h| scale(h)).unwrap_or(0);
             let depth = depths.get(e.depth_index).map(|&d| scale(d)).unwrap_or(0);
             chars[charcode] = Some((width, height, depth));
-            char_italic[charcode] =
-                italics.get(e.italic_index).map(|&v| scale(v)).unwrap_or(0);
+            char_italic[charcode] = italics.get(e.italic_index).map(|&v| scale(v)).unwrap_or(0);
             lig_kern_index[charcode] = e.lig_kern;
             next_larger[charcode] = e.larger;
         }

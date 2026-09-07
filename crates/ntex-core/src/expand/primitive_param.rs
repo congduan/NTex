@@ -173,16 +173,16 @@ impl Expander {
                         // 不认这个臂 → `\escapechar\m@ne` 被判成"单独出现 no-op"，
                         // \m@ne 回流后当赋值目标吞掉后续 token——plain.tex \newif
                         // 因此把 \m@ne(\count22) 抹成 0，\newinsert 分配器失步。
-                        let internal_integer = match &slot {
-                            EqSlot::Register(..) => true,
-                            EqSlot::Primitive(
-                                Primitive::Count
-                                | Primitive::Dimen
-                                | Primitive::Skip
-                                | Primitive::Muskip,
-                            ) => true,
-                            _ => false,
-                        };
+                        let internal_integer = matches!(
+                            &slot,
+                            EqSlot::Register(..)
+                                | EqSlot::Primitive(
+                                    Primitive::Count
+                                        | Primitive::Dimen
+                                        | Primitive::Skip
+                                        | Primitive::Muskip,
+                                )
+                        );
                         if internal_integer {
                             self.unread(tok);
                             break;

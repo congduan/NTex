@@ -34,16 +34,26 @@
 
 use wasm_bindgen::prelude::*;
 
-/// 内嵌 CM 字体（plain 子集够用的 6 个）：来源 TinyTeX `texmf-dist/fonts/tfm/public/cm/`
+/// 内嵌 CM 字体（plain 子集 14 个）：来源 TinyTeX `texmf-dist/fonts/tfm/public/cm/`
 /// （Computer Modern，可再分发；来源与许可见 `fonts/README.md`）。
-/// cmmi/cmsy/cmex 供数学（M4）与 B 档 demo 预留；随包 demo.tex 用到前三个。
+/// 10pt 七件套覆盖正文与数学文本字号（cmtt10 供 `\tt`）；7/5pt 五件套供数学
+/// 上下标（plain.tex `\scriptfont`/`\scriptscriptfont` 装配口径）；cmr12 供标题
+/// （`scaled` 缩放仅改尺寸不改度量来源）。
 const EMBEDDED_TFMS: &[(&str, &[u8])] = &[
     ("cmr10", include_bytes!("../fonts/cmr10.tfm")),
     ("cmbx10", include_bytes!("../fonts/cmbx10.tfm")),
     ("cmti10", include_bytes!("../fonts/cmti10.tfm")),
+    ("cmtt10", include_bytes!("../fonts/cmtt10.tfm")),
     ("cmmi10", include_bytes!("../fonts/cmmi10.tfm")),
     ("cmsy10", include_bytes!("../fonts/cmsy10.tfm")),
     ("cmex10", include_bytes!("../fonts/cmex10.tfm")),
+    ("cmr12", include_bytes!("../fonts/cmr12.tfm")),
+    ("cmr7", include_bytes!("../fonts/cmr7.tfm")),
+    ("cmr5", include_bytes!("../fonts/cmr5.tfm")),
+    ("cmmi7", include_bytes!("../fonts/cmmi7.tfm")),
+    ("cmmi5", include_bytes!("../fonts/cmmi5.tfm")),
+    ("cmsy7", include_bytes!("../fonts/cmsy7.tfm")),
+    ("cmsy5", include_bytes!("../fonts/cmsy5.tfm")),
 ];
 
 /// 随 crate 发布的示例源（`examples/demo.tex`）：`demo_tex()` 与裸冒烟入口共用。

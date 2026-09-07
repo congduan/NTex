@@ -1614,7 +1614,7 @@ impl PageSink for NodeBuilder {
         self.append(Node::Ins {
             class,
             body: toks,
-            split_top_skip: self.params.splittopskip.clone(),
+            split_top_skip: self.params.splittopskip,
             split_max_depth: self.params.splitmaxdepth,
             float_cost: self.params.misc[37], // \floatingpenalty
         });

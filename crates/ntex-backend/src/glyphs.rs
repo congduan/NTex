@@ -3,9 +3,12 @@
 //! TFM 只有度量无轮廓（引擎布局事实源不变），本模块在**渲染侧**补字形：
 //!
 //! - TeX 字体名（cmr10 等）→ Latin Modern OpenType 文件（LM 与 CM 同源，
-//!   度量一致；光学尺寸取名字中的设计字号）；
-//! - OT1 编码 slot → Unicode（数据源：latex base `ot1enc.def` 的
-//!   symbol/accent slot 声明 + cmr 常识位）→ skrifa cmap 查字形 id；
+//!   度量一致；文本族走光学尺寸族文件，数学族 cmmi/cmsy/cmex 共用
+//!   `latinmodern-math.otf` 单文件）；
+//! - slot → Unicode 按字体编码分发（[`slot_to_unicode`]）：文本族 OT1
+//!   （`ot1enc.def`），数学族 OML/OMS/OMX（槽位锚定 plain.tex mathchardef
+//!   与 canonical TeX 编码布局，数学字母数字取 Unicode Mathematical
+//!   Alphanumeric Symbols 区）→ skrifa cmap 查字形 id；
 //! - 字形绘制双通道：vello glyph run（`vello.rs::append_prims`）与软光栅
 //!   轮廓填充（[`GlyphFont::outline_paths`] → `raster::fill_polygon`）；
 //! - 字体字节来源：`kpsewhich`/texlive 文件系统之外，
@@ -78,18 +81,241 @@ pub(crate) fn ot1_to_unicode(slot: u8) -> Option<u32> {
     })
 }
 
-/// TeX 文本字体名 → Latin Modern OpenType 文件名（无映射的字体返回 None，
-/// 调用方回落占位方框）。
-///
-/// 覆盖 cm 常用文本族；数学族（cmmi/cmsy/cmex）的 LM 文件本地常见精简
-/// 安装不含，尝试映射、找不到文件同样回落。
-fn lm_file_name(tex_name: &str) -> Option<String> {
-    // 拆前缀（字母）+ 设计字号（数字，如 cmr10 → cmr + 10）。
+/// TeX 字体名（如 `cmr10`）的族前缀（首个数字前的字母段）。
+pub(crate) fn family_prefix(tex_name: &str) -> (&str, &str) {
     let split = tex_name
         .find(|c: char| c.is_ascii_digit())
         .unwrap_or(tex_name.len());
     let (family, size) = tex_name.split_at(split);
     let size = if size.is_empty() { "10" } else { size };
+    (family, size)
+}
+
+/// OML 编码（cmmi 数学斜体）slot（0..=127）→ Unicode 码位。
+///
+/// 槽位锚定 plain.tex mathchardef（`\alpha`="010B…`\omega`="0121、`\partial`="0140、
+/// `\ell`="0160、`\imath`="017B 等）；拉丁字母取 Unicode Mathematical Italic
+/// 区（U+1D434/U+1D44E 起），斜体 h 因 U+1D455 保留改取 U+210E（ℎ）；
+/// 希腊小写 U+1D6FC 起（σ/τ 起跳过 ς 位），变体形式（εϑϖϱςϕ∂）取
+/// U+1D715..1D71B 的 symbol 位。
+pub(crate) fn oml_to_unicode(slot: u8) -> Option<u32> {
+    const GREEK_AFTER_PI: [u32; 7] = [
+        0x1D70E, // σ
+        0x1D70F, // τ
+        0x1D710, // υ
+        0x1D711, // φ
+        0x1D712, // χ
+        0x1D713, // ψ
+        0x1D714, // ω
+    ];
+    Some(match slot {
+        // 大写序（Unicode 在 Ρ 后多 ϴ 位，非线性）：Γ Δ Θ Λ Ξ Π Σ Υ Φ Ψ Ω。
+        0x00 => 0x1D6E4, // Γ
+        0x01 => 0x1D6E5, // Δ
+        0x02 => 0x1D6E9, // Θ
+        0x03 => 0x1D6EC, // Λ
+        0x04 => 0x1D6EF, // Ξ
+        0x05 => 0x1D6F1, // Π
+        0x06 => 0x1D6F4, // Σ
+        0x07 => 0x1D6F6, // Υ
+        0x08 => 0x1D6F7, // Φ
+        0x09 => 0x1D6F9, // Ψ
+        0x0A => 0x1D6FA, // Ω
+        0x0F => 0x1D716, // \epsilon（lunate ϵ，区别于 0x22 的标准 ε）
+        // 0x0B..=0x18：α..ξ 连续段（U+1D6FC 起；0x0F 已被上一臂截走）。
+        0x0B..=0x18 => 0x1D6FC + (slot - 0x0B) as u32,
+        // 0x19..=0x21：π 起跳过 Unicode 序的 ο（omicron）位。
+        0x19 => 0x1D70B, // π
+        0x1A => 0x1D70C, // ρ
+        0x1B..=0x21 => GREEK_AFTER_PI[(slot - 0x1B) as usize],
+        0x22 => 0x1D700,                               // \varepsilon（标准 ε 形）
+        0x23 => 0x1D717,                               // \vartheta（ϑ）
+        0x24 => 0x1D71B,                               // \varpi（ϖ）
+        0x25 => 0x1D71A,                               // \varrho（ϱ）
+        0x26 => 0x1D70D,                               // \varsigma（ς，Unicode 序在 ρ 后）
+        0x27 => 0x1D719,                               // \varphi（ϕ）
+        0x28 => 0x21BC,                                // \leftharpoonup（↼）
+        0x29 => 0x21BD,                                // \leftharpoondown（↽）
+        0x2A => 0x21C0,                                // \rightharpoonup（⇀）
+        0x2B => 0x21C1,                                // \rightharpoondown（ↁ 形 U+21C1）
+        0x2E => 0x25B7,                                // \triangleright（▷）
+        0x2F => 0x25C1,                                // \triangleleft（◁）
+        0x30..=0x39 => slot as u32,                    // 旧式数字（cmap 直通 ASCII 位）
+        0x3C => 0x003C,                                // <
+        0x3E => 0x003E,                                // >
+        0x40 => 0x1D715,                               // \partial（∂ 斜体）
+        0x41..=0x5A => 0x1D434 + (slot - 0x41) as u32, // A..Z 斜体
+        0x5E => 0x2323,                                // \smile（⌣）
+        0x5F => 0x2322,                                // \frown（⌢）
+        0x60 => 0x2113,                                // \ell（ℓ）
+        // 0x61..=0x7A：a..z 斜体；h 位 U+1D455 在 Unicode 保留，改 ℎ。
+        0x61..=0x7A => {
+            if slot == b'h' {
+                0x210E
+            } else {
+                0x1D44E + (slot - 0x61) as u32
+            }
+        }
+        0x7B => 0x0131, // \imath（ı）
+        0x7C => 0x0237, // \jmath（ȷ）
+        0x7D => 0x2118, // \wp（℘）
+        _ => return None,
+    })
+}
+
+/// OMS 编码（cmsy 数学符号）slot（0..=127）→ Unicode 码位。
+///
+/// 槽位锚定 plain.tex mathchardef（`\pm`="2206、`\circ`="220E、`\bullet`="220F、
+/// `\leq`="3214、`\rightarrow`="3221、`\langle` 用 \delimiter"426830A → 小件
+/// cmsy 0x68 等）与 canonical OMS 布局。
+pub(crate) fn oms_to_unicode(slot: u8) -> Option<u32> {
+    Some(match slot {
+        0x00 => 0x2212, // −
+        0x01 => 0x22C5, // ⋅
+        0x02 => 0x00D7, // ×
+        0x03 => 0x2217, // ∗
+        0x04 => 0x00F7, // ÷
+        0x05 => 0x22C4, // ⋄
+        0x06 => 0x00B1, // ±
+        0x07 => 0x2213, // ∓
+        0x08 => 0x2295, // ⊕
+        0x09 => 0x2296, // ⊖
+        0x0A => 0x2297, // ⊗
+        0x0B => 0x2298, // ⊘
+        0x0C => 0x2299, // ⊙
+        0x0D => 0x25EF, // ◯（\bigcirc）
+        0x0E => 0x2218, // ∘
+        0x0F => 0x2219, // •
+        0x10 => 0x224D, // ≍（\asymp）
+        0x11 => 0x2261, // ≡
+        0x12 => 0x2286, // ⊆
+        0x13 => 0x2287, // ⊇
+        0x14 => 0x2264, // ≤
+        0x15 => 0x2265, // ≥
+        0x16 => 0x227C, // ≼
+        0x17 => 0x227D, // ≽
+        0x18 => 0x223C, // ∼
+        0x19 => 0x2248, // ≈
+        0x1A => 0x2282, // ⊂
+        0x1B => 0x2283, // ⊃
+        0x1C => 0x226A, // ≪
+        0x1D => 0x226B, // ≫
+        0x1E => 0x227A, // ≺
+        0x1F => 0x227B, // ≻
+        0x20 => 0x2190, // ←
+        0x21 => 0x2192, // →
+        0x22 => 0x2191, // ↑
+        0x23 => 0x2193, // ↓
+        0x24 => 0x2194, // ↔
+        0x25 => 0x2197, // ↗
+        0x26 => 0x2198, // ↘
+        0x27 => 0x2195, // ↕
+        0x28 => 0x21D0, // ⇐
+        0x29 => 0x21D2, // ⇒
+        0x2A => 0x21D1, // ⇑
+        0x2B => 0x21D3, // ⇓
+        0x2C => 0x21D4, // ⇔
+        0x2D => 0x2196, // ↖
+        0x2E => 0x2199, // ↙
+        0x2F => 0x221D, // ∝
+        0x31 => 0x221E, // ∞（\infty="1231）
+        0x32 => 0x2032, // ′（\prime）
+        0x33 => 0x2205, // ∅
+        0x34 => 0x22A4, // ⊤
+        0x35 => 0x22A5, // ⊥
+        0x38 => 0x2200, // ∀
+        0x39 => 0x2203, // ∃
+        0x3A => 0x00AC, // ¬
+        0x3C => 0x211C, // ℜ（\Re）
+        0x3D => 0x2111, // ℑ（\Im）
+        0x40 => 0x2135, // ℵ
+        0x50 => 0x2211, // ∑（\sum="1350）
+        0x5B => 0x222A, // ∪
+        0x5C => 0x2229, // ∩
+        0x5D => 0x228E, // ⊎（\uplus）
+        0x5E => 0x2227, // ∧
+        0x5F => 0x2228, // ∨
+        0x60 => 0x22A2, // ⊢
+        0x61 => 0x22A3, // ⊣
+        0x64 => 0x2308, // ⌈
+        0x65 => 0x2309, // ⌉
+        0x66 => 0x230A, // ⌊
+        0x67 => 0x230B, // ⌋
+        0x68 => 0x27E8, // ⟨（\langle 小件）
+        0x69 => 0x27E9, // ⟩
+        0x6A => 0x2223, // ∣（\mid）
+        0x6B => 0x2225, // ∥
+        0x6E => 0x2216, // ∖（\setminus）
+        0x6F => 0x2240, // ≀（\wr）
+        0x71 => 0x2A3F, // ⨿（\amalg）
+        0x72 => 0x2207, // ∇
+        0x74 => 0x2294, // ⊔
+        0x75 => 0x2293, // ⊓
+        0x76 => 0x2291, // ⊑
+        0x77 => 0x2292, // ⊒
+        0x79 => 0x2020, // †
+        0x7A => 0x2021, // ‡
+        0x7C => 0x2663, // ♣
+        0x7D => 0x2662, // ♢
+        0x7E => 0x2661, // ♡
+        0x7F => 0x2660, // ♠
+        _ => return None,
+    })
+}
+
+/// OMX 编码（cmex 大型定界/积分/大算符）slot → Unicode 码位（常用子集；
+/// display 变体经 next_larger 放大（如 `\sum` cmsy 0x50 → cmex 0x58）映射回
+/// 同一基字符 Unicode，字号由 TFM 度量放大；括号拼接件属多段图形，留方框
+/// 口径待后续）。
+pub(crate) fn omx_to_unicode(slot: u8) -> Option<u32> {
+    Some(match slot {
+        0x46 | 0x47 => 0x2A06, // ⨆（\bigsqcup 及 display 变体）
+        0x4A | 0x4B => 0x2A00, // ⨀
+        0x4C | 0x4D => 0x2A01, // ⨁
+        0x4E | 0x4F => 0x2A02, // ⨂
+        0x50 | 0x58 => 0x2211, // ∑（display = next_larger 终点 0x58）
+        0x51 | 0x59 => 0x220F, // ∏
+        0x52 | 0x5A => 0x222B, // ∫（\intop="1352）
+        0x53 | 0x5B => 0x22C3, // ⋃
+        0x54 | 0x5C => 0x22C2, // ⋂
+        0x55 | 0x5D => 0x2A04, // ⨄
+        0x56 | 0x5E => 0x22C0, // ⋀
+        0x57 | 0x5F => 0x22C1, // ⋁
+        0x60 | 0x61 => 0x2210, // ∐（\coprod）
+        0x70..=0x73 => 0x221A, // √（\radical"270370 及 next_larger 链）
+        _ => return None,
+    })
+}
+
+/// 按字体族分发的 slot → Unicode（prims 字形通道统一入口）：
+/// cmmi→OML、cmsy→OMS、cmex→OMX、cmtt 系→ASCII 直通（cmtt 编码的花括号/
+/// 反斜杠在 OT1 位上是 ligature/标点，`\string`/`\char` 转录须按字面出），
+/// 其余文本族→OT1。
+pub(crate) fn slot_to_unicode(tex_name: &str, slot: u8) -> Option<u32> {
+    let (family, _) = family_prefix(tex_name);
+    match family {
+        "cmmi" => oml_to_unicode(slot),
+        "cmsy" => oms_to_unicode(slot),
+        "cmex" => omx_to_unicode(slot),
+        "cmtt" | "cmsltt" | "cmtex" => {
+            if (0x20..=0x7E).contains(&slot) {
+                Some(slot as u32)
+            } else {
+                ot1_to_unicode(slot)
+            }
+        }
+        _ => ot1_to_unicode(slot),
+    }
+}
+
+/// TeX 文本字体名 → Latin Modern OpenType 文件名（无映射的字体返回 None，
+/// 调用方回落占位方框）。
+///
+/// 覆盖 cm 常用文本族；数学族（cmmi/cmsy/cmex）共用 OpenType MATH 字体
+/// `latinmodern-math.otf`（LM 无独立 lmmi/lmsy OTF 文件，数学字形全在
+/// lm-math 包这一个 MATH 表字体内，cmap 覆盖数学字母数字区）。
+fn lm_file_name(tex_name: &str) -> Option<String> {
+    let (family, size) = family_prefix(tex_name);
     // LM 光学尺寸族：5/6/7/8/9/10/12/17；其余字号取就近存在的文件由
     // kpsewhich 决定（找不到即回落）。
     let style = match family {
@@ -102,9 +328,8 @@ fn lm_file_name(tex_name: &str) -> Option<String> {
         "cmss" => format!("lmsans{size}-regular"),
         "cmssbx" => format!("lmsans{size}-bold"),
         "cmssi" => format!("lmsans{size}-oblique"),
-        "cmmi" => format!("lmmi{size}-regular"),
-        "cmsy" => format!("lmsy{size}-regular"),
-        "cmex" => "lmex10-regular".to_owned(),
+        // 数学族：LM 无独立 OTF，统一走 OpenType MATH 单文件。
+        "cmmi" | "cmsy" | "cmex" => "latinmodern-math".to_owned(),
         _ => return None,
     };
     Some(format!("{style}.otf"))
@@ -121,14 +346,15 @@ pub struct GlyphFont {
 }
 
 impl GlyphFont {
-    /// 解析 OTF 字节：skrifa 校验格式 + dump cmap（BMP 全量，~6.5 万次
-    /// 二分查找，毫秒级一次性成本；数学字体扩展无需再改）。
+    /// 解析 OTF 字节：skrifa 校验格式 + dump cmap（全 Unicode 区间预填，
+    /// ~111 万次二分查找，毫秒级一次性成本；数学字母数字区在平面 1，
+    /// latinmodern-math 亦在此区）。
     fn load(bytes: Vec<u8>) -> Option<Self> {
         let bytes: Arc<[u8]> = bytes.into();
         let font_ref = skrifa::FontRef::new(bytes.as_ref()).ok()?;
         let charmap = font_ref.charmap();
         let mut map = HashMap::new();
-        for ch in 0u32..=0xFFFF {
+        for ch in 0u32..=0x10FFFF {
             if let Some(gid) = charmap.map(ch) {
                 map.insert(ch, gid.to_u32());
             }
@@ -149,6 +375,20 @@ impl GlyphFont {
     /// vello 绘制句柄。
     pub fn font_data(&self) -> &FontData {
         &self.font
+    }
+
+    /// 字形在给定字号下的墨迹纵向跨度（页面坐标，y 向下；基线锚定测量）：
+    /// `(lo, hi)`，lo ≤ 基线（上方为负）。轮廓缺失/解析失败返回 None。
+    pub(crate) fn glyph_vspan_px(&self, gid: u32, size_px: f64) -> Option<(f64, f64)> {
+        let paths = self.outline_paths(gid, size_px, 0.0, 0.0);
+        let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+        for c in &paths {
+            for p in c {
+                lo = lo.min(p[1] as f64);
+                hi = hi.max(p[1] as f64);
+            }
+        }
+        (hi >= lo).then_some((lo, hi))
     }
 
     /// 提取字形轮廓为页面坐标多边形组（软光栅填充用；vello 走 glyph run
@@ -436,6 +676,78 @@ mod tests {
         );
         // 未知族回落。
         assert_eq!(lm_file_name("unknown10"), None);
+        // 数学族统一走 OpenType MATH 单文件。
+        assert_eq!(
+            lm_file_name("cmmi10").as_deref(),
+            Some("latinmodern-math.otf")
+        );
+        assert_eq!(
+            lm_file_name("cmsy7").as_deref(),
+            Some("latinmodern-math.otf")
+        );
+    }
+
+    #[test]
+    fn math_encoding_slot_anchors() {
+        // OML（cmmi）：plain.tex mathchardef 权威位。
+        assert_eq!(slot_to_unicode("cmmi10", 0x19), Some(0x1D70B)); // \pi="0119
+        assert_eq!(slot_to_unicode("cmmi10", 0x0B), Some(0x1D6FC)); // \alpha="010B
+        assert_eq!(slot_to_unicode("cmmi10", 0x1B), Some(0x1D70E)); // \sigma="011B
+        assert_eq!(slot_to_unicode("cmmi10", 0x22), Some(0x1D700)); // \varepsilon="0122
+        assert_eq!(slot_to_unicode("cmmi10", 0x0F), Some(0x1D716)); // \epsilon（lunate）
+        assert_eq!(slot_to_unicode("cmmi10", 0x40), Some(0x1D715)); // \partial="0140
+        assert_eq!(slot_to_unicode("cmmi10", 0x60), Some(0x2113)); // \ell="0160
+        assert_eq!(slot_to_unicode("cmmi10", 0x68), Some(0x210E)); // 斜体 h → ℎ（U+1D455 保留）
+        assert_eq!(slot_to_unicode("cmmi10", b'a'), Some(0x1D44E));
+        assert_eq!(slot_to_unicode("cmmi10", b'Z'), Some(0x1D44D));
+        // OMS（cmsy）：demo1 实测翻车位——\sum 的 0x50 不能再当 OT1 'P'。
+        assert_eq!(slot_to_unicode("cmsy10", 0x50), Some(0x2211)); // ∑
+        assert_eq!(slot_to_unicode("cmsy10", 0x0F), Some(0x2219)); // \bullet="220F
+        assert_eq!(slot_to_unicode("cmsy10", 0x08), Some(0x2295)); // ⊕（\oplus="2208）
+        assert_eq!(slot_to_unicode("cmsy10", 0x14), Some(0x2264)); // ≤（\leq="3214）
+        assert_eq!(slot_to_unicode("cmsy10", 0x21), Some(0x2192)); // →（\rightarrow="3221）
+        assert_eq!(slot_to_unicode("cmsy10", 0x40), Some(0x2135)); // ℵ（\aleph="0240）
+        assert_eq!(slot_to_unicode("cmsy10", 0x31), Some(0x221E)); // ∞（\infty="1231）
+                                                                   // cmtt 编码：花括号/反斜杠按字面 ASCII（\string 转录口径）。
+        assert_eq!(slot_to_unicode("cmtt10", 0x7B), Some(0x7B)); // {
+        assert_eq!(slot_to_unicode("cmtt10", 0x5C), Some(0x5C)); // \
+        assert_eq!(slot_to_unicode("cmr10", 0x7B), Some(0x2013)); // OT1 endash 对照
+        assert_eq!(slot_to_unicode("cmsy10", 0x68), Some(0x27E8)); // ⟨（\delimiter"426830A）
+                                                                   // OMX（cmex）：plain.tex 大算符位。
+        assert_eq!(slot_to_unicode("cmex10", 0x70), Some(0x221A)); // √（\radical"270370）
+        assert_eq!(slot_to_unicode("cmex10", 0x52), Some(0x222B)); // ∫（\intop="1352）
+        assert_eq!(slot_to_unicode("cmex10", 0x51), Some(0x220F)); // ∏（\prod="1351）
+                                                                   // 文本族仍走 OT1。
+        assert_eq!(slot_to_unicode("cmr10", 0x7B), Some(0x2013)); // endash
+                                                                  // 未知族回落 OT1，OMS 空洞返回 None。
+        assert_eq!(slot_to_unicode("cmsy10", 0x50 ^ 0xFF), None);
+        assert_eq!(slot_to_unicode("unknown10", b'A'), Some(0x41));
+    }
+
+    /// tests/data/latinmodern-math.otf：texlive lm-math 包（GUST Font
+    /// License，可再分发）；入库供数学字形通道测试脱离环境依赖。
+    const LM_MATH: &[u8] = include_bytes!("../tests/data/latinmodern-math.otf");
+
+    /// 数学编码表全覆盖：凡映射出的 Unicode 码位必须命中
+    /// latinmodern-math 的 cmap（防"表写了、字体没字形"的静默方框）。
+    #[test]
+    fn math_tables_all_hit_lm_math_cmap() {
+        assert!(register_font_bytes("lm-math-cmap-test", LM_MATH));
+        let mut cache = GlyphCache::new();
+        let font = cache.resolve("lm-math-cmap-test").expect("注册表命中");
+        let mut checked = 0;
+        for slot in 0u8..=127 {
+            for name in ["cmmi10", "cmsy10", "cmex10"] {
+                if let Some(cp) = slot_to_unicode(name, slot) {
+                    assert!(
+                        font.glyph_id(cp).is_some(),
+                        "{name} slot {slot:#x} → U+{cp:04X} 不在 latinmodern-math cmap"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 100, "映射应成规模（实测 {checked}）");
     }
 
     /// tests/data/lmroman10-regular.otf：texlive 2024 basic（GUST Font

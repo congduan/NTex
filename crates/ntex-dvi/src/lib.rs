@@ -766,10 +766,7 @@ mod tests {
 
     /// bop 起始 44 字节：139 + 10×4 计数 + 前页指针。
     fn bop_counters(dvi: &[u8]) -> Vec<i64> {
-        let at = dvi
-            .iter()
-            .position(|&b| b == 139)
-            .expect("应含 bop");
+        let at = dvi.iter().position(|&b| b == 139).expect("应含 bop");
         (0..10)
             .map(|k| {
                 let b = &dvi[at + 1 + 4 * k..at + 5 + 4 * k];
@@ -789,7 +786,15 @@ mod tests {
         let dvi = write_dvi_with_counts(std::slice::from_ref(&page), &[counts], &[]);
         assert_eq!(
             bop_counters(&dvi),
-            (0..10).map(|k| if k == 0 { 5 } else if k == 1 { 7 } else { 0 }).collect::<Vec<_>>(),
+            (0..10)
+                .map(|k| if k == 0 {
+                    5
+                } else if k == 1 {
+                    7
+                } else {
+                    0
+                })
+                .collect::<Vec<_>>(),
             "bop 应写 \\count0=5 \\count1=7，其余 0"
         );
         // 负值照写（TRIP：\count0=-5000 → 4 字节二进制补码）
@@ -810,10 +815,7 @@ mod tests {
         let dvi = write_dvi(&pages, &[]);
         assert_eq!(bop_counters(&dvi)[0], 1, "首页 count0 = 1");
         let second = {
-            let at = dvi
-                .iter()
-                .rposition(|&b| b == 139)
-                .expect("第二页 bop");
+            let at = dvi.iter().rposition(|&b| b == 139).expect("第二页 bop");
             let b = &dvi[at + 1..at + 5];
             i32::from_be_bytes([b[0], b[1], b[2], b[3]]) as i64
         };

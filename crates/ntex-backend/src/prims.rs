@@ -17,7 +17,7 @@ use std::sync::Arc;
 use ntex_font::FontMetrics;
 use ntex_layout::node::{BoxKind, BoxNode, FontId, GlueOrder, Node, GLUE_ORDER_FIL};
 
-use crate::glyphs::{ot1_to_unicode, GlyphCache, GlyphFont};
+use crate::glyphs::{slot_to_unicode, GlyphCache, GlyphFont};
 
 use crate::raster::sp_to_px;
 
@@ -134,6 +134,8 @@ pub struct PagePrims {
 
 /// 真字形绘制指令：`(x, y)` = 基线原点（y 向下，同 rect 坐标系），
 /// `size` = em 的像素数（TFM 实际字号按 dpi 换算），`gid`/`font` 定位轮廓。
+/// `dy` = 基线纵向微调（px，向下为正）：cmex 轴中心字形按 TFM 盒对齐时
+/// 由 [`GlyphCtx::push_char`]( 后端绘制两侧统一施加。
 #[derive(Debug, Clone, Copy)]
 pub struct GlyphPrim {
     pub x: f64,
@@ -141,6 +143,7 @@ pub struct GlyphPrim {
     pub size: f64,
     pub gid: u32,
     pub font: u16,
+    pub dy: f64,
 }
 
 /// 字形通道收集上下文（贯穿 collect 递归；`on = false` 时全部为空操作，
@@ -158,15 +161,31 @@ pub(crate) struct GlyphCtx<'a> {
 impl GlyphCtx<'_> {
     /// 尝试把字符收成字形指令；成功返回 true（调用方跳过占位方框），
     /// 字体/字形/编码任一环节缺失返回 false（回落方框，不报错）。
-    fn push_char(&mut self, font: FontId, charcode: u32, x: f64, y: f64) -> bool {
+    ///
+    /// `h_sp`/`d_sp` 为该字符 TFM 盒的 height/depth（sp）：cmex 大算符
+    /// （display ∑ 等 next_larger 变体槽）映射的 Unicode 基字符字形相对 em
+    /// 偏小，按盒 vextent 放大字形尺寸对齐 TFM 度量（advance 仍用 TFM 宽度，
+    /// 不影响后续排版位置）。
+    fn push_char(
+        &mut self,
+        font: FontId,
+        charcode: u32,
+        x: f64,
+        y: f64,
+        h_sp: i64,
+        d_sp: i64,
+    ) -> bool {
         if !self.on {
             return false;
         }
-        let Some(slot) = u8::try_from(charcode).ok().and_then(ot1_to_unicode) else {
-            return false; // OT1 之外/之上的编码位（如 T1 高位区）暂无映射
-        };
         let Some(fm) = self.metrics.get(font.0 as usize) else {
             return false;
+        };
+        let Some(slot) = u8::try_from(charcode)
+            .ok()
+            .and_then(|s| slot_to_unicode(&fm.name, s))
+        else {
+            return false; // 无映射的编码位（如 OT1 高位区/OMS 空洞）暂无对应
         };
         let gf = match self.cache.resolve(&fm.name) {
             Some(gf) => gf,
@@ -177,6 +196,24 @@ impl GlyphCtx<'_> {
         };
         // em 像素 = 实际字号（design × scale / 2^20）按 dpi 换算。
         let em_sp = fm.design_size_sp.saturating_mul(fm.scale) >> 20;
+        let mut size_px = sp_to_px(em_sp, self.dpi);
+        // cmex 轴中心字形：墨迹设计在基线下方（h 小 d 大），LM OpenType 的
+        // 同名 Unicode 字形却是常规基线字形（墨迹朝上）。按 TFM 盒 [y−h,
+        // y+d] 对齐：字形放大到盒 vextent、基线下移使墨迹顶落在 y−h。
+        let mut dy = 0.0;
+        if crate::glyphs::family_prefix(&fm.name).0 == "cmex" {
+            let h_px = sp_to_px(h_sp, self.dpi);
+            let vext_px = sp_to_px(h_sp.saturating_add(d_sp), self.dpi);
+            if let Some((lo0, hi0)) = gf.glyph_vspan_px(gid, size_px) {
+                let bbox_h0 = hi0 - lo0;
+                if bbox_h0 > 0.0 && vext_px > bbox_h0 {
+                    let k = vext_px / bbox_h0;
+                    size_px *= k;
+                    // 缩放后墨迹顶（基线上方 px）与 TFM 盒顶（y−h）对齐。
+                    dy = (-lo0 * k) - h_px;
+                }
+            }
+        }
         let idx = match self.fonts_out.iter().position(|f| Arc::ptr_eq(f, &gf)) {
             Some(i) => i,
             None => {
@@ -188,9 +225,10 @@ impl GlyphCtx<'_> {
         self.out.push(GlyphPrim {
             x,
             y,
-            size: sp_to_px(em_sp, self.dpi),
+            size: size_px,
             gid,
             font: idx,
+            dy,
         });
         true
     }
@@ -544,7 +582,7 @@ fn collect_hlist(
                 let x = rx + sp_to_px(cur_h, dpi);
                 // 真字形通道优先（OT1→Unicode→LM 轮廓）；任一环节缺失
                 // 回落占位方框口径（与既有渲染一致）。
-                if g.push_char(*font, *charcode, x, ry) {
+                if g.push_char(*font, *charcode, x, ry, *height, *depth) {
                     cur_h += width;
                     continue;
                 }
@@ -643,7 +681,14 @@ fn collect_hlist(
             }
             Node::Box(inner) => {
                 let x = rx + sp_to_px(cur_h, dpi);
-                let child_ry = ry + sp_to_px(inner.shift, dpi);
+                // HBox 子盒挂在基线（shift 下移）；VBox 参考点是顶：
+                // 顶 = 基线 − 高 + shift（如 display 公式的 limits vbox）。
+                let child_ry = ry + sp_to_px(inner.shift, dpi)
+                    - if inner.kind == BoxKind::VBox {
+                        sp_to_px(inner.height, dpi)
+                    } else {
+                        0.0
+                    };
                 collect_box(inner, x, child_ry, dpi, out, g, dbg);
                 cur_h += inner.width;
             }
@@ -668,13 +713,19 @@ fn collect_vlist(
     for node in &bx.children {
         match node {
             Node::Box(inner) => {
-                // 先推进 height，再以「参考点 + height」为子盒基线（HBox）
-                // 或子盒顶（VBox）。统一走 collect_box：子盒也描边/画基线。
-                cur_v += inner.height;
-                let child_ref_y = ry + sp_to_px(cur_v, dpi);
+                // HBox：先推进 height，参考点 = 盒基线；VBox：参考点 = 盒顶
+                //（推进前的 cur_v）。统一走 collect_box：子盒也描边/画基线。
                 let child_rx = rx + sp_to_px(inner.shift, dpi);
-                collect_box(inner, child_rx, child_ref_y, dpi, out, g, dbg);
-                cur_v += inner.depth;
+                if inner.kind == BoxKind::VBox {
+                    let child_ref_y = ry + sp_to_px(cur_v, dpi);
+                    collect_box(inner, child_rx, child_ref_y, dpi, out, g, dbg);
+                    cur_v += inner.height + inner.depth;
+                } else {
+                    cur_v += inner.height;
+                    let child_ref_y = ry + sp_to_px(cur_v, dpi);
+                    collect_box(inner, child_rx, child_ref_y, dpi, out, g, dbg);
+                    cur_v += inner.depth;
+                }
             }
             Node::Glue {
                 width,

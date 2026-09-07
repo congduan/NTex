@@ -89,7 +89,7 @@ impl Backend for TinySkiaBackend {
                 }
                 for g in &prims.glyphs {
                     if let Some(font) = prims.glyph_fonts.get(g.font as usize) {
-                        let paths = font.outline_paths(g.gid, g.size, g.x, g.y);
+                        let paths = font.outline_paths(g.gid, g.size, g.x, g.y + g.dy);
                         pm.fill_polygon(&paths, (0, 0, 0));
                     }
                 }

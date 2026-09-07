@@ -10,8 +10,15 @@ wasm 导出 `set_glyph_font(tex_name, bytes)` 注入进程级注册表（wasm �
 | `lmroman10-regular.otf` | cmr10 | 正文罗马 |
 | `lmroman10-bold.otf` | cmbx10 | 粗体 |
 | `lmroman10-italic.otf` | cmti10 | 意大利体 |
+| `lmmono10-regular.otf` | cmtt10 | 打字机体 |
+| `lmroman12-regular.otf` | cmr12 | 标题字号 |
+| `lmroman7-regular.otf` | cmr7 | 脚本层罗马 |
+| `lmroman5-regular.otf` | cmr5 | 二阶脚本罗马 |
+| `latinmodern-math.otf` | cmmi10/7/5、cmsy10/7/5、cmex10 | 数学族（斜体字母/符号/大算符） |
 
-- 来源：texlive 2024 basic（`texmf-dist/fonts/opentype/public/lm/`）
+- 来源：texlive 2024 basic（`texmf-dist/fonts/opentype/public/lm/` 与
+  `lm-math/`；数学族 LM 无独立 OTF，统一走 lm-math 包的 OpenType MATH 单文件）
 - 许可：GUST Font License（可再分发，见字体文件内嵌 LICENSE 声明）
-- 未注入的字体（如数学 lmmi10/lmsy10/lmex10）渲染时逐字符回落占位方框
-  （引擎契约：不报错不 panic）
+- slot→Unicode 按字体编码分发（OT1/OML/OMS/OMX，见
+  `crates/ntex-backend/src/glyphs.rs`）；未映射的字符渲染时逐字符回落
+  占位方框（引擎契约：不报错不 panic）

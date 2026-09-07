@@ -66,7 +66,7 @@ fn append_prims(scene: &mut Scene, prims: &PagePrims) {
         scene
             .draw_glyphs(gf.font_data())
             .font_size(gp.size as f32)
-            .transform(Affine::translate((gp.x, gp.y)))
+            .transform(Affine::translate((gp.x, gp.y + gp.dy)))
             .draw(
                 Fill::NonZero,
                 [vello::Glyph {

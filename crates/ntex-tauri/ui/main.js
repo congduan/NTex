@@ -22,10 +22,23 @@ const state = {
 /* ---------- 引擎 ---------- */
 
 // 真字形：fetch Latin Modern OTF 注入 wasm（进程级注册表；映射见 ui/fonts/README.md）。
+// 数学族 cmmi/cmsy/cmex 共用 OpenType MATH 单文件 latinmodern-math.otf
+// （LM 无独立数学族 OTF；slot→Unicode 按 OML/OMS/OMX 编码分发，见 glyphs.rs）。
 const GLYPH_FONTS = [
   ['cmr10', 'fonts/lmroman10-regular.otf'],
+  ['cmr12', 'fonts/lmroman12-regular.otf'],
+  ['cmr7', 'fonts/lmroman7-regular.otf'],
+  ['cmr5', 'fonts/lmroman5-regular.otf'],
   ['cmbx10', 'fonts/lmroman10-bold.otf'],
   ['cmti10', 'fonts/lmroman10-italic.otf'],
+  ['cmtt10', 'fonts/lmmono10-regular.otf'],
+  ['cmmi10', 'fonts/latinmodern-math.otf'],
+  ['cmmi7', 'fonts/latinmodern-math.otf'],
+  ['cmmi5', 'fonts/latinmodern-math.otf'],
+  ['cmsy10', 'fonts/latinmodern-math.otf'],
+  ['cmsy7', 'fonts/latinmodern-math.otf'],
+  ['cmsy5', 'fonts/latinmodern-math.otf'],
+  ['cmex10', 'fonts/latinmodern-math.otf'],
 ];
 
 async function loadFonts() {
