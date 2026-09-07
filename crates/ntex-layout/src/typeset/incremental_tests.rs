@@ -752,4 +752,244 @@ mod incremental_tests {
         }
         head
     }
+    // ---------- R1b 前置钉子：SideEffects 镜像 roundtrip ----------
+    //
+    // side_effects() 的**字段完整性**由编译器保证（SideEffects 结构体字面量
+    // 缺字段即编译错）；restore_side_effects 的**遗漏 / 串线**（写了错的来源
+    // 字段、或干脆漏写一个字段）编译器抓不到，只能运行时断言。本测试把全部
+    // 镜像字段涂成 A 值 → 捕获 → 涂成 B 值 → 恢复，逐字段断言回到 A 值。
+    // 铁律：SideEffects 字段增减时，A/B 两组涂值与断言同步增减。
+
+    use crate::node::{BoxNode, FontId, LeadersKind, Node};
+    use crate::hyphen::PatternTrie;
+    use ntex_core::Glue;
+
+    fn mirror_builder() -> super::NodeBuilder {
+        super::NodeBuilder::new(super::Fonts::Fn {
+            metrics: |_, _| (0, 0, 0),
+            space: |_| Glue::ZERO,
+        })
+    }
+
+    /// 镜像字段涂成 A 值（全部非默认、彼此可辨）。
+    fn paint_a(b: &mut super::NodeBuilder) {
+        b.pending_box = Some(super::PendingBox::VTop);
+        b.pending_kind = Some(super::GroupKind::Output);
+        b.pending_shift = Some(11);
+        b.pending_hshift = Some(33);
+        b.pending_leaders = Some(LeadersKind::Xleaders);
+        b.leaders_box = Some((LeadersKind::Leaders, Node::Kern { width: 7 }));
+        b.params = super::Params { parindent: 101, ..Default::default() };
+        b.penalty_arrays = [vec![1], vec![2], vec![3], vec![4]];
+        b.param_stack = vec![
+            super::Params { parindent: 201, ..Default::default() },
+            super::Params { parindent: 202, ..Default::default() },
+        ];
+        b.sfcodes = [0; 256];
+        b.sfcodes[b'a' as usize] = 3000;
+        b.sfcodes[b'b' as usize] = 3001;
+        b.font_stack = vec![FontId(1)];
+        b.space_factor = 1001;
+        b.noindent_next = true;
+        b.align_stack = vec![(super::AlignDir::Halign, super::AlignCtx {
+            tabskips: vec![Glue::ZERO],
+            stream: vec![],
+            cur_cells: vec![],
+            cur_col: 1,
+            to: Some(5),
+        })];
+        b.last_par_line = 55;
+        b.font_cs_names = vec![None, Some("tenrm".into())];
+        b.current_font = FontId(3);
+        b.shipout_next = true;
+        b.ship_seq = 5;
+        b.page_counts = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+        b.boxes = std::rc::Rc::new(vec![Some(BoxNode::new_hbox(vec![])), None, None, None]);
+        b.box_saves = vec![(0, 1, None)];
+        b.output_defined = true;
+        b.pending_pages = [BoxNode::new_vbox(vec![])].into();
+        b.write_flush_pending = true;
+        b.page_shipped = true;
+        b.math_style = super::MathStyle::Script;
+        b.pending_script = Some(true);
+        b.sqrt_pending = true;
+        b.radical_pending = Some(7);
+        b.class_pending = Some(super::MathClass::Bin);
+        b.accent_pending = true;
+        b.underline_pending = true;
+        b.overline_pending = true;
+        b.nonscript_pending = true;
+        b.math_fonts = vec![[Some(FontId(1)); 3]; 16];
+        b.patterns = PatternTrie::parse(b"ab1c");
+        b.hyph_exceptions = vec![(b"abc".to_vec(), vec![0, 2])];
+        b.setbox_target = Some(4);
+        b.setbox_global = true;
+        b.pending_box_spec = Some((Some(10), None));
+        b.predisplay_size = 77;
+        b.after_display = true;
+        b.muskip_params = [
+            Glue { width: 196608, ..Glue::ZERO },
+            Glue { width: 262144, ..Glue::ZERO },
+            Glue { width: 327680, ..Glue::ZERO },
+        ];
+        b.muskip_is_mu = [true, false, true];
+        b.marks_top = [(1, "top-a".to_string())].into_iter().collect();
+        b.marks_first = [(1, "first-a".to_string())].into_iter().collect();
+        b.marks_bot = [(1, "bot-a".to_string())].into_iter().collect();
+        b.marks_split_top = [(2, "stop-a".to_string())].into_iter().collect();
+        b.marks_split_first = [(2, "sfirst-a".to_string())].into_iter().collect();
+        b.marks_split_bot = [(2, "sbot-a".to_string())].into_iter().collect();
+        b.lastbox_hold = Some(BoxNode::new_hbox(vec![]));
+    }
+
+    /// 镜像字段涂成 B 值（与 A 值逐一不同）。
+    fn paint_b(b: &mut super::NodeBuilder) {
+        b.pending_box = Some(super::PendingBox::HBox);
+        b.pending_kind = Some(super::GroupKind::Align);
+        b.pending_shift = Some(-22);
+        b.pending_hshift = Some(-44);
+        b.pending_leaders = Some(LeadersKind::Cleaders);
+        b.leaders_box = Some((LeadersKind::Cleaders, Node::Kern { width: 9 }));
+        b.params = super::Params { parindent: 102, ..Default::default() };
+        b.penalty_arrays = [vec![11], vec![12], vec![13], vec![14]];
+        b.param_stack = vec![super::Params { parindent: 203, ..Default::default() }];
+        b.sfcodes = [0; 256];
+        b.sfcodes[b'a' as usize] = 4000;
+        b.sfcodes[b'b' as usize] = 4001;
+        b.font_stack = vec![FontId(1), FontId(2)];
+        b.space_factor = 2002;
+        b.noindent_next = false;
+        b.align_stack = vec![(super::AlignDir::Valign, super::AlignCtx {
+            tabskips: vec![],
+            stream: vec![],
+            cur_cells: vec![],
+            cur_col: 2,
+            to: None,
+        })];
+        b.last_par_line = 66;
+        b.font_cs_names = vec![Some("trip".into())];
+        b.current_font = FontId(4);
+        b.shipout_next = false;
+        b.ship_seq = 6;
+        b.page_counts = [10, 9, 8, 7, 6, 5, 4, 3, 2, 1];
+        b.boxes = std::rc::Rc::new(vec![None; 6]);
+        b.box_saves = vec![(0, 1, None), (1, 2, None)];
+        b.output_defined = false;
+        b.pending_pages = [BoxNode::new_vbox(vec![]), BoxNode::new_vbox(vec![])].into();
+        b.write_flush_pending = false;
+        b.page_shipped = false;
+        b.math_style = super::MathStyle::ScriptScript;
+        b.pending_script = Some(false);
+        b.sqrt_pending = false;
+        b.radical_pending = Some(8);
+        b.class_pending = Some(super::MathClass::Rel);
+        b.accent_pending = false;
+        b.underline_pending = false;
+        b.overline_pending = false;
+        b.nonscript_pending = false;
+        b.math_fonts = vec![[Some(FontId(2)); 3]; 16];
+        b.patterns = PatternTrie::parse(b"xy2z");
+        b.hyph_exceptions = vec![(b"xy".to_vec(), vec![1])];
+        b.setbox_target = Some(5);
+        b.setbox_global = false;
+        b.pending_box_spec = Some((None, Some(20)));
+        b.predisplay_size = 88;
+        b.after_display = false;
+        b.muskip_params = [
+            Glue { width: 1, ..Glue::ZERO },
+            Glue { width: 2, ..Glue::ZERO },
+            Glue { width: 3, ..Glue::ZERO },
+        ];
+        b.muskip_is_mu = [false, true, false];
+        b.marks_top = [(1, "top-b".to_string())].into_iter().collect();
+        b.marks_first = [(1, "first-b".to_string())].into_iter().collect();
+        b.marks_bot = [(1, "bot-b".to_string())].into_iter().collect();
+        b.marks_split_top = [(2, "stop-b".to_string())].into_iter().collect();
+        b.marks_split_first = [(2, "sfirst-b".to_string())].into_iter().collect();
+        b.marks_split_bot = [(2, "sbot-b".to_string())].into_iter().collect();
+        b.lastbox_hold = Some(BoxNode::new_vbox(vec![]));
+    }
+
+    /// 捕获 → 涂异 → 恢复：52 个镜像字段逐位复原（缺一即败）。
+    #[test]
+    fn side_effects_roundtrip_restores_every_field() {
+        let mut b = mirror_builder();
+        paint_a(&mut b);
+        let se = b.side_effects();
+        paint_b(&mut b);
+        b.restore_side_effects(&se);
+
+        // 盒封装待定
+        assert_eq!(b.pending_box, Some(super::PendingBox::VTop));
+        assert_eq!(b.pending_kind, Some(super::GroupKind::Output));
+        assert_eq!(b.pending_shift, Some(11));
+        assert_eq!(b.pending_hshift, Some(33));
+        assert_eq!(b.pending_leaders, Some(LeadersKind::Xleaders));
+        assert_eq!(
+            b.leaders_box,
+            Some((LeadersKind::Leaders, Node::Kern { width: 7 }))
+        );
+        // 参数 / 字体镜像
+        assert_eq!(b.params.parindent, 101);
+        assert_eq!(b.penalty_arrays, [vec![1], vec![2], vec![3], vec![4]]);
+        assert_eq!(b.param_stack.len(), 2);
+        assert_eq!(b.param_stack[1].parindent, 202);
+        assert_eq!(b.sfcodes[b'a' as usize], 3000);
+        assert_eq!(b.sfcodes[b'b' as usize], 3001);
+        assert_eq!(b.font_stack, vec![FontId(1)]);
+        assert_eq!(b.space_factor, 1001);
+        assert!(b.noindent_next);
+        assert_eq!(b.align_stack.len(), 1);
+        assert_eq!(b.align_stack[0].0, super::AlignDir::Halign);
+        assert_eq!(b.align_stack[0].1.cur_col, 1);
+        assert_eq!(b.last_par_line, 55);
+        assert_eq!(b.font_cs_names, vec![None, Some("tenrm".to_string())]);
+        assert_eq!(b.current_font, FontId(3));
+        // 页面 / shipout
+        assert!(b.shipout_next);
+        assert_eq!(b.ship_seq, 5);
+        assert_eq!(b.page_counts, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        assert_eq!(b.boxes.len(), 4);
+        assert!(b.boxes[0].is_some());
+        assert_eq!(b.box_saves.len(), 1);
+        assert!(b.output_defined);
+        assert_eq!(b.pending_pages.len(), 1);
+        assert!(b.write_flush_pending);
+        assert!(b.page_shipped);
+        // 数学
+        assert_eq!(b.math_style, super::MathStyle::Script);
+        assert_eq!(b.pending_script, Some(true));
+        assert!(b.sqrt_pending);
+        assert_eq!(b.radical_pending, Some(7));
+        assert_eq!(b.class_pending, Some(super::MathClass::Bin));
+        assert!(b.accent_pending);
+        assert!(b.underline_pending);
+        assert!(b.overline_pending);
+        assert!(b.nonscript_pending);
+        assert_eq!(b.math_fonts[0], [Some(FontId(1)); 3]);
+        assert!(!b.patterns.is_empty());
+        assert_eq!(b.patterns.count, PatternTrie::parse(b"ab1c").count);
+        assert_eq!(b.hyph_exceptions, vec![(b"abc".to_vec(), vec![0, 2])]);
+        assert_eq!(b.setbox_target, Some(4));
+        assert!(b.setbox_global);
+        assert_eq!(b.pending_box_spec, Some((Some(10), None)));
+        assert_eq!(b.predisplay_size, 77);
+        assert!(b.after_display);
+        assert_eq!(b.muskip_params[0].width, 196608);
+        assert_eq!(b.muskip_params[2].width, 327680);
+        assert_eq!(b.muskip_is_mu, [true, false, true]);
+        // marks
+        assert_eq!(b.marks_top.get(&1).map(String::as_str), Some("top-a"));
+        assert_eq!(b.marks_first.get(&1).map(String::as_str), Some("first-a"));
+        assert_eq!(b.marks_bot.get(&1).map(String::as_str), Some("bot-a"));
+        assert_eq!(b.marks_split_top.get(&2).map(String::as_str), Some("stop-a"));
+        assert_eq!(b.marks_split_first.get(&2).map(String::as_str), Some("sfirst-a"));
+        assert_eq!(b.marks_split_bot.get(&2).map(String::as_str), Some("sbot-a"));
+        assert!(b.lastbox_hold.is_some());
+        assert_eq!(b.lastbox_hold.as_ref().map(|x| x.kind), b.boxes[0].as_ref().map(|x| x.kind));
+
+        // 全结构一致（BoxFile 走指针相等快路径：restore 后共享同一 Rc）
+        assert_eq!(b.side_effects(), se);
+    }
+
 }

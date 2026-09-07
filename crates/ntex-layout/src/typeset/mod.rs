@@ -1105,6 +1105,7 @@ impl NodeBuilder {
         self.output_defined = s.output_defined;
         self.pending_pages = s.pending_pages.clone();
         self.write_flush_pending = s.write_flush_pending;
+        self.page_shipped = s.page_shipped;
         self.math_style = s.math_style;
         self.pending_script = s.pending_script;
         self.sqrt_pending = s.sqrt_pending;
