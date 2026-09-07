@@ -542,6 +542,7 @@ mod tests {
             checksum: 0x1234_5678,
             name: name.to_owned(),
             chars: vec![None; 128],
+            char_italic: vec![0; 128],
             slant: 0,
             space: 218_453,
             space_stretch: 109_227,

@@ -61,6 +61,7 @@ impl FontLoader for TfmLoader {
                 checksum: 0,
                 name: "nullfont".to_owned(),
                 chars: Vec::new(),
+                char_italic: Vec::new(),
                 slant: 0,
                 space: 0,
                 space_stretch: 0,

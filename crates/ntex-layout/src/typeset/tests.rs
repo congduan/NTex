@@ -1001,6 +1001,74 @@ mod tests {
 
     // ---------- M4-1 数学模式 ----------
 
+    // ---------- D1 数学斜体修正 kern（tex.web §759-762） ----------
+
+    /// 解析真实 cmmi10 度量（无 TeX 安装则 None，测试跳过）。
+    fn cmmi10_metrics() -> Option<FontMetrics> {
+        let path = ntex_font::find_tfm("cmmi10")?;
+        let bytes = std::fs::read(path).ok()?;
+        ntex_font::parse_tfm(&bytes).ok()
+    }
+
+    /// 数学行盒 children（TFM 实字体；剥 \mathon/\mathoff 边界标记与行尾
+    /// parfillskip）。
+    fn math_tfm_children(text: &str) -> Vec<Node> {
+        let mut ts = Typesetter::with_tfm();
+        let main = ts.typeset(text).unwrap();
+        assert_eq!(main.len(), 1);
+        let mut children: Vec<Node> = as_box(&main[0])
+            .children
+            .iter()
+            .filter(|n| !matches!(n, Node::MathOn { .. } | Node::MathOff { .. }))
+            .cloned()
+            .collect();
+        if matches!(
+            children.last(),
+            Some(Node::Glue {
+                stretch_order: GLUE_ORDER_FIL,
+                ..
+            })
+        ) {
+            children.pop();
+        }
+        children
+    }
+
+    #[test]
+    fn math_italic_correction_kern_after_ord_char() {
+        if cmmi10_metrics().is_none() {
+            eprintln!("未找到 cmmi10.tfm，跳过");
+            return;
+        }
+        // 官方对照（tex \tracingoutput showbox）：`...\tenmi E \kern0.57637`
+        // （0.57637pt = 37773sp = char_italic(cmmi10, E)，fix_word 截断取整）
+        let children = math_tfm_children(r#"\font\tenmi=cmmi10\textfont1=\tenmi\mathcode`\E="0145 $E$"#);
+        assert_eq!(children.len(), 2, "E 后应跟斜体修正 kern：{children:?}");
+        assert_eq!(as_char(&children[0]), b'E' as u32);
+        assert_eq!(children[1], Node::Kern { width: 37_773 });
+        // italic=0 的字符不追加（官方 `mc^2`：c 后无 kern，right294003 全为 sup 盒宽）
+        let plain = math_tfm_children(r#"\font\tenmi=cmmi10\textfont1=\tenmi\mathcode`\m="016D $m$"#);
+        assert_eq!(plain.len(), 1, "m（italic=0）不应有 kern：{plain:?}");
+        assert_eq!(as_char(&plain[0]), b'm' as u32);
+    }
+
+    #[test]
+    fn math_italic_kern_sup_only_but_not_sub_only() {
+        if cmmi10_metrics().is_none() {
+            eprintln!("未找到 cmmi10.tfm，跳过");
+            return;
+        }
+        // 官方对照：`f^2` → `\tenmi f \kern1.0764 \hbox`（70543sp）；
+        // `f_2` → `\tenmi f \hbox(...)`（无 kern，delta 转 make_scripts 偏移）
+        let sup = math_tfm_children(r#"\font\tenmi=cmmi10\textfont1=\tenmi\mathcode`\f="0166 $f^2$"#);
+        assert_eq!(as_char(&sup[0]), b'f' as u32);
+        assert_eq!(sup[1], Node::Kern { width: 70_543 }, "仅上标仍追加斜体 kern");
+        assert!(matches!(sup[2], Node::Box(_)));
+        let sub = math_tfm_children(r#"\font\tenmi=cmmi10\textfont1=\tenmi\mathcode`\f="0166 $f_2$"#);
+        assert_eq!(as_char(&sub[0]), b'f' as u32);
+        assert!(matches!(sub[1], Node::Box(_)), "带下标时 delta 交脚本偏移，不落 kern：{sub:?}");
+    }
+
     /// 段落行盒 children（`$...$` 触发段落 → 主列表单行 hbox）。
     fn math_line_children(text: &str) -> Vec<Node> {
         let main = typeset(text).unwrap();

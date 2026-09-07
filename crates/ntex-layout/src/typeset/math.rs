@@ -1,6 +1,20 @@
+/// 字符斜体修正（tex.web `char_italic(f)(q)`；fn 指针占位一律 0）。
+/// impl 分片落在本文件：mod.rs 正由 box/insert 侧刀线并行修改，领地隔离。
+impl Fonts {
+    fn char_italic(&self, font: FontId, charcode: u32) -> i64 {
+        match self {
+            Fonts::Fn { .. } => 0,
+            Fonts::Tfm(table) => table
+                .borrow()
+                .get(font.0 as usize)
+                .map(|fm| fm.char_italic(charcode))
+                .unwrap_or(0),
+        }
+    }
+}
+
 impl NodeBuilder {
     // ---------- M4-1 数学模式 ----------
-
     /// 数学专用原语在非数学模式：TeX 报 "You can't use \x in <mode> mode." 并恢复
     /// （ETRIP：错误入转录继续，不再致命终止）。
     fn math_mode_error(&mut self, prim: &str) -> Result<()> {
@@ -363,7 +377,7 @@ impl NodeBuilder {
         let mut out = Vec::new();
         let mut style = style;
         let mut prev: Option<MathClass> = None;
-        for atom in atoms {
+        for (idx, atom) in atoms.iter().enumerate() {
             // 样式切换原子就地生效（影响后续原子字阶与 spacing）
             if let MathAtom::Style(s) = atom {
                 style = *s;
@@ -411,6 +425,12 @@ impl NodeBuilder {
                 prev = cur;
             }
             out.extend(self.math_atom_nodes(atom, style));
+            // 斜体修正（tex.web §759-762）：紧邻后随原子作 make_ord 判据
+            if let MathAtom::Char(mc) = atom {
+                if let Some(kern) = self.italic_kern_after(mc, style, false, atoms.get(idx + 1)) {
+                    out.push(kern);
+                }
+            }
         }
         out
     }
@@ -443,6 +463,14 @@ impl NodeBuilder {
                     }
                 }
                 let mut out = self.math_atom_nodes(base, style);
+                // 斜体修正（tex.web §759-762）：核带**下标**时 delta 转
+                // make_scripts 偏移、不落 kern；仅上标（sup-only）仍追加。
+                // 脚本化核不参与 make_ord 转换，无 text 字体抑制分支。
+                if let MathAtom::Char(mc) = base.as_ref() {
+                    if let Some(kern) = self.italic_kern_after(mc, style, sub.is_some(), None) {
+                        out.push(kern);
+                    }
+                }
                 let s_style = style.next();
                 // 上标：内容打包为 hbox，shift 上移（hlist 内 Box.shift 为垂直位移）。
                 // tex.web make_scripts 对 sub/sup 盒都执行 width(x)+=script_space
@@ -888,6 +916,47 @@ impl NodeBuilder {
             let (num, den) = style.scale();
             (self.current_font, num, den)
         }
+    }
+
+    /// tex.web §759-762（mlist_to_hlist 第三遍 `@<Create a character node
+    /// |p| for |nucleus(q)|...@>`）：math_char 核取字后 `delta=char_italic`；
+    /// 核**无下标**且 delta≠0 时在字符后追加显式 kern（有下标时 delta 交
+    /// make_scripts 作 sub/sup 水平偏移，不落 kern 节点；demo1 实证：官方
+    /// `E =` 左侧 right219813 = kern37773 + thickmuskip182040，而 `c^2` 因
+    /// cmmi10 'c' italic=0 无 kern、sup 盒宽 261235+scriptspace=294003）。
+    /// make_ord（§14759）转成的 math_text_char：核无脚本、紧邻后随同族
+    /// math_char 简单 noad（ord..punct，不含 inner）→ 正文字体（space≠0）
+    /// 词中不加斜体修正。Op 大算符走 make_op：delta 进 vcenter/脚本偏移，
+    /// 同样不落 kern。`has_sub`=本原子带下标；`next`=紧邻下一原子。
+    fn italic_kern_after(
+        &self,
+        mc: &MathChar,
+        style: MathStyle,
+        has_sub: bool,
+        next: Option<&MathAtom>,
+    ) -> Option<Node> {
+        if mc.class == MathClass::Op || has_sub {
+            return None;
+        }
+        // make_ord 只挂在 ord_noad 上（§14419）：斜体修正本身对所有简单 noad
+        // 的 math_char 核生效，text 字体抑制仅 Ord/Var 核。
+        if matches!(mc.class, MathClass::Ord | MathClass::Var) {
+            if let Some(MathAtom::Char(nc)) = next {
+                if nc.fam == mc.fam
+                    && nc.class != MathClass::Inner
+                    && self.fonts.space(self.math_char_font(mc, style).0).width != 0
+                {
+                    return None;
+                }
+            }
+        }
+        let (font, num, den) = self.math_char_font(mc, style);
+        let it = self.fonts.char_italic(font, mc.charcode);
+        if it == 0 {
+            return None;
+        }
+        let it = if num == den { it } else { xn_over_d(it, num, den) };
+        Some(Node::Kern { width: it })
     }
 
     /// 上标提升量（M4-3）：fontdimen sup1（参数 11，无上标时 sup2/3）；回退 x_height×字阶。

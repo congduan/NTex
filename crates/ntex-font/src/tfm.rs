@@ -38,6 +38,8 @@ struct CharInfoEntry {
     width_index: usize,
     height_index: usize,
     depth_index: usize,
+    /// 斜体修正表索引（byte2 高 6 位；tex.web `char_italic_end`）
+    italic_index: usize,
     /// tag=1：lig/kern 程序起始索引
     lig_kern: Option<u16>,
     /// tag=2：更大变体字符码（list_tag，Op 大算符放大取字形来源）
@@ -120,6 +122,9 @@ pub struct FontMetrics {
     pub name: String,
     /// charcode → (width, height, depth)（sp，已按当前缩放换算）。
     pub chars: Vec<Option<(i64, i64, i64)>>,
+    /// charcode → 斜体修正（sp，已按当前缩放换算；tex.web `char_italic`；
+    /// 数学行组装按 tex.web §759 追加为显式 kern）。未定义字符为 0。
+    pub char_italic: Vec<i64>,
     /// 字体参数（TeX 参数 1..=7，sp；缺失为 0）。
     pub slant: i64,
     pub space: i64,
@@ -151,6 +156,14 @@ impl FontMetrics {
             .copied()
             .flatten()
             .unwrap_or((0, 0, 0))
+    }
+
+    /// 字符斜体修正（tex.web `char_italic(f)(q)`）；未定义字符为 0。
+    pub fn char_italic(&self, charcode: u32) -> i64 {
+        self.char_italic
+            .get(charcode as usize)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// 字符是否在字体中定义（tex.web `char_exists(char_info(f)(c))`；
@@ -238,6 +251,7 @@ impl FontMetrics {
                 .iter()
                 .map(|c| c.map(|(w, h, d)| (scale(w), scale(h), scale(d))))
                 .collect(),
+            char_italic: self.char_italic.iter().map(|&v| scale(v)).collect(),
             slant: scale(self.slant),
             space: scale(self.space),
             space_stretch: scale(self.space_stretch),
@@ -327,6 +341,7 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
             width_index: ((w >> 24) & 0xFF) as usize,
             height_index: ((w >> 20) & 0x0F) as usize,
             depth_index: ((w >> 16) & 0x0F) as usize,
+            italic_index: ((w >> 10) & 0x3F) as usize,
             lig_kern: (tag == 1).then_some(remainder),
             larger: (tag == 2).then_some(remainder as u8),
         });
@@ -336,7 +351,7 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
     let widths = read_words(&mut r, nw)?;
     let heights = read_words(&mut r, nh)?;
     let depths = read_words(&mut r, nd)?;
-    let _italics = read_words(&mut r, ni)?;
+    let italics = read_words(&mut r, ni)?;
     // lig/kern 程序（nl 字）：b0 = skip 字节，b1 = next_char，b2 = op 字节，b3 = remainder
     let mut lig_kern_steps = Vec::with_capacity(nl as usize);
     for _ in 0..nl {
@@ -360,6 +375,7 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
 
     // 字符度量组装
     let mut chars = vec![None; 256];
+    let mut char_italic = vec![0i64; 256];
     let mut lig_kern_index = vec![None; 256];
     let mut next_larger = vec![None; 256];
     for (i, e) in char_info.iter().enumerate() {
@@ -369,6 +385,8 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
             let height = heights.get(e.height_index).map(|&h| scale(h)).unwrap_or(0);
             let depth = depths.get(e.depth_index).map(|&d| scale(d)).unwrap_or(0);
             chars[charcode] = Some((width, height, depth));
+            char_italic[charcode] =
+                italics.get(e.italic_index).map(|&v| scale(v)).unwrap_or(0);
             lig_kern_index[charcode] = e.lig_kern;
             next_larger[charcode] = e.larger;
         }
@@ -383,6 +401,7 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
         checksum,
         name: String::new(), // 加载器（ntex-layout TfmLoader）填充
         chars,
+        char_italic,
         slant: p(0),
         space: p(1),
         space_stretch: p(2),
