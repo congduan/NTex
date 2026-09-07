@@ -1,13 +1,17 @@
 //! demo 驱动：读 .tex → `Typesetter::typeset_dvi` 排版 → 逐页渲染 PNG。
 //!
 //! 用法：`ntex-backend <input.tex> [output_prefix] [dpi] [--vello] [--debug]
-//! [--no-glyphs]`
+//! [--no-glyphs] [--input-path <dir>]... [--quiet]`
 //! 输出：`<prefix>-<页码,01 起>.png`（默认前缀 = 输入文件名去扩展名）；
 //! `--debug` 时文件名带 `-debug` 后缀，并叠加排版调试 overlay
 //! （盒边界/glue/断点标记）。
 //! `--vello` 走 GPU 后端（vello/wgpu，无头纹理回读）；缺省软光栅。
 //! vello 后端默认渲染真字形（Latin Modern，kpsewhich/texlive 定位）；
 //! `--no-glyphs` 回落占位方框口径（软光栅恒为方框口径）。
+//! `--input-path <dir>`（可重复，先加先试）：`\input` 文件解析的搜索路径
+//! （TEXINPUTS 语义最小子集，格式预载 G1）。缺省只有 cwd。
+//! `--quiet`：关掉 stderr 转录（`\message`/`\show`/`\write16`/错误恢复文本，
+//! 格式预载 G0）。默认开——静默是最大的测量陷阱。
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -21,31 +25,44 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!(
-            "用法：ntex-backend <input.tex> [output_prefix] [dpi] [--vello] [--debug] [--no-glyphs]"
+            "用法：ntex-backend <input.tex> [output_prefix] [dpi] [--vello] [--debug] [--no-glyphs] [--input-path <dir>]... [--quiet]"
         );
         return ExitCode::from(2);
     }
-    // flag 解析：未知 `-` 前缀参数报错；positional 1..=3 个。
-    for a in &args[1..] {
+    // flag 解析：`--input-path` 吃一个值；未知 `-` 前缀参数报错；positional 1..=3 个。
+    let mut positional: Vec<&String> = Vec::new();
+    let mut input_paths: Vec<String> = Vec::new();
+    let mut use_vello = false;
+    let mut debug = false;
+    let mut no_glyphs = false;
+    let mut quiet = false;
+    let mut it = args[1..].iter();
+    while let Some(a) = it.next() {
         match a.as_str() {
-            "--vello" | "--debug" | "--no-glyphs" => {}
+            "--vello" => use_vello = true,
+            "--debug" => debug = true,
+            "--no-glyphs" => no_glyphs = true,
+            "--quiet" => quiet = true,
+            "--input-path" => match it.next() {
+                Some(p) => input_paths.push(p.clone()),
+                None => {
+                    eprintln!("--input-path 需要一个目录参数");
+                    return ExitCode::from(2);
+                }
+            },
             other if other.starts_with('-') => {
                 eprintln!("未知参数：{other}");
                 return ExitCode::from(2);
             }
-            _ => {}
+            _ => positional.push(a),
         }
     }
-    let positional: Vec<&String> = args[1..].iter().filter(|a| !a.starts_with('-')).collect();
-    if positional.len() > 3 {
+    if positional.is_empty() || positional.len() > 3 {
         eprintln!(
-            "用法：ntex-backend <input.tex> [output_prefix] [dpi] [--vello] [--debug] [--no-glyphs]"
+            "用法：ntex-backend <input.tex> [output_prefix] [dpi] [--vello] [--debug] [--no-glyphs] [--input-path <dir>]... [--quiet]"
         );
         return ExitCode::from(2);
     }
-    let use_vello = args.iter().skip(1).any(|a| a == "--vello");
-    let debug = args.iter().skip(1).any(|a| a == "--debug");
-    let no_glyphs = args.iter().skip(1).any(|a| a == "--no-glyphs");
     let tex_path = Path::new(positional[0]);
     let prefix = positional.get(1).map(|s| s.to_string()).unwrap_or_else(|| {
         tex_path
@@ -65,7 +82,25 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let (pages, fonts) = match Typesetter::with_tfm().typeset_dvi(&source) {
+    let mut ts = Typesetter::with_tfm();
+    if !input_paths.is_empty() {
+        let mut vfs = ntex_io::SearchPathVfs::new(Box::new(ntex_io::LocalVfs));
+        for p in &input_paths {
+            vfs.push_path(p);
+        }
+        ts.set_vfs(Box::new(vfs));
+    }
+    let outcome = ts.typeset_dvi(&source);
+    // G0：转录透传（成功/失败两条路都取；失败时 finish 未走，转录仍在 sink）。
+    let transcript = ts.take_transcript();
+    if !quiet && !transcript.is_empty() {
+        let mut t = transcript;
+        if !t.ends_with('\n') {
+            t.push('\n');
+        }
+        eprint!("{t}");
+    }
+    let (pages, fonts) = match outcome {
         Ok(out) => out,
         Err(err) => {
             eprintln!("排版失败：{}", err);

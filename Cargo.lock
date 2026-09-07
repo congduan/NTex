@@ -3313,6 +3313,7 @@ version = "0.1.0"
 dependencies = [
  "ntex-dvi",
  "ntex-font",
+ "ntex-io",
  "ntex-layout",
  "ntex-pdf",
  "peniko",
@@ -3354,6 +3355,7 @@ name = "ntex-dvi"
 version = "0.1.0"
 dependencies = [
  "ntex-font",
+ "ntex-io",
  "ntex-layout",
 ]
 

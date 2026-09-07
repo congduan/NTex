@@ -97,6 +97,87 @@ impl Vfs for MemVfs {
     }
 }
 
+/// 搜索路径层：[`Vfs`] 读侧的 TEXINPUTS 语义最小子集（格式预载战役 G1）。
+///
+/// [`Vfs::read`] 依次尝试：
+/// 1. 原样（相对 cwd / MemVfs 裸键）——保持既有语义，命中即返；
+/// 2. 各搜索路径前缀拼原名（见下）——先加先试，第一个命中的返回。
+///
+/// 全部落空返回 `Ok(None)`：`\input`/`\openin` 的「文件不存在」语义不变。
+/// 写侧（write/append）不经搜索路径，原样透传（TeX 的 TEXINPUTS 只管输入）。
+///
+/// 前缀拼接按本 crate 约定用原始字符串（不做平台 Path 解析，WASM 友好）：
+/// 前缀末尾无 `/` 则补一个再接原名；以 `/` 开头的原名视为绝对路径，
+/// 跳过搜索（kpathsea 同口径）。
+///
+/// **范围纪律**：只做单层前缀拼接。kpathsea 的其余语义——`TEXINPUTS`
+/// 环境变量冒号多路径展开、递归树扫描、`!!` 哈希缓存——均未实现，待办。
+#[derive(Debug)]
+pub struct SearchPathVfs {
+    inner: Box<dyn Vfs>,
+    paths: Vec<String>,
+}
+
+impl SearchPathVfs {
+    /// 包住既有后端（本地 [`LocalVfs`] 或 [`MemVfs`]）。
+    pub fn new(inner: Box<dyn Vfs>) -> Self {
+        Self {
+            inner,
+            paths: Vec::new(),
+        }
+    }
+
+    /// 追加一条搜索路径（后加者优先级低）。
+    pub fn push_path(&mut self, path: impl Into<String>) -> &mut Self {
+        self.paths.push(path.into());
+        self
+    }
+
+    /// 已登记的搜索路径（诊断 / 测试断言用）。
+    pub fn paths(&self) -> &[String] {
+        &self.paths
+    }
+
+    /// 解析：返回命中路径与内容；`None` = 全部落空。
+    fn resolve(&mut self, path: &str) -> io::Result<Option<(String, Vec<u8>)>> {
+        if let Some(bytes) = self.inner.read(path)? {
+            return Ok(Some((path.to_owned(), bytes)));
+        }
+        if path.starts_with('/') {
+            return Ok(None);
+        }
+        for prefix in &self.paths {
+            let joined = if prefix.is_empty() || prefix.ends_with('/') {
+                format!("{prefix}{path}")
+            } else {
+                format!("{prefix}/{path}")
+            };
+            if let Some(bytes) = self.inner.read(&joined)? {
+                return Ok(Some((joined, bytes)));
+            }
+        }
+        Ok(None)
+    }
+}
+
+impl Vfs for SearchPathVfs {
+    fn read(&mut self, path: &str) -> io::Result<Option<Vec<u8>>> {
+        Ok(self.resolve(path)?.map(|(_, bytes)| bytes))
+    }
+
+    fn write(&mut self, path: &str, bytes: &[u8]) -> io::Result<()> {
+        self.inner.write(path, bytes)
+    }
+
+    fn append(&mut self, path: &str, bytes: &[u8]) -> io::Result<()> {
+        self.inner.append(path, bytes)
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,5 +204,44 @@ mod tests {
         let mut v = LocalVfs;
         let r = v.read("/nonexistent/ntex-io-test-file.txt");
         assert!(matches!(r, Ok(None)), "{r:?}");
+    }
+
+    // ---------- G1：搜索路径（\input plain → \input hyphen 的缺口） ----------
+
+    #[test]
+    fn search_path_resolves_when_bare_misses() {
+        let mut mem = MemVfs::new();
+        // plain.tex 旁边的 hyphen.tex 不在 cwd：经搜索路径前缀命中。
+        mem.insert("tex/plain/base/hyphen.tex", b"\\patterns{...}");
+        let mut v = SearchPathVfs::new(Box::new(mem));
+        v.push_path("tex/plain/base");
+        assert_eq!(
+            v.read("hyphen.tex").unwrap(),
+            Some(b"\\patterns{...}".to_vec()),
+            "搜索路径前缀应参与解析"
+        );
+        assert_eq!(v.read("absent.tex").unwrap(), None, "全落空仍须 Ok(None)");
+        assert_eq!(v.paths(), ["tex/plain/base"]);
+    }
+
+    #[test]
+    fn bare_path_wins_and_writes_bypass_search() {
+        let mut mem = MemVfs::new();
+        mem.insert("plain.tex", b"% cwd copy");
+        mem.insert("dir/plain.tex", b"% search-path copy");
+        let mut v = SearchPathVfs::new(Box::new(mem));
+        v.push_path("dir");
+        assert_eq!(
+            v.read("plain.tex").unwrap(),
+            Some(b"% cwd copy".to_vec()),
+            "原样命中优先（既有语义不变，cwd 相当于 TEXINPUTS 里的 `.`）"
+        );
+        // 写侧不走搜索路径：写 "out.tex" 不得落到 dir/out.tex。
+        v.write("out.tex", b"x").unwrap();
+        v.append("out.tex", b"y").unwrap();
+        assert_eq!(v.read("out.tex").unwrap(), Some(b"xy".to_vec()));
+        let inner = v.inner.as_any_mut().downcast_ref::<MemVfs>().unwrap();
+        assert!(inner.get("out.tex").is_some(), "应写在原样路径");
+        assert!(inner.get("dir/out.tex").is_none(), "写侧不经搜索路径");
     }
 }
