@@ -216,7 +216,14 @@ fn line_badness_kind(bi: &BreakSpec, ap: &BreakSpec, hsize: i64) -> (u16, LineKi
         if o > 0 {
             (0, LineKind::Shrink)
         } else {
-            (badness(w - hsize, amt), LineKind::Shrink)
+            let over = w - hsize;
+            // tex.web：收缩不足 → b = inf_bad+1（>inf_bad 才触发 active 淘汰；
+            // 拉伸不足的 b 上限是 inf_bad，active 保留不产生候选）。
+            if over > amt {
+                (INF_BAD + 1, LineKind::Shrink)
+            } else {
+                (badness(over, amt), LineKind::Shrink)
+            }
         }
     }
 }
@@ -311,73 +318,76 @@ fn best_path(
 
     for i in 1..n {
         let bi = breaks[i];
-        // A1：active 集淘汰（tex.web §880 `deactivate`）——非强制断点处，起点 a 的
-        // 行 [a, i] badness 超容差 → 移除 a：行 [a, j]（j≥i）只会更宽、badness 单调
-        // 不减，a 不可能成为任何后续非强制行的起点。配合 TeX 默认 `\tolerance=200`，
-        // active 集有界（约一行宽度的断点窗口）→ 复杂度 O(n²) → 接近 O(n)。
-        if !bi.is_forced {
-            let mut last_removed = None;
-            active.retain(|&a| {
-                let (bad, _) = line_badness_kind(&bi, &breaks[a], hsize);
-                let ok = bad as i64 <= threshold;
-                if !ok {
-                    last_removed = Some(a);
-                }
-                ok
-            });
-            if active.is_empty() {
-                match pass {
-                    // 第一遍：内容在 \pretolerance 内断不开 → 失败（tex.web
-                    // `active 空 → goto done`，second_pass 重新开始）
-                    Pass::First => return None,
-                    // 第二遍：兜底恢复最后一个被淘汰的起点（最近的可行断点）——
-                    // 非强制断点仍因超容差不产生候选，仅保证 forced 末点可取。
-                    Pass::Second => active.push(last_removed.unwrap_or(0)),
-                }
-            }
-        }
-        // 按本行拟合类分槽的候选（tex.web `minimal_demerits`/`best_place`）。
+        // tex.web try_break（§859-899）逐 active 的语义：
+        // - b > inf_bad（overfull，badness 钳 10000）或强制断点 → 淘汰臂：
+        //   final pass 且本断点尚无候选且 active 仅剩这一个 → artificial
+        //   demerits（d=0）在 i 记录可行断行（overfull 行兜底，tex.web
+        //   @<Prepare to deactivate...@>）；否则淘汰（不入 survivors）。
+        // - b ≤ inf_bad：active 一律保留；b ≤ threshold 记录候选，超阈值仅
+        //   不产生候选（tex.web `goto continue`）——淘汰与记录门槛解耦。
+        let is_final = pass == Pass::Second;
         let mut champion: [Option<(i64, usize, FitClass)>; 4] = [None; 4];
+        let mut survivors: Vec<usize> = Vec::new();
         for &a in &active {
-            let ap = breaks[a];
-            let (bad, kind) = line_badness_kind(&bi, &ap, hsize);
-            // 强制断点即使过满也可接受
-            if bad as i64 > threshold && !bi.is_forced {
-                continue;
-            }
-            let fit = fit_class_of(bad, kind);
-            for (af, &ad) in best[a].iter().enumerate() {
-                if ad == i64::MAX {
+            let (bad, kind) = line_badness_kind(&bi, &breaks[a], hsize);
+            let forced_drop = bi.is_forced && bad as i64 > threshold;
+            if bad > INF_BAD || forced_drop {
+                if is_final
+                    && champion.iter().all(|c| c.is_none())
+                    && active.len() == 1
+                {
+                    // artificial demerits：d=0（行 demerits 不计，路径链仍建立）
+                    let fit = fit_class_of(bad, kind);
+                    let (af, &ad) = best[a]
+                        .iter()
+                        .enumerate()
+                        .min_by_key(|(_, &v)| v)
+                        .expect("起点必有余量");
+                    champion[fit as usize] = Some((ad, a, af as FitClass));
+                }
+                // 淘汰该起点（不入 survivors）
+            } else {
+                survivors.push(a);
+                if bad as i64 > threshold {
                     continue;
                 }
-                let d = ad + line_demerits(bad, bi.penalty, fit, af as FitClass);
-                // \tracingparagraphs：每个可行断点输出一行（tex.web
-                // `@<类型> via @@<prev> b=.. p=.. d=..`；glue 断点类型名空）。
-                if tracing {
-                    let name = match bi.kind {
-                        BreakKind::Start | BreakKind::Glue => String::new(),
-                        BreakKind::Penalty => "\\penalty".to_string(),
-                        BreakKind::Disc => "\\discretionary".to_string(),
-                        BreakKind::Par => "\\par".to_string(),
-                    };
-                    let b_str = if bad == 10_000 { "*" } else { &bad.to_string() };
-                    trace.push_str(&format!(
-                        "@{name} via @@{a} b={b_str} p={} d={}\n",
-                        bi.penalty,
-                        line_demerits(bad, bi.penalty, fit, af as FitClass)
-                    ));
-                }
-                let slot = &mut champion[fit as usize];
-                if slot.map_or(true, |(bd, _, _)| d < bd) {
-                    *slot = Some((d, a, af as FitClass));
+                let fit = fit_class_of(bad, kind);
+                for (af, &ad) in best[a].iter().enumerate() {
+                    if ad == i64::MAX {
+                        continue;
+                    }
+                    let d = ad + line_demerits(bad, bi.penalty, fit, af as FitClass);
+                    // \tracingparagraphs：每个可行断点输出一行（tex.web
+                    // `@<类型> via @@<prev> b=.. p=.. d=..`；glue 断点类型名空）。
+                    if tracing {
+                        let name = match bi.kind {
+                            BreakKind::Start | BreakKind::Glue => String::new(),
+                            BreakKind::Penalty => "\\penalty".to_string(),
+                            BreakKind::Disc => "\\discretionary".to_string(),
+                            BreakKind::Par => "\\par".to_string(),
+                        };
+                        let b_str = if bad == 10_000 { "*" } else { &bad.to_string() };
+                        trace.push_str(&format!(
+                            "@{name} via @@{a} b={b_str} p={} d={}\n",
+                            bi.penalty,
+                            line_demerits(bad, bi.penalty, fit, af as FitClass)
+                        ));
+                    }
+                    let slot = &mut champion[fit as usize];
+                    if slot.map_or(true, |(bd, _, _)| d < bd) {
+                        *slot = Some((d, a, af as FitClass));
+                    }
                 }
             }
         }
-        for (fc, c) in champion.iter().enumerate() {
-            if let Some((d, a, af)) = *c {
-                best[i][fc] = d;
-                best_prev[i][fc] = Some((a, af));
-                best_lines[i][fc] = best_lines[a][af as usize] + 1;
+        active = survivors;
+        if active.is_empty() {
+            match pass {
+                // 第一遍：active 淘汰殆尽（overfull 行）→ 失败重跑第二遍
+                //（tex.web 主循环 `link(active)=last_active` 停扫 + 非 done 重来）
+                Pass::First => return None,
+                // 第二遍不会到这（单 active 的 overfull 走 artificial 已记录候选）
+                Pass::Second => {}
             }
         }
         if champion.iter().any(|c| c.is_some()) {
@@ -397,12 +407,19 @@ fn best_path(
                     best_lines[i][fc]
                 ));
             }
-            active.push(i);
-            if bi.is_forced {
-                // 强制断行：此前的路径已定案，后续只能从本断点起行
-                active.clear();
-                active.push(i);
+            for (fc, c) in champion.iter().enumerate() {
+                if let Some((d, a, af)) = *c {
+                    best[i][fc] = d;
+                    best_prev[i][fc] = Some((a, af));
+                    best_lines[i][fc] = best_lines[a][af as usize] + 1;
+                }
             }
+            active.push(i);
+        }
+        if bi.is_forced {
+            // 强制断行：此前的路径已定案，后续只能从本断点起行
+            active.clear();
+            active.push(i);
         }
     }
     // 最优路径回溯（tex.web：last_active 链 + 每断点最优拟合类）
@@ -564,6 +581,7 @@ mod tests {
             for j in (i + 1)..breaks.len() {
                 let bj = breaks[j];
                 let (bad, kind) = line_badness_kind(&bj, &bi, hsize);
+                eprintln!("BRUTE i={i} j={j} bad={bad} forced={} w={}", bj.is_forced, (bj.width-bi.width));
                 if bad as i64 > tolerance && !bj.is_forced {
                     continue;
                 }
