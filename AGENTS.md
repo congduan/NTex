@@ -126,15 +126,21 @@ make tauri   # Tauri 桌面壳（wasm 渲染形态）：先构建 ntex-wasm→ui
   C 工程健壮性 / D 语义简化点 / F 优先级路线图）。已修：A2 空行 → `\par`
   （input.rs 有测试覆盖）；未修：A1 死循环根因（watchdog 只是诊断，不是修复）、
   A4 `\outer` 语义、A5 输入层 UTF-8 方案等——动相关模块前先查此表；
+- **验收 checklist（委派验收的标准动作）**：
+  1. 验收推送后**同步刷新 [docs/KNOWN-SIMPLIFICATIONS.md](docs/KNOWN-SIMPLIFICATIONS.md)**——
+     已修项标 ✅ + commit，并用 `git show --stat <commit>` 核对 commit 号真实存在且改动对得上，
+     不得留"未提交"悬空措辞；
+  2. **新增简化/no-op 必须当天登记**（既有规则）；**修复同步移除/标 ✅，验收人核对**。
 - 提交信息风格（中文，`feat:` 开头，冒号后空格）：
   `feat: ETRIP 冲刺迭代 —— 表达式 i128 中间量 + 胶水阶语义`。
 
 ## 7. 已知简化点（改动前务必知悉）
 
-- `\insert` 只收集不排版（脚注不可用）；数学矩阵未做；`\scriptfont` 未接真实字体；
+- `\insert` 体已保留但排版仍挂账（577ed3c，脚注仍不可用）；数学矩阵未做；`\scriptfont` 未接真实字体；
 - `.fmt` 快照不含字体表（加载后需重新 `\font`）；
 - `\write` 已在 shipout 边界提交；`\muexpr` 的 1mu=1pt 与 `\the` "5.0mu" 显示待校准；
 - 数学模式下矩阵/对齐环境（\matrix/\eqalign 等）尚未实现。
+- 逐项清单（含架构债小节）：[docs/KNOWN-SIMPLIFICATIONS.md](docs/KNOWN-SIMPLIFICATIONS.md)——改动前先查表。
 
 ## 8. 里程碑一览（当前焦点）
 
