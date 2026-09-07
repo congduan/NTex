@@ -44,7 +44,9 @@ pub use macrodef::{MacroDef, ParamSpec, TokenArray};
 pub use register::{
     format_dimen, format_glue, Glue, Registers, NULL_FLAG, REGISTER_COUNT, SP_PER_PT,
 };
-pub use sink::{TokenSink, VecSink};
+pub use sink::{
+    AlignSink, BoxSink, CoreSink, FontSink, IoSink, MathSink, PageSink, TokenSink, VecSink,
+};
 pub use span::{BytePos, LineCol, SourceId, Span};
 pub use token::{meaning, Token, TokenKind};
 pub use version::{Version, VersionCounter, Versioned};

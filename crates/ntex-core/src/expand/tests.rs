@@ -5,6 +5,7 @@ mod tests {
     use std::collections::HashSet;
     use std::rc::Rc;
     use ntex_io::MemVfs;
+    use crate::sink::{AlignSink, BoxSink, CoreSink, FontSink, IoSink, MathSink, PageSink};
 
     /// 运行源码（**双轨等价**）：字节码与解释器轨道各跑一次并断言输出一致，
     /// 返回字节码轨道结果。全部用例自动覆盖 M2 双轨验证。
@@ -3160,19 +3161,11 @@ I changed this one to zero.
         patterns: Vec<Vec<u8>>,
     }
 
-    impl TokenSink for EventSink {
+    impl CoreSink for EventSink {
         fn token(&mut self, tok: Token) -> Result<()> {
             if let Some(c) = tok.charcode().and_then(char::from_u32) {
                 self.chars.push(c);
             }
-            Ok(())
-        }
-        fn font_selected(&mut self, font: u32) -> Result<()> {
-            self.fonts.push(font);
-            Ok(())
-        }
-        fn patterns(&mut self, patterns: Vec<u8>) -> Result<()> {
-            self.patterns.push(patterns);
             Ok(())
         }
         fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
@@ -3182,6 +3175,23 @@ I changed this one to zero.
             self
         }
     }
+    impl FontSink for EventSink {
+        fn font_selected(&mut self, font: u32) -> Result<()> {
+            self.fonts.push(font);
+            Ok(())
+        }
+    }
+    impl IoSink for EventSink {
+        fn patterns(&mut self, patterns: Vec<u8>) -> Result<()> {
+            self.patterns.push(patterns);
+            Ok(())
+        }
+    }
+    impl TokenSink for EventSink {}
+    impl MathSink for EventSink {}
+    impl BoxSink for EventSink {}
+    impl AlignSink for EventSink {}
+    impl PageSink for EventSink {}
 
     /// 记录加载请求的测试加载器（每次加载返回递增 FontId）。
     /// 调用记录经 `Rc<RefCell>` 共享，移入 Expander 后仍可读取。

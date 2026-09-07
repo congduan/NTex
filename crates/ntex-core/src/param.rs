@@ -3,7 +3,7 @@
 //! 显示数学间距（`\abovedisplayskip` 等 4 个 glue + 前后 penalty）。
 //!
 //! TeX 的内部参数存储在 eqtb；这里用独立结构体持有。赋值走组作用域
-//! （`SavedValue::Param`），值变化经 [`TokenSink::param_changed`] 事件
+//! （`SavedValue::Param`），值变化经 [`CoreSink::param_changed`] 事件
 //! 镜像给排版器（ntex-layout），排版器据此计算段落缩进、interline glue 与折行。
 
 use crate::register::{Glue, SP_PER_PT};

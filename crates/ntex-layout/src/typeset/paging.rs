@@ -63,7 +63,7 @@ impl NodeBuilder {
     /// NTex 体未排版 → 累积盒的子节点是 [`Node::Ins`] 本尊（token 体无损保留）：
     /// `\ifvoid<insert号>`/`\unvbox<insert号>`/`\box<insert号>` 因此走既有盒子
     /// 寄存器面（tex.web：`box(c)` 就是插入号 c 的累积盒，无需新寄存器文件）。
-    /// box(255) 是页队列 → `\insert255` 已在 [`TokenSink::insert_node`] 报错改道 0。
+    /// box(255) 是页队列 → `\insert255` 已在 [`PageSink::insert_node`] 报错改道 0。
     fn insert_accumulate(&mut self, mut p: BoxNode) -> BoxNode {
         let mut moved: Vec<(usize, Node)> = Vec::new();
         let mut children = Vec::with_capacity(p.children.len());

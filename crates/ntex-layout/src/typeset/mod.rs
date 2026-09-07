@@ -25,7 +25,10 @@ use ntex_core::expand::Expander;
 use ntex_core::param::{ParamKind, ParamValue, Params};
 use ntex_core::register::{Glue, REGISTER_COUNT, SP_PER_PT};
 use ntex_core::token::Token;
-use ntex_core::{FontLoader, Primitive, TokenSink};
+use ntex_core::{
+    AlignSink, BoxSink, CoreSink, FontLoader, FontSink, IoSink, MathSink, PageSink, Primitive,
+    TokenSink,
+};
 use ntex_font::{FontMetrics, LigKern};
 
 use crate::hyphen::PatternTrie;
@@ -573,7 +576,7 @@ struct NodeBuilder {
     shipped_counts: Vec<[i64; 10]>,
     /// `\count0..9` 镜像（输出例程刀 5 页号链）：tex.web `ship_out` L12694-12699
     /// 在 shipout 边界**直接读 count(j)** 打页标签——引擎经
-    /// [`TokenSink::count_changed`] 赋值即推送，本侧无从反查寄存器文件。
+    /// [`PageSink::count_changed`] 赋值即推送，本侧无从反查寄存器文件。
     page_counts: [i64; 10],
     /// `\\tracingoutput` 转录计数（tex.web ship_out 页号末段：每次 shipout +1；
     /// 页标签自刀 5 起改读 [`Self::page_counts`] 镜像，此计数保留为 shipout 次数
@@ -603,7 +606,7 @@ struct NodeBuilder {
     pending_pages: VecDeque<BoxNode>,
     /// RFC-3：页面真正输出（`\shipout` 边界）时置位，通知引擎 flush 延迟写流。
     write_flush_pending: bool,
-    /// 输出例程刀 1：页面真正 shipout 过（自上次 [`TokenSink::take_page_shipped`]
+    /// 输出例程刀 1：页面真正 shipout 过（自上次 [`PageSink::take_page_shipped`]
     /// 查询以来）——`dead_cycles` 清零依据（tex.web ship_out `dead_cycles:=0`）。
     page_shipped: bool,
     /// 数学列表栈（M4-1）：数学模式期间一层；`{...}` 数学组/脚本字段压层。

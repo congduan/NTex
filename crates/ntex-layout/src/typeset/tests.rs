@@ -3,7 +3,6 @@ mod tests {
     use super::*;
     use crate::node::BoxKind;
     use ntex_core::SP_PER_PT;
-    use ntex_core::TokenSink;
 
     /// TRIP 冲刺调试（临时）：trip.tex 前段逐行二分。
     /// 无断言（只打 DBG 行）。`#[ignore]`：它把进程级 `NTEX_TFM_DIR` 改成
