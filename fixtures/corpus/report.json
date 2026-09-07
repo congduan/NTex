@@ -3,48 +3,48 @@
   "file": "latex/sample2e.tex",
   "dvi": null,
   "pdf": null,
-  "error": "DVI: 未产出页面（源码缺少 \\shipout）"
+  "error": "DVI:  \\z@\n\nA number should have been here; I inserted `0'.\n(If you can't figure out why I needed to see a number,\nlook up `weird error' in the index to The TeXbook.)"
  },
  {
   "file": "latex/small2e.tex",
   "dvi": null,
   "pdf": null,
-  "error": "DVI: 未产出页面（源码缺少 \\shipout）"
+  "error": "DVI:  \\z@\n\nA number should have been here; I inserted `0'.\n(If you can't figure out why I needed to see a number,\nlook up `weird error' in the index to The TeXbook.)"
  },
  {
   "file": "latex/testpage.tex",
   "dvi": null,
   "pdf": null,
-  "error": "DVI: 未产出页面（源码缺少 \\shipout）"
+  "error": "DVI:  \\z@\n\nA number should have been here; I inserted `0'.\n(If you can't figure out why I needed to see a number,\nlook up `weird error' in the index to The TeXbook.)"
  },
  {
   "file": "math/basic-expressions.tex",
   "dvi": null,
   "pdf": null,
-  "error": "DVI: 排版失败：非法输入：双重上标（Double superscript）"
+  "error": "DVI:  \\z@\n\nA number should have been here; I inserted `0'.\n(If you can't figure out why I needed to see a number,\nlook up `weird error' in the index to The TeXbook.)"
  },
  {
   "file": "math/symbols-matrix.tex",
   "dvi": null,
   "pdf": null,
-  "error": "DVI: 已写出 /home/ubuntu/NTex/fixtures/corpus/math/symbols-matrix.dvi（203 字节，1 页，0 字体）"
+  "error": "DVI:  \\z@\n\nA number should have been here; I inserted `0'.\n(If you can't figure out why I needed to see a number,\nlook up `weird error' in the index to The TeXbook.)"
  },
  {
   "file": "plain/letterformat.tex",
   "dvi": null,
   "pdf": null,
-  "error": "DVI: 排版失败：非法输入：\\advance 目标必须是寄存器或内部参数"
+  "error": "DVI:  \\z@\n\nA number should have been here; I inserted `0'.\n(If you can't figure out why I needed to see a number,\nlook up `weird error' in the index to The TeXbook.)"
  },
  {
   "file": "plain/list.tex",
   "dvi": null,
   "pdf": null,
-  "error": "DVI: 排版失败：非法输入：\\multiply/\\divide 目标必须是寄存器或内部参数"
+  "error": "DVI:  \\z@\n\nA number should have been here; I inserted `0'.\n(If you can't figure out why I needed to see a number,\nlook up `weird error' in the index to The TeXbook.)"
  },
  {
   "file": "plain/plain.tex",
   "dvi": null,
   "pdf": null,
-  "error": "DVI: 排版失败：非法输入：寄存器未分配（先 \\newcount 等分配）"
+  "error": "DVI:  \\z@\n\nA number should have been here; I inserted `0'.\n(If you can't figure out why I needed to see a number,\nlook up `weird error' in the index to The TeXbook.)"
  }
 ]
