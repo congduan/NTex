@@ -238,8 +238,12 @@ fn build_document(dvi: &Dvi, contents: &[Vec<u8>], opts: &PdfOptions) -> io::Res
         obj(&mut buf, &mut offsets, &body);
     }
 
-    // 字体对象（去重）
-    for (idx, (font_name, (_, pfa))) in uniq.iter().enumerate() {
+    // 字体对象（去重）——/BaseFont 与 /FontDescriptor /FontName 统一取 PFB 内
+    // /FontName（Type1 惯例大写，如 CMR10），而非 DVI 侧小写引用名（tex fnt_def
+    // 名是引擎内部引用键；PDF 名字对象必须与嵌入的 PFB 自声明名一致，否则部分
+    // 查看器按名字匹配字体度量失败）。fallback（无 PFB）路径同样走大写兜底名。
+    for (idx, (_, (pfb_name, pfa))) in uniq.iter().enumerate() {
+        let font_name = pfb_name.as_str();
         let dict_obj = font_base + 3 * idx;
         let desc_obj = dict_obj + 1;
         let file_obj = dict_obj + 2;
