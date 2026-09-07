@@ -567,8 +567,17 @@ struct NodeBuilder {
     shipout_next: bool,
     /// 已 \\shipout 的页面（按顺序）。
     shipped: Vec<BoxNode>,
+    /// 各页面 shipout 边界的 `\count0..9` 快照（与 [`Self::shipped`] 一一对应；
+    /// 输出例程刀 5：DVI bop 的 10 计数字取值源，由调用方 `write_dvi_with_counts`
+    /// 消费）。
+    shipped_counts: Vec<[i64; 10]>,
+    /// `\count0..9` 镜像（输出例程刀 5 页号链）：tex.web `ship_out` L12694-12699
+    /// 在 shipout 边界**直接读 count(j)** 打页标签——引擎经
+    /// [`TokenSink::count_changed`] 赋值即推送，本侧无从反查寄存器文件。
+    page_counts: [i64; 10],
     /// `\\tracingoutput` 转录计数（tex.web ship_out 页号末段：每次 shipout +1；
-    /// count0-9 首段精确值待 count 快照接线，暂 0 占位）。
+    /// 页标签自刀 5 起改读 [`Self::page_counts`] 镜像，此计数保留为 shipout 次数
+    /// 诊断量并进 M5 副作用快照）。
     ship_seq: u32,
     /// M3-5-2 断页：启用自动分页（`typeset_dvi` 打开；旧 `typeset` 保持切片行为）。
     pagination: bool,
@@ -765,6 +774,8 @@ impl NodeBuilder {
             current_font: FontId(0),
             shipout_next: false,
             shipped: Vec::new(),
+            shipped_counts: Vec::new(),
+            page_counts: [0; 10],
             ship_seq: 0,
             pagination,
             page: PageBuilder::new(),
@@ -1023,6 +1034,7 @@ impl NodeBuilder {
             current_font: self.current_font,
             shipout_next: self.shipout_next,
             ship_seq: self.ship_seq,
+            page_counts: self.page_counts,
             boxes: BoxFile(std::rc::Rc::clone(&self.boxes)),
             box_saves: self.box_saves.clone(),
             output_defined: self.output_defined,
@@ -1084,6 +1096,7 @@ impl NodeBuilder {
         self.current_font = s.current_font;
         self.shipout_next = s.shipout_next;
         self.ship_seq = s.ship_seq;
+        self.page_counts = s.page_counts;
         self.boxes = std::rc::Rc::clone(&s.boxes.0);
         self.box_saves = s.box_saves.clone();
         self.output_defined = s.output_defined;
@@ -1201,7 +1214,7 @@ impl NodeBuilder {
         if ship {
             if let Node::Box(b) = node {
                 self.trace_shipout(&b);
-                self.shipped.push(b);
+                self.push_shipped(b);
                 self.write_flush_pending = true;
             }
             return;

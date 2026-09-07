@@ -221,6 +221,13 @@ pub trait TokenSink: std::fmt::Debug {
     fn sfcode_changed(&mut self, _charcode: u8, _value: u32) -> Result<()> {
         Ok(())
     }
+    /// `\count<n>=<值>`（含 `\advance`/组内回滚还原；输出例程刀 5，idx < 10 才推送）：
+    /// 页号链镜像——tex.web `ship_out` L12694 在 shipout 边界**直接读 count(j)**
+    /// 打页标签、写 DVI bop 的 10 计数字，排版器侧无从反查引擎寄存器，故与
+    /// [`TokenSink::param_changed`] 同款赋值即推送。
+    fn count_changed(&mut self, _idx: usize, _value: i64) -> Result<()> {
+        Ok(())
+    }
     /// `\output` 例程定义状态变化（M3-5-3）：true 时 fire_up 改道 box255 + 待执行，
     /// false 时直通 shipout（默认）。
     fn output_defined(&mut self, _defined: bool) -> Result<()> {

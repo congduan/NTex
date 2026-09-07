@@ -2495,4 +2495,112 @@ mod tests {
         assert_eq!(with, default, "\\copy255 应复制当前页并原样输出");
     }
 
+    // ---------- 输出例程刀 5：页号链（\count0 页标签 + DVI bop 计数） ----------
+    //
+    // tex.web ship_out L12694-12699：`print_char("["); j:=9;
+    // while (count(j)=0)and(j>0) do decr(j); for k:=0 to j do print_int(count(k))
+    // ...`——count0 起逐段点分、**遇 0 截断**；全零 j 停在 0 → 恒打 `[0]`。
+    // TRIP 参考 log L42/L602：`[0.0.0.0.11]`、`[-5000.0.0.0.11.53110374]`
+    // （负值照打）。真 TeX 对拍探针见 /tmp/ors-work-k5/（TinyTeX plain）。
+
+    #[test]
+    fn page_label_truncates_at_first_zero_tail() {
+        let c = |v: [i64; 10]| {
+            let mut a = [0i64; 10];
+            a[..v.len()].copy_from_slice(&v);
+            format_page_label(&a)
+        };
+        assert_eq!(c([1, 0, 0, 0, 0, 0, 0, 0, 0, 0]), "[1]", "count1 起全零→只打 count0");
+        assert_eq!(c([5, 7, 0, 0, 0, 0, 0, 0, 0, 0]), "[5.7]");
+        assert_eq!(c([0, 0, 0, 0, 11, 0, 0, 0, 0, 0]), "[0.0.0.0.11]", "TRIP L42");
+        assert_eq!(
+            c([-5000, 0, 0, 0, 11, 53110374, 0, 0, 0, 0]),
+            "[-5000.0.0.0.11.53110374]",
+            "TRIP L602：负值照打，中段零保留"
+        );
+        assert_eq!(c([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), "[0]", "全零特例：恒打 [0]");
+        assert_eq!(c([2, 0, 4, 0, 0, 0, 0, 0, 0, 0]), "[2.0.4]", "尾零截断，非尾零保留");
+    }
+
+    #[test]
+    fn count0_feeds_shipout_page_label() {
+        // 单页：\count0=5 \count1=7 → 标题行 `... [5.7]`（与 TinyTeX plain 逐字符），
+        // 且页级快照随页走（DVI bop 计数取值源）。
+        let mut ts = Typesetter::with_metrics(metrics);
+        let _ = ts.typeset_dvi(r"\tracingoutput=1 \count0=5 \count1=7 \shipout\hbox{aa}\end");
+        let t = ts.take_transcript();
+        assert!(
+            t.contains("Completed box being shipped out [5.7]"),
+            "页标签应为 count0.count1 尾零截断：{t:?}"
+        );
+        let mut ts2 = Typesetter::with_metrics(metrics);
+        let (pages, _) =
+            ts2.typeset_dvi(r"\count0=5 \count1=7 \shipout\hbox{aa}\end").unwrap();
+        assert_eq!(pages.len(), 1);
+        let mut want = [0i64; 10];
+        want[0] = 5;
+        want[1] = 7;
+        assert_eq!(
+            ts2.shipped_page_counts(),
+            &[want][..],
+            "shipout 边界的 \\count0..9 快照应随页携带"
+        );
+    }
+
+    #[test]
+    fn count0_advances_between_pages() {
+        // 两页：例程 `\global\advance\count0 by 1` 复刻 plain `\advancepageno`
+        // （\countdef\pageno=0；例程体在组内，须 \global——真 TeX 同探针
+        // 非 global 时两页都是 [5.7]），第二页标签 [6.7]——真 TeX 对拍
+        // [5.7]/[6.7]（/tmp/ors-work-k5/k5-p2.tex）。
+        let mut ts = Typesetter::with_metrics(metrics);
+        let _ = ts.typeset_dvi(
+            r"\vsize 40000000sp\hsize 20000000sp \count0=5 \count1=7 \tracingoutput=1
+              \output={\shipout\box255 \global\advance\count0 by 1}
+              aa\par\penalty-10000 bb\par\end",
+        );
+        let t = ts.take_transcript();
+        assert!(
+            t.contains("Completed box being shipped out [5.7]"),
+            "第一页 [5.7]：{t:?}"
+        );
+        assert!(
+            t.contains("Completed box being shipped out [6.7]"),
+            "第二页 count0 已 +1 → [6.7]：{t:?}"
+        );
+        let counts: Vec<i64> = ts
+            .shipped_page_counts()
+            .iter()
+            .flat_map(|c| c[..2].to_vec())
+            .collect();
+        assert_eq!(counts, vec![5, 7, 6, 7], "两页快照 = count0 递增、count1 不变");
+    }
+
+    #[test]
+    fn page_label_defaults_to_zero() {
+        // 未设 \count（INITEX 初表全零）→ `[0]`：tex.web 全零特例 j 停在 0。
+        // 旧实现的 `[0.0.0.0.1]`（ship_seq 占位）即由此纠正。
+        let mut ts = Typesetter::with_metrics(metrics);
+        let _ = ts.typeset_dvi(r"\tracingoutput=1 \shipout\hbox{aa}\end");
+        let t = ts.take_transcript();
+        assert!(
+            t.contains("Completed box being shipped out [0]\n"),
+            "全零 count 应打 [0]：{t:?}"
+        );
+    }
+
+    #[test]
+    fn count0_group_rollback_restores_mirror() {
+        // 组内赋值组外回滚（tex.web：count 寄存器在 eqtb 内，组结束还原）：
+        // 镜像须随引擎还原，否则 shipout 标签读到已回滚的值。
+        let mut ts = Typesetter::with_metrics(metrics);
+        let _ = ts
+            .typeset_dvi(r"\tracingoutput=1 \count0=1 {\count0=9} \shipout\hbox{aa}\end");
+        let t = ts.take_transcript();
+        assert!(
+            t.contains("Completed box being shipped out [1]"),
+            "组内 \\count0=9 回滚后应仍为 1：{t:?}"
+        );
+    }
+
 }

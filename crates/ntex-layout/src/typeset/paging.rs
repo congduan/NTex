@@ -1,18 +1,48 @@
+/// 页标签（tex.web `ship_out` L12694-12699）：`[` + count0 起逐段点分，**遇 0
+/// 截断**——`j:=9; while (count(j)=0)and(j>0) do decr(j)` 取最高非零下标 j，
+/// 打 count(0)..count(j)。全零时 j 停在 0 → 恒打 `[0]`（不省略整个标签）。
+/// 负值照打（TRIP 参考 log：`[-5000.0.0.0.11.53110374]`）。
+pub(crate) fn format_page_label(counts: &[i64; 10]) -> String {
+    let mut j = 9;
+    while counts[j] == 0 && j > 0 {
+        j -= 1;
+    }
+    let mut out = String::from("[");
+    for (k, c) in counts[..=j].iter().enumerate() {
+        out.push_str(&c.to_string());
+        if k < j {
+            out.push('.');
+        }
+    }
+    out.push(']');
+    out
+}
+
 impl NodeBuilder {
     /// `\tracingoutput` 转录：shipout 时输出 "Completed box being shipped out [页号]"
     /// 后接完整盒树（tex.web ship_out L12687-12691：tracing_output>0 时 print_nl
     /// 标题；树用 show_box 同款格式——TRIP L42 起参考转录；TRIP 语义 diff 大头
-    /// 之一）。页号 = count0..最高非零 count（tex.web L12694-12699），暂 0 占位。
+    /// 之一）。页号 = count0..最高非零 count（tex.web L12694-12699）。
     fn trace_shipout(&mut self, b: &BoxNode) {
         if self.params.misc[27] <= 0 {
             return;
         }
         self.ship_seq += 1;
-        let mut out =
-            format!("Completed box being shipped out [0.0.0.0.{}]\n", self.ship_seq);
+        let mut out = format!(
+            "Completed box being shipped out {}\n",
+            format_page_label(&self.page_counts)
+        );
         showbox_format_box(b, 0, &self.fonts, &self.font_cs_names, &mut out);
         out.push('\n');
         let _ = self.write16(out);
+    }
+
+    /// `\count<n>=<值>`（含 `\advance`、组结束回滚；idx < 10 才推送，输出例程刀 5）：
+    /// 维护页号链镜像，shipout 边界打标签 / 组装 DVI bop 计数用。
+    fn count_changed(&mut self, idx: usize, value: i64) {
+        if idx < 10 {
+            self.page_counts[idx] = value;
+        }
     }
 
     fn accept_page(&mut self, p: BoxNode) {
@@ -62,11 +92,25 @@ impl NodeBuilder {
 
     /// 页面真正输出（tex.web `ship_out`）：转录标题 + 入 shipped 队列 + flush 标记。
     /// `page_shipped` 供引擎清零 `\deadcycles`（tex.web ship_out `dead_cycles:=0`）。
+    /// 页号链（刀 5）：`\count0..9` 快照与页面对应入 [`Self::shipped_counts`]——
+    /// DVI bop 的 10 计数字由此取值（tex.web ship_out `dvi_out(count(k))`）。
     fn ship_page(&mut self, p: BoxNode) {
         self.trace_shipout(&p);
-        self.shipped.push(p);
+        self.push_shipped(p);
         self.write_flush_pending = true;
         self.page_shipped = true;
+    }
+
+    /// 页面入 shipped 队列（计数快照同步入 [`Self::shipped_counts`]——两表恒同长，
+    /// 增量回滚截断时按同一长度截）。
+    fn push_shipped(&mut self, p: BoxNode) {
+        self.shipped_counts.push(self.page_counts);
+        self.shipped.push(p);
+    }
+
+    /// 各页面 shipout 边界的 `\count0..9` 快照（与 [`Self::shipped`] 一一对应）。
+    pub fn shipped_page_counts(&self) -> &[[i64; 10]] {
+        &self.shipped_counts
     }
 
     /// 结束开放段落：Knuth-Plass 折行成行 hbox 并追加到上层列表（行间插 interline glue）。

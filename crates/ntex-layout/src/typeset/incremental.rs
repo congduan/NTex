@@ -177,6 +177,8 @@ struct SideEffects {
     current_font: FontId,
     shipout_next: bool,
     ship_seq: u32,
+    /// `\count0..9` 镜像（输出例程刀 5 页号链：页标签/bop 计数取值源）。
+    page_counts: [i64; 10],
     boxes: BoxFile,
     box_saves: Vec<(usize, usize, Option<BoxNode>)>,
     output_defined: bool,
@@ -266,9 +268,13 @@ impl LayoutBoundary {
     /// 整体还原（编辑回滚点）：builder 全字段 + shipped 截断到边界。
     fn restore_full(&self, b: &mut NodeBuilder) {
         let mut pages = std::mem::take(&mut b.shipped);
+        // 页号链快照与页面同长同截（输出例程刀 5：push_shipped 双表同步）。
+        let mut page_counts = std::mem::take(&mut b.shipped_counts);
         *b = self.builder.clone();
         pages.truncate(self.shipped_count);
+        page_counts.truncate(self.shipped_count);
         b.shipped = pages;
+        b.shipped_counts = page_counts;
     }
 }
 
@@ -351,6 +357,8 @@ pub struct IncrementalStats {
 #[derive(Debug, Clone)]
 pub struct CompileOutput {
     pub pages: Vec<BoxNode>,
+    /// 各页面 shipout 边界的 `\count0..9` 快照（与 `pages` 一一对应；输出例程刀 5）。
+    pub page_counts: Vec<[i64; 10]>,
     pub fonts: Vec<FontMetrics>,
 }
 
@@ -864,10 +872,15 @@ impl IncrementalTypesetter {
         // 页面**克隆**给调用方（不摘走）：builder 里的 shipped 是下一次 `edit`
         // 回滚截断的基准（前缀页面的逐位一致由它保证）。
         let pages = self.builder_mut().shipped.clone();
+        let page_counts = self.builder_mut().shipped_page_counts().to_vec();
         let fonts = match &self.fonts {
             Fonts::Tfm(table) => table.borrow().clone(),
             Fonts::Fn { .. } => Vec::new(),
         };
-        Ok(CompileOutput { pages, fonts })
+        Ok(CompileOutput {
+            pages,
+            page_counts,
+            fonts,
+        })
     }
 }

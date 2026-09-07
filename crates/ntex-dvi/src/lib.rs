@@ -29,16 +29,41 @@ const DVI_DEN: u32 = 473_628_672;
 ///
 /// - `pages`：`\shipout` / 自动分页的页面（顺序 = DVI 页面顺序）；
 /// - `fonts`：字体表快照（下标 = 字体编号）。
+///
+/// bop 计数：无 `\count0..9` 快照时的回落——count0 = 页序号（plain 的
+/// `\advancepageno` 语义），count1..9 = 0。携带快照用
+/// [`write_dvi_with_counts`]（输出例程刀 5）。
 pub fn write_dvi(pages: &[BoxNode], fonts: &[FontMetrics]) -> Vec<u8> {
+    let synthetic: Vec<[i64; 10]> = (1..=pages.len() as i64)
+        .map(|n| {
+            let mut c = [0i64; 10];
+            c[0] = n;
+            c
+        })
+        .collect();
+    write_dvi_with_counts(pages, &synthetic, fonts)
+}
+
+/// 同 [`write_dvi`]，bop 的 10 计数字改取各页 shipout 边界的 `\count0..9`
+/// 快照（输出例程刀 5：tex.web `ship_out` 的 `dvi_out(count(k))`，全量写入
+/// 不截断——截断只发生在 log/终端的 `[...]` 页标签，tex.web L12694-12699）。
+///
+/// - `counts`：与 `pages` 一一对应；不足处（调用方快照缺失）按 0 补齐。
+pub fn write_dvi_with_counts(
+    pages: &[BoxNode],
+    counts: &[[i64; 10]],
+    fonts: &[FontMetrics],
+) -> Vec<u8> {
     let mut w = Writer::new(fonts);
     w.pre();
     let mut prev_bop = -1i64; // 首页无前一 bop（TeX 写 -1）
     let mut last_bop = 0i64;
     let mut max_h = 0i64; // post 的 l = max(页高+深)
     let mut max_w = 0i64; // post 的 u = max 页宽
-    for page in pages {
+    for (i, page) in pages.iter().enumerate() {
         let pos = w.out.len() as i64;
-        w.page(page, prev_bop);
+        let page_counts = counts.get(i).copied().unwrap_or([0i64; 10]);
+        w.page(page, prev_bop, &page_counts);
         prev_bop = pos;
         last_bop = pos;
         max_h = max_h.max(page.height + page.depth);
@@ -111,11 +136,11 @@ impl<'a> Writer<'a> {
     /// 一页：bop（10 个计数 + 前一 bop 指针）→ 页面内容 → eop。
     /// 参考点（tex.web `ship_out` §736-739）：hbox 基线在 `height`、vbox 顶在 0，
     /// 首个 down 由第一个字符/规则的 `synch_v` 惰性发出。
-    fn page(&mut self, page: &BoxNode, prev_bop: i64) {
+    fn page(&mut self, page: &BoxNode, prev_bop: i64, counts: &[i64; 10]) {
         self.out.push(139); // bop
-        self.out.extend(1u32.to_be_bytes()); // \count0 = 页码（plain 默认 1）
-        for _ in 1..10 {
-            self.out.extend(0u32.to_be_bytes()); // \count1..9 快照（全 0）
+        for c in counts {
+            // \count0..9 全量快照（tex.web ship_out：dvi_out(count(0..9))，不截断）
+            self.out.extend((*c as u32).to_be_bytes());
         }
         self.out.extend((prev_bop as u32).to_be_bytes()); // 首页 -1（0xFFFFFFFF）
         self.font = None;
@@ -735,5 +760,66 @@ mod tests {
         }
         let dvi = write_dvi(&pages, &fonts);
         assert!(!dvi.is_empty());
+    }
+
+    // ---------- 输出例程刀 5：bop 的 10 计数字（\count0..9 全量写入） ----------
+
+    /// bop 起始 44 字节：139 + 10×4 计数 + 前页指针。
+    fn bop_counters(dvi: &[u8]) -> Vec<i64> {
+        let at = dvi
+            .iter()
+            .position(|&b| b == 139)
+            .expect("应含 bop");
+        (0..10)
+            .map(|k| {
+                let b = &dvi[at + 1 + 4 * k..at + 5 + 4 * k];
+                i32::from_be_bytes([b[0], b[1], b[2], b[3]]) as i64
+            })
+            .collect()
+    }
+
+    #[test]
+    fn bop_counters_carry_shipout_counts() {
+        // tex.web ship_out：`for k:=0 to 15? `——bop 写 count(0..9) **全量**，
+        // 不做尾零截断（截断只发生在 log/终端的 `[...]` 页标签）。
+        let mut counts = [0i64; 10];
+        counts[0] = 5;
+        counts[1] = 7;
+        let page = hbox_page(vec![char_node(b'H', 500_000)]);
+        let dvi = write_dvi_with_counts(std::slice::from_ref(&page), &[counts], &[]);
+        assert_eq!(
+            bop_counters(&dvi),
+            (0..10).map(|k| if k == 0 { 5 } else if k == 1 { 7 } else { 0 }).collect::<Vec<_>>(),
+            "bop 应写 \\count0=5 \\count1=7，其余 0"
+        );
+        // 负值照写（TRIP：\count0=-5000 → 4 字节二进制补码）
+        let mut neg = [0i64; 10];
+        neg[0] = -5000;
+        let dvi = write_dvi_with_counts(std::slice::from_ref(&page), &[neg], &[]);
+        assert_eq!(bop_counters(&dvi)[0], -5000, "负 count 照写");
+    }
+
+    #[test]
+    fn write_dvi_falls_back_to_sequential_page_numbers() {
+        // 无 counts 快照的旧入口：count0 = 页序号（plain \advancepageno 语义），
+        // count1..9 = 0——修正此前每页恒写 1 的多页偏差。
+        let pages = vec![
+            hbox_page(vec![char_node(b'H', 500_000)]),
+            hbox_page(vec![char_node(b'i', 260_000)]),
+        ];
+        let dvi = write_dvi(&pages, &[]);
+        assert_eq!(bop_counters(&dvi)[0], 1, "首页 count0 = 1");
+        let second = {
+            let at = dvi
+                .iter()
+                .rposition(|&b| b == 139)
+                .expect("第二页 bop");
+            let b = &dvi[at + 1..at + 5];
+            i32::from_be_bytes([b[0], b[1], b[2], b[3]]) as i64
+        };
+        assert_eq!(second, 2, "次页 count0 = 2（此前恒 1）");
+        // 快照缺失时按 0 补齐（不 panic）
+        let dvi = write_dvi_with_counts(&pages, &[], &[]);
+        assert_eq!(bop_counters(&dvi), vec![0; 10]);
     }
 }

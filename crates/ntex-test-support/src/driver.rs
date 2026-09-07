@@ -343,7 +343,11 @@ impl EngineDriver for NtexDriver {
             if run2.is_ok() {
                 let fonts = ts2.fonts_snapshot();
                 dvi = Some((
-                    ntex_dvi::write_dvi(ts2.shipped_pages(), &fonts),
+                    ntex_dvi::write_dvi_with_counts(
+                        ts2.shipped_pages(),
+                        ts2.shipped_page_counts(),
+                        &fonts,
+                    ),
                     ts2.shipped_pages().len(),
                 ));
             }

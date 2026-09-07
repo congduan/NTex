@@ -118,6 +118,11 @@ pub struct Typesetter {
     last_transcript: String,
     /// `finish` 收走的 `\shipout` 页面（DVI 统计行：页数）。
     shipped: Vec<BoxNode>,
+    /// 与 [`Self::shipped`] 一一对应的各页 `\count0..9` 快照（输出例程刀 5）。
+    shipped_counts: Vec<[i64; 10]>,
+    /// `.fmt` 恢复的 `\count0..9`（install_builder 播种页号链镜像用；`.fmt` 的
+    /// 寄存器不经 count_changed 事件，install 边界是唯一可取点——输出例程刀 5）。
+    fmt_page_counts: [i64; 10],
     /// .fmt 导入的当前字体（import_state 时 sink 未装，install_builder 同步）。
     fmt_current_font: u32,
     /// finish 收走的当前字体（take_sink 后 NodeBuilder 不可达，export_state 用）。
@@ -153,6 +158,8 @@ impl Typesetter {
             },
             last_transcript: String::new(),
             shipped: Vec::new(),
+            shipped_counts: Vec::new(),
+            fmt_page_counts: [0; 10],
             fmt_current_font: 0,
             last_current_font: 0,
         }
@@ -197,6 +204,12 @@ impl Typesetter {
         let font_loads = state.font_loads.clone();
         let font_cs_names = state.font_cs_names.clone();
         self.fmt_current_font = state.current_font;
+        // 页号链初值（输出例程刀 5）：fmt 恢复的 \count0..9，install_builder 播种
+        let mut fmt_page_counts = [0i64; 10];
+        for (i, c) in state.registers.counts.iter().take(10).enumerate() {
+            fmt_page_counts[i] = *c;
+        }
+        self.fmt_page_counts = fmt_page_counts;
         self.expander.import_state(state);
         // .fmt 不含字体表：按 font_loads 重新加载 TFM（pass1 定义的
         // `\font\trip` 在 pass2 不重跑，字体表需恢复——否则字符悬空字体）
@@ -240,6 +253,8 @@ impl Typesetter {
             fonts: Fonts::Tfm(Rc::new(RefCell::new(Vec::new()))),
             last_transcript: String::new(),
             shipped: Vec::new(),
+            shipped_counts: Vec::new(),
+            fmt_page_counts: [0; 10],
             fmt_current_font: 0,
             last_current_font: 0,
         }
@@ -254,6 +269,8 @@ impl Typesetter {
             fonts: Fonts::Tfm(Rc::new(RefCell::new(Vec::new()))),
             last_transcript: String::new(),
             shipped: Vec::new(),
+            shipped_counts: Vec::new(),
+            fmt_page_counts: [0; 10],
             fmt_current_font: 0,
             last_current_font: 0,
         }
@@ -296,6 +313,9 @@ impl Typesetter {
         // .fmt 导入的 FontId → cs 名（pass1 定义的 \font\trip 在 pass2 不重跑；
         // import_state 时 sink 尚未安装，须在 install 时补同步）
         builder.font_cs_names = self.expander.font_cs_names_ref().clone();
+        // 页号链播种（输出例程刀 5）：.fmt 恢复的 \count0..9 不经 count_changed
+        // 事件，镜像须取 fmt 初值（TRIP：pass1 dump 前 \count4 已到 11）
+        builder.page_counts = self.fmt_page_counts;
         // .fmt 导入的当前字体（防 pass2 字符全 nullfont + Missing 警告）
         builder.current_font = FontId(self.fmt_current_font);
         // pass2 NodeBuilder 重建：同步数学间距参数（\\thinmuskip 等 muskip 寄存器——
@@ -345,6 +365,12 @@ impl Typesetter {
     /// 排版结束后取回已 shipout 的页面列表（[`Self::finish`] 已执行时有效）。
     pub fn shipped_pages(&self) -> &[BoxNode] {
         &self.shipped
+    }
+
+    /// 各页面 shipout 边界的 `\count0..9` 快照（与 [`Self::shipped_pages`]
+    /// 一一对应；输出例程刀 5 页号链——DVI bop 计数取值源）。
+    pub fn shipped_page_counts(&self) -> &[[i64; 10]] {
+        &self.shipped_counts
     }
 
     /// 排版结束后取回字体表快照（[`Self::finish`] 已执行时有效）。
@@ -499,6 +525,7 @@ impl Typesetter {
         let mut lists = std::mem::take(&mut builder.lists);
         debug_assert_eq!(lists.len(), 1, "收尾后应只剩主列表");
         let shipped = std::mem::take(&mut builder.shipped);
+        let shipped_counts = std::mem::take(&mut builder.shipped_counts);
         let fonts = match &self.fonts {
             Fonts::Tfm(table) => table.borrow().clone(),
             Fonts::Fn { .. } => Vec::new(),
@@ -506,6 +533,7 @@ impl Typesetter {
         // RFC-3：排版结束收尾 flush 残留延迟写流（TeX \end final_cleanup 语义）
         self.expander.flush_writes()?;
         self.shipped = shipped.clone();
+        self.shipped_counts = shipped_counts;
         Ok(FinishOutput {
             main: lists.pop().expect("主列表"),
             shipped,
@@ -515,6 +543,7 @@ impl Typesetter {
 }
 
 /// `finish` 的返回：主垂直列表 + `\shipout` 页面 + 字体表快照。
+/// （各页 `\count0..9` 快照随 `Typesetter::shipped_page_counts` 取用，不在此传递。）
 struct FinishOutput {
     main: Vec<Node>,
     shipped: Vec<BoxNode>,

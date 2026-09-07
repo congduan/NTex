@@ -996,6 +996,13 @@ impl TokenSink for NodeBuilder {
         Ok(())
     }
 
+    /// `\count<n>` 赋值镜像（输出例程刀 5 页号链）：shipout 页标签与 DVI bop
+    /// 计数的取值源（tex.web ship_out L12694 直接读 count(j)）。
+    fn count_changed(&mut self, idx: usize, value: i64) -> Result<()> {
+        self.count_changed(idx, value);
+        Ok(())
+    }
+
     fn output_defined(&mut self, defined: bool) -> Result<()> {
         self.output_defined = defined;
         if !defined {

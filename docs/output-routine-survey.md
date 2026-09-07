@@ -701,3 +701,65 @@ fire_up 被删除（装得下时），体进 `box(class)`——**`box(c)` 就是
 6. `cargo test -p ntex-layout`：181 过 / 2 失败均为 D 线在途数学斜体测试
    （`math_italic_correction_kern_after_ord_char`/`math_italic_kern_sup_only_but_not_sub_only`，
    与本刀无关）；本刀 5 条全绿。`cargo test -p ntex-core`：335 全绿。
+
+## 5.bis.5 刀 5 实测记录（2026-09-07，✅ 完成——页号链 count0 页标签 + bop 计数接线）
+
+**改动面**：`ntex-core/src/sink.rs`（`TokenSink::count_changed(idx, value)` 新事件，
+默认 no-op）+ `ntex-core/src/expand/save.rs`（`assign_count` 末尾 `idx<10` 推送 +
+组回滚 `restore` 臂同款，各 3 行——**此文件属并行线领地，是本刀唯一的 expand/
+侵入点**，改动为纯追加、可无冲突回退）+ `ntex-layout`（`mod.rs` 镜像字段
+`page_counts: [i64;10]` 与页级快照 `shipped_counts`、`typesetter.rs` fmt 播种 +
+`shipped_page_counts()` 访问器、`incremental.rs` SideEffects 三处同步 +
+`restore_full` 双表同截、`paging.rs` `format_page_label` + `ship_page`/`\shipout`
+直通两路入快照、`sink.rs` 事件实现、`tests.rs` 5 条）+ `ntex-dvi`
+（`write_dvi_with_counts(pages, counts, fonts)`；`write_dvi` 签名不变，回落
+count0=页序号）+ `ntex-test-support/src/driver.rs`（改走 counts 版）。
+
+**tex.web 裁决**（ship_out L12687-12708）：页标签 = `print_char("["); j:=9;
+while (count(j)=0)and(j>0) do decr(j); for k:=0 to j do print_int(count(k)) ...`——
+count0 起逐段点分、**遇 0 截断**（j 是"最高非零下标"，不是"首个零"）；**全零时
+j 停在 0 → 恒打 `[0]`**（探针 3 的答案：打 `[0]`，不省略标签）；负值照打。bop 的
+10 计数字是**全量写入不截断**（截断只发生在 log/终端标签）。`]` 的落点分两支：
+tracing_output>0 时 `]` 先于盒树（L12702），否则 ship 完再补 `]`（L12706）。
+
+**真 TeX 对拍**（TinyTeX 2026 plain，/tmp/ors-work-k5/k5-p1–p3.tex ↔ NTex 同源
+n1–n3.tex，ntex-dvi 驱动 stdout 逐字符）：
+
+| 探针 | 真 TeX | NTex |
+|---|---|---|
+| p1 `\count0=5 \count1=7` + `\shipout\hbox{aa}` | `...shipped out [5.7]` | `[5.7]` ✅ |
+| p2 两页 + `\output={\shipout\box255 \global\advance\count0 by 1}` | `[5.7]` / `[6.7]` | `[5.7]` / `[6.7]` ✅ |
+| p3 `\count0=0`（全零特例） | `[0]` | `[0]` ✅ |
+| p2 的 DVI bop 10 计数（python 解析） | `[[5,7,0…],[6,7,0…]]` | 快照同值 ✅（见残留 ①） |
+
+**发现未修（按领地约束记录）**：
+1. **ntex-dvi/src/main.rs 仍调 `write_dvi`**（G0 线领地）：库侧
+   `write_dvi_with_counts` + `Typesetter::shipped_page_counts()` 已就绪，
+   驱动侧一行换接即得真 bop 计数；现驱动的 DVI 走回落
+   （count0=页序号 1,2,3…，**已顺带修掉每页恒写 1 的旧偏差**）。ntex-mcp/
+   ntex-wasm/ntex-backend 的 `write_dvi` 调用点同批换接。
+2. **`.fmt` 重载后的播种**（已修）：fmt 恢复的 count 不经 `assign_count`
+   （无事件），镜像在 `Typesetter::import_state` 从 `FmtState.registers.counts`
+   取初值、`install_builder` 播种——TRIP 首页标签由 `[0.0.0.0.1]` 纠正为
+   **`[0.0.0.0.11]` 与参考逐字符一致**（trip.tex L89 递归 `\sh` 后
+   `\count4=11` 存 fmt）。曾试 `impl Expander { page_counts() }` 放 sink.rs，
+   被 `registers` 字段模块私有权拦下（字段级私有，跨模块 inherent impl 不可见），
+   故改走 FmtState 公共面。
+3. **M5 段级回滚的寄存器还原不走事件**：`Registers::restore_dirty`（影子表重放）
+   在 `register.rs`，无 sink 可达——增量段回滚若回滚了 `\count0..9`，镜像滞后
+   （下一段重排时 SideEffects 快照会带回，窗口极窄）。根治须 `restore_dirty` 加
+   事件或快照对比，归 M5 线。
+4. **TRIP 门禁无回归**：pass2 失败签名逐字符不变（`组未闭合 … groups=[SemiSimple,
+   MathLeft, MathLeft, Align]`），log diff 由 3 行标签差异收敛到 1 行精确一致 +
+   2 行计数残留（`[0.0.0.0.11]`/`[-2.0.0.0.11]` vs 参考 `[-5000.0.0.0.11.53110374]`
+   等——pass2 例程体在既有失败点之后未执行，count0 的 `\countz=\outputpenalty`
+   链路未走到，归 TRIP 主线非本刀）。
+5. **探针教训**：①真 TeX 的输出例程体在**组内**执行，`\advance\count0` 须
+   `\global`（plain `\advancepageno` 正是 `\global\advance\pageno by 1`），非
+   global 时真 TeX 两页都是 `[5.7]`；②惩罚断页探针 penalty 前须 `\par` 进垂直
+   模式（刀 1 同款教训）；③NTex 驱动（TFM 路径、无 `\font`）字符全 nullfont →
+   自动分页产空页被丢弃 → "未产出页面"，探针须带 `\font\tenrm=cmr10`（nullfont
+   空页丢弃是既有行为，与本刀无关）。
+6. `cargo test -p ntex-layout`：188 过（本刀 5 条新增全绿）；`-p ntex-core`：335 过；
+   `-p ntex-dvi`：8 过（bop 2 条新增）。工作区构建除 ntex-studio（glib-sys 系统
+   依赖缺失，既有环境问题）全绿。

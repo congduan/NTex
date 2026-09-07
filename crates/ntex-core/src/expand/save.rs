@@ -192,6 +192,11 @@ impl Expander {
             ));
         }
         self.registers.set_count(idx, val);
+        // 输出例程刀 5（G5 页号链）：count0..9 是 shipout 页标签/DVI bop 计数的
+        // 取值源（tex.web ship_out L12694-12699 直接读 count(j)），赋值即推送镜像。
+        if idx < 10 {
+            let _ = self.sink.count_changed(idx, val);
+        }
         self.finish_assignment();
     }
 
@@ -870,7 +875,13 @@ impl Expander {
                     self.eqtb.set_level(csid, prev_level);
                 }
             }
-            SavedValue::Count { idx, prev } => self.registers.set_count(idx, prev),
+            // 组结束回滚同镜像（tex.web：count 寄存器在 eqtb 内，组结束还原旧值）
+            SavedValue::Count { idx, prev } => {
+                self.registers.set_count(idx, prev);
+                if idx < 10 {
+                    let _ = self.sink.count_changed(idx, prev);
+                }
+            }
             SavedValue::Dimen { idx, prev } => self.registers.set_dimen(idx, prev),
             SavedValue::Skip { idx, prev } => self.registers.set_skip(idx, prev),
             SavedValue::Muskip { idx, prev } => self.registers.set_muskip(idx, prev),
