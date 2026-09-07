@@ -281,6 +281,61 @@ mod tests {
     }
 
     #[test]
+    fn advance_param_page_arithmetic() {
+        // G3（tex.web do_register_command）：page 参数是 \advance 合法目标
+        // （survey §2.3 的独立引擎缺口；plain letterformat.tex 死点形态）
+        assert_eq!(
+            expand("\\hsize=100pt\\advance\\hsize by 10pt\\the\\hsize").unwrap(),
+            "110.0pt"
+        );
+        // \vsize 同通道；负号紧贴 by（无空格）
+        assert_eq!(
+            expand("\\vsize=100pt\\voffset=24pt\\advance\\vsize by-\\voffset\\the\\vsize").unwrap(),
+            "76.0pt"
+        );
+        // 内部量做增量（\parindent → \hsize）
+        assert_eq!(
+            expand("\\parindent=10pt\\hsize=100pt\\advance\\hsize by\\parindent\\the\\hsize").unwrap(),
+            "110.0pt"
+        );
+        // 胶参数：逐分量加
+        assert_eq!(
+            expand("\\baselineskip=12pt plus 2pt\\advance\\baselineskip 3pt\\the\\baselineskip")
+                .unwrap(),
+            "15.0pt plus 2.0pt"
+        );
+        // 整数参数
+        assert_eq!(
+            expand("\\tolerance=100\\advance\\tolerance 100\\the\\tolerance").unwrap(),
+            "200"
+        );
+        // 组作用域：组内增量出组恢复（走 assign_param 的 save 通道）
+        assert_eq!(
+            expand("\\hsize=100pt{\\advance\\hsize by10pt}\\the\\hsize").unwrap(),
+            "100.0pt"
+        );
+        // mu 胶参数（muskip 0/1/2 槽）
+        assert_eq!(
+            expand("\\thinmuskip=3mu\\advance\\thinmuskip by 1mu\\the\\thinmuskip").unwrap(),
+            "4.0mu"
+        );
+    }
+
+    #[test]
+    fn multiply_divide_param_arithmetic() {
+        // G3：乘除同通道（tex.web do_register_command 同一目标集合）
+        assert_eq!(
+            expand("\\hsize=100pt\\multiply\\hsize by2\\divide\\hsize by4\\the\\hsize").unwrap(),
+            "50.0pt"
+        );
+        // 寄存器路径不受影响（回归钉：by 关键字形态）
+        assert_eq!(
+            expand("\\count0=5\\advance\\count0 by1\\the\\count0").unwrap(),
+            "6"
+        );
+    }
+
+    #[test]
     fn current_if_readonly_ints() {
         // 无条件：level 0 / type 0 / branch 0
         assert_eq!(

@@ -1682,6 +1682,10 @@ impl NodeBuilder {
 // ---------- Typesetter 段（TfmLoader + Typesetter + FinishOutput） ----------
 include!("typesetter.rs");
 
+// 格式预载 G2(a)：内嵌 plain.tex/hyphen.tex 资源 + `\input` 兜底 VFS 层
+pub mod plain_format;
+pub use plain_format::{EmbeddedFormatVfs, HYPHEN_TEX, PLAIN_TEX};
+
 // M8-A WASM 骨架线：TFM 字节源缝（宿主注入；默认空 → native 走文件系统不变）
 include!("wasm_fonts.rs");
 

@@ -143,6 +143,69 @@ fn interaction_mode_value(p: Primitive) -> Option<i64> {
     })
 }
 
+/// 内部参数原语 → [`ParamKind`]（G3：`\advance/\multiply/\divide` 目标判定与
+/// `\the` 读取共用的一张表）。tex.web `do_register_command` 的目标集合是
+/// assign_int/assign_dimen/assign_glue/assign_mu_glue 四个 eqtb 区——`\hsize/
+/// \vsize/\voffset` 等页面参数、`\baselineskip/\parskip` 等胶参数、`\tolerance`
+/// 等整数参数都在其列；内部整数（misc 数组）走 [`int_param_index`]，
+/// `\xspaceskip`/`\prevdepth` 在 exec_advance 有专属臂（TRIP L410/L434），
+/// 均不入此表。
+fn param_kind_of(p: Primitive) -> Option<ParamKind> {
+    Some(match p {
+        Primitive::ParIndent => ParamKind::ParIndent,
+        Primitive::LineSkipLimit => ParamKind::LineSkipLimit,
+        Primitive::BaselineSkip => ParamKind::BaselineSkip,
+        Primitive::LineSkip => ParamKind::LineSkip,
+        Primitive::HSize => ParamKind::HSize,
+        Primitive::Tolerance => ParamKind::Tolerance,
+        Primitive::VSize => ParamKind::VSize,
+        Primitive::TopSkip => ParamKind::TopSkip,
+        Primitive::MaxDepth => ParamKind::MaxDepth,
+        Primitive::ParSkip => ParamKind::ParSkip,
+        Primitive::ParFillSkip => ParamKind::ParFillSkip,
+        Primitive::AboveDisplaySkip => ParamKind::AboveDisplaySkip,
+        Primitive::BelowDisplaySkip => ParamKind::BelowDisplaySkip,
+        Primitive::AboveDisplayShortSkip => ParamKind::AboveDisplayShortSkip,
+        Primitive::BelowDisplayShortSkip => ParamKind::BelowDisplayShortSkip,
+        Primitive::PreDisplayPenalty => ParamKind::PreDisplayPenalty,
+        Primitive::PostDisplayPenalty => ParamKind::PostDisplayPenalty,
+        Primitive::LeftSkip => ParamKind::LeftSkip,
+        Primitive::RightSkip => ParamKind::RightSkip,
+        Primitive::HangIndent => ParamKind::HangIndent,
+        Primitive::SpaceSkip => ParamKind::SpaceSkip,
+        Primitive::TabSkip => ParamKind::TabSkip,
+        Primitive::LastSkip => ParamKind::LastSkip,
+        Primitive::SplitTopSkip => ParamKind::SplitTopSkip,
+        Primitive::PageStretch => ParamKind::PageStretch,
+        Primitive::PageFilStretch => ParamKind::PageFilStretch,
+        Primitive::PageFillStretch => ParamKind::PageFillStretch,
+        Primitive::Hfuzz => ParamKind::Hfuzz,
+        Primitive::Vfuzz => ParamKind::Vfuzz,
+        Primitive::BoxMaxDepth => ParamKind::BoxMaxDepth,
+        Primitive::SplitMaxDepth => ParamKind::SplitMaxDepth,
+        Primitive::EmergencyStretch => ParamKind::EmergencyStretch,
+        Primitive::DisplayIndent => ParamKind::DisplayIndent,
+        Primitive::DelimiterShortfall => ParamKind::DelimiterShortfall,
+        Primitive::MathSurround => ParamKind::MathSurround,
+        Primitive::LastKern => ParamKind::LastKern,
+        Primitive::InterLinePenalty => ParamKind::InterLinePenalty,
+        Primitive::ClubPenalty => ParamKind::ClubPenalty,
+        Primitive::WidowPenalty => ParamKind::WidowPenalty,
+        Primitive::DisplayWidowPenalty => ParamKind::DisplayWidowPenalty,
+        Primitive::NullDelimiterSpace => ParamKind::NullDelimiterSpace,
+        Primitive::ScriptSpace => ParamKind::ScriptSpace,
+        Primitive::OverfullRule => ParamKind::OverfullRule,
+        Primitive::VOffset => ParamKind::VOffset,
+        Primitive::HOffset => ParamKind::HOffset,
+        Primitive::EndlineChar => ParamKind::EndlineChar,
+        Primitive::NewlineChar => ParamKind::NewlineChar,
+        Primitive::DefaultHyphenChar => ParamKind::DefaultHyphenChar,
+        Primitive::DefaultSkewChar => ParamKind::DefaultSkewChar,
+        Primitive::Mag => ParamKind::Mag,
+        _ => return None,
+    })
+}
+
 /// 字符 token 是否为十进制数字；返回数字值。
 fn digit_value(tok: Token) -> Option<u8> {
     let ch = tok.charcode()? as u8;

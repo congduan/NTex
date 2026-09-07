@@ -1240,4 +1240,5 @@ mod tests {
     mod tests_insert { include!("tests_insert.rs"); }
     mod tests_math { include!("tests_math.rs"); }
     mod tests_align { include!("tests_align.rs"); }
+    mod tests_plain_format { include!("tests_plain_format.rs"); }
 }

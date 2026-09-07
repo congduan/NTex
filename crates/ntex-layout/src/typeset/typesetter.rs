@@ -127,6 +127,12 @@ pub struct Typesetter {
     fmt_current_font: u32,
     /// finish 收走的当前字体（take_sink 后 NodeBuilder 不可达，export_state 用）。
     last_current_font: u32,
+    /// plain 格式预载开关（格式预载 G2(a)）：排版入口在用户源前先跑内嵌
+    /// [`plain_format::PLAIN_TEX`]。默认关——TRIP/latex probe/corpus math 等
+    /// INITEX 语义调用方不受影响；`ntex-dvi` 等面向 plain 文档的入口显式打开。
+    preload_plain: bool,
+    /// 内嵌格式 VFS 兜底层是否已包（[`Self::use_embedded_format`] 幂等标记）。
+    embedded_vfs_installed: bool,
 }
 
 /// INITEX/plain 大写字母 `\sfcode=999`（tex.web §4852 `for k:="A" to "Z" ...
@@ -162,6 +168,8 @@ impl Typesetter {
             fmt_page_counts: [0; 10],
             fmt_current_font: 0,
             last_current_font: 0,
+            preload_plain: false,
+            embedded_vfs_installed: false,
         }
     }
 
@@ -189,6 +197,46 @@ impl Typesetter {
     /// 取回 VFS（测试断言写入内容用）。
     pub fn take_vfs(&mut self) -> Box<dyn ntex_io::Vfs> {
         self.expander.take_vfs()
+    }
+
+    /// 接入内嵌 plain 格式文件（格式预载 G2(a)）：`\input plain`/`\input hyphen`
+    /// 在本地/宿主 VFS 全落空时改读内嵌资源（[`EmbeddedFormatVfs`] 兜底层，
+    /// 本地命中优先，不改变既有搜索语义）。幂等：已包过不再包。
+    ///
+    /// 与 [`Self::set_preload_plain`] 独立——「内嵌文件可被 `\input` 到」是
+    /// 分发能力，「启动自动跑 plain.tex」是格式开关；后者隐含前者。
+    pub fn use_embedded_format(&mut self) {
+        if self.embedded_vfs_installed {
+            return;
+        }
+        let inner = self.expander.take_vfs();
+        self.expander
+            .set_vfs(Box::new(EmbeddedFormatVfs::new(inner)));
+        self.embedded_vfs_installed = true;
+    }
+
+    /// plain 格式预载开关（格式预载 G2(a)）：排版入口（[`Self::typeset`] /
+    /// [`Self::typeset_bytes`] / [`Self::typeset_dvi`]）在用户源前先跑内嵌
+    /// [`PLAIN_TEX`]，等价于源文件首行 `\input plain`。
+    ///
+    /// 连同 [`Self::use_embedded_format`] 一起打开（plain.tex:1222 的
+    /// `\input hyphen` 也走内嵌）。builder 风格 [`Self::plain_format`]。
+    pub fn set_preload_plain(&mut self, on: bool) {
+        if on {
+            self.use_embedded_format();
+        }
+        self.preload_plain = on;
+    }
+
+    /// [`Self::set_preload_plain`]`(true)` 的 builder 形式（链式构造）。
+    pub fn plain_format(mut self) -> Self {
+        self.set_preload_plain(true);
+        self
+    }
+
+    /// plain 格式预载是否已开（诊断/测试用）。
+    pub fn preload_plain(&self) -> bool {
+        self.preload_plain
     }
 
     /// 导出展开引擎状态快照（`.fmt` v1；供 `ntex-format` 序列化）。
@@ -257,6 +305,8 @@ impl Typesetter {
             fmt_page_counts: [0; 10],
             fmt_current_font: 0,
             last_current_font: 0,
+            preload_plain: false,
+            embedded_vfs_installed: false,
         }
     }
 
@@ -273,6 +323,8 @@ impl Typesetter {
             fmt_page_counts: [0; 10],
             fmt_current_font: 0,
             last_current_font: 0,
+            preload_plain: false,
+            embedded_vfs_installed: false,
         }
     }
 
@@ -280,6 +332,7 @@ impl Typesetter {
     pub fn typeset(&mut self, text: &str) -> Result<Vec<Node>> {
         self.install_font_loader();
         self.install_builder(NodeBuilder::new(self.fonts.clone()));
+        self.run_plain_preload()?;
         self.expander.run_source(text)?;
         self.finish().map(|out| {
             self.shipped = out.shipped;
@@ -291,12 +344,23 @@ impl Typesetter {
     pub fn typeset_bytes(&mut self, bytes: impl Into<Vec<u8>>) -> Result<Vec<Node>> {
         self.install_font_loader();
         self.install_builder(NodeBuilder::new(self.fonts.clone()));
+        self.run_plain_preload()?;
         self.expander.feed_source(bytes);
         self.expander.run()?;
         self.finish().map(|out| {
             self.shipped = out.shipped;
             out.main
         })
+    }
+
+    /// plain 格式预载（G2(a)）：开关开着才跑，且只在用户源前跑一次。
+    /// 出错即失败——plain.tex 是格式的一部分，格式坏了不该静默带病排版
+    /// （G0 教训：静默是最大测量陷阱）。
+    fn run_plain_preload(&mut self) -> Result<()> {
+        if !self.preload_plain {
+            return Ok(());
+        }
+        self.expander.run_source(plain_format::PLAIN_TEX)
     }
 
     /// 安装 NodeBuilder 并同步参数镜像（`.fmt` 加载的 \\\\vsize/\\\\tracingpages 等
@@ -356,6 +420,7 @@ impl Typesetter {
     pub fn typeset_dvi(&mut self, text: &str) -> Result<(Vec<BoxNode>, Vec<FontMetrics>)> {
         self.install_font_loader();
         self.install_builder(NodeBuilder::with_pagination(self.fonts.clone(), true));
+        self.run_plain_preload()?;
         self.expander.run_source(text)?;
         let out = self.finish()?;
         self.shipped = out.shipped.clone();

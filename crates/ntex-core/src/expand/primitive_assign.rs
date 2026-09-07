@@ -6,7 +6,8 @@
 //
 // 涵盖：\advance/\multiply/\divide 的目标获取（fetch_register_target，含宏/\let
 // 别名跟随的 TeX get_x_token 语义），增量应用（advance_register），标量应用
-// （scale_register）。
+// （scale_register）；G3 起目标集合扩到内部参数族（advance_param/scale_param，
+// 表见 free.rs::param_kind_of——tex.web do_register_command 的 assign_* 区）。
 
 impl Expander {
     /// 读取寄存器运算目标（`\advance/\multiply/\divide` 共用）：TeX get_x_token
@@ -121,10 +122,52 @@ impl Expander {
                 self.finish_assignment();
                 Ok(())
             }
+            // G3（tex.web do_register_command）：内部参数族目标——\hsize/\vsize/
+            // \voffset 等页面参数、\baselineskip/\parskip 等胶参数、\tolerance 等
+            // 都在 assign_int/assign_dimen/assign_glue 区。增量按参数值类扫描，
+            // 写通道复用 `\hsize=…` 的 assign_param（组作用域保存 + sink 镜像 +
+            // tracingassigns），增量通道与赋值通道不另起炉灶。
+            EqSlot::Primitive(p) if param_kind_of(p).is_some() => {
+                self.advance_param(param_kind_of(p).expect("已检查 is_some"))
+            }
+            // \thinmuskip/\medmuskip/\thickmuskip：muskip 寄存器 0/1/2（与既有
+            // 赋值 exec_muskip_param 同槽），增量走 mu 胶通道
+            EqSlot::Primitive(p)
+                if matches!(
+                    p,
+                    Primitive::ThinMuskip | Primitive::MedMuskip | Primitive::ThickMuskip
+                ) =>
+            {
+                let idx = match p {
+                    Primitive::ThinMuskip => 0,
+                    Primitive::MedMuskip => 1,
+                    _ => 2,
+                };
+                self.advance_register(RegKind::Muskip, idx)
+            }
             _ => Err(Error::invalid_input(
                 "\\advance 目标必须是寄存器或内部参数",
             )),
         }
+    }
+
+    /// `\advance<内部参数> <增量>`（G3）：按参数值类扫描增量（dimen/glue/number），
+    /// 经 assign_param 落账。旧值在增量扫描后读取（tex.web do_register_command
+    /// 同序——增量展开中若含对同一参数的赋值，以赋值后的值为基）。
+    fn advance_param(&mut self, kind: ParamKind) -> Result<()> {
+        self.scan_keyword(|w| w == "by")?;
+        let delta = match self.params.get(kind) {
+            ParamValue::Dimen(_) => ParamValue::Dimen(self.scan_dimen()?),
+            ParamValue::Number(_) => ParamValue::Number(self.scan_number()?),
+            ParamValue::Glue(_) => ParamValue::Glue(self.scan_glue()?),
+        };
+        let new = match (self.params.get(kind), delta) {
+            (ParamValue::Dimen(v), ParamValue::Dimen(d)) => ParamValue::Dimen(v + d),
+            (ParamValue::Number(v), ParamValue::Number(d)) => ParamValue::Number(v + d),
+            (ParamValue::Glue(g), ParamValue::Glue(d)) => ParamValue::Glue(add_glue(g, d)),
+            _ => return Err(Error::internal("参数值类在增量扫描中漂移")),
+        };
+        self.assign_param(kind, new)
     }
 
     /// `\advance` 的寄存器增量应用（TeX：`new = old + delta`，胶水逐分量加）。
@@ -205,10 +248,57 @@ impl Expander {
                 self.finish_assignment();
                 Ok(())
             }
+            // G3（tex.web do_register_command）：内部参数族目标，乘除与增量同集合
+            EqSlot::Primitive(p) if param_kind_of(p).is_some() => {
+                self.scale_param(param_kind_of(p).expect("已检查 is_some"), prim)
+            }
+            // \thinmuskip/\medmuskip/\thickmuskip：muskip 寄存器 0/1/2，mu 胶通道
+            EqSlot::Primitive(p)
+                if matches!(
+                    p,
+                    Primitive::ThinMuskip | Primitive::MedMuskip | Primitive::ThickMuskip
+                ) =>
+            {
+                let idx = match p {
+                    Primitive::ThinMuskip => 0,
+                    Primitive::MedMuskip => 1,
+                    _ => 2,
+                };
+                self.scale_register(RegKind::Muskip, idx, prim)
+            }
             _ => Err(Error::invalid_input(
                 "\\multiply/\\divide 目标必须是寄存器或内部参数",
             )),
         }
+    }
+
+    /// `\multiply/\divide<内部参数> by<n>`（G3）：标量缩放与 [`Self::scale_register`]
+    /// 同式（胶水逐分量、除 0 保持不变），经 assign_param 落账。
+    fn scale_param(&mut self, kind: ParamKind, prim: Primitive) -> Result<()> {
+        self.scan_keyword(|w| w == "by")?;
+        let f = self.scan_number()?;
+        // TeX：除以 0 保持不变（不报错）
+        let scale = |v: i64| {
+            if prim == Primitive::Multiply {
+                v * f
+            } else if f != 0 {
+                v / f
+            } else {
+                v
+            }
+        };
+        let new = match self.params.get(kind) {
+            ParamValue::Dimen(v) => ParamValue::Dimen(scale(v)),
+            ParamValue::Number(v) => ParamValue::Number(scale(v)),
+            // 乘除不改无穷阶（分量标量缩放，阶保留）
+            ParamValue::Glue(g) => ParamValue::Glue(Glue {
+                width: scale(g.width),
+                stretch: scale(g.stretch),
+                shrink: scale(g.shrink),
+                ..g
+            }),
+        };
+        self.assign_param(kind, new)
     }
 
     /// `\multiply/\divide` 的寄存器标量应用（胶水逐分量乘/除）。

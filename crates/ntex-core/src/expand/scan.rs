@@ -1506,31 +1506,24 @@ impl Expander {
                 let v = self.params.prevdepth;
                 return Ok((if neg { -v } else { v }, 0));
             }
-            // TRIP 冲刺：dimen 内部参数作尺寸（\ifdim\hsize<\hsize、\the\hsize 等）
-            if matches!(
-                self.eqtb.slot(csid),
-                EqSlot::Primitive(
-                    Primitive::HSize
-                        | Primitive::ParIndent
-                        | Primitive::VSize
-                        | Primitive::MaxDepth
-                        | Primitive::LineSkipLimit
-                        // TRIP：\displayindent 同为 dimen 参数（l.251/252 误报修复）
-                        | Primitive::DisplayIndent
-                        // TRIP：\mathsurround 是 dimen 参数（l.260 `.11em` 赋值）
-                        | Primitive::MathSurround
-                )
-            ) {
+            // dimen 内部参数作尺寸（\ifdim\hsize<\hsize、\the\hsize 等；G3 起与
+            // \advance 目标集合共用 free.rs::param_kind_of 一张表——tex.web
+            // scan_dimen 对 assign_dimen 区全认：\voffset/\scriptspace/\hangindent/
+            // \overfullrule/… 不再报 Missing number，letterformat 的
+            // `\advance\vsize by-\voffset` 增量扫描走这里）。只取 Dimen 值类：
+            // 胶参数由下方胶臂按宽度分量、整数参数走数字通道；\lastkern 下方有
+            // 专属臂读 sink 实时值，须排除在此臂外。
+            let dim_param = match self.eqtb.slot(csid) {
+                EqSlot::Primitive(p) if *p != Primitive::LastKern => param_kind_of(*p).and_then(
+                    |k| match self.params.get(k) {
+                        ParamValue::Dimen(v) => Some(v),
+                        _ => None,
+                    },
+                ),
+                _ => None,
+            };
+            if let Some(v) = dim_param {
                 self.fetch()?;
-                let v = match self.eqtb.slot(csid) {
-                    EqSlot::Primitive(Primitive::HSize) => self.params.hsize,
-                    EqSlot::Primitive(Primitive::ParIndent) => self.params.parindent,
-                    EqSlot::Primitive(Primitive::VSize) => self.params.vsize,
-                    EqSlot::Primitive(Primitive::MaxDepth) => self.params.maxdepth,
-                    EqSlot::Primitive(Primitive::DisplayIndent) => self.params.displayindent,
-                    EqSlot::Primitive(Primitive::MathSurround) => self.params.mathsurround,
-                    _ => self.params.lineskiplimit,
-                };
                 return Ok((if neg { -v } else { v }, 0));
             }
             // TRIP：只读显示/页面内部量作尺寸（\predisplaysize/\displaywidth/\pagetotal/

@@ -6,6 +6,10 @@
 //!
 //! `--input-path <dir>`（可重复，先加先试）：`\input` 文件解析的搜索路径
 //! （TEXINPUTS 语义最小子集，格式预载 G1）。缺省只有 cwd。
+//! plain 格式预载（格式预载 G2(a)）：默认开——启动时先跑内嵌 plain.tex
+//! （等价源首行 `\input plain`），`\input plain`/`\input hyphen` 在本地
+//! 文件落空时改读内嵌资源（无 TinyTeX 树也能跑 plain 文档）。
+//! `--no-plain`：关掉预载（回 INITEX 裸表；内嵌文件兜底仍在）。
 //! `--quiet`：关掉 stderr 转录（`\message`/`\show`/`\write16`/错误恢复文本，
 //! 格式预载 G0）。默认开——静默是当前最大的测量陷阱（plain-format-survey §2.4）。
 
@@ -17,10 +21,12 @@ fn main() -> ExitCode {
     let mut positional: Vec<&String> = Vec::new();
     let mut input_paths: Vec<String> = Vec::new();
     let mut quiet = false;
+    let mut no_plain = false;
     let mut it = args[1..].iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--quiet" => quiet = true,
+            "--no-plain" => no_plain = true,
             "--input-path" => match it.next() {
                 Some(p) => input_paths.push(p.clone()),
                 None => {
@@ -36,7 +42,9 @@ fn main() -> ExitCode {
         }
     }
     if positional.is_empty() || positional.len() > 2 {
-        eprintln!("用法：ntex-dvi <input.tex> [output.dvi] [--input-path <dir>]... [--quiet]");
+        eprintln!(
+            "用法：ntex-dvi <input.tex> [output.dvi] [--input-path <dir>]... [--no-plain] [--quiet]"
+        );
         return ExitCode::from(2);
     }
     let input = positional[0];
@@ -52,12 +60,23 @@ fn main() -> ExitCode {
         }
     };
     let mut ts = ntex_layout::typeset::Typesetter::with_tfm();
-    if !input_paths.is_empty() {
-        let mut vfs = ntex_io::SearchPathVfs::new(Box::new(ntex_io::LocalVfs));
-        for p in &input_paths {
-            vfs.push_path(p);
+    {
+        // G1 搜索路径 + G2(a) 内嵌格式文件兜底：组合成 Local → 搜索前缀 → 内嵌
+        // 三层（内嵌只答 plain.tex/hyphen.tex，且仅在前两层全落空时命中）。
+        let mut base: Box<dyn ntex_io::Vfs> = Box::new(ntex_io::LocalVfs);
+        if !input_paths.is_empty() {
+            let mut vfs = ntex_io::SearchPathVfs::new(base);
+            for p in &input_paths {
+                vfs.push_path(p);
+            }
+            base = Box::new(vfs);
         }
-        ts.set_vfs(Box::new(vfs));
+        ts.set_vfs(base);
+        ts.use_embedded_format();
+    }
+    if !no_plain {
+        // G2(a)：启动预载（等价源首行 `\input plain`）。
+        ts.set_preload_plain(true);
     }
     let outcome = ts.typeset_dvi(&text);
     // G0：转录透传。成功/失败两条路都取（失败时 finish 未走，转录仍在 sink）。
