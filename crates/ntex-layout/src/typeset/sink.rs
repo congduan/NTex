@@ -3,7 +3,7 @@ impl CoreSink for NodeBuilder {
     fn token(&mut self, tok: Token) -> Result<()> {
         // `\leaders` 引导盒子已就位：非胶水 token → TeX "Leaders not followed by
         // proper glue"（空格跳过——TeX "get next non-blank non-relax" 语义）。
-        if self.leaders_box.is_some() {
+        if self.box_state.leaders_box.is_some() {
             if tok.catcode() == Some(ntex_core::Catcode::Space) {
                 return Ok(());
             }
@@ -47,16 +47,16 @@ impl CoreSink for NodeBuilder {
         match self.mode() {
             Mode::Vertical => {
                 // 垂直模式字符触发段落（TeX new_graf）
-                if self.after_display {
+                if self.math_state.after_display {
                     // M4-4：显示公式后续文字仍在段内——无 parskip、无缩进（续排）
-                    self.after_display = false;
+                    self.math_state.after_display = false;
                     self.lists.push(Vec::new());
                     self.list_modes.push(Mode::Horizontal);
                     self.space_factor = 1000;
                     self.append_char(node);
                 } else {
                     // M3-5-2：段落起始追加上下段间距 \parskip（空页上被页面构建器丢弃）
-                    if self.pagination {
+                    if self.page_state.pagination {
                         let ps = self.params.parskip;
                         self.append(Node::Glue {
             name: None,                            width: ps.width,
@@ -80,8 +80,8 @@ impl CoreSink for NodeBuilder {
     }
     fn group_begin(&mut self, line: u32) -> Result<()> {
         // 显式组种类（\begingroup/\valign/\noalign）优先；否则盒子种类；再否则普通组
-        let explicit = self.pending_kind.take();        let kind = explicit.or_else(|| {
-            self.pending_box.take().map(|pb| match pb {
+        let explicit = self.box_state.pending_kind.take();        let kind = explicit.or_else(|| {
+            self.box_state.pending_box.take().map(|pb| match pb {
                 // 垂直/内部垂直模式中的 \hbox 是 adjusted hbox group（TeX begin_box 语义）
                 PendingBox::HBox => {
                     if self.mode() == Mode::Vertical {
@@ -107,7 +107,7 @@ impl CoreSink for NodeBuilder {
         };
         // `\shipout` 目标 = 紧邻的盒子组（内层盒子不消费该标记）
         let ship = if box_kind.is_some() {
-            std::mem::take(&mut self.shipout_next)
+            std::mem::take(&mut self.page_state.shipout_next)
         } else {
             false
         };
@@ -121,7 +121,7 @@ impl CoreSink for NodeBuilder {
         // `\leaders` 引导盒子：认领到紧邻的盒子组（组结束封装时挂起等胶水）。
         // 内层盒子（如引导 hbox 里的 \vbox）不消费该标记。
         let leaders = if box_kind.is_some() {
-            self.pending_leaders.take()
+            self.box_state.pending_leaders.take()
         } else {
             None
         };
@@ -129,7 +129,7 @@ impl CoreSink for NodeBuilder {
         // box_end 语义）。内层嵌套盒（`\setbox0=\vbox{\hbox{...}}` 的 \hbox）不消费，
         // 否则 target 被第一个内层盒抢走、RHS 的 vbox 无法入寄存器。
         let setbox = if box_kind.is_some() {
-            self.setbox_target.take()
+            self.box_state.setbox_target.take()
         } else {
             None
         };
@@ -171,26 +171,26 @@ impl CoreSink for NodeBuilder {
         } else if gkind == GroupKind::Math {
             // 数学组：`{...}`（含脚本/根式/定类字段）压 math 层。
             // `\begingroup`（SemiSimple）等显式组不压 math 层（tex.web math_group 语义）。
-            let field = if let Some(is_sup) = self.pending_script.take() {
+            let field = if let Some(is_sup) = self.math_state.pending_script.take() {
                 Some(MathFieldKind::Script(is_sup))
-            } else if self.sqrt_pending {
-                self.sqrt_pending = false;
+            } else if self.math_state.sqrt_pending {
+                self.math_state.sqrt_pending = false;
                 Some(MathFieldKind::Sqrt)
-            } else if let Some(d) = self.radical_pending.take() {
+            } else if let Some(d) = self.math_state.radical_pending.take() {
                 Some(MathFieldKind::Radical(d))
-            } else if self.accent_pending {
-                self.accent_pending = false;
+            } else if self.math_state.accent_pending {
+                self.math_state.accent_pending = false;
                 Some(MathFieldKind::Accent)
-            } else if self.underline_pending {
-                self.underline_pending = false;
+            } else if self.math_state.underline_pending {
+                self.math_state.underline_pending = false;
                 Some(MathFieldKind::Underline)
-            } else if self.overline_pending {
-                self.overline_pending = false;
+            } else if self.math_state.overline_pending {
+                self.math_state.overline_pending = false;
                 Some(MathFieldKind::Overline)
             } else {
-                self.class_pending.take().map(MathFieldKind::Class)
+                self.math_state.class_pending.take().map(MathFieldKind::Class)
             };
-            self.math.push(MathLevel {
+            self.math_state.math.push(MathLevel {
                 atoms: Vec::new(),
                 field,
                 left: None,
@@ -208,11 +208,11 @@ impl CoreSink for NodeBuilder {
         // （TeX 寄存器组级保存——trip L317 组内 \setbox22 → restoring \box22=void）
         let cur_level = self.groups.len();
         while self
-            .box_saves
+            .box_state.box_saves
             .last()
             .is_some_and(|(lvl, _, _)| *lvl > cur_level)
         {
-            let (_, idx, old) = self.box_saves.pop().expect("last 已检查");
+            let (_, idx, old) = self.box_state.box_saves.pop().expect("last 已检查");
             // 经 write_box 路由：寄存器 255 的回滚落在页面队列队首（trip.tex
             // 第二例程 `\setbox255\copy255` ——「at end of group, \box255 reverts
             // to former value」tex.web eq_restore 语义）
@@ -279,11 +279,11 @@ impl CoreSink for NodeBuilder {
             // 已被收走/只剩一层。真实 TeX 在该处组已平衡，`}` 会被拒为
             // "Extra }, or forgotten \endgroup." 并删除——此处降级对齐：报
             // 同款错误、只收组不并原子，绝不内部致命（任意畸形输入可恢复）。
-            let Some(level) = self.math.pop() else {
+            let Some(level) = self.math_state.math.pop() else {
                 self.report_error("Extra }, or forgotten \\endgroup.");
                 return Ok(());
             };
-            let Some(parent) = self.math.last_mut() else {
+            let Some(parent) = self.math_state.math.last_mut() else {
                 self.report_error("Extra }, or forgotten \\endgroup.");
                 return Ok(());
             };
@@ -402,20 +402,20 @@ impl CoreSink for NodeBuilder {
     fn primitive(&mut self, prim: Primitive) -> Result<()> {
         // TeX box_end leader 分支：盒子后必须是 \hskip/\vskip 胶水，否则
         // "Leaders not followed by proper glue" 报错并丢弃引导盒子。
-        if self.leaders_box.is_some() {
+        if self.box_state.leaders_box.is_some() {
             self.report_leaders_misplaced();
         }
         // tex.web scan_math：待定数学字段遇原语事件（非字符非 {）→ Missing { inserted
         self.check_math_field_break()?;
         match prim {
-            Primitive::HBox => self.pending_box = Some(PendingBox::HBox),
-            Primitive::VBox => self.pending_box = Some(PendingBox::VBox),
-            Primitive::VTop => self.pending_box = Some(PendingBox::VTop),
+            Primitive::HBox => self.box_state.pending_box = Some(PendingBox::HBox),
+            Primitive::VBox => self.box_state.pending_box = Some(PendingBox::VBox),
+            Primitive::VTop => self.box_state.pending_box = Some(PendingBox::VTop),
             // TRIP 冲刺：\leaders/\cleaders/\xleaders —— 引导符，等待其后的盒子
             // （tex.web scan_box(leader_flag+kind)；盒子经 group/rule 路径挂起）。
-            Primitive::Leaders => self.pending_leaders = Some(LeadersKind::Leaders),
-            Primitive::Cleaders => self.pending_leaders = Some(LeadersKind::Cleaders),
-            Primitive::XLeaders => self.pending_leaders = Some(LeadersKind::Xleaders),
+            Primitive::Leaders => self.box_state.pending_leaders = Some(LeadersKind::Leaders),
+            Primitive::Cleaders => self.box_state.pending_leaders = Some(LeadersKind::Cleaders),
+            Primitive::XLeaders => self.box_state.pending_leaders = Some(LeadersKind::Xleaders),
             Primitive::Par => {
                 match self.mode() {
                     Mode::Horizontal => {
@@ -485,17 +485,17 @@ impl CoreSink for NodeBuilder {
                 }
             }
             // M3-5：\shipout 后的下一个盒子封装为页面
-            Primitive::ShipOut => self.shipout_next = true,
+            Primitive::ShipOut => self.page_state.shipout_next = true,
             // M4-2：\nonscript 使下一个数学空格在脚本模式丢弃
             Primitive::Nonscript => {
                 if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-                    self.nonscript_pending = true;
+                    self.math_state.nonscript_pending = true;
                 }
             }
             // M4：\mathaccent（\accent 的数学等价，已报错改道）：记录待定重音符
             // 字段，nucleus 字段由后续 token/组补齐（tex.web math_ac）。
             Primitive::MathAccent if matches!(self.mode(), Mode::Math | Mode::DisplayMath) => {
-                self.accent_pending = true;
+                self.math_state.accent_pending = true;
             }
             // TRIP 冲刺：\accent 在数学模式报错恢复（TRIP L396）
             Primitive::Accent => {
@@ -503,7 +503,7 @@ impl CoreSink for NodeBuilder {
                     self.write16(
                         "! Please use \\mathaccent for accents in math mode.\n".to_string(),
                     )?;
-                    self.accent_pending = true;
+                    self.math_state.accent_pending = true;
                 }
             }
             // TeX \error 原语（tex.web @<Report an improper...@> /
@@ -511,12 +511,12 @@ impl CoreSink for NodeBuilder {
             // 仅转录后继续；trip.tex 多处 \error 依赖此消息，参考 log 14 处）。
             Primitive::Error => {
                 let mode = self.params.misc[19]; // interactionmode（0=batch 1=nonstop 2=scroll 3=errorstop）
-                self.transcript.push_str("! OK.\n");
+                self.io_state.transcript.push_str("! OK.\n");
                 if mode >= 2 {
-                    self.transcript.push_str("(Please type a command or say \\end)\n");
+                    self.io_state.transcript.push_str("(Please type a command or say \\end)\n");
                 }
                 if mode == 0 || mode == 1 {
-                    self.transcript.push_str(
+                    self.io_state.transcript.push_str(
                         "This error message was issued in nonstop or batch mode,\n\
                          so I can't continue interacting with you.\n",
                     );
@@ -535,7 +535,7 @@ impl CoreSink for NodeBuilder {
     fn glue(&mut self, g: Glue) -> Result<()> {
         // `\leaders` 引导盒子已就位：\hskip/\vskip 胶水到来 → 组成 Leader 节点
         // （tex.web box_end leader 分支：append_glue + subtype + leader_ptr）。
-        if let Some((kind, box_node)) = self.leaders_box.take() {
+        if let Some((kind, box_node)) = self.box_state.leaders_box.take() {
             self.append(Node::Leaders {
                 kind,
                 inner: Box::new(box_node),
@@ -590,8 +590,8 @@ impl CoreSink for NodeBuilder {
     fn rule(&mut self, width: i64, height: i64, depth: i64) -> Result<()> {
         // `\leaders\hrule/\vrule`：rule 作引导内容（tex.web scan_box leader 分支
         // 允许 hrule/vrule；宽度保持 NULL_FLAG，showbox 显示 `x*`）。
-        if let Some(kind) = self.pending_leaders.take() {
-            self.leaders_box = Some((kind, Node::Rule { width, height, depth }));
+        if let Some(kind) = self.box_state.pending_leaders.take() {
+            self.box_state.leaders_box = Some((kind, Node::Rule { width, height, depth }));
             return Ok(());
         }
         // 数学模式 `\vrule`：数学列表规则原子（M4-1——此前忽略）
@@ -656,7 +656,7 @@ impl CoreSink for NodeBuilder {
     }
     /// `\begingroup`：下一个组为半简单组（14）。
     fn semisimple_begin(&mut self) -> Result<()> {
-        self.pending_kind = Some(GroupKind::SemiSimple);
+        self.box_state.pending_kind = Some(GroupKind::SemiSimple);
         Ok(())
     }
     /// 当前模式名（`\tracingcommands` 追踪；tex.web print_mode 语义）。
@@ -725,7 +725,7 @@ impl CoreSink for NodeBuilder {
         }
     }
     fn transcript(&self) -> &str {
-        &self.transcript
+        &self.io_state.transcript
     }
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
@@ -834,7 +834,7 @@ impl MathSink for NodeBuilder {
                     // M4-4 显示数学：垂直模式 = TeX new_graf 开段（parskip），公式作段首
                     // 垂直元素（predisplaypenalty + abovedisplayskip + 公式盒 + 下间距）。
                     // 垂直列表为空（文档开头）时不加 parskip。
-                    if self.pagination && !self.lists.last().is_some_and(Vec::is_empty) {
+                    if self.page_state.pagination && !self.lists.last().is_some_and(Vec::is_empty) {
                         let ps = self.params.parskip;
                         self.append(Node::Glue {
             name: None,                            width: ps.width,
@@ -846,11 +846,11 @@ impl MathSink for NodeBuilder {
                     }
                     // tex.web：段首 `$$` 走 head=tail 臂（`\noindent$$`），w := -max_dimen
                     // → close_math 裁决取长 skip。
-                    self.predisplay_size = -ntex_core::register::MAX_DIMEN;
+                    self.math_state.predisplay_size = -ntex_core::register::MAX_DIMEN;
                     self.enter_display_math()
                 } else {
                     // 行内数学：开段（TeX new_graf）
-                    if self.pagination {
+                    if self.page_state.pagination {
                         let ps = self.params.parskip;
                         self.append(Node::Glue {
             name: None,                            width: ps.width,
@@ -875,7 +875,7 @@ impl MathSink for NodeBuilder {
                     // 列表为空 = -max_dimen。长/短 skip 的裁决在 close_math 退出时做
                     // （那时公式自然宽才可知）。
                     let last_natural = self.close_paragraph();
-                    self.predisplay_size = match last_natural {
+                    self.math_state.predisplay_size = match last_natural {
                         Some(w) => w + 2 * self.fonts.font_param(self.current_font, 6),
                         None => -ntex_core::register::MAX_DIMEN,
                     };
@@ -935,7 +935,7 @@ impl MathSink for NodeBuilder {
             return self.math_mode_error("over");
         }
         let level = self
-            .math
+            .math_state.math
             .last_mut()
             .ok_or_else(|| Error::internal("\\over 无数学层"))?;
         if level.fraction.is_some() {
@@ -945,7 +945,7 @@ impl MathSink for NodeBuilder {
             self.write16("! Ambiguous; you need another { and }.\n".to_string())?;
             return Ok(());
         }
-        if self.pending_script.is_some() {
+        if self.math_state.pending_script.is_some() {
             return Err(Error::invalid_input("\\over 前不能有未挂脚本（Missing { inserted）"));
         }
         let num = std::mem::take(&mut level.atoms);
@@ -958,7 +958,7 @@ impl MathSink for NodeBuilder {
         if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
             return self.math_mode_error("left");
         }
-        self.math.push(MathLevel {
+        self.math_state.math.push(MathLevel {
             left: Some(delim),
             ..Default::default()
         });
@@ -966,7 +966,7 @@ impl MathSink for NodeBuilder {
     }
     /// `\left`/`\middle` 的 math left group（16）挂起标记：随后的 begin_group 消费。
     fn math_left_begin(&mut self) -> Result<()> {
-        self.pending_kind = Some(GroupKind::MathLeft);
+        self.box_state.pending_kind = Some(GroupKind::MathLeft);
         Ok(())
     }
     /// `\right<delim>`：弹最内层 `\left` 层，内容收为 Delimited 原子并入外层。
@@ -975,7 +975,7 @@ impl MathSink for NodeBuilder {
             return self.math_mode_error("right");
         }
         let mut level = self
-            .math
+            .math_state.math
             .pop()
             .ok_or_else(|| Error::internal("\\right 无数学层"))?;
         let Some(left) = level.left.take() else {
@@ -988,7 +988,7 @@ impl MathSink for NodeBuilder {
         // 先收 \left(...\over...\right) 的分式，再包定界符
         Self::math_finish_fraction(&mut level);
         let parent = self
-            .math
+            .math_state.math
             .last_mut()
             .ok_or_else(|| Error::internal("\\right 无外层数学层"))?;
         parent.atoms.push(MathAtom::Delimited {
@@ -1004,7 +1004,7 @@ impl MathSink for NodeBuilder {
             return self.math_mode_error("middle");
         }
         let level = self
-            .math
+            .math_state.math
             .last_mut()
             .ok_or_else(|| Error::internal("\\middle 无数学层"))?;
         Self::math_finish_fraction(level);
@@ -1018,7 +1018,7 @@ impl MathSink for NodeBuilder {
         }
         // \sqrt 本身不是合法字段开头（tex.web scan_math othercases）
         self.check_math_field_break()?;
-        self.sqrt_pending = true;
+        self.math_state.sqrt_pending = true;
         Ok(())
     }
     /// `\radical<delimiter><math field>`：根式原子（\sqrt 底层，带定界符号；TRIP L412）。
@@ -1029,7 +1029,7 @@ impl MathSink for NodeBuilder {
         // \radical 不是合法字段开头（tex.web scan_math othercases；TRIP L272
         // `\mathord \radical` 在此报 Missing { inserted）
         self.check_math_field_break()?;
-        self.radical_pending = Some(delim.unwrap_or(0));
+        self.math_state.radical_pending = Some(delim.unwrap_or(0));
         Ok(())
     }
     /// `\mathord` 等：给下一个字段定类。
@@ -1042,7 +1042,7 @@ impl MathSink for NodeBuilder {
         self.check_math_field_break()?;
         // 入参是命令编号（1=Bin/2=Op/7=Inner），须用 class_of_cmd 而非
         // mathcode 体系的 class_of（两体系 Bin/Op 互换）
-        self.class_pending = Some(Self::class_of_cmd(class));
+        self.math_state.class_pending = Some(Self::class_of_cmd(class));
 
         Ok(())
     }
@@ -1057,13 +1057,13 @@ impl MathSink for NodeBuilder {
                 "! Please use \\mathaccent for accents in math mode.\n".to_string(),
             )?;
         }
-        self.accent_pending = matches!(self.mode(), Mode::Math | Mode::DisplayMath);
+        self.math_state.accent_pending = matches!(self.mode(), Mode::Math | Mode::DisplayMath);
         Ok(())
     }
     /// `\underline`：等待字段组（数学模式；组开收为 Underline 原子）。
     fn math_underline(&mut self) -> Result<()> {
         self.check_math_field_break()?;
-        self.underline_pending = matches!(self.mode(), Mode::Math | Mode::DisplayMath);
+        self.math_state.underline_pending = matches!(self.mode(), Mode::Math | Mode::DisplayMath);
         Ok(())
     }
     /// `\mathchar<15-bit>`：完整数学字符原子（tex.web math_char）——
@@ -1084,12 +1084,12 @@ impl MathSink for NodeBuilder {
     /// `\overline`：等待字段组（数学模式；组开收为 Overline 原子）。
     fn math_overline(&mut self) -> Result<()> {
         self.check_math_field_break()?;
-        self.overline_pending = matches!(self.mode(), Mode::Math | Mode::DisplayMath);
+        self.math_state.overline_pending = matches!(self.mode(), Mode::Math | Mode::DisplayMath);
         Ok(())
     }
     /// 数学字体族分配（`\textfont<fam>=<fontcs>` 等；M4-3）。
     fn math_font(&mut self, kind: u8, fam: u8, font: u32) -> Result<()> {
-        if let Some(slot) = self.math_fonts.get_mut(fam as usize) {
+        if let Some(slot) = self.math_state.math_fonts.get_mut(fam as usize) {
             slot[kind as usize] = Some(FontId(font));
         }
         Ok(())
@@ -1099,8 +1099,8 @@ impl MathSink for NodeBuilder {
         // 标位 muskip_is_mu[idx] 同时置 true——muskip_param 触发自 expander 端的
         // `\thinmuskip=<mu glue>` 路径，width/stretch/shrink 始终以 mu 数值存。
         if idx < 3 {
-            self.muskip_params[idx] = glue;
-            self.muskip_is_mu[idx] = true;
+            self.math_state.muskip_params[idx] = glue;
+            self.math_state.muskip_is_mu[idx] = true;
         }
         Ok(())
     }
@@ -1109,13 +1109,13 @@ impl MathSink for NodeBuilder {
 impl BoxSink for NodeBuilder {
     /// `\setbox<n>=<box>`（ETRIP）：记录目标寄存器；后续封装的盒子存入该槽。
     fn setbox(&mut self, idx: usize, global: bool) -> Result<()> {
-        self.setbox_target = Some(idx);
-        self.setbox_global = global;
+        self.box_state.setbox_target = Some(idx);
+        self.box_state.setbox_global = global;
         Ok(())
     }
     /// `\hbox to/spread <dimen>`（ETRIP）：记录盒子规格，随下一个盒子组生效。
     fn box_spec(&mut self, to: Option<i64>, spread: Option<i64>) -> Result<()> {
-        self.pending_box_spec = Some((to, spread));
+        self.box_state.pending_box_spec = Some((to, spread));
         Ok(())
     }
     /// 无限阶胶水（ETRIP）：`\hfil`=0/`\hfill`=1/`\hss`=2/`\vfil`=3/`\vfill`=4/`\vss`=5。
@@ -1166,7 +1166,7 @@ impl BoxSink for NodeBuilder {
     fn vsplit(&mut self, idx: usize, to: Option<i64>, spread: Option<i64>) -> Result<()> {
         let Some(b) = self.take_box_at(idx) else {
             // void 盒：cur_box=null（tex.web）→ `\setbox` 目标存空、裸调用不产节点
-            if let Some(t) = self.setbox_target.take() {
+            if let Some(t) = self.box_state.setbox_target.take() {
                 self.store_box(t, None);
             }
             return Ok(());
@@ -1181,7 +1181,7 @@ impl BoxSink for NodeBuilder {
         // 余量写回寄存器：tex.web `box(n):=vpack(q,natural)` 同层裸写（无组级
         // 日志——例程内 `\vsplit\@cclv to\z@` 的余量在例程组结束时不回滚）
         self.write_box(idx, Some(remainder));
-        if let Some(t) = self.setbox_target.take() {
+        if let Some(t) = self.box_state.setbox_target.take() {
             self.store_box(t, Some(result));
         } else {
             self.append(Node::Box(result));
@@ -1193,21 +1193,21 @@ impl BoxSink for NodeBuilder {
     /// 寄存器 255 = 待输出例程处理页面的队首（[PAGE_BOX]，tex.web `box(255)`）。
     fn box_register(&mut self, idx: usize) -> Result<()> {
         // `\setbox5=\box3`：把寄存器 3 移入目标 5（\box3 变 void；tex.web set_box 赋值语义）
-        if let Some(target) = self.setbox_target.take() {
+        if let Some(target) = self.box_state.setbox_target.take() {
             // `\setbox0=\lastbox`：优先取 \lastbox 摘下的盒子
-            let b = self.lastbox_hold.take().or_else(|| self.take_box_at(idx));
+            let b = self.box_state.lastbox_hold.take().or_else(|| self.take_box_at(idx));
             self.store_box(target, b);
             return Ok(());
         }
         // `\box0` 紧跟在 `\lastbox` 后：取摘下的盒子（TeX 语义）
-        let b = self.lastbox_hold.take().or_else(|| self.take_box_at(idx));
+        let b = self.box_state.lastbox_hold.take().or_else(|| self.take_box_at(idx));
         let Some(b) = b else {
             // TeX：\box 取 void 盒子 → 空 hbox 节点（tex.web：仍产生节点；TRIP L104 前 \copy200 void）
             self.append(Node::Box(crate::node::BoxNode::new_hbox(Vec::new())));
             return Ok(());
         };
-        if self.shipout_next {
-            self.shipout_next = false;
+        if self.page_state.shipout_next {
+            self.page_state.shipout_next = false;
             self.ship_page(b);
         } else {
             self.append(Node::Box(b));
@@ -1245,7 +1245,7 @@ impl BoxSink for NodeBuilder {
     fn set_box_dim(&mut self, idx: usize, dim: u8, value: i64) -> Result<()> {
         let idx255 = idx == PAGE_BOX;
         let slot = if idx255 {
-            self.pending_pages.front_mut()
+            self.page_state.pending_pages.front_mut()
         } else {
             self.boxes_mut().get_mut(idx).and_then(|s| s.as_mut())
         };
@@ -1264,7 +1264,7 @@ impl BoxSink for NodeBuilder {
     /// 寄存器 255 = 待输出页队首（[PAGE_BOX]）——trip.tex 第二例程
     /// `\setbox255\copy255` 即复制当前页。
     fn copy_box(&mut self, idx: usize) -> Result<()> {
-        let b = if let Some(h) = self.lastbox_hold.take() {
+        let b = if let Some(h) = self.box_state.lastbox_hold.take() {
             // `\copy0` 紧跟在 `\lastbox` 后：复制摘下的盒子
             h.clone()
         } else {
@@ -1277,7 +1277,7 @@ impl BoxSink for NodeBuilder {
             b.clone()
         };
         // `\setbox<n>=\copy<m>`：复制结果存入目标寄存器（\copy 不消耗原盒）
-        if let Some(target) = self.setbox_target.take() {
+        if let Some(target) = self.box_state.setbox_target.take() {
             self.store_box(target, Some(b));
             return Ok(());
         }
@@ -1332,13 +1332,13 @@ impl BoxSink for NodeBuilder {
         };
         if let Some(Node::Box(_)) = list.last() {
             if let Some(Node::Box(b)) = list.pop() {
-                self.lastbox_hold = Some(b);
+                self.box_state.lastbox_hold = Some(b);
             }
         }
         // `\setbox0=\lastbox`：摘下的盒子存入目标寄存器（tex.web last_box →
         // cur_box → set_box 赋值语义）；裸 \lastbox 留给后续 \box 消费。
-        if let Some(t) = self.setbox_target.take() {
-            if let Some(b) = self.lastbox_hold.take() {
+        if let Some(t) = self.box_state.setbox_target.take() {
+            if let Some(b) = self.box_state.lastbox_hold.take() {
                 self.store_box(t, Some(b));
             }
         }
@@ -1419,17 +1419,17 @@ impl BoxSink for NodeBuilder {
     }
     /// `\raise`/`\lower<dimen>`：记录盒子参考点位移（下一个封装盒子生效）。
     fn raise(&mut self, amount: i64) -> Result<()> {
-        self.pending_shift = Some(amount);
+        self.box_state.pending_shift = Some(amount);
         Ok(())
     }
     /// `\moveleft<dimen>`：记录盒子水平左移（下一个封装盒子生效；TRIP 冲刺简化）。
     fn move_left(&mut self, amount: i64) -> Result<()> {
-        self.pending_hshift = Some(-amount);
+        self.box_state.pending_hshift = Some(-amount);
         Ok(())
     }
     /// `\moveright<dimen>`：记录盒子水平右移（下一个封装盒子生效；TRIP 冲刺简化）。
     fn move_right(&mut self, amount: i64) -> Result<()> {
-        self.pending_hshift = Some(amount);
+        self.box_state.pending_hshift = Some(amount);
         Ok(())
     }
     /// `\showbox<n>`：把盒子寄存器内容格式化到转录（TeX show_box 风格）。
@@ -1437,13 +1437,13 @@ impl BoxSink for NodeBuilder {
         let Some(b) = self.box_view(idx) else {
             // TeX：\showbox 空盒 → 显示 void 并恢复（TRIP 中 box 状态差异不致命）
             let out = format!("> \\box{idx}=\nvoid\n! OK.\n");
-            self.transcript.push_str(&out);
+            self.io_state.transcript.push_str(&out);
             return Ok(());
         };
         let mut out = format!("> \\box{idx}=\n");
         showbox_format_box(b, 0, &self.fonts, &self.font_cs_names, &mut out);
         out.push_str("! OK.\n");
-        self.transcript.push_str(&out);
+        self.io_state.transcript.push_str(&out);
         Ok(())
     }
 }
@@ -1454,7 +1454,7 @@ impl AlignSink for NodeBuilder {
     /// 基准不摊派）。
     fn align_begin(&mut self, is_halign: bool) -> Result<()> {
         let dir = if is_halign { AlignDir::Halign } else { AlignDir::Valign };
-        let (to, _spread) = self.pending_box_spec.take().unwrap_or((None, None));
+        let (to, _spread) = self.box_state.pending_box_spec.take().unwrap_or((None, None));
         self.align_stack.push((
             dir,
             AlignCtx {
@@ -1465,7 +1465,7 @@ impl AlignSink for NodeBuilder {
                 to,
             },
         ));
-        self.pending_kind = Some(GroupKind::Align);
+        self.box_state.pending_kind = Some(GroupKind::Align);
         Ok(())
     }
     /// M4-5 `\cr`（对齐行/列结束，tex.web fin_row）：当前行单元入流
@@ -1523,42 +1523,42 @@ impl AlignSink for NodeBuilder {
     }
     /// `\noalign{`：下一个组为无对齐组（7）。
     fn noalign_begin(&mut self) -> Result<()> {
-        self.pending_kind = Some(GroupKind::NoAlign);
+        self.box_state.pending_kind = Some(GroupKind::NoAlign);
         Ok(())
     }
 }
 
 impl PageSink for NodeBuilder {
     fn output_defined(&mut self, defined: bool) -> Result<()> {
-        self.output_defined = defined;
+        self.page_state.output_defined = defined;
         if !defined {
             // 例程恢复未定义：未处理页面无法再经例程产出，直接丢弃（TeX 语义）
-            self.pending_pages.clear();
+            self.page_state.pending_pages.clear();
         }
         Ok(())
     }
     fn output_pending(&self) -> bool {
-        !self.pending_pages.is_empty()
+        !self.page_state.pending_pages.is_empty()
     }
     fn take_output_pending(&mut self) -> bool {
-        !self.pending_pages.is_empty()
+        !self.page_state.pending_pages.is_empty()
     }
     fn output_pending_count(&self) -> usize {
-        self.pending_pages.len()
+        self.page_state.pending_pages.len()
     }
     fn discard_pending_pages(&mut self) {
-        self.pending_pages.clear();
+        self.page_state.pending_pages.clear();
     }
     fn output_break_penalty(&mut self) -> Option<i64> {
-        self.page.take_output_penalty()
+        self.page_state.page.take_output_penalty()
     }
     fn take_page_shipped(&mut self) -> bool {
-        std::mem::take(&mut self.page_shipped)
+        std::mem::take(&mut self.page_state.page_shipped)
     }
     fn default_output_routine(&mut self) {
         // tex.web @<Perform the default output routine@>：待处理页面不经用户
         // 例程直接 shipout（dead cycles 分支——`\output` 例程从不 ship 时）。
-        while let Some(p) = self.pending_pages.pop_front() {
+        while let Some(p) = self.page_state.pending_pages.pop_front() {
             self.ship_page(p);
         }
     }
@@ -1571,28 +1571,28 @@ impl PageSink for NodeBuilder {
     // ---- ETRIP 冲刺：e-TeX marks 族查询 ----
     // （注意：轮转在 feed_one 产出页时立即执行，不在查询时修改状态。）
     fn topmarks(&self, class: i64) -> String {
-        self.marks_top.get(&class).cloned().unwrap_or_default()
+        self.page_state.marks_top.get(&class).cloned().unwrap_or_default()
     }
     fn firstmarks(&self, class: i64) -> String {
-        self.marks_first.get(&class).cloned().unwrap_or_default()
+        self.page_state.marks_first.get(&class).cloned().unwrap_or_default()
     }
     fn botmarks(&self, class: i64) -> String {
-        self.marks_bot.get(&class).cloned().unwrap_or_default()
+        self.page_state.marks_bot.get(&class).cloned().unwrap_or_default()
     }
     fn splitfirstmarks(&self, class: i64) -> String {
-        self.marks_split_first
+        self.page_state.marks_split_first
             .get(&class)
             .cloned()
             .unwrap_or_default()
     }
     fn splittopmarks(&self, class: i64) -> String {
-        self.marks_split_top
+        self.page_state.marks_split_top
             .get(&class)
             .cloned()
             .unwrap_or_default()
     }
     fn splitbotmarks(&self, class: i64) -> String {
-        self.marks_split_bot
+        self.page_state.marks_split_bot
             .get(&class)
             .cloned()
             .unwrap_or_default()
@@ -1629,7 +1629,7 @@ impl PageSink for NodeBuilder {
     }
     /// 输出例程的隐式组：组种类 8（output group，tex.web group_code）。
     fn output_routine_begin(&mut self) -> Result<()> {
-        self.pending_kind = Some(GroupKind::Output);
+        self.box_state.pending_kind = Some(GroupKind::Output);
         Ok(())
     }
     /// `\mark`/`\marks<n>`：mark 节点追加到当前列表（无维度）。
@@ -1638,15 +1638,15 @@ impl PageSink for NodeBuilder {
         // TeX 语义：\mark 等价于 \marks0（class 0）。
         let c = class.unwrap_or(0);
         // marks_first：该 class 在当前页第一次出现时设置。
-        self.marks_first.entry(c).or_insert_with(|| text.clone());
+        self.page_state.marks_first.entry(c).or_insert_with(|| text.clone());
         // marks_bot：每次出现都更新（最后一次出现）。
-        self.marks_bot.insert(c, text.clone());
+        self.page_state.marks_bot.insert(c, text.clone());
         self.append(Node::Mark { class, text });
         Ok(())
     }
     fn take_write_flush_pending(&mut self) -> bool {
-        let v = self.write_flush_pending;
-        self.write_flush_pending = false;
+        let v = self.page_state.write_flush_pending;
+        self.page_state.write_flush_pending = false;
         v
     }
 }
@@ -1665,18 +1665,18 @@ impl IoSink for NodeBuilder {
     }
     // ETRIP 冲刺：终端转录（\message/\show/\showthe/\write16）
     fn message(&mut self, text: String) -> Result<()> {
-        self.transcript.push_str(&text);
+        self.io_state.transcript.push_str(&text);
         Ok(())
     }
     fn show(&mut self, text: String) -> Result<()> {
-        self.transcript.push_str(&text);
-        self.transcript.push('\n');
+        self.io_state.transcript.push_str(&text);
+        self.io_state.transcript.push('\n');
         Ok(())
     }
     /// `\showbox<n>`：把盒子寄存器内容格式化到转录（TeX show_box 风格）。
     fn write16(&mut self, text: String) -> Result<()> {
-        self.transcript.push_str(&text);
-        self.transcript.push('\n');
+        self.io_state.transcript.push_str(&text);
+        self.io_state.transcript.push('\n');
         Ok(())
     }
     /// `\showgroups`：把组上下文栈格式化为转录（诊断用）。
@@ -1686,7 +1686,7 @@ impl IoSink for NodeBuilder {
             out.push_str(&format!("level {i}: {:?} (code {})\n", g.kind, g.kind.code()));
         }
         out.push_str("### end group\n");
-        self.transcript.push_str(&out);
+        self.io_state.transcript.push_str(&out);
         Ok(())
     }
     /// `\showlists`：把当前列表简化为转录（诊断用；盒子内容递归展示）。
@@ -1703,7 +1703,7 @@ impl IoSink for NodeBuilder {
             }
         }
         out.push_str("### end list\n");
-        self.transcript.push_str(&out);
+        self.io_state.transcript.push_str(&out);
         Ok(())
     }
     /// `\write<n>{...}`（非 \immediate）：whatsit 节点追加到当前列表（无维度）。

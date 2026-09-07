@@ -315,15 +315,15 @@ impl Typesetter {
         builder.font_cs_names = self.expander.font_cs_names_ref().clone();
         // 页号链播种（输出例程刀 5）：.fmt 恢复的 \count0..9 不经 count_changed
         // 事件，镜像须取 fmt 初值（TRIP：pass1 dump 前 \count4 已到 11）
-        builder.page_counts = self.fmt_page_counts;
+        builder.page_state.page_counts = self.fmt_page_counts;
         // .fmt 导入的当前字体（防 pass2 字符全 nullfont + Missing 警告）
         builder.current_font = FontId(self.fmt_current_font);
         // pass2 NodeBuilder 重建：同步数学间距参数（\\thinmuskip 等 muskip 寄存器——
 //  pass1 赋值在 dump 前，pass2 不重跑赋值事件）。muskip_is_mu 同步为全 true：
 // muskip 寄存器 0/1/2（= thinmuskip/medmuskip/thickmuskip）的 width/stretch/shrink
 // 字段永为 mu 数值（expander 端 scan_glue_mu 路径按 1mu=65536 单位存）。
-        builder.muskip_params = self.expander.muskip_registers();
-        builder.muskip_is_mu = [true; 3];
+        builder.math_state.muskip_params = self.expander.muskip_registers();
+        builder.math_state.muskip_is_mu = [true; 3];
         init_sfcodes(&mut builder);
         self.expander.set_sink(Box::new(builder));
         if let Some(b) = self
@@ -346,7 +346,7 @@ impl Typesetter {
             .sink_mut()
             .as_any_mut()
             .downcast_mut::<NodeBuilder>()
-            .map(|b| std::mem::take(&mut b.transcript))
+            .map(|b| std::mem::take(&mut b.io_state.transcript))
             .unwrap_or_default()
     }
 
@@ -407,16 +407,16 @@ impl Typesetter {
                 .as_any_mut()
                 .downcast_mut::<NodeBuilder>()
                 .ok_or_else(|| Error::internal("typesetter 安装了 NodeBuilder"))?;
-            if builder.pending_box.is_some() {
+            if builder.box_state.pending_box.is_some() {
                 if ended {
-                    builder.pending_box = None;
+                    builder.box_state.pending_box = None;
                 } else {
                     return Err(Error::invalid_input("\\hbox/\\vbox 后缺少组"));
                 }
             }
-            if builder.shipout_next {
+            if builder.page_state.shipout_next {
                 if ended {
-                    builder.shipout_next = false;
+                    builder.page_state.shipout_next = false;
                 } else {
                     return Err(Error::invalid_input("\\shipout 后缺少盒子"));
                 }
@@ -438,18 +438,18 @@ impl Typesetter {
                         .join(", ");
                     let m = format!(
                         "组未闭合（缺少 }}）：groups=[{dbg}] pending_box={:?} pending_kind={:?} math={}",
-                        builder.pending_box,
-                        builder.pending_kind,
-                        builder.math.len()
+                        builder.box_state.pending_box,
+                        builder.box_state.pending_kind,
+                        builder.math_state.math.len()
                     );
                     return Err(Error::invalid_input(&m));
                 }
             }
-            if !builder.math.is_empty() {
+            if !builder.math_state.math.is_empty() {
                 if ended {
                     // TeX：\end 时数学列表未闭合 → 同样警告不中断
                     let _ = builder.write16("(end occurred inside a math list)\n".to_string());
-                    builder.math.clear();
+                    builder.math_state.math.clear();
                 } else {
                     return Err(Error::invalid_input("数学模式未闭合（缺少 $）"));
                 }
@@ -481,7 +481,7 @@ impl Typesetter {
                     .as_any_mut()
                     .downcast_mut::<NodeBuilder>()
                     .ok_or_else(|| Error::internal("typesetter 安装了 NodeBuilder"))?;
-                if builder.pagination {
+                if builder.page_state.pagination {
                     builder.eject_one_page()?
                 } else {
                     false
@@ -519,13 +519,13 @@ impl Typesetter {
             .downcast_mut::<NodeBuilder>()
             .ok_or_else(|| Error::internal("typesetter 安装了 NodeBuilder"))?;
         // 转录留档（finish 后 sink 被 VecSink 替换，take_transcript 读不到 NodeBuilder）
-        self.last_transcript = std::mem::take(&mut builder.transcript);
+        self.last_transcript = std::mem::take(&mut builder.io_state.transcript);
         // 当前字体存档（take_sink 后 export_state 读不到 NodeBuilder）
         self.last_current_font = builder.current_font.0;
         let mut lists = std::mem::take(&mut builder.lists);
         debug_assert_eq!(lists.len(), 1, "收尾后应只剩主列表");
-        let shipped = std::mem::take(&mut builder.shipped);
-        let shipped_counts = std::mem::take(&mut builder.shipped_counts);
+        let shipped = std::mem::take(&mut builder.page_state.shipped);
+        let shipped_counts = std::mem::take(&mut builder.page_state.shipped_counts);
         let fonts = match &self.fonts {
             Fonts::Tfm(table) => table.borrow().clone(),
             Fonts::Fn { .. } => Vec::new(),

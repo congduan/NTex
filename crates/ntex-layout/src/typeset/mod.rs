@@ -505,6 +505,15 @@ impl Fonts {
 /// `Params.misc` 下标：`\tracinglostchars`（与 ntex-core `int_param_index` 对齐）。
 const MISC_TRACING_LOSTCHARS: usize = 1;
 
+/// R1b 字段分组：NodeBuilder 的 65 个状态字段按域聚成四个嵌入结构体
+/// （[`BoxState`]/[`PageState`]/[`MathState`]/[`IoState`]，对齐 R1 的子 trait 域），
+/// 其余列表/组/参数/字体/断字等核心态留在本结构体顶层。方法体零逻辑变化，
+/// `self.X` → `self.<域>.X` 纯机械替换。
+///
+/// 增量快照（[`SideEffects`]）保持逐字段平铺镜像：其字段集是本结构体的
+/// **子集**（跨组挑字段），不随分组嵌套——`side_effects()`/`restore_side_effects()`
+/// 的字段清单契约不变。
+///
 /// 节点构建 sink：把 VM 排版事件转成节点列表。
 ///
 /// `Clone`（M5 阶段三）：排版层段边界检查点整体克隆 builder 状态
@@ -517,75 +526,104 @@ struct NodeBuilder {
     /// 记录每个列表的模式（段落 = Horizontal，hbox 内容 = RestrictedHorizontal，
     /// vbox 内容 / 主列表 = Vertical）。作用域组（非盒子）不压列表。
     lists: Vec<Vec<Node>>,
+
     list_modes: Vec<Mode>,
+
     /// 组上下文栈（与列表栈独立：作用域组只压 ctx）。
     groups: Vec<GroupCtx>,
-    /// 等待下一个组的盒子种类。
-    pending_box: Option<PendingBox>,
-    /// 等待下一个组的显式种类（`\begingroup`/`\valign`/`\noalign`；优先于 pending_box）。
-    pending_kind: Option<GroupKind>,
-    /// `\\raise`/`\\lower`：下一个封装盒子的参考点位移（sp）。
-    pending_shift: Option<i64>,
-    /// `\\moveleft`/`\\moveright`：下一个封装盒子的水平位移（sp）。
-    pending_hshift: Option<i64>,
-    /// `\leaders`/`\cleaders`/`\xleaders`：已见引导符、等待盒子。
-    pending_leaders: Option<LeadersKind>,
-    /// 引导符盒子已就位（`\leaders\hbox{...}` 封装完成 / `\leaders\hrule`）、等待胶水。
-    leaders_box: Option<(LeadersKind, Node)>,
-    /// 诊断：累计追加节点数 + 最近追加节点（layout 侧死循环/OOM 定位用）。
-    nodes_appended: u64,
-    last_appended: String,
+
     /// 内部参数镜像（随 `param_changed` 事件更新，组作用域快照/恢复）。
     params: Params,
+
     /// e-TeX 惩罚数组镜像（随 `penalty_array_changed` 事件更新；kind 0-3：
     /// interline/club/widow/displaywidow）。折行时行间惩罚按索引取值，超出用末值。
     penalty_arrays: [Vec<i64>; 4],
+
     /// 组开始时的参数快照（group_end 恢复）。
     param_stack: Vec<Params>,
+
     /// `\sfcode` 表（随 `sfcode_changed` 事件更新；plain 默认 .,?!=3000、:=2000、
     /// ;=1500、,=1250，其余 1000）。
     sfcodes: [u32; 256],
+
     /// 组开始时的当前字体（group_end 恢复——TeX 字体选择**组作用域**：
     /// `{\bf bold} normal` 组内选择组外恢复；etrip L125 `\nullfont` 在组内
     /// 选择后 L129 `\endgroup` 须恢复 `\trip`，否则后续段落全 nullfont）。
     font_stack: Vec<FontId>,
+
     /// 当前 spacefactor（tex.web `space_factor`；段落/\hbox 开始 = 1000，
     /// 随字符 sfcode 更新，控制词间空格胶水）。
     space_factor: i64,
+
     /// `\noindent`：下一个段落不缩进。
     noindent_next: bool,
+
     /// M4-5 对齐排版栈（嵌套对齐：\noalign 组或单元内的 \halign/\valign）。
     /// 每项 = (方向, 两遍法上下文；见 [`AlignCtx`])。
     align_stack: Vec<(AlignDir, AlignCtx)>,
+
     /// 最近一次 \par 的源码行号（折行警告 `at lines a--b` 的结束行）。
     last_par_line: i64,
+
     /// 字体度量来源（M3-4：fn 指针占位或 TFM 字体表）。
     fonts: Fonts,
+
     /// `\font<cs>=<name>` 登记的 FontId → cs 名（showbox 字体标识显示
     /// `.\trip 1`；fmt 导入恢复 + `font_defined` 事件更新）。
     font_cs_names: Vec<Option<String>>,
+
     /// 当前字体（TFM 模式由 `font_selected` 事件更新；fn 指针模式恒为 FontId(0)）。
     current_font: FontId,
-    /// `\shipout`：下一个封装盒子作为页面（DVI shipout，M3-5）。
-    shipout_next: bool,
-    /// 已 \\shipout 的页面（按顺序）。
-    shipped: Vec<BoxNode>,
-    /// 各页面 shipout 边界的 `\count0..9` 快照（与 [`Self::shipped`] 一一对应；
-    /// 输出例程刀 5：DVI bop 的 10 计数字取值源，由调用方 `write_dvi_with_counts`
-    /// 消费）。
-    shipped_counts: Vec<[i64; 10]>,
-    /// `\count0..9` 镜像（输出例程刀 5 页号链）：tex.web `ship_out` L12694-12699
-    /// 在 shipout 边界**直接读 count(j)** 打页标签——引擎经
-    /// [`PageSink::count_changed`] 赋值即推送，本侧无从反查寄存器文件。
-    page_counts: [i64; 10],
-    /// `\\tracingoutput` 转录计数（tex.web ship_out 页号末段：每次 shipout +1；
-    /// 页标签自刀 5 起改读 [`Self::page_counts`] 镜像，此计数保留为 shipout 次数
-    /// 诊断量并进 M5 副作用快照）。
-    ship_seq: u32,
-    /// M3-5-2 断页：启用自动分页（`typeset_dvi` 打开；旧 `typeset` 保持切片行为）。
-    pagination: bool,
-    /// 页面构建器（`pagination` 时把顶层垂直列表拆成页面）。
-    page: PageBuilder,
+
+    /// 断字模式表（M4-6）：`\patterns{...}` 解析后的 Liang trie。
+    patterns: PatternTrie,
+
+    /// ETRIP 冲刺：断字异常词表（`\hyphenation{...}`）：小写字母 + 允许断点
+    /// （0 = 词首、len = 词尾）。断字时优先于模式表。
+    hyph_exceptions: Vec<(Vec<u8>, Vec<usize>)>,
+
+    /// M5 阶段三：主列表录制（增量段贡献缓存）。`Some` 时把进入**主列表**
+    /// （`lists.len() == 1`）的节点原样录下——编辑段后的增量重放把缓存节点流
+    /// 重新注入主列表，行盒免重排、页面装配（断页）照常重跑。
+    /// 只追加、不参与任何语义分支；`append`/`push_node` 两个入列路径挂钩。
+    record_main: Option<Vec<Node>>,
+
+    /// BoxState 域（见 [`BoxState`]）。
+    box_state: BoxState,
+
+    /// PageState 域（见 [`PageState`]）。
+    page_state: PageState,
+
+    /// MathState 域（见 [`MathState`]）。
+    math_state: MathState,
+
+    /// IoState 域（见 [`IoState`]）。
+    io_state: IoState,
+}
+
+/// 盒域状态（R1b 分组；对齐 R1 的 [`BoxSink`] 域）：盒封装待定（`\hbox{`、
+/// `\raise`/`\moveleft`、`\leaders`、`to`/`spread` 规格）、盒寄存器文件与组级
+/// 保存日志、`\setbox` 目标、`\lastbox` 暂存。字段可服务多个域，按主归属划组。
+#[derive(Debug, Clone)]
+struct BoxState {
+    /// 等待下一个组的盒子种类。
+    pending_box: Option<PendingBox>,
+
+    /// 等待下一个组的显式种类（`\begingroup`/`\valign`/`\noalign`；优先于 pending_box）。
+    pending_kind: Option<GroupKind>,
+
+    /// `\\raise`/`\\lower`：下一个封装盒子的参考点位移（sp）。
+    pending_shift: Option<i64>,
+
+    /// `\\moveleft`/`\\moveright`：下一个封装盒子的水平位移（sp）。
+    pending_hshift: Option<i64>,
+
+    /// `\leaders`/`\cleaders`/`\xleaders`：已见引导符、等待盒子。
+    pending_leaders: Option<LeadersKind>,
+
+    /// 引导符盒子已就位（`\leaders\hbox{...}` 封装完成 / `\leaders\hrule`）、等待胶水。
+    leaders_box: Option<(LeadersKind, Node)>,
+
     /// 盒子寄存器（M3-5-3）：`\box<n>` 读写（box255 为待输出例程页面队列，见
     /// [`Self::pending_pages`]，不占此表）。
     ///
@@ -594,91 +632,161 @@ struct NodeBuilder {
     /// （[`Self::boxes_mut`]）让克隆与比较退化为引用计数 / 指针相等，语义不变
     /// （共享期间无人可写）。
     boxes: std::rc::Rc<Vec<Option<BoxNode>>>,
+
     /// `\setbox` 组作用域变更日志（TeX 寄存器组级保存）：(组级, 下标, 旧值)。
     /// 组结束回滚本组及更深组内的盒子设置（trip L317 组内 `\setbox22=\lastbox`
     /// → L318 `}` 后参考 `restoring \box22=void`）。
     box_saves: Vec<(usize, usize, Option<BoxNode>)>,
+
+    /// ETRIP 冲刺：`\setbox<n>=<box>` 目标寄存器（下一个封装盒子存入该槽）。
+    setbox_target: Option<usize>,
+
+    /// `\setbox` 的 `\global` 前缀（\global\setbox 不随组回滚——tex.web 语义）。
+    setbox_global: bool,
+
+    /// ETRIP 冲刺：盒子规格（`\hbox to/spread <dimen>`）：(to, spread)，随下一个盒子组生效。
+    pending_box_spec: Option<(Option<i64>, Option<i64>)>,
+
+    /// ETRIP 第二波：`\lastbox` 摘下的盒子（TeX 语义：供下一个 `\box`/`\copy` 使用）。
+    lastbox_hold: Option<BoxNode>,
+}
+
+/// 页域状态（R1b 分组；对齐 R1 的 [`PageSink`] 域）：页面构建器与自动分页开关、
+/// shipout 产出（页面队列与 `\count0..9` 计数快照，两表恒同长）、`\output`
+/// 例程事件态、e-TeX marks 族（tex.web 断页轮转）。
+#[derive(Debug, Clone)]
+struct PageState {
+    /// M3-5-2 断页：启用自动分页（`typeset_dvi` 打开；旧 `typeset` 保持切片行为）。
+    pagination: bool,
+
+    /// 页面构建器（`pagination` 时把顶层垂直列表拆成页面）。
+    page: PageBuilder,
+
+    /// `\shipout`：下一个封装盒子作为页面（DVI shipout，M3-5）。
+    shipout_next: bool,
+
+    /// 已 \\shipout 的页面（按顺序）。
+    shipped: Vec<BoxNode>,
+
+    /// 各页面 shipout 边界的 `\count0..9` 快照（与 [`Self::shipped`] 一一对应；
+    /// 输出例程刀 5：DVI bop 的 10 计数字取值源，由调用方 `write_dvi_with_counts`
+    /// 消费）。
+    shipped_counts: Vec<[i64; 10]>,
+
+    /// `\count0..9` 镜像（输出例程刀 5 页号链）：tex.web `ship_out` L12694-12699
+    /// 在 shipout 边界**直接读 count(j)** 打页标签——引擎经
+    /// [`PageSink::count_changed`] 赋值即推送，本侧无从反查寄存器文件。
+    page_counts: [i64; 10],
+
+    /// `\\tracingoutput` 转录计数（tex.web ship_out 页号末段：每次 shipout +1；
+    /// 页标签自刀 5 起改读 [`Self::page_counts`] 镜像，此计数保留为 shipout 次数
+    /// 诊断量并进 M5 副作用快照）。
+    ship_seq: u32,
+
     /// `\output` 例程是否已定义（true：fire_up 改道 box255 + 待执行）。
     output_defined: bool,
+
     /// 待输出例程处理的页面队列（M3-5-3）：`\output` 定义时 fire_up 产出的页面
     /// 排队，`\box255` 逐页取出，例程反复运行直至队列清空。队列而非单槽——
     /// `close_paragraph` 一次推入多行可能连续产出多页，逐页交错执行例程。
     pending_pages: VecDeque<BoxNode>,
+
     /// RFC-3：页面真正输出（`\shipout` 边界）时置位，通知引擎 flush 延迟写流。
     write_flush_pending: bool,
+
     /// 输出例程刀 1：页面真正 shipout 过（自上次 [`PageSink::take_page_shipped`]
     /// 查询以来）——`dead_cycles` 清零依据（tex.web ship_out `dead_cycles:=0`）。
     page_shipped: bool,
+
+    /// ETRIP 冲刺：e-TeX marks 族状态（断页轮转）。
+    /// `\topmarks<c>`：继承自上一页 botmarks<c>（初始空）。
+    marks_top: std::collections::HashMap<i64, String>,
+
+    /// 当前页第一个出现的 marks<c>（断页新页开始时清空）。
+    marks_first: std::collections::HashMap<i64, String>,
+
+    /// 当前页最后一个出现的 marks<c>（断页新页开始时保留继承值，后续新 marks 覆盖）。
+    marks_bot: std::collections::HashMap<i64, String>,
+
+    /// \vsplit 产生的拆分 marks（暂未实现 vsplit 全语义；留空）。
+    marks_split_top: std::collections::HashMap<i64, String>,
+
+    marks_split_first: std::collections::HashMap<i64, String>,
+
+    marks_split_bot: std::collections::HashMap<i64, String>,
+}
+
+/// 数学域状态（R1b 分组；对齐 R1 的 [`MathSink`] 域）：数学列表栈、当前样式与
+/// 待定字段（`^`/`_`、`\sqrt`、`\radical`、类、重音、`\underline`/`\overline`）、
+/// 数学字体族、显示数学装配、muskip 参数镜像。
+#[derive(Debug, Clone)]
+struct MathState {
     /// 数学列表栈（M4-1）：数学模式期间一层；`{...}` 数学组/脚本字段压层。
     math: Vec<MathLevel>,
+
     /// 当前数学样式（进入 Math=Text、DisplayMath=Display；`\displaystyle` 等修改）。
     math_style: MathStyle,
+
     /// 待挂载的脚本方向（`^`=Some(true)、`_`=Some(false)）：等待下一个原子/组。
     pending_script: Option<bool>,
+
     /// `\sqrt`：等待 radicand 字段（下一个原子或组）。
     sqrt_pending: bool,
+
     /// `\radical<delim>`：等待 radicand 字段（带定界符号；TRIP）。
     radical_pending: Option<u32>,
+
     /// `\mathbin` 等：等待字段（下一个原子或组），应用指定类。
     class_pending: Option<MathClass>,
+
     /// `\accent`/`\mathaccent`：重音符字段的 <15-bit number> 已扫描，等待 nucleus 字段。
     pub(super) accent_pending: bool,
+
     /// `\underline`：等待字段（组开收为 Underline 原子）。
     pub(super) underline_pending: bool,
+
     /// `\overline`：等待字段（组开收为 Overline 原子）。
     pub(super) overline_pending: bool,
+
     /// `\nonscript`：下一个数学空格在脚本模式丢弃。
     nonscript_pending: bool,
+
     /// 数学字体族表（M4-3）：16 族 × 3 阶（text/script/scriptscript）。
     /// `\textfont<fam>=<cs>` 等原语分配；字符按族+字阶选字体。
     math_fonts: Vec<[Option<FontId>; 3]>,
-    /// 断字模式表（M4-6）：`\patterns{...}` 解析后的 Liang trie。
-    patterns: PatternTrie,
-    /// ETRIP 冲刺：断字异常词表（`\hyphenation{...}`）：小写字母 + 允许断点
-    /// （0 = 词首、len = 词尾）。断字时优先于模式表。
-    hyph_exceptions: Vec<(Vec<u8>, Vec<usize>)>,
-    /// ETRIP 冲刺：`\setbox<n>=<box>` 目标寄存器（下一个封装盒子存入该槽）。
-    setbox_target: Option<usize>,
-    /// `\setbox` 的 `\global` 前缀（\global\setbox 不随组回滚——tex.web 语义）。
-    setbox_global: bool,
-    /// ETRIP 冲刺：盒子规格（`\hbox to/spread <dimen>`）：(to, spread)，随下一个盒子组生效。
-    pending_box_spec: Option<(Option<i64>, Option<i64>)>,
+
     /// M4-4 显示数学：tex.web `pre_display_size`（进入显示时由上一段末行算出：
     /// 2em + 末行可见材料自然宽；空段落 = -max_dimen）。`close_math` 退出时与
     /// `d+s = half(\displaywidth-公式宽)+\displayindent` 比较，裁决长/短 display skip。
     predisplay_size: i64,
+
     /// M4-4 显示数学：公式刚闭合，后续文字续排（不开新段：无 parskip/缩进）。
     after_display: bool,
+
     /// ETRIP 冲刺：数学间距参数（\\thinmuskip/\\medmuskip/\\thickmuskip =
     /// muskip 寄存器 0/1/2 的 mu glue；`muskip_param` 事件更新，
     /// 默认 thin=3mu/med=4mu±2mu∓4mu/thick=5mu±5mu）。
     /// 数学间距与排版事件 muskip_param 均属 mu 上下文路径；`width`/`stretch`/`shrink`
     /// 字段以 mu 单位存（1mu=1pt 数值=N×65536），math_to_hlist 内部按当前 style em/18 转 sp。
     muskip_params: [ntex_core::Glue; 3],
+
     /// 与 muskip_params 一一对应的 mu 单位标记：`\thinmuskip`/`\medmuskip`/`\thickmuskip`
     /// 永远绑 muskip 寄存器 0/1/2，全部按 mu 数值存；保留 `[bool;3]` 而非硬编码 `[true;3]`
     /// 是为未来承接 `\muskipdef` cs 绑到 muskip 时的同源同步。
     muskip_is_mu: [bool; 3],
+}
+
+/// I/O 与诊断域状态（R1b 分组；对齐 R1 的 [`IoSink`] 域）：终端转录累积、追加
+/// 计数与最近追加节点（layout 侧死循环/OOM 定位共用同一诊断通道）。
+#[derive(Debug, Clone)]
+struct IoState {
     /// ETRIP 冲刺：终端转录累积（`\message`/`\show`/`\write16`）。
     transcript: String,
-    /// ETRIP 冲刺：e-TeX marks 族状态（断页轮转）。
-    /// `\topmarks<c>`：继承自上一页 botmarks<c>（初始空）。
-    marks_top: std::collections::HashMap<i64, String>,
-    /// 当前页第一个出现的 marks<c>（断页新页开始时清空）。
-    marks_first: std::collections::HashMap<i64, String>,
-    /// 当前页最后一个出现的 marks<c>（断页新页开始时保留继承值，后续新 marks 覆盖）。
-    marks_bot: std::collections::HashMap<i64, String>,
-    /// \vsplit 产生的拆分 marks（暂未实现 vsplit 全语义；留空）。
-    marks_split_top: std::collections::HashMap<i64, String>,
-    marks_split_first: std::collections::HashMap<i64, String>,
-    marks_split_bot: std::collections::HashMap<i64, String>,
-    /// ETRIP 第二波：`\lastbox` 摘下的盒子（TeX 语义：供下一个 `\box`/`\copy` 使用）。
-    lastbox_hold: Option<BoxNode>,
-    /// M5 阶段三：主列表录制（增量段贡献缓存）。`Some` 时把进入**主列表**
-    /// （`lists.len() == 1`）的节点原样录下——编辑段后的增量重放把缓存节点流
-    /// 重新注入主列表，行盒免重排、页面装配（断页）照常重跑。
-    /// 只追加、不参与任何语义分支；`append`/`push_node` 两个入列路径挂钩。
-    record_main: Option<Vec<Node>>,
+
+    /// 诊断：累计追加节点数 + 最近追加节点（layout 侧死循环/OOM 定位用）。
+    nodes_appended: u64,
+
+    last_appended: String,
 }
 
 /// 盒子寄存器 255（tex.web `box(255)`）：页面构建器完成页的投递寄存器——
@@ -711,11 +819,11 @@ impl NodeBuilder {
     /// group_begin——它们消费待定字段，不经过此检查（合法字段）。
     fn check_math_field_break(&mut self) -> Result<()> {
         if matches!(self.mode(), Mode::Math | Mode::DisplayMath)
-            && (self.class_pending.is_some()
-                || self.accent_pending
-                || self.radical_pending.is_some()
-                || self.sqrt_pending
-                || self.pending_script.is_some())
+            && (self.math_state.class_pending.is_some()
+                || self.math_state.accent_pending
+                || self.math_state.radical_pending.is_some()
+                || self.math_state.sqrt_pending
+                || self.math_state.pending_script.is_some())
         {
             self.report_error("Missing { inserted.");
             // scan_left_brace 隐含 `{`：TeX 报错后 cur_tok={ 开 math_group
@@ -723,11 +831,11 @@ impl NodeBuilder {
             // → Missing $ + close_math（TRIP l.272 `\mathord\radical"161` 缺 {，
             //    l.278 的 }}} 第 3 个 `}` 靠它配对；l.280 eqno 数学丢根因）。
             // 待定字段清空后开隐含组（Math 组：push math 层，由后续 `}` pop）。
-            self.class_pending = None;
-            self.accent_pending = false;
-            self.radical_pending = None;
-            self.sqrt_pending = false;
-            self.pending_script = None;
+            self.math_state.class_pending = None;
+            self.math_state.accent_pending = false;
+            self.math_state.radical_pending = None;
+            self.math_state.sqrt_pending = false;
+            self.math_state.pending_script = None;
             self.group_begin(0)?;
         }
         Ok(())
@@ -760,10 +868,6 @@ impl NodeBuilder {
             lists: vec![Vec::new()],
             list_modes: vec![Mode::Vertical],
             groups: Vec::new(),
-            pending_box: None,
-            pending_kind: None,
-            pending_shift: None,
-            pending_hshift: None,
             params: Params::default(),
             penalty_arrays: Default::default(),
             param_stack: Vec::new(),
@@ -775,59 +879,71 @@ impl NodeBuilder {
             align_stack: Vec::new(),
             last_par_line: 0,
             current_font: FontId(0),
-            shipout_next: false,
-            shipped: Vec::new(),
-            shipped_counts: Vec::new(),
-            page_counts: [0; 10],
-            ship_seq: 0,
-            pagination,
-            page: PageBuilder::new(),
-            boxes: std::rc::Rc::new(vec![None; REGISTER_COUNT]),
-            box_saves: Vec::new(),
-            output_defined: false,
-            pending_pages: VecDeque::new(),
-            write_flush_pending: false,
-            page_shipped: false,
-            math: Vec::new(),
-            math_style: MathStyle::Text,
-            pending_script: None,
-            sqrt_pending: false,
-            radical_pending: None,
-            class_pending: None,
-            accent_pending: false,
-            underline_pending: false,
-            overline_pending: false,
-            nonscript_pending: false,
-            math_fonts: vec![[None; 3]; 16],
+            fonts,
             patterns: PatternTrie::default(),
             hyph_exceptions: Vec::new(),
-            setbox_target: None,
-            setbox_global: false,
-            pending_box_spec: None,
-            predisplay_size: 0,
-            after_display: false,
-            // 默认数学间距（TeXbook p.170）：thin=3mu、med=4mu±2mu∓4mu、thick=5mu±5mu
-            // ——按 mu 数值存（1mu=1pt 数值=N×65536）；math_to_hlist 内部按当前 style em/18 转 sp。
-            muskip_params: [
-                ntex_core::Glue::new(3 * SP_PER_PT, 0, 0),
-                ntex_core::Glue::new(4 * SP_PER_PT, 2 * SP_PER_PT, 4 * SP_PER_PT),
-                ntex_core::Glue::new(5 * SP_PER_PT, 5 * SP_PER_PT, 0),
-            ],
-            muskip_is_mu: [true; 3],
-            pending_leaders: None,
-            leaders_box: None,
-            nodes_appended: 0,
-            last_appended: String::new(),
-            transcript: String::new(),
-            fonts,
-            marks_top: std::collections::HashMap::new(),
-            marks_first: std::collections::HashMap::new(),
-            marks_bot: std::collections::HashMap::new(),
-            marks_split_top: std::collections::HashMap::new(),
-            marks_split_first: std::collections::HashMap::new(),
-            marks_split_bot: std::collections::HashMap::new(),
-            lastbox_hold: None,
             record_main: None,
+            box_state: BoxState {
+                pending_box: None,
+                pending_kind: None,
+                pending_shift: None,
+                pending_hshift: None,
+                pending_leaders: None,
+                leaders_box: None,
+                boxes: std::rc::Rc::new(vec![None; REGISTER_COUNT]),
+                box_saves: Vec::new(),
+                setbox_target: None,
+                setbox_global: false,
+                pending_box_spec: None,
+                lastbox_hold: None,
+            },
+            page_state: PageState {
+                pagination,
+                page: PageBuilder::new(),
+                shipout_next: false,
+                shipped: Vec::new(),
+                shipped_counts: Vec::new(),
+                page_counts: [0; 10],
+                ship_seq: 0,
+                output_defined: false,
+                pending_pages: VecDeque::new(),
+                write_flush_pending: false,
+                page_shipped: false,
+                marks_top: std::collections::HashMap::new(),
+                marks_first: std::collections::HashMap::new(),
+                marks_bot: std::collections::HashMap::new(),
+                marks_split_top: std::collections::HashMap::new(),
+                marks_split_first: std::collections::HashMap::new(),
+                marks_split_bot: std::collections::HashMap::new(),
+            },
+            math_state: MathState {
+                math: Vec::new(),
+                math_style: MathStyle::Text,
+                pending_script: None,
+                sqrt_pending: false,
+                radical_pending: None,
+                class_pending: None,
+                accent_pending: false,
+                underline_pending: false,
+                overline_pending: false,
+                nonscript_pending: false,
+                math_fonts: vec![[None; 3]; 16],
+                predisplay_size: 0,
+                after_display: false,
+                // 默认数学间距（TeXbook p.170）：thin=3mu、med=4mu±2mu∓4mu、thick=5mu±5mu
+                // ——按 mu 数值存（1mu=1pt 数值=N×65536）；math_to_hlist 内部按当前 style em/18 转 sp。
+                muskip_params: [
+                    ntex_core::Glue::new(3 * SP_PER_PT, 0, 0),
+                    ntex_core::Glue::new(4 * SP_PER_PT, 2 * SP_PER_PT, 4 * SP_PER_PT),
+                    ntex_core::Glue::new(5 * SP_PER_PT, 5 * SP_PER_PT, 0),
+                ],
+                muskip_is_mu: [true; 3],
+            },
+            io_state: IoState {
+                transcript: String::new(),
+                nodes_appended: 0,
+                last_appended: String::new(),
+            },
         }
     }
 
@@ -851,11 +967,11 @@ impl NodeBuilder {
     ///   marks_bot = marks_top（新页无新 marks 时 bot==继承的 top）。
     fn rotate_marks(&mut self) {
         // marks_top：承接上一页 botmarks（继承）
-        self.marks_top = self.marks_bot.clone();
+        self.page_state.marks_top = self.page_state.marks_bot.clone();
         // marks_first：新页第一个 marks 清空
-        self.marks_first.clear();
+        self.page_state.marks_first.clear();
         // marks_bot：初始等于继承的 marks_top（若无新 marks 则 bot==top）
-        self.marks_bot = self.marks_top.clone();
+        self.page_state.marks_bot = self.page_state.marks_top.clone();
     }
 
     /// TeX `\unhbox`/`\unvbox` 不可拆盒的错误恢复：写转录并继续
@@ -884,17 +1000,17 @@ impl NodeBuilder {
     fn append(&mut self, node: Node) {
         // 诊断：节点增长监控（TRIP L338 `\halign` 内挂死 = 列表无限增长 OOM；
         // 死循环在 layout 侧不经 process_one，VM 看门狗不计数）。
-        self.nodes_appended += 1;
-        self.last_appended = format!("{node:?}");
-        if self.nodes_appended % 200_000 == 0 {
+        self.io_state.nodes_appended += 1;
+        self.io_state.last_appended = format!("{node:?}");
+        if self.io_state.nodes_appended % 200_000 == 0 {
             eprintln!(
                 "[layout-watchdog] nodes={} mode={:?} lists={} top_len={} groups={} last={:?}",
-                self.nodes_appended,
+                self.io_state.nodes_appended,
                 self.mode(),
                 self.lists.len(),
                 self.lists.last().map_or(0, |l| l.len()),
                 self.groups.len(),
-                self.last_appended
+                self.io_state.last_appended
             );
         }
         // tex.web box_end（L20894 `shift_amount(cur_box):=box_context`）：
@@ -903,13 +1019,13 @@ impl NodeBuilder {
         // hlist_out 的语义：shift 沿盒子进入当前列表时写入，非包装完成时。
         let mut node = node;
         if let Node::Box(b) = &mut node {
-            if let Some(v) = self.pending_shift.take() {
+            if let Some(v) = self.box_state.pending_shift.take() {
                 b.shift = v;
             }
             // 水平位移（\moveleft/\moveright）：tex.web 同一 box_context 机制，
             // hlist 中 vbox 的 shift 也可表示水平偏移（vlist_out L12590
             // `cur_h:=left_edge+shift_amount(p)`）——同一字段按列表方向解释。
-            if let Some(v) = self.pending_hshift.take() {
+            if let Some(v) = self.box_state.pending_hshift.take() {
                 b.shift = v;
             }
         }
@@ -918,14 +1034,18 @@ impl NodeBuilder {
         // M3-5-2：顶层垂直模式追加后运行页面构建器（TeX build_page 的触发点）。
         // 增量（feed_one）：每产出一页即暂停——若定义了输出例程，让引擎在 token
         // 边界执行例程（ship box255）后再继续；未定义时页面直通 shipped。
-        if self.pagination && self.mode() == Mode::Vertical && self.lists.len() == 1 {
-            if let Some(p) = self.page.feed_one(&mut self.lists[0], &self.params) {
+        if self.page_state.pagination && self.mode() == Mode::Vertical && self.lists.len() == 1 {
+            if let Some(p) = self
+                .page_state
+                .page
+                .feed_one(&mut self.lists[0], &self.params)
+            {
                 self.accept_page(p);
                 // ETRIP 冲刺：断页 marks 轮转（top = 旧 bot，first 清空，bot 保留继承）
                 self.rotate_marks();
             }
             // \tracingpages：断页追踪输出到转录（tex.web begin_diagnostic → log）
-            if let Some(t) = self.page.take_trace() {
+            if let Some(t) = self.page_state.page.take_trace() {
                 let _ = self.write16(t);
             }
         }
@@ -968,15 +1088,15 @@ impl NodeBuilder {
     /// 的边界检查点/副作用对齐克隆与活 builder 共享同一份寄存器文件，写入
     /// 前必须解共享，语义与整份深克隆一致）。
     fn boxes_mut(&mut self) -> &mut Vec<Option<BoxNode>> {
-        std::rc::Rc::make_mut(&mut self.boxes)
+        std::rc::Rc::make_mut(&mut self.box_state.boxes)
     }
 
     /// 读盒子寄存器（255 → 待输出页队首，见 [PAGE_BOX]）。
     fn box_view(&self, idx: usize) -> Option<&BoxNode> {
         if idx == PAGE_BOX {
-            self.pending_pages.front()
+            self.page_state.pending_pages.front()
         } else {
-            self.boxes.get(idx).and_then(|s| s.as_ref())
+            self.box_state.boxes.get(idx).and_then(|s| s.as_ref())
         }
     }
 
@@ -987,7 +1107,7 @@ impl NodeBuilder {
     /// 回滚会把已消费页塞回队列导致重复输出）。
     fn take_box_at(&mut self, idx: usize) -> Option<BoxNode> {
         if idx == PAGE_BOX {
-            self.pending_pages.pop_front()
+            self.page_state.pending_pages.pop_front()
         } else {
             self.boxes_mut().get_mut(idx).and_then(|s| s.take())
         }
@@ -999,10 +1119,12 @@ impl NodeBuilder {
     fn write_box(&mut self, idx: usize, value: Option<BoxNode>) {
         if idx == PAGE_BOX {
             match value {
-                Some(b) if !self.pending_pages.is_empty() => self.pending_pages[0] = b,
-                Some(b) => self.pending_pages.push_front(b),
+                Some(b) if !self.page_state.pending_pages.is_empty() => {
+                    self.page_state.pending_pages[0] = b
+                }
+                Some(b) => self.page_state.pending_pages.push_front(b),
                 None => {
-                    self.pending_pages.pop_front();
+                    self.page_state.pending_pages.pop_front();
                 }
             }
         } else if let Some(slot) = self.boxes_mut().get_mut(idx) {
@@ -1018,12 +1140,12 @@ impl NodeBuilder {
     /// **字段清单与 [`Self::restore_side_effects`] 必须一致，新增字段两处同步。**
     fn side_effects(&self) -> SideEffects {
         SideEffects {
-            pending_box: self.pending_box,
-            pending_kind: self.pending_kind,
-            pending_shift: self.pending_shift,
-            pending_hshift: self.pending_hshift,
-            pending_leaders: self.pending_leaders,
-            leaders_box: self.leaders_box.clone(),
+            pending_box: self.box_state.pending_box,
+            pending_kind: self.box_state.pending_kind,
+            pending_shift: self.box_state.pending_shift,
+            pending_hshift: self.box_state.pending_hshift,
+            pending_leaders: self.box_state.pending_leaders,
+            leaders_box: self.box_state.leaders_box.clone(),
             params: self.params,
             penalty_arrays: self.penalty_arrays.clone(),
             param_stack: self.param_stack.clone(),
@@ -1035,41 +1157,41 @@ impl NodeBuilder {
             last_par_line: self.last_par_line,
             font_cs_names: self.font_cs_names.clone(),
             current_font: self.current_font,
-            shipout_next: self.shipout_next,
-            ship_seq: self.ship_seq,
-            page_counts: self.page_counts,
-            boxes: BoxFile(std::rc::Rc::clone(&self.boxes)),
-            box_saves: self.box_saves.clone(),
-            output_defined: self.output_defined,
-            pending_pages: self.pending_pages.clone(),
-            write_flush_pending: self.write_flush_pending,
-            page_shipped: self.page_shipped,
-            math_style: self.math_style,
-            pending_script: self.pending_script,
-            sqrt_pending: self.sqrt_pending,
-            radical_pending: self.radical_pending,
-            class_pending: self.class_pending,
-            accent_pending: self.accent_pending,
-            underline_pending: self.underline_pending,
-            overline_pending: self.overline_pending,
-            nonscript_pending: self.nonscript_pending,
-            math_fonts: self.math_fonts.clone(),
+            shipout_next: self.page_state.shipout_next,
+            ship_seq: self.page_state.ship_seq,
+            page_counts: self.page_state.page_counts,
+            boxes: BoxFile(std::rc::Rc::clone(&self.box_state.boxes)),
+            box_saves: self.box_state.box_saves.clone(),
+            output_defined: self.page_state.output_defined,
+            pending_pages: self.page_state.pending_pages.clone(),
+            write_flush_pending: self.page_state.write_flush_pending,
+            page_shipped: self.page_state.page_shipped,
+            math_style: self.math_state.math_style,
+            pending_script: self.math_state.pending_script,
+            sqrt_pending: self.math_state.sqrt_pending,
+            radical_pending: self.math_state.radical_pending,
+            class_pending: self.math_state.class_pending,
+            accent_pending: self.math_state.accent_pending,
+            underline_pending: self.math_state.underline_pending,
+            overline_pending: self.math_state.overline_pending,
+            nonscript_pending: self.math_state.nonscript_pending,
+            math_fonts: self.math_state.math_fonts.clone(),
             patterns: self.patterns.clone(),
             hyph_exceptions: self.hyph_exceptions.clone(),
-            setbox_target: self.setbox_target,
-            setbox_global: self.setbox_global,
-            pending_box_spec: self.pending_box_spec,
-            predisplay_size: self.predisplay_size,
-            after_display: self.after_display,
-            muskip_params: self.muskip_params,
-            muskip_is_mu: self.muskip_is_mu,
-            marks_top: self.marks_top.clone(),
-            marks_first: self.marks_first.clone(),
-            marks_bot: self.marks_bot.clone(),
-            marks_split_top: self.marks_split_top.clone(),
-            marks_split_first: self.marks_split_first.clone(),
-            marks_split_bot: self.marks_split_bot.clone(),
-            lastbox_hold: self.lastbox_hold.clone(),
+            setbox_target: self.box_state.setbox_target,
+            setbox_global: self.box_state.setbox_global,
+            pending_box_spec: self.box_state.pending_box_spec,
+            predisplay_size: self.math_state.predisplay_size,
+            after_display: self.math_state.after_display,
+            muskip_params: self.math_state.muskip_params,
+            muskip_is_mu: self.math_state.muskip_is_mu,
+            marks_top: self.page_state.marks_top.clone(),
+            marks_first: self.page_state.marks_first.clone(),
+            marks_bot: self.page_state.marks_bot.clone(),
+            marks_split_top: self.page_state.marks_split_top.clone(),
+            marks_split_first: self.page_state.marks_split_first.clone(),
+            marks_split_bot: self.page_state.marks_split_bot.clone(),
+            lastbox_hold: self.box_state.lastbox_hold.clone(),
         }
     }
 
@@ -1080,12 +1202,12 @@ impl NodeBuilder {
     ///
     /// **字段清单与 [`Self::side_effects`] 必须一致，新增字段两处同步。**
     fn restore_side_effects(&mut self, s: &SideEffects) {
-        self.pending_box = s.pending_box;
-        self.pending_kind = s.pending_kind;
-        self.pending_shift = s.pending_shift;
-        self.pending_hshift = s.pending_hshift;
-        self.pending_leaders = s.pending_leaders;
-        self.leaders_box = s.leaders_box.clone();
+        self.box_state.pending_box = s.pending_box;
+        self.box_state.pending_kind = s.pending_kind;
+        self.box_state.pending_shift = s.pending_shift;
+        self.box_state.pending_hshift = s.pending_hshift;
+        self.box_state.pending_leaders = s.pending_leaders;
+        self.box_state.leaders_box = s.leaders_box.clone();
         self.params = s.params;
         self.penalty_arrays = s.penalty_arrays.clone();
         self.param_stack = s.param_stack.clone();
@@ -1097,49 +1219,51 @@ impl NodeBuilder {
         self.last_par_line = s.last_par_line;
         self.font_cs_names = s.font_cs_names.clone();
         self.current_font = s.current_font;
-        self.shipout_next = s.shipout_next;
-        self.ship_seq = s.ship_seq;
-        self.page_counts = s.page_counts;
-        self.boxes = std::rc::Rc::clone(&s.boxes.0);
-        self.box_saves = s.box_saves.clone();
-        self.output_defined = s.output_defined;
-        self.pending_pages = s.pending_pages.clone();
-        self.write_flush_pending = s.write_flush_pending;
-        self.page_shipped = s.page_shipped;
-        self.math_style = s.math_style;
-        self.pending_script = s.pending_script;
-        self.sqrt_pending = s.sqrt_pending;
-        self.radical_pending = s.radical_pending;
-        self.class_pending = s.class_pending;
-        self.accent_pending = s.accent_pending;
-        self.underline_pending = s.underline_pending;
-        self.overline_pending = s.overline_pending;
-        self.nonscript_pending = s.nonscript_pending;
-        self.math_fonts = s.math_fonts.clone();
+        self.page_state.shipout_next = s.shipout_next;
+        self.page_state.ship_seq = s.ship_seq;
+        self.page_state.page_counts = s.page_counts;
+        self.box_state.boxes = std::rc::Rc::clone(&s.boxes.0);
+        self.box_state.box_saves = s.box_saves.clone();
+        self.page_state.output_defined = s.output_defined;
+        self.page_state.pending_pages = s.pending_pages.clone();
+        self.page_state.write_flush_pending = s.write_flush_pending;
+        self.page_state.page_shipped = s.page_shipped;
+        self.math_state.math_style = s.math_style;
+        self.math_state.pending_script = s.pending_script;
+        self.math_state.sqrt_pending = s.sqrt_pending;
+        self.math_state.radical_pending = s.radical_pending;
+        self.math_state.class_pending = s.class_pending;
+        self.math_state.accent_pending = s.accent_pending;
+        self.math_state.underline_pending = s.underline_pending;
+        self.math_state.overline_pending = s.overline_pending;
+        self.math_state.nonscript_pending = s.nonscript_pending;
+        self.math_state.math_fonts = s.math_fonts.clone();
         self.patterns = s.patterns.clone();
         self.hyph_exceptions = s.hyph_exceptions.clone();
-        self.setbox_target = s.setbox_target;
-        self.setbox_global = s.setbox_global;
-        self.pending_box_spec = s.pending_box_spec;
-        self.predisplay_size = s.predisplay_size;
-        self.after_display = s.after_display;
-        self.muskip_params = s.muskip_params;
-        self.muskip_is_mu = s.muskip_is_mu;
-        self.marks_top = s.marks_top.clone();
-        self.marks_first = s.marks_first.clone();
-        self.marks_bot = s.marks_bot.clone();
-        self.marks_split_top = s.marks_split_top.clone();
-        self.marks_split_first = s.marks_split_first.clone();
-        self.marks_split_bot = s.marks_split_bot.clone();
-        self.lastbox_hold = s.lastbox_hold.clone();
+        self.box_state.setbox_target = s.setbox_target;
+        self.box_state.setbox_global = s.setbox_global;
+        self.box_state.pending_box_spec = s.pending_box_spec;
+        self.math_state.predisplay_size = s.predisplay_size;
+        self.math_state.after_display = s.after_display;
+        self.math_state.muskip_params = s.muskip_params;
+        self.math_state.muskip_is_mu = s.muskip_is_mu;
+        self.page_state.marks_top = s.marks_top.clone();
+        self.page_state.marks_first = s.marks_first.clone();
+        self.page_state.marks_bot = s.marks_bot.clone();
+        self.page_state.marks_split_top = s.marks_split_top.clone();
+        self.page_state.marks_split_first = s.marks_split_first.clone();
+        self.page_state.marks_split_bot = s.marks_split_bot.clone();
+        self.box_state.lastbox_hold = s.lastbox_hold.clone();
     }
 
     /// 存入盒子寄存器（TeX 寄存器组级保存）：组内记录旧值，组结束回滚。
     /// 返回旧值（`\box` 取走语义：读旧值 + 清空由调用方按返回值使用）。
     fn store_box(&mut self, idx: usize, value: Option<BoxNode>) -> Option<BoxNode> {
         let old = self.box_view(idx).cloned();
-        if !self.groups.is_empty() && !self.setbox_global {
-            self.box_saves.push((self.groups.len(), idx, old.clone()));
+        if !self.groups.is_empty() && !self.box_state.setbox_global {
+            self.box_state
+                .box_saves
+                .push((self.groups.len(), idx, old.clone()));
         }
         self.write_box(idx, value);
         old
@@ -1156,7 +1280,7 @@ impl NodeBuilder {
         let children = self.lists.pop().expect("盒子列表");
         self.list_modes.pop();
         // ETRIP 冲刺：\hbox/\vbox to/spread 规格（目标宽/高）
-        let spec = self.pending_box_spec.take();
+        let spec = self.box_state.pending_box_spec.take();
         let node = match kind {
             PendingBox::HBox => {
                 let natural = hbox_dimensions(&children).width;
@@ -1199,13 +1323,13 @@ impl NodeBuilder {
         };
         // `\raise`/`\lower`：封装结果应用参考点位移（\raise 向上为正）
         let mut node = node;
-        if let Some(shift) = self.pending_shift.take() {
+        if let Some(shift) = self.box_state.pending_shift.take() {
             if let Node::Box(b) = &mut node {
                 b.shift = shift;
             }
         }
         // `\moveleft`/`\moveright`：水平位移（TRIP 冲刺暂不落节点，取走即清）
-        let _hshift = self.pending_hshift.take();
+        let _hshift = self.box_state.pending_hshift.take();
         // ETRIP 冲刺：`\setbox<n>=<box>` —— 封装结果存入寄存器（不入当前列表）。
         // 仅最外层 RHS 盒子组（group_begin 认领进 GroupCtx）持有目标；内层嵌套盒
         // （`\setbox0=\vbox{\hbox{...}}` 的 \hbox）不消费。
@@ -1219,7 +1343,7 @@ impl NodeBuilder {
             if let Node::Box(b) = node {
                 self.trace_shipout(&b);
                 self.push_shipped(b);
-                self.write_flush_pending = true;
+                self.page_state.write_flush_pending = true;
             }
             return;
         }
@@ -1234,7 +1358,7 @@ impl NodeBuilder {
         }
         // `\leaders` 引导盒子：封装结果挂起，等 \hskip/\vskip 胶水组成 Leader 节点。
         if let Some(ld) = leaders {
-            self.leaders_box = Some((ld, node));
+            self.box_state.leaders_box = Some((ld, node));
             return;
         }
         self.push_box(node);
@@ -1244,8 +1368,8 @@ impl NodeBuilder {
     /// （tex.web `append_to_vlist`：d = \baselineskip − (depth 前 + height 新)，
     /// d < \lineskiplimit 用 \lineskip，否则用宽度调整为 d 的 \baselineskip）。
     fn push_node(&mut self, node: Node) {
-        self.nodes_appended += 1;
-        self.last_appended = format!("{node:?}");
+        self.io_state.nodes_appended += 1;
+        self.io_state.last_appended = format!("{node:?}");
         self.record_main_node(&node);
         self.lists.last_mut().expect("列表栈非空").push(node);
     }
@@ -1271,7 +1395,7 @@ impl NodeBuilder {
         if self.mode() == Mode::Vertical {
             // 分页模式下顶层前驱盒子的深度/类型：页面构建器里的盒子，或
             // 断页后仍在贡献列表中的残余盒子（未入页，interline glue 的依据）。
-            let (prev_is_box, prev_depth) = if self.pagination && self.lists.len() == 1 {
+            let (prev_is_box, prev_depth) = if self.page_state.pagination && self.lists.len() == 1 {
                 match self.lists[0]
                     .iter()
                     .rev()
@@ -1280,8 +1404,8 @@ impl NodeBuilder {
                     Some(Node::Box(prev)) => (true, prev.depth),
                     Some(Node::Rule { depth, .. }) => (true, *depth),
                     _ => (
-                        self.page.prev_depth() > crate::page::IGNORE_DEPTH,
-                        self.page.prev_depth(),
+                        self.page_state.page.prev_depth() > crate::page::IGNORE_DEPTH,
+                        self.page_state.page.prev_depth(),
                     ),
                 }
             } else {
@@ -1404,7 +1528,7 @@ impl NodeBuilder {
              <hskip or vskip>, so I'm ignoring these leaders.\n"
                 .to_string(),
         );
-        self.leaders_box = None;
+        self.box_state.leaders_box = None;
     }
 
     /// 词间空白胶水（tex.web `append_normal_space` / `app_space`）：

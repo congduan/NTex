@@ -57,8 +57,8 @@ impl NodeBuilder {
             Mode::DisplayMath => MathStyle::Display,
             _ => MathStyle::Text,
         };
-        self.math.push(MathLevel::default());
-        self.math_style = style;
+        self.math_state.math.push(MathLevel::default());
+        self.math_state.math_style = style;
         self.lists.push(Vec::new());
         self.list_modes.push(mode);
         Ok(())
@@ -77,16 +77,16 @@ impl NodeBuilder {
     /// 显示公式（M4-4）：收为 `\hbox to \hsize` 居中盒 + `\belowdisplayskip` +
     /// `\postdisplaypenalty`（垂直元素）；行内公式：节点直通当前列表。
     fn close_math(&mut self) -> Result<()> {
-        if self.pending_script.is_some() {
+        if self.math_state.pending_script.is_some() {
             return Err(Error::invalid_input(
                 "数学模式中 ^/_ 后缺少上标/下标（Missing { inserted）",
             ));
         }
         let mut level = self
-            .math
+            .math_state.math
             .pop()
             .ok_or_else(|| Error::internal("close_math 无数学层"))?;
-        let style = self.math_style;
+        let style = self.math_state.math_style;
         let was_display = self.list_modes.pop() == Some(Mode::DisplayMath);
         self.lists.pop();
         // 公式末尾收尾：未闭合 \left 报错恢复（TeX "Extra } or forgotten \right."，
@@ -115,7 +115,7 @@ impl NodeBuilder {
             let d = half(z - formula_width);
             // tex.web：`(d+s<=pre_display_size) or l` → 长 skip（ clearance 不足），
             // 否则短 skip；eqno/leqno（l 臂）本刀不做，恒按无公式编号。
-            let long = d + s <= self.predisplay_size;
+            let long = d + s <= self.math_state.predisplay_size;
             let above = if long {
                 self.params.abovedisplayskip
             } else {
@@ -159,7 +159,7 @@ impl NodeBuilder {
             });
             self.append_param_glue(below);
             // 后续文字续排：无 parskip/缩进（TeX 公式仍在段内）
-            self.after_display = true;
+            self.math_state.after_display = true;
         } else {
             for n in nodes {
                 self.append(n);
@@ -177,11 +177,11 @@ impl NodeBuilder {
         // （`\mathaccent 16 x`），经 math_push_atom 挂为 nucleus 原子（不报错）。
         match cat {
             ntex_core::Catcode::Superscript => {
-                self.pending_script = Some(true);
+                self.math_state.pending_script = Some(true);
                 Ok(())
             }
             ntex_core::Catcode::Subscript => {
-                self.pending_script = Some(false);
+                self.math_state.pending_script = Some(false);
                 Ok(())
             }
             ntex_core::Catcode::Letter | ntex_core::Catcode::Other => self
@@ -198,19 +198,19 @@ impl NodeBuilder {
     /// 脚本挂载（`x^2`/`x_i`/`x_i^2`）。
     fn math_push_atom(&mut self, atom: MathAtom) -> Result<()> {
         // `\sqrt` 单原子字段：`\sqrt x`
-        if self.sqrt_pending {
-            self.sqrt_pending = false;
+        if self.math_state.sqrt_pending {
+            self.math_state.sqrt_pending = false;
             let level = self
-                .math
+                .math_state.math
                 .last_mut()
                 .ok_or_else(|| Error::internal("数学原子无数学层"))?;
             level.atoms.push(MathAtom::Radical { base: vec![atom] });
             return Ok(());
         }
         // `\radical<delim>` 单原子字段：`\radical"3 x`（TRIP L412 everymath 注入路径）
-        if let Some(_delim) = self.radical_pending.take() {
+        if let Some(_delim) = self.math_state.radical_pending.take() {
             let level = self
-                .math
+                .math_state.math
                 .last_mut()
                 .ok_or_else(|| Error::internal("数学原子无数学层"))?;
             level.atoms.push(MathAtom::Radical { base: vec![atom] });
@@ -218,11 +218,11 @@ impl NodeBuilder {
         }
         // `\accent`/`\mathaccent` 单原子 nucleus 字段：第一个原子充当重音符，
         // 第二个原子是被重音内容（tex.web math_ac：accent 字段在前）。
-        if self.accent_pending {
-            if let Some(level) = self.math.last_mut() {
+        if self.math_state.accent_pending {
+            if let Some(level) = self.math_state.math.last_mut() {
                 if let Some(MathAtom::Accent { nucleus, .. }) = level.atoms.last_mut() {
                     nucleus.push(atom);
-                    self.accent_pending = false;
+                    self.math_state.accent_pending = false;
                     return Ok(());
                 }
             }
@@ -231,7 +231,7 @@ impl NodeBuilder {
         // 单字符是合法字段（tex.web scan_math letter 分支：`\mathord x` 不报错）；
         // 非字符非 { token 的 Missing { inserted 由 check_math_field_break 负责
         //（原语事件入口）。
-        if let Some(class) = self.class_pending.take() {
+        if let Some(class) = self.math_state.class_pending.take() {
             let atom = match atom {
                 MathAtom::Char(mut mc) => {
                     mc.class = class;
@@ -251,7 +251,7 @@ impl NodeBuilder {
                 stretch,
                 shrink,
                 ..
-            } if self.nonscript_pending => MathAtom::MSkip {
+            } if self.math_state.nonscript_pending => MathAtom::MSkip {
                 width,
                 stretch,
                 shrink,
@@ -259,24 +259,24 @@ impl NodeBuilder {
             },
             other => other,
         };
-        self.nonscript_pending = false;
+        self.math_state.nonscript_pending = false;
         self.math_push_atom_raw(atom)
     }
 
     /// 原始追加（含脚本挂载）：`x^2`/`x_i`/`x_i^2`。
     fn math_push_atom_raw(&mut self, atom: MathAtom) -> Result<()> {
         // 先探测原子缺失（报错写 transcript 需 &mut self，避免与 level 借用冲突）
-        if self.pending_script.is_some()
-            && self.math.last().is_some_and(|l| l.atoms.is_empty())
+        if self.math_state.pending_script.is_some()
+            && self.math_state.math.last().is_some_and(|l| l.atoms.is_empty())
         {
             // TeX：^/_ 前无原子 → "Missing { inserted" 恢复（插入空原子；TRIP L263）
             self.report_error("Missing { inserted.");
         }
         // 重音符 nucleus 字段在重音符之后（`\accent\x`）：TeX scan_math 对非字符
         // token 报 "Missing { inserted" 放回重扫（trip.tex L396）。
-        if self.accent_pending
+        if self.math_state.accent_pending
             && self
-                .math
+                .math_state.math
                 .last()
                 .is_some_and(|l| {
                     matches!(l.atoms.last(), Some(MathAtom::Accent { nucleus, .. }) if nucleus.is_empty())
@@ -285,10 +285,10 @@ impl NodeBuilder {
             self.report_error("Missing { inserted.");
         }
         let level = self
-            .math
+            .math_state.math
             .last_mut()
             .ok_or_else(|| Error::internal("数学原子无数学层"))?;
-        if let Some(is_sup) = self.pending_script.take() {
+        if let Some(is_sup) = self.math_state.pending_script.take() {
             let mut base = match level.atoms.pop() {
                 Some(b) => b,
                 None => MathAtom::Classed {
@@ -420,8 +420,8 @@ impl NodeBuilder {
                         //  smalltrip=5pt → 18mu 实际 sp = 5pt，对齐 etrip.log）。
                         // math_to_hlist 按当前 style 的 family-2 em/18 缩放到 sp。
                         let idx = code_idx(code);
-                        let g = self.muskip_params[idx];
-                        let (w, st, sh) = if self.muskip_is_mu[idx] {
+                        let g = self.math_state.muskip_params[idx];
+                        let (w, st, sh) = if self.math_state.muskip_is_mu[idx] {
                             let em = self.math_em(style);
                             (
                                 mu_to_sp(g.width, em),
@@ -642,7 +642,7 @@ impl NodeBuilder {
         // num1/num2/num3/denom1/denom2 = mathsy(8..12)（tex.web @d L13817-13821）
         let kind = style.size_kind();
         let fam2 = self
-            .math_fonts
+            .math_state.math_fonts
             .get(2)
             .and_then(|s| s.get(kind))
             .copied()
@@ -653,7 +653,7 @@ impl NodeBuilder {
         };
         // 默认分式线厚度 = mathex(8)（tex.web @d L13841，非 fam2！）
         let fam3 = self
-            .math_fonts
+            .math_state.math_fonts
             .get(3)
             .and_then(|s| s.get(kind))
             .copied()
@@ -733,7 +733,7 @@ impl NodeBuilder {
     fn axis_height(&self, style: MathStyle) -> i64 {
         let kind = style.size_kind();
         let font = self
-            .math_fonts
+            .math_state.math_fonts
             .get(2)
             .and_then(|s| s.get(kind))
             .copied()
@@ -749,7 +749,7 @@ impl NodeBuilder {
     fn big_op_spacings(&self, style: MathStyle) -> [i64; 5] {
         let kind = style.size_kind();
         let font = self
-            .math_fonts
+            .math_state.math_fonts
             .get(3)
             .and_then(|s| s.get(kind))
             .copied()
@@ -937,7 +937,7 @@ impl NodeBuilder {
             MathStyle::Script => 1,
             _ => 2,
         };
-        if let Some(Some(f)) = self.math_fonts.get(mc.fam as usize).map(|s| s[kind]) {
+        if let Some(Some(f)) = self.math_state.math_fonts.get(mc.fam as usize).map(|s| s[kind]) {
             (f, 1, 1) // 族字体已按字阶设计字号，不缩放
         } else {
             let (num, den) = style.scale();
@@ -990,7 +990,7 @@ impl NodeBuilder {
     /// family-2（math symbols）字体在指定字阶槽的 fontdimen（tex.web
     /// `mathsy(n)`；缺字体/缺参数回 0，与 TeX nullfont 参数为 0 同义）。
     fn mathsy_param(&self, kind: usize, idx: usize) -> i64 {
-        self.math_fonts
+        self.math_state.math_fonts
             .get(2)
             .and_then(|s| s.get(kind).copied().flatten())
             .map(|f| self.fonts.font_param(f, idx))
@@ -999,7 +999,7 @@ impl NodeBuilder {
 
     /// family-2 字体的 x_height（tex.web `math_x_height(cur_size)`）。
     fn mathsy_x_height(&self, kind: usize) -> i64 {
-        self.math_fonts
+        self.math_state.math_fonts
             .get(2)
             .and_then(|s| s.get(kind).copied().flatten())
             .map(|f| self.fonts.x_height(f))
@@ -1039,7 +1039,7 @@ impl NodeBuilder {
             _ => 2,
         };
         let quad = if let Some(f) = self
-            .math_fonts
+            .math_state.math_fonts
             .get(2)
             .and_then(|s| s.get(kind).copied().flatten())
         {

@@ -27,10 +27,10 @@ impl NodeBuilder {
         if self.params.misc[27] <= 0 {
             return;
         }
-        self.ship_seq += 1;
+        self.page_state.ship_seq += 1;
         let mut out = format!(
             "Completed box being shipped out {}\n",
-            format_page_label(&self.page_counts)
+            format_page_label(&self.page_state.page_counts)
         );
         showbox_format_box(b, 0, &self.fonts, &self.font_cs_names, &mut out);
         out.push('\n');
@@ -41,14 +41,14 @@ impl NodeBuilder {
     /// 维护页号链镜像，shipout 边界打标签 / 组装 DVI bop 计数用。
     fn count_changed(&mut self, idx: usize, value: i64) {
         if idx < 10 {
-            self.page_counts[idx] = value;
+            self.page_state.page_counts[idx] = value;
         }
     }
 
     fn accept_page(&mut self, p: BoxNode) {
         let p = self.insert_accumulate(p);
-        if self.output_defined {
-            self.pending_pages.push_back(p);
+        if self.page_state.output_defined {
+            self.page_state.pending_pages.push_back(p);
         } else {
             self.ship_page(p);
         }
@@ -97,20 +97,20 @@ impl NodeBuilder {
     fn ship_page(&mut self, p: BoxNode) {
         self.trace_shipout(&p);
         self.push_shipped(p);
-        self.write_flush_pending = true;
-        self.page_shipped = true;
+        self.page_state.write_flush_pending = true;
+        self.page_state.page_shipped = true;
     }
 
     /// 页面入 shipped 队列（计数快照同步入 [`Self::shipped_counts`]——两表恒同长，
     /// 增量回滚截断时按同一长度截）。
     fn push_shipped(&mut self, p: BoxNode) {
-        self.shipped_counts.push(self.page_counts);
-        self.shipped.push(p);
+        self.page_state.shipped_counts.push(self.page_state.page_counts);
+        self.page_state.shipped.push(p);
     }
 
     /// 各页面 shipout 边界的 `\count0..9` 快照（与 [`Self::shipped`] 一一对应）。
     pub fn shipped_page_counts(&self) -> &[[i64; 10]] {
-        &self.shipped_counts
+        &self.page_state.shipped_counts
     }
 
     /// 结束开放段落：Knuth-Plass 折行成行 hbox 并追加到上层列表（行间插 interline glue）。
@@ -120,7 +120,7 @@ impl NodeBuilder {
     /// 清除，eject 循环会把这些可丢弃节点误判为"有待冲材料"而反复追加
     /// eject 节点 → 空页死循环。
     fn drop_empty_page_discardables(&mut self) {
-        if !self.page.is_empty() {
+        if !self.page_state.page.is_empty() {
             return;
         }
         while let Some(n) = self.lists[0].first() {
@@ -140,7 +140,7 @@ impl NodeBuilder {
     /// 交错执行——页面经 [`Self::accept_page`] 路由（box255+例程 或 直通 shipout）。
     fn eject_one_page(&mut self) -> Result<bool> {
         loop {
-            if self.page.is_empty() && self.lists[0].is_empty() {
+            if self.page_state.page.is_empty() && self.lists[0].is_empty() {
                 return Ok(false);
             }
             // 只在贡献列表已空（全部材料已进页构建器、需要强制断出这最后一页）时
@@ -167,7 +167,7 @@ impl NodeBuilder {
             }
             // 产出一页则返回；材料全部入页但未触发断页 → 循环（贡献已空时补 eject
             // 节点再试，贡献非空时继续消化既有材料）。
-            if let Some(p) = self.page.feed_one(&mut self.lists[0], &self.params) {
+            if let Some(p) = self.page_state.page.feed_one(&mut self.lists[0], &self.params) {
                 self.accept_page(p);
                 // ETRIP 冲刺：断页 marks 轮转（top = 旧 bot，first 清空，bot 保留继承）
                 self.rotate_marks();

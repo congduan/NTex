@@ -133,7 +133,7 @@ fn main_above_depth(b: &NodeBuilder) -> Option<i64> {
         Some(Node::Box(x)) => Some(x.depth),
         Some(Node::Rule { depth, .. }) => Some(*depth),
         _ => {
-            let pd = b.page.prev_depth();
+            let pd = b.page_state.page.prev_depth();
             if pd > crate::page::IGNORE_DEPTH {
                 Some(pd)
             } else {
@@ -235,7 +235,7 @@ impl SideEffects {
     /// 边界必干净，有缓存 ⇒ 该段执行进入时 `builder_shaped` 成立）；活侧非空即
     /// 判不匹配（与阶段四行为一致）。
     fn matches(&self, b: &NodeBuilder) -> bool {
-        b.groups.is_empty() && b.math.is_empty() && b.side_effects() == *self
+        b.groups.is_empty() && b.math_state.math.is_empty() && b.side_effects() == *self
     }
 }
 
@@ -255,10 +255,10 @@ struct LayoutBoundary {
 impl LayoutBoundary {
     /// 捕获（须持有 builder 可变引用：摘/还 shipped）。
     fn capture(b: &mut NodeBuilder) -> Self {
-        let shipped = std::mem::take(&mut b.shipped);
+        let shipped = std::mem::take(&mut b.page_state.shipped);
         let shipped_count = shipped.len();
         let builder = b.clone();
-        b.shipped = shipped;
+        b.page_state.shipped = shipped;
         Self {
             builder,
             shipped_count,
@@ -267,14 +267,14 @@ impl LayoutBoundary {
 
     /// 整体还原（编辑回滚点）：builder 全字段 + shipped 截断到边界。
     fn restore_full(&self, b: &mut NodeBuilder) {
-        let mut pages = std::mem::take(&mut b.shipped);
+        let mut pages = std::mem::take(&mut b.page_state.shipped);
         // 页号链快照与页面同长同截（输出例程刀 5：push_shipped 双表同步）。
-        let mut page_counts = std::mem::take(&mut b.shipped_counts);
+        let mut page_counts = std::mem::take(&mut b.page_state.shipped_counts);
         *b = self.builder.clone();
         pages.truncate(self.shipped_count);
         page_counts.truncate(self.shipped_count);
-        b.shipped = pages;
-        b.shipped_counts = page_counts;
+        b.page_state.shipped = pages;
+        b.page_state.shipped_counts = page_counts;
     }
 }
 
@@ -596,8 +596,8 @@ impl IncrementalTypesetter {
         }
         let mut builder = NodeBuilder::with_pagination(self.fonts.clone(), true);
         builder.font_cs_names = self.expander.font_cs_names_ref().clone();
-        builder.muskip_params = self.expander.muskip_registers();
-        builder.muskip_is_mu = [true; 3];
+        builder.math_state.muskip_params = self.expander.muskip_registers();
+        builder.math_state.muskip_is_mu = [true; 3];
         builder.sync_params(self.expander.params_ref());
         // \sfcode 默认（大写 999）与全量路径 install_builder 同源，否则增量
         // 段与全量段的大写-标点空格因子钳制不一致（见 init_sfcodes 文档）。
@@ -615,10 +615,10 @@ impl IncrementalTypesetter {
         let b = sink_builder(&mut self.expander);
         b.groups.is_empty()
             && b.lists.len() == 1
-            && b.math.is_empty()
-            && b.pending_box.is_none()
-            && b.pending_kind.is_none()
-            && !b.shipout_next
+            && b.math_state.math.is_empty()
+            && b.box_state.pending_box.is_none()
+            && b.box_state.pending_kind.is_none()
+            && !b.page_state.shipout_next
     }
 
     /// 段 `j` 的缓存复用判定（`Err(原因)` = 不可复用，须照常执行）。
@@ -782,7 +782,7 @@ impl IncrementalTypesetter {
             })
         };
         self.capture_boundary(j + 1, false);
-        if self.builder_mut().output_defined {
+        if self.builder_mut().page_state.output_defined {
             self.output_routine = true;
         }
         self.stats.executed += 1;
@@ -796,16 +796,16 @@ impl IncrementalTypesetter {
         let ended = self.expander.is_ended();
         {
             let b = self.builder_mut();
-            if b.pending_box.is_some() {
+            if b.box_state.pending_box.is_some() {
                 if ended {
-                    b.pending_box = None;
+                    b.box_state.pending_box = None;
                 } else {
                     return Err(Error::invalid_input("\\hbox/\\vbox 后缺少组"));
                 }
             }
-            if b.shipout_next {
+            if b.page_state.shipout_next {
                 if ended {
-                    b.shipout_next = false;
+                    b.page_state.shipout_next = false;
                 } else {
                     return Err(Error::invalid_input("\\shipout 后缺少盒子"));
                 }
@@ -821,10 +821,10 @@ impl IncrementalTypesetter {
                     return Err(Error::invalid_input("组未闭合（缺少 }）"));
                 }
             }
-            if !b.math.is_empty() {
+            if !b.math_state.math.is_empty() {
                 if ended {
                     let _ = b.write16("(end occurred inside a math list)\n".to_string());
-                    b.math.clear();
+                    b.math_state.math.clear();
                 } else {
                     return Err(Error::invalid_input("数学模式未闭合（缺少 $）"));
                 }
@@ -845,7 +845,7 @@ impl IncrementalTypesetter {
         loop {
             let ejected = {
                 let b = self.builder_mut();
-                if b.pagination {
+                if b.page_state.pagination {
                     b.eject_one_page()?
                 } else {
                     false
@@ -871,7 +871,7 @@ impl IncrementalTypesetter {
         self.expander.flush_writes()?;
         // 页面**克隆**给调用方（不摘走）：builder 里的 shipped 是下一次 `edit`
         // 回滚截断的基准（前缀页面的逐位一致由它保证）。
-        let pages = self.builder_mut().shipped.clone();
+        let pages = self.builder_mut().page_state.shipped.clone();
         let page_counts = self.builder_mut().shipped_page_counts().to_vec();
         let fonts = match &self.fonts {
             Fonts::Tfm(table) => table.borrow().clone(),
