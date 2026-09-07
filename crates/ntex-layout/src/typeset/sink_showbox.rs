@@ -39,6 +39,48 @@ fn order_name(order: u8) -> &'static str {
     }
 }
 
+/// 胶水 spec（tex.web print_spec）：`10.0 plus 2.0fil`；无拉伸/收缩只有宽度。
+/// insert 节点的 `split(...)` 用（真 TeX 走 print_spec(split_top_ptr)）。
+fn showbox_glue_spec(g: &Glue) -> String {
+    let mut s = showbox_pt(g.width);
+    if g.stretch != 0 {
+        s.push_str(&format!(
+            " plus {}{}",
+            showbox_pt(g.stretch),
+            order_name(g.stretch_order)
+        ));
+    }
+    if g.shrink != 0 {
+        s.push_str(&format!(
+            " minus {}{}",
+            showbox_pt(g.shrink),
+            order_name(g.shrink_order)
+        ));
+    }
+    s
+}
+
+/// 体 token 串（insert 节点未排版体的占位显示）：字符按字面、控制序列
+/// `\cs<下标> `（TeX show_token_list 在 cs 后补空格的样式；intern 表在
+/// expander 侧，sink 无名可查）、宏参数 `#n`。
+fn showbox_token_list(toks: &[Token]) -> String {
+    let mut s = String::new();
+    for t in toks {
+        if let Some(csid) = t.csid() {
+            s.push_str(&format!("\\cs{csid} "));
+            continue;
+        }
+        if let Some(n) = t.param_number() {
+            s.push_str(&format!("#{n}"));
+            continue;
+        }
+        if let Some(c) = t.charcode().and_then(char::from_u32) {
+            s.push(c);
+        }
+    }
+    s
+}
+
 fn showbox_format_box(
     b: &BoxNode,
     depth: usize,
@@ -204,7 +246,28 @@ fn showbox_format_node(
             Some(c) => out.push_str(&format!("{p}\\marks{c}{{{text}}}\n")),
             None => out.push_str(&format!("{p}\\mark{{{text}}}\n")),
         },
-        Node::Ins { class, text } => out.push_str(&format!("{p}\\insert{class} {text}\n")),
+        Node::Ins {
+            class,
+            body,
+            split_top_skip,
+            split_max_depth,
+            float_cost,
+        } => {
+            // tex.web show_node @<Display insertion |p|@>：
+            // `\insert<class>, natural size <height>; split(<split_top_skip>,<depth>); float cost <float_cost>`
+            // natural size = 排版后体高（NTex 体未执行 → 0.0 占位，见 node.rs Ins 注）。
+            out.push_str(&format!(
+                "{p}\\insert{class}, natural size {}; split({},{}); float cost {float_cost}\n",
+                showbox_pt(0),
+                showbox_glue_spec(split_top_skip),
+                showbox_pt(*split_max_depth),
+            ));
+            // 体 token 串占位显示（真 TeX 此处是 `ins_ptr` vlist 子树逐行展开）。
+            // intern 表在 expander 侧、sink 无名可查 → cs 以 \cs<下标> 显示。
+            if !body.is_empty() {
+                out.push_str(&format!("{p}{{{}}}\n", showbox_token_list(body)));
+            }
+        }
         Node::Adjust { text } => out.push_str(&format!("{p}\\vadjust {text}\n")),
         Node::Whatsit { text } => out.push_str(&format!("{p}\\write {text}\n")),
         // 数学边界标记（tex.web math_node）：`.\\mathon`；`\\mathsurround` 非 0

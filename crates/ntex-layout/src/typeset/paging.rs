@@ -16,11 +16,48 @@ impl NodeBuilder {
     }
 
     fn accept_page(&mut self, p: BoxNode) {
+        let p = self.insert_accumulate(p);
         if self.output_defined {
             self.pending_pages.push_back(p);
         } else {
             self.ship_page(p);
         }
+    }
+
+    /// fire_up 的 insert 计账（tex.web fire_up
+    /// `@<Either insert the material specified by node |p| into box |n|...@>`）：
+    /// 页上 ins_node 的体进入 `box(class)`（插入累积盒，多个 insert 依次追加），
+    /// ins_node 本身从页里删除——真 TeX 页盒树里没有 ins 节点，脚注由输出例程
+    /// `\unvbox\footins` 回流（plain 默认例程 `\shipout\box255` 则直接丢弃）。
+    ///
+    /// NTex 体未排版 → 累积盒的子节点是 [`Node::Ins`] 本尊（token 体无损保留）：
+    /// `\ifvoid<insert号>`/`\unvbox<insert号>`/`\box<insert号>` 因此走既有盒子
+    /// 寄存器面（tex.web：`box(c)` 就是插入号 c 的累积盒，无需新寄存器文件）。
+    /// box(255) 是页队列 → `\insert255` 已在 [`TokenSink::insert_node`] 报错改道 0。
+    fn insert_accumulate(&mut self, mut p: BoxNode) -> BoxNode {
+        let mut moved: Vec<(usize, Node)> = Vec::new();
+        let mut children = Vec::with_capacity(p.children.len());
+        for n in std::mem::take(&mut p.children) {
+            match &n {
+                Node::Ins { class, .. } => moved.push((*class, n)),
+                _ => children.push(n),
+            }
+        }
+        p.children = children;
+        for (class, ins) in moved {
+            let slot = self.box_view(class).cloned();
+            // tex.web ensure_vbox：累积盒只许是 vbox；本实现遇 hbox/异型直接重建
+            // （`\setbox150=\hbox{}` 与 `\insert150` 撞号在真 TeX 报
+            // "Improper \hbox"，此处静默覆盖——insert 号与盒寄存器撞号见 survey §5.bis.4）
+            let mut b = match slot {
+                Some(b) if b.kind == BoxKind::VBox => b,
+                _ => BoxNode::new_vbox(Vec::new()),
+            };
+            b.children.push(ins);
+            // 裸写不入组级日志（tex.web：页面构建器对 box(n) 的写不走 set_box）
+            self.write_box(class, Some(b));
+        }
+        p
     }
 
     /// 页面真正输出（tex.web `ship_out`）：转录标题 + 入 shipped 队列 + flush 标记。

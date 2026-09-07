@@ -27,6 +27,9 @@
 //!
 //! 胶水/字距/惩罚不参与 height/depth：水平列表里它们有 width，垂直列表里无维度。
 
+use ntex_core::register::Glue;
+use ntex_core::token::Token;
+
 /// 字体标识：由字体表（M3-4 TFM 解析）分配；`FontId(0)` 为默认字体。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FontId(pub u32);
@@ -212,11 +215,24 @@ pub enum Node {
         class: Option<i64>,
         text: String,
     },
-    /// insert 节点（`\insert<num>{<general text>}`；无维度）：class 为插入寄存器号，
-    /// 内容（一般文本）只收集不排版（ETRIP 简化）。
+    /// insert 节点（`\insert<num>{<general text>}`；无维度）：class 为插入寄存器号。
+    ///
+    /// tex.web `begin_insert_or_adjust` 把组体在内部垂直模式排版、`vpack(natural)`
+    /// 后挂在 `ins_ptr`，并在 insert_group 收口时读 `\splittopskip`/`\splitmaxdepth`/
+    /// `\floatingpenalty` 存入 `split_top_ptr`/`depth`/`float_cost`。NTex 现阶段组体
+    /// **不在扫描位执行**（体排版需要主循环，见 survey §5.bis.4 发现未修），
+    /// 故体以 token 串**无损保留**（此前 `text: String` 把 cs 全部丢掉）——
+    /// `\insert150{\hbox{FN}}` 的 `\hbox` 结构还在，`natural size` 以 0 占位。
     Ins {
         class: usize,
-        text: String,
+        /// 组体 token 串（无损；`\ifvoid<insert号>`/`\unvbox<insert号>` 的回流内容）
+        body: Vec<Token>,
+        /// `\splittopskip`（tex.web `split_top_ptr`）
+        split_top_skip: Glue,
+        /// `\splitmaxdepth`（tex.web `depth`）
+        split_max_depth: i64,
+        /// `\floatingpenalty`（tex.web `float_cost`）
+        float_cost: i64,
     },
     /// adjust 节点（`\vadjust{<vertical material>}`；无维度）。
     Adjust {

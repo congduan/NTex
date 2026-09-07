@@ -1236,11 +1236,26 @@ impl TokenSink for NodeBuilder {
         Ok(())
     }
 
-    /// `\insert<num>{...}`：insert 节点追加到当前列表（无维度；内容只收集不排版）。
+    /// `\insert<num>{...}`：insert 节点追加到当前列表（无维度；体 token 串无损保留）。
+    ///
+    /// 三参数取扫描点的参数镜像——tex.web 在 insert_group 收口（`}` 处）读
+    /// `\splittopskip`/`\splitmaxdepth`/`\floatingpenalty`，NTex 体不在扫描位
+    /// 执行，组体内的同名赋值不生效（见 survey §5.bis.4 发现未修 1）。
+    /// `\insert255` 按 tex.web 报错并改道 0（box 255 是页面寄存器）——否则
+    /// 刀 3 的 fire_up 累积会写穿 [`PAGE_BOX`] 页队列。
     fn insert_node(&mut self, class: usize, toks: Vec<Token>) -> Result<()> {
+        let mut class = class;
+        if class == PAGE_BOX {
+            self.report_error("You can't \\insert255.");
+            self.report_help("I'm changing to \\insert0; box 255 is special.");
+            class = 0;
+        }
         self.append(Node::Ins {
             class,
-            text: toks_to_text(&toks),
+            body: toks,
+            split_top_skip: self.params.splittopskip.clone(),
+            split_max_depth: self.params.splitmaxdepth,
+            float_cost: self.params.misc[37], // \floatingpenalty
         });
         Ok(())
     }

@@ -638,3 +638,66 @@ fire_up 覆写 box(255) ≙ push_back）。三个助手：`box_view`（读）、
 5. TRIP：pass2 既有失败不变（同 `组未闭合` groups）；pass1 delta 39 行全部
    落在 `\setbox 254=\box255`/`\ifvoid 254`/`\box255` 消费路径（即本刀修复的
    语义——take 真正取走页，`\ifvoid254` 由真变假）；ETRIP 逐字节一致。
+
+## 5.bis.4 刀 3 实测记录（2026-09-07，✅ 部分完成——token 体结构化落地，体排版受阻于 expand/）
+
+**改动面**（全部 ntex-layout，零 ntex-core 改动——`insert_node` 的 sink 事件签名未动，
+`expand/primitive_align.rs` 的 Insert 臂一行未碰）：`node.rs`（`Node::Ins` 从
+`{class, text: String}` 改为 `{class, body: Vec<Token>, split_top_skip, split_max_depth,
+float_cost}`）+ `sink.rs`（insert 事件捕获三参数镜像 + `\insert255` 报错改道 0）+
+`sink_showbox.rs`（tex.web show_node 格式 + 体 token 串显示）+ `paging.rs`（`accept_page`
+前 `insert_accumulate`：页上 ins_node 的体进 `box(class)`、ins_node 从页里删除）+
+`tests.rs` 5 条靶向单测。
+
+**tex.web 裁决**（`begin_insert_or_adjust` + insert_group 收口 + fire_up
+`@<Either insert the material specified by node |p| into box |n|...@>`）：
+①体在**内部垂直模式**排版后 `vpack(natural)` 挂 `ins_ptr`；②`\splittopskip`/
+`\splitmaxdepth`/`\floatingpenalty` 在**组体收口时**读取，存 `split_top_ptr`/`depth`/
+`float_cost`；③ins_node 的 `height` = 体高+体深（参与页记账），ins_node 本身在
+fire_up 被删除（装得下时），体进 `box(class)`——**`box(c)` 就是插入号 c 的累积盒**，
+输出例程 `\unvbox\footins` 由此回流。④`\insert255` 报错改道 0。
+
+**真 TeX 对拍**（TinyTeX 2026 plain，/tmp/knife3/p1–p4.tex）：
+
+| 探针 | 真 TeX | NTex |
+|---|---|---|
+| p1 `\setbox0=\vbox{\insert150{...三参数赋值...\hbox{FN}}}\showbox0` | `\insert150, natural size 6.83331; split(10.0 plus 2.0fil,1.0); float cost 200` + `.\hbox(...)` 体子树 | `\insert150, natural size 0.0; split(10.0 plus 2.0fil,1.0); float cost 200` + `.{\cs… {FN}}`（三参数逐字一致；**natural size 与体子树待体排版**）✅ 部分 |
+| p4 `\hbox{X}\insert150{\hbox{A}}\vfill\penalty-10000 ␣\ifvoid150` | `FULL` | `FULL` ✅（fire_up 后 `\ifvoid` 经既有盒寄存器面判非 void） |
+| p4' 同上后 `\setbox3=\vbox{\unvbox150}\showbox3` + `\ifvoid150` | box3 含体子树、150 复归 void | box3 含 ins 节点（体 token 保留）、150 复归 void ✅（取走语义） |
+| p3 `\penalty-10000\ifvoid150`（**紧邻**） | `VOID`（条件在数字扫描前瞻位求值） | `VOID` ✅ 同款——探针须用空格隔开 |
+| 断页后的页盒树 | 无 ins 节点 | 无 ins 节点 ✅（真 TeX 页形） |
+| `\insert255{...}` | `! You can't \insert255.` + help + 改道 0 | 同（缺 `<to be read again>`/l.N 上下文行——sink 无输入栈可见性）✅ |
+
+**发现未修（本刀不动，按领地约束记录）**：
+1. **体排版被领地卡住（本刀核心缺口）**：`Node::Ins.body` 已无损保留，但体**执行**
+   需要 `\insert` 臂把组体交给主循环（tex.web `begin_insert_or_adjust`：`saved(0):=class;
+   new_save_level(insert_group); scan_left_brace; normal_paragraph; push_nest; mode:=-vmode`
+   + 收口在 `insert_group` 组事件做 `vpack(natural)` + 三参数读取）。落点
+   `ntex-core/src/expand/primitive_align.rs` 的 `Primitive::Insert` 臂（现
+   `scan_group_contents(None)` 有损收集）+ 新 sink 事件对（如 `insert_begin(class)`/
+   复用 group 机制）+ `GroupKind::Insert`（`\currentgrouptype` 须报 11，ETRIP L325
+   已在测）。layout 侧无法替代：`scan_group_contents` 收集后 sink 只拿到 token 串，
+   而 sink 无 expander 回指、无 cs 名解析面（intern 表在 expander 侧）——故 showbox
+   的体只能显示为 `\cs<下标>` 占位。**体一旦执行即同时解决**：natural size、
+   `\hbox{FN}` 子树同形、体内 `\splittopskip=` 等赋值生效（本刀三参数取扫描点镜像，
+   体内赋值不生效——sample2e `\@footnotetext` 的隐藏需求）、sink 的 cs 名显示。
+2. **`\vadjust`/`\special` 仍是 `toks_to_text`**：同一有损压缩模式在 adjust 通路
+   未动（本刀领地只覆盖 insert）。体执行刀落地时同法处理。
+3. **insert 号与盒寄存器撞号静默**：`\setbox150=\hbox{}` 后 `\insert150` 在
+   `insert_accumulate` 直接重建 vbox（tex.web `ensure_vbox` 报
+   "! Improper \hbox" 类错误）——撞号报错待补。
+4. **TRIP 基线**（共享工作树含 D 线未提交改动，A/B 以 HEAD 基线逐行比对）：
+   本刀贡献 7 行 delta——`! You can't \insert255.` 错误块 4 行（tex.web 要求的新增
+   正确行为）+ `\insert255 999` → `\insert0, natural size 0.0; split(...); float cost 100`
+   + 体行（**格式向参考 `\insert200, natural size ...; split(...); float cost ...` 收敛**，
+   仅 natural size/split 值因体未排版而异）；其余 15 行为 D 线斜体 kern
+   （`.\kern0.69999`/盒宽 1.39999→2.09999）。ETRIP 当前失败
+   （`group_end 无配对 group_begin` @ l.358 math left group）**与本刀无关**——
+   临时回退本刀 4 文件后 ETRIP 同样失败（D 线 math.rs 在途改动所致）；knife 2 时代
+   ETRIP 逐字节一致。
+5. **探针教训**：`\penalty-10000\ifvoid150` 紧邻时，`\ifvoid` 在 `\penalty` 数字扫描的
+   前瞻位（expandable `get_x_token`）被求值——真 TeX 同款（p3 VOID / p4 带空格 FULL，
+   两边一致），探针写法须用空格或 `\relax` 隔开。
+6. `cargo test -p ntex-layout`：181 过 / 2 失败均为 D 线在途数学斜体测试
+   （`math_italic_correction_kern_after_ord_char`/`math_italic_kern_sup_only_but_not_sub_only`，
+   与本刀无关）；本刀 5 条全绿。`cargo test -p ntex-core`：335 全绿。
