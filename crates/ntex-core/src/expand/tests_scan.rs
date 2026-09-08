@@ -386,3 +386,54 @@ ab5c}").unwrap();
         // 扫描过程中定义并展开宏
         assert_eq!(expand(r"\scantokens{a\def\y{b}\y}").unwrap(), "ab");
     }
+
+    /// 刀29（LaTeX 兼容战役）：tex.web scan_glue S=scan_dimen 分支——level=glue_val
+    /// 时内部 dimen 转零阶胶水（width=值，stretch/shrink=0，plus/minus 照常可扫）。
+    /// expl3 依赖此臂：`\skip_const:Nn \c_zero_skip {\c_zero_dim}`（latex.ltx
+    /// l.13899 停点根因）。
+    #[test]
+    fn glue_scan_accepts_internal_dimen() {
+        // 基本转换：\skip1=\dimen0 → width=5pt、零阶
+        assert_eq!(
+            expand(r"\dimen0=5pt\skip1=\dimen0\the\skip1").unwrap(),
+            "5.0pt"
+        );
+        // 前导负号作用于整个胶水（width 取负，stretch/shrink 本就为 0）
+        assert_eq!(
+            expand(r"\dimen0=3pt\skip1=-\dimen0\the\skip1").unwrap(),
+            "-3.0pt"
+        );
+        // 内部 dimen 后 plus/minus 照常扫描
+        assert_eq!(
+            expand(r"\dimen0=1pt\skip2=\dimen0 plus 2pt\the\skip2").unwrap(),
+            "1.0pt plus 2.0pt"
+        );
+        // dimendef 绑定的 cs 同样走 Register(Dimen) 臂
+        assert_eq!(
+            expand(r"\dimendef\zd=3\dimen3=7pt\skip4=\zd\the\skip4").unwrap(),
+            "7.0pt"
+        );
+    }
+
+    /// 刀29：mu 上下文遇内部 dimen → "Incompatible glue units"（按 1mu=1pt 继续，
+    /// tex.web mu 分支同款），赋值成功不中断。
+    #[test]
+    fn muskip_scan_internal_dimen_incompatible_units() {
+        let mut e = Expander::new();
+        e.set_sink(Box::new(VecSink::default()));
+        e.run_source(r"\dimen0=2pt\muskip0=\dimen0\the\muskip0").unwrap();
+        // 按 1mu=1pt 恢复：赋值成功，宽度保留（output 先于 take_sink 取）
+        let out: String = e
+            .output()
+            .iter()
+            .map(|t| t.charcode().and_then(char::from_u32).unwrap_or('\u{FFFD}'))
+            .collect();
+        let mut sink = e.take_sink();
+        let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+        assert!(
+            sink.transcript.contains("Incompatible glue units"),
+            "mu 上下文遇 dimen 应报 Incompatible glue units：{}",
+            sink.transcript
+        );
+        assert_eq!(out, "2.0mu", "1mu=1pt 恢复口径");
+    }

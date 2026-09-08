@@ -23,14 +23,14 @@ fn halign_to_locks_row_width_tabskip_absorbs() {
     .unwrap();
     assert_eq!(
         top_box_width(&nodes),
-        200 * i64::from(SP_PER_PT),
+        200 * SP_PER_PT,
         "对齐盒应锁到 to 目标宽"
     );
     // 行内胶水吸收差额
     let vbox = as_box(&nodes[0]);
     assert_eq!(vbox.children.len(), 1, "单行");
-    let row = as_box(&vbox.children.first().unwrap());
-    assert_eq!(row.width, 200 * i64::from(SP_PER_PT), "行宽锁定 200pt");
+    let row = as_box(vbox.children.first().unwrap());
+    assert_eq!(row.width, 200 * SP_PER_PT, "行宽锁定 200pt");
     let mut glue_widths = Vec::new();
     for c in &row.children {
         if let Node::Glue { width, .. } = c {
@@ -40,9 +40,9 @@ fn halign_to_locks_row_width_tabskip_absorbs() {
     assert_eq!(
         glue_widths,
         vec![
-            60 * i64::from(SP_PER_PT),
-            60 * i64::from(SP_PER_PT),
-            60 * i64::from(SP_PER_PT)
+            60 * SP_PER_PT,
+            60 * SP_PER_PT,
+            60 * SP_PER_PT
         ],
         "3 个 fil tabskip 各吸收 60pt：{glue_widths:?}"
     );
@@ -59,7 +59,7 @@ fn halign_spread_extends_natural_width() {
     .unwrap();
     assert_eq!(
         top_box_width(&nodes),
-        40 * i64::from(SP_PER_PT),
+        40 * SP_PER_PT,
         "spread 应在自然宽上加增量"
     );
 }
@@ -74,7 +74,7 @@ fn halign_natural_keeps_own_width() {
     .unwrap();
     assert_eq!(
         top_box_width(&nodes),
-        20 * i64::from(SP_PER_PT),
+        20 * SP_PER_PT,
         "无规格对齐盒应为自然宽"
     );
 }

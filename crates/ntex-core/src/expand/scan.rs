@@ -2015,6 +2015,7 @@ impl Expander {
             }
         }
         // M4-5 e-TeX：\glueexpr/\muexpr 可在任意胶水上下文求值
+        let mut width_internal: Option<i64> = None;
         if let Some(csid) = self.peek_csid()? {
             match self.eqtb.slot(csid).clone() {
                 EqSlot::Primitive(Primitive::Glueexpr) => {
@@ -2072,35 +2073,72 @@ impl Expander {
                     }
                     return Ok(if neg { g.negated() } else { g });
                 }
+                // tex.web scan_glue（S=scan_dimen 分支）：`\hskip\dimen0` ——
+                // `\dimen` 寄存器访问原语 + 下标，语义同下方 Register(Dimen) 臂
+                EqSlot::Primitive(Primitive::Dimen) => {
+                    self.fetch()?;
+                    let idx = self.scan_register_index()?;
+                    let d = self.registers.dimen(idx);
+                    width_internal = Some(if neg { -d } else { d });
+                    if mu {
+                        self.report_incompatible_glue_units();
+                    }
+                }
                 EqSlot::Register(kind, idx) => {
                     // skipdef/muskipdef 绑定的寄存器 cs
                     self.fetch()?;
-                    let g = match kind {
-                        RegKind::Skip => self.registers.skip(idx),
-                        RegKind::Muskip => self.registers.muskip(idx),
+                    match kind {
+                        RegKind::Skip => {
+                            let g = self.registers.skip(idx);
+                            if mu {
+                                self.report_incompatible_glue_units();
+                            }
+                            return Ok(if neg { g.negated() } else { g });
+                        }
+                        RegKind::Muskip => {
+                            let g = self.registers.muskip(idx);
+                            if !mu {
+                                self.report_incompatible_glue_units();
+                            }
+                            return Ok(if neg { g.negated() } else { g });
+                        }
+                        // tex.web scan_glue（S=scan_dimen 分支）：level=glue_val 时内部
+                        // dimen 转零阶胶水（width=值，stretch/shrink=0，plus/minus 照常可扫）；
+                        // mu 上下文非 mu 内部量 → "Incompatible glue units"（按 1mu=1pt 继续）。
+                        // LaTeX/expl3 依赖此臂：`\skip_const:Nn \c_zero_skip {\c_zero_dim}`。
+                        RegKind::Dimen => {
+                            let d = self.registers.dimen(idx);
+                            width_internal = Some(if neg { -d } else { d });
+                            if mu {
+                                self.report_incompatible_glue_units();
+                            }
+                        }
                         _ => {
                             return Err(Error::invalid_input(
                                 "胶水上下文需要 \\skip/\\muskip 寄存器",
                             ))
                         }
-                    };
-                    if mu != matches!(kind, RegKind::Muskip) {
-                        self.report_incompatible_glue_units();
                     }
-                    return Ok(if neg { g.negated() } else { g });
                 }
                 _ => {}
             }
         }
         // width：mu 上下文只认 "mu" 单位（scan_dimen_mu）。
+        // 内部 dimen 量（Register(Dimen) 臂）已转为宽度，跳过宽度扫描直接进 plus/minus。
         // 裸尺寸路径的负号只作用于宽度（tex.web scan_glue 非内部量分支：
         // scan_dimen 后 `if negative then negate(cur_val)`；plus/minus 不受影响）
-        let width = if mu {
-            self.scan_dimen_mu()?
-        } else {
-            self.scan_dimen()?
+        let width = match width_internal {
+            // 内部 dimen 路径的负号已在各自臂内应用于整个胶水，此处不再取反
+            Some(d) => d,
+            None if mu => {
+                let w = self.scan_dimen_mu()?;
+                if neg { -w } else { w }
+            }
+            None => {
+                let w = self.scan_dimen()?;
+                if neg { -w } else { w }
+            }
         };
-        let width = if neg { -width } else { width };
         let mut stretch = 0i64;
         let mut shrink = 0i64;
         let mut stretch_order = 0u8;
