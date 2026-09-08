@@ -1004,17 +1004,20 @@ mod tests {
 
     #[test]
     fn without_patterns_word_stays_whole() {
-        // 无 \patterns：词内无断点 → 整段一条过满行（末尾强制断点），不断字
+        // 无 \patterns：词内无断点，行超宽且收缩不足 → tex.web artificial
+        // demerits 在空格断点逐断点成行（真实 TeX 同为多条 Overfull 行）；
+        // 词本身保持完整不断字。
         let main = typeset_spaced(r"\hsize 10700sp m abcdefgh n").unwrap();
-        assert_eq!(main.len(), 1, "无模式表：整段一条过满行（不断字）：{main:?}");
+        assert_eq!(main.len(), 4, "行1(m abcdefgh 过满) + 惩罚/胶 + 行2(n)：{main:?}");
         let l1 = as_box(&main[0]);
-        // [m, glue, a..h, glue, n, \parfillskip]（13 节点，字母连续）
-        assert_eq!(l1.children.len(), 13, "行1 = m abcdefgh n：{l1:?}");
+        // 行1 = [m, glue, a..h]（10 节点，字母连续不断字）
+        assert_eq!(l1.children.len(), 10, "行1 = m abcdefgh：{l1:?}");
         assert_eq!(as_char(&l1.children[0]), b'm' as u32);
         for (k, ch) in (b'a'..=b'h').enumerate() {
             assert_eq!(as_char(&l1.children[k + 2]), ch as u32, "字母不断字");
         }
-        assert_eq!(as_char(&l1.children[11]), b'n' as u32);
+        let l2 = as_box(&main[3]);
+        assert_eq!(as_char(&l2.children[0]), b'n' as u32, "行2 = n");
     }
 
     // ---------- ETRIP 冲刺：e-TeX marks 族状态语义 ----------

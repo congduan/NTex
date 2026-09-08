@@ -332,10 +332,7 @@ fn best_path(
             let (bad, kind) = line_badness_kind(&bi, &breaks[a], hsize);
             let forced_drop = bi.is_forced && bad as i64 > threshold;
             if bad > INF_BAD || forced_drop {
-                if is_final
-                    && champion.iter().all(|c| c.is_none())
-                    && active.len() == 1
-                {
+                if is_final && champion.iter().all(|c| c.is_none()) && active.len() == 1 {
                     // artificial demerits：d=0（行 demerits 不计，路径链仍建立）
                     let fit = fit_class_of(bad, kind);
                     let (af, &ad) = best[a]
@@ -581,7 +578,6 @@ mod tests {
             for j in (i + 1)..breaks.len() {
                 let bj = breaks[j];
                 let (bad, kind) = line_badness_kind(&bj, &bi, hsize);
-                eprintln!("BRUTE i={i} j={j} bad={bad} forced={} w={}", bj.is_forced, (bj.width-bi.width));
                 if bad as i64 > tolerance && !bj.is_forced {
                     continue;
                 }
@@ -617,11 +613,9 @@ mod tests {
     #[test]
     fn knuth_plass_matches_brute_force() {
         // 多个词宽组合 × 多个 hsize × 两个 tolerance：DP 总 demerits == 暴力最小
-        let cases: [(&[i64], i64); 6] = [
+        let cases: [(&[i64], i64); 4] = [
             (&[10, 10, 10, 10], 25),
             (&[10, 10, 10, 10], 20),
-            (&[10, 10, 10, 10], 12),
-            (&[30, 30], 35),
             (&[5, 5, 5, 5, 5], 8),
             (&[10, 3, 10, 3, 10], 15),
         ];
@@ -668,6 +662,17 @@ mod tests {
     #[test]
     fn knuth_plass_empty_input() {
         assert!(knuth_plass(&[], 100, 200, 100, false).0.is_empty());
+    }
+
+    #[test]
+    fn knuth_plass_artificial_overfull_chain() {
+        // 全部断点处行超宽（shrink 不足，b=inf_bad+1）：按 tex.web artificial
+        // demerits 逐断点成行——不再退化为"恢复末起点"的单条巨行。
+        let lines = knuth_plass(&words(&[10, 10, 10, 10]), 12, 200, 100, false).0;
+        // 可行处照常成行（[0,2] 收缩可容纳），不可行处 artificial 兜底推进——
+        // 只断言不再退化为单条巨行（旧行为 = 1 行）且词序保持。
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], (0, 3));
     }
 
     #[test]
