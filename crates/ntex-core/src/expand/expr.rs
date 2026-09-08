@@ -995,17 +995,18 @@ impl Expander {
     }
 
     /// `\expanded` 实参扫描：scan_left_brace（filler 语义——跳空格/`\relax`、
-    /// 展开可展开项）消费强制 `{` 后，组内容按 `\edef` 体扫描（protected 宏
-    /// 抑制展开——pdfTeX 语义同 `\edef`；可展开项展开后压帧递归、条件即时
-    /// 求值）。复用 `scan_edef_body`（macro_def 的 `#` 转换 + `\begingroup`
-    /// 计深）——字面 `#` 直达 `\expanded` 实参在 LaTeX 源中罕见，偏差记录于
-    /// 报告 §18。
+    /// 展开可展开项）消费强制 `{` 后，组内容按 `scan_toks(macro_def=false,
+    /// xpand=true)` 扫描（protected 宏抑制展开——pdfTeX 语义同 `\edef`；
+    /// 可展开项展开后压帧递归、条件即时求值）。与 `\edef` 体的关键差异：
+    /// **不做参数 `#` 处理**（tex.web scan_toks macro_def=false——字面 `#`
+    /// 原样收集、不报 Illegal parameter number；expl3-code l.9356-9372 经
+    /// `\lowercase` 构造 catcode 查表时 `#` 进 `\expanded` 实参即依赖此）。
     fn scan_expanded_group(&mut self) -> Result<Vec<Token>> {
         self.scan_left_brace()?;
         self.suppress_expansion += 1;
-        // `\expanded` 无"正在定义的 cs"：def_name 传空（Illegal parameter
-        // number 消息省略 "of \X" 段）。
-        let scanned = self.scan_edef_body("");
+        // macro_def=false：不报 IPN，def_name 不再使用（此前传空串使消息
+        // 缺 "of \X" 段——现参数 `#` 检查整体关闭）。
+        let scanned = self.scan_edef_body("", false);
         self.suppress_expansion -= 1;
         scanned
     }

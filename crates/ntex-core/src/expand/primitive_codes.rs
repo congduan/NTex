@@ -178,6 +178,30 @@ impl Expander {
         let table = if upper { &self.uccodes } else { &self.lccodes };
         let mut out = Vec::with_capacity(toks.len());
         for tok in toks {
+            // active 字符 token（本引擎编码为带标志 cs token）：tex.web
+            // shift_case 的判据 `cur_tok<cs_token_flag+single_base` 含 active
+            // char——施表**换字符码、保持 active**。实测 pdftex（2026-09-08
+            // 对拍 /tmp/ntex-r29/probe_a.tex：`\lccode126=35 \lowercase{~}`）
+            // 产物报 `! Undefined control sequence. <recently read> #`——
+            // 即 active char 35（若是 cat 6 字符会报 "You can't use macro
+            // parameter character"）。转换 = 新字符码 intern 为名 + active 标志。
+            if tok.is_active() {
+                if let Some(csid) = tok.csid() {
+                    let code = self.intern.name(csid).chars().next().map(|c| c as u32);
+                    if let Some(code) = code.filter(|&c| c <= 0xff) {
+                        let nv = table[code as usize];
+                        if nv != 0 && nv != code as i64 {
+                            if let Some(nc) = char::from_u32(nv as u32) {
+                                let ncsid = self.intern.intern(&nc.to_string());
+                                out.push(Token::active_sequence(ncsid));
+                                continue;
+                            }
+                        }
+                    }
+                }
+                out.push(tok);
+                continue;
+            }
             if let (Some(ch), Some(cc)) = (tok.charcode(), tok.catcode()) {
                 // tex.web change_case（@1288）：判据是"字符 token"
                 // （`info(p)<cs_token_flag+single_base`，含 active char），

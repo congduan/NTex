@@ -747,6 +747,51 @@ use super::*;
     }
 
     #[test]
+    fn expanded_takes_literal_hash_without_ipn() {
+        // tex.web scan_toks(macro_def=false)：\expanded 实参**不做参数 # 处理**
+        // ——字面 #（含 cat 6）原样收集，不报 Illegal parameter number，## 亦不
+        // 折叠。expl3-code l.9356-9372 经 \lowercase 构造 catcode 查表时
+        // #（cat 6）进入 \expanded 实参即依赖此语义（latex.ltx --initex
+        // 256 条 IPN 的根因，2026-09-08 修复）。
+        // 实参经 \toks0 捕获（cat 6 字符主循环不可排版，不能裸落输出）。
+        let (r, t) = run_transcript("\\expanded{\\toks0={a#b}}");
+        assert!(r.is_ok(), "转录：{t}");
+        assert!(!t.contains("Illegal parameter number"), "不应报 IPN：{t}");
+        let (r2, t2) = run_transcript("\\expanded{\\toks0={##}}");
+        assert!(r2.is_ok(), "转录：{t2}");
+        assert!(!t2.contains("Illegal parameter number"), "## 不折叠不报 IPN：{t2}");
+        // 语义锁：\expanded 与 \edef 体就此分流——同内容进 \edef 体（macro_def
+        // 模式）**必须**仍报 IPN（真 TeX 同样报）。
+        let (_, t3) = run_transcript("\\edef\\x{a#b}");
+        assert!(t3.contains("Illegal parameter number"), "\\edef 体应报 IPN：{t3}");
+    }
+
+    #[test]
+    fn lowercase_converts_active_char_keeping_active() {
+        // tex.web shift_case：active char（cs_token_flag+active 区槽位 < 
+        // cs_token_flag+single_base）施表**换字符码、保持 active**。pdftex 对拍
+        //（2026-09-08 /tmp/ntex-r29/probe_a.tex：`\lccode126=35 \lowercase{~}`）
+        // 产物报 `! Undefined control sequence. <recently read> #`——active char
+        // 35，而非 cat 6 字符（那会报 "You can't use macro parameter character"）。
+        // 引擎断言：转成 active-a（csid 与 \a 同槽）后落主循环展开为 \a 的定义体。
+        assert_eq!(
+            expand("\\def\\a{YES}\\lccode126=97\\relax\\lowercase{~}").unwrap(),
+            "YES"
+        );
+        // pdftex 对拍形态：转换产物 active-#（csid "#" 未定义）主循环报
+        // Undefined control sequence——保持 cat 13，未降为 cat 6 字符。
+        let (_, t) = run_transcript("\\lccode126=35\\relax\\lowercase{~}");
+        assert!(t.contains("! Undefined control sequence."), "转录：{t}");
+        assert!(
+            !t.contains("macro parameter character"),
+            "产物应是 active char 而非 cat 6 字符：{t}"
+        );
+        // lccode=0 不转换（tex.web equiv=0 跳过）：~ 保持 active-~ 未定义
+        let (_, t2) = run_transcript("\\lccode126=0\\relax\\lowercase{\\toks0={~}}");
+        assert!(!t2.contains("! Undefined control sequence."), "未施表不落主循环：{t2}");
+    }
+
+    #[test]
     fn csname_terminates_on_endcsname_meaning_not_name() {
         // scan_csname 按**含义**终止（tex.web cur_cmd=end_csname）：expl3 的
         // `\cs_end:` 是 `\endcsname` 别名（槽 = EndCsname 原语），名字不同也应

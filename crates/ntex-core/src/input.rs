@@ -256,10 +256,13 @@ pub fn scan_token(
                         continue; // LineStart/InSpace：跳过，状态不变
                     }
                     Catcode::Active => {
-                        // active 字符视作同名控制序列
+                        // active 字符视作同名控制序列；带 active 标志
+                        // （tex.web：active char 是 cs token，但位于 eqtb
+                        // active 区、结构上与命名 cs 可分——\lowercase/
+                        // \uppercase 的 change_case 语义依赖该区分）
                         *state = ScanState::MidLine;
                         let csid = intern.intern(&char::from(ch).to_string());
-                        return Ok(Some(Token::control_sequence(csid)));
+                        return Ok(Some(Token::active_sequence(csid)));
                     }
                     _ => {
                         *state = ScanState::MidLine;

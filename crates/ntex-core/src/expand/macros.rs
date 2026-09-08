@@ -422,7 +422,7 @@ impl Expander {
             // 扫描时即展开可展开项、组深含 \begingroup/\endgroup、条件即时求值；
             // 输入耗尽未配平 → "Runaway definition" 转录报告并以 } 收尾（可恢复）。
             self.suppress_expansion += 1;
-            let scanned = self.scan_edef_body(&cs_name).map_err(ctx);
+            let scanned = self.scan_edef_body(&cs_name, true).map_err(ctx);
             self.suppress_expansion -= 1;
             scanned?
         } else {
@@ -620,9 +620,10 @@ impl Expander {
         Ok(out)
     }
 
-    /// e-TeX（ETRIP）：`\edef`/`\xdef` 体 = TeX `scan_toks(macro_def, xpand=true)`。
+    /// e-TeX（ETRIP）：`\edef`/`\xdef` 体与 pdfTeX `\expanded` 实参 = TeX
+    /// `scan_toks(macro_def, xpand=true)` 的两种形态，由 `in_definition` 区分。
     ///
-    /// 与 [`scan_balanced_text`] 的差异：
+    /// 共同点（xpand=true）：
     /// - **扫描时即展开**可展开项（宏/可展开原语/`\expandafter` 链），展开结果
     ///   压帧重新进入本扫描（递归语义），不再"先扫后展"两步；
     /// - **组深度计入 `\begingroup`/`\endgroup`**（TeX macro_def 模式组定界），
@@ -631,8 +632,17 @@ impl Expander {
     ///   跳过分支的 token 直接丢弃，与 `process_one` 一致）；
     /// - **输入耗尽未配平** → 转录报告 "Runaway definition?" 并以 `}` 收尾
     ///   （可恢复，TeX 语义，不报错）；
-    /// - `\edef` 上下文（`suppress_expansion > 0`）：protected 宏不展开，原样收入。
-    fn scan_edef_body(&mut self, def_name: &str) -> Result<Vec<Token>> {
+    /// - 展开抑制上下文（`suppress_expansion > 0`）：protected 宏不展开，原样收入。
+    ///
+    /// 差异（macro_def 位，tex.web scan_toks L9405 区）：
+    /// - `in_definition=true`（`\edef`/`\xdef`）：字符 token 走参数 `#` 处理
+    ///   ——`#<数字>` → macro_param、`##` → 字面 `#`、越界 → IPN（可恢复）；
+    /// - `in_definition=false`（`\expanded`，tex.web scan_toks(false,true)）：
+    ///   **不做参数 `#` 处理**——字面 `#`（含 cat 6）原样收集、不报
+    ///   Illegal parameter number。expl3-code l.9356-9372 经 `\lowercase`
+    ///   构造 catcode 查表时 `#`（cat 6）进入 `\expanded` 实参即依赖此语义
+    ///   （latex.ltx --initex 256 条 IPN 的根因，2026-09-08 修复）。
+    fn scan_edef_body(&mut self, def_name: &str, in_definition: bool) -> Result<Vec<Token>> {
         let mut out = Vec::new();
         let mut depth = 0usize;
         let mut runaway = false;
@@ -671,8 +681,9 @@ impl Expander {
                 _ => {}
             }
             let Some(csid) = tok.csid() else {
-                // 字符 token：参数 # 处理（同 scan_balanced_text）
-                if is_parameter_char(tok) {
+                // 字符 token：仅 \edef/\xdef 体（macro_def 模式）做参数 # 处理；
+                // \expanded 实参（macro_def=false）字面 # 原样收集（见函数头注释）
+                if in_definition && is_parameter_char(tok) {
                     let next = self
                         .fetch()?
                         .ok_or_else(|| Error::invalid_input("替换文本中 # 后无 token"))?

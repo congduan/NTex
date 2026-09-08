@@ -25,6 +25,16 @@ const CHAR_SHIFT: u32 = 21;
 const CHARCODE_MASK: u64 = MAX_CHARCODE as u64;
 const CSID_MASK: u64 = u32::MAX as u64;
 const PARAM_MASK: u64 = 0xF;
+/// ControlSeq 载荷的 active 字符标志（csid 32 bit 之上的首个空位）。
+///
+/// tex.web 的 active char token = `cs_token_flag + eqtb active 区槽位`
+/// （active 区在 single_base 之前），与命名 cs 同属 cs token 但**结构可分**
+/// ——`\lowercase`/`\uppercase`（shift_case，tex.web §1288）按此区分：
+/// active 字符施 uccode/lccode 表、同名单字符 cs 不施。本引擎 csid 只是
+/// InternTable 下标、无 active 区，用标志位补回表示层差异（token 表示层
+/// 另一刀，2026-09-08；仅生成位 input.rs 与消费位 case_convert_tokens
+/// 使用，`\if`/`\ifx`/eqtb 查找仍只看 csid）。
+const CS_ACTIVE_FLAG: u64 = 1 << 32;
 
 /// token 类别（tag 值）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +61,16 @@ impl Token {
     /// 控制序列 token（csid = InternTable 下标）。
     pub const fn control_sequence(csid: u32) -> Self {
         Self(((TokenKind::ControlSeq as u64) << TAG_SHIFT) | (csid as u64 & CSID_MASK))
+    }
+
+    /// active 字符 token（cat 13 → 同名 cs + active 标志；tex.web
+    /// `cs_token_flag + eqtb active 区槽位` 的引擎等价表示）。
+    pub const fn active_sequence(csid: u32) -> Self {
+        Self(
+            ((TokenKind::ControlSeq as u64) << TAG_SHIFT)
+                | CS_ACTIVE_FLAG
+                | (csid as u64 & CSID_MASK),
+        )
     }
 
     /// 宏参数 token `#n`（n ∈ 1..=9）。
@@ -106,6 +126,11 @@ impl Token {
             TokenKind::ControlSeq => Some((self.0 & CSID_MASK) as u32),
             _ => None,
         }
+    }
+
+    /// 是否 active 字符 token（`ControlSeq` + active 标志；见 [`Self::active_sequence`]）。
+    pub const fn is_active(self) -> bool {
+        matches!(self.kind(), TokenKind::ControlSeq) && (self.0 & CS_ACTIVE_FLAG) != 0
     }
 
     /// 宏参数号（仅 `MacroParam`）。
