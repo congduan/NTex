@@ -31,13 +31,23 @@
 
 ## 3. 对齐组（halign/valign）
 
+> **2026-09-08 更新**：对齐状态机已由 `ntex-core/src/expand/align.rs`（M4-5）+
+> `ntex-layout/typeset/sink.rs` align_fin（两遍列宽定稿）承担，本节早期
+> "\cr/\span/\crcr/\omit 无操作"条目已被状态机取代（raw 拦截 + dispatcher
+> 误位报错）。剩余简化见 halign-survey.md §3.2（S1–S7）——其中 S1（everycr
+> 只存不注入）、S2/S7（to/spread 摊派）已于 2026-09-08 修复（4b912f9）。
+
 | 位置 | 现状 | 状态 |
 |---|---|---|
-| `expand/primitive.rs:680` | `\cr` 无操作（对齐组按盒子处理） | 待做 |
-| `expand/primitive.rs:707` | `\span` 列合并无操作 | 待做 |
-| `expand/primitive.rs:805` | `\crcr` 与 `\-` 简化 no-op | 待做 |
-| `expand/primitive.rs:1356` / `eqtb/primitive.rs:504` | `\omit` 简化为 no-op | 待做 |
+| `expand/primitive.rs:680` | `\cr` 无操作（对齐组按盒子处理） | ⚠️ 已被 align.rs 状态机取代（raw 拦截做 Insert v_j；dispatcher 误位报 Misplaced \cr） |
+| `expand/primitive.rs:707` | `\span` 列合并无操作 | ⚠️ 已被 align.rs 取代（preamble 展开一次 + body 分隔符）；span 宽度摊派见 align_fin |
+| `expand/primitive.rs:805` | `\crcr` 与 `\-` 简化 no-op | ⚠️ \crcr 已被 align.rs 取代（行边界冗余忽略 + raw 结束符）；`\-` 仍 no-op |
+| `expand/primitive.rs:1356` / `eqtb/primitive.rs:504` | `\omit` 简化为 no-op | ⚠️ 已被 align.rs 取代（列首 \omit 判定，单元 V 模板置空） |
 | `typeset/sink.rs:488` | 组类型 7 不另开列表（沿用对齐组列表） | 待做 |
+| `expand/align.rs`（S4） | preamble `#{` 无特判——tex.web 原文证实 preamble 扫描**无 brace 深度机制**（`&`/`\cr` 在任何位置终结 u/v 段），引擎的 brace_depth 是超集偏离；对齐 tex.web 需整体移除深度跟踪（halign-survey G3/刀 2） | 待做（先复现） |
+| `expand/align.rs`（S5） | 多列越界钳末列 | 待做 |
+| `expand/align.rs`（S6） | `\halign` 模式合法性 + interwoven + EOF 静默 | 待做 |
+| `typeset/sink.rs`（S3） | `\valign` 行高/深度数学整体跳过 | 待做 |
 | `typeset/sink.rs:1483` | 数据行边界（此前 no-op 导致列内容混入 vbox，已修） | ✅ 已修 |
 
 ## 4. 内部量单独出现（no-op 语义——已系统性修完，勿回退）
@@ -110,4 +120,5 @@ demo1 六刀 + 输出例程刀 2/3/5 的修复登记；全部已提交，留作�
 - 2026-09-02：fraction 原语族挂载 + Ambiguous 恢复式（721646c）；\tracingcommands2 可选 `=` 赋值开启追踪（6cc16f0）；mode_name internal vertical（483b640）；\if 求值 {true}/{false}（3a5ec1e）
 - 2026-09-02：\eqno/\leqno 非数学报错 + math_style 报错（942346e）；\outer 展开上下文禁止（a4c2aeb，R3 补登 commit）
 - 2026-09-07：R3 账实同步——5 处"未提交"悬空项核实归位（eqno 多报 f75a638、radical l.412 报错 f75a638、math_mode_error 942346e、\outer a4c2aeb，位置列顺带刷新到分片后路径）；demo1 六刀 + 输出例程刀 2/3/5 战果登记（§7）；架构债小节新设（§8）
+- 2026-09-08：LaTeX 战役二十九刀——\expanded 实参 IPN ×256 清零（scan_edef_body 加 in_definition，78dd892）+ \lowercase 转换 active char（token 表示层 CS_ACTIVE_FLAG，78dd892），详见 latex-feasibility.md §36；\halign 战役刀 1/3——\everycr 两点注入 + align_peek 入口 align_state 复位 + to/spread 摊派真语义（4b912f9），§3 对齐组条目同步刷新
 - **收尾纪律提醒**：后续每轮修复后同步更新本清单（已修项标 ✅ + commit；维护记录追加）

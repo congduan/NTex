@@ -2816,3 +2816,56 @@ tex.web change_case（@1288）的判据是"字符 token"（含 active char），
 
 本刀原配靶 B（`\dump` 原语探路）经主控决定**取消**：收官优先，dump 另派专刀。
 本节只记本条。
+
+---
+
+## 36. 第二十九刀：\expanded 实参 IPN ×256 清零 + \lowercase 转换 active char（2026-09-08，78dd892）
+
+### 36.1 靶与验收（relay28b 门槛逐条核销）
+
+| 门 | 结果 |
+|---|---|
+| 两缺陷各有回归测 | ✅ `expanded_takes_literal_hash_without_ipn`（\expanded 实参字面 `#`/`##` 不报 IPN + \edef 体仍报的分流语义锁）+ `lowercase_converts_active_char_keeping_active`（转换产物保持 active + lccode=0 跳过） |
+| probe 错误 258 → IPN 清零 | ✅ `latex_probe --shim --initex` 实测 **259 → 3**（基线复测 259 = 256 IPN + 2 Undefined cs[l.302/303，基线已有] + 1 Missing number[l.1 shim 产物]；修复后仅剩基线已有的 3 条）；**l.13899 停点保留**（`胶水上下文需要 \skip/\muskip 寄存器` 致命，基线同形态，属另一靶） |
+| mech19 标尺产 1 | ✅ 仓内锁测 `expr_operator_peek_skips_spaces_and_evals_cond`（GA=1 逐行相等）保持绿 |
+| 测试全绿 | ✅ ntex-core 343（334 既有 + 3 新增）；TRIP/ETRIP 输出与 HEAD 基线**逐字节一致**（diff 空）；ntex-layout 13 个增量段测试失败为 HEAD 8d375d6 既有回归，与本刀无关 |
+| 插桩不残留 | ✅ 改动仅 6 文件功能面，无诊断代码 |
+| 勘误 | 上轮（relay28b 头部）"5→0 待复核"自述不实——本轮 stash 基线复测证实当时仍 258/259 错；本节为准 |
+
+### 36.2 缺陷 1：\expanded 实参误用宏定义体 `#` 检查（256 条 IPN 根因）
+
+`scan_expanded_group` 复用 `scan_edef_body`，把 e 型实参当宏定义体扫：`#`+非数字
+即报 Illegal parameter number。tex.web 口径：`\expanded` = `scan_toks(macro_def=false,
+xpand=true)`——**不做 macro_def 的 `#`→`##` 归一/参数号检查**（那是宏定义扫描专属）。
+expl3-code l.9356-9372 经 `\lowercase` 构造 catcode 查表时，cat 6 臂的 `^^@` 转成
+`#`（cat 6）进 `\expanded` 实参——真 TeX 合法、本引擎报 256 次（0..255 每轮一次）。
+
+修法：`scan_edef_body(def_name, in_definition: bool)` 分流——`\edef/\xdef` 传 true
+（参数 `#` 处理：`#<数字>`→macro_param、`##`→字面 `#`、越界 IPN）；`\expanded` 传
+false（字面 `#` 原样收集）。
+
+### 36.3 缺陷 2：\lowercase/\uppercase 跳过 active char
+
+引擎把 cat 13 编码为普通 cs token（`input.rs` active char → 同名 cs），`case_convert_tokens`
+的 `tok.charcode()` 对其返回 None → 转换被跳过（tests_scan.rs:290 注释挂账的
+"token 表示层另一刀"）。tex.web shift_case 判据 `cur_tok<cs_token_flag+single_base`
+**含 active 区**（eqtb active 区槽位在 single_base 之前）。
+
+修法（8 字节布局不变，RFC-1 §3）：ControlSeq 载荷加 `CS_ACTIVE_FLAG`（bit 32，
+csid 32 位之上首个空位）；`Token::active_sequence(csid)` 生成位 = input.rs 扫描；
+消费位 = case_convert_tokens——active char 施 uccode/lccode 表，**换字符码、保持
+active**（新字符码 intern 为名单字符 + 标志）。`\if`/`\ifx`/eqtb 查找仍只看 csid，
+零影响。
+
+**pdftex 地面真值对拍**（/tmp/ntex-r29/probe_a.tex：`\lccode126=35 \lowercase{~}`）：
+真 TeX 报 `! Undefined control sequence. <recently read> #`——产物是 **active char 35**
+（csid "#" 未定义）；若是 cat 6 字符会报 "You can't use macro parameter character"。
+ipn2b 形态同理：`\show\x` 显示 `->\lowercase {x}.` 的 `#` 消失是 active-# 未定义
+被错误恢复吞掉，**不是**转成了 cat 6 字符。
+
+### 36.4 环境备忘
+
+- 对拍工作目录 /tmp/ntex-r29（ipn2b.tex、probe_a/b.tex、基线 before.txt）；latex.ltx
+  仍在 /tmp/latexsurvey/tex/latex/base/；probe 转录写在 latex.ltx 同目录 .transcript。
+- l.13899（`\skip_const:Nn \c_zero_skip { \c_zero_dim }`）现为**致命**停点
+  （"胶水上下文需要 \skip/\muskip 寄存器"），是 LaTeX 战役下一刀的首选靶。

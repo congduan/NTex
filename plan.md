@@ -3,7 +3,15 @@
 > 依据：[idea.md](file:///Users/congduan/Desktop/code/_vibe_coding_/NTex/idea.md) 架构 + 性能决策（字节码预编译 / 深 .fmt / CJK 整形捷径 / 并行 / 增量）
 > 原则：**正确性优先、性能架构前置、基准先行**
 
-## 当前进度（2026-09-03）
+## 当前进度（2026-09-03；2026-09-08 增补）
+
+> **2026-09-08 战报**：LaTeX 战役二十九刀——latex.ltx `--initex` 错误 **259 → 3**
+> （\expanded 实参 IPN ×256 清零 + \lowercase 转换 active char，78dd892，
+> 验收核销见 latex-feasibility.md §36；剩余 l.13899 `\skip_const` 胶水寄存器
+> 致命停点为下一刀首选靶）。\halign 战役刀 1/3——`\everycr` 两点注入 +
+> align_peek 入口 align_state 复位 + to/spread 摊派真语义（4b912f9）。
+> 战役前置勘察改判：\insert 属输出例程战（零共享地基）、数学矩阵无独立
+> 引擎战役（= 宏层 + \halign 地基），见 §6 P1 组勘误与 halign-survey.md。
 
 | 里程碑           | 状态                                                                                                                                                                                                                                                                                                         |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -574,10 +582,22 @@ P1 —— D 组语义简化点（REVIEW-2026-08-23，偏离规范但可接受）
 从"可接受简化"**提升为 LaTeX 兼容战役前置**——真实 `\documentclass` 文档必需，
 战役阶段 A（§11.0）撞上时按需提前实施：
 - [ ] `\insert` 只收集不排版（脚注不可用）——**战役前置**（LaTeX 脚注/浮动体地基）
+      **2026-09-08 勘察改判**（halign-survey.md §6 Q2）：`\insert` 排版化属输出例程战
+      （断页器/\vsplit/insert 三联寄存器），与 \halign **零共享地基**；latex.ltx 真实
+      排版用点仅 `\@footnotetext` 1 处，优先级低于 \halign 战役
 - [ ] `\badness` 等只读整数单独出现为 no-op（规范应报错）
-- [ ] `\omit` no-op 占位 + `\halign/\valign/\cr/\noalign/\span` 对齐语义未实现——
-      **战役前置**（表格/对齐环境全靠它）
+- [x] `\omit` no-op 占位 + `\halign/\valign/\cr/\noalign/\span` 对齐语义——
+      **战役前置**：引擎对齐状态机已落地（`expand/align.rs` + `sink.rs align_fin`，
+      TRIP 大量使用），2026-09-08 补精化两刀（4b912f9）：`\everycr` 两点注入
+      （tex.web L15339/L15732）+ align_peek 入口 align_state 复位 + to/spread 摊派
+      真语义（列宽自然、差额进行内 tabskip glue set 4 阶）。剩余 S3–S7 精化与
+      刀序见 halign-survey.md §5（9–12 刀路线，下一刀 = 刀 0 对拍仪器/刀 2 preamble
+      宏展开通路）
 - [ ] 数学矩阵（`\matrix`/`\eqalign` 等）——**战役前置**（amsmath 系宏包地基）
+      **2026-09-08 勘察改判**（halign-survey.md §6 Q3）：矩阵 = 宏层
+      （plain `\vcenter{\ialign{…}}`）+ \halign 地基，**无独立引擎战役**；
+      引擎增量仅 `\vcenter` 数学模式包装验证 + `Improper \halign inside $$'s`
+      检查 + Align 产物盒交 MathAtom::Box，依赖 \halign 战役刀 0/2 先行
 - [ ] `\scriptfont` 未接真实字体
 - [ ] `\vsplit` marks 拆分暂空（`\splitfirstmarks` 等返回空）
 - [ ] `\output` 例程消费判定用 count 启发式（应显式 `\shipout\box255`）
