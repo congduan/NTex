@@ -1450,11 +1450,10 @@ impl BoxSink for NodeBuilder {
 
 impl AlignSink for NodeBuilder {
     /// `\valign{`/`\halign{`：下一个组为对齐组（6）。M4-5：建排版上下文
-    /// （两遍法；`to`/`spread` 规格取 box_spec 槽——spread 简化为自然宽
-    /// 基准不摊派）。
+    /// （两遍法；`to`/`spread` 规格取 box_spec 槽）。
     fn align_begin(&mut self, is_halign: bool) -> Result<()> {
         let dir = if is_halign { AlignDir::Halign } else { AlignDir::Valign };
-        let (to, _spread) = self.box_state.pending_box_spec.take().unwrap_or((None, None));
+        let (to, spread) = self.box_state.pending_box_spec.take().unwrap_or((None, None));
         self.align_stack.push((
             dir,
             AlignCtx {
@@ -1463,6 +1462,7 @@ impl AlignSink for NodeBuilder {
                 cur_cells: Vec::new(),
                 cur_col: 0,
                 to,
+                spread,
             },
         ));
         self.box_state.pending_kind = Some(GroupKind::Align);
@@ -1796,19 +1796,48 @@ fn align_fin(bmd: i64, dir: AlignDir, mut ctx: AlignCtx) -> Vec<Node> {
                     }
                 }
             }
-            // `to <dimen>` 摊派（自然总宽不足目标 → 差额均摊各列）
-            if let Some(t) = ctx.to {
-                let total: i64 = w.iter().sum::<i64>() + (0..=n).map(glue_w).sum::<i64>();
-                if total < t && n > 0 {
-                    let diff = t - total;
-                    let each = diff / n as i64;
-                    let mut rem = diff % n as i64;
-                    for wi in w.iter_mut() {
-                        let extra = if rem > 0 { rem -= 1; 1 } else { 0 };
-                        *wi += each + extra;
-                    }
+            // 目标宽（tex.web fin_align）：`to` → 锁定值；`spread` → 最宽行
+            // 自然宽 + 增量；无规格 → 各行保持自己的自然宽。**列宽不因
+            // to/spread 改变**（保持第一遍的自然最大值）——差额由行级
+            // hpack 的 glue set 摊给行内 tabskip 胶水（4 阶拉伸/收缩，
+            // align_tabskip_node 已保留 stretch/shrink 字段）。旧实现把
+            // to 差额均摊进列宽、丢弃 spread（S2/S7），2026-09-08 对齐
+            // tex.web fin_align 真语义。
+            let target: Option<i64> = match (ctx.to, ctx.spread) {
+                (Some(t), _) => Some(t),
+                (None, Some(sp)) => {
+                    let max_nat = ctx
+                        .stream
+                        .iter()
+                        .filter_map(|it| match it {
+                            AlignItem::Row(cells) => {
+                                let nodes: Vec<Node> = std::iter::once(
+                                    align_tabskip_node(ctx.tabskips.first()),
+                                )
+                                .chain(cells.iter().map(|c| {
+                                    let end =
+                                        (c.start_col + c.span_len as usize).min(n);
+                                    let span_w: i64 = (c.start_col..end)
+                                        .map(|i| w[i])
+                                        .sum::<i64>()
+                                        + ((c.start_col + 1)..end)
+                                            .map(glue_w)
+                                            .sum::<i64>();
+                                    Node::Box(crate::node::hpack(
+                                        &c.nodes, span_w,
+                                    ))
+                                }))
+                                .collect();
+                                Some(crate::node::hbox_dimensions(&nodes).width)
+                            }
+                            AlignItem::Material(_) => None,
+                        })
+                        .max()
+                        .unwrap_or(0);
+                    Some(max_nat + sp)
                 }
-            }
+                (None, None) => None,
+            };
             // 行封装（第二遍）
             let mut rows: Vec<Node> = Vec::new();
             for item in ctx.stream {
@@ -1824,7 +1853,12 @@ fn align_fin(bmd: i64, dir: AlignDir, mut ctx: AlignCtx) -> Vec<Node> {
                             nodes.push(align_tabskip_node(ctx.tabskips.get(end)));
                         }
                         let nat = crate::node::hbox_dimensions(&nodes).width;
-                        rows.push(Node::Box(crate::node::hpack(&nodes, nat)));
+                        // to/spread 模式：所有行锁到同一目标宽，差额按行内
+                        // tabskip 胶水的 stretch/shrink 摊派（hpack 4 阶语义）
+                        rows.push(Node::Box(crate::node::hpack(
+                            &nodes,
+                            target.unwrap_or(nat),
+                        )));
                     }
                     AlignItem::Material(ns) => rows.extend(ns),
                 }

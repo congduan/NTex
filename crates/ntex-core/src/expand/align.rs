@@ -155,6 +155,25 @@ impl Expander {
         }
     }
 
+    /// `\everycr` 注入（tex.web L15339/L15732：`begin_token_list(every_cr,
+    /// every_cr_text)`）。两处注入点：① preamble 扫完（init_align 尾）；
+    /// ② 每行 fin_row。注入后 token 在输入流顶，**先于 align_peek 的前瞻**
+    /// 被读（amsmath `\everycr{\noalign{…}}` 每行重置标签、kernel `\ialign`/
+    /// `\eqnarray` 的 `\everycr{}` 清空语义都依赖它）。此前"只存不注入"
+    /// （S1/G1，halign-survey §3.2）。
+    fn align_inject_everycr(&mut self) -> Result<()> {
+        let toks = self.everycr_toks.clone();
+        if toks.is_empty() {
+            return Ok(());
+        }
+        let items: Vec<(Token, bool)> = toks.into_iter().map(|t| (t, false)).collect();
+        self.stack.push(InputFrame::TokenList {
+            items: Arc::from(items),
+            pos: 0,
+        });
+        Ok(())
+    }
+
     /// 静默组（eqtb 作用域，不发 sink 组事件）：对齐组与对齐单元组用
     /// （sink 侧组由 align_begin/align_cell_begin 事件分别管理）。
     fn begin_silent_group(&mut self) {
@@ -613,6 +632,8 @@ impl Expander {
             };
         }
         self.sink.align_preamble_end(snapshot)?;
+        // tex.web L15339：preamble 扫完注入 \everycr（先于 align_peek）
+        self.align_inject_everycr()?;
         self.align_peek_next()?;
         Ok(())
     }
@@ -695,6 +716,8 @@ impl Expander {
                 self.align_close_cell(AlignCellEnd::Cr)?;
                 self.sink.align_row_end()?;
                 self.align_set_row_open(true);
+                // tex.web L15732：fin_row 尾注入 \everycr（先于 align_peek）
+                self.align_inject_everycr()?;
                 self.align_peek_next()?;
             }
         }
@@ -845,6 +868,14 @@ impl Expander {
     /// init_row + init_col）。
     fn align_peek_next(&mut self) -> Result<()> {
         loop {
+            // tex.web L15509：align_peek 入口复位 align_state:=1000000
+            // （restart 标签首句）。preamble 完成路径下 align_state 残留
+            // -1000000 哨兵，若不复位，注入的 `\noalign{…}` 的 `}` 会被
+            // EndGroup 分支减到 <0 误判为对齐闭括号（2026-09-08 everycr
+            // 注入刀引入对拍时暴露；fin_row 路径此前恒 1000000 未踩到）。
+            if let Some(frame) = self.align_frames.last_mut() {
+                frame.align_state = 1000000;
+            }
             let Some(tok) = self.align_fetch_significant()? else {
                 // 输入耗尽（\end inside \halign）——交由主循环收尾报错
                 return Ok(());

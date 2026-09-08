@@ -1028,3 +1028,27 @@ use super::*;
         .unwrap();
         assert_eq!(out, r"\foo ");
     }
+
+    #[test]
+    fn everycr_injected_at_preamble_end_and_fin_row() {
+        // tex.web L15339/L15732：\everycr 在两处注入——preamble 扫完
+        // （init_align 尾）+ 每行 fin_row，且**先于 align_peek 的前瞻**。
+        // amsmath 形态 `\everycr{\noalign{…}}`（halign-survey §2.3 p3g）每行
+        // 重置标签、kernel `\ialign`/`\eqnarray` 的 `\everycr{}` 清空语义都
+        // 依赖它。此前只存不注入（S1/G1）。
+        let src = concat!(
+            "\\everycr={\\noalign{\\message{N}}} ",
+            "\\halign{\\hfil#\\hfil\\cr a\\cr b\\cr}"
+        );
+        let (_r, t) = run_transcript(src);
+        let count = t.matches('N').count();
+        // 1（preamble 扫完）+ 2（每行 fin_row）= 3
+        assert_eq!(count, 3, "\\everycr 注入次数（1 preamble + 2 fin_row）：{t}");
+        // 空表注入为无操作（kernel \ialign 第一步 \everycr{} 清空）
+        let src2 = "\\everycr={}\\halign{\\hfil#\\hfil\\cr a\\cr}";
+        let (_r2, t2) = run_transcript(src2);
+        assert!(
+            !t2.contains("! Undefined") && !t2.contains("Missing"),
+            "\\everycr 空表不应产生任何错误：{t2}"
+        );
+    }

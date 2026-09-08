@@ -797,6 +797,7 @@ mod incremental_tests {
             cur_cells: vec![],
             cur_col: 1,
             to: Some(5),
+            spread: None,
         })];
         b.last_par_line = 55;
         b.font_cs_names = vec![None, Some("tenrm".into())];
@@ -865,6 +866,7 @@ mod incremental_tests {
             cur_cells: vec![],
             cur_col: 2,
             to: None,
+            spread: None,
         })];
         b.last_par_line = 66;
         b.font_cs_names = vec![Some("trip".into())];

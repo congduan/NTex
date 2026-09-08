@@ -287,6 +287,8 @@ struct AlignCtx {
     cur_col: usize,
     /// `to <dimen>` 目标宽/高（fin_align 摊派）；None = 自然。
     to: Option<i64>,
+    /// `spread <dimen>` 增量（S7 修复，2026-09-08）：目标 = 最宽行自然宽 + spread。
+    spread: Option<i64>,
 }
 
 /// 对齐流项（行/列与 \noalign 材料的顺序记录）。
