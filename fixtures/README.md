@@ -34,3 +34,16 @@ diff <(ntotext fixtures/pdftex/expanded.log) fixtures/pdftex/expanded.txt
 
 如需追加新库请编辑 `scripts/fetch-extras-fixtures.sh`；每行一个文件 + 一条 fallback URL 链。
 新增文件要在本 README 加一行、并在 `AGENTS.md §6` 状态表加一条标注。
+
+## 测试字体缓存（~/.ntex-fonts，环境约定）
+
+`ntex-layout` 的增量排版测试（`typeset/incremental_tests.rs`）经
+`ensure_tfm_dir()` 查找 `~/.ntex-fonts/cmr10.tfm`：**缺失时退化为 nullfont
+全零度量，多页夹具塌成 1 页，13 个测试的"≥2 页"哨兵断言连环失败**
+（2026-09-09 在 Mac 实测复现并定位，非代码回归）。
+
+补齐方式（源 = 仓库自带 wasm 内嵌 CM 度量表）：
+
+```bash
+mkdir -p ~/.ntex-fonts && cp crates/ntex-wasm/fonts/*.tfm ~/.ntex-fonts/
+```
