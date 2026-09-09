@@ -146,6 +146,25 @@ use super::*;
     }
 
     #[test]
+    fn let_missing_control_sequence_recovers() {
+        // tex.web 的 \let 左侧不是控制序列时插入 \inaccessible，拒绝的字符
+        // 回推给主循环；不得把可恢复的 TeX 输入错误升级为 Rust Err。
+        // 被拒的 `a` 会被回推，继而成为 \inaccessible 的右值；`=` 随后作为
+        // 普通字符输出（与 TeX 的 back_input 恢复顺序一致）。
+        assert_eq!(expand("\\let a=xZ").unwrap(), "=xZ");
+    }
+
+    #[test]
+    fn macro_definition_balances_non_brace_group_character() {
+        // expl3 `tl-analysis` 临时将 ^^@ 设为组开始符，再把它放进宏定义体。
+        // 定义扫描必须按 token 的实际 catcode 计深，不能吞掉其后的定义/全文。
+        assert_eq!(
+            expand("\\catcode`\\^^@=1 \\def\\a{^^@}}\\catcode`\\^^@=12 X").unwrap(),
+            "X"
+        );
+    }
+
+    #[test]
     fn expandafter_classic() {
         // 经典：\expandafter\def\expandafter\x\expandafter{\b} 使 \x = \b 的展开。
         // 注：\b 中 \a 与 C 之间的空格在扫描时被控制词吞掉，故为 "ABC"（与真实 TeX 一致）。
@@ -209,6 +228,13 @@ use super::*;
         let src =
             "\\futurelet\\next\\relax a\\let\\expected a\\ifx\\next\\expected yes\\else no\\fi";
         assert_eq!(expand(src).unwrap(), "ayes");
+    }
+
+    #[test]
+    fn futurelet_missing_control_sequence_recovers() {
+        // 与 \let 同款 missing-control-sequence 恢复：被拒 token 回推后成为
+        // \inaccessible 的观察 token，后续输入仍可继续处理。
+        assert_eq!(expand("\\futurelet aXY").unwrap(), "aXY");
     }
 
     #[test]

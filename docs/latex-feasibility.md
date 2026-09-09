@@ -2869,3 +2869,29 @@ ipn2b 形态同理：`\show\x` 显示 `->\lowercase {x}.` 的 `#` 消失是 acti
   仍在 /tmp/latexsurvey/tex/latex/base/；probe 转录写在 latex.ltx 同目录 .transcript。
 - l.13899（`\skip_const:Nn \c_zero_skip { \c_zero_dim }`）现为**致命**停点
   （"胶水上下文需要 \skip/\muskip 寄存器"），是 LaTeX 战役下一刀的首选靶。
+
+## 37. 第三十刀（推进）：`\let` 左侧缺控制序列走 TeX 恢复，而非终止引擎（2026-09-09）
+
+### 37.1 修复
+
+`exec_let` 原先自行读取左侧 token，遇到非控制序列便返回 Rust `Error`，使真实
+`latex.ltx`/expl3 载入在错误恢复链内提前终止。tex.web 对此报
+`Missing control sequence inserted`，插入不可访问控制序列并回推被拒 token，继续扫描。
+
+现统一改用既有的 `scan_cs_ident()`：它已为 `\def`、`\chardef` 与寄存器定义实现
+上述恢复语义；`\futurelet` 左侧也同样接入。新增
+`let_missing_control_sequence_recovers` 与
+`futurelet_missing_control_sequence_recovers` 锁定恢复后不返回引擎错误及其回推顺序。
+
+### 37.2 实测与新阻塞点
+
+- `latex_probe --initex` 已越过原 l.13899 `\skip_const:Nn \c_zero_skip
+  {\c_zero_dim}` 胶水扫描停点，证明该 `<dimen>` 路径有效；
+- 本刀后不再在 `\let` 处终止。探针继续读入至 expl3 的
+  `\l__iow_line_part_tl` 定义，随后命中既有 `MAX_INPUT_STACK=5000` 保护；
+  诊断为「定义 `\l__iow_line_part_tl` 的替换文本时」参数/宏扫描无终止条件，
+  transcript 伴有连续 `Missing endcsname inserted`；
+- `cargo test -p ntex-core`：348 passed、2 ignored；`git diff --check` 通过。
+
+下一刀应以该最小化定义为靶，追踪 `\csname`/定界参数扫描为何反复注入输入帧；
+不能通过抬高输入栈上限掩盖问题。

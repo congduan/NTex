@@ -56,3 +56,8 @@ tmp_pngcmp.py
 crates/ntex-wasm/www/pkg/
 crates/ntex-wasm/examples/*.dvi
 crates/ntex-tauri/ui/pkg/
+
+
+.workbuddy
+.zcode
+8terminal

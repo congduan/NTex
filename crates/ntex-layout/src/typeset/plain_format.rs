@@ -50,10 +50,7 @@ impl EmbeddedFormatVfs {
 
     /// 内嵌表命中？（诊断/测试用）。
     pub fn lookup(name: &str) -> Option<&'static str> {
-        BUNDLED
-            .iter()
-            .find(|(k, _)| *k == name)
-            .map(|(_, v)| *v)
+        BUNDLED.iter().find(|(k, _)| *k == name).map(|(_, v)| *v)
     }
 }
 

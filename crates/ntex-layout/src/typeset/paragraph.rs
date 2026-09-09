@@ -95,18 +95,35 @@ impl NodeBuilder {
                 });
             }
             last_natural = Some(hbox_dimensions(&line).width);
-            // 折行警告（tex.web §922-930）：行自然宽超 \\hsize → Overfull
+            // 折行警告（tex.web §922-930）：行自然宽超 \hsize 且**收缩不足**才 Overfull
+            // ——tex.web 的 overfull 判定是行 badness 达 inf_bad（收缩/拉伸无法容纳），
+            // 而非"自然宽 > \hsize"：glue 收缩能把超宽压回 \hsize 时（badness 有限）
+            // 不算 overfull。故此处需比较超宽量与该行 glue 总可收缩量。
             // `(<超宽> too wide) in paragraph at lines <a>--<b>`（\par 行号；
             // 段落开始行暂用 \par 行——单行段落精确，跨行段落待 D 组行号追踪）。
             let natural = hbox_dimensions(&line).width;
             if natural > self.params.hsize {
+                // 行总可收缩量（普通阶 shrink_order==0；高阶 shrink 不参与有限行）
+                let mut shrinkable = 0i64;
+                for node in &line {
+                    if let Node::Glue {
+                        shrink,
+                        shrink_order: 0,
+                        ..
+                    } = node
+                    {
+                        shrinkable += *shrink;
+                    }
+                }
                 let over = natural - self.params.hsize;
-                let _ = self.write16(format!(
-                    "Overfull \\hbox ({} too wide) in paragraph at lines {}--{}\n",
-                    ntex_core::register::format_dimen(over),
-                    self.last_par_line,
-                    self.last_par_line
-                ));
+                if over > shrinkable {
+                    let _ = self.write16(format!(
+                        "Overfull \\hbox ({} too wide) in paragraph at lines {}--{}\n",
+                        ntex_core::register::format_dimen(over),
+                        self.last_par_line,
+                        self.last_par_line
+                    ));
+                }
             }
             // 行盒 = `\hbox to \hsize`（tex.web line_break：恰好 hsize 宽，胶水拉伸/收缩）
             self.push_box(Node::Box(hpack(&line, self.params.hsize)));

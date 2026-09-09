@@ -850,13 +850,12 @@ impl Expander {
     /// `\let\cs<token>`：cs 别名到控制序列或等价于字符。
     /// TeX 语义：`=` 是可选赋值符（`\let\cs=x` 等价 `\let\cs x`）。
     fn exec_let(&mut self) -> Result<()> {
-        let name = self
-            .fetch()?
-            .ok_or_else(|| Error::invalid_input("\\let 后缺少控制序列"))?
-            .0;
-        let csid = name
-            .csid()
-            .ok_or_else(|| Error::invalid_input("\\let 后必须是控制序列"))?;
+        // tex.web prefixed_command 的 define 分支经 scan_optional_equals 前先取
+        // 左侧控制序列；非控制序列不是引擎致命错误，而是 "Missing control
+        // sequence inserted" 后以 \inaccessible 续跑。复用定义/寄存器绑定的
+        // scan_cs_ident，保证错误恢复会回推被拒 token（真实 latex.ltx 的错误
+        // 恢复链会走到这一分支）。
+        let csid = self.scan_cs_ident()?;
 
         // 可选空格 + 可选 '='
         self.skip_spaces()?;
@@ -945,13 +944,9 @@ impl Expander {
 
     /// `\futurelet\cs T1 T2`：\cs ← \let T2（不展开），T1、T2 继续正常处理。
     fn exec_futurelet(&mut self) -> Result<()> {
-        let name = self
-            .fetch()?
-            .ok_or_else(|| Error::invalid_input("\\futurelet 后缺少控制序列"))?
-            .0;
-        let csid = name
-            .csid()
-            .ok_or_else(|| Error::invalid_input("\\futurelet 后必须是控制序列"))?;
+        // 与 \let/\def 一致：左侧不是控制序列时，TeX 插入 \inaccessible
+        // 并回推原 token 继续恢复；不能把格式加载中的可恢复错误升级为 Rust Err。
+        let csid = self.scan_cs_ident()?;
         let t1 = self
             .fetch()?
             .ok_or_else(|| Error::invalid_input("\\futurelet 后缺少 token"))?

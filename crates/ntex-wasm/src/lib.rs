@@ -411,6 +411,22 @@ mod tests {
         );
     }
 
+    /// 自举 plain 示例不能依赖格式预载：`\bye` 所需的 `\eject` 已在源内以
+    /// 核心 penalty 定义。此回归覆盖 Tauri/WASM 所走的无预载编译管线。
+    #[test]
+    fn self_bootstrapped_plain_demo_compiles_without_undefined_eject() {
+        const SOURCE: &str = include_str!("../../../demo1-fixed.tex");
+        let compiled = compile_pipeline(SOURCE).expect("自举 plain 示例应能编译");
+        assert!(!compiled.pages.is_empty(), "示例应至少产出一页");
+        assert!(
+            !compiled
+                .transcript
+                .contains("! Undefined control sequence.\n\\eject"),
+            "不得再出现未定义 \\eject：{}",
+            compiled.transcript
+        );
+    }
+
     /// 统计非白像素数（渲染有墨验证；alpha=0 或任一通道 ≥250 视为白）。
     fn ink_pixels(pm: &ntex_backend::Pixmap) -> usize {
         (0..pm.height())

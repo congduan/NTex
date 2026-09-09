@@ -65,6 +65,9 @@
 \def\tt{\tentt}
 \def\item#1{\par\hangindent=1.5em\hangafter=1\noindent\hbox to1.5em{#1\hss}\ignorespaces}
 \def\LaTeX{LaTeX}
+% 无 plain 格式预载时补齐 plain 的 `\eject`；以核心 penalty 表达，避免再依赖
+% 同样未预载的 `\break` 宏。
+\def\eject{\par\penalty-10000 }
 \def\bye{\par\vfill\eject\end}
 
 \centerline{\titlefont Plain TeX Demonstration}
@@ -81,7 +84,7 @@ in the source file, just like in LaTeX.
 You can write inline math like $E = mc^2$, or displayed math equations using
 double dollar signs:
 $$ \sum_{n=1}^{\infty} {1 \over n^2} = {\pi^2 \over 6} $$
-Notice that instead of \LaTeX's \vbox{\tt\string\frac\char`\{1\char`\}\char`\{n\char`\^2\char`\}}, Plain TeX uses the
+Notice that instead of \LaTeX's {\tt\string\frac\char`\{1\char`\}\char`\{n\char`\^2\char`\}}, Plain TeX uses the
 native {\tt\string\over} primitive.
 
 \vskip 0.25in

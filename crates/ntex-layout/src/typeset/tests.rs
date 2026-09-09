@@ -366,6 +366,43 @@ mod tests {
         }
     }
 
+    // ---------- 折行 overfull 判定（tex.web §922-930） ----------
+
+    /// overfull 判定 = 行自然宽超 \hsize 且**收缩不足**（超宽量 > 总可收缩量），
+    /// 而非"自然宽 > \hsize"。glue 能收缩压回 \hsize 时（badness 有限）不算
+    /// overfull —— 这是 tex.web `line_break` 的语义（demo1-fixed 74 行回归：
+    /// `\parindent=0pt` + 断字 discretionary 段落在窄行宽下被误报）。
+    #[test]
+    fn overfull_only_when_shrink_insufficient() {
+        // metrics: 每个字符宽 (1000+charcode)sp；space: 宽 10pt 伸缩 5pt 收缩 3pt。
+        // 构造一行：自然宽略超 \hsize，但多个词间 glue 可收缩足够 → 不报 overfull。
+        // 取 \hsize 让段落自然宽超过它约 2pt（每词 ~1 字符 + 空格 10pt）。
+        // 用两个词 "ab cd"：char a=1061, b=1062, c=1063, d=1064（sp）；
+        // 词间 glue 10pt=655360sp。自然宽 ≈ 4×~1062 + 655360 ≈ 4×1062+655360 ≈ 659608sp≈10.06pt。
+        // 设 \hsize=8pt=524288sp：自然宽超 ~2pt，而 glue 收缩 3pt 足够 → 不报 overfull。
+        let mut ts = Typesetter::with_metrics(metrics).with_space(space);
+        ts.typeset(r"\hsize=8pt ab cd").unwrap();
+        let t = ts.take_transcript();
+        assert!(
+            !t.contains("Overfull"),
+            "可收缩时不应报 overfull，转录：{t}"
+        );
+    }
+
+    /// 收缩不足：自然宽超 \hsize 且超出量 > 可收缩量 → 报 overfull。
+    #[test]
+    fn overfull_reported_when_shrink_insufficient() {
+        // 单字符 'a' 宽 (1000+97)=1097sp，无可收缩 glue；
+        // \hsize 极小（如 0.01pt）→ 自然宽远超 \hsize 且无 glue 可收缩 → overfull。
+        let mut ts = Typesetter::with_metrics(metrics).with_space(space);
+        ts.typeset(r"\hsize=0.01pt a").unwrap();
+        let t = ts.take_transcript();
+        assert!(
+            t.contains("Overfull"),
+            "收缩不足时应报 overfull，转录：{t}"
+        );
+    }
+
     #[test]
     fn interline_uses_custom_baselineskip() {
         // \baselineskip 8pt：d = 8pt − (1500 + 6000)

@@ -1,0 +1,107 @@
+%=====================================================================
+% resume-plain.tex —— Plain TeX 简历示例
+% 编译方式（任选其一）：
+%   pdftex resume-plain.tex   → 直接产出 resume-plain.pdf（推荐）
+%   tex     resume-plain.tex  → 产出 resume-plain.dvi，再 dvipdfmx 转换
+% 说明：纯 Knuth plain 格式，不依赖 LaTeX / \documentclass / 任何宏包。
+%       字体使用 Computer Modern（TeX 发行版自带）。
+%=====================================================================
+
+%------------------------- 全局设置 -------------------------
+% 中文排版说明：请用 XeTeX 编译（xetex resume-plain.tex）。
+% 下面按引擎分支设置字体：XeTeX 下用系统字体支持中文，
+% 其余引擎走默认 Computer Modern（此时中文不可见）。
+\hsize=17cm                     % 版心宽度
+\vsize=24.5cm                   % 版心高度（压缩页边距，一页放下）
+\parindent=0pt                  % 不缩进
+\baselineskip=14pt
+\ifx\XeTeXrevision\undefined
+  \font\sectfont=cmr12 scaled \magstep1
+\else
+  \XeTeXlinebreaklocale "zh"                 % 中文断行规则
+  \XeTeXlinebreakskip = 0pt plus 1pt minus .1pt
+  \font\tenrm="Songti SC" at 11pt            % 正文（宋体）
+  \font\tenbf="Songti SC/B" at 11pt          % 粗体
+  \font\tentt="Menlo" at 10.5pt              % 等宽
+  \font\sectfont="Songti SC/B" at 14pt       % 节标题
+  \tenrm                                     % 关键：激活中文字体为当前字体
+  \baselineskip=16pt
+\fi
+
+%------------------------- 自定义宏 -------------------------
+% 节标题：粗体大字 + 横线
+\newdimen\secgap  \secgap=6pt
+\def\section#1{%
+  \vskip\secgap
+  \hrule height .8pt
+  \vskip 4pt
+  {\sectfont #1}%
+  \vskip 4pt
+}
+
+% 单行条目：左粗体标题，右日期（同一行两端对齐）
+% 用法：\entryline{公司 / 职位}{2024.07 -- 至今}
+\def\entryline#1#2{\line{\bf #1\hfil #2}\smallskip}
+
+% 描述行 / 列表项
+% 描述行 / 列表项（bullet = CMSY 字体 0F 槽位，\mathchar"220F）
+\mathchardef\bulchar="220F
+\def\item#1{\line{\hbox to 1.2em{\hss$\bulchar$\hss}\vtop{\hsize=15.4cm\noindent #1}}\smallskip}
+
+% 联系方式一行内的分隔
+\def\sep{\quad$\cdot$\quad}
+
+%------------------------- 正文开始 -------------------------
+
+\centerline{\bf 张\enspace 三}
+\medskip
+\centerline{北京 \sep 138-0000-0000 \sep zhangsan@example.com}
+\centerline{\tt github.com/zhangsan \sep blog.zhangsan.dev}
+\medskip
+
+%========================== 教育背景 ==========================
+\section{教育背景}
+
+\entryline{某某大学\quad 计算机科学与技术\quad 硕士}{2022.09 -- 2025.06}
+\item{GPA 3.8/4.0；研究方向：编译器与程序分析。}
+\entryline{某某大学\quad 软件工程\quad 本科}{2018.09 -- 2022.06}
+\item{GPA 3.6/4.0，专业排名前 5\%；获国家奖学金、校级优秀毕业生。}
+
+%========================== 工作经历 ==========================
+\section{工作经历}
+
+\entryline{某科技公司\quad 高级软件工程师}{2025.07 -- 至今}
+\item{负责排版引擎核心模块的开发与性能优化，主导重写词法分析层，
+      吞吐量提升 2.1 倍。}
+\item{搭建差分测试框架，覆盖 200+ 对照用例，线上缺陷率下降 60\%。}
+
+\entryline{某研究院\quad 实习生}{2024.03 -- 2024.09}
+\item{参与增量计算框架设计，实现脏区域追踪算法，重排延迟降低 45\%。}
+\item{独立完成 GPU 渲染后端原型，支持无头纹理回读与亚像素抗锯齿。}
+
+%========================== 项目经历 ==========================
+\section{项目经历}
+
+\entryline{NTex —— 现代 TeX 排版引擎}{2023.01 -- 至今}
+\item{以 Rust 重写 TeX 宏求值器：Token 采用 8 字节 tagged union，
+      宏体为连续不可变 TokenArray，并实现字节码双轨执行与等价性测试。}
+\item{实现 DVI 逐字节一致的排版输出与 PDF 后端（Type1 字体嵌入）。}
+\item{技术栈：Rust、wgpu/vello GPU 渲染、WASM 实时预览。}
+
+\entryline{开源贡献}{2022.01 -- 至今}
+\item{向某编译器项目提交 30+ PR，涉及寄存器分配与错误恢复。}
+
+%========================== 专业技能 ==========================
+\section{专业技能}
+
+\item{{\bf 语言：}Rust（精通）、C/C++（熟练）、Python（熟练）。}
+\item{{\bf 系统：}编译原理、增量计算、并行布局、GPU 渲染管线。}
+\item{{\bf 工具：}Git、LLVM、perf、CI/CD 流水线搭建。}
+
+%========================== 荣誉奖项 ==========================
+\section{荣誉奖项}
+
+\item{2024\quad 全国大学生编译器挑战赛 一等奖}
+\item{2023\quad ACM-ICPC 亚洲区域赛 银牌}
+
+\bye
