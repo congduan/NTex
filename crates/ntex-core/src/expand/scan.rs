@@ -382,6 +382,15 @@ impl Expander {
                     let v = self.registers.count(idx);
                     return Ok(if neg { -v } else { v });
                 }
+                // dimendef'd cs（如 plain 的 \z@=\dimen12）数字上下文返回 sp 值：
+                // tex.web scan_something_internal `register:` 分支对四种寄存器统一
+                // 取 cur_val，随后 while cur_val_level>level 降级（dimen→int 数值直传）。
+                // 此前只认 Count 别名，\fam\z@（plain.tex \rm 定义）报 Missing number。
+                EqSlot::Register(RegKind::Dimen, idx) => {
+                    self.fetch()?; // 消费 dimendef'd cs
+                    let v = self.registers.dimen(idx);
+                    return Ok(if neg { -v } else { v });
+                }
                 EqSlot::Stream(_, n) => {
                     self.fetch()?; // 消费 cs
                     return Ok(if neg { -(n as i64) } else { n as i64 });
