@@ -4,6 +4,9 @@
 > 进展随冲刺迭代更新。本文件是 ETRIP 原语状态的**唯一状态源**（plan.md §6 引用）。
 > **不符规范项待办全集**（ETRIP + TRIP 硬差距 + D 组简化点 + A5，按 P0/P1/P2 优先级）见
 > **plan.md §6 待办清单**（2026-08-26 盘点）。
+> 2026-09-09 备忘：scan 两刀——`scan_glue` 补 `RegKind::Dimen` 臂（226c177）+
+> `scan_int` 补 dimendef'd cs 数字上下文（04d2023）——只动寄存器别名扫描路径，
+> A/B/C 组原语清单条目不受影响，无组状态变更。
 > 最近更新：2026-09-03 三轮（marks 段 2 个 "Bad register code" 整块缺失已修复：etrip.tex L208
 > `\marks-1{-1}\marks32768{32768}`——e-TeX marks class 走 register-code 语义，越界报
 > "! Bad register code (N)." + read-again token（数字后下一 token `{`）+ l.N 两行 + help 2 行，

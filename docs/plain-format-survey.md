@@ -370,7 +370,7 @@ python3 -c "print(b'MARKER-PO' in open('r.dvi','rb').read())"    # → True
 
 ---
 
-## 5.bis.g2 G2(a) 实测记录（2026-09-07，✅ 完成——启动 `\input plain` 内嵌接入，提交 bfb66bb）
+## 5.bis.g2 G2(a) 实测记录（2026-09-07，✅ 完成——启动 `\input plain` 内嵌接入，提交 510431b）
 
 **改动面**：`crates/ntex-layout/resources/{plain.tex,hyphen.tex}`（逐字节 verbatim，
 plain.tex 与 `fixtures/corpus/plain/plain.tex` `diff -q` 一致；hyphen.tex 头部自述
@@ -420,7 +420,7 @@ plain.tex 与 `fixtures/corpus/plain/plain.tex` `diff -q` 一致；hyphen.tex �
 |---|---|---|
 | `\footins`/`\topins` 落 insert255 | `\footins=\insert254`、`\topins=\insert253` | **已消**——输出例程刀 4 `\newinsert` 分配器落地（3ef1f67），分配号与真 plain 格式一致（254/253） |
 | `\newif`/`\newbox`/`\newinsert` 区（l.598/599/1023/1121/1149/1177） | 24×`! Use of macro doesn't match its definition.` | **仍在**——量恰 = plain.tex 全部 8 处 `\newif` 调用点 ×3，G6 普查靶子，本刀不修 |
-| l.1237 | 2×`! Missing number, treated as zero.`（`<to be read again> \z@` / `\tenrm`） | **仍在**——`\rm`=`\fam\z@\tenrm`（plain.tex:478），引擎数字扫描不认 dimen 内部量 `\z@`，G6 靶子 |
+| l.1237 | 2×`! Missing number, treated as zero.`（`<to be read again> \z@` / `\tenrm`） | **已消**——`scan_int` 补 dimendef'd cs 数字上下文臂（04d2023，plain 预载全通、corpus 8/8 爬坡）；剩余 `\newif` 链与字体备料见 G6 |
 | `\bye` Incompatible list | 未复现（本轮未观测到该签名） | 待 G6 构造探针复验 |
 | （G0 未照见，本刀首见）shipout 路径 | 3×`Missing number …\z@` 无行上下文，仅在有页面冲出时出现 | **新增可见**——预载前 `\plainoutput`/`\makefootline`/`\advancepageno` 不存在、不可达；钳制探针：`\def\plainoutput{\shipout\vbox{\makefootline}}` 与 `…\advancepageno` 单独即可少 2 处 → 疑 `\pagebody`/`\makeheadline` 一带，G6 靶子 |
 
@@ -430,7 +430,7 @@ plain.tex 与 `fixtures/corpus/plain/plain.tex` `diff -q` 一致；hyphen.tex �
 |---|---|---|---|
 | `list.tex` | FAIL（`\multiply` 目标） | 121B / 1 页 / 53 字体，PDF OK | **PASS**（`\newcount` 分配机制，不回退） |
 | `plain.tex` | FAIL（找不到 hyphen） | 172B / 1 页 / 51 字体，PDF OK | **PASS**（`\input hyphen` 走内嵌） |
-| `letterformat.tex` | FAIL（`\advance` 目标） | 121B / 1 页 / 53 字体，PDF OK | **PASS***——旧死点 `\advance\vsize by-\voffset` 由**并行 G3 刀在 ntex-core 的在途改动**解开（非本刀）；带 * 是因为它与 list.tex 同为宏/格式文件（无正文、无 `\bye`），真 TeX 是 **0 页**，NTex 预载后经 `\plainoutput` 收尾冲页出一页**空页**（见下「发现未修」#1） |
+| `letterformat.tex` | FAIL（`\advance` 目标） | 121B / 1 页 / 53 字体，PDF OK | **PASS***——旧死点 `\advance\vsize by-\voffset` 由 G3 刀解开（3af87dd，`\advance/\multiply/\divide` 目标集合扩 page 参数）；带 * 是因为它与 list.tex 同为宏/格式文件（无正文、无 `\bye`），真 TeX 是 **0 页**，NTex 预载后经 `\plainoutput` 收尾冲页出一页**空页**（见下「发现未修」#1） |
 
 **demo1-fixed 全链**（验收口径：md5 变化须判定语义）：
 - md5 `5e2acc8a…`（1697B / 15 字体）→ `703a356e…`（1722B / 53 字体）。
@@ -478,7 +478,7 @@ plain.tex 与 `fixtures/corpus/plain/plain.tex` `diff -q` 一致；hyphen.tex �
 既有基线（trip-round4-findings），本刀代码在其路径上零触碰（`preload_plain`
 缺省 false，`run_plain_preload` 直接返回）。
 
-**账实备注（共享树事故）**：提交 bfb66bb 除本刀文件外带入了同树并行 G3 刀在
+**账实备注（共享树事故，已核实）**：G2(a) 提交 510431b 除本刀文件外带入了同树并行 G3 刀在
 ntex-core 的已暂存在途改动（free.rs/primitive_assign.rs/scan.rs/tests.rs，+226/−25）
 ——`git add` 只加本刀七路径，对方已暂存文件被一并提交。内容经本刀全量测试验证
-可用，故保留不拆；letterformat 旧死点正由它解开，上文已归据。
+可用，故保留不拆；letterformat 旧死点已由 G3 刀正式落地解开（3af87dd，上文已归据）。

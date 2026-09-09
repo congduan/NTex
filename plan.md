@@ -3,8 +3,20 @@
 > 依据：[idea.md](file:///Users/congduan/Desktop/code/_vibe_coding_/NTex/idea.md) 架构 + 性能决策（字节码预编译 / 深 .fmt / CJK 整形捷径 / 并行 / 增量）
 > 原则：**正确性优先、性能架构前置、基准先行**
 
-## 当前进度（2026-09-03；2026-09-08 增补）
+## 当前进度（2026-09-03；2026-09-10 增补）
 
+> **2026-09-09/10 增补**：格式预载战役（plain-format-survey.md 为状态源）——
+> G0/G1 起步（4ec6a84）→ G2(a) 启动 `\input plain` 内嵌接入（510431b，
+> corpus plain 3 样例全 PASS）→ G3 `\advance/\multiply/\divide` 目标集合扩
+> page 参数（3af87dd）；scan 两刀拆掉胶水/数字扫描的寄存器总闸——
+> `scan_glue` 补 `RegKind::Dimen` 臂（`\skip_const:Nn \c_zero_skip{\c_zero_dim}`，
+> 226c177，**latex.ltx l.13899 `\skip_const` 致命停点消除**，见 latex-feasibility.md
+> §36.4/§37）+ `scan_int` 补 dimendef'd cs 数字上下文（`\z@`，04d2023，
+> plain 预载全通、corpus 8/8 爬坡）。输出例程刀 4/5——`\newinsert` 分配器 +
+> 三联寄存器（3ef1f67，`\footins=\insert254` 与真 plain 一致）+ 页号链 count0
+> 页标签（375b390，`[5.7]` 格式）。字形通道数学编码 + 预览字体装配补齐
+> （2b0afd6，wasm/Tauri 预览对齐 pdftex）。
+>
 > **2026-09-08 战报**：LaTeX 战役二十九刀——latex.ltx `--initex` 错误 **259 → 3**
 > （\expanded 实参 IPN ×256 清零 + \lowercase 转换 active char，78dd892，
 > 验收核销见 latex-feasibility.md §36；剩余 l.13899 `\skip_const` 胶水寄存器
@@ -582,6 +594,9 @@ P1 —— D 组语义简化点（REVIEW-2026-08-23，偏离规范但可接受）
 从"可接受简化"**提升为 LaTeX 兼容战役前置**——真实 `\documentclass` 文档必需，
 战役阶段 A（§11.0）撞上时按需提前实施：
 - [ ] `\insert` 只收集不排版（脚注不可用）——**战役前置**（LaTeX 脚注/浮动体地基）
+      **2026-09-07 进展**：分配面已落——输出例程刀 4 `\newinsert` 分配器 +
+      `\count/\dimen/\skip` 三联寄存器（3ef1f67，`\footins=\insert254` 与真 plain
+      分配号一致）；**体排版仍挂账**（`Node::Ins` 体排版化未做，脚注仍不可用）
       **2026-09-08 勘察改判**（halign-survey.md §6 Q2）：`\insert` 排版化属输出例程战
       （断页器/\vsplit/insert 三联寄存器），与 \halign **零共享地基**；latex.ltx 真实
       排版用点仅 `\@footnotetext` 1 处，优先级低于 \halign 战役

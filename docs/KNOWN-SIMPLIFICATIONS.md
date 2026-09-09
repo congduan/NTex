@@ -97,6 +97,18 @@ demo1 六刀 + 输出例程刀 2/3/5 的修复登记；全部已提交，留作�
 | `typeset/mod.rs` / `sink.rs` | box255 寄存器化统一访问面（box_view/take_box_at/write_box 三访问面） | ✅ 已修（c5d02b9） |
 | `typeset/paging.rs` / `node.rs` | insert 结构化 token 体保留 | ⚠️ 部分已修（577ed3c）：体已保留，**体排版仍挂账**（脚注仍不可用，见 AGENTS.md §7） |
 | `ntex-dvi` transcript 通道 + `--input-path` | 诊断转录（stderr 默认开）+ `\input` 搜索路径（SearchPathVfs）——补"undefined cs 静默跳过"盲区 | ✅ 已修（4ec6a84） |
+| `typeset/paging.rs` / `node.rs` | insert `\newinsert` 分配器 + `\count/\dimen/\skip` 三联寄存器（`\footins=\insert254` 与真 plain 一致） | ✅ 已修（3ef1f67，输出例程刀 4；体排版仍挂账，见上行） |
+
+### 7.bis 格式预载（G 线）登记（2026-09-09 补登，详见 plain-format-survey.md §5.bis）
+
+| 位置 | 现状 | 影响 | 状态 |
+|---|---|---|---|
+| `ntex-layout/typeset/plain_format.rs` `EmbeddedFormatVfs`/`set_preload_plain` | 格式预载仅 ntex-dvi 默认开；ntex-backend/ntex-wasm/ntex-mcp 未接线 | 各渲染端无 `\input plain` 时行为与 ntex-dvi 不一致 | 待接线（plain-format-survey §5.bis 发现未修 #6） |
+| 预载路径 | 预载后空文档经 `\plainoutput` 收尾冲出一页空页 | corpus 内宏/格式文件（无 `\bye`）页数与真 TeX（0 页）不一致 | 待做（survey #1） |
+| `\lccode/\uccode` 初表 | 预载前初表全 0，未按 INITEX 初值（`a..z`/`A..Z` = 自身）播种 | 预载失败回落时 `\lowercase` 行为偏差 | 待做（survey #2） |
+| `expand/scan.rs` | `scan_glue` 胶水上下文不认 dimen 寄存器别名（`\skip_const:Nn \c_zero_skip{\c_zero_dim}` 致命） | latex.ltx l.13899 停点 | ✅ 已修（226c177，`RegKind::Dimen` 臂） |
+| `expand/scan.rs` | `scan_int` 数字上下文不认 dimendef'd cs（`\rm`=`\fam\z@\tenrm` 的 `\z@` Missing number） | plain 预载 l.1237 停点 | ✅ 已修（04d2023，plain 预载全通、corpus 8/8 爬坡） |
+| `\advance/\multiply/\divide` | 目标集合不含 page 参数寄存器（`\advance\vsize`…类死点） | letterformat.tex FAIL | ✅ 已修（3af87dd，tex.web do_register_command） |
 
 ---
 
@@ -121,4 +133,5 @@ demo1 六刀 + 输出例程刀 2/3/5 的修复登记；全部已提交，留作�
 - 2026-09-02：\eqno/\leqno 非数学报错 + math_style 报错（942346e）；\outer 展开上下文禁止（a4c2aeb，R3 补登 commit）
 - 2026-09-07：R3 账实同步——5 处"未提交"悬空项核实归位（eqno 多报 f75a638、radical l.412 报错 f75a638、math_mode_error 942346e、\outer a4c2aeb，位置列顺带刷新到分片后路径）；demo1 六刀 + 输出例程刀 2/3/5 战果登记（§7）；架构债小节新设（§8）
 - 2026-09-08：LaTeX 战役二十九刀——\expanded 实参 IPN ×256 清零（scan_edef_body 加 in_definition，78dd892）+ \lowercase 转换 active char（token 表示层 CS_ACTIVE_FLAG，78dd892），详见 latex-feasibility.md §36；\halign 战役刀 1/3——\everycr 两点注入 + align_peek 入口 align_state 复位 + to/spread 摊派真语义（4b912f9），§3 对齐组条目同步刷新
+- 2026-09-09：格式预载/scan 线补登（§7.bis 新设）——scan_glue dimen 臂（226c177，latex.ltx l.13899 \skip_const 停点消除）+ scan_int dimendef 数字上下文（04d2023，\z@）+ G3 page 参数（3af87dd）；输出例程刀 4 \newinsert 分配器补登（3ef1f67，§7）；新增三项简化登记：EmbeddedFormatVfs 仅 ntex-dvi 接线、预载空页、\lccode/\uccode 初表全 0（510431b 系）
 - **收尾纪律提醒**：后续每轮修复后同步更新本清单（已修项标 ✅ + commit；维护记录追加）

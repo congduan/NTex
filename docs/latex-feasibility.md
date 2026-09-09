@@ -2867,8 +2867,10 @@ ipn2b 形态同理：`\show\x` 显示 `->\lowercase {x}.` 的 `#` 消失是 acti
 
 - 对拍工作目录 /tmp/ntex-r29（ipn2b.tex、probe_a/b.tex、基线 before.txt）；latex.ltx
   仍在 /tmp/latexsurvey/tex/latex/base/；probe 转录写在 latex.ltx 同目录 .transcript。
-- l.13899（`\skip_const:Nn \c_zero_skip { \c_zero_dim }`）现为**致命**停点
-  （"胶水上下文需要 \skip/\muskip 寄存器"），是 LaTeX 战役下一刀的首选靶。
+- ~~l.13899（`\skip_const:Nn \c_zero_skip { \c_zero_dim }`）现为**致命**停点
+  （"胶水上下文需要 \skip/\muskip 寄存器"），是 LaTeX 战役下一刀的首选靶~~
+  **已消（2026-09-09）**：`scan_glue` 补 `RegKind::Dimen` 臂（226c177），
+  已越过原 l.13899 停点；当前阻塞点见 §37（`\let` 左侧缺 cs）。
 
 ## 37. 第三十刀（推进）：`\let` 左侧缺控制序列走 TeX 恢复，而非终止引擎（2026-09-09）
 

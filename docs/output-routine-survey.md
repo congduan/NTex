@@ -376,7 +376,7 @@ hbox=2  xdef=1  def=1
 | `\ifvoid\footins`/`\unvbox\footins`/`\skip\footins`/`\count\footins`/`\dimen\footins` | ❌ **插入寄存器完全没建模**（无 `\count/\dimen/\skip` 与插入类联动） | 全 crate 无 hit；`Node::Ins{class,text}` node.rs:215–219 |
 | insert 参与断页成本 | ❌ 完全不参与（`Ins` 直接入页、不测量、无 `\insertpenalties`） | page.rs:293–298、513–518；头注 page.rs:15 |
 | `\pagegoal/\pagetotal/\pagedepth/\pagestretch/\pageshrink` | ❌ 影子值是 PageBuilder 私有字段，无 sink API | page.rs:40–58；全 crate grep 无 hit（**但 latex.ltx 基本不用，见 §2.4**） |
-| `\count0` → 页号（`[5.7]` 格式） | ❌ `trace_shipout` 硬编码 `[0.0.0.0.{ship_seq}]`；NodeBuilder 无 count 镜像 | paging.rs:11–12；mod.rs:543–545 |
+| `\count0` → 页号（`[5.7]` 格式） | ✅ 已修（375b390，见 §5.bis.5）；残留挂账：`ntex-dvi/src/main.rs:102` 旧驱动仍走 `write_dvi` 回落接口 | paging.rs:11–12；mod.rs:543–545 |
 | `\vsize` 例程中途改（L20817/20820/20823） | ✅ 逐页生效（页中途改到下页起效，与 tex.web 一致） | page.rs:610–648 |
 | `\topmark/\firstmark/\botmark` | ✅（绑贡献流而非页内容——语义待核） | sink.rs:1212–1256 |
 | `\splitfirstmarks/\splitbotmarks`（每页 24 次） | ⚠️ 接口在、恒空 | sink.rs:1257–1274 |
@@ -398,7 +398,7 @@ hbox=2  xdef=1  def=1
 |---|---|---|---|---|
 | G1 | **`\outputpenalty`**：FireUp 不记断点惩罚，`\output` 第一个判据就失真（8 个用点；**六档罚分协议** -\@M/-\@Mi/-\@Mii/-\@Miii/-\@Miv/-\@MM 全靠它分派，规格见 §2.2bis） | page.rs:356–384 | 1 原语 + PageBuilder 1 字段 + 1 sink API；**1 刀** | 例程第一 token；档位差 ±1 就换路（-10000→正常臂，-10001→`\@doclearpage`），**不能模糊化** |
 | G2 | **box255 寄存器化**：255 不在 `boxes` 寄存器文件，`\unvbox\@cclv`×2/`\vsplit\@cclv`×1/`\ifvoid\@cclv`/`\wd\ht\dp\@cclv` 全废 | sink.rs:1021–1023 vs 1480–1497/1365–1373/1500–1509 | 1 处结构（255 进 `boxes` 或队列感知面）+ 5 个调用点；**1–2 刀** | `\@makecol` 只用 `\box\@cclv`（已通），但 `\end{document}` 的 `\clearpage`→`\@doclearpage` 必碰 `\vsplit\@cclv to\z@`；sample2e 最后一页必经 |
-| G3 | **insert 建模**：`\insert` 体被有损压串 + `\count/\dimen/\skip` 三联缺失 + `\newinsert` 分配面（**56 个：52 个 float 池 `bx@A…bx@ZZ` + `footins`/`\@mpfootins`/`\@kludgeins`/`\reserved@a`**）；且 `\@currbox`/`\@marbox` 是**指向 insert 的宏**（`\count\@currbox` 须经宏展开寻址） | sink.rs:1224–1230；node.rs:215–219 | 1 个结构改造（`Node::Ins` 存 token 体/BoxNode）+ 3 类寄存器联动 + `\newinsert` 分配器；**2–3 刀** | sample2e 有脚注：`\@footnotetext`(17950)→`\insert\footins`（体内 `\splittopskip\footnotesep\splitmaxdepth\dp\strutbox\floatingpenalty\@MM`，17953–54）→`\@outputbox@appendfootnotes`(21025) 的 `\ifvoid\footins`/`\unvbox\footins`/`\skip\footins` 必经 |
+| G3 | **insert 建模**：`\insert` 体被有损压串 + `\count/\dimen/\skip` 三联缺失 + `\newinsert` 分配面（**56 个：52 个 float 池 `bx@A…bx@ZZ` + `footins`/`\@mpfootins`/`\@kludgeins`/`\reserved@a`**）；且 `\@currbox`/`\@marbox` 是**指向 insert 的宏**（`\count\@currbox` 须经宏展开寻址） | sink.rs:1224–1230；node.rs:215–219 | 1 个结构改造（`Node::Ins` 存 token 体/BoxNode）+ 3 类寄存器联动 + `\newinsert` 分配器；**2–3 刀**；**进展（2026-09-07）：分配面已落（3ef1f67，见 §5.bis.4bis）——`\newinsert` 分配器 + 三联寄存器，`\footins=\insert254` 与真 plain 一致；体排版仍挂账** | sample2e 有脚注：`\@footnotetext`(17950)→`\insert\footins`（体内 `\splittopskip\footnotesep\splitmaxdepth\dp\strutbox\floatingpenalty\@MM`，17953–54）→`\@outputbox@appendfootnotes`(21025) 的 `\ifvoid\footins`/`\unvbox\footins`/`\skip\footins` 必经 |
 | G4 | **`\deadcycles`/`\maxdeadcycles`**：无死循环保护；latex.ltx 6 个用点（20608/20831/15495/15560/9784/20245） | 全 crate 无 hit | 1 原语 + fire_up 处 1 判据；**0.5 刀**（可与 G1 并刀） | 带来输出例程时代必需的安全网（例程不出页 → `pending_pages` 无限堆积，现在不报错） |
 | G5 | **页号链**：`\count0..9` 快照进 `trace_shipout`/DVI 页标签（`[5.7]` 格式实测） | paging.rs:11–12 | count 镜像 1 个 + 格式化 1 处；**0.5–1 刀** | `\@outputpage` 的 `\ifodd\count\z@` + `\stepcounter{page}` 是页眉选择与页码来源；对拍真 TeX 的 log/DVI 都靠它 |
 | G6 | **`\vsplit` 完整语义**：`\splittopskip/\splitmaxdepth`/split marks/可拆性判据；**两个用户**——`\@doclearpage`(20884) 与 ltmarks 的 `\mark_update_structure_from_material:nn`(18222 用 `\tex_vsplit:D`) | sink.rs:364–384；node.rs:442–461 | 2 参数 + 判据改写；**1–2 刀** | `\@doclearpage` 的 `\vsplit\@cclv to\z@` 只为"取走页首 discardables"，几何拆分可能侥幸；但浮动体页（非 sample2e）必炸；ltmarks 是第二用户 |
@@ -701,6 +701,18 @@ fire_up 被删除（装得下时），体进 `box(class)`——**`box(c)` 就是
 6. `cargo test -p ntex-layout`：181 过 / 2 失败均为 D 线在途数学斜体测试
    （`math_italic_correction_kern_after_ord_char`/`math_italic_kern_sup_only_but_not_sub_only`，
    与本刀无关）；本刀 5 条全绿。`cargo test -p ntex-core`：335 全绿。
+
+## 5.bis.4bis 刀 4 实测记录（2026-09-07，✅ 完成——`\newinsert` 分配器 + 三联寄存器，提交 3ef1f67）
+
+**改动面**：`\newinsert` 原语落地（分配器 + 三联寄存器 `\count/\dimen/\skip` 与
+insert 类联动），分配号与真 plain 格式一致——`\footins=\insert254`、`\topins=\insert253`。
+
+**验证**：plain 格式预载侧复测通过（plain-format-survey.md §5.bis.g2：G0 首轮
+`\footins`/`\topins` 落 insert255 条目判"已消"；corpus plain `list.tex` PASS）；
+TRIP/单元测试无回归。
+
+**残留**：`Node::Ins` 体排版仍挂账（体被收集但排版化未做，脚注仍不可用）——
+见 §4 G3 行注记与 KNOWN-SIMPLIFICATIONS.md。
 
 ## 5.bis.5 刀 5 实测记录（2026-09-07，✅ 完成——页号链 count0 页标签 + bop 计数接线）
 
