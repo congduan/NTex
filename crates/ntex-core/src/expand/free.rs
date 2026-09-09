@@ -273,9 +273,9 @@ fn pdf_creation_date_tokens(day: i64, month: i64, year: i64, minutes: i64) -> Ve
 }
 
 /// `\pdfstrcmp`：两 token 串的字符串比较（detokenize 同规则转字节）→ -1/0/1。
-fn pdf_strcmp_value(a: &[Token], b: &[Token], intern: &InternTable) -> i64 {
-    let sa = pdf_detokenize_bytes(a, intern);
-    let sb = pdf_detokenize_bytes(b, intern);
+fn pdf_strcmp_value(a: &[Token], b: &[Token], intern: &InternTable, esc: i64) -> i64 {
+    let sa = pdf_detokenize_bytes(a, intern, esc);
+    let sb = pdf_detokenize_bytes(b, intern, esc);
     match sa.cmp(&sb) {
         std::cmp::Ordering::Less => -1,
         std::cmp::Ordering::Equal => 0,
@@ -284,10 +284,10 @@ fn pdf_strcmp_value(a: &[Token], b: &[Token], intern: &InternTable) -> i64 {
 }
 
 /// token 串 → 字节串（与 `\detokenize` 同一转换，再取字符码）。
-fn pdf_detokenize_bytes(toks: &[Token], intern: &InternTable) -> Vec<u8> {
+fn pdf_detokenize_bytes(toks: &[Token], intern: &InternTable, esc: i64) -> Vec<u8> {
     let mut text = Vec::new();
     for t in toks {
-        detokenize_token(*t, intern, &mut text);
+        detokenize_token(*t, intern, esc, &mut text);
     }
     text.iter()
         .filter_map(|t| t.charcode().and_then(|c| u8::try_from(c).ok()))
@@ -367,7 +367,12 @@ fn compare(a: i64, b: i64, rel: Relation) -> bool {
 /// `\detokenize` 单 token 转换：字符 → catcode 12（空格 10）；控制序列 → `\名字`。
 /// e-TeX：控制词（名字以字母开头）后补一个空格分隔符（TeX `\detokenize{a\relax b}`
 /// 输出 "a\relax b"——控制词后的空格 token 已被扫描吞掉）。
-fn detokenize_token(tok: Token, intern: &InternTable, out: &mut Vec<Token>) {
+///
+/// 转义字符取 `\escapechar`（`esc`）：tex.web `print_esc` 只在 `0<=esc<256` 时打印
+/// 转义字符（负数 / 256 / >255 一律不可见）——plain `\newif` 的
+/// `\expandafter\if@\string\iffoo` 依赖 `\escapechar=-1` 时 `\string` 不带前导 `\`
+/// （`\if@` 的 "if" 定界才匹配得上）。旧实现硬编码 `\` 使 -1 失效。
+fn detokenize_token(tok: Token, intern: &InternTable, esc: i64, out: &mut Vec<Token>) {
     match tok.kind() {
         TokenKind::Char => {
             let ch = tok.charcode().expect("Char 必有 charcode");
@@ -380,7 +385,9 @@ fn detokenize_token(tok: Token, intern: &InternTable, out: &mut Vec<Token>) {
         }
         TokenKind::ControlSeq => {
             let name = intern.name(tok.csid().expect("ControlSeq 必有 csid"));
-            out.push(Token::char(Catcode::Other, u32::from(b'\\')));
+            if (0..=255).contains(&esc) {
+                out.push(Token::char(Catcode::Other, esc as u32));
+            }
             for b in name.bytes() {
                 out.push(Token::char(Catcode::Other, u32::from(b)));
             }
@@ -404,7 +411,9 @@ fn detokenize_token(tok: Token, intern: &InternTable, out: &mut Vec<Token>) {
 /// = `\cs_if_exist:N`（无空格），cs_split 的签名组才是干净 `{N}`；若误带空格，
 /// p 型条件生成器的 csname `\cs_if_exist:NTF` 会变成含空格的 `\cs_if_exist:N TF`，
 /// 后续 `\cs_if_exist:NTF` 全部 Undefined control sequence。
-fn string_token(tok: Token, intern: &InternTable, out: &mut Vec<Token>) {
+///
+/// 转义字符同 [`detokenize_token`]：`esc`（`\escapechar`）仅在 `0..=255` 内打印。
+fn string_token(tok: Token, intern: &InternTable, esc: i64, out: &mut Vec<Token>) {
     match tok.kind() {
         TokenKind::Char => {
             let ch = tok.charcode().expect("Char 必有 charcode");
@@ -417,7 +426,9 @@ fn string_token(tok: Token, intern: &InternTable, out: &mut Vec<Token>) {
         }
         TokenKind::ControlSeq => {
             let name = intern.name(tok.csid().expect("ControlSeq 必有 csid"));
-            out.push(Token::char(Catcode::Other, u32::from(b'\\')));
+            if (0..=255).contains(&esc) {
+                out.push(Token::char(Catcode::Other, esc as u32));
+            }
             for b in name.bytes() {
                 out.push(Token::char(Catcode::Other, u32::from(b)));
             }

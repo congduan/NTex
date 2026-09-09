@@ -1019,15 +1019,16 @@ impl Expander {
         }
     }
 
-    /// 当前 escape 字符（`\escapechar`，misc[34]；256 = 不可见 → 空串）。
+    /// 当前 escape 字符（`\escapechar`，misc[34]）。tex.web print_esc：仅
+    /// `0<=esc<256` 才打印转义字符——负数（plain \newif 的 -1）与 256 都不可见。
     fn escape_char_str(&self) -> String {
         let esc = self.params.misc[34];
-        if esc == 256 {
-            String::new()
-        } else {
+        if (0..=255).contains(&esc) {
             char::from_u32(esc as u32)
                 .map(|c| c.to_string())
-                .unwrap_or_else(|| "\\".to_string())
+                .unwrap_or_default()
+        } else {
+            String::new()
         }
     }
 

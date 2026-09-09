@@ -122,7 +122,7 @@ impl Expander {
             Primitive::PdfStrCmp => {
                 let a = self.scan_group_contents_expanding()?;
                 let b = self.scan_group_contents_expanding()?;
-                let v = pdf_strcmp_value(&a, &b, &self.intern);
+                let v = pdf_strcmp_value(&a, &b, &self.intern, self.params.misc[34]);
                 self.emit_tokens(emit_count(v))
             }
             // \pdffilesize{<file>}：文件字节数；文件不存在展开为空
@@ -158,7 +158,7 @@ impl Expander {
                     .ok_or_else(|| Error::invalid_input("\\string 后无 token"))?
                     .0;
                 let mut buf = Vec::new();
-                string_token(t, &self.intern, &mut buf);
+                string_token(t, &self.intern, self.params.misc[34], &mut buf);
                 self.emit_tokens(buf)
             }
             // \inputlineno 单独出现：no-op（恒 0；数字上下文由 scan_number 处理）

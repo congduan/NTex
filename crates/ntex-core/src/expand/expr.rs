@@ -178,8 +178,9 @@ impl Expander {
                     // \detokenize{...}：组内容转回字符 token（cat 12 其他字符）
                     let toks = self.scan_group_contents_expanding()?;
                     let mut detok = Vec::new();
+                    let esc = self.params.misc[34];
                     for t in toks {
-                        detokenize_token(t, &self.intern, &mut detok);
+                        detokenize_token(t, &self.intern, esc, &mut detok);
                     }
                     out.extend(detok.into_iter().map(|t| (t, false)));
                 }
@@ -192,13 +193,15 @@ impl Expander {
                 EqSlot::Primitive(Primitive::String_) => {
                     // \string<token>：token 转文本（字符序列）。用 string_token
                     // （tex.web sprint_cs 语义：控制词后**不**补空格——\detokenize
-                    // 才补。expl3 cs_split/cs_to_str 依赖无空格签名）。
+                    // 才补。expl3 cs_split/cs_to_str 依赖无空格签名）。转义字符按
+                    // \escapechar（tex.web print_esc：0..=255 才打印）——
+                    // plain \newif 的 \string\iffoo 在 \escapechar=-1 下须无前导 \。
                     let t = self
                         .fetch()?
                         .ok_or_else(|| Error::invalid_input("\\string 后无 token"))?
                         .0;
                     let mut buf = Vec::new();
-                    string_token(t, &self.intern, &mut buf);
+                    string_token(t, &self.intern, self.params.misc[34], &mut buf);
                     out.extend(buf.into_iter().map(|t| (t, false)));
                 }
                 EqSlot::Primitive(Primitive::Meaning) => {
@@ -365,7 +368,7 @@ impl Expander {
                 EqSlot::Primitive(Primitive::PdfStrCmp) => {
                     let a = self.scan_group_contents_expanding()?;
                     let b = self.scan_group_contents_expanding()?;
-                    let v = pdf_strcmp_value(&a, &b, &self.intern);
+                    let v = pdf_strcmp_value(&a, &b, &self.intern, self.params.misc[34]);
                     out.extend(emit_count(v).into_iter().map(|t| (t, false)));
                 }
                 EqSlot::Primitive(Primitive::PdfFileSize) => {
@@ -966,8 +969,9 @@ impl Expander {
     fn exec_detokenize(&mut self) -> Result<()> {
         let toks = self.scan_group_contents_expanding()?;
         let mut out = Vec::new();
+        let esc = self.params.misc[34];
         for t in toks {
-            detokenize_token(t, &self.intern, &mut out);
+            detokenize_token(t, &self.intern, esc, &mut out);
         }
         self.emit_tokens(out)
     }
@@ -1017,8 +1021,9 @@ impl Expander {
     fn exec_scantokens(&mut self) -> Result<()> {
         let toks = self.scan_group_contents_expanding()?;
         let mut text: Vec<Token> = Vec::new();
+        let esc = self.params.misc[34];
         for t in toks {
-            detokenize_token(t, &self.intern, &mut text);
+            detokenize_token(t, &self.intern, esc, &mut text);
         }
         let bytes: Vec<u8> = text
             .iter()

@@ -1078,3 +1078,97 @@ use super::*;
             "\\everycr 空表不应产生任何错误：{t2}"
         );
     }
+
+    // ── \newif / \escapechar 展开链（plain.tex L598 预载 24 条 "doesn't
+    // match" 根因）──────────────────────────────────────────────────────
+    // plain.tex L264-271 的 \newif 定义压缩成单行（@=11、\count@=255、
+    // \m@ne=22；见 crates/ntex-layout/resources/plain.tex L47/206/212/264-271）。
+    const PLAIN_NEWIF_DEFS: &str = concat!(
+        r"\catcode`@=11 ",
+        r"\countdef\count@=255 ",
+        r"\countdef\m@ne=22 \m@ne=-1 ",
+        r"\outer\def\newif#1{\count@\escapechar \escapechar\m@ne ",
+        r"\expandafter\expandafter\expandafter \def\@if#1{true}{\let#1=\iftrue} ",
+        r"\expandafter\expandafter\expandafter \def\@if#1{false}{\let#1=\iffalse} ",
+        r"\@if#1{false}\escapechar\count@} ",
+        r"\def\@if#1#2{\csname\expandafter\if@\string#1#2\endcsname} ",
+        r"{\uccode`1=`i \uccode`2=`f \uppercase{\gdef\if@12{}}} ",
+    );
+
+    /// PLAIN_NEWIF_DEFS + 尾串（concat! 不接受 const，用 format 内联捕获）。
+    fn nsrc(tail: &str) -> String {
+        format!("{PLAIN_NEWIF_DEFS}{tail}")
+    }
+
+    fn probe_dual(src: &str) -> (String, String, String) {
+        // 返回 (字节码轨道输出, 字节码转录, 解释器转录)——双轨各自独立检查报错
+        let mut a = Expander::new();
+        a.run_source(src).ok();
+        let oa: String = a
+            .output()
+            .iter()
+            .map(|t| t.charcode().and_then(char::from_u32).unwrap_or('\u{FFFD}'))
+            .collect();
+        let ta = a.transcript().to_string();
+        let mut b = Expander::new_interpreter();
+        b.run_source(src).ok();
+        let tb = b.transcript().to_string();
+        (oa, ta, tb)
+    }
+
+    #[test]
+    fn newif_escapechar_minus1_string_no_leading_escape() {
+        // \escapechar=-1 时 \string\iffoo 不带前导 \（tex.web print_esc 0..=255
+        // 才打印转义字符）——plain \newif 的 "if" 定界匹配依赖此。修复前硬编码
+        // 反斜杠使输出为 "\iffoo"。
+        assert_eq!(expand(r"\escapechar=-1 \string\iffoo").unwrap(), "iffoo");
+        // 默认 \escapechar=`\\ 时仍带前导 \
+        assert_eq!(expand(r"\escapechar=`\\ \string\iffoo").unwrap(), "\\iffoo");
+        // \escapechar=256 也不可见
+        assert_eq!(expand(r"\escapechar=256 \string\iffoo").unwrap(), "iffoo");
+    }
+
+    #[test]
+    fn newif_iffoo_defines_true_and_false_conditions() {
+        // \newif\iffoo 应制造 \footrue/\foofalse 并把 \iffoo 初始置为 false：
+        // \ifx 判等走含义（\iffoo \let 到 \iftrue/\iffalse 原语）。
+        let src = nsrc(
+            &[
+                r"\newif\iffoo ",
+                r"\ifx\iffoo\iffalse INIT-F\else INIT-T\fi ", // 初始 false
+                r"\footrue ",
+                r"\ifx\iffoo\iftrue NOW-T\else NOW-F\fi ", // \footrue 后为 true
+                r"\iffoo COND-T\else COND-F\fi ",          // 真分支
+            ]
+            .concat(),
+        );
+        let (out, ta, tb) = probe_dual(&src);
+        assert_eq!(out.trim(), "INIT-FNOW-TCOND-T", "双轨输出：{out}");
+        assert!(!ta.contains("doesn't match"), "字节码轨道报错：{ta}");
+        assert!(!tb.contains("doesn't match"), "解释器轨道报错：{tb}");
+    }
+
+    #[test]
+    fn newif_csname_string_if_prefix_matches() {
+        // \@if\iffoo{true} = \csname\expandafter\if@\string#1#2\endcsname（#1=\iffoo、
+        // #2=`true` 无空格——参数替换在 token 层，名字不含空格）：\string 先行展开
+        // 为字符、\if@ 吞掉 "if" 前缀 → 名字 = "footrue"。修复前 \string 带前导 \
+        // 使 \if@ 定界失配、\def 定义到错误 cs，随后 \footrue 未定义。
+        // 3 层 \expandafter 与 \newif 同构：E2 把 \@if 展开出的 \csname...\endcsname
+        // 先解析成 \footrue token，\def 才吃到目标 cs（\def 本身不展开 \csname）。
+        let src = nsrc(
+            r"\escapechar=-1 \expandafter\expandafter\expandafter\def\@if\iffoo{true}{MKR}\footrue",
+        );
+        let (out, ta, tb) = probe_dual(&src);
+        assert_eq!(out.trim(), "MKR", "out={out:?} bytecode转录：{ta} 解释器转录：{tb}");
+    }
+
+    #[test]
+    fn newif_ifus_at_zero_errors() {
+        // plain.tex L598 现场（预载 24 条 "doesn't match" 的单个 \newif 复现）：
+        // 修复后该行不再报错。
+        let src = nsrc(r"\newif\ifus@ ");
+        let (_, ta, tb) = probe_dual(&src);
+        assert!(!ta.contains("doesn't match"), "字节码轨道报错：{ta}");
+        assert!(!tb.contains("doesn't match"), "解释器轨道报错：{tb}");
+    }

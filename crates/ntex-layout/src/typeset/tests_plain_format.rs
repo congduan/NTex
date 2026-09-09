@@ -103,3 +103,18 @@ fn embedded_hyphen_tex_parses_into_pattern_trie() {
     let trie = crate::hyphen::PatternTrie::parse(&body.as_bytes()[start..end]);
     assert!(trie.count > 4000, "4447 条模式应全部入 trie：{}", trie.count);
 }
+
+
+
+#[test]
+fn preload_plain_newif_region_zero_definition_mismatch() {
+    // \newif\ifus@（plain.tex L598）此前报 24 条 "Use of macro doesn't match
+    // its definition"：根因在 \csname 名字扫描里 \string 不读 \escapechar
+    // （-1 时仍打前导 \），\if@ 的 "if" 定界失配。整个 plain 预载须零此类报错。
+    let mut ts = Typesetter::with_tfm();
+    ts.set_preload_plain(true);
+    ts.typeset(r"\message{AFTER}").unwrap();
+    let t = ts.take_transcript();
+    let n = t.matches("doesn't match").count();
+    assert_eq!(n, 0, "plain 预载不应有宏定义失配：……\n{t}");
+}
