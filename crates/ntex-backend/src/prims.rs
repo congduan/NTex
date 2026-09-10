@@ -181,17 +181,26 @@ impl GlyphCtx<'_> {
         let Some(fm) = self.metrics.get(font.0 as usize) else {
             return false;
         };
-        let Some(slot) = u8::try_from(charcode)
-            .ok()
-            .and_then(|s| slot_to_unicode(&fm.name, s))
-        else {
-            return false; // 无映射的编码位（如 OT1 高位区/OMS 空洞）暂无对应
+        // 字形码位（Unicode 语义）：Unicode 直映字体（OpenType，M9 中文刀 1）
+        // 的 charcode 本身就是 Unicode 码位，直通 cmap——此前一律 `u8::try_from`
+        // 截断，CJK（如 U+4E00）会因超出 u8 直接返回 false 而回落占位方框；
+        // 8-bit 字体（TFM）保持先经编码向量（OT1/OML/OMS/OMX）映射。
+        let unicode = if fm.unicode_native {
+            charcode
+        } else {
+            let Some(u) = u8::try_from(charcode)
+                .ok()
+                .and_then(|s| slot_to_unicode(&fm.name, s))
+            else {
+                return false; // 无映射的编码位（如 OT1 高位区/OMS 空洞）暂无对应
+            };
+            u
         };
         let gf = match self.cache.resolve(&fm.name) {
             Some(gf) => gf,
-            None => return false, // 环境无字体文件（kpsewhich 未命中）
+            None => return false, // 环境无字体文件（kpsewhich/字体目录均未命中）
         };
-        let Some(gid) = gf.glyph_id(slot) else {
+        let Some(gid) = gf.glyph_id(unicode) else {
             return false; // 该字体无此字形（如 lmroman 无希腊区）
         };
         // em 像素 = 实际字号（design × scale / 2^20）按 dpi 换算。

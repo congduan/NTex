@@ -143,9 +143,17 @@ impl Expander {
     }
 
     /// `\char<num>` 展开 token 计算（exec 与 expand_once 共用）。
+    ///
+    /// 合法上界**由当前字体决定**（[`FontLoader::char_code_limit`]，M9 中文刀 1）：
+    /// 8-bit TFM 字体 255——tex.web §1108 的 `! Bad character code (N).` 是
+    /// TRIP/ETRIP 硬口径（`reference/trip/tripin.log`、`fixtures/etrip/etrip.log`
+    /// 均含 `(256)` 参考块），不可放宽；Unicode 直映字体（OpenType）0x10FFFF，
+    /// 对齐 XeTeX，使 `\char"4E00` 可排汉字。无字体（nullfont）时按 255。
     fn char_tokens(&mut self) -> Result<Vec<Token>> {
         let n = self.scan_number()?;
-        if !(0..=255).contains(&n) {
+        let font = self.sink.current_font();
+        let limit = i64::from(self.font_loader.char_code_limit(font));
+        if !(0..=limit).contains(&n) {
             let mut msg = format!("! Bad character code ({n}).\n");
             if let Some((ln, line)) = self.error_context() {
                 msg.push_str(&format!("l.{ln} {line}\n"));

@@ -25,7 +25,7 @@ impl Expander {
         match content {
             Some(bytes) => {
                 let bytes = Arc::from(bytes);
-                self.stack.push(InputFrame::Source {
+                self.push_frame(InputFrame::Source {
                     line_starts: Arc::from(crate::input::line_starts(&bytes)),
                     bytes,
                     pos: 0,
@@ -138,7 +138,7 @@ impl Expander {
                         r?;
                         if !expansion.is_empty() && !no_progress {
                             let items: Vec<(Token, bool)> = expansion;
-                            self.stack.push(InputFrame::TokenList {
+                            self.push_frame(InputFrame::TokenList {
                                 items: Arc::from(items),
                                 pos: 0,
                             });

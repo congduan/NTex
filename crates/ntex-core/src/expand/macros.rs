@@ -151,7 +151,35 @@ impl Expander {
         }
         let mut buf: Vec<Token> = Vec::new();
         let mut depth = 0usize; // 平衡组深度：`{…}` 组整组贡献，组内 token 不定界
+        // TEMP DEBUG（挂死定位）
+        let mut guard: u64 = 0;
+        let dbg_on = std::env::var("NTEX_DELIM_DBG").is_ok();
+        let entry_last = self.last_tok.clone();
+        let entry_stack = if dbg_on {
+            self.debug_stack_summary()
+        } else {
+            String::new()
+        };
         loop {
+            guard += 1;
+            if dbg_on && guard == 1_000_000 {
+                let show = |t: &Token| match t.csid() {
+                    Some(id) => format!("\\{}", self.intern.name(id)),
+                    None => format!("c{}", t.charcode().unwrap_or(9999)),
+                };
+                let head: Vec<String> = buf.iter().take(32).map(show).collect();
+                eprintln!(
+                    "[delim-dbg] 失控定界实参 name={name} 达到 1M：buf.len={blen} depth={depth}\n  入口 last_tok={entry_last:?}\n  入口栈={entry_stack}\n  头32=[{head:?}]",
+                    blen = buf.len()
+                );
+            }
+            if guard > 40_000_000 {
+                eprintln!("[delim-dbg] 超限退出 name={name} buf.len={}", buf.len());
+                return Err(Error::invalid_input(format!(
+                    "定界实参收集无终止（\\{name}，{} token）",
+                    buf.len()
+                )));
+            }
             let tok = match self.fetch()? {
                 Some(t) => t.0,
                 None => {
@@ -748,7 +776,7 @@ impl Expander {
                     if expansion.is_empty() {
                         continue;
                     }
-                    self.stack.push(InputFrame::TokenList {
+                    self.push_frame(InputFrame::TokenList {
                         items: Arc::from(expansion),
                         pos: 0,
                     });
@@ -767,7 +795,7 @@ impl Expander {
                     if expansion.is_empty() {
                         continue;
                     }
-                    self.stack.push(InputFrame::TokenList {
+                    self.push_frame(InputFrame::TokenList {
                         items: Arc::from(expansion),
                         pos: 0,
                     });
@@ -808,7 +836,7 @@ impl Expander {
                 None => format!("{:?}({:?})", t.charcode(), t.catcode()),
             }).collect();
             let items: Vec<(Token, bool)> = tokens.into_iter().map(|t| (t, false)).collect();
-            self.stack.push(InputFrame::TokenList {
+            self.push_frame(InputFrame::TokenList {
                 items: Arc::from(items),
                 pos: 0,
             });
@@ -972,7 +1000,7 @@ impl Expander {
         self.let_to(csid, t2);
         self.eq_mark_level(csid, global);
         let items: Vec<(Token, bool)> = vec![(t1, false), (t2, false)];
-        self.stack.push(InputFrame::TokenList {
+        self.push_frame(InputFrame::TokenList {
             items: Arc::from(items),
             pos: 0,
         });

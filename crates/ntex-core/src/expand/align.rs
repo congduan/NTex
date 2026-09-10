@@ -167,7 +167,7 @@ impl Expander {
             return Ok(());
         }
         let items: Vec<(Token, bool)> = toks.into_iter().map(|t| (t, false)).collect();
-        self.stack.push(InputFrame::TokenList {
+        self.push_frame(InputFrame::TokenList {
             items: Arc::from(items),
             pos: 0,
         });
@@ -200,7 +200,7 @@ impl Expander {
         self.aftergroup.retain(|(l, _)| *l != self.group_level);
         if !tokens.is_empty() {
             let items: Vec<(Token, bool)> = tokens.into_iter().map(|t| (t, false)).collect();
-            self.stack.push(InputFrame::TokenList {
+            self.push_frame(InputFrame::TokenList {
                 items: Arc::from(items),
                 pos: 0,
             });
@@ -666,7 +666,7 @@ impl Expander {
             _ => return,
         };
         let _ = omit;
-        self.stack.push(InputFrame::AlignV {
+        self.push_frame(InputFrame::AlignV {
             items: TokenArray::from(v),
             pos: 0,
         });
@@ -822,7 +822,7 @@ impl Expander {
                 }) => cols.get(*cur_col).map(|c| c.u.clone()).unwrap_or_default(),
                 _ => Vec::new(),
             };
-            self.stack.push(InputFrame::AlignU {
+            self.push_frame(InputFrame::AlignU {
                 items: TokenArray::from(u),
                 pos: 0,
             });

@@ -18,9 +18,11 @@
 //! `Err`，不 panic（引擎契约：任意畸形输入不 panic）。
 
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use ttf_parser::{Face, OutlineBuilder};
+
+use crate::tfm::FontMetrics;
 
 /// OTF/TTF 解析错误（操作意图上下文内嵌于消息）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +106,35 @@ pub struct Outline {
 /// 本层是 M9 前置的度量/正身层，逐字形保真渲染属 M9 后续
 /// （`ntex-backend` vello 字形通道走完整缓存，不经本表示）。
 pub const MAX_OUTLINE_POINTS: usize = 64;
+
+/// OpenType 字体的默认设计字号 = 10pt（655360 sp）。
+///
+/// OTF/TTF 没有 TeX 意义上的"设计字号"（TFM 头部 header[1]）。取 10pt 为
+/// 基准与 XeTeX 对未指定尺寸 OpenType 字体的处理一致；`at`/`scaled` 由
+/// 调用方按 TFM 同款 [`FontMetrics::scaled_by`] 施加，使两条字体路径的
+/// 缩放语义（`design_size_sp` 保持基准、`scale` = round(num/den × 2^20)）
+/// 完全一致——DVI `fnt_def` 的 d/s 两字段因此无需分叉。
+pub const DEFAULT_DESIGN_SP: i64 = 655360;
+
+/// 全量字符度量快照（单位 = 字体设计单位；由 [`build_metrics`] 换算为 sp）。
+///
+/// [`OtfFont::metrics_snapshot`] 的产物：cmap 全量枚举（仅 Unicode 兼容
+/// 子表）+ 逐字形 hmtx/bbox，`Face` 只解析一次。这是"逐字符查询"（每个
+/// 字符一次 cmap 查表 + 一次 CFF charstring 解析）的批量化替代——引擎
+/// 布局热路径按码位查表，不能在每次 `char_metrics` 里重解析字形轮廓。
+#[derive(Debug, Clone)]
+pub struct MetricsSnapshot {
+    /// head.unitsPerEm（advance/bbox 换算为 sp 的分母；0 表示头部非法）。
+    pub units_per_em: u16,
+    /// hhea ascender（设计单位；空字形 bbox 缺失时的纵向回落）。
+    pub ascender: i16,
+    /// hhea descender（设计单位，通常为负）。
+    pub descender: i16,
+    /// maxp.numGlyphs（诊断用）。
+    pub number_of_glyphs: u16,
+    /// `(Unicode 码位, hmtx 前进宽度, 墨迹包围盒)`，按码位升序去重。
+    pub chars: Vec<(u32, u16, Rect)>,
+}
 
 /// 单个轮廓点（设计单位）。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -212,6 +243,259 @@ impl OtfFont {
         face.outline_glyph(ttf_parser::GlyphId(gid), &mut acc);
         Some(acc.outline())
     }
+
+    /// 全量字符度量快照（cmap 枚举 + 逐字形 hmtx/bbox）。
+    ///
+    /// 空字形（如 U+0020 空白、`.notdef`）的 bbox 可能为全零或缺失，此时
+    /// 落 `ascender`/`descender` 作纵向度量——调用方据此决定纵向回落。
+    ///
+    /// 成本：`maxp.numGlyphs` 次 hmtx 读 +（CFF 字体）同样次数的 charstring
+    /// 解析，中文字体（约 3 万字形）为一次性加载开销，不在排版热路径。
+    pub fn metrics_snapshot(&self) -> Result<MetricsSnapshot> {
+        let face = self.face()?;
+        let units_per_em = face.units_per_em();
+        if units_per_em == 0 {
+            return Err(OtfError("head.unitsPerEm 为 0（字体头部非法）".into()));
+        }
+        let ascender = face.ascender();
+        let descender = face.descender();
+        let number_of_glyphs = face.number_of_glyphs();
+        // 逐字形度量：glyf 字体直接读表级 bbox，CFF 字体解析 charstring。
+        let mut per_glyph: Vec<(u16, Rect)> = Vec::with_capacity(number_of_glyphs as usize);
+        for i in 0..number_of_glyphs {
+            let gid = ttf_parser::GlyphId(i);
+            let advance = face.glyph_hor_advance(gid).unwrap_or(0);
+            let bbox = face
+                .glyph_bounding_box(gid)
+                .map(from_ttf_rect)
+                .unwrap_or(Rect {
+                    x_min: 0,
+                    y_min: descender,
+                    x_max: 0,
+                    y_max: ascender,
+                });
+            per_glyph.push((advance, bbox));
+        }
+        // cmap 枚举（仅 Unicode 兼容子表；多子表重复码位在排序后去重）
+        let mut chars: Vec<(u32, u16, Rect)> = Vec::new();
+        if let Some(cmap) = face.tables().cmap {
+            for st in cmap.subtables {
+                if !st.is_unicode() {
+                    continue;
+                }
+                st.codepoints(|cp| {
+                    if let Some(gid) = st.glyph_index(cp) {
+                        if let Some(&(advance, bbox)) = per_glyph.get(gid.0 as usize) {
+                            chars.push((cp, advance, bbox));
+                        }
+                    }
+                });
+            }
+        }
+        chars.sort_by_key(|c| c.0);
+        chars.dedup_by_key(|c| c.0);
+        Ok(MetricsSnapshot {
+            units_per_em,
+            ascender,
+            descender,
+            number_of_glyphs,
+            chars,
+        })
+    }
+}
+
+/// 从 OTF/TTF 字节构建引擎侧字体度量（`unicode_native = true`，设计字号
+/// [`DEFAULT_DESIGN_SP`]）。
+///
+/// 产出物可直接交给 [`FontMetrics::scaled_by`] 施加 `at`/`scaled`——与
+/// TFM 路径共用同一套缩放代码，两条路径的 DVI `fnt_def` 语义因此一致。
+///
+/// 与 TFM 的字段取舍：
+/// - `chars` / `char_italic` / `lig_kern_*` / `next_larger` 保持空——8-bit
+///   槽表概念对 Unicode 字体无意义（连字/字距属 HarfBuzz 整形，见 §11.0）；
+/// - `space` 取 U+0020 前进宽度，stretch/shrink 按 TeX 文本字体惯例
+///   1/2、1/3；缺失时退 1/4 em；
+/// - `x_height` 取 'x' 墨迹上缘；`quad` = 1 em；`extra_space` = 1/18 em；
+/// - `checksum` 置 0（OTF 无 TFM 校验和；DVI 按字体名区分）。
+pub fn build_metrics(data: Vec<u8>, name: &str) -> Result<FontMetrics> {
+    let font = OtfFont::from_data(data)?;
+    let snap = font.metrics_snapshot()?;
+    let design = DEFAULT_DESIGN_SP;
+    let upem = i128::from(snap.units_per_em);
+    let ascender = i64::from(snap.ascender);
+    let descender = i64::from(snap.descender);
+
+    // 设计单位 → sp（round-away-from-zero，与 tfm::parse_tfm 的取整口径一致）
+    let to_sp = |v: i64| -> i64 {
+        let n = v as i128 * design as i128;
+        if n >= 0 {
+            ((n + upem / 2) / upem) as i64
+        } else {
+            -(((-n) + upem / 2) / upem) as i64
+        }
+    };
+    let fallback_h = to_sp(ascender);
+    let fallback_d = to_sp(-descender);
+
+    let mut unicode_chars: Vec<(u32, (i64, i64, i64))> = Vec::with_capacity(snap.chars.len());
+    for &(cp, advance, bbox) in &snap.chars {
+        let w = to_sp(i64::from(advance));
+        // 纵向优先取字形墨迹；全零 bbox（空格等空字形）回落字体全局纵横
+        let (h, d) = if bbox.y_max == 0 && bbox.y_min == 0 {
+            (fallback_h, fallback_d)
+        } else {
+            (
+                to_sp(i64::from(bbox.y_max).max(0)),
+                to_sp((-i64::from(bbox.y_min)).max(0)),
+            )
+        };
+        unicode_chars.push((cp, (w, h, d)));
+    }
+
+    // unicode_chars 已按码位升序（metrics_snapshot 保证），可直接二分
+    let char_w = |cp: u32| -> Option<i64> {
+        unicode_chars
+            .binary_search_by_key(&cp, |(k, _)| *k)
+            .ok()
+            .map(|i| unicode_chars[i].1 .0)
+    };
+    let space = char_w(0x20).filter(|&w| w > 0).unwrap_or(design / 4);
+    let space_stretch = space / 2;
+    let space_shrink = space / 3;
+    let x_height = snap
+        .chars
+        .binary_search_by_key(&0x78, |c| c.0) // 'x'
+        .ok()
+        .map(|i| to_sp(i64::from(snap.chars[i].2.y_max).max(0)))
+        .filter(|&v| v > 0)
+        .unwrap_or(design / 2);
+    let extra_space = design / 18;
+
+    Ok(FontMetrics {
+        design_size_sp: design,
+        scale: 1 << 20,
+        checksum: 0,
+        name: name.to_owned(),
+        chars: Vec::new(),
+        char_italic: Vec::new(),
+        slant: 0,
+        space,
+        space_stretch,
+        space_shrink,
+        x_height,
+        quad: design,
+        extra_space,
+        lig_kern_steps: Vec::new(),
+        kern_values: Vec::new(),
+        lig_kern_index: Vec::new(),
+        next_larger: Vec::new(),
+        // 1-based TFM 参数序：1=slant 2=space 3=stretch 4=shrink 5=x_height 6=quad
+        font_params: vec![
+            0,
+            space,
+            space_stretch,
+            space_shrink,
+            x_height,
+            design,
+            extra_space,
+        ],
+        unicode_native: true,
+        unicode_chars,
+    })
+}
+
+/// `ttf_parser::Rect` → 本模块 [`Rect`]。
+///
+/// 两个 `Rect` 字段同名同类型，仅分属不同 crate（ttf-parser 不实现 From），
+/// 故手写逐字段搬运。
+fn from_ttf_rect(r: ttf_parser::Rect) -> Rect {
+    Rect {
+        x_min: r.x_min,
+        y_min: r.y_min,
+        x_max: r.x_max,
+        y_max: r.y_max,
+    }
+}
+
+/// 字体名是否已带字体文件后缀（OTF/TTF 及集合 TTC）。
+fn has_font_ext(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.ends_with(".otf") || lower.ends_with(".ttf") || lower.ends_with(".ttc")
+}
+
+/// 查找 OTF/TTF/TTC 字体文件（M9 中文刀 1；与 [`crate::tfm::find_tfm`] 同款约定）。
+///
+/// 搜索链：`NTEX_OTF_DIR` → `~/.ntex-fonts`（仓库既有测试字体缓存约定）→
+/// 系统字体目录（macOS `/System/Library/Fonts` 等、Linux `/usr/share/fonts`
+/// 含一层子目录）→ `kpsewhich`。`name` 未带后缀时依次试 `.otf` / `.ttf`。
+///
+/// 找不到返回 `None`——加载失败由调用方报"找不到字体"，不是错误传播点。
+pub fn find_otf(name: &str) -> Option<PathBuf> {
+    let candidates: Vec<String> = if has_font_ext(name) {
+        vec![name.to_owned()]
+    } else {
+        vec![format!("{name}.otf"), format!("{name}.ttf")]
+    };
+
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Ok(d) = std::env::var("NTEX_OTF_DIR") {
+        dirs.push(PathBuf::from(d));
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        dirs.push(home.join(".ntex-fonts"));
+        dirs.push(home.join("Library/Fonts"));
+    }
+    for d in [
+        "/System/Library/Fonts",
+        "/System/Library/Fonts/Supplemental",
+        "/Library/Fonts",
+        "/usr/share/fonts",
+        "/usr/local/share/fonts",
+    ] {
+        dirs.push(PathBuf::from(d));
+    }
+    // texlive opentype 安装目录（按年份取最新）
+    if let Ok(entries) = std::fs::read_dir("/usr/local/texlive") {
+        let mut years: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+        years.sort();
+        for y in years.into_iter().rev() {
+            dirs.push(y.join("texmf-dist/fonts/opentype"));
+        }
+    }
+
+    for dir in &dirs {
+        for c in &candidates {
+            let p = dir.join(c);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+        // 一层子目录（/usr/share/fonts/{truetype,opentype,ttf-*}/…）
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for sub in entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()) {
+                for c in &candidates {
+                    let p = sub.join(c);
+                    if p.is_file() {
+                        return Some(p);
+                    }
+                }
+            }
+        }
+    }
+
+    // 最后回落 kpsewhich（PATH 上存在时）
+    for c in &candidates {
+        if let Ok(out) = std::process::Command::new("kpsewhich").arg(c).output() {
+            if out.status.success() {
+                let path = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+                if !path.is_empty() {
+                    return Some(PathBuf::from(path));
+                }
+            }
+        }
+    }
+    None
 }
 
 /// 轮廓累积器：同时服务 `glyph_outline`（点集）与 CFF 路径的 bbox 计算

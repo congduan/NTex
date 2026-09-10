@@ -166,7 +166,7 @@ impl Expander {
                     let mut expansion = Vec::new();
                     self.expand_once((tok, false), &mut expansion)?;
                     if !expansion.is_empty() {
-                        self.stack.push(InputFrame::TokenList {
+                        self.push_frame(InputFrame::TokenList {
                             items: Arc::from(expansion),
                             pos: 0,
                         });
@@ -206,7 +206,7 @@ impl Expander {
                         let mut expansion = Vec::new();
                         self.expand_once((tok, false), &mut expansion)?;
                         if !expansion.is_empty() {
-                            self.stack.push(InputFrame::TokenList {
+                            self.push_frame(InputFrame::TokenList {
                                 items: Arc::from(expansion),
                                 pos: 0,
                             });
@@ -673,7 +673,7 @@ impl Expander {
                                 let mut expansion = Vec::new();
                                 self.expand_once((tok, false), &mut expansion)?;
                                 if !expansion.is_empty() {
-                                    self.stack.push(InputFrame::TokenList {
+                                    self.push_frame(InputFrame::TokenList {
                                         items: Arc::from(expansion),
                                         pos: 0,
                                     });
@@ -987,7 +987,7 @@ impl Expander {
         let mut expansion = Vec::new();
         self.expand_once((tok, noexpand), &mut expansion)?;
         let items: Vec<(Token, bool)> = expansion.into_iter().collect();
-        self.stack.push(InputFrame::TokenList {
+        self.push_frame(InputFrame::TokenList {
             items: Arc::from(items),
             pos: 0,
         });
@@ -1177,7 +1177,7 @@ impl Expander {
                     let mut expansion = Vec::new();
                     self.expand_once((open, false), &mut expansion)?;
                     let items: Vec<(Token, bool)> = expansion.into_iter().collect();
-                    self.stack.push(InputFrame::TokenList {
+                    self.push_frame(InputFrame::TokenList {
                         items: Arc::from(items),
                         pos: 0,
                     });
@@ -1187,7 +1187,7 @@ impl Expander {
                     let mut expansion = Vec::new();
                     self.expand_once((open, false), &mut expansion)?;
                     let items: Vec<(Token, bool)> = expansion.into_iter().collect();
-                    self.stack.push(InputFrame::TokenList {
+                    self.push_frame(InputFrame::TokenList {
                         items: Arc::from(items),
                         pos: 0,
                     });
@@ -1361,7 +1361,7 @@ impl Expander {
                     let mut expansion = Vec::new();
                     self.expand_once((tok, ne), &mut expansion)?;
                     if !expansion.is_empty() {
-                        self.stack.push(InputFrame::TokenList {
+                        self.push_frame(InputFrame::TokenList {
                             items: Arc::from(expansion),
                             pos: 0,
                         });
@@ -1454,6 +1454,11 @@ impl Expander {
                 return Ok((if neg { -g.shrink } else { g.shrink }, 0));
             }
             // ETRIP 冲刺：\fontcharwd/ht/dp/ic<font><char> → 字符度量分量（尺寸上下文）
+            //
+            // 与 [`exec_fontchar_dimen`](Self::exec_fontchar_dimen)、`the_tokens_after`
+            // 是**同一语义的三个入口**：字符码闸门一律走 [`Self::fontchar_code`]
+            // （按被查字体判上界，M9 中文刀 1）。任一处写死 255 都会让
+            // `\dimen0=\fontcharwd\zh"4E2D` 报「Bad character code」。
             if let EqSlot::Primitive(
                 Primitive::FontCharWd | Primitive::FontCharHt | Primitive::FontCharDp | Primitive::FontCharIc,
             ) = self.eqtb.slot(csid)
@@ -1467,11 +1472,10 @@ impl Expander {
                 self.fetch()?; // 消费 \fontchar*
                 let font = self.scan_font_ident()?;
                 let ch = self.scan_number()?;
-                if !(0..=255).contains(&ch) {
-                    self.report_error("Bad character code.");
+                let Some(ch) = self.fontchar_code(font, ch) else {
                     return Ok((0, 0));
-                }
-                let m = self.font_loader.char_metric(font, ch as u32);
+                };
+                let m = self.font_loader.char_metric(font, ch);
                 let v = match component {
                     0 => m.map(|x| x.0).unwrap_or(0),
                     1 => m.map(|x| x.1).unwrap_or(0),
@@ -1821,14 +1825,14 @@ impl Expander {
                         // 输出全部进入流，如 `0fil\the\count7` → 展开 "77" 保留为
                         // 文本；只放回首个 token 会丢失其余输出）。
                         let items: Vec<(Token, bool)> = expansion.into_iter().collect();
-                        self.stack.push(InputFrame::TokenList {
+                        self.push_frame(InputFrame::TokenList {
                             items: Arc::from(items),
                             pos: 0,
                         });
                         break;
                     }
                     let items: Vec<(Token, bool)> = expansion.into_iter().collect();
-                    self.stack.push(InputFrame::TokenList {
+                    self.push_frame(InputFrame::TokenList {
                         items: Arc::from(items),
                         pos: 0,
                     });
@@ -1933,7 +1937,7 @@ impl Expander {
                 .iter()
                 .map(|(t, _)| (*t, false))
                 .collect();
-            self.stack.push(InputFrame::TokenList {
+            self.push_frame(InputFrame::TokenList {
                 items: Arc::from(back),
                 pos: 0,
             });
@@ -2194,7 +2198,7 @@ impl Expander {
         if is_kw(&lower) {
             return Ok(Some(lower));
         }
-        self.stack.push(InputFrame::TokenList {
+        self.push_frame(InputFrame::TokenList {
             items: Arc::from(letters),
             pos: 0,
         });

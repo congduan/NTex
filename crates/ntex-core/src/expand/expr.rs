@@ -43,7 +43,7 @@ impl Expander {
             }
             // 前面的 token 照常输出（t1）
             let seq = vec![t1];
-            self.stack.push(InputFrame::TokenList {
+            self.push_frame(InputFrame::TokenList {
                 items: Arc::from(seq),
                 pos: 0,
             });
@@ -54,7 +54,7 @@ impl Expander {
         let mut seq = Vec::with_capacity(1 + expansion.len());
         seq.push(t1);
         seq.extend(expansion);
-        self.stack.push(InputFrame::TokenList {
+        self.push_frame(InputFrame::TokenList {
             items: Arc::from(seq),
             pos: 0,
         });
@@ -406,7 +406,7 @@ impl Expander {
     /// 把 token 序列压入输入流（可展开项将被展开）。
     fn emit_tokens(&mut self, tokens: Vec<Token>) -> Result<()> {
         let items: Vec<(Token, bool)> = tokens.into_iter().map(|t| (t, false)).collect();
-        self.stack.push(InputFrame::TokenList {
+        self.push_frame(InputFrame::TokenList {
             items: Arc::from(items),
             pos: 0,
         });
@@ -530,7 +530,7 @@ impl Expander {
                     let mut expansion = Vec::new();
                     self.expand_once((tok, false), &mut expansion)?;
                     if !expansion.is_empty() {
-                        self.stack.push(InputFrame::TokenList {
+                        self.push_frame(InputFrame::TokenList {
                             items: Arc::from(expansion),
                             pos: 0,
                         });
@@ -690,7 +690,7 @@ impl Expander {
                         let mut expansion = Vec::new();
                         self.expand_once((tok, false), &mut expansion)?;
                         if !expansion.is_empty() {
-                            self.stack.push(InputFrame::TokenList {
+                            self.push_frame(InputFrame::TokenList {
                                 items: Arc::from(expansion),
                                 pos: 0,
                             });
@@ -979,7 +979,7 @@ impl Expander {
         let toks = self.scan_group_contents_expanding()?;
         let flag = self.expand_only;
         let items: Vec<(Token, bool)> = toks.into_iter().map(|t| (t, flag)).collect();
-        self.stack.push(InputFrame::TokenList {
+        self.push_frame(InputFrame::TokenList {
             items: Arc::from(items),
             pos: 0,
         });
@@ -1025,7 +1025,7 @@ impl Expander {
             .filter_map(|t| t.charcode().and_then(|c| u8::try_from(c).ok()))
             .collect();
         let bytes = Arc::from(bytes);
-        self.stack.push(InputFrame::Source {
+        self.push_frame(InputFrame::Source {
             line_starts: Arc::from(crate::input::line_starts(&bytes)),
             bytes,
             pos: 0,
@@ -1045,7 +1045,7 @@ impl Expander {
         // TeX eq_define(cs,relax,256)：未定义名先变 \relax 同义再放回
         self.csname_define_relax(csid);
         let tok = Token::control_sequence(csid);
-        self.stack.push(InputFrame::One {
+        self.push_frame(InputFrame::One {
             tok,
             noexpand: false,
         });
@@ -1130,7 +1130,7 @@ impl Expander {
                         let body = materialize(&m.value.body, &args);
                         let seq: Vec<(Token, bool)> =
                             body.into_iter().map(|t| (t, false)).collect();
-                        self.stack.push(InputFrame::TokenList {
+                        self.push_frame(InputFrame::TokenList {
                             items: Arc::from(seq),
                             pos: 0,
                         });
@@ -1140,7 +1140,7 @@ impl Expander {
                         let mut out = Vec::new();
                         self.expand_once((tok, false), &mut out)?;
                         let seq: Vec<(Token, bool)> = out;
-                        self.stack.push(InputFrame::TokenList {
+                        self.push_frame(InputFrame::TokenList {
                             items: Arc::from(seq),
                             pos: 0,
                         });

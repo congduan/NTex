@@ -70,7 +70,7 @@ impl Expander {
                 let t = self
                     .fetch()?
                     .ok_or_else(|| Error::invalid_input("\\noexpand 后无 token"))?;
-                self.stack.push(InputFrame::One {
+                self.push_frame(InputFrame::One {
                     tok: t.0,
                     noexpand: true,
                 });
@@ -500,9 +500,40 @@ impl Expander {
         self.sink.show(format!("> {text}."))
     }
 
+    /// `\fontcharwd/ht/dp/ic<font><char>` 的字符码闸门：上界按**被查字体**判定
+    /// （M9 中文刀 1）。
+    ///
+    /// - 8-bit 字体（TFM）→ 255：tex.web §1108 的 `! Bad character code (N).`
+    ///   是硬口径，`reference/trip/tripin.log` 与 `fixtures/etrip/etrip.log`
+    ///   均有参考块，**不许放宽**；
+    /// - Unicode 直映字体（OpenType）→ 0x10FFFF：对齐 XeTeX，使
+    ///   `\fontcharwd\zh"4E2D` 可用。
+    ///
+    /// **`\fontchar*` 有三个入口，必须共用本函数**（历史上只放宽了其中一处，
+    /// 造成同一语义两套口径）：
+    /// 1. [`Self::exec_fontchar_dimen`]——独立展开（`\fontcharwd\zh"4E2D`）；
+    /// 2. `scan_dimen_inner` 的尺寸上下文臂（`\dimen0=\fontcharwd\zh"4E2D`）；
+    /// 3. `the_tokens_after` 的 `\the` 臂（`\the\fontcharwd\zh"4E2D`）。
+    ///
+    /// 漏改的后果是隐蔽的：`\iffontchar` 判定「字体里有」，而 `\fontcharwd`
+    /// 报「Bad character code」。回归锁见
+    /// `crates/ntex-layout/tests/cjk_charcode.rs::otf_font_char_queries_share_unicode_range`。
+    ///
+    /// 越界时自行报错并返回 `None`，调用方沿用各自既有的 0 值恢复路径。
+    fn fontchar_code(&mut self, font: u32, ch: i64) -> Option<u32> {
+        let limit = i64::from(self.font_loader.char_code_limit(font));
+        if !(0..=limit).contains(&ch) {
+            self.report_error("Bad character code.");
+            return None;
+        }
+        u32::try_from(ch).ok()
+    }
+
     /// `\fontcharwd/ht/dp/ic<font><char>`：查询字体字符度量分量（sp）并展开为维度。
     /// 参数非法（字体标识符/字符码越界）→ 报 "! Bad character code." 并恢复
     /// （TeX 对 `\fontcharwd \fontcharht ...` 裸用同样报错继续）。
+    ///
+    /// 字符码上限按被查字体判定（M9 中文刀 1），闸门见 [`Self::fontchar_code`]。
     fn exec_fontchar_dimen(&mut self, prim: Primitive) -> Result<()> {
         let component = match prim {
             Primitive::FontCharWd => 0,
@@ -510,13 +541,10 @@ impl Expander {
             Primitive::FontCharDp => 2,
             _ => 3, // FontCharIc（italic correction：TFM 无此字段，恒 0）
         };
-        let scanned = (|| -> Result<(u32, u32)> {
+        let scanned = (|| -> Result<(u32, i64)> {
             let font = self.scan_font_ident()?;
             let ch = self.scan_number()?;
-            if !(0..=255).contains(&ch) {
-                return Err(Error::invalid_input("Bad character code"));
-            }
-            Ok((font, ch as u32))
+            Ok((font, ch))
         })();
         let (font, ch) = match scanned {
             Ok(v) => v,
@@ -524,6 +552,9 @@ impl Expander {
                 self.report_error("Bad character code.");
                 return Ok(());
             }
+        };
+        let Some(ch) = self.fontchar_code(font, ch) else {
+            return Ok(());
         };
         let m = self.font_loader.char_metric(font, ch);
         let v = match component {

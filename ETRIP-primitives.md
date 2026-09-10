@@ -98,6 +98,14 @@ M4 数学 + e-TeX 验收时已实现的 e-TeX 原语：
 - ✅ `\iffontchar`
   （2026-08-23：font.rs 增 `char_metric` 默认方法，TfmLoader 读字体表；
   `\iffontchar` 条件码 20；参数越界报 "! Bad character code." 取假）
+- **2026-09-10 口径扩展（M9 中文刀 1）**：`\char`/`\iffontchar`/`\fontchar*` 的字符码
+  合法上界改为**按被查字体判定**（`FontLoader::char_code_limit`）——8-bit TFM 字体
+  恒 255（TRIP/ETRIP 的 "! Bad character code (256)." 硬规则**原样保留**），Unicode
+  直映字体（OpenType，`FontMetrics::unicode_native`）为 0x10FFFF。三条入口
+  （`primitive_codes.rs` `\char`、`cond.rs` `\iffontchar`、`scan.rs`/`save.rs`/
+  `primitive.rs` 的 `\fontchar*`）已统一走同一闸门，回归锁
+  `ntex-layout/tests/cjk_charcode.rs` 固化（含突变验证）。已实测：对 8-bit 口径
+  TRIP/ETRIP 输出与 HEAD 基线逐字节一致，零回归。
 
 ### 段落形状
 - ✅ `\parshape`

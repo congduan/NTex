@@ -146,16 +146,35 @@ pub struct FontMetrics {
     /// 全量字体参数（fontdimen；`font_params[i-1]` = TFM 参数 i，已缩放）。
     /// 数学字体用：参数 8+（sup/sub 高度、分式间距、delimiter 等）。
     pub font_params: Vec<i64>,
+    /// Unicode 直映字体标记（M9 中文刀 1）：本字体由 OTF/TTF 加载，字符度量
+    /// 按 Unicode 码位存于 [`Self::unicode_chars`]，[`Self::chars`]（8-bit 槽表）
+    /// 保持空。`\char` 的合法码位上限、后端字形查找口径均据此分叉——TFM 字体
+    /// 走 TeX 8-bit 语义（上限 255），本类字体走 XeTeX Unicode 语义（0x10FFFF）。
+    pub unicode_native: bool,
+    /// Unicode 码位 → `(width, height, depth)`（sp，已按当前缩放换算）。
+    /// 仅 `unicode_native` 字体非空；**按码位升序**（二分查询）。
+    pub unicode_chars: Vec<(u32, (i64, i64, i64))>,
 }
 
 impl FontMetrics {
     /// 字符维度；未定义字符返回 (0, 0, 0)。
     pub fn char_metrics(&self, charcode: u32) -> (i64, i64, i64) {
-        self.chars
-            .get(charcode as usize)
-            .copied()
-            .flatten()
-            .unwrap_or((0, 0, 0))
+        self.char_metrics_opt(charcode).unwrap_or((0, 0, 0))
+    }
+
+    /// 字符维度查询（含"是否存在"语义）：无该字符返回 `None`。
+    ///
+    /// 两条字体路径的统一入口——`unicode_native` 按 Unicode 码位二分，
+    /// 否则按 8-bit 槽表直查。`\iffontchar`/`\fontchar*` 与排版建节点共用。
+    pub fn char_metrics_opt(&self, charcode: u32) -> Option<(i64, i64, i64)> {
+        if self.unicode_native {
+            return self
+                .unicode_chars
+                .binary_search_by_key(&charcode, |(cp, _)| *cp)
+                .ok()
+                .map(|i| self.unicode_chars[i].1);
+        }
+        self.chars.get(charcode as usize).copied().flatten()
     }
 
     /// 字符斜体修正（tex.web `char_italic(f)(q)`）；未定义字符为 0。
@@ -169,11 +188,7 @@ impl FontMetrics {
     /// 字符是否在字体中定义（tex.web `char_exists(char_info(f)(c))`；
     /// `new_character` 据此决定建节点还是发 "Missing character" 警告）。
     pub fn char_exists(&self, charcode: u32) -> bool {
-        self.chars
-            .get(charcode as usize)
-            .copied()
-            .flatten()
-            .is_some()
+        self.char_metrics_opt(charcode).is_some()
     }
 
     /// 词间空白胶水（space / space_stretch / space_shrink）。
@@ -264,6 +279,13 @@ impl FontMetrics {
             lig_kern_index: self.lig_kern_index.clone(),
             next_larger: self.next_larger.clone(),
             font_params: self.font_params.iter().map(|&v| scale(v)).collect(),
+            unicode_native: self.unicode_native,
+            // 码位顺序在缩放中不变（逐项线性变换），二分前提得以保持
+            unicode_chars: self
+                .unicode_chars
+                .iter()
+                .map(|&(cp, (w, h, d))| (cp, (scale(w), scale(h), scale(d))))
+                .collect(),
         }
     }
 }
@@ -413,6 +435,9 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
         lig_kern_index,
         next_larger,
         font_params,
+        // TFM 是 8-bit 编码向量字体：永远走 `chars` 槽表（0..=255）
+        unicode_native: false,
+        unicode_chars: Vec::new(),
     })
 }
 

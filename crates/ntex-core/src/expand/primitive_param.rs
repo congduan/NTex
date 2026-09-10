@@ -199,7 +199,7 @@ impl Expander {
                             self.expand_once((tok, false), &mut expansion)?;
                             if !expansion.is_empty() {
                                 let items: Vec<(Token, bool)> = expansion.into_iter().collect();
-                                self.stack.push(InputFrame::TokenList {
+                                self.push_frame(InputFrame::TokenList {
                                     items: Arc::from(items),
                                     pos: 0,
                                 });

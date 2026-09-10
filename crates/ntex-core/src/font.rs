@@ -11,6 +11,12 @@
 
 use crate::error::{Error, Result};
 
+/// Unicode 码位上限（U+10FFFF）——Unicode 直映字体的 `\char` 合法上界。
+///
+/// 注意与 [`crate::token::Token`] 的 charcode 位宽（21 bit = 0x1FFFFF）区分：
+/// 前者是 Unicode 标准约束，后者是 token 表示容量，取两者中更严的语义边界。
+pub const UNICODE_MAX_CHARCODE: u32 = 0x10FFFF;
+
 /// 字体加载器：把外部字体名解析为字体槽号（FontId）。
 ///
 /// 返回值直接用作 [`crate::eqtb::EqSlot::Font`] 的槽号；表由实现方维护，
@@ -38,6 +44,18 @@ pub trait FontLoader: std::fmt::Debug {
     /// `ex → x_height(cur_font)`）用。字体未加载/无该参数 → None（按 0 计）。
     fn font_param(&mut self, _font: u32, _param: usize) -> Option<i64> {
         None
+    }
+
+    /// 该字体的合法字符码上限（`\char`/`\iffontchar`/`\fontchar*` 的校验上界）。
+    ///
+    /// 默认 255——TeX 8-bit 语义，越界报 `! Bad character code (N).` 并恢复
+    /// （tex.web §1108；TRIP/ETRIP 均有该错误块的硬口径）。Unicode 直映字体
+    /// （OpenType，见 ntex-font `FontMetrics::unicode_native`）覆写为
+    /// [`UNICODE_MAX_CHARCODE`]，对齐 XeTeX 的 `\char"4E00` 可排汉字。
+    ///
+    /// 未加载的字体槽（含 nullfont）一律按 255 处理。
+    fn char_code_limit(&mut self, _font: u32) -> u32 {
+        255
     }
 }
 

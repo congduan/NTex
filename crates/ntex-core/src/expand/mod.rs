@@ -485,6 +485,7 @@ const DIAG_KEYS: &[&str] = &[
     "NTEX_TRACE_STACK",
     "NTEX_SANITY_CHECK",
     "NTEX_ALIGN_TRACE",
+    "NTEX_BIGLIST_TRACE",
 ];
 
 /// 展开引擎。
@@ -890,7 +891,7 @@ impl Expander {
     /// 追加一个源码输入（后续 `\input`/VFS 在 M3 接入）。
     pub fn feed_source(&mut self, text: impl Into<Vec<u8>>) {
         let bytes = Arc::from(text.into());
-        self.stack.push(InputFrame::Source {
+        self.push_frame(InputFrame::Source {
             line_starts: Arc::from(crate::input::line_starts(&bytes)),
             bytes,
             pos: 0,
@@ -956,9 +957,29 @@ impl Expander {
                 }
             });
         }
+        // TEMP DEBUG：巨型 TokenList 帧首现定位（挂死诊断）
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut biglist_reported = false;
         loop {
             // 看门狗：防死循环（ETRIP 诊断用；正常作业远低于此）
             steps += 1;
+            // TEMP DEBUG：>1M token 的 TokenList 帧出现时打印当年 last_tok + 回溯
+            #[cfg(not(target_arch = "wasm32"))]
+            if diag_enabled("NTEX_BIGLIST_TRACE") && !biglist_reported {
+                if let Some(n) = self.stack.iter().rev().find_map(|f| match f {
+                    InputFrame::TokenList { items, .. } if items.len() > 1_000_000 => {
+                        Some(items.len())
+                    }
+                    _ => None,
+                }) {
+                    biglist_reported = true;
+                    eprintln!(
+                        "[biglist] {} tok, steps={steps}, last_tok={:?}",
+                        n, self.last_tok
+                    );
+                    eprintln!("{}", std::backtrace::Backtrace::force_capture());
+                }
+            }
             // 心跳 + last_tok（每 64 步）+ 状态快照（每 5000 步，卡死时保留最后状态）。
             // 看门狗线程 2s 轮询 + 10s 阈值，心跳 16Hz 绰绰有余；每步 clock_gettime +
             // mutex 写是纯诊断税（P1 实测占展开吞吐 ~10%），长文档上白付。
@@ -1524,7 +1545,7 @@ impl Expander {
         // 组种类 output_group=8（tex.web group_code，ETRIP L396 \currentgrouptype 检查）
         self.sink.output_routine_begin()?;
         self.begin_group()?;
-        self.stack.push(InputFrame::OutputRoutine {
+        self.push_frame(InputFrame::OutputRoutine {
             items: Arc::from(items),
             pos: 0,
         });
@@ -1808,7 +1829,7 @@ impl Expander {
                             .iter()
                             .map(|t| (*t, false))
                             .collect::<Vec<_>>();
-                        self.stack.push(InputFrame::TokenList {
+                        self.push_frame(InputFrame::TokenList {
                             items: Arc::from(items),
                             pos: 0,
                         });
@@ -1907,7 +1928,7 @@ impl Expander {
         // M2 双轨：字节码优先（未编译则回退解释器轨道）
         if self.use_bytecode {
             if let Some(code) = &def.code {
-                self.stack.push(InputFrame::Bytecode {
+                self.push_frame(InputFrame::Bytecode {
                     code: code.clone(),
                     pc: 0,
                     args,
@@ -1915,7 +1936,7 @@ impl Expander {
                 return Ok(());
             }
         }
-        self.stack.push(InputFrame::Macro {
+        self.push_frame(InputFrame::Macro {
             body: def.body.clone(),
             pos: 0,
             args,
@@ -1939,7 +1960,7 @@ impl Expander {
         if is && consume_for_display {
             Ok(true)
         } else {
-            self.stack.push(InputFrame::One { tok, noexpand: ne });
+            self.push_frame(InputFrame::One { tok, noexpand: ne });
             Ok(false)
         }
     }
@@ -2003,7 +2024,7 @@ impl Expander {
                         if arg.is_empty() {
                             continue;
                         }
-                        self.stack.push(InputFrame::MacroArg { items: arg, pos: 0 });
+                        self.push_frame(InputFrame::MacroArg { items: arg, pos: 0 });
                         continue;
                     }
                     return Ok(Some((tok, false)));
@@ -2031,7 +2052,7 @@ impl Expander {
                             if arg.is_empty() {
                                 continue;
                             }
-                            self.stack.push(InputFrame::MacroArg { items: arg, pos: 0 });
+                            self.push_frame(InputFrame::MacroArg { items: arg, pos: 0 });
                             continue;
                         }
                         _ => {
@@ -2106,9 +2127,35 @@ impl Expander {
         }
     }
 
+    /// 压入输入帧（全帧型统一入口；TEMP DEBUG 挂钩巨型 TokenList 定位）。
+    fn push_frame(&mut self, f: InputFrame) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if diag_enabled("NTEX_BIGLIST_TRACE") {
+            if let InputFrame::TokenList { items, .. } = &f {
+                if items.len() > 300_000 {
+                    let head: Vec<String> = items
+                        .iter()
+                        .take(40)
+                        .map(|t| match t.0.csid() {
+                            Some(id) => format!("\\{}", self.intern.name(id)),
+                            None => format!("c{}", t.0.charcode().unwrap_or(9999)),
+                        })
+                        .collect();
+                    eprintln!(
+                        "[bigpush] {} tok last_tok={:?} head={:?}",
+                        items.len(),
+                        self.last_tok,
+                        head
+                    );
+                }
+            }
+        }
+        self.stack.push(f);
+    }
+
     /// 把 token 放回输入流（等价于压入单元素 token 列表帧）。
     fn unread(&mut self, tok: Token) {
-        self.stack.push(InputFrame::TokenList {
+        self.push_frame(InputFrame::TokenList {
             items: Arc::from([(tok, false)]),
             pos: 0,
         });

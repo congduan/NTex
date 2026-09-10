@@ -376,12 +376,27 @@ impl<'a> Writer<'a> {
 
     // ---------- 指令字节 ----------
 
+    /// `set_char_*` / `set1..set4`（DVI 规范 §2.6.2）：按码位宽度取最短编码。
+    ///
+    /// 8-bit 字体只用 `set_char`/`set1`，与真实 TeX 一致；Unicode 字体
+    /// （M9 中文刀 1，码位可达 0x10FFFF）用 `set2`/`set3`——此前一律
+    /// `ch as u8`，会把 `\char"4E00` 静默截断成 `\char"00`。
     fn set_char(&mut self, ch: u32) {
         if ch < 128 {
             self.out.push(ch as u8); // set_char_0..127
-        } else {
-            self.out.push(128); // set1
+        } else if ch < 0x100 {
+            self.out.push(128); // set1（1 字节操作数）
             self.out.push(ch as u8);
+        } else if ch < 0x1_0000 {
+            self.out.push(129); // set2（2 字节操作数）
+            self.out.extend_from_slice(&(ch as u16).to_be_bytes());
+        } else if ch < 0x100_0000 {
+            self.out.push(130); // set3（3 字节操作数）
+            let b = ch.to_be_bytes();
+            self.out.extend_from_slice(&b[1..4]);
+        } else {
+            self.out.push(131); // set4（4 字节操作数）
+            self.out.extend_from_slice(&ch.to_be_bytes());
         }
     }
 
@@ -562,6 +577,8 @@ mod tests {
 
     fn cmr_metrics(name: &str) -> FontMetrics {
         FontMetrics {
+            unicode_native: false,
+            unicode_chars: Vec::new(),
             design_size_sp: 10 * 65_536,
             scale: 1 << 20,
             checksum: 0x1234_5678,

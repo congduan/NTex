@@ -867,13 +867,28 @@ LaTeX 兼容战役（进行中）
 
 | 缺口 | 现状 | 前置 |
 |---|---|---|
-| TTF/OTF 字体解析 | 无（TFM-only，cmr10 单字体） | ② |
+| TTF/OTF 字体解析 | 🟡 刀 1 已通（2026-09-10）：ttf-parser 度量直映通道 `OtfFont::build_metrics` → `FontMetrics::unicode_native/unicode_chars`，`\char"4E2D` 全链（度量→折行→DVI set2/3/4→PDF/vello/PNG 渲染 cmap 直查）已验证；HarfBuzz 整形/kerning/italic correction 仍无 | ② |
 | HarfBuzz 整形/整形缓存 | 无（M6 铺路条目已列） | ② |
-| 输入层 UTF-8 | REVIEW A5 未修 | ③ |
+| 输入层 UTF-8 | REVIEW A5 未修（刀 1 绕开：不动 catcode，中文经 `\char"XXXX` 输入） | ③ |
 | CJK 断行规则（linebreak locale） | 无 | ④ |
 | 中文标点挤压/字距 | 无 | ④ |
 | ctex 宏包兼容 | 无（xeCJK 最小子集起步） | ⑤ |
-| 中文 TTF 字体备料 | 无（Fandol/Noto CJK 待取） | ② |
+| 中文 TTF 字体备料 | ✅（2026-09-10）Fandol 7 款（Song/Hei/Kai/Fang + Bold + Braille，GPL，CTAN fonts/fandol，USTC 镜像）入 `~/.ntex-fonts/`；镜像注意：mirrors.ctan.org/tuna 会 403，用 mirrors.ustc.edu.cn/CTAN 或 alyun | ② |
+
+**刀 1 战果（2026-09-10，最小纵切：\char 扩位 + OTF 接入）**：
+
+- **口径决策**（用户拍板）：`\char` 等字符码合法上界**按当前字体判定**
+  （`FontLoader::char_code_limit`：8-bit TFM 恒 255，`unicode_native` OTF 0x10FFFF），
+  8-bit catcode 表与 `scan_token` 零改动 → TRIP/ETRIP 口径零回归
+  （已用 HEAD worktree 对照，trip/etrip 输出逐字节一致；`\char` 255 硬规则原样保留）；
+- **三条入口同闸门**：`\char`（primitive_codes）、`\iffontchar`（cond）、
+  `\fontchar*`（scan/save/primitive 三份重复实现统一），回归锁
+  `ntex-layout/tests/cjk_charcode.rs`（6 测试，含突变验证）；
+- **端到端样张** `demo-cjk.tex`：FandolSong 24pt，「中文排版 / 一二…十」PNG 渲染
+  字形正确（`cargo run -p ntex-backend -- demo-cjk.tex demo-cjk 150 --glyphs`）；
+  `make check` 全绿；
+- **遗留**：输入层 UTF-8（刀 2，源文件直写中文前提）、HarfBuzz 整形、wasm 侧
+  OTF 注入联调、CJK 断行/标点挤压（④）。
 
 **分阶段验收标准**：
 

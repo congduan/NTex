@@ -1,13 +1,14 @@
 //! demo 驱动：读 .tex → `Typesetter::typeset_dvi` 排版 → 逐页渲染 PNG。
 //!
-//! 用法：`ntex-backend <input.tex> [output_prefix] [dpi] [--vello] [--debug]
-//! [--no-glyphs] [--input-path <dir>]... [--quiet]`
+//! 用法：`ntex-backend <input.tex> [output_prefix] [dpi] [--vello] [--glyphs]
+//! [--debug] [--no-glyphs] [--input-path <dir>]... [--quiet]`
 //! 输出：`<prefix>-<页码,01 起>.png`（默认前缀 = 输入文件名去扩展名）；
 //! `--debug` 时文件名带 `-debug` 后缀，并叠加排版调试 overlay
 //! （盒边界/glue/断点标记）。
 //! `--vello` 走 GPU 后端（vello/wgpu，无头纹理回读）；缺省软光栅。
-//! vello 后端默认渲染真字形（Latin Modern，kpsewhich/texlive 定位）；
-//! `--no-glyphs` 回落占位方框口径（软光栅恒为方框口径）。
+//! 真字形通道（字符走字体轮廓 + `fill_polygon`，非占位方框）**两个后端都支持**：
+//! vello 下默认开启，软光栅下经 `--glyphs` 显式开启（默认关，保持既有
+//! 方框差分/快照口径零变化）；`--no-glyphs` 无条件回落方框。
 //! `--input-path <dir>`（可重复，先加先试）：`\input` 文件解析的搜索路径
 //! （TEXINPUTS 语义最小子集，格式预载 G1）。缺省只有 cwd。
 //! `--quiet`：关掉 stderr 转录（`\message`/`\show`/`\write16`/错误恢复文本，
@@ -25,7 +26,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!(
-            "用法：ntex-backend <input.tex> [output_prefix] [dpi] [--vello] [--debug] [--no-glyphs] [--input-path <dir>]... [--quiet]"
+            "用法：ntex-backend <input.tex> [output_prefix] [dpi] [--vello] [--glyphs] [--debug] [--no-glyphs] [--input-path <dir>]... [--quiet]"
         );
         return ExitCode::from(2);
     }
@@ -35,11 +36,13 @@ fn main() -> ExitCode {
     let mut use_vello = false;
     let mut debug = false;
     let mut no_glyphs = false;
+    let mut glyphs_flag = false;
     let mut quiet = false;
     let mut it = args[1..].iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--vello" => use_vello = true,
+            "--glyphs" => glyphs_flag = true,
             "--debug" => debug = true,
             "--no-glyphs" => no_glyphs = true,
             "--quiet" => quiet = true,
@@ -110,8 +113,10 @@ fn main() -> ExitCode {
     let opts = RenderOptions {
         dpi,
         debug,
-        // 真字形仅 vello 支持（软光栅内部强制回落方框口径）。
-        glyphs: use_vello && !no_glyphs,
+        // 真字形通道：两个后端都实现（软光栅走 `fill_polygon`）。
+        // vello 默认开（历史口径）；软光栅默认关，经 `--glyphs` 显式开启，
+        // 以保持既有方框差分/快照口径零变化；`--no-glyphs` 无条件回落方框。
+        glyphs: !no_glyphs && (use_vello || glyphs_flag),
         ..RenderOptions::default()
     };
     let backend_name = if use_vello { "vello(gpu)" } else { "软光栅" };

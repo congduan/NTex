@@ -11,33 +11,11 @@ impl FontLoader for TfmLoader {
         if at.is_some() && scaled.is_some() {
             return Err(Error::invalid_input("\\font 的 at 与 scaled 不能同时给出"));
         }
-        // TFM 字节来源（M8-A WASM 骨架线分叉）：
-        // ① 宿主注册的 [`crate::TfmSource`]（wasm32 无文件系统，唯一来源；native 可
-        //    显式 opt-in）；未注册 → None 回落 ②。
-        // ② native 文件系统（`find_tfm` + `std::fs::read`，原路径，native 默认走这里
-        //    ——注册表为空时行为与历史版本逐字节一致）；wasm32 下 `std::fs` 不可用，
-        //    直接报"找不到字体"。
-        let bytes: Vec<u8> = match crate::registered_tfm_bytes(name) {
-            Some(bytes) => bytes,
-            None => {
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    let path = ntex_font::find_tfm(name)
-                        .ok_or_else(|| Error::invalid_input(format!("找不到 TFM 文件：{name}")))?;
-                    std::fs::read(&path).map_err(|e| Error::io("读取 TFM", path, e))?
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    return Err(Error::invalid_input(format!(
-                        "找不到 TFM 字节：{name}（wasm 无文件系统，宿主须 set_tfm_source 注册字体源）"
-                    )));
-                }
-            }
-        };
-        let mut fm = ntex_font::parse_tfm(&bytes)
-            .map_err(|e| Error::invalid_input(format!("解析 {name}: {e}")))?;
+        let mut fm = load_metrics(name)?;
         fm.name = name.to_owned(); // DVI fnt_def 的字体名
         // at：目标尺寸/设计字号；scaled：千分比
+        // （OpenType 字体的 design_size_sp 由 ntex_font::build_metrics 置为 10pt
+        //   基准，故此处两条字体路径共用同一套缩放逻辑，DVI fnt_def 语义一致。）
         let fm = match (at, scaled) {
             (Some(at_sp), None) => {
                 let den = fm.design_size_sp;
@@ -74,6 +52,8 @@ impl FontLoader for TfmLoader {
                 lig_kern_index: Vec::new(),
                 next_larger: Vec::new(),
                 font_params: Vec::new(),
+                unicode_native: false,
+                unicode_chars: Vec::new(),
             });
         }
         // 同名字+同缩放复用 id（tex.web：\font\cs=name 同参重复定义不新加载）。
@@ -91,10 +71,26 @@ impl FontLoader for TfmLoader {
     }
 
     /// 字体字符度量查询（`\iffontchar`/`\fontchar*`）：字体表与排版器共享。
+    /// Unicode 直映字体（OTF）按码位二分，TFM 走 8-bit 槽表（见
+    /// [`FontMetrics::char_metrics_opt`]）。
     fn char_metric(&mut self, font: u32, ch: u32) -> Option<(i64, i64, i64)> {
         let table = self.table.borrow();
         let fm = table.get(font as usize)?;
-        fm.chars.get(ch as usize).copied().flatten()
+        fm.char_metrics_opt(ch)
+    }
+
+    /// 合法字符码上限（`\char`/`\iffontchar`/`\fontchar*` 的校验上界）。
+    ///
+    /// 8-bit 字体（TFM）→ 255：保持 TeX 语义的 "Bad character code" 硬口径
+    /// （`reference/trip/tripin.log` 与 `fixtures/etrip/etrip.log` 均有
+    /// `! Bad character code (256).` 参考块，不能放宽）；
+    /// Unicode 直映字体（OTF）→ 0x10FFFF：对齐 XeTeX，使 `\char"4E00` 可排汉字。
+    fn char_code_limit(&mut self, font: u32) -> u32 {
+        let table = self.table.borrow();
+        match table.get(font as usize) {
+            Some(fm) if fm.unicode_native => ntex_core::font::UNICODE_MAX_CHARCODE,
+            _ => 255,
+        }
     }
 
     /// 字体参数查询（em/ex 内部单位：param 5=x_height、6=quad）：
@@ -107,6 +103,88 @@ impl FontLoader for TfmLoader {
         let fm = table.get(font as usize)?;
         fm.font_params.get(param - 1).copied()
     }
+}
+
+/// 字体名是否显式带 OpenType 文件后缀（`.otf`/`.ttf`/`.ttc`，大小写不敏感）。
+///
+/// 带后缀时不试 TFM——避免"名字里写死了字体文件"却被同名 TFM 抢走。
+fn is_open_type_name(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    n.ends_with(".otf") || n.ends_with(".ttf") || n.ends_with(".ttc")
+}
+
+/// 按名字取字体度量（M9 中文刀 1 的双路径分派）。
+///
+/// 分派顺序与兼容性契约：
+/// 1. **宿主注册的 OpenType 字节**（wasm/Tauri 前端 fetch 注入）最优先；
+/// 2. 名字带 OpenType 后缀 → 直接走 OpenType；
+/// 3. 否则先按 TFM 找（**原路径**，native 行为逐字节不变）；
+/// 4. TFM 找不到才回落 OpenType——中文/西文 OpenType 字体没有 TFM，靠这一步命中；
+/// 5. 都没有 → 报既有的 `找不到 TFM 文件：<name>`（保持消息不变，TRIP/ETRIP
+///    缺字体路径有硬口径）。
+fn load_metrics(name: &str) -> Result<FontMetrics> {
+    if let Some(bytes) = crate::registered_otf_bytes(name) {
+        return ntex_font::build_metrics(bytes, name)
+            .map_err(|e| Error::invalid_input(format!("解析字体 {name}: {e}")));
+    }
+    if is_open_type_name(name) {
+        return load_otf_from_fs(name)?
+            .ok_or_else(|| Error::invalid_input(format!("找不到字体文件：{name}")));
+    }
+    // TFM 字节来源（M8-A WASM 骨架线分叉）：
+    // ① 宿主注册的 [`crate::TfmSource`]（wasm32 无文件系统，唯一来源；native 可
+    //    显式 opt-in）；未注册 → None 回落 ②。
+    // ② native 文件系统（`find_tfm` + `std::fs::read`，原路径，native 默认走这里
+    //    ——注册表为空时行为与历史版本逐字节一致）；wasm32 下 `std::fs` 不可用。
+    let tfm_bytes: Option<Vec<u8>> = match crate::registered_tfm_bytes(name) {
+        Some(bytes) => Some(bytes),
+        None => {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                ntex_font::find_tfm(name).and_then(|path| std::fs::read(&path).ok())
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                None
+            }
+        }
+    };
+    if let Some(bytes) = tfm_bytes {
+        return ntex_font::parse_tfm(&bytes)
+            .map_err(|e| Error::invalid_input(format!("解析 {name}: {e}")));
+    }
+    // OpenType 兜底（无 TFM 的字体：中文 Fandol/思源、西文 OTF）
+    if let Some(fm) = load_otf_from_fs(name)? {
+        return Ok(fm);
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        return Err(Error::invalid_input(format!(
+            "找不到 TFM 字节：{name}（wasm 无文件系统，宿主须 set_tfm_source 注册字体源）"
+        )));
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Err(Error::invalid_input(format!("找不到 TFM 文件：{name}")))
+    }
+}
+
+/// 文件系统查找并构建 OpenType 度量：`Ok(None)` = 找不到文件（非错误，
+/// 由调用方决定回落或报错），`Err` = 找到了但解析失败。
+#[cfg(not(target_arch = "wasm32"))]
+fn load_otf_from_fs(name: &str) -> Result<Option<FontMetrics>> {
+    let Some(path) = ntex_font::find_otf(name) else {
+        return Ok(None);
+    };
+    let bytes = std::fs::read(&path).map_err(|e| Error::io("读取字体", path, e))?;
+    let fm = ntex_font::build_metrics(bytes, name)
+        .map_err(|e| Error::invalid_input(format!("解析字体 {name}: {e}")))?;
+    Ok(Some(fm))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn load_otf_from_fs(_name: &str) -> Result<Option<FontMetrics>> {
+    Ok(None)
 }
 
 /// 排版器：VM token 流 → 节点树（主垂直列表）。

@@ -567,6 +567,19 @@ fn glob_lm_candidates(file: &str) -> Vec<PathBuf> {
     out
 }
 
+/// 按 TeX 字体名直接定位 OpenType 字体文件（M9 中文刀 1）。
+///
+/// 与 [`lm_file_name`] 的「CM 家族名 → LM 文件名」改名映射不同：这里把 TeX
+/// 字体名**直接当字体文件名**（中文 Fandol/思源、用户自带 OTF/TTF），查找链
+/// 复用 `ntex_font::find_otf`——与引擎侧 `TfmLoader` 完全同源，保证
+/// 「引擎能量到的字体，渲染端也能量到」，不会出现度量已按 CJK 字体算、
+/// 渲染却回落占位方框的错配。
+fn locate_by_font_name(tex_name: &str) -> Option<Arc<GlyphFont>> {
+    let path = ntex_font::find_otf(tex_name)?;
+    let bytes = std::fs::read(path).ok()?;
+    GlyphFont::load(bytes).map(Arc::new)
+}
+
 /// 进程级字体字节注册表：[`register_font_bytes`] 写入，
 /// [`GlyphCache::resolve`] 优先于文件系统查找命中。
 static REGISTRY: LazyLock<Mutex<HashMap<String, Arc<GlyphFont>>>> =
@@ -603,8 +616,8 @@ impl GlyphCache {
         Self::default()
     }
 
-    /// 按名字解析（命中缓存直接返回；注册表 → kpsewhich/texlive 均未命中
-    /// 返回 None，字符走方框口径）。
+    /// 按名字解析（命中缓存直接返回；注册表 → kpsewhich/texlive → 字体目录
+    /// 均未命中返回 None，字符走方框口径）。
     pub(crate) fn resolve(&mut self, tex_name: &str) -> Option<Arc<GlyphFont>> {
         if let Some(hit) = self.resolved.get(tex_name) {
             return hit.clone();
@@ -617,6 +630,9 @@ impl GlyphCache {
                 .and_then(|path| std::fs::read(path).ok())
                 .and_then(GlyphFont::load)
                 .map(Arc::new)
+                // 非 LM 字体（M9 中文刀 1）：TeX 字体名直接当字体文件名定位
+                // （FandolSong-Regular / xxx.otf 等），与引擎侧 find_otf 同源。
+                .or_else(|| locate_by_font_name(tex_name))
         });
         self.resolved.insert(tex_name.to_owned(), loaded.clone());
         loaded

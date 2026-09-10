@@ -25,6 +25,15 @@
 pub trait TfmSource: std::fmt::Debug {
     /// 取字体 `name` 的 TFM 字节；缺失返回 `None`（上层报 TeX 的"找不到字体"错误）。
     fn tfm_bytes(&mut self, name: &str) -> Option<Vec<u8>>;
+
+    /// 取字体 `name` 的 OTF/TTF 字节（M9 中文刀 1）。
+    ///
+    /// 默认实现返回 `None`——宿主未提供 OpenType 字体源时，`TfmLoader`
+    /// 按原路径回落文件系统（native 行为逐字节不变）。wasm/Tauri 前端
+    /// fetch 中文字体后经此注入，使 CJK 排版在无文件系统环境同样可用。
+    fn otf_bytes(&mut self, _name: &str) -> Option<Vec<u8>> {
+        None
+    }
 }
 
 /// 可克隆的共享源句柄（`Rc<RefCell>`：wasm 单线程足够，native 无跨线程需求）。
@@ -51,6 +60,16 @@ pub fn registered_tfm_bytes(name: &str) -> Option<Vec<u8>> {
         cell.borrow()
             .as_ref()
             .and_then(|src| src.borrow_mut().tfm_bytes(name))
+    })
+}
+
+/// 已注册则取名字对应的 OTF/TTF 字节；未注册或宿主未实现返回 `None`
+/// （调用方回落文件系统 `find_otf`）。
+pub fn registered_otf_bytes(name: &str) -> Option<Vec<u8>> {
+    TFM_SOURCE.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .and_then(|src| src.borrow_mut().otf_bytes(name))
     })
 }
 

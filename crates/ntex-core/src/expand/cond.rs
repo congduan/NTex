@@ -658,15 +658,14 @@ saved_if_type: self.cur_if_type,
             }
             // ETRIP 冲刺：\iffontchar<font><char> —— 字体含该字符为真。
             // 参数缺失/非法（如 `\iffontchar \else \fi`）报错恢复取假；
-            // 字符码越界（<0 或 >255）报 "! Bad character code." 并取假。
+            // 字符码越界（<0 或超该字体上限）报 "! Bad character code." 并取假。
+            // 上限按被查字体判定（M9 中文刀 1）：8-bit TFM 字体 255（ETRIP 硬
+            // 口径），Unicode 直映字体（OpenType）0x10FFFF。
             CondOp::IfFontChar => {
-                let scanned = (|| -> Result<(u32, u32)> {
+                let scanned = (|| -> Result<(u32, i64)> {
                     let font = self.scan_font_ident()?;
                     let ch = self.scan_number()?;
-                    if !(0..=255).contains(&ch) {
-                        return Err(Error::invalid_input("Bad character code"));
-                    }
-                    Ok((font, ch as u32))
+                    Ok((font, ch))
                 })();
                 let (font, ch) = match scanned {
                     Ok(v) => v,
@@ -675,9 +674,14 @@ saved_if_type: self.cur_if_type,
                         return Ok(false);
                     }
                 };
+                let limit = i64::from(self.font_loader.char_code_limit(font));
+                if !(0..=limit).contains(&ch) {
+                    self.report_error("Bad character code.");
+                    return Ok(false);
+                }
                 Ok(self
                     .font_loader
-                    .char_metric(font, ch)
+                    .char_metric(font, ch as u32)
                     .is_some())
             }
             CondOp::IfCsname => {
@@ -828,7 +832,7 @@ saved_if_type: self.cur_if_type,
                     let mut expansion = Vec::new();
                     self.expand_once((tok, false), &mut expansion)?;
                     if !expansion.is_empty() {
-                        self.stack.push(InputFrame::TokenList {
+                        self.push_frame(InputFrame::TokenList {
                             items: Arc::from(expansion),
                             pos: 0,
                         });
@@ -961,7 +965,7 @@ saved_if_type: self.cur_if_type,
                     let mut expansion = Vec::new();
                     self.expand_once((tok, false), &mut expansion)?;
                     if !expansion.is_empty() {
-                        self.stack.push(InputFrame::TokenList {
+                        self.push_frame(InputFrame::TokenList {
                             items: Arc::from(expansion),
                             pos: 0,
                         });

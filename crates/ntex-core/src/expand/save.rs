@@ -315,7 +315,7 @@ impl Expander {
     fn exec_the(&mut self) -> Result<()> {
         let tokens = self.the_tokens()?;
         let items: Vec<(Token, bool)> = tokens.into_iter().map(|t| (t, false)).collect();
-        self.stack.push(InputFrame::TokenList {
+        self.push_frame(InputFrame::TokenList {
             items: Arc::from(items),
             pos: 0,
         });
@@ -582,6 +582,9 @@ impl Expander {
                     Ok(emit_dimen(self.fontdimen(font, num)))
                 }
                 // \the\fontcharwd/ht/dp/ic<font><char>：字体字符度量分量（sp）
+                //
+                // 与 `exec_fontchar_dimen`、`scan_dimen_inner` 同语义：字符码闸门
+                // 走 [`Self::fontchar_code`]（按被查字体判上界，M9 中文刀 1）。
                 Primitive::FontCharWd
                 | Primitive::FontCharHt
                 | Primitive::FontCharDp
@@ -594,11 +597,10 @@ impl Expander {
                     };
                     let font = self.scan_font_ident()?;
                     let ch = self.scan_number()?;
-                    if !(0..=255).contains(&ch) {
-                        self.report_error("Bad character code.");
+                    let Some(ch) = self.fontchar_code(font, ch) else {
                         return Ok(emit_dimen(0));
-                    }
-                    let m = self.font_loader.char_metric(font, ch as u32);
+                    };
+                    let m = self.font_loader.char_metric(font, ch);
                     let v = match component {
                         0 => m.map(|x| x.0).unwrap_or(0),
                         1 => m.map(|x| x.1).unwrap_or(0),
@@ -838,7 +840,7 @@ impl Expander {
         self.aftergroup.retain(|(l, _)| *l != self.group_level);
         if !tokens.is_empty() {
             let items: Vec<(Token, bool)> = tokens.into_iter().map(|t| (t, false)).collect();
-            self.stack.push(InputFrame::TokenList {
+            self.push_frame(InputFrame::TokenList {
                 items: Arc::from(items),
                 pos: 0,
             });

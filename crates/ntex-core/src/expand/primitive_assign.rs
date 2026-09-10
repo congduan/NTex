@@ -29,7 +29,7 @@ impl Expander {
                 EqSlot::Macro(m) if !(m.value.protected && self.suppress_expansion > 0) => {
                     let mut expansion = Vec::new();
                     self.expand_once((tok, false), &mut expansion)?;
-                    self.stack.push(InputFrame::TokenList {
+                    self.push_frame(InputFrame::TokenList {
                         items: Arc::from(expansion),
                         pos: 0,
                     });

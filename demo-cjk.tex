@@ -1,0 +1,25 @@
+% demo-cjk.tex —— M9 中文刀 1 端到端验收样张（OpenType 中文字体 + 大码位 \char）
+%
+% 说明：
+% - 本样张**刻意不使用 UTF-8 输入**（输入层仍是 8-bit，见 REVIEW A5 与
+%   plan §11.0 缺口③），改用 `\char"<码位>` 直取字形。这条路径的合法性由
+%   FontLoader::char_code_limit 按**当前字体**开通：8-bit TFM 字体保持
+%   0..=255（"Bad character code" 硬口径，TRIP/ETRIP 不变），OpenType
+%   Unicode 直映字体放开到 0x10FFFF。
+% - 字体 FandolSong-Regular（GPL，CTAN fonts/fandol）经 find_otf 搜索链定位：
+%   NTEX_OTF_DIR → ~/.ntex-fonts → 系统字体目录 → kpsewhich。
+% - 运行（软光栅 + 真字形）：
+%     cargo run -p ntex-backend -- demo-cjk.tex demo-cjk 200 --glyphs
+
+\font\zh=FandolSong-Regular at 24pt
+\zh
+\hsize=300pt
+% 本驱动（ntex-backend）不预载 plain，行距内部参数是引擎默认值；
+% 显式给定以得到正常行距（与 plain.tex 的 \baselineskip=12pt / \lineskip=1pt 同理）。
+\baselineskip=32pt
+\lineskip=4pt
+\parindent=0pt
+
+\char"4E2D\char"6587\char"6392\char"7248\par
+\char"4E00\char"4E8C\char"4E09\char"56DB\char"4E94\char"516D\char"4E03\char"516B\char"4E5D\char"5341\par
+\end
