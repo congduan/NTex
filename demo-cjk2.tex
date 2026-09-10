@@ -1,0 +1,31 @@
+% demo-cjk2.tex —— M9 中文刀 2 端到端验收样张（UTF-8 输入：源文件直接写中文）
+%
+% 说明：
+% - 与 demo-cjk.tex（刀 1，`\char"<码位>` 形式）对照：本样张开启
+%   `\utfinputmode=1` 后**源文件直接写中文**，由输入层把 UTF-8 多字节序列
+%   合并为单个 21-bit 字符 token（>255 码位默认 catcode letter，XeTeX 惯例），
+%   之后走刀 1 的 OTF 度量 → 折行 → DVI → 渲染 cmap 直查通路。
+% - 默认 `\utfinputmode=0`（bytes）时 8-bit 逐字节语义原样保留——
+%   TRIP/ETRIP 口径零影响（回归锁：ntex-layout/tests/cjk_charcode.rs）。
+% - 字体 FandolSong-Regular（GPL，CTAN fonts/fandol）经 find_otf 搜索链定位。
+% - 运行（软光栅 + 真字形）：
+%     cargo run -p ntex-backend -- demo-cjk2.tex demo-cjk2 200 --glyphs
+
+\utfinputmode=1
+\font\zh=FandolSong-Regular at 24pt
+\zh
+\hsize=300pt
+% 本驱动（ntex-backend）不预载 plain，行距内部参数是引擎默认值；
+% 显式给定以得到正常行距（与 plain.tex 的 \baselineskip=12pt / \lineskip=1pt 同理）。
+\baselineskip=32pt
+\lineskip=4pt
+\parindent=0pt
+
+中文排版：源文件直写。
+
+一二三四五六七八九十
+
+% 注：CJK 字符 catcode 为 letter（词），TeX 不会在字母间自动断行——
+% CJK 断行规则（\XeTeXlinebreaklocale 类钩子/标点挤压）是依赖链 ④，
+% 样张以空行分段使每段不超 \hsize。
+\end

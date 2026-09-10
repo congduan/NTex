@@ -23,6 +23,39 @@ use crate::token::Token;
 /// 十六进制对仅限小写 `a`-`f` 与 `0`-`9`（pdfTeX 实测：`^^Ab`→字符1+'b'、
 /// `^^A0`→字符1+'0'，大写 A-F 不参与配对）；`^^a`（后随非 hex）→ 97-64=33。
 ///
+/// UTF-8 多字节序列解码（M9 中文刀 2：`\utfinputmode=1` 时启用）。
+///
+/// `pos` 指向待读字节；仅当该字节 ≥ 0x80（UTF-8 领先字节/孤儿续字节）时尝试解码，
+/// 返回 `(码位, 消费字节数)`。解码用 `std::str::from_utf8` 按前缀长度 2..=4 逐步
+/// 尝试（合法 UTF-8 最长 4 字节；std 保证不产出代理区/超 21-bit 的值）。
+/// 解码失败返回 `None` 且不消费——调用方落回单字节处理（按 8-bit catcode 表，
+/// 通常得到 cat 12 token 或 cat 15 可恢复错误，与字节模式一致）。
+fn decode_utf8_char(bytes: &[u8], pos: usize) -> Option<(u32, usize)> {
+    let b = *bytes.get(pos)?;
+    if b < 0x80 {
+        return None;
+    }
+    for len in 2..=4usize {
+        let Some(slice) = bytes.get(pos..pos + len) else {
+            break; // 尾部截断：不再有更长的合法前缀
+        };
+        if let Ok(s) = std::str::from_utf8(slice) {
+            let cp = s.chars().next()? as u32;
+            return Some((cp, len));
+        }
+    }
+    None
+}
+
+/// `^^` 转义解码（TeXbook p.45）：`pos` 指向第一个 `^`（catcode 7）。
+///
+/// 命中 `^^` 时消费字节并返回解码后的字符码：
+/// - 后随两位十六进制数字（`^^5e`）→ 按十六进制取值；
+/// - 否则单字符规则：字符码 <64 加 64，64..=127 减 64（如 `^^A`→1、`^^@`→0、`^^?`→127）。
+///
+/// 十六进制对仅限小写 `a`-`f` 与 `0`-`9`（pdfTeX 实测：`^^Ab`→字符1+'b'、
+/// `^^A0`→字符1+'0'，大写 A-F 不参与配对）；`^^a`（后随非 hex）→ 97-64=33。
+///
 /// 非 `^^` 情形返回 `None` 且不消费任何字节。
 fn decode_circumflex(bytes: &[u8], pos: &mut usize, catcodes: &CatcodeTable) -> Option<u8> {
     // 第一个 `^` 必须 catcode 7（superscript），第二个仅按字符码 94 匹配（tex.web 同规则）
@@ -94,12 +127,19 @@ pub enum ScanState {
 ///
 /// `pos` 指向下一个待读字节；`intern` 用于驻留控制词/控制符号/active 名字；
 /// `state` 为扫描器行状态（每行行尾自动回到 [`ScanState::LineStart`]）。
+///
+/// `utf8_input`（M9 中文刀 2）：`\utfinputmode=1` 时源码按 UTF-8 解码——领先字节
+/// ≥0x80 的多字节序列合并为单个 21-bit 字符 token（>255 码位 catcode 默认
+/// letter，见 [`CatcodeTable::get_codepoint`]），控制词/控制符号名可含非 ASCII
+/// 字母。默认 `false`（bytes）：逐字节语义与 TRIP/ETRIP 口径完全一致，该分支
+/// 一个字节都不会碰到。
 pub fn scan_token(
     bytes: &[u8],
     pos: &mut usize,
     catcodes: &CatcodeTable,
     intern: &mut InternTable,
     state: &mut ScanState,
+    utf8_input: bool,
 ) -> Result<Option<Token>> {
     loop {
         let Some(&b) = bytes.get(*pos) else {
@@ -140,31 +180,47 @@ pub fn scan_token(
                 let Some(&c0) = bytes.get(*pos) else {
                     return Err(Error::invalid_input("输入以反斜杠结束"));
                 };
-                // ^^ 转义（\^^@、\^^? 等）：控制符号名取解码后的字符
-                let mut first = c0;
-                let mut advanced = false;
+                // 首字符三路解码：^^ 转义（\^^@、\^^? 等）/ UTF-8 多字节
+                // （utf8 模式，M9 中文刀 2：`\中文` 可作控制词/控制符号名）/ 单字节
+                let mut first_cp: u32 = c0 as u32;
+                let mut first_len: usize = 1;
                 if c0 == b'^'
                     && catcodes.get(c0) == Catcode::Superscript
                     && bytes.get(*pos + 1) == Some(&b'^')
                 {
                     if let Some(d) = decode_circumflex(bytes, pos, catcodes) {
-                        first = d;
-                        advanced = true;
+                        first_cp = d as u32;
+                        first_len = 0; // decode_circumflex 已消费字节
+                    }
+                } else if utf8_input && c0 >= 0x80 {
+                    if let Some((cp, len)) = decode_utf8_char(bytes, *pos) {
+                        first_cp = cp;
+                        first_len = len;
                     }
                 }
-                if catcodes.get(first).is_letter() {
-                    // 控制词：首字符（可能为 ^^ 解码）+ 连续字母（cat 11）
-                    // 及 ^^ 转义解码后为 cat 11 的字符（`\bigtr^^@p` → 名字 "bigtr\0p"）。
-                    if !advanced {
-                        *pos += 1; // 首字符未解码：越过它再读后续字母
-                    }
-                    let mut name = vec![first];
+                *pos += first_len;
+                let first_char = char::from_u32(first_cp);
+                if catcodes.get_codepoint(first_cp).is_letter() {
+                    // 控制词：首字符 + 连续字母（cat 11；utf8 模式下非 ASCII
+                    // letter 同样并入——`\中文` → 控制词 "中文"）
+                    let mut name = first_char.unwrap_or('\u{FFFD}').to_string().into_bytes();
                     let mut i = *pos;
                     while i < bytes.len() {
                         let b = bytes[i];
                         if catcodes.get(b).is_letter() {
                             name.push(b);
                             i += 1;
+                        } else if utf8_input && b >= 0x80 {
+                            // UTF-8 多字节字母（M9 中文刀 2）
+                            match decode_utf8_char(bytes, i) {
+                                Some((cp, len)) if catcodes.get_codepoint(cp).is_letter() => {
+                                    let c = char::from_u32(cp).unwrap_or('\u{FFFD}');
+                                    let mut tmp = [0u8; 4];
+                                    name.extend_from_slice(c.encode_utf8(&mut tmp).as_bytes());
+                                    i += len;
+                                }
+                                _ => break,
+                            }
                         } else if b == b'^'
                             && catcodes.get(b) == Catcode::Superscript
                             && bytes.get(i + 1) == Some(&b'^')
@@ -198,27 +254,44 @@ pub fn scan_token(
                     *state = ScanState::MidLine;
                     return Ok(Some(Token::control_sequence(csid)));
                 }
-                // 控制符号：单个任意非字母字符（含空格、`\` 自身、^^ 解码字符）
-                if !advanced {
-                    *pos += 1;
-                }
-                let csid = intern.intern(&char::from(first).to_string());
+                // 控制符号：单个任意非字母字符（含空格、`\` 自身、^^/UTF-8 解码字符）
+                let csid = intern.intern(&first_char.unwrap_or('\u{FFFD}').to_string());
                 *state = ScanState::MidLine;
                 return Ok(Some(Token::control_sequence(csid)));
             }
             _ => {
-                // ^^ 转义：catcode 7 的 ^ 后随 ^ → 解码为单个字符 token
-                let mut ch = b;
+                // 字符三路解码 ^^ 转义：catcode 7 的 ^ 后随 ^ → 解码为单个字符 token
+                let ch: u32;
                 let mut cat = cat;
-                if cat == Catcode::Superscript && b == b'^' && bytes.get(*pos + 1) == Some(&b'^') {
+                if utf8_input && b >= 0x80 {
+                    // UTF-8 多字节（M9 中文刀 2）：领先字节/孤儿续字节 ≥0x80 →
+                    // 尝试整体解码为单个 21-bit 字符 token；失败（孤儿续字节/
+                    // 尾部截断）落回单字节——按 8-bit 表处理，行为与 bytes 模式一致
+                    match decode_utf8_char(bytes, *pos) {
+                        Some((cp, len)) => {
+                            *pos += len;
+                            ch = cp;
+                            cat = catcodes.get_codepoint(cp);
+                        }
+                        None => {
+                            *pos += 1;
+                            ch = b as u32;
+                        }
+                    }
+                } else if cat == Catcode::Superscript
+                    && b == b'^'
+                    && bytes.get(*pos + 1) == Some(&b'^')
+                {
                     if let Some(d) = decode_circumflex(bytes, pos, catcodes) {
-                        ch = d;
+                        ch = d as u32;
                         cat = catcodes.get(d);
                     } else {
                         *pos += 1; // 非 ^^（如行尾）：按单字符处理
+                        ch = b as u32;
                     }
                 } else {
                     *pos += 1;
+                    ch = b as u32;
                 }
                 // 行状态机（tex.web get_next）：空格折叠 + 空行 → \par。
                 // 注意 `^^M`（cat 5）也在此路径解码为行尾，走同样判定。
@@ -261,12 +334,13 @@ pub fn scan_token(
                         // active 区、结构上与命名 cs 可分——\lowercase/
                         // \uppercase 的 change_case 语义依赖该区分）
                         *state = ScanState::MidLine;
-                        let csid = intern.intern(&char::from(ch).to_string());
+                        let csid =
+                            intern.intern(&char::from_u32(ch).unwrap_or('\u{FFFD}').to_string());
                         return Ok(Some(Token::active_sequence(csid)));
                     }
                     _ => {
                         *state = ScanState::MidLine;
-                        return Ok(Some(Token::char(cat, ch as u32)));
+                        return Ok(Some(Token::char(cat, ch)));
                     }
                 }
             }
@@ -285,8 +359,15 @@ mod tests {
         let mut pos = 0usize;
         let mut state = ScanState::LineStart;
         let mut out = Vec::new();
-        while let Some(t) =
-            scan_token(src.as_bytes(), &mut pos, &catcodes, &mut intern, &mut state).unwrap()
+        while let Some(t) = scan_token(
+            src.as_bytes(),
+            &mut pos,
+            &catcodes,
+            &mut intern,
+            &mut state,
+            false,
+        )
+        .unwrap()
         {
             out.push(t);
         }
@@ -366,8 +447,15 @@ mod tests {
         let mut pos = 0usize;
         let mut state = ScanState::LineStart;
         let mut toks = Vec::new();
-        while let Some(t) =
-            scan_token(b"a\n\nb", &mut pos, &catcodes, &mut intern, &mut state).unwrap()
+        while let Some(t) = scan_token(
+            b"a\n\nb",
+            &mut pos,
+            &catcodes,
+            &mut intern,
+            &mut state,
+            false,
+        )
+        .unwrap()
         {
             toks.push(t);
         }
@@ -506,25 +594,46 @@ mod tests {
         // \^^@ → 控制符号，名字为字符码 0
         let mut pos = 0usize;
         let mut state = ScanState::LineStart;
-        let tok = scan_token(b"\\^^@", &mut pos, &catcodes, &mut intern, &mut state)
-            .unwrap()
-            .unwrap();
+        let tok = scan_token(
+            b"\\^^@",
+            &mut pos,
+            &catcodes,
+            &mut intern,
+            &mut state,
+            false,
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(tok.kind(), TokenKind::ControlSeq);
         let csid = tok.csid().unwrap();
         assert_eq!(intern.name(csid), "\0");
         // \^^? → 控制符号，名字为字符码 127
         let mut pos = 0usize;
         let mut state = ScanState::LineStart;
-        let tok = scan_token(b"\\^^?", &mut pos, &catcodes, &mut intern, &mut state)
-            .unwrap()
-            .unwrap();
+        let tok = scan_token(
+            b"\\^^?",
+            &mut pos,
+            &catcodes,
+            &mut intern,
+            &mut state,
+            false,
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(intern.name(tok.csid().unwrap()), "\u{7f}");
         // \^^A：A 解码为 1，非字母 → 控制符号
         let mut pos = 0usize;
         let mut state = ScanState::LineStart;
-        let tok = scan_token(b"\\^^A", &mut pos, &catcodes, &mut intern, &mut state)
-            .unwrap()
-            .unwrap();
+        let tok = scan_token(
+            b"\\^^A",
+            &mut pos,
+            &catcodes,
+            &mut intern,
+            &mut state,
+            false,
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(intern.name(tok.csid().unwrap()), "\u{1}");
     }
 
@@ -541,6 +650,120 @@ mod tests {
         let mut pos = 0usize;
         let mut state = ScanState::LineStart;
         let bytes = [0x7F];
-        assert!(scan_token(&bytes, &mut pos, &catcodes, &mut intern, &mut state).is_err());
+        assert!(scan_token(&bytes, &mut pos, &catcodes, &mut intern, &mut state, false).is_err());
+    }
+
+    // ---------- M9 中文刀 2：UTF-8 输入模式（\utfinputmode=1） ----------
+
+    /// 指定编码模式扫描全部 token。
+    fn scan_all_mode(src: &str, utf8: bool) -> Vec<Token> {
+        let mut intern = InternTable::new();
+        let catcodes = CatcodeTable::new();
+        let mut pos = 0usize;
+        let mut state = ScanState::LineStart;
+        let mut out = Vec::new();
+        while let Some(t) = scan_token(
+            src.as_bytes(),
+            &mut pos,
+            &catcodes,
+            &mut intern,
+            &mut state,
+            utf8,
+        )
+        .unwrap()
+        {
+            out.push(t);
+        }
+        out
+    }
+
+    #[test]
+    fn utf8_mode_merges_multibyte_into_single_token() {
+        // utf8 模式：「中文」→ 两个 21-bit 字符 token，catcode letter（XeTeX 惯例）
+        let toks = scan_all_mode("中文", true);
+        assert_eq!(toks.len(), 2, "tokens: {toks:?}");
+        assert_eq!(toks[0].charcode(), Some(0x4E2D));
+        assert_eq!(toks[0].catcode(), Some(Catcode::Letter));
+        assert_eq!(toks[1].charcode(), Some(0x6587));
+        assert_eq!(toks[1].catcode(), Some(Catcode::Letter));
+    }
+
+    #[test]
+    fn bytes_mode_keeps_single_byte_semantics() {
+        // 默认 bytes 模式（TRIP/ETRIP 口径）：同一输入按 8-bit 切成单字节 token
+        let toks = scan_all_mode("中", false);
+        assert_eq!(
+            toks.iter().map(|t| t.charcode()).collect::<Vec<_>>(),
+            vec![Some(0xE4), Some(0xB8), Some(0xAD)]
+        );
+    }
+
+    #[test]
+    fn utf8_mode_mixed_ascii_and_cjk() {
+        // 混排：行状态机行为与纯 ASCII 一致（行中空格产出空格 token）
+        let toks = scan_all_mode("a中 b", true);
+        assert_eq!(
+            toks.iter().map(|t| t.charcode()).collect::<Vec<_>>(),
+            vec![
+                Some(b'a' as u32),
+                Some(0x4E2D),
+                Some(b' ' as u32),
+                Some(b'b' as u32)
+            ]
+        );
+    }
+
+    #[test]
+    fn utf8_mode_cjk_control_word() {
+        // `\中文 x` → 控制词 "中文" + 字符 x（后续空格被吞）
+        let mut intern = InternTable::new();
+        let catcodes = CatcodeTable::new();
+        let mut pos = 0usize;
+        let mut state = ScanState::LineStart;
+        let mut toks = Vec::new();
+        while let Some(t) = scan_token(
+            "\\中文 x".as_bytes(),
+            &mut pos,
+            &catcodes,
+            &mut intern,
+            &mut state,
+            true,
+        )
+        .unwrap()
+        {
+            toks.push(t);
+        }
+        assert_eq!(toks.len(), 2, "tokens: {toks:?}");
+        assert_eq!(toks[0].kind(), TokenKind::ControlSeq);
+        assert_eq!(intern.name(toks[0].csid().unwrap()), "中文");
+        assert_eq!(toks[1].charcode(), Some(b'x' as u32));
+    }
+
+    #[test]
+    fn utf8_mode_orphan_continuation_falls_back_to_byte() {
+        // 孤儿续字节 0x80：解码失败落回单字节（cat 12），不 panic、不吞后续输入
+        let toks = scan_all_mode("A\u{80}B", true);
+        assert_eq!(
+            toks.iter().map(|t| t.charcode()).collect::<Vec<_>>(),
+            vec![Some(b'A' as u32), Some(0x80), Some(0x42)]
+        );
+    }
+
+    #[test]
+    fn utf8_mode_comment_and_newline_unchanged() {
+        // 注释/行尾仍是字节级语义（% 与 \n 是 ASCII）：a%中\nb → a b
+        let toks = scan_all_mode("a%中\nb", true);
+        assert_eq!(
+            toks.iter().map(|t| t.charcode()).collect::<Vec<_>>(),
+            vec![Some(b'a' as u32), Some(b'b' as u32)]
+        );
+    }
+
+    #[test]
+    fn utf8_mode_circumflex_still_works() {
+        // ^^ 转义在 utf8 模式不受影响（ASCII 字节级规则优先）
+        let toks = scan_all_mode("^^5e", true);
+        assert_eq!(toks.len(), 1);
+        assert_eq!(toks[0].charcode(), Some(0x5E));
     }
 }

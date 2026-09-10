@@ -653,4 +653,10 @@ define_primitives! {
     PdfStrCmp,
     PdfFileSize,
     PdfCreationDate,
+    // M9 中文刀 2：\utfinputmode（内部整数参数，misc 65）——源文件输入编码开关。
+    // 0 = bytes（默认，8-bit 逐字节语义原样保留，TRIP/ETRIP 口径零影响）；
+    // 1 = UTF-8：scan_token 将多字节序列解码为单个 21-bit 字符 token，
+    // >255 码位默认 letter（XeTeX 惯例）。门控只作用于字节→token 入口
+    // （Source 帧 + \read），宏体 token 流不受影响。
+    UtfInputMode,
 }

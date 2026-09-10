@@ -138,6 +138,19 @@ impl CatcodeTable {
         Catcode::from_u8(self.0[byte as usize]).expect("catcode 表只允许 0..=15")
     }
 
+    /// 查询某 Unicode 码位的 catcode（M9 中文刀 2：UTF-8 输入模式专用）。
+    ///
+    /// ≤255 走 8-bit 表（与字节模式同源，ASCII 行为不变）；>255 按 XeTeX
+    /// 惯例默认 **letter**（CJK/扩展文字直接可排版）。8-bit 表保持 `[u8; 256]`
+    /// 不动——`\catcode` 对 >255 码位的赋值扩展留待后续刀（A5 建议方向）。
+    pub fn get_codepoint(&self, cp: u32) -> Catcode {
+        if cp <= 0xFF {
+            self.get(cp as u8)
+        } else {
+            Catcode::Letter
+        }
+    }
+
     /// 修改某字节的 catcode（`\catcode` 原语入口）。
     pub fn set(&mut self, byte: u8, cat: Catcode) {
         self.0[byte as usize] = cat.as_u8();

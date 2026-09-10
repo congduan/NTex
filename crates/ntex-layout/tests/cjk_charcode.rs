@@ -273,3 +273,82 @@ fn otf_font_char_queries_share_unicode_range() {
         "\\the 入口应给 1em（{EM_SP}sp = {EM_PT}），实际转录：\n{t}"
     );
 }
+
+// ---------- 锁三：UTF-8 输入模式（\utfinputmode，M9 中文刀 2） ----------
+
+/// `\utfinputmode=1` 后源文件可直接写中文：多字节序列合并为单个 21-bit
+/// 字符 token（catcode letter），经刀 1 的 OTF 通路排成 Char 节点。
+#[test]
+fn utf8_input_mode_direct_chinese_typesets() {
+    if !samples_ready() {
+        eprintln!("样本缺失，跳过");
+        return;
+    }
+    install_fonts();
+    let (chars, t) = run("\\utfinputmode=1 \\font\\zh=zh \\zh 中文排版\n");
+    for (name, cp) in [
+        ("中", 0x4E2D),
+        ("文", 0x6587),
+        ("排", 0x6392),
+        ("版", 0x7248),
+    ] {
+        let hit = chars.iter().find(|(c, _)| *c == cp).unwrap_or_else(|| {
+            panic!("utf8 直写模式未见 {name}（U+{cp:04X}）的 Char 节点，实得 {chars:?}\n转录：{t}")
+        });
+        assert_eq!(hit.1, EM_SP, "{name} 应取 1em（{EM_SP}sp），实得 {}", hit.1);
+    }
+}
+
+/// 默认 bytes 模式（不设 `\utfinputmode`）直写中文不被合并——8-bit 逐字节
+/// 语义原样保留，这是 TRIP/ETRIP 口径零回归的锁。
+///
+/// 判定走 `\message`：token 文本渲染与字体无关（`0xE4` 等单字节 token 渲染为
+/// Latin-1 视角的 U+00E4…，而**不会**合并出「中」）；直写节点路径不可用——
+/// 单字节在 Fandol 中无字形，走 Missing character 被丢弃。
+#[test]
+fn bytes_mode_default_does_not_merge_multibyte() {
+    let (_, t) = run("\\message{中}\n");
+    assert!(
+        !t.contains('中'),
+        "bytes 模式下多字节序列不得合并出 U+4E2D：{t:?}"
+    );
+    assert!(
+        t.contains('\u{E4}'),
+        "bytes 模式应保留领先字节 0xE4 的单字节 token（渲染为 U+00E4）：{t:?}"
+    );
+    // 对照组：utf8 模式同一输入合并出「中文」
+    let (_, t2) = run("\\utfinputmode=1 \\message{中文}\n");
+    assert!(
+        t2.contains("中文"),
+        "utf8 模式应把多字节序列合并为「中文」：{t2:?}"
+    );
+}
+
+/// `\utfinputmode` 是可写内部整数参数：赋值/回读/`\the` 全通
+/// （misc 65 走标准 int_param_index 通道）。
+#[test]
+fn utf_input_mode_is_readable_int_param() {
+    let (_, t) = run("\\utfinputmode=1 \\message{m=\\the\\utfinputmode}\n");
+    assert!(
+        t.contains("m=1"),
+        "\\utfinputmode 赋值后应可回读 1，实际转录：\n{t}"
+    );
+    // 默认值 0（bytes）
+    let (_, t) = run("\\message{d=\\the\\utfinputmode}\n");
+    assert!(
+        t.contains("d=0"),
+        "\\utfinputmode 默认应为 0（bytes），实际转录：\n{t}"
+    );
+}
+
+/// utf8 模式下 CJK 控制词可用：`\def\中{X}` 定义后展开（input.rs 的
+/// 控制词字母收集含非 ASCII letter 的回归点）。判定走 `\message`
+/// （展开结果为字符文本，与当前字体是否有该字形无关）。
+#[test]
+fn utf8_mode_cjk_control_word_expands() {
+    let (_, t) = run("\\utfinputmode=1 \\def\\中{X} \\message{e=\\中}\n");
+    assert!(
+        t.contains("e=X"),
+        "\\中 应作为控制词被 \\def 定义并展开为 X，实际转录：\n{t:?}"
+    );
+}

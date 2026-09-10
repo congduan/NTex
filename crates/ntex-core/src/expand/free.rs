@@ -125,6 +125,8 @@ fn int_param_index(p: Primitive) -> Option<usize> {
         // （\pdfrandomseed 用 misc 64 但**不**入此表：pdfTeX 中它只读，
         //  写入走 \pdfsetrandomseed。）
         Primitive::PdfOutput => 63,
+        // M9 中文刀 2：\utfinputmode（misc 65；源文件输入编码开关，0=bytes 1=utf8）
+        Primitive::UtfInputMode => crate::param::MISC_UTF_INPUT_MODE,
         _ => return None,
     })
 }

@@ -1,9 +1,10 @@
 /// 内建原语注册表：`名字 → Primitive` 的单一事实源。
 ///
-/// 411 项（`\muexpr` 为 `Glueexpr` 的别名，故比 `Primitive::ALL` 多一项；
+/// 413 项（`\muexpr` 为 `Glueexpr` 的别名，故比 `Primitive::ALL` 多一项；
 /// TRIP 冲刺补充 13 个标准参数原语；LaTeX 兼容第八刀补 pdfTeX 引擎探测/兼容族
-/// 12 项），供 `register_builtins` 注册与 `tests.rs` 的一致性测试共用。
-pub(crate) const BUILTINS: [(&str, Primitive); 412] = [
+/// 12 项；M9 中文刀 2 补 \utfinputmode），供 `register_builtins` 注册与
+/// `tests.rs` 的一致性测试共用。
+pub(crate) const BUILTINS: [(&str, Primitive); 413] = [
     ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -530,6 +531,9 @@ pub(crate) const BUILTINS: [(&str, Primitive); 412] = [
             // \pdffilesize 缺失则 \file_full_name:n 的存在性探测瘫痪
             ("pdffilesize", Primitive::PdfFileSize),
             ("pdfcreationdate", Primitive::PdfCreationDate),
+            // M9 中文刀 2：源文件输入编码开关（0=bytes 默认，1=UTF-8 解码；
+            // 只影响字节→token 入口，TRIP/ETRIP 的 8-bit 口径零影响）
+            ("utfinputmode", Primitive::UtfInputMode),
 ];
 
 impl Expander {

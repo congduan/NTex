@@ -278,12 +278,19 @@ impl Expander {
             stream.pos = if end < stream.data.len() { end + 1 } else { end };
             line
         };
-        // token 化（catcode 表；行状态从行首开始——\read 每次读一行）
+        // token 化（catcode 表；行状态从行首开始——\read 每次读一行；
+        // M9 中文刀 2：\utfinputmode≠0 时该行同样按 UTF-8 解码）
         let mut pos = 0usize;
         let mut state = ScanState::LineStart;
         let mut toks = Vec::new();
-        while let Some(tok) = scan_token(&line, &mut pos, &self.catcodes, &mut self.intern, &mut state)?
-        {
+        while let Some(tok) = scan_token(
+            &line,
+            &mut pos,
+            &self.catcodes,
+            &mut self.intern,
+            &mut state,
+            self.params.misc[crate::param::MISC_UTF_INPUT_MODE] != 0,
+        )? {
             // TeX：\read 的 token 列表禁止 outer 宏（tex.web read_toks）
             self.check_not_outer(tok)?;
             toks.push(tok);

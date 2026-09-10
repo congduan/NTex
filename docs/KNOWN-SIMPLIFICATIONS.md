@@ -60,7 +60,8 @@
 
 | 位置 | 现状 | 状态 |
 |---|---|---|
-| 输入层（`catcode`/`scan_token`） | 仍是 8-bit 逐字节扫描（REVIEW A5）——源文件直接写中文不可用，中文须经 `\char"4E2D` 形式（M9 中文刀 1 只扩了 `\char` 数值上界 + OTF 度量，未动输入层，TRIP/ETRIP 口径零回归已验证） | 待做（刀 2） |
+| `catcode.rs` / `input.rs` | `\utfinputmode=1`（M9 中文刀 2）已通 UTF-8 直写；**默认 bytes 模式逐字节语义零改动**（TRIP/ETRIP 已对照）。遗留：`\catcode` 对 >255 码位的赋值扩展（Unicode catcode 表，A5 全量收口；现 >255 恒 letter 不可改） | 待做（刀 3） |
+| 折行 | CJK 字符是 letter（词），字母间无断点——`\XeTeXlinebreaklocale` 类断行钩子/标点挤压未做，中文长段需手工分段 | 待做（④） |
 | `ntex-font/otf.rs` `build_metrics` | OTF 度量只有 advance/height/depth（hmtx+bbox），italic correction 恒 0；无 kerning/连字/HarfBuzz 整形 | 待做（M9 ②） |
 | `ntex-backend` CJK 渲染 | 字形经 cmap 直查（`unicode_native` 字体 codepoint→glyph）；缺字形逐字回落方框；无 CJK 字体链 fallback | 待做 |
 | `ntex-font/tfm.rs:191` | 保留左/右字符的连字（罕见）暂不支持 | 待做 |
@@ -138,4 +139,5 @@ demo1 六刀 + 输出例程刀 2/3/5 的修复登记；全部已提交，留作�
 - 2026-09-08：LaTeX 战役二十九刀——\expanded 实参 IPN ×256 清零（scan_edef_body 加 in_definition，78dd892）+ \lowercase 转换 active char（token 表示层 CS_ACTIVE_FLAG，78dd892），详见 latex-feasibility.md §36；\halign 战役刀 1/3——\everycr 两点注入 + align_peek 入口 align_state 复位 + to/spread 摊派真语义（4b912f9），§3 对齐组条目同步刷新
 - 2026-09-09：格式预载/scan 线补登（§7.bis 新设）——scan_glue dimen 臂（226c177，latex.ltx l.13899 \skip_const 停点消除）+ scan_int dimendef 数字上下文（04d2023，\z@）+ G3 page 参数（3af87dd）；输出例程刀 4 \newinsert 分配器补登（3ef1f67，§7）；新增三项简化登记：EmbeddedFormatVfs 仅 ntex-dvi 接线、预载空页、\lccode/\uccode 初表全 0（510431b 系）
 - 2026-09-10：M9 中文刀 1 登记（§5 新增三行）——\char 上界按字体判定（`FontLoader::char_code_limit`，8-bit 255/Unicode 0x10FFFF，TRIP/ETRIP 口径不变已对照 HEAD 逐字节验证）+ OTF→FontMetrics 直映通道（`unicode_native`/`unicode_chars`，无 ic/kerning）+ 渲染 cmap 直查；遗留：输入层 UTF-8（A5，刀 2）为源文件直写中文前提
+- 2026-09-11：M9 中文刀 2 登记（§5 首行刷新）——`\utfinputmode`（misc 65）UTF-8 直写通路打通，默认 bytes 零改动；遗留改为：\catcode >255 赋值扩展（刀 3）、CJK 断行/标点挤压（④）
 - **收尾纪律提醒**：后续每轮修复后同步更新本清单（已修项标 ✅ + commit；维护记录追加）

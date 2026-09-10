@@ -1987,7 +1987,17 @@ impl Expander {
             match frame {
                 InputFrame::Source {
                     bytes, pos, state, ..
-                } => match scan_token(bytes, pos, &self.catcodes, &mut self.intern, state) {
+                } => match scan_token(
+                    bytes,
+                    pos,
+                    &self.catcodes,
+                    &mut self.intern,
+                    state,
+                    // M9 中文刀 2：\utfinputmode≠0 → 源码按 UTF-8 解码
+                    //（只作用于字节→token 入口；宏体/实参 token 流不受影响，
+                    // TRIP/ETRIP 默认 bytes 模式零影响）
+                    self.params.misc[crate::param::MISC_UTF_INPUT_MODE] != 0,
+                ) {
                     Ok(Some(tok)) => return Ok(Some((tok, false))),
                     Ok(None) => {
                         self.stack.pop();

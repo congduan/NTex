@@ -129,7 +129,11 @@ pub enum ParamValue {
 
 /// 内部整数参数总数（TeX/e-TeX 内部整数，ETRIP/TRIP 冲刺；仅存储/回读）。
 /// 下标与 [`crate::expand::int_param_index`] 的映射一致。
-pub const MISC_INTS: usize = 65;
+pub const MISC_INTS: usize = 66;
+
+/// `\utfinputmode` 在 [`Params::misc`] 中的下标（M9 中文刀 2）：
+/// 源文件输入编码开关，0 = bytes（默认）、非 0 = UTF-8 解码。
+pub const MISC_UTF_INPUT_MODE: usize = 65;
 
 /// 系统时间 → (日, 月, 年, 自午夜分钟数)（tex.web `date_and_time`；\day/\month/\year/\time）。
 /// 公历转换用 Howard Hinnant 的 days-from-civil 逆算法（无外部依赖）。
@@ -232,8 +236,12 @@ pub fn default_misc() -> [i64; MISC_INTS] {
         // LaTeX 兼容第八刀：pdfTeX 原语状态
         0, // 63 \pdfoutput（pdfTeX 默认 0 = DVI 模式；NTex 亦输出 DVI）
         1, // 64 \pdfrandomseed（随机种子状态；\pdfsetrandomseed 写、
-           //        \pdfuniformdeviate 推进。pdfTeX 出厂种子非 0，取 1 避免首个
-           //        随机数序列恒 0——LCG 平凡不动点）
+        //        \pdfuniformdeviate 推进。pdfTeX 出厂种子非 0，取 1 避免首个
+        //        随机数序列恒 0——LCG 平凡不动点）
+        // M9 中文刀 2：\utfinputmode（源文件输入编码开关；initex 默认 0 = bytes——
+        // 8-bit 逐字节语义原样保留，TRIP/ETRIP 口径零影响；置 1 后源码按 UTF-8
+        // 解码，多字节序列合并为单个 21-bit 字符 token，>255 码位默认 letter）
+        0,
     ]
 }
 

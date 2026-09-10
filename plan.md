@@ -619,8 +619,10 @@ P1 —— D 组语义简化点（REVIEW-2026-08-23，偏离规范但可接受）
 - [ ] `\lefthyphenmin`/`\righthyphenmin` 词界规则待校准
 
 P2 —— 架构决策：
-- [ ] A5 输入层 8-bit catcode：CJK 多字节被切单字节 token，影响所有字符类原语
-      （P0 决策项，需独立排期）
+- [x] A5 输入层 8-bit catcode：CJK 多字节被切单字节 token，影响所有字符类原语
+      —— 🟡 刀 2 已通（2026-09-11）：`\utfinputmode=1` 源码按 UTF-8 解码
+      （默认 bytes 模式 8-bit 口径零影响，TRIP/ETRIP 已对照验证）；遗留
+      `\catcode` 对 >255 码位的赋值扩展（Unicode catcode 表）
 
 **冲刺纪律**：每次迭代前先 `cargo build -p ntex-trip` 确认全绿再跑（避免脏构建旧产物
 误报，如误报过的 `\ifcase 序号不能为负`）；对照 etrip.log 参考逐段验证，不做整体 diff。
@@ -869,7 +871,7 @@ LaTeX 兼容战役（进行中）
 |---|---|---|
 | TTF/OTF 字体解析 | 🟡 刀 1 已通（2026-09-10）：ttf-parser 度量直映通道 `OtfFont::build_metrics` → `FontMetrics::unicode_native/unicode_chars`，`\char"4E2D` 全链（度量→折行→DVI set2/3/4→PDF/vello/PNG 渲染 cmap 直查）已验证；HarfBuzz 整形/kerning/italic correction 仍无 | ② |
 | HarfBuzz 整形/整形缓存 | 无（M6 铺路条目已列） | ② |
-| 输入层 UTF-8 | REVIEW A5 未修（刀 1 绕开：不动 catcode，中文经 `\char"XXXX` 输入） | ③ |
+| 输入层 UTF-8 | 🟡 刀 2 已通（2026-09-11）：`\utfinputmode=1` → scan_token 将 UTF-8 多字节序列合并为单个 21-bit 字符 token（>255 码位默认 letter，XeTeX 惯例；CJK 控制词 `\def\中{}` 可用）；默认 bytes 模式零改动。遗留：`\catcode` >255 赋值扩展（Unicode catcode 表，A5 全量） | ③ |
 | CJK 断行规则（linebreak locale） | 无 | ④ |
 | 中文标点挤压/字距 | 无 | ④ |
 | ctex 宏包兼容 | 无（xeCJK 最小子集起步） | ⑤ |
@@ -889,6 +891,22 @@ LaTeX 兼容战役（进行中）
   `make check` 全绿；
 - **遗留**：输入层 UTF-8（刀 2，源文件直写中文前提）、HarfBuzz 整形、wasm 侧
   OTF 注入联调、CJK 断行/标点挤压（④）。
+
+**刀 2 战果（2026-09-11，输入层 UTF-8：源文件直写中文）**：
+
+- **门控设计**：新内部整数参数 `\utfinputmode`（misc 65，initex 默认 0 = bytes）
+  ——门控只作用于**字节→token 入口**（`InputFrame::Source` 扫描 + `\read`），
+  宏体/实参已是 token 流天然不受影响；默认 bytes 模式 8-bit 逐字节语义零改动
+  （TRIP/ETRIP 口径保住，HEAD 对照验证）；
+- **解码规则**：领先字节 ≥0x80 的多字节序列经 `std::str::from_utf8` 合并为单个
+  21-bit 字符 token（孤儿续字节/截断落回单字节，不 panic）；>255 码位默认
+  catcode letter（`CatcodeTable::get_codepoint`，XeTeX 惯例）；控制词/控制符号
+  名可含非 ASCII letter（`\def\中{X}` 可用）；`^^` 转义/注释/行尾不受影响；
+- **端到端**：`demo-cjk2.tex` 直写「中文排版：源文件直写。」渲染验证通过；
+  回归锁扩至 10 测试（`cjk_charcode.rs`：直写/bytes 不合并/参数读写/CJK 控制词）；
+- **遗留**：`\catcode` >255 赋值扩展（Unicode catcode 表，A5 全量收口）、
+  CJK 断行/标点挤压（④，样张需空行分段因 letter 无断点）、`.fmt` 快照
+  misc 数组扩容的版本兼容注意（MISC_INTS 65→66）。
 
 **分阶段验收标准**：
 
