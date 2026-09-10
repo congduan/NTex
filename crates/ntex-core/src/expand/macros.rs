@@ -25,12 +25,12 @@ impl Expander {
             if !def.params.text.is_empty()
                 && self.match_input_delim(&def.params.text).is_err()
             {
-                let _ = self.sink.write16(
-                    "! Use of macro doesn't match its definition.\n\
+                let name = self.intern.name(csid).to_owned();
+                let _ = self.sink.write16(format!(
+                    "! Use of \\{name} doesn't match its definition.\n\
                      The macro here has not been followed by the required stuff,\n\
                      so I'm ignoring it.\n"
-                        .to_string(),
-                );
+                ));
             }
             return Ok(Vec::new());
         }
@@ -54,12 +54,11 @@ impl Expander {
         if self.match_input_delim(&segments[0]).is_err() {
             // TeX：宏调用与定义不匹配 → "Use of \X doesn't match its definition."
             // 报错恢复（忽略该宏调用，按无参展开；TRIP L332 `\t2` 等）
-            let _ = self.sink.write16(
-                "! Use of macro doesn't match its definition.\n\
+            let _ = self.sink.write16(format!(
+                "! Use of \\{name} doesn't match its definition.\n\
                  The macro here has not been followed by the required stuff,\n\
                  so I'm ignoring it.\n"
-                    .to_string(),
-            );
+            ));
             return Ok(Vec::new());
         }
         for k in 0..n {

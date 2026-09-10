@@ -2897,3 +2897,52 @@ ipn2b 形态同理：`\show\x` 显示 `->\lowercase {x}.` 的 `#` 消失是 acti
 
 下一刀应以该最小化定义为靶，追踪 `\csname`/定界参数扫描为何反复注入输入帧；
 不能通过抬高输入栈上限掩盖问题。
+
+## 38. 第三十一刀（定位轮）：plain 预载 24 错全部锚定 `\if@`——latex.ltx 的前置依赖带病（2026-09-10/11 定位，未修）
+
+本轮未出新修复，产出三项定位成果与一项报错保真改进。
+
+### 38.1 报错保真：`Use of \X doesn't match its definition.` 补宏名
+
+`expand/macros.rs` 两处（0 参数纯定界串失配 + 前导定界符 P_1 失配）原报
+"Use of **macro** doesn't match its definition."，缺宏名，与 tex.web
+`print_err("Use of "); sprint_cs(warning_index);` 不符。已改为带宏名。
+该改动立即见效：plain 预载 24 个报错全部锚定为 **`\if@`**。
+
+### 38.2 定位成果一：plain 预载 24 错 = `\newif` 链路
+
+- NTex 内嵌 plain.tex 预载恒产 24 个 "Use of \if@ doesn't match"。
+  分布与 8 处 `\newif` 调用点对应（每处 3 个）。
+- `\if@` 是 `{\uccode`1=`i \uccode`2=`f \uppercase{\gdef\if@12{}}}` 生成的
+  "吞 if 前缀" 宏，参数文本 = uccode 转换后的 catcode-12 字符 `i``f`。
+- plain.tex `\newif` 机制（tex.web 对照已核）：`\escapechar\m@ne` 临时关闭
+  转义字符后 `\string\ifus@` 产出**无前缀** catcode-12 串，三重
+  `\expandafter` 链折叠出 `\us@true`/`\us@false`（=`\let\ifus@=\iftrue/false`）。
+  `\exp_stop_f:`（expl3）与 `\if@`（plain）共用同一族机制：
+  `\let` 的 `=` 后 spacer 只跳一次（tex.web §22839）。
+- 已验证 NTex 微观语义正确：`\let\cs=~`（显式 =，expl3 `\cs_set_eq:NN`
+  的 `=~` 体）、`\use:nn{...}{~}` 花括号组传空格、`\ifnum` 后空格别名终结符、
+  `\meaning` 输出 "blank space"，均与 pdfTeX 一致（/tmp/tg.tex 对拍）。
+- 已知显示分歧（次要）：NTex `\show` 对 catcode-10 别名打印
+  "the character ␣"，pdfTeX 打印 "blank space"。
+
+### 38.3 定位成果二：latex.ltx --initex 的主簇错误上游在 fp 模块
+
+刷新后的 /tmp/latexsurvey 材料（2026-09-10 00:26 重勘）：
+- 错误分布集中在 expl3-code.tex **l.20290（1253 条）**、**l.19534（204 条）**，
+  位于 `\__fp_trig_large:ww` 等 fp 浮点模块；
+- 错误形态 `\ifnum` 关系符位读到 `exp_stop_f:`（"Missing = inserted"）；
+- 终局挂死于 `\__iow_wrap_line_loop:w` 的 `;` 定界实参收集
+  （`scan_relation` 产 21.7M+ token 帧，`collect_delimited_arg` 内存膨胀 4.1G）。
+
+### 38.4 待办（下一轮入口）
+
+1. **先修 plain 预载 24 错**（`\if@` 匹配失败）：latex.ltx 在 plain 基础上
+   加载，前置依赖带病则上层一切失真。靶心 = `\uppercase`+uccode 参数文本
+   与 `\string`（escapechar=-1）输出的 catcode/charcode 对拍。
+   注意：微观对拍文件极易写错（tg/th/ti/tj/tk 五轮教训），
+   必须以 pdfTeX 实测为 ground truth 逐字对拍。
+2. 修完后再勘 l.20290 fp 主簇，最后处理 `\__iow_wrap` 挂死。
+3. 收尾时移除 `NTEX_DELIM_DBG`（macros.rs:153）/`NTEX_BIGLIST_TRACE`
+   （mod.rs）临时诊断；当前均环境变量门控、默认关闭，未删。
+4. `\show` 对 catcode-10 别名的显示文本对齐 "blank space"（低优先）。
