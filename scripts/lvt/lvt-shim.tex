@@ -57,6 +57,13 @@
 \def\NeedsTeXFormat#1{}
 \def\ProvidesPackage#1{}
 \def\ProcessOptions{\relax}
+% ── expl3 调试设施（l3debug.dtx L108 `\debug_on:n`）────────────────────────
+% `.lvt` 头部在 `\ExplSyntaxOn` 后调 `\debug_on:n { check-declarations ,
+% deprecation , log-functions }`——这是 **expl3 kernel 函数**，plain 无。
+% 不提供则报 Undefined → 级联污染（实测 m3basics001 首个错误即 `\debug_on:n`，
+% 其后测试体全部错位）。调试开关对输出**无影响**（只加检查），故空实现即可。
+\def\debug_on:n#1{}
+\def\debug_off:n#1{}
 % ── `\ExplSyntaxOn` / `\ExplSyntaxOff`（LaTeX 内核 / l3bootstrap 提供）──────
 % 官方定义见 l3kernel/l3bootstrap.dtx L317+：开启时把
 %   tab(9)/space(32) → ignore、双引号(34)/竖线(124) → other、
@@ -77,7 +84,12 @@
   \ifnum\lvt@expl@bool=0
     \catcode`\^^I=9 \catcode`\ =9 \catcode`\"=12
     \catcode`\:=11 \catcode`\_=11 \catcode`\^=7
-    \catcode`\|=12 \catcode`\~=13
+    \catcode`\|=12
+    % ⚠ `~`(126) 在 expl3 语法下是 **catcode 10（space）**，不是 13！
+    % 官方 l3bootstrap.dtx L345 `\char_set_catcode_space:n { 126 } % tilde`。
+    % 写成 13 使 `.lvt` 测试标题里的 `~`（作空格用，如 `cs~if~exist~use`）
+    % 被当 active char 展开成 `\~`（重音宏），187 例测试标题全渲染错。
+    \catcode`\~=10
     \endlinechar=32
     \chardef\lvt@expl@bool=1
   \fi}

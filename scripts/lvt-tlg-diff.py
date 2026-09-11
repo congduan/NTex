@@ -104,6 +104,9 @@ def extract_body(text: str) -> list[str]:
             continue
         if s.strip() in ("", "\\par"):
             continue
+        # 分隔线（`====`/`----`）：.tlg 侧已剔，NTex 侧同剔
+        if re.fullmatch(r"[=\-]{4,}", s.strip()):
+            continue
         # harness 头（.tlg 顶部同款，此处也剔）
         if s.startswith(("This is a generated file", "Don't change this file", "Author:")):
             continue
