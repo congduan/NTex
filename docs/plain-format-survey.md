@@ -420,7 +420,7 @@ plain.tex 与 `fixtures/corpus/plain/plain.tex` `diff -q` 一致；hyphen.tex �
 |---|---|---|
 | `\footins`/`\topins` 落 insert255 | `\footins=\insert254`、`\topins=\insert253` | **已消**——输出例程刀 4 `\newinsert` 分配器落地（3ef1f67），分配号与真 plain 格式一致（254/253） |
 | `\newif`/`\newbox`/`\newinsert` 区（l.598/599/1023/1121/1149/1177） | 24×`! Use of macro doesn't match its definition.` | **仍在**——量恰 = plain.tex 全部 8 处 `\newif` 调用点 ×3，G6 普查靶子，本刀不修 |
-| l.1237 | 2×`! Missing number, treated as zero.`（`<to be read again> \z@` / `\tenrm`） | **已消**——`scan_int` 补 dimendef'd cs 数字上下文臂（04d2023，plain 预载全通、corpus 8/8 爬坡）；剩余 `\newif` 链与字体备料见 G6 |
+| l.1237 | 2×`! Missing number, treated as zero.`（`<to be read again> \z@` / `\tenrm`） | **已消**——`scan_int` 补 dimendef'd cs 数字上下文臂（04d2023，plain 预载全通）；剩余 `\newif` 链与字体备料见 G6 |
 | `\bye` Incompatible list | 未复现（本轮未观测到该签名） | 待 G6 构造探针复验 |
 | （G0 未照见，本刀首见）shipout 路径 | 3×`Missing number …\z@` 无行上下文，仅在有页面冲出时出现 | **新增可见**——预载前 `\plainoutput`/`\makefootline`/`\advancepageno` 不存在、不可达；钳制探针：`\def\plainoutput{\shipout\vbox{\makefootline}}` 与 `…\advancepageno` 单独即可少 2 处 → 疑 `\pagebody`/`\makeheadline` 一带，G6 靶子 |
 

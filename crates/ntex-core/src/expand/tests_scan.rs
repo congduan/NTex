@@ -437,3 +437,42 @@ ab5c}").unwrap();
         );
         assert_eq!(out, "2.0mu", "1mu=1pt 恢复口径");
     }
+
+/// `\uppercase`/`\lowercase` 语义锁（tex.web `shift_case` @23609）：
+/// 判据 `t < cs_token_flag + single_base` —— **只对单字符 token（char / active
+/// char）施表，多字母控制序列一律原样保留**。plain.tex L271
+/// `{\uccode`1=`i \uccode`2=`f \uppercase{\gdef\if@if{}}}` 依赖数字字符
+/// `1`/`2` 被转成 `i`/`f`（不是动 cs）。
+#[cfg(test)]
+mod case_convert_semantics {
+    use super::*;
+
+    /// plain.tex L271 复现：`\uppercase` 内数字字符按 `\uccode` 转字母，
+    /// 使 `\if@if` 名字成立（G4 靶的最小用例）。
+    #[test]
+    fn uppercase_maps_digits_per_uccode_in_definition_body() {
+        let out = expand(
+            "\\uccode`1=`i \\uccode`2=`f \\uppercase{\\gdef\\if@if{}}             \\ifx\\if@if\\undefined NO\\else YES\\fi",
+        )
+        .unwrap();
+        assert!(out.contains("YES"), "\\if@if 未定义：{out}");
+    }
+
+    /// 多字母控制序列不受施表影响（tex.web：`t >= cs_token_flag + single_base`）。
+    #[test]
+    fn uppercase_keeps_multiletter_cs() {
+        assert_eq!(expand("\\def\\maxdimen{MD}\\uppercase{\\maxdimen}").unwrap(), "MD");
+    }
+
+    /// 字符 token 按 `\uccode` 表转换。
+    #[test]
+    fn uppercase_maps_char_token() {
+        assert_eq!(expand("\\uccode`1=`i \\uppercase{1}").unwrap(), "i");
+    }
+
+    /// `\lowercase` 同构：字符 token 按 `\lccode` 表转换。
+    #[test]
+    fn lowercase_maps_char_token() {
+        assert_eq!(expand("\\lccode`A=`a \\lowercase{A}").unwrap(), "a");
+    }
+}

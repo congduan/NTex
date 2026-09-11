@@ -12,7 +12,9 @@
 > `scan_glue` 补 `RegKind::Dimen` 臂（`\skip_const:Nn \c_zero_skip{\c_zero_dim}`，
 > 226c177，**latex.ltx l.13899 `\skip_const` 致命停点消除**，见 latex-feasibility.md
 > §36.4/§37）+ `scan_int` 补 dimendef'd cs 数字上下文（`\z@`，04d2023，
-> plain 预载全通、corpus 8/8 爬坡）。输出例程刀 4/5——`\newinsert` 分配器 +
+> plain 预载全通、corpus 端到端产出全链打通——**5/8 真排版 + 3 空页**
+> （2026-09-11 修正 KPI：早期"8/8"是探针输出路径 bug 导致的假阳性，
+> 实测见 fixtures/corpus/report.json））。输出例程刀 4/5——`\newinsert` 分配器 +
 > 三联寄存器（3ef1f67，`\footins=\insert254` 与真 plain 一致）+ 页号链 count0
 > 页标签（375b390，`[5.7]` 格式）。字形通道数学编码 + 预览字体装配补齐
 > （2b0afd6，wasm/Tauri 预览对齐 pdftex）。

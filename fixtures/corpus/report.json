@@ -1,50 +1,74 @@
 [
  {
   "file": "latex/sample2e.tex",
-  "dvi": null,
-  "pdf": null,
-  "error": "DVI: 104 \\begin{em}\n\n! Undefined control sequence.\n\\emph\nl.107    given \\emph{additional} emphasis.\n\nOverfull \\hbox (8.35689 too wide) in paragraph at lines 104--104"
+  "dvi": 2897,
+  "pdf": 46963,
+  "ink": 14044,
+  "chars": 2074,
+  "status": "PASS",
+  "error": null
  },
  {
   "file": "latex/small2e.tex",
-  "dvi": null,
-  "pdf": null,
-  "error": "DVI: .\n\n! Undefined control sequence.\n\\subsection\nl.29 \\subsection{A Warning or Two}  % This command makes a subsection title.\n\n! Incompatible list can't be unboxed."
+  "dvi": 1404,
+  "pdf": 41287,
+  "ink": 6148,
+  "chars": 922,
+  "status": "PASS",
+  "error": null
  },
  {
   "file": "latex/testpage.tex",
-  "dvi": null,
-  "pdf": null,
-  "error": "DVI: 311    \\makebox(0,0){\\arabic{foo}}\\addtocounter{foo}{1}}\n\n! Undefined control sequence.\n\\addtocounter\nl.311    \\makebox(0,0){\\arabic{foo}}\\addtocounter{foo}{1}}"
+  "dvi": 2637,
+  "pdf": 46558,
+  "ink": 12083,
+  "chars": 1624,
+  "status": "PASS",
+  "error": null
  },
  {
   "file": "math/basic-expressions.tex",
-  "dvi": null,
-  "pdf": null,
-  "error": "DVI: 2}$$\n\nA number should have been here; I inserted `0'.\n(If you can't figure out why I needed to see a number,\nlook up `weird error' in the index to The TeXbook.)"
+  "dvi": 1162,
+  "pdf": 276321,
+  "ink": 985,
+  "chars": 166,
+  "status": "PASS",
+  "error": null
  },
  {
   "file": "math/symbols-matrix.tex",
-  "dvi": null,
-  "pdf": null,
-  "error": "DVI: ed horizontal mode.\n\n! You can't use \\par in restricted horizontal mode.\n\n! You can't use \\par in restricted horizontal mode.\n\n(end occurred inside a math list)"
+  "dvi": 634,
+  "pdf": 208602,
+  "ink": 579,
+  "chars": 84,
+  "status": "PASS",
+  "error": null
  },
  {
   "file": "plain/letterformat.tex",
-  "dvi": null,
-  "pdf": null,
-  "error": "DVI: t.\n\n! Font cmdunh10 not loadable: Metric (TFM) file not found.\nI'm not loading it.\n\n! Font manfnt not loadable: Metric (TFM) file not found.\nI'm not loading it."
+  "dvi": 121,
+  "pdf": 459,
+  "ink": 0,
+  "chars": 0,
+  "status": "EMPTY",
+  "error": null
  },
  {
   "file": "plain/list.tex",
-  "dvi": null,
-  "pdf": null,
-  "error": "DVI: (TFM) file not found.\nI'm not loading it.\n\n\\m=\\count26\n\\n=\\count27\n@September 8, 2026 at 1726! Undefined control sequence.\n\\r@ggedbottomtrue\nl.26 \\nopagenumbers"
+  "dvi": 121,
+  "pdf": 459,
+  "ink": 0,
+  "chars": 0,
+  "status": "EMPTY",
+  "error": null
  },
  {
   "file": "plain/plain.tex",
-  "dvi": null,
-  "pdf": null,
-  "error": "DVI: ,\nso I'm ignoring it.\n\n! Use of macro doesn't match its definition.\nThe macro here has not been followed by the required stuff,\nso I'm ignoring it.\n\nhyphenation"
+  "dvi": 172,
+  "pdf": 36628,
+  "ink": 7,
+  "chars": 1,
+  "status": "EMPTY",
+  "error": null
  }
 ]

@@ -2946,3 +2946,59 @@ ipn2b 形态同理：`\show\x` 显示 `->\lowercase {x}.` 的 `#` 消失是 acti
 3. 收尾时移除 `NTEX_DELIM_DBG`（macros.rs:153）/`NTEX_BIGLIST_TRACE`
    （mod.rs）临时诊断；当前均环境变量门控、默认关闭，未删。
 4. `\show` 对 catcode-10 别名的显示文本对齐 "blank space"（低优先）。
+
+## 39. 第三十二刀（KPI 仪器校正）：corpus-probe 双盲区修复 + latex 三例真跑通（2026-09-11）
+
+### 38.1 触发：KPI 从 0/8 到 8/8 的"跃迁"是假的
+
+复测 corpus 时探针报 `0/8 PASS`，但**手工直接跑 `ntex-dvi fixtures/corpus/plain/plain.tex`
+成功写出 172B / 1 页 / 51 字体 DVI**（exit 0）。差异定位到探针脚本自身。
+
+**根因（假阴性）**：`ntex-dvi` / `ntex-pdf` 的默认输出路径 =
+`<输入路径去扩展名>.dvi/.pdf`，**保留源文件的目录**。而 `corpus-probe.py` 假设产物
+落在仓库根（`REPO/<stem>.dvi`），且用 `<子目录>-<stem>` 造工作副本名。于是
+`fixtures/corpus/plain/plain.tex` 的产物被写进 `fixtures/corpus/plain/plain.dvi`，
+探针在 `REPO/plain.dvi` 找不到 → 全库误判 FAIL。**修法**：产物路径按
+`tex.parent` 取；清理逻辑同步改为遍历 `CORPUS/*/`。
+
+修完后探针立即报 `8/8 PASS`。
+
+### 38.2 第二盲区：8/8 里 3 个是空页（假阳性）
+
+只判"产物存在"的 KPI 不足以采信。用 pymupdf 实测每个产物 PDF 的
+**非白像素（40dpi）+ 提取字符数**，结果分裂成两类：
+
+| 样例 | ink | chars | 实情 |
+|---|---|---|---|
+| `latex/sample2e.tex` | 14044 | 2074 | ✅ 真排版（标题/作者/日期/正文/连字） |
+| `latex/small2e.tex` | 6148 | 922 | ✅ 真排版 |
+| `latex/testpage.tex` | 12083 | 1624 | ✅ 真排版（2 页） |
+| `math/basic-expressions.tex` | 985 | 166 | ✅ 有内容 |
+| `math/symbols-matrix.tex` | 579 | 84 | ✅ 有内容 |
+| `plain/plain.tex` | 7 | 1 | ⬜ **空页**（仅页码） |
+| `plain/letterformat.tex` | 0 | 0 | ⬜ **空页** |
+| `plain/list.tex` | 0 | 0 | ⬜ **空页** |
+
+**修法**：探针升级为三级判定 `FAIL`（无产物/引擎错）/ `EMPTY`（ink < `MIN_INK=200`）/
+`PASS`（有实质内容），report.json 增录 `ink`/`chars`/`status` 三字段。
+
+**修正后的诚实 KPI：5/8 PASS + 3 EMPTY**（不是 8/8，也不是 0/8）。
+
+### 38.3 附带收获：latex 三例是货真价实的排版成功
+
+`sample2e.tex` 产出的 PDF 提取出 2074 字符，含 `\documentclass{article}` 渲染的
+标题块（"An Example Document / Leslie Lamport / January 21, 1994"）、Section 标题、
+正文段落与连字（ﬁ/ﬀ）——即 **`\documentclass` + `\title/\author/\date/\maketitle`
++ 正文段落链在 NTex 上端到端跑通**。此前状态记录只到"latex 3 样例推进到 `\emph` 宏层"，
+本刀把端到端实况校正为"产出真实版面"。
+
+`plain/*.tex` 三例的 3 个空页**不是新问题**，正是 survey §5.bis 发现未修 #1
+（宏/格式文件无正文无 `\bye`，真 TeX 0 页，NTex 经 `\plainoutput` 收尾冲一页空页）
+——现由 EMPTY 状态显式可见，不再是藏在 PASS 里的暗数。
+
+### 38.4 纪律沉淀
+
+- **KPI 仪器本身必须被验证**：一个只判"文件存在"的探针，既可能因路径假设报假阴性，
+  也可能因空页报假阳性。指标跃迁（0/8 → 8/8）出现时，先怀疑仪器再庆祝。
+- **产物路径契约**：ntex-dvi / ntex-pdf 的输出 = `<输入路径去扩展名>.<ext>`，
+  **保留目录**。写脚本消费产物时不要假设落盘位置。
