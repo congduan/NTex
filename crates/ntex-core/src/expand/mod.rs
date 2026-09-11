@@ -613,11 +613,58 @@ pub mod trace {
     }
 }
 
+/// tex.web `scanner_status`（L6597-6604）——扫描上下文状态机。
+///
+/// **唯一**决定 outer 宏是否报错的条件：`check_outer_validity`（L7152）判据是
+/// `scanner_status <> normal`。tex.web 的赋值点：
+///
+/// | 状态 | 设置处 | 含义 |
+/// |---|---|---|
+/// | `normal` | L7096 初值 / L7714 取单 token 前临时 | 常规 |
+/// | `skipping` | L9663 `pass_text` | 跳过条件文本（`\if` 假分支）|
+/// | `defining` | L9324 `scan_toks(macro_def=true)` / L9454 `scan_def` | 扫宏定义 |
+/// | `matching` | L8008 `macro_call` 扫实参 | 扫宏实参 |
+/// | `aligning` | L15368 `init_align` | 扫对齐 preamble |
+/// | `absorbing` | L9325 `scan_toks(macro_def=false)` | 扫平衡文本（`\edef` 等）|
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum ScannerStatus {
+    /// 常规上下文（外层）。
+    #[default]
+    Normal,
+    /// 跳过条件文本（`pass_text`）——最低级：`check_outer_validity` 走
+    /// 「Incomplete \if; all text was ignored」分支（L7157-7166）。
+    Skipping,
+    /// 扫宏定义（`scan_toks` macro_def / `scan_def`）。
+    Defining,
+    /// 扫宏实参（`macro_call`）。
+    Matching,
+    /// 扫对齐 preamble（`init_align`）。
+    Aligning,
+    /// 扫平衡文本（`scan_toks` 非 macro_def：`\edef`/`\write`/`\message` 等）。
+    Absorbing,
+}
+
 /// 展开引擎。
 #[derive(Debug)]
 pub struct Expander {
     intern: InternTable,
     eqtb: Eqtb,
+    /// tex.web `scanner_status`（L6572-6604）：当前扫描上下文。**唯一**决定
+    /// outer 宏是否报 `Forbidden control sequence` 的条件——
+    /// `check_outer_validity`（L7152）判据是 `scanner_status <> normal`。
+    ///
+    /// ⚠ 此前的实现用「输入栈里是否有 Macro 帧」当代理判据（mod.rs 展开臂的
+    /// `stack.iter().any(InputFrame::Macro)`），**是错的**：栈含 Macro 帧
+    /// ≠ `scanner_status<>normal`。实测代价——plain 的 `^^L` 是 active char
+    /// 且 `\outer\def^^L{\par}`（active char 的 `cur_cmd := eq_type` =
+    /// `outer_call`，故 outer 检查会跑），但宏实参扫描用 `get_token`
+    /// （L7714 `save_scanner_status; scanner_status:=normal; get_token; 恢复`）
+    /// **不设 scanner_status**，pdfTeX 因此不报错；NTex 误报 →
+    /// expl3-code.tex L9320 `\char_set_catcode_active:N \^^L` 处级联，
+    /// `Extra \or` 224 条（占 expl3 载入现场错误 43.8%）。
+    scanner_status: ScannerStatus,
+    /// tex.web `warning_index`：报错时指向「正在扫描谁的」cs（宏名）。
+    warning_index: Option<u32>,
     /// 线程看门狗共享状态（挂死诊断；不参与 .fmt 序列化，run 时创建）。
     /// WASM（M8-A）：随看门狗整段门控（单线程环境无诊断线程）。
     #[cfg(not(target_arch = "wasm32"))]
@@ -814,6 +861,8 @@ impl Expander {
         let mut e = Self {
             intern: InternTable::new(),
             eqtb: Eqtb::new(),
+            scanner_status: ScannerStatus::Normal,
+            warning_index: None,
             catcodes: CatcodeTable::new(),
             sfcodes: [1000; 256],
             stack: Vec::new(),
@@ -1896,24 +1945,69 @@ impl Expander {
                         }
                     }
                     SlotAction::Macro(def) => {
-                        // \outer（tex.web scan_depth>0 禁止）：outer 宏在展开
-                        // 上下文（宏体/实参——栈含 Macro 帧）被读取 →
-                        // "Forbidden control sequence found while scanning
-                        // ..." + 跳过不展开。TokenList 回放（\the\toks0 /
-                        // \everymath 注入）不算（TeX scan_depth 不增）；
-                        // 顶层（仅 Source 帧）合法（plain 的 \bye 等）。
-                        // 简化：消息报 outer cs 自身（参考为调用方名；
-                        // Runaway/插入 } 恢复后续补——先对齐主消息）
-                        if def.outer
-                            && self
-                                .stack
-                                .iter()
-                                .any(|f| matches!(f, InputFrame::Macro { .. }))
-                        {
-                            let name = self.cs_display_name(csid);
-                            self.write_error(&format!(
-                                "Forbidden control sequence found while scanning use of {name}."
-                            ));
+                        // tex.web `check_outer_validity`（L7149-7170）——**唯一**判据是
+                        // `scanner_status <> normal`：
+                        //
+                        //   begin if scanner_status<>normal then
+                        //     begin deletions_allowed:=false;
+                        //     @<Back up an outer control sequence so that it can be reread@>;
+                        //     if scanner_status>skipping then
+                        //       @<Tell the user what has run away and try to recover@>
+                        //     else  begin print_err("Incomplete "); ... end;
+                        //     deletions_allowed:=true;
+                        //     end;
+                        //   end;
+                        //
+                        // ⚠ 旧实现用「输入栈含 Macro 帧」当代理判据——**错的**：
+                        // 栈含 Macro 帧 ≠ `scanner_status<>normal`。宏实参扫描用
+                        // `get_token`（L7714 取 token 前临时置 `normal`），此时栈里
+                        // 明明有 Macro 帧但 `scanner_status=normal`，pdfTeX 不报错。
+                        // 实证：plain `^^L` 为 active char + `\outer\def^^L{\par}`，
+                        // expl3-code.tex L9320 `\char_set_catcode_active:N \^^L`
+                        // 取实参即触发误报 → `Extra \or` 224 条（43.8%）。
+                        if def.outer && self.scanner_status != ScannerStatus::Normal {
+                            let name = match self.warning_index {
+                                Some(cs) => self.cs_display_name(cs),
+                                None => self.cs_display_name(csid),
+                            };
+                            // `scanner_status > skipping` → Runaway/Forbidden 恢复分支；
+                            // `= skipping` → Incomplete \if 分支（L7157-7166）。
+                            if self.scanner_status > ScannerStatus::Skipping {
+                                match self.scanner_status {
+                                    ScannerStatus::Matching => {
+                                        let _ = self.sink.write16(format!(
+                                            "! Forbidden control sequence found while scanning use of {name}.\\n\\
+                                             <inserted text> \\n                \\\\par \\n\\
+                                             I suspect you have forgotten a `}}', causing me\\n\\
+                                             to read past where you wanted me to stop.\\n\\
+                                             I'll try to recover; but if the error is serious,\\n\\
+                                             you'd better type `E' or `X' now and fix your file.\\n"
+                                        ));
+                                    }
+                                    ScannerStatus::Absorbing => {
+                                        let _ = self.sink.write16(format!(
+                                            "! Forbidden control sequence found while scanning text of {name}.\\n\\
+                                             <inserted text> \\n                }} \\n\\
+                                             I suspect you have forgotten a `}}', causing me\\n\\
+                                             to read past where you wanted me to stop.\\n\\
+                                             I'll try to recover; but if the error is serious,\\n\\
+                                             you'd better type `E' or `X' now and fix your file.\\n"
+                                        ));
+                                    }
+                                    _ => {
+                                        // Defining：tex.web L6617 case 只有
+                                        // defining/alignment 的措辞，其余同 Forbidden。
+                                        let _ = self.sink.write16(format!(
+                                            "! Forbidden control sequence found while scanning definition of {name}.\\n"
+                                        ));
+                                    }
+                                }
+                            } else {
+                                let _ = self.sink.write16(format!(
+                                    "! Incomplete \\\\if; all text was ignored after line.\\n\\
+                                     A forbidden control sequence occurred in skipped text.\\n"
+                                ));
+                            }
                             return Ok(());
                         }
                         // e-TeX（M4-5）：protected 宏在展开抑制上下文（\edef/\write 等）
@@ -2072,6 +2166,30 @@ impl Expander {
 
     /// 展开宏调用：收集实参，压入字节码（M2）或宏体输入帧。
     fn call_macro(&mut self, csid: u32, def: Arc<MacroDef>) -> Result<()> {
+        // tex.web macro_call（L7968-7975）：
+        //   save_scanner_status:=scanner_status; save_warning_index:=warning_index;
+        //   warning_index:=cur_cs; ...
+        //   @<Scan the parameters...@> = begin scanner_status:=matching; unbalance:=0; ...
+        //   exit: scanner_status:=save_scanner_status; warning_index:=save_warning_index;
+        // 即**扫实参期间** `scanner_status=matching`——outer 宏此刻才被禁。
+        //
+        // ⚠ 实参扫描本身用 `get_token`，且 `get_token` 内部（L7714）会临时
+        // `save_scanner_status; scanner_status:=normal; get_token; 恢复`——
+        // 故「取单个 token」不触发 outer 检查；只有扫描过程里的**宏展开**才看到
+        // `matching`。这正是 pdfTeX 对 `\csca:N \^^L`（`` `#1 `` 取实参）不报错
+        // 的原因（外层 normal 未被 brief `get_token` 时期的恢复覆盖）。
+        let save_status = self.scanner_status;
+        let save_warning = self.warning_index;
+        self.warning_index = Some(csid);
+        self.scanner_status = ScannerStatus::Matching;
+        let r = self.call_macro_inner(csid, def);
+        self.scanner_status = save_status;
+        self.warning_index = save_warning;
+        return r;
+    }
+
+    /// `call_macro` 主体（`scanner_status` 由调用方设/恢复）。
+    fn call_macro_inner(&mut self, csid: u32, def: Arc<MacroDef>) -> Result<()> {
         // TeX 输入栈上限（tex.web `stack_size`；TeX Live 取 5000）：宏递归展开
         // 无终止条件时以此报错终止，而非耗尽内存。此前无此保护——latex.ltx 加载
         // 曾触发单步内无界递归（每层压一个 Bytecode 帧，主循环 10M 步上限够不到），
