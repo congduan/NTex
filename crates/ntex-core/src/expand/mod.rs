@@ -1795,9 +1795,6 @@ impl Expander {
         // （`flush_writes` → `expand_to_string` → 本函数），若在此一并拦截会
         // **丢失 write 内容**（实测：`tests_io_write::write_defers_until_end`
         // 等 3 例失败）。
-        if self.ended && !self.expand_only {
-            return Ok(());
-        }
         // \edef/\xdef/\write 展开上下文：只展开可展开项，其余保留
         if self.expand_only {
             return self.process_expand_only(tok);
