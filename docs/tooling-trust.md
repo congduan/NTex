@@ -27,12 +27,13 @@ NTex 是「错误恢复式引擎」——它会吞掉错误继续跑。这让两
 | 3 | **`\meaning` 丢定界符** | 只渲染 `#n`，不渲染 `params.text` | **两轮定位跑偏**：§38 断言 → §39 固化 → §41 推翻 | ✅ `make instrument-check`（13 用例）|
 | 4 | `--no-plain` 语义 | 跳过预载但保留 plain 表，非真 INITEX | `\the\catcode0` 给 12（应 9），init 域对拍失真 | ✅ 已修（`--no-plain` 切 INITEX 表）|
 | 5 | 探针自伤 | 手写探针出错（`\let\else:` 配对、`%` 续行、缺 plain 定义） | 多轮浪费——实测 6 个探针里 3 个是探针自身问题 | ✅ `scripts/abcheck.py`（自动对拍）|
+| 6 | 转录靠手工 grep | 5620 条错误里只能看到「数量最多的那类」 | 首现场判断反复出错（曾以为在 l.21291，实为 **l.301**，早 2 万行）| ✅ `scripts/logtrace.py`（首现场/震中/级联形状）|
 
 **共同模式**：把「工具的输出」当成了「世界的真相」。
 
 ---
 
-## 2. 四件套（按使用频率排）
+## 2. 五件套（按使用频率排）
 
 ### 2.1 `make instrument-check` — 仪器自检（**改诊断原语后必跑**）
 
@@ -105,6 +106,34 @@ scripts/blocker-track.sh --show    # 只看历史
 
 历史：`docs/blocker-history.tsv`（入库，作为战役仪表盘）。
 退出码：`REGRESSION`/`SIGMA-CHANGE` 非零（可接 CI）。
+
+### 2.5 `scripts/logtrace.py` — 转录/log 结构分析（**拿到 5000+ 错误时用**）
+
+```bash
+make logtrace LOG=/tmp/r27b/latex.ltx.transcript
+python3 scripts/logtrace.py X.transcript --first-new --context 8
+python3 scripts/logtrace.py X.transcript --compare pdftex.log   # 找"我方独有"
+python3 scripts/logtrace.py X.transcript --emit-seq /tmp/seq.txt # 跨轮 diff
+python3 scripts/logtrace.py X.transcript --kinds trace,restore,file
+```
+
+**解决的痛点**：latex.ltx 转录有 **5620 条错误**，人工 grep 只能看到「数量最多的
+那类」，但真正要回答的是结构性问题。本工具把错误洪流压成五段报告：
+
+| 段 | 回答的问题 |
+|---|---|
+| ① 首现场 | 第一条错误 + 上下文（**注意：可能不是你以为的那条**）|
+| ② 震中 | 错误最集中的位置行 topN（错误火山口）|
+| ③ 级联形状 | **扇出**（同一错误重复 N 次）vs **链式**（跨多行传播）|
+| ④ 首次出现序 | 每种错误「冒头」的顺序 —— **第一个新种类比第一个错误更接近真起点** |
+| ⑤ 归一化序列 | 去数字/去 cs 名后可直接跨轮 diff |
+
+**`--compare` 是与 pdfTeX 参考 log 对比的关键能力**：把错误分三类——
+「我方独有」（**真偏差**）/「参考有我方无」（吞错或语义缺失）/「共有但数量差异大」。
+
+**实测价值（首次运行即产出）**：对 5620 条错误的转录，工具立刻指出真首现场是
+**`l.301`**（texsys 探测区），而非此前人工反复定位的 `l.21291`——**早了 2 万行**；
+震中是 `l.21039`（占 22.3%）。
 
 ---
 

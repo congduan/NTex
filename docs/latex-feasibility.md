@@ -177,6 +177,34 @@ watchdog 只在 `process_one` 返回时计数，所以只能靠栈深暴露（`N
 `TokenList(33426tok)` 被压入后逐 token 消费，若每次消费又经
 `expand_once` 压入新帧而不复用，即形成累积。
 
+### A1.quinquies logtrace 首现场纠偏（2026-09-11）
+
+新增设施 `scripts/logtrace.py` 首次运行即**纠偏了首现场判断**：
+
+```
+总行数 25061 | 错误 5620 | 归一化后 14 种
+
+① 首现场（第 6 行）  Undefined control sequence.  @ l.301
+② 震中   l.21039  1253 条 (22.3%)   ← 错误火山口
+         l.20279   204 条 ( 3.6%)
+         l.25851    58 条 ( 1.0%)
+④ 首次出现序：
+   #6     l.301     Undefined control sequence.   ← 真起点
+   #79    l.0       Missing = inserted for \?
+   #144   l.20279   Font \?? has only N fontdimen
+```
+
+**纠偏**：此前人工定位（§A1.bis）判首现场为 `l.21291`（`\cs_new:Npe`），
+logtrace 显示**真首现场在 `l.301`，早 2 万行** —— 该行属 latex.ltx/texsys 探测区
+（`\edef\reserved@a{\expandafter\reserved@a\string^^J\@@}`，其后紧邻
+`\@input` 链）。
+
+**注意「l.0」条目**：多条错误**无位置行**（引擎丢失行号信息）——本身是缺陷信号，
+列入待查。
+
+**下一刀顺序修正**：先查 l.301 的 `Undefined control sequence`（真起点），
+再回头处理 l.21039 震中（1253 条）与 `\edef` 爆栈（§A1.quater）。
+
 ### A2. 连锁：`\reserved@a` 未定义自引用
 
 ```

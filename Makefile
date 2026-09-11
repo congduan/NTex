@@ -2,7 +2,7 @@
 # 质量门禁：`make check` = fmt + lint + test 三件套全绿。
 
 .PHONY: fmt lint test check fixtures fixture-extras trip diff bench tauri-wasm tauri \
-        instrument-check abcheck blocker-track
+        instrument-check abcheck blocker-track logtrace
 
 fmt:
 	cargo fmt --all -- --check
@@ -29,6 +29,11 @@ abcheck:
 # 阻塞点单调性看板：跑 latex_probe → 记录 (行号, 首错签名) → 单调性判定
 blocker-track:
 	./scripts/blocker-track.sh
+
+# 转录/log 结构分析：`make logtrace LOG=path`（加 ARGS=--compare ref.log 对比参考）
+# 回答「首现场在哪 / 震中是哪行 / 级联是扇出还是链式 / 哪些错我方独有」
+logtrace:
+	python3 scripts/logtrace.py $(LOG) $(ARGS)
 
 # 获取 TRIP 测试 fixtures（优先 kpsewhich，失败则从 CTAN/GitHub 下载）
 fixtures:

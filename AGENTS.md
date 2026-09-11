@@ -45,6 +45,7 @@ make fixture-extras  # 获取补充对照 fixtures（pdftex expanded.{tex,txt} �
 make instrument-check   # 仪器自检：诊断原语与 pdfTeX 逐字对拍（失真即回归）
 make abcheck TEX=probe.tex ARGS=--trace   # 双引擎差分对拍
 make blocker-track      # 阻塞点单调性看板（跑 latex_probe + 历史对比）
+make logtrace LOG=x.transcript   # 转录/log 结构分析（首现场/震中/级联形状/参考对比）
 
 # 端到端演示
 cargo run -p ntex-dvi -- demo.tex   # → demo.dvi
