@@ -62,6 +62,12 @@ def fetch() -> Path:
     """下载/解包 l3kernel 测试树；返回 testfiles 目录。"""
     tf = CACHE / "testfiles"
     if tf.is_dir() and any(tf.glob("*.lvt")):
+        # ⚠ 已缓存也要**同步 shim**：shim 是本仓库的代码（`scripts/lvt/lvt-shim.tex`），
+        # 会随开发更新。不同步会导致「跑了旧 shim 得出错误结论」——实测踩过：
+        # 旧 shim 仍自带 `\input regression-test.tex`（双重载入致爆栈），
+        # 而仓库里已修好，导致 187 例全被误判为 CRASH（2026-09-11）。
+        if SHIM.exists():
+            shutil.copy(SHIM, tf / "lvt-shim.tex")
         return tf
     CACHE.mkdir(parents=True, exist_ok=True)
     tgz = CACHE / "l3.tgz"
@@ -109,6 +115,11 @@ def run_one(tf: Path, name: str, timeout: int = 30) -> tuple[str, str]:
         )
     except subprocess.TimeoutExpired:
         return "TIMEOUT", ""
+    finally:
+        # ⚠ 必须清理：每例一个临时目录，187 例 × 每轮全量跑 = 目录/磁盘持续泄漏
+        # （实测累积 1142 个 `/tmp/lvt-*`，磁盘 87%，并**污染后续判定**——
+        #  磁盘压力下 NTex 打开输入文件失败，被误报成 CRASH）。
+        shutil.rmtree(wd, ignore_errors=True)
     # ⚠ NTex 的转录走 **stderr**（stdout 仅 DVI/二进制产物），且失败时
     # returncode=1 也可能已跑完全部用例——故**两侧都收**再判据。
     out = (r.stdout + r.stderr).decode(errors="replace").replace("\r", "\n").replace("\x00", "")

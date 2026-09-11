@@ -57,6 +57,33 @@
 \def\NeedsTeXFormat#1{}
 \def\ProvidesPackage#1{}
 \def\ProcessOptions{\relax}
+% ── `\ExplSyntaxOn` / `\ExplSyntaxOff`（LaTeX 内核 / l3bootstrap 提供）──────
+% 官方定义见 l3kernel/l3bootstrap.dtx L317+：开启时把
+%   tab(9)/space(32) → ignore、双引号(34)/竖线(124) → other、
+%   冒号(58)/下划线(95) → **letter**、脱字符(94) → math_superscript、
+%   波浪号(126) → space；`\endlinechar` 置 32。
+% 关掉时恢复原值。
+%
+% ⚠ 这两个宏**必须存在**，否则 `_`/`:` 保持 catcode 8/12，`\tl_new:N \l_A_tl`
+% 里的 `_` 被当数学下标 → `! 双重下标`（实测 46 例 CRASH 的真根因，
+% 见 docs/expl3-lvt-scoreboard.md）。plain 无此宏，须 shim 提供。
+\chardef\l__lvt@expl@bool=0
+\def\ExplSyntaxOn{%
+  \ifnum\l__lvt@expl@bool=0
+    \catcode`\^^I=9 \catcode`\ =9 \catcode`\"=12
+    \catcode`\:=11 \catcode`\_=11 \catcode`\^=7
+    \catcode`\|=12 \catcode`\~=13
+    \endlinechar=32
+    \chardef\l__lvt@expl@bool=1
+  \fi}
+\def\ExplSyntaxOff{%
+  \ifnum\l__lvt@expl@bool=1
+    \catcode`\^^I=10 \catcode`\ =10 \catcode`\"=12
+    \catcode`\:=12 \catcode`\_=8 \catcode`\^=7
+    \catcode`\|=12 \catcode`\~=13
+    \endlinechar=13
+    \chardef\l__lvt@expl@bool=0
+  \fi}
 % ⚠ 不可 `\let\@undefined\relax`！LaTeX **内核里 `\@undefined` 本身是未定义的**
 % 名字，`\ifx\X\@undefined` 判「X 是否未定义」靠的是 **undefined vs undefined
 % 同类比较**（tex.web：eqtb 空槽 vs 空槽 → 类型同 → 真）。
