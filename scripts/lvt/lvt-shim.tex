@@ -25,18 +25,15 @@
 \catcode`\@=11
 
 % ── LaTeX 最小符号 ──────────────────────────────────────────────
-% \documentclass{...}：吃参数，无操作（NTex 走 plain 预载）
-\def\documentclass#1{\@gobbleopt}
-\def\@gobbleopt{\futurelet\@let@token\@gobbleopt@}
-\def\@gobbleopt@{%
-  \ifx\@let@token[%
-    \expandafter\@gobbleopt@@
-  \else
-    \expandafter\@gobbleopt@end
-  \fi
-}
-\def\@gobbleopt@@[#1]{\@gobbleopt@end}
-\def\@gobbleopt@end{}
+% \documentclass[opts]{class}：吃可选参数 + 必选参数，无操作
+% （旧实现用 \@gobbleopt + \futurelet 链，疑似在 LVT 上下文残留状态
+%  污染后续 cs 解析 —— 见 docs/latex-feasibility.md §A1.sedecies。
+%  LVT 用例里没有可选参数，直接简化。）
+% \@ifnextchar 不存在于 plain，用 \futurelet 单层判 `[`。
+\def\documentclass{\futurelet\@let@token\@docclass}
+\def\@docclass{\ifx\@let@token[\expandafter\@docclass@opt\else\expandafter\@docclass@arg\fi}
+\def\@docclass@opt[#1]{\@docclass@arg}
+\def\@docclass@arg#1{}
 
 % \begin{document}/\end{document}：无操作（内容是测试体本身）
 %
@@ -46,13 +43,15 @@
 % `\end` 后跟 `{document}` 会误当正文——故用 `\AtEndDocument` 式惰性处理：
 % 把 `\end` 包成"若下一 token 是 `{` 则吞参数组，否则转原语"）。
 \def\begin#1{}
-% ⚠ 顺序关键：必须在 `\def\end{...}` **之前**绑 `\@@end`/`\@@ntex@end@prim`，
-% 此时 `\end` 还是**原语**。regression-test.tex 的 `\ifx\@@end\@undefined`
-% 依赖 `\@@end` 存在（LaTeX 内核里它是 plain `\end` 的别名）→ 走 else →
-% `\let\@@@end\@@end`。若不提供，NTex 下 `\@@end` 为 undefined，
-% harness 会走 `\if` 真分支，`\@@@end` 绑定错误 → `\END` 宏体无限重放爆栈
-% （§A1.terdecies 实测 4986 轮 → input stack size=5000）。
-\let\@@end\end
+% ⚠⚠ **绝不可 `\let\@@end\end`**（2026-09-11 血泪，§A1.sedecies）：
+% regression-test.tex 用 `\ifx\@@end\@undefined` 判「`\@@end` 是否未定义」
+% —— 在**真 LaTeX** 里 `\@@end` 是 **undefined**（pdfTeX 实测走 TRUE 分支）。
+% 若在 shim 里给它定义，判定翻成 FALSE → harness 走 else →
+% `\let\@@end\END` → `\END` 宏体里的 `\@@@end` 指向 `\END` 自身 →
+% **宏体无限重放**，4986 轮后 input stack size=5000 爆栈
+% （187 例官方用例中 111 例 STACK-END）。
+%
+% 只绑 `\@@ntex@end@prim`（供 `\end` 包装器转调原语），**不碰 `\@@end`**。
 \let\@@ntex@end@prim\end
 \def\end{\futurelet\@let@token\@@ntex@end@}
 \def\@@ntex@end@{%

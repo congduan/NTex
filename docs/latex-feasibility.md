@@ -739,6 +739,43 @@ LVT 链路：ntex-dvi run.tex → \input lvt-shim → \input <case>.lvt → \inp
 
 修通此点 → 187 例中 111 例 STACK-END 批量转绿（`docs/expl3-lvt-scoreboard.md`）。
 
+### A1.septendecies ✅ 判定翻转已修：shim 误定义 `\@@end`（2026-09-11）
+
+**§A1.sedecies 的「LVT 链路」之谜破解** —— 逐层 bisect（主文件 vs 各层 `\input`
+组合）定位到 **`lvt-shim.tex` 里的 `\let\@@end\end`**。
+
+#### 验证
+
+```
+[A] \input shim → \input{regression-test} → \message{[\ifx\@@end\@undefined T/F]}
+
+修复前：F ❌
+修复后：T ✅      （与 pdfTeX 的 TRUE 一致）
+```
+
+**删掉 `\let\@@end\end` 后判定立即恢复正确。** 该行是 §A1.terdecies 里我
+「猜测性补救」加的（当时误以为 harness 需要 `\@@end` 存在），实为**制造了 bug**。
+
+**教训**：在**未验证 ground truth 前**给 shim 打补丁，会把「未知」变成「错误的已知」
+——本轮为此多绕了 3-4 个回合。
+
+#### ⏳ 仍未消（另一原因，非判定问题）
+
+LVT 链路跑官方用例**仍 STACK-END**，但 trace 显示**末步 token 是 `\immediate`**
+（不再是 `\@@@end`/`\END` 重放）——**即根因已换了一个**：
+
+```
+末 step 帧分布：100% TokenList(1tok)，token = \immediate（d=4994..5001 单调递增）
+```
+
+**新靶点**：`\immediate` 单 token 递归。已知 `\immediate` 的实现
+（`primitive_io.rs`）在取下一 token 后调 `self.process_token(next)` ——
+**这是嵌套入口**。`\LONGTYPEOUT`（= `\begingroup\def\TYPE##1{##1}
+\immediate\write128{#1}\endgroup`）在 **800+ 次调用**下累积 5000 帧。
+
+**下一刀**：查 `\immediate` → `process_token` → `\write` → `scan_general_text`
+这条链上**是否有帧未被弹出**（`feed_one`/`fetch` 的 pop 配对）。
+
 ### A2. 连锁：`\reserved@a` 未定义自引用
 
 ```
