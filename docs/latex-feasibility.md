@@ -695,6 +695,50 @@ NTex 判 FALSE
 
 **这一处修通，187 例中 111 例 STACK-END 应批量转绿**（`docs/expl3-lvt-scoreboard.md`）。
 
+### A1.sedecies 翻转条件的 aggressive bisect（2026-09-11，未完成但大幅收窄）
+
+§A1.quindecies 确认「harness 里 `\ifx\@@end\@undefined` 判假」。本轮做逐行
+bisect，**推翻了我自己的归因**并显著收窄条件。
+
+#### 已排除（全部实测）
+
+| 场景 | 判定 | 结论 |
+|---|---|---|
+| 纯 plain | **T** | ✅ 正确 |
+| 纯 plain + harness 前 313 行（全量）+ 探针 | **T** | harness 定义链**不翻转** |
+| 主文件：harness + `\begin{document}` + 探针 | **T** | `\begin` shim **不翻转** |
+| 主文件 `\input` 嵌套两层 + 探针 | **T** | 多层 `\input` **不翻转** |
+| L64 / L87 原地插探针（`rt64`/`rt87`）| **T / T** | **harness 自身走 TRUE，与 pdfTeX 一致** |
+| **LVT 文件里（经 shim `\input`）** | **F** ❌ | **唯一翻转场景** |
+
+#### 关键修正（推翻 §A1.quindecies 的表述）
+
+`[AT64 TRUE] [AT87 TRUE]` —— harness 的**两个分支实际都走 TRUE**，
+与 pdfTeX **完全一致**。所以 §A1.quindecies「NTex 判假」的表述**不够精确**：
+**判假只发生在「LVT 被 shim 载入」这一完整链路上**，而非 harness 本身。
+
+#### 剩余未定位的差异（唯一条件）
+
+```
+LVT 链路：ntex-dvi run.tex → \input lvt-shim → \input <case>.lvt → \input{regression-test}
+主文件链路：ntex-dvi main.tex → \input regression-test        ← 判 T（正确）
+```
+
+**两条链路的差异 = 中间多了一层 LVT（且 LVT 用 `\input{regression-test}`
+带花括号、首行 `\documentclass{minimal}`）。**
+
+**已知嫌疑（下一轮直查）**：
+1. LVT 里的 **`\input{regression-test}` 带 `{}`** —— TeX 的 `\input` 是文件名
+   扫描不吃分组（本会话早期踩过同一坑）。若这里扫描异常，`\@gobbleopt` 的
+   `\futurelet` 状态可能残留，影响后续 cs 解析；
+2. shim 的 `\documentclass` 实现（`\@gobbleopt` + `\futurelet` 链）在 LVT
+   上下文里的行为；
+3. `\begin{document}` 在 LVT 里的展开路径。
+
+#### 收益（不变）
+
+修通此点 → 187 例中 111 例 STACK-END 批量转绿（`docs/expl3-lvt-scoreboard.md`）。
+
 ### A2. 连锁：`\reserved@a` 未定义自引用
 
 ```
