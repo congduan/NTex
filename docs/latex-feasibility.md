@@ -977,3 +977,54 @@ expl3 失败后 latex.ltx 继续执行暴露的上层连锁，**A1 修好后应�
    预载后 `\if@` 不可访问是**正确行为**（pdfTeX 同样切成 `\if` + `@`）。
 6. **math 组生命周期大改会死循环**（290 万步卡 `}`/`$`）——禁直接改
    `MathShift`/组结束/`close_math` 路径；分阶段 + `timeout 200` 验证。
+
+### A2.expl3-loader ⭐⭐ expl3 载入现场打通 + 首错根因锁定（2026-09-11）
+
+**现场**：`/tmp/e3w`（`expl3.ltx` + `expl3-code.tex` 取自 TinyTeX）。
+
+**结构化画像**（`logtrace`，首次可用）：
+```
+1989 行 | 事件 511 | 错误 511 | 归一化后 14 种
+① 首现场：Use of \@ doesn't match its definition.
+② 震中：l.9365  224 条（43.8%）→ `! Extra \or.`
+③ 扇出：341× Undefined control sequence / 46× Incompatible list can't be unboxed
+④ 首次出现序：Use of \? → Forbidden \ → Argument of \? extra } → Improper alphabetic
+```
+
+**首错定位**：`expl3-code.tex` L9320 `\char_set_catcode_active:N \^^L`
+→ `! Missing number, treated as zero.`（`<to be read again> \__int_eval_end:`）
+
+**根因（tex.web 铁证 L7152 + L7395-7399）**：
+
+```pascal
+procedure check_outer_validity;
+begin if scanner_status<>normal then      ← ★ 唯一条件
+  begin ... @<Tell the user what has run away...@> ... end;
+end;
+
+@<Process an active-character...@>=
+begin cur_cs:=cur_chr+active_base;
+cur_cmd:=eq_type(cur_cs); cur_chr:=equiv(cur_cs); state:=mid_line;
+if cur_cmd>=outer_call then check_outer_validity;   ← active char 也走此检查
+end
+```
+
+- `plain` 的 `^^L`(char 12) 是 **active char + `\outer\def^^L{\par}`**
+  （pdfTeX 实测 `[X \outer macro:->\par ]`）
+- active char 的 `cur_cmd := eq_type(cur_cs)` = **`outer_call`(68)** → outer 检查**会跑**
+- **但 `check_outer_validity` 只在 `scanner_status <> normal` 时报错**。宏实参扫描
+  （`get_token`）**不设 `scanner_status`** → pdfTeX **不报错**
+
+**实测对照**（同一输入）：
+| | pdfTeX | NTex |
+|---|---|---|
+| `\csca:N \^^L`（`` `#1 `` 取值）| **0 错误**，`[A][B][C]` ✅ | `Forbidden ... \f` + `extra }` + `Missing number` + `Too many }'s` ❌ |
+
+**NTex 的缺陷**：`mod.rs:1907` 用「输入栈里存在 Macro 帧」当 outer 判据——
+**这是错误的代理**（栈含 Macro 帧 ≠ `scanner_status<>normal`）。NTex **没有
+`scanner_status` 状态机**，是架构缺口，非局部补丁能修。
+
+**影响**：`Extra \or` 224 条（43.8% 震中）+ `Forbidden` 级联全部由此派生。
+
+**下一刀**：引入 `scanner_status` 状态机（tex.web `normal/skipping/defining/
+matching/aligning/absorbing`），把 outer 检查从「栈启发式」改为条件正确实现。
