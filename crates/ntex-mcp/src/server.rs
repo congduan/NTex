@@ -191,6 +191,17 @@ fn tools_call_result(params: &Json) -> Result<Json, (i64, String, Option<Json>)>
         Json::String(name) if !name.is_empty() => name.clone(),
         _ => "doc.tex".to_owned(),
     };
+    // 空源显式拒绝（API 层契约）：预载 plain 后空源会「排版成功」产出 1 页
+    // （plain 自身的 `\null` 页），但那不是用户想要的——工具报「已排版 1 页」
+    // 对空输入是误导。此守卫与「格式预载」正交，**不得**靠「没预载所以产空页」
+    // 这一副作用来实现（G4 接线后该副作用消失，测试曾因此失败）。
+    if source.trim().is_empty() {
+        return Err((
+            code::INVALID_PARAMS,
+            "source 为空：未提供任何 TeX 源码".to_owned(),
+            None,
+        ));
+    }
 
     match typeset_to_pdf(&source, &filename) {
         Ok((pages, pdf)) => {
@@ -221,6 +232,11 @@ fn tools_call_result(params: &Json) -> Result<Json, (i64, String, Option<Json>)>
 fn typeset_to_pdf(source: &str, filename: &str) -> Result<(usize, Vec<u8>), String> {
     let mut typesetter = Typesetter::with_tfm();
     typesetter.set_vfs(Box::new(MemVfs::new()));
+    // 格式预载（G2(a)/G4）：与 native `ntex-dvi` 驱动同路径——内嵌 plain 兜底
+    // + 启动预载（等价源首行 `\input plain`）。MCP 全部内存运行，plain 只能走
+    // 内嵌资源；缺此则 plain 宏全缺，样例产空页并触发下面的「未产出页面」错。
+    typesetter.use_embedded_format();
+    typesetter.set_preload_plain(true);
     let (pages, fonts) = typesetter
         .typeset_dvi(source)
         .map_err(|e| format_error(filename, &e))?;

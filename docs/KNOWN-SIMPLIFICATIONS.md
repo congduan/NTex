@@ -111,7 +111,7 @@ demo1 六刀 + 输出例程刀 2/3/5 的修复登记；全部已提交，留作�
 
 | 位置 | 现状 | 影响 | 状态 |
 |---|---|---|---|
-| `ntex-layout/typeset/plain_format.rs` `EmbeddedFormatVfs`/`set_preload_plain` | 格式预载仅 ntex-dvi 默认开；ntex-backend/ntex-wasm/ntex-mcp 未接线 | 各渲染端无 `\input plain` 时行为与 ntex-dvi 不一致 | 待接线（plain-format-survey §5.bis 发现未修 #6） |
+| `ntex-layout/typeset/plain_format.rs` `EmbeddedFormatVfs`/`set_preload_plain` | 各渲染端无 `\input plain` 契约 → plain 宏全缺、样例产空页 | ✅ **已修**（G4 接线：ntex-backend/ntex-wasm/ntex-mcp 三端统一 `use_embedded_format()` + `set_preload_plain(true)`，与 ntex-dvi 同路径）|
 | 预载路径 | 预载后空文档经 `\plainoutput` 收尾冲出一页空页 | corpus 内宏/格式文件（无 `\bye`）页数与真 TeX（0 页）不一致 | 待做（survey #1） |
 | `\lccode/\uccode` 初表 | 预载前初表全 0，未按 INITEX 初值（`a..z`/`A..Z` = 自身）播种 | 预载失败回落时 `\lowercase` 行为偏差 | 待做（survey #2） |
 | `expand/macros.rs` 实参扫描 | `\char`/`\number`/`\romannumeral` 在**实参位置**取不到数字时**不报** `! Missing number, treated as zero.`（pdfTeX 报）| 错误报告面缺失（排版结果不变，影响诊断保真与 TRIP 口径）| 待做（latex-feasibility §A1.octies；回归锁 `tests_scan.rs` `arg_scan_does_not_expand`）|

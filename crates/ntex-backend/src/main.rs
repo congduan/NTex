@@ -86,12 +86,19 @@ fn main() -> ExitCode {
         }
     };
     let mut ts = Typesetter::with_tfm();
+    // 格式预载（G2(a)/G4）：与 ntex-dvi 驱动同路径——内嵌 plain 兜底 +
+    // 启动预载（等价源首行 `\input plain`）。缺此则 `\hsize`/`\baselineskip`
+    // 等 plain 定义全缺，corpus 样例产出空页（survey §5.bis #6）。
+    ts.use_embedded_format();
+    ts.set_preload_plain(true);
     if !input_paths.is_empty() {
         let mut vfs = ntex_io::SearchPathVfs::new(Box::new(ntex_io::LocalVfs));
         for p in &input_paths {
             vfs.push_path(p);
         }
         ts.set_vfs(Box::new(vfs));
+        // set_vfs 会替换 VFS → 重新包一层内嵌兜底（幂等由 installed 标志保证）
+        ts.use_embedded_format();
     }
     let outcome = ts.typeset_dvi(&source);
     // G0：转录透传（成功/失败两条路都取；失败时 finish 未走，转录仍在 sink）。

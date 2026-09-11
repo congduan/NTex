@@ -98,6 +98,11 @@ fn compile_pipeline(tex: &str) -> ntex_core::error::Result<Compiled> {
     ntex_layout::set_tfm_source(Box::new(EmbeddedTfmSource));
     let mut ts = ntex_layout::Typesetter::with_tfm();
     ts.set_vfs(Box::new(ntex_io::MemVfs::new()));
+    // 格式预载（G2(a)/G4）：与 native `ntex-dvi` 驱动同路径——内嵌 plain 兜底
+    // + 启动预载（等价源首行 `\input plain`）。wasm 无文件系统，`\input plain`
+    // 只能走内嵌资源；缺此则 plain 宏（`\hsize` 等）全缺，样例产空页。
+    ts.use_embedded_format();
+    ts.set_preload_plain(true);
     // 出错也要收转录：TeX 语义是错误上下文行进 log，作业不止于 stderr。
     let result = ts.typeset_dvi(tex);
     let transcript = ts.take_transcript();
@@ -594,7 +599,13 @@ mod tests {
     }
 
     /// 缺字体 → **可恢复** TeX 错误（tex.web：`! Font .. not loadable` 进转录，
-    /// 作业继续不 panic）；不产页面、不出 DVI。
+    /// 作业继续不 panic）。
+    ///
+    /// ⚠ G4 接线后语义变更：wasm 流水线与 native `ntex-dvi` 一致地预载 plain，
+    /// 故 `\end` 触发 plain 的输出例程后**会**产 1 页（plain 的 `\null` 页）。
+    /// 旧断言「无 `\shipout` → 0 页」建立在「wasm 不预载」的副作用上——那不是
+    /// 契约，只是未接线的表现。此处改断言**作业继续且转录含 TeX 式错误**这一
+    /// 真正关心的事实（页面数由 plain 输出例程决定，不作硬编码断言）。
     #[test]
     fn unknown_font_is_recoverable_error() {
         let compiled = compile_pipeline("\\font\\x=nosuchfont10\\x hi\\end").expect("作业应继续");
@@ -605,15 +616,21 @@ mod tests {
             "转录应含 TeX 式缺字体错误：{:?}",
             compiled.transcript
         );
-        assert_eq!(compiled.pages.len(), 0, "无 \\shipout，不应有页面");
-        assert!(compiled.dvi.is_empty());
     }
 
-    /// 空输入 → 不产出页面（`typeset_dvi` 对无 `\shipout` 作业返回空页表）。
+    /// 空作业不报错（`compile_pipeline` 返回 `Ok`）。
+    ///
+    /// ⚠ G4 接线后语义变更：预载 plain 使空作业也产页（见上）。此处只断言
+    /// 「不报错」这一契约，页面数不作硬编码（与 native `ntex-dvi` 行为对齐：
+    /// `printf '' | ntex-dvi` 亦产 1 页）。
     #[test]
-    fn empty_input_yields_no_pages() {
+    fn empty_input_does_not_error() {
         let compiled = compile_pipeline("\\end").expect("空作业不应报错");
-        assert_eq!(compiled.pages.len(), 0);
-        assert!(compiled.dvi.is_empty());
+        assert_eq!(
+            compiled.pages.len(),
+            1,
+            "预载 plain 后 `\\end` 触发输出例程产 1 页"
+        );
+        assert!(!compiled.dvi.is_empty(), "有页面即应出 DVI");
     }
 }
