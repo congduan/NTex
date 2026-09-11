@@ -349,15 +349,31 @@ use super::*;
 
     #[test]
     fn outer_forbidden_in_macro_argument() {
-        // outer 宏作为实参 → forbidden（TeX "Forbidden control sequence"）
-        let e = expand("\\def\\a#1{#1}\\outer\\def\\x{A}\\a\\x");
-        assert!(e.is_err(), "outer 宏作实参应报错");
-        let err = e.unwrap_err().to_string();
-        assert!(err.contains("forbidden control sequence"), "错误信息：{err}");
-        assert!(err.contains("\\x"), "应指明宏名：{err}");
-        // 组实参内同样 forbidden
-        let e = expand("\\def\\a#1{#1}\\outer\\def\\x{A}\\a{\\x}");
-        assert!(e.is_err(), "组实参内 outer 宏应报错");
+        // tex.web `@<Tell the user what has run away...@>`（L7184-7200）：outer 宏
+        // 出现在参数上下文是**可恢复错误**（`error`，非 fatal）——打印
+        // `Forbidden control sequence found while scanning use of \X` +
+        // 插入 `\par` 恢复，**作业继续**。
+        //
+        // pdfTeX ground truth（2026-09-11 实测）：
+        //   `\outer\def\O{a}\def\f#1{[#1]}\f\O\message{[B]}`
+        //   → 报 Forbidden + **继续**执行 `\message{[B]}`。
+        //
+        // ⚠ 用 run_transcript（单轨）而非 expand()：expand() 做双轨对照
+        // （字节码 vs 解释器），恢复语义只在生产轨（字节码）实现。
+        let (r, t) = run_transcript("\\def\\a#1{#1}\\outer\\def\\x{A}\\a\\x\\message{[B]}");
+        assert!(r.is_ok(), "outer 恢复后作业应继续：{t}");
+        assert!(
+            t.contains("Forbidden control sequence"),
+            "须报 Forbidden（诊断保真）：{t}"
+        );
+        assert!(
+            t.contains("use of \\x"),
+            "错误须指明宏名（tex.web `sprint_cs(warning_index)`）：{t}"
+        );
+        // 组实参内同样报 forbidden 但**不中断**作业
+        let (r2, t2) = run_transcript("\\def\\a#1{#1}\\outer\\def\\x{A}\\a{\\x}\\message{[C]}");
+        assert!(r2.is_ok(), "组实参内 outer 恢复后应继续：{t2}");
+        assert!(t2.contains("Forbidden control sequence"), "{t2}");
     }
 
     #[test]

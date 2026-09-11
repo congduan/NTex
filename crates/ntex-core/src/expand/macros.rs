@@ -200,7 +200,12 @@ impl Expander {
             //（见 collect_undelimited_arg 的归属说明）。
             //
             // TeX：分隔实参内的 outer 宏 → forbidden
-            self.check_not_outer(tok)?;
+            if let Err(e) = self.check_not_outer(tok) {
+                if self.recover_forbidden_outer(&e) {
+                    return Ok(Arc::from([]));
+                }
+                return Err(e);
+            }
             match tok.catcode() {
                 Some(Catcode::BeginGroup) => {
                     // TeX macro_call：定界符匹配**优先于**组贡献（`cur_tok=info(r)`
@@ -367,7 +372,12 @@ impl Expander {
                         return Ok(Arc::from(tokens));
                     }
                     // TeX：组实参内的 outer 宏同样 forbidden
-                    self.check_not_outer(t)?;
+                    if let Err(e) = self.check_not_outer(t) {
+                        if self.recover_forbidden_outer(&e) {
+                            return Ok(Arc::from(tokens));
+                        }
+                        return Err(e);
+                    }
                     match t.catcode() {
                         Some(Catcode::BeginGroup) => {
                             depth += 1;
@@ -402,7 +412,12 @@ impl Expander {
                     return Ok(Arc::from([]));
                 }
                 // TeX：单 token 实参为 outer 宏 → forbidden
-                self.check_not_outer(tok)?;
+                if let Err(e) = self.check_not_outer(tok) {
+                    if self.recover_forbidden_outer(&e) {
+                        return Ok(Arc::from([tok]));
+                    }
+                    return Err(e);
+                }
                 Ok(Arc::from([tok]))
             }
         }
@@ -417,16 +432,52 @@ impl Expander {
     /// TeX：outer 宏禁止出现在宏实参 / `\edef` / general text / `\read` 的 token
     /// 列表中（tex.web `forbidden`：`\outer` 宏只能在正常展开上下文使用）。
     /// 非 outer 宏或非宏 token 直接通过。
+    /// tex.web `@<Tell the user what has run away...@>` 的恢复动作
+    /// （`scanner_status=matching`，L7210-7212）：打印
+    /// `Forbidden control sequence found while scanning use of \X.` + help，
+    /// **插入 `\par`**（`info(p):=par_token; long_state:=outer_call`），
+    /// 当前实参扫描按空实参收场并**不中断作业**。
+    ///
+    /// 返回 true 表示「已按 outer 恢复处理」（调用方应 return 空实参）。
+    fn recover_forbidden_outer(&mut self, e: &Error) -> bool {
+        let Error::RecoverableOuter { name } = e else {
+            return false;
+        };
+        let _ = self.sink.write16(format!(
+            "! Forbidden control sequence found while scanning use of \\{name}.\n\
+             <inserted text> \n                \\par \n\
+             I suspect you have forgotten a `}}', causing me\n\
+             to read past where you wanted me to stop.\n\
+             I'll try to recover; but if the error is serious,\n\
+             you'd better type `E' or `X' now and fix your file.\n"
+        ));
+        true
+    }
+
+    /// tex.web `@<Tell the user what has run away...@>`（L7184-7200）：**outer 宏
+    /// 出现在参数/展开上下文是「可恢复错误」**（`error`，非 `fatal_error`），
+    /// 恢复材料按 `scanner_status` 选择（L7206-7223）：`matching`（宏实参扫描）
+    /// → 插入 `\par`；`absorbing`（general text）→ 插入 `}`。
+    ///
+    /// ⚠ pdfTeX ground truth（2026-09-11 实测）：
+    /// ```tex
+    /// \outer\def\O{outer-macro}
+    /// \def\f#1{[#1]}
+    /// \f\O                     % outer 宏作实参
+    /// \message{[B]}
+    /// ```
+    /// pdfTeX：`[A]` + `Forbidden control sequence` + **`[B]`**（继续）✅
+    /// 旧 NTex：返回致命 `Error::invalid_input` → **作业终止** ❌
+    /// （l3kernel `m3fp-parse002`/`m3regex005` 即此因）。
     fn check_not_outer(&self, tok: Token) -> Result<()> {
         let Some(csid) = tok.csid() else {
             return Ok(());
         };
         if let EqSlot::Macro(m) = self.eqtb.slot(csid) {
             if m.value.outer {
-                return Err(Error::invalid_input(format!(
-                    "forbidden control sequence \\{}（outer 宏禁止出现在参数/展开上下文）",
-                    self.intern.name(csid)
-                )));
+                return Err(Error::recoverable_outer(
+                    self.intern.name(csid).to_owned(),
+                ));
             }
         }
         Ok(())

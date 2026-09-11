@@ -23,6 +23,15 @@ pub enum Error {
     /// 输入流中的非法字符（cat 15）：TeX 语义为报错后跳过该字符继续（可恢复），
     /// 由 `fetch` 拦截并写入转录（tex.web `get_next` invalid_char）。
     InvalidCharacter { byte: u8 },
+    /// outer 宏出现在参数/展开上下文：tex.web `@<Tell the user what has run
+    /// away...@>`（L7184-7200）判为**可恢复错误**（`error`，非 `fatal_error`）
+    /// —— 打印 `Forbidden control sequence found while scanning use of \X`
+    /// 并插入恢复材料（`matching` 分支用 `\par`、`absorbing` 分支用 `}`）
+    /// 后继续。由 `check_not_outer` 的调用方拦截并恢复（不中断作业）。
+    ///
+    /// pdfTeX ground truth（2026-09-11）：`\outer\def\O{a}\def\f#1{[#1]}\f\O`
+    /// → pdfTeX 报错后**继续**执行后续命令；NTex 曾当致命错终止作业。
+    RecoverableOuter { name: String },
     /// 内部不变量被破坏（bug 保护，表示引擎自身缺陷而非用户输入问题）。
     Internal { message: String },
 }
@@ -35,6 +44,11 @@ impl Error {
             path: path.into(),
             source,
         }
+    }
+
+    /// 构造 outer 宏误用（可恢复）错误。
+    pub fn recoverable_outer(name: impl Into<String>) -> Self {
+        Self::RecoverableOuter { name: name.into() }
     }
 
     /// 构造非法输入错误。
@@ -63,6 +77,10 @@ impl fmt::Display for Error {
             Error::Io { op, path, .. } => write!(f, "{op} 失败：{}", path.display()),
             Error::InvalidInput { message } => write!(f, "非法输入：{message}"),
             Error::InvalidCharacter { byte } => write!(f, "非法输入：非法字符 0x{byte:02X}"),
+            Error::RecoverableOuter { name } => write!(
+                f,
+                "Forbidden control sequence found while scanning use of \\{name}."
+            ),
             Error::Internal { message } => write!(f, "内部错误：{message}"),
         }
     }
