@@ -103,7 +103,11 @@ demo1 六刀 + 输出例程刀 2/3/5 的修复登记；全部已提交，留作�
 | `ntex-dvi` transcript 通道 + `--input-path` | 诊断转录（stderr 默认开）+ `\input` 搜索路径（SearchPathVfs）——补"undefined cs 静默跳过"盲区 | ✅ 已修（4ec6a84） |
 | `typeset/paging.rs` / `node.rs` | insert `\newinsert` 分配器 + `\count/\dimen/\skip` 三联寄存器（`\footins=\insert254` 与真 plain 一致） | ✅ 已修（3ef1f67，输出例程刀 4；体排版仍挂账，见上行） |
 
-### 7.bis 格式预载（G 线）登记（2026-09-09 补登，详见 plain-format-survey.md §5.bis）
+### 7.bis 格式预载（G 线）登记（详见 plain-format-survey.md §5.bis.g）
+
+> ⚠ **文档改版（2026-09-11）**：`latex-feasibility.md` 已精简为活文档（41 节 →
+> §A–§F），历史 §8–§41 归档于 `docs/archive/latex-feasibility-full-2026-09-11.md`。
+> 本文件中对旧节号的引用（如「§36」「§15」）请去归档文件 grep。
 
 | 位置 | 现状 | 影响 | 状态 |
 |---|---|---|---|

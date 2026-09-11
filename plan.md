@@ -3,29 +3,37 @@
 > 依据：[idea.md](file:///Users/congduan/Desktop/code/_vibe_coding_/NTex/idea.md) 架构 + 性能决策（字节码预编译 / 深 .fmt / CJK 整形捷径 / 并行 / 增量）
 > 原则：**正确性优先、性能架构前置、基准先行**
 
-## 当前进度（2026-09-03；2026-09-10 增补）
+## 当前进度（2026-09-11）
 
-> **2026-09-09/10 增补**：格式预载战役（plain-format-survey.md 为状态源）——
-> G0/G1 起步（4ec6a84）→ G2(a) 启动 `\input plain` 内嵌接入（510431b，
-> corpus plain 3 样例全 PASS）→ G3 `\advance/\multiply/\divide` 目标集合扩
-> page 参数（3af87dd）；scan 两刀拆掉胶水/数字扫描的寄存器总闸——
-> `scan_glue` 补 `RegKind::Dimen` 臂（`\skip_const:Nn \c_zero_skip{\c_zero_dim}`，
-> 226c177，**latex.ltx l.13899 `\skip_const` 致命停点消除**，见 latex-feasibility.md
-> §36.4/§37）+ `scan_int` 补 dimendef'd cs 数字上下文（`\z@`，04d2023，
-> plain 预载全通、corpus 端到端产出全链打通——**5/8 真排版 + 3 空页**
-> （2026-09-11 修正 KPI：早期"8/8"是探针输出路径 bug 导致的假阳性，
-> 实测见 fixtures/corpus/report.json））。输出例程刀 4/5——`\newinsert` 分配器 +
-> 三联寄存器（3ef1f67，`\footins=\insert254` 与真 plain 一致）+ 页号链 count0
-> 页标签（375b390，`[5.7]` 格式）。字形通道数学编码 + 预览字体装配补齐
-> （2b0afd6，wasm/Tauri 预览对齐 pdftex）。
->
-> **2026-09-08 战报**：LaTeX 战役二十九刀——latex.ltx `--initex` 错误 **259 → 3**
-> （\expanded 实参 IPN ×256 清零 + \lowercase 转换 active char，78dd892，
-> 验收核销见 latex-feasibility.md §36；剩余 l.13899 `\skip_const` 胶水寄存器
-> 致命停点为下一刀首选靶）。\halign 战役刀 1/3——`\everycr` 两点注入 +
-> align_peek 入口 align_state 复位 + to/spread 摊派真语义（4b912f9）。
-> 战役前置勘察改判：\insert 属输出例程战（零共享地基）、数学矩阵无独立
-> 引擎战役（= 宏层 + \halign 地基），见 §6 P1 组勘误与 halign-survey.md。
+> **状态源**：LaTeX 兼容 → [docs/latex-feasibility.md](docs/latex-feasibility.md)（活文档）；
+> 格式预载 → [docs/plain-format-survey.md](docs/plain-format-survey.md)；
+> 输出例程 → [docs/output-routine-survey.md](docs/output-routine-survey.md)；
+> 技术债 → [docs/KNOWN-SIMPLIFICATIONS.md](docs/KNOWN-SIMPLIFICATIONS.md)。
+> 本节只放**一句话摘要**，细节一律去状态源。
+
+**当前焦点：LaTeX 渲染链路（唯一主线）**
+
+```
+[✅] plain.tex 预载（G0–G3，1241 行全通；\newif 端到端与 pdfTeX 一致）
+[🔴] expl3 加载          ← 阻塞：输入栈无终止条件（5001 帧 > 5000）
+[⬜] latex.ltx 主体加载   ← 被 expl3 阻塞
+[⬜] \documentclass/article.cls
+[⬜] 结构宏（\maketitle/\section）+ NFSS 字体
+```
+
+⚠ **corpus 的 LaTeX PASS 是降级渲染**（`\documentclass` 等全 Undefined，只排出裸文字），
+真 LaTeX 结构/字体/版式未通。KPI 现为 **5/8 PASS + 3 EMPTY**（EMPTY = plain 空页债）。
+
+**其他线状态**
+
+| 线 | 状态 |
+|---|---|
+| 输出例程战 | 刀 1–5 已落（`\outputpenalty`/box255/insert/`\newinsert`/页号链） |
+| 格式预载 | G0–G3 已落；剩 G4（`\lccode/\uccode` 初表）、G5（初表分裂脑收敛） |
+| M5 增量 | 阶段一~五完成（改正文 4.3x / 改宏体 1.1x）；阶段六待办见 §7 |
+| M9 中文 | 刀 1/2 落地（`\char` 扩位按字体判定 + `\utfinputmode`）；A5 部分收口 |
+| M2 字节码 | 吞吐 1.01x，≥2x 结构性不可达（RFC-4 IR 与解释器同构）；转 M7 `.fmt` v2 |
+| 技术债 | KNOWN-SIMPLIFICATIONS：30 待办 / 22 已修 |
 
 | 里程碑           | 状态                                                                                                                                                                                                                                                                                                         |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -37,7 +45,12 @@
 | M5 增量计算 | 🟡 阶段一\~五完成（2026-09-03：0099b1f→7601d1d→c2a2418→b585864→55bcb09→14f7bc7）：段级增量重算（POC）→ 可回滚段快照 · edit 单路径化 → 端到端增量排版（连续编辑逐位一致）→ 排版层依赖判定（宏体编辑省重排）→ 复用判定开销削减（**增量墙钟翻正**：release 120 段文档改正文 4.3x / 改宏体 1.1x，增量 < 全量）；**仍存边界** + **阶段六待办**见 §7 |
 | 输出端           | 🟢 正式 PDF 后端可用（`ntex-pdf`：DVI → PDF 直出 + Type1 嵌入，替换临时 Helvetica 切片；demo 两页与 dvipdfmx 渲染一致；023ff2a 修 DVI 字体选择按字体号 k 归位——demo.dvi → PDF 不再报"未定义字体"）；**多字体嵌入 2026-09-04 验证**（CM 全家族 6 族 8 页 demo-multi 全链：cmr10/cmbx10/cmss12/cmtt10/cmmi10/cmsy10，`/FontFile` 逐字节等于 PFB、`/BaseFont` 取 PFB `/FontName`；每页 `/Resources /Font` 只列本页实际引用字体、跨页复用同一字典对象无冲突；PFB 查找链补 `NTEX_TYPE1_DIR` + 备料根兜底；`cargo test -p ntex-pdf` 11 用例全绿） |
 
-**下一步**：主线已按 §6 末尾 2026-09-03 转场决策**转入 M5**（阶段一\~五完成），当前双线并行：**M5 阶段六**（§7：执行段成本削减/检查点增量维护、副作用边界 `\output`·`\write`·`\input`·marks、`Expand(source, snapshot)` 纯函数化、槽级归因、随机编辑模糊测试）+ **TRIP/ETRIP 收尾**——P0 必修剩 **M1-13 错误恢复通用机制**（`back_input`/`\errhelp`，trip.tex 恢复路径卡点根因，契约级，见 §6 收尾决策项 ③）；TRIP/ETRIP 语义 diff 归零 + 错误块抽查，`etrip.log`/TRIP log 逐字节口径留 M8 L2。性能 backlog **P1** 消分配已落地（展开吞吐 +61%），`expand-throughput`（release）469ms / 42.6 万调用/s 已入库。
+**下一步**：主线 = **LaTeX 渲染链路**（见顶部「当前进度」）——先解 expl3 加载期的
+输入栈无终止条件，再逐层推进 latex.ltx → article.cls → 结构宏 → 真 LaTeX 版面 PDF。
+并行线：M5 阶段六（§7）、TRIP/ETRIP 收尾（P0 剩 M1-13 错误恢复通用机制，
+`back_input`/`\errhelp`）、格式预载 G4/G5。
+性能 backlog P1 消分配已落地（展开吞吐 +61%），`expand-throughput`（release）
+469ms / 42.6 万调用/s 已入库。
 
 ***
 
