@@ -3,7 +3,42 @@
 > **本文档是 expl3 攻坚的进度仪表盘。** 状态源：`scripts/lvt-run.py`。
 > 上游权威数据：`latex3/latex3` 仓库 `l3kernel/testfiles/`（每例配 `.tlg` 期望转录）。
 
-## 最新基线（2026-09-11 晚）⭐ 爆栈已修
+## 最新基线（2026-09-11 深夜）⭐ RAN 170/187 = 90.9%
+
+| 判定 | 数量 | 占比 |
+|---|---|---|
+| **RAN** | **170** | **90.9%** ✅ |
+| CRASH | 16 | 8.6% |
+| STACK | 1 | 0.5% |
+
+### 本战役累计（起点 → 现在）
+
+| 判定 | 起点 | 现在 |
+|---|---|---|
+| STACK-END | **112** | **0** ✅ |
+| RAN | **0** | **170** ✅ |
+
+### 三个真修复（都改变了通过率）
+
+| # | 修复 | 效果 |
+|---|---|---|
+| 1 | shim 重复载入 harness 致 `\END` 自递归 | STACK-END 112 → 0 |
+| 2 | shim 补 `\ExplSyntaxOn`/`\ExplSyntaxOff`（LaTeX 内核提供，plain 无）| RAN 114 → 135 |
+| 3 | **`\input` 文件名扫描漏收非 Letter/Other catcode**（tex.web L10210 判据为 `cur_cmd>other_char`）→ 路径含 `_` 被截断 | RAN 135 → **170** |
+
+### 剩余 16 例 CRASH 的 8 个簇
+
+| 例数 | 首错 |
+|---|---|
+| **8** | `! 实参扫描到输入末尾`（m3fp-logic004/m3int001/m3int003/m3prg001/m3skip002/m3skip006/m3tl002/m3tlist002）|
+| 2 | `forbidden control sequence \+`（outer 宏出现在展开上下文）—— m3fp-parse002/m3regex005 |
+| 1 each | 组未闭合 / `\f` outer / 双重上标 / `\CS 赋值 RHS` / `\CS 需要寄存器参数` |
+
+**下一刀：8 例「实参扫描到输入末尾」**（最大簇，单一根因概率高）。
+已收窄到 `m3int001.lvt` L171-176 `\int_to_arabic:n { ( 2+7 ) / 3 }` 一带；
+该表达式在 `\ExplSyntaxOn` 下（`_`/`:` 为 letter）展开时与 `\TYPE` 交互出错。
+
+## 历史基线：爆栈修复（2026-09-11 晚）
 
 | 判定 | 数量 | 说明 |
 |---|---|---|
