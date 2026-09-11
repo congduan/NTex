@@ -1700,9 +1700,6 @@ impl Expander {
         // 实测：l3build 官方 harness 的 `\END`（`\LOTYPOUT{...}\@@@end` 之后接
         // 条件检查）触发 4986 轮后 `input stack size=5000` 爆栈（187 例中 111 例
         // 因此 STACK-END，见 docs/expl3-lvt-scoreboard.md）。
-        if self.ended {
-            return Ok(false);
-        }
         match self.fetch()? {
             None => Ok(false),
             Some((tok, noexpand)) => {
@@ -1791,13 +1788,14 @@ impl Expander {
 
     /// 处理单个 token（展开宏/原语，其余输出）。
     fn process_token(&mut self, tok: Token) -> Result<()> {
-        // `\end` 已执行 → 不再处理任何 token（tex.web final_cleanup 终结语义）。
-        // 与 [`Self::process_one`] 顶部同款检查：本函数是**嵌套入口**——
-        // `\immediate`（primitive_io.rs）与 `\expandafter` 等会在一次 fetch 内
-        // 直接调它，绕过主循环顶部。l3build harness 的 `\END` 经
-        // `\immediate\write128`（`\LONGTYPEOUT`）链到达 `\@@@end`，若不在此处
-        // 拦截，`\END` 宏体会被反复重放（实测 4986 轮 → 输入栈爆）。
-        if self.ended {
+        // `\end` 已执行 → 不再处理新 token（tex.web final_cleanup 终结语义）。
+        //
+        // ⚠ 仅在**非展开上下文**拦截：`\write`/`\edef` 的参数展开走
+        // `expand_only` 路径，`\end` 收尾时要 flush 已入队的延迟写流
+        // （`flush_writes` → `expand_to_string` → 本函数），若在此一并拦截会
+        // **丢失 write 内容**（实测：`tests_io_write::write_defers_until_end`
+        // 等 3 例失败）。
+        if self.ended && !self.expand_only {
             return Ok(());
         }
         // \edef/\xdef/\write 展开上下文：只展开可展开项，其余保留
@@ -2193,18 +2191,6 @@ impl Expander {
                     return Ok(Some((tok, false)));
                 }
                 InputFrame::Bytecode { code, pc, args } => {
-                    // `\end` 已执行 → 帧不再产出 token（tex.web final_cleanup）。
-                    // ⚠ 这是**第三处**必须的检查：`\end` 的实现做
-                    // `self.stack.clear()`，但本臂的 `code`/`pc`/`args` 是
-                    // `frame` 的局部可变借用 —— clear() 清不掉它，本帧会继续
-                    // emit 后续指令。`\END` 宏体（`\LONGTYPEOUT{...}\@@@end`）
-                    // 因此在 `\@@@end` 之后把整段宏体重放，4986 轮后
-                    // input stack size=5000 爆栈（187 例官方用例 111 例
-                    // STACK-END，见 docs/expl3-lvt-scoreboard.md）。
-                    if self.ended {
-                        self.stack.pop();
-                        continue;
-                    }
                     if *pc >= code.len() {
                         self.stack.pop();
                         continue;
