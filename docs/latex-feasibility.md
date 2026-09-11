@@ -138,6 +138,45 @@ scripts/trace-view.py /tmp/t.jsonl --around <首次step>            # 那一步�
 `\edef <未定义 cs> {...}` 上走了「展开自身」而非「报错 + 当 `\relax`」，
 就会形成 `\edef` → 展开体 → 又见 `\edef` 的自我复制。
 
+### A1.quater 单步内爆栈的精确定位（2026-09-11，trace 二次分析）
+
+栈深时序（每 5 万事件采样）显示**长期健康、末步爆炸**：
+
+```
+idx=1050000  step=219323   depth=57      ← 一直很浅
+idx=1100000  step=227286   depth=39
+idx=1150000  step=228182   depth=1838    ← 同一步内
+idx=1200000  step=228182   depth=4010
+idx=1222683  step=228182   depth=5001    ← 超限
+```
+
+**step 228182 内压帧 116,850 次**，形态：
+
+```
+depth= 26  TokenList(38tok)      tok=\tex_edef:D
+depth= 26  TokenList(1tok)       tok=\tex_edef:D
+depth= 27  TokenList(33426tok)   ← 巨型 token 列表
+depth= 19  TokenList(16709tok)   ← 又一个巨型列表
+depth= 20..30  TokenList(1tok) ×11   ← 单调递增
+depth= 21..28  TokenList(1tok) ×8    ← 回落后再增（周期 ≈12-14 帧）
+   …重复 11 万次
+```
+
+**判读**：`\edef`（`\tex_edef:D`）在展开一个**巨型 token 列表**时，每处理
+一批 token 就压入若干 `TokenList(1tok)` 帧且**不被弹出**；周期性回落说明有
+递归调用自身的行为，每轮留下残留帧。**这是「单步内无终止」的典型形态**——
+watchdog 只在 `process_one` 返回时计数，所以只能靠栈深暴露（`NTEX_TRACE_JSONL`
+正是为此而生）。
+
+**定位到函数**：`crates/ntex-core/src/expand/macros.rs::scan_edef_body`
+（`\edef` 体扫描）——它是 `\edef` 展开巨型列表时的帧生产者。
+
+**下一刀靶**（收窄后可动手）：`scan_edef_body` 的 `'scan` 循环里，
+`self.fetch()` 返回的帧（尤其 `TokenList`）在循环内是否**成对弹出**；
+重点查 L710 起的 `csid` 分支与 L677 的 `fetch()` 交互——巨型
+`TokenList(33426tok)` 被压入后逐 token 消费，若每次消费又经
+`expand_once` 压入新帧而不复用，即形成累积。
+
 ### A2. 连锁：`\reserved@a` 未定义自引用
 
 ```
