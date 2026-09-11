@@ -822,6 +822,55 @@ step=1740 d=94  TokenList(1tok)  tok=\ifnum      ← \END 重放
 **下一刀（最直接）**：在 `\LONGTYPEOUT` 调用前后各插 `\immediate\write128` 探针，
 二分出是「`\LONGTYPEOUT` 本身」还是「它之后的 `\@@@end`」引发重放。
 
+### A1.undevicies ⭐⭐ 爆栈根因锁定：嵌套 `\input` 上下文里执行 `\end` → 输入栈无限增长（2026-09-11）
+
+**这是 expl3 爆栈（187 例中 111 例 STACK-END）的真根因。**
+
+#### 决定性对照（6 行最小复现）
+
+```tex
+% 驱动（也被 \input 进来，或直接跑）
+\def\LVTFILE{min.lvt}
+\input lvt-shim          ← 内部 \input{regression-test}
+\end                     ← ★ 这一行
+```
+
+| 驱动是否带 `\end` | 结果 |
+|---|---|
+| **不带** | `[OK]` ✅ **正常完成** |
+| **带** | `[OK]` + `! 输入栈超限（5001 帧）` ❌ |
+
+**同一份 shim + LVT，唯一变量是末尾那个 `\end`。**
+
+#### 机制
+
+shim/LVT 是**被 `\input` 进来的**，执行到 `\end` 时输入栈上仍有**外层帧**。
+`\end` 的实现（`primitive.rs`）做 `self.stack.clear()` 并置 `ended = true`，
+但**当前帧是 `fetch()` 内的局部借用**，`clear()` 清不掉 → 该帧继续吐 token
+→ `\END`/`\end` 被反复重放 → 每轮 depth +1 → 4986 轮后爆栈。
+
+**tex.web 语义**：`\end`（`final_cleanup`）是**终结信号**，无论从哪个嵌套深度
+执行都必须结束作业。NTex 在**嵌套 input** 场景下做不到。
+
+#### 已加的三处 `ended` 检查（部分有效，不足）
+
+| 位置 | 作用 |
+|---|---|
+| `process_one` 顶部 | 主循环入口 |
+| `process_token` 顶部 | 嵌套入口（`\immediate` 等直接调）|
+| `fetch()` 的 `InputFrame::Bytecode` 臂 | 字节码帧 |
+
+**仍不够** —— 说明 `\end` 清栈后，**`fetch()` 内部还有别的路径**（如
+`InputFrame::Source` 的 `\input` 帧）继续产出 token。
+
+#### 下一刀（精确）
+
+在 `fetch()` 的**每个帧类型臂**（`Source`/`Macro`/`MacroArg`/`TokenList`/
+`AlignU`/`AlignV`/`OutputRoutine`）统一加 `ended` 检查，或**在 `\end` 的
+实现里改 `stack.clear()` 为「清栈 + 标记所有帧失效」**（若帧结构支持）。
+
+**验证指标**：`scripts/lvt-run.py --all` 的 **STACK-END 111 例**应批量转绿。
+
 ### A2. 连锁：`\reserved@a` 未定义自引用
 
 ```

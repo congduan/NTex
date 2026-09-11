@@ -85,4 +85,9 @@
   \input \LVTFILE
 \fi
 
-\end
+% ⚠ **不要在此加 `\end`**（2026-09-11 实测，§A1.undevicies）：
+% shim 是被 `\input` 进来的，输入栈上还有外层帧。在**嵌套 input 上下文**里执行
+% `\end` 会触发输入栈无限增长（实测：加 `\end` → `input stack size=5000` 爆栈；
+% 去掉 → 正常）。作业终止由**最外层驱动文件**负责（`run.tex` 或 lvt-run.py 的
+% driver），shim 只做定义 + 载入，不主动结束作业。
+

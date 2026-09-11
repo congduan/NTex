@@ -96,7 +96,11 @@ def run_one(tf: Path, name: str, timeout: int = 30) -> tuple[str, str]:
     for f in ("lvt-shim.tex", "regression-test.tex", "regression-test.cfg", base):
         if (tf / f).exists():
             shutil.copy(tf / f, wd / f)
-    (wd / "run.tex").write_text(f"\\def\\LVTFILE{{{base}}}\n\\input {wd}/lvt-shim\n")
+    # 驱动文件负责终止作业（shim 不再自带 \end —— 嵌套 input 上下文里执行 \end
+    # 会触发输入栈无限增长，见 docs/latex-feasibility.md §A1.undevicies）
+    (wd / "run.tex").write_text(
+        f"\\def\\LVTFILE{{{base}}}\n\\input {wd}/lvt-shim\n"
+    )
     try:
         r = subprocess.run(
             [str(NTEX), "--input-path", str(wd), str(wd / "run.tex")],
