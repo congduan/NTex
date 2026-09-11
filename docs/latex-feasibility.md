@@ -79,6 +79,65 @@ l.21291 \cs_new:Npe \__fp_atan_default:w #1#2#3 @ { #1 #2 #3 \c_one_fp @ }
 的展开结果——重点看 `\cs_split_function:N` 与 `\tl_to_str:n` 在 `\edef` 内的交互
 （`\exp_not:N` 标记在 `\edef` 中是否被正确消费）。
 
+### A1.ter 调用链定位（2026-09-11，JSONL trace 产出）
+
+用新设施 `NTEX_TRACE_JSONL` + `scripts/trace-view.py` 抓 **122 万事件**，得到决定性数据：
+
+```
+栈深峰值 5001 @ step 228182   frame=TokenList(1tok)  tok=\tex_edef:D
+高频 token top5: \__kernel_tl_set:Nx(144217)  \tex_edef:D(143772)
+                \if_int_compare:w(110190)  \exp_after:wN(110091)
+                \tex_expanded:D(95115)
+```
+
+**栈重建**（`--stack-at 227257`）显示**递归下降形态**：
+
+```
+[1099785] TokenList(30tok) ←tok=\__kernel_tl_set:Nx
+[1099788] TokenList(16tok) ←tok=\__kernel_tl_set:Nx
+[1099791] TokenList(1tok)  ←tok=\__kernel_tl_set:Nx
+[1099794] TokenList(28tok) ←tok=\__kernel_tl_set:Nx
+[1099797] TokenList(16tok) ←tok=\__kernel_tl_set:Nx
+[1099800] TokenList(1tok)  ←tok=\__kernel_tl_set:Nx
+   …  token 数递减 30→28→26→24→22→20→18→16→14→12，每次吐 (16tok, 1tok) 后回自身
+```
+
+**`\__kernel_tl_set:Nx` 反复压帧且不回退** = 递归不终止。
+
+### 别名链（expl3-code.tex）
+
+```tex
+L3560  \cs_new_eq:NN \__kernel_tl_set:Nx \cs_set_nopar:Npe
+L1556  \tex_global:D \tex_let:D \cs_set_nopar:Npe \tex_edef:D
+```
+
+即 `\__kernel_tl_set:Nx` → `\cs_set_nopar:Npe` → `\tex_edef:D`（= `\edef`）。
+
+### 已排除的嫌疑（本轮实测）
+
+| 嫌疑 | 结论 |
+|---|---|
+| `\let` 到宏/Alias 解析 | ✅ 正常（`\let\cs_set_nopar:Npe\tex_edef:D` 后 `\meaning` 与调用均正确）|
+| `\tex_gdef:D <cs> {body}` 空参宏定义 | ✅ 正常（`\meaning` 得 `macro:->\tex_long:D\tex_xdef:D`）|
+| `\exp_not:N` 同 token 探测惯用法 | ✅ 与 pdfTeX 同为 SAME |
+| `\if:w N #4` 字面字符比较 | ✅ 与 pdfTeX 同为真 |
+| INITEX 初表 | ✅ 已修（`--no-plain` 切 INITEX 表）|
+
+### 下一刀入口（收窄后）
+
+死循环在 **`\__kernel_tl_set:Nx`（= `\edef` 别名）的调用点**，且伴随
+`\if_int_compare:w` 高频（循环判据）。**下一步**：
+
+```bash
+NTEX_TRACE_JSONL=/tmp/t.jsonl ntex-test-support/latex_probe ...
+scripts/trace-view.py /tmp/t.jsonl --grep tl_set:Nx --limit 200   # 看首次出现的调用点
+scripts/trace-view.py /tmp/t.jsonl --around <首次step>            # 那一步的上下文
+```
+
+重点查 `\edef` 在**其参数（tl 变量）尚未定义**时的行为：NTex 若在
+`\edef <未定义 cs> {...}` 上走了「展开自身」而非「报错 + 当 `\relax`」，
+就会形成 `\edef` → 展开体 → 又见 `\edef` 的自我复制。
+
 ### A2. 连锁：`\reserved@a` 未定义自引用
 
 ```
