@@ -34,7 +34,28 @@
 | 2 | `forbidden control sequence \+`（outer 宏出现在展开上下文）—— m3fp-parse002/m3regex005 |
 | 1 each | 组未闭合 / `\f` outer / 双重上标 / `\CS 赋值 RHS` / `\CS 需要寄存器参数` |
 
-**下一刀：8 例「实参扫描到输入末尾」**（最大簇，单一根因概率高）。
+**下一刀（已收窄到 3 行最小复现）**：8 例「实参扫描到输入末尾」
+
+```tex
+\ExplSyntaxOn
+\TYPE{~}      % ← 失败；`\TYPE{ ~~ }`、`\TYPE{a~b}` 均通过
+\ExplSyntaxOff
+```
+
+**规律**：active 字符 `~`（cat 13）**作为实参的最后一个 token**（后面紧跟 `}`）时，
+实参扫描取不到 token → `! 实参扫描到输入末尾`。`~` 后有别的字符则正常。
+
+**位置**：`crates/ntex-core/src/expand/macros.rs::collect_undelimited_arg`
+L296-310（跳过前导空格后 `fetch()` 返回 None）。推测：active char 展开
+（`~` → `\nobreakspace` 之类）压帧后，`fetch()` 在帧耗尽处的 pop/读取配对不对，
+使下一个 `fetch()` 误判输入耗尽。
+
+**影响**：8 例（m3fp-logic004/m3int001/m3int003/m3prg001/m3skip002/m3skip006/
+m3tl002/m3tlist002）—— 都是 `~` 出现在参数/展开上下文末尾的写法。
+
+#### 原「下一刀」记录（保留）
+
+**旧记录：8 例「实参扫描到输入末尾」**（最大簇，单一根因概率高）。
 已收窄到 `m3int001.lvt` L171-176 `\int_to_arabic:n { ( 2+7 ) / 3 }` 一带；
 该表达式在 `\ExplSyntaxOn` 下（`_`/`:` 为 letter）展开时与 `\TYPE` 交互出错。
 
