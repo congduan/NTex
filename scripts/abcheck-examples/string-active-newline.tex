@@ -1,0 +1,7 @@
+% 探针：\string 对 active char（^^J = char 10）的输出
+% ground truth：`[B ` + 真换行 + `]`（裸字符，无 escapechar 前缀）
+% 关联：latex.ltx L301 TeX 版本嗅探 `\expandafter\reserved@a\string^^J\@@`
+% 注：catcode 赋值行不用 `=`（abcheck 的 KEY=value 抽取会误抓），用空格形式
+{\catcode`\^^J \active
+  \message{[B \string^^J]}}
+\end

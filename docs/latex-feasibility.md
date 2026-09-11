@@ -205,6 +205,56 @@ logtrace 显示**真首现场在 `l.301`，早 2 万行** —— 该行属 latex
 **下一刀顺序修正**：先查 l.301 的 `Undefined control sequence`（真起点），
 再回头处理 l.21039 震中（1253 条）与 `\edef` 爆栈（§A1.quater）。
 
+### A1.sexies 首现场诊断与一处真修复（2026-09-11）
+
+**首现场 = latex.ltx L295-303 的 TeX 版本嗅探**：
+
+```tex
+\ifx\@TeXversion\@undefined
+  \ifx\@undefined\inputlineno
+    \def\@TeXversion{2}
+  \else
+   {\catcode`\^^J=\active
+     \def\reserved@a#1#2\@@{\if#1\string^3\fi}
+     \edef\reserved@a{\expandafter\reserved@a\string^^J\@@}   ← L301
+     \ifx\reserved@a\@empty\else\gdef\@TeXversion{3}\fi}
+  \fi
+\fi
+```
+
+**✅ 已修真 bug：`\string` 对 active char 多打 escapechar 前缀**
+
+`string_token`（`expand/free.rs`）对 `TokenKind::ControlSeq` **无条件**加
+`escapechar` 前缀；而本引擎把 active char 编码为「带 `CS_ACTIVE_FLAG` 的
+csid token」→ `\string^^J` 输出 `\<换行>` 而非裸换行。
+
+tex.web 依据（`conv_toks` L9280-9281）：
+```pascal
+string_code: if cur_cs<>0 then sprint_cs(cur_cs) else print_char(cur_chr);
+```
+—— 判据是 **`cur_cs≠0`**，而 active char 的 `cur_cs=0` → 走裸字符路径。
+
+修复：`string_token` 里按 `tok.is_active()` 归位到字符分支。
+验证（`cat -A` 逐字节）：
+
+| 探针 | pdfTeX | NTex（修复后）|
+|---|---|---|
+| `\message{[B \string^^J]}`（`^^J` active）| `[B $`（裸换行）| `[B $` ✅ |
+
+**该 bug 会污染下游 token 流**：多出的 `\` 被当 cs 前缀 → 未定义 cs 报错
+（正是首现场里的 `! Undefined control sequence.` + 孤立 `\`）。
+
+**⏳ 首现场仍未全消**：`l.301` 仍报同错。已收窄到
+**`\edef` + `\expandafter\string^^J`** 的组合（`\edef\z{\expandafter\t\string^^J\@@}` 复现），
+`\message` 未及执行即报错。已排除 `\string` 本身（`\string^`/`\string x`/`\string\relax`
+逐字节与 pdfTeX 一致）。
+
+**下一刀靶**：`\edef` 体的 token 扫描遇到 **char 10（换行）token** 时的处理——
+`\string^^J` 产出的是 charcode 10 的 Other 字符，本引擎行模型（LF=cat 5）
+可能让它在 token 流中触发特殊路径。查 `scan_edef_body` 与 `fetch()` 对该
+charcode 的处理，并在 `abcheck` 上加一个固定探针
+（`scripts/abcheck-examples/string-active-newline.tex`）。
+
 ### A2. 连锁：`\reserved@a` 未定义自引用
 
 ```

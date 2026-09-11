@@ -425,7 +425,31 @@ fn string_token(tok: Token, intern: &InternTable, esc: i64, out: &mut Vec<Token>
             out.push(Token::char(cat, ch));
         }
         TokenKind::ControlSeq => {
-            let name = intern.name(tok.csid().expect("ControlSeq 必有 csid"));
+            let csid = tok.csid().expect("ControlSeq 必有 csid");
+            let name = intern.name(csid);
+            // tex.web `\string`（conv_toks，L9280-9281）：
+            //   `string_code: if cur_cs<>0 then sprint_cs(cur_cs) else print_char(cur_chr)`
+            // —— 判据是 **cur_cs≠0**。tex.web 里 active char 的 cur_cs=0（走
+            // cur_chr 路径），故 `\string` 输出**裸字符**，不带 escapechar 前缀。
+            // 本引擎把 active char 编码为「带 CS_ACTIVE_FLAG 的 csid token」，
+            // 必须在此处按 flag 归位到字符分支，否则 `\string^^J` 会输出
+            // `\<换行>` 而非裸换行 —— 该多出的 `\` 会污染下游 token 流
+            // （latex.ltx L301 `\edef\reserved@a{\expandafter\reserved@a
+            //   \string^^J\@@}` 的 TeX 版本嗅探即此形态：多余 `\` 被解析成
+            // 未定义 cs → 首现场 Undefined control sequence）。
+            let is_active_char = tok.is_active();
+            if is_active_char {
+                // active char 的字符码 = intern 名（本引擎以单字符为名）
+                if let Some(ch) = name.chars().next() {
+                    let cat = if ch == ' ' {
+                        Catcode::Space
+                    } else {
+                        Catcode::Other
+                    };
+                    out.push(Token::char(cat, ch as u32));
+                    return;
+                }
+            }
             if (0..=255).contains(&esc) {
                 out.push(Token::char(Catcode::Other, esc as u32));
             }

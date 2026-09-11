@@ -517,3 +517,43 @@ mod uppercase_param_text {
         );
     }
 }
+
+/// `\string` 对 **active char** 输出裸字符（不补 escapechar 前缀）。
+///
+/// tex.web `conv_toks`（L9280-9281）：
+/// ```pascal
+/// string_code: if cur_cs<>0 then sprint_cs(cur_cs) else print_char(cur_chr);
+/// ```
+/// 判据是 **`cur_cs≠0`**；active char 的 `cur_cs=0` → 走 `print_char` 裸字符路径。
+///
+/// 本引擎把 active char 编码为「带 `CS_ACTIVE_FLAG` 的 csid token」，`string_token`
+/// 曾对 `TokenKind::ControlSeq` **无条件**加 escapechar 前缀 → `\string^^J`
+/// 输出 `\<换行>` 而非裸换行。多出的 `\` 污染下游 token 流（latex.ltx L301
+/// TeX 版本嗅探 `\expandafter\reserved@a\string^^J\@@` 的首现场错误即此形态）。
+#[cfg(test)]
+mod string_active_char {
+    use super::*;
+
+    /// active char 的 `\string` 产物不含 escapechar 前缀。
+    #[test]
+    fn string_of_active_char_has_no_escape_prefix() {
+        // `^^J` 设为 active 后 `\string^^J` 应输出单个 char（码 10），
+        // 而非 `\` + char。判据：产物长度 1 且码为 10。
+        // active 化后 `^^J` 会把后续内容也吞作 active char，故用组隔离 + `\relax` 收口
+        let out = expand("\\catcode`\\^^J\\active {\\string^^J}\\relax").unwrap();
+        assert_eq!(out.chars().count(), 1, "应输出单字符（裸换行）：{out:?}");
+        assert_eq!(out.chars().next().unwrap() as u32, 10, "{out:?}");
+    }
+
+    /// 对照：普通控制序列的 `\string` **仍带** escapechar 前缀。
+    #[test]
+    fn string_of_control_seq_keeps_escape_prefix() {
+        assert_eq!(expand("\\string\\relax").unwrap(), "\\relax");
+    }
+
+    /// 对照：普通字符 token 的 `\string` 输出裸字符。
+    #[test]
+    fn string_of_char_token_is_bare() {
+        assert_eq!(expand("\\string x").unwrap(), "x");
+    }
+}
