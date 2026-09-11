@@ -316,3 +316,43 @@ expl3 的 `:TF` 分派**不靠 `\if`**，靠**可展开 token 选择**：
 3. 然后才是修 `\ifnum` 扫描（1503 次那个错误簇）。
 
 ⚠ 在 (1) 完成前，**不要**再引用「RAN 180/187」作为 expl3 进度。
+
+---
+
+# 🎯 187 全 STACK 的根因诊断（2026-09-12，主控实测）
+
+## 现场铁证（NTEX_STACK_DUMP=1）
+
+```
+[stack-dump] depth=5001 kinds={"Bytecode": 1, "Other": 1, "Source": 4, "TokenList": 4995}
+```
+
+**Bytecode=1** ⇒ **不是宏递归**。4995 个 TokenList 帧 = x 型展开（`\edef` 体扫描）
+吞入时的「展开产物压帧」累积。
+
+## 根因链
+
+1. `expl3.ltx` 载入推进到 L25851（`\__tl_analysis` 段，`^^@` 作组定界符）
+2. 空组惯用法 `\tex_edef:D \l_tl { \if_false: } \fi:` 的语义 =
+   **edef 体吞到源码中下一个配平的 `}`**（tex.web scan_toks：skip 区的
+   `{`/`}` 不计数；对拍 pdfTeX 确认——裸跑同样吞到文件尾报 Runaway）
+3. NTex 的 `scan_edef_body` 展开可展开项用 `expand_once` + `push_frame(TokenList)`
+   ——**吞得越多帧越多**，帧消耗（逐 token 取）追不上生产（每个宏展开又压帧）
+   → 5001 帧爆栈
+4. pdfTeX 不爆：`scan_toks` 的 xpand 走 `expand` 直接在输入栈上消费，
+   token 取走即弹帧，无「整体压帧」中间态
+
+## 修复方向（机制修复，顺带性能收益）
+
+`scan_edef_body` 的展开产物**就地续扫**，不经「压帧 → fetch → 弹帧」往返。
+可参照 `expand_region` 的做法但避免其帧驻留；或给 edef 扫描专设
+「展开产物直连」通道（tex.web `link(p):=link(temp_head)` 的等价物）。
+
+**顺带收益**：每次 x 型展开少一次 push/pop 往返，热路径性能↑。
+
+## 附：诊断设施
+
+- `NTEX_STACK_DUMP=1`：爆栈时输出栈帧类型分布（本次定位的关键仪器，
+  已提交在 `fetch()` 兜底点）。
+- 教训（再次验证）：**报错行号 l.25851 是失真的**（截断 15000 行同样报此号），
+  真实现场只能靠栈帧/watchdog 快照。

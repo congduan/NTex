@@ -2259,6 +2259,28 @@ impl Expander {
             // 只盖宏帧，TokenList/Source 等帧的循环注入同样能把栈撑爆——此处统一
             // 兜底（每次压帧后必经 fetch，故为全帧型的唯一收口点）。
             if self.stack.len() > MAX_INPUT_STACK {
+                // 诊断开关（NTEX_STACK_DUMP）：爆栈时输出栈帧类型分布 + 最近帧名，
+                // 用于定位「递归不终止」的循环主体（2026-09-11 expl3 载入
+                // L25851 现场排查：报错行号失真，栈帧才是真现场）。
+                if std::env::var_os("NTEX_STACK_DUMP").is_some() {
+                    use std::collections::BTreeMap;
+                    let mut kinds: BTreeMap<&'static str, usize> = BTreeMap::new();
+                    for f in &self.stack {
+                        let k = match f {
+                            InputFrame::One { .. } => "One",
+                            InputFrame::TokenList { .. } => "TokenList",
+                            InputFrame::Bytecode { .. } => "Bytecode",
+                            InputFrame::Source { .. } => "Source",
+                            #[allow(unreachable_patterns)]
+                            _ => "Other",
+                        };
+                        *kinds.entry(k).or_default() += 1;
+                    }
+                    let _ = self.sink.write16(format!(
+                        "[stack-dump] depth={} kinds={kinds:?}\n",
+                        self.stack.len()
+                    ));
+                }
                 return Err(Error::invalid_input(format!(
                     "输入栈超限（{} 帧 > {MAX_INPUT_STACK}）——展开/参数扫描疑似无终止条件",
                     self.stack.len()
