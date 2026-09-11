@@ -114,6 +114,7 @@ demo1 六刀 + 输出例程刀 2/3/5 的修复登记；全部已提交，留作�
 | `ntex-layout/typeset/plain_format.rs` `EmbeddedFormatVfs`/`set_preload_plain` | 格式预载仅 ntex-dvi 默认开；ntex-backend/ntex-wasm/ntex-mcp 未接线 | 各渲染端无 `\input plain` 时行为与 ntex-dvi 不一致 | 待接线（plain-format-survey §5.bis 发现未修 #6） |
 | 预载路径 | 预载后空文档经 `\plainoutput` 收尾冲出一页空页 | corpus 内宏/格式文件（无 `\bye`）页数与真 TeX（0 页）不一致 | 待做（survey #1） |
 | `\lccode/\uccode` 初表 | 预载前初表全 0，未按 INITEX 初值（`a..z`/`A..Z` = 自身）播种 | 预载失败回落时 `\lowercase` 行为偏差 | 待做（survey #2） |
+| `expand/macros.rs` 实参扫描 | `\char`/`\number`/`\romannumeral` 在**实参位置**取不到数字时**不报** `! Missing number, treated as zero.`（pdfTeX 报）| 错误报告面缺失（排版结果不变，影响诊断保真与 TRIP 口径）| 待做（latex-feasibility §A1.octies；回归锁 `tests_scan.rs` `arg_scan_does_not_expand`）|
 | `expand/primitive.rs` `meaning_text` / `save.rs` `slot_display` | 宏的 `\meaning` **只渲染 `#n` 而丢参数文本定界符**（pdfTeX `\meaning\if@` = `macro:if->`，NTex 误报 `macro:->`）——曾把 §38/§39 的根因误判为 `\uppercase` 语义问题 | `\meaning` 输出失真；误导诊断（非功能缺陷） | ✅ 已修（2026-09-11，改渲染 `params.text`，tex.web `print_meaning` 的 `token_show(参数文本)`；测试 `tests_scan.rs` `uppercase_param_text`） |
 | `expand/scan.rs` | `scan_glue` 胶水上下文不认 dimen 寄存器别名（`\skip_const:Nn \c_zero_skip{\c_zero_dim}` 致命） | latex.ltx l.13899 停点 | ✅ 已修（226c177，`RegKind::Dimen` 臂） |
 | `scripts/corpus-probe.py` | 产物路径按仓库根找（`REPO/<stem>.dvi`），但 ntex-dvi/ntex-pdf 默认输出**保留源文件目录**（`<输入去扩展名>.dvi/.pdf`）→ 全库误判 FAIL | KPI 假阴性（曾把实际成功的 `plain/*.tex` 全判 0/8） | ✅ 已修（2026-09-11，路径按 `tex.parent` 取 + 清理同步） |

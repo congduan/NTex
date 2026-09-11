@@ -557,3 +557,50 @@ mod string_active_char {
         assert_eq!(expand("\\string x").unwrap(), "x");
     }
 }
+
+/// §A1.septies 探针：char 10 token 在宏实参传递中的存活性。
+
+/// §A1.septies 探针：可展开原语在**宏实参位置**是否被展开。
+
+/// 宏实参扫描**不展开**可展开原语（tex.web `get_token` 语义）。
+///
+/// pdfTeX ground truth（2026-09-11 实测）：
+/// ```tex
+/// \def\showit#1{[#1]}
+/// \message{[A]}\showit\char65\message{[B]}
+/// ```
+/// → `[A]` + `! Missing number, treated as zero.` + `[B]`
+/// 即 `#1` = `\char` 单 token，`65` 留在外面；`\char` 执行时读不到数字。
+///
+/// **NTex 已知差异**：不报 `Missing number`，静默产出 `\0` 并把 `65` 留作字面。
+/// 归类「错误报告面缺失」（不影响排版结果，影响诊断保真）。
+/// 见 docs/latex-feasibility.md §A1.octies。
+#[cfg(test)]
+mod arg_scan_does_not_expand {
+    use super::*;
+
+    /// 实参只吃到 `\char` 单 token（不跨 token 取参数）。
+    #[test]
+    fn undelimited_arg_takes_only_the_primitive_token() {
+        let out = expand("\\def\\showit#1{[#1]}\\showit\\char65").unwrap();
+        // 关键：`65` 留在实参**之外**（不作 `\char` 的参数）
+        assert!(out.contains("65"), "65 应留在实参外：{out:?}");
+        // 已知差异：NTex 静默（pdfTeX 报 Missing number）——此处不断言错误，
+        // 只锁「65 未被 `\\char` 消费」这一结构性事实。
+    }
+
+    /// 对照：组形式实参把 `\char65` 整体交给 `#1`，`\char` 正常取参。
+    #[test]
+    fn braced_arg_lets_char_read_its_number() {
+        assert_eq!(expand("\\def\\showit#1{[#1]}\\showit{\\char65}").unwrap(), "[A]");
+    }
+
+    /// 对照：`\number`/`\romannumeral` 在实参位置同样不展开。
+    #[test]
+    fn other_expandables_also_not_expanded_in_arg() {
+        let n = expand("\\def\\s#1{[#1]}\\s\\number65").unwrap();
+        assert!(n.contains("65"), "65 应留在实参外：{n:?}");
+        let r = expand("\\def\\s#1{[#1]}\\s\\romannumeral5").unwrap();
+        assert!(r.contains('5'), "5 应留在实参外：{r:?}");
+    }
+}

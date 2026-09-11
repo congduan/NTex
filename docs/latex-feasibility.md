@@ -301,6 +301,62 @@ charcode 的处理，并在 `abcheck` 上加一个固定探针
 
 **建议先走 A 路**（外科、可回退），B 路作为 M 级架构债登记。
 
+### A1.octies ⚠ 本轮两次误判的更正 + 一个新的真差异（2026-09-11）
+
+**必须诚实记录**：本轮我在 §A1.septies 之后提出的两个"根因"**都是探针误判**，
+已用 pdfTeX ground truth 逐个证伪。这是仪器纪律的又一次实战（见
+`docs/tooling-trust.md`）。
+
+#### 误判 1：「charcode 10 token 被行尾模型吞掉」——证伪
+
+`\char10` **单独执行完全正常**（产出 char 10）；`\string^^J` 也已由 §A1.sexies
+修复。此前用 `\expandafter\showit\char10` 得出"char 10 被吞"的结论，
+实际是**探针本身构造错误**（见下）。
+
+#### 误判 2：「宏实参位置不展开可展开原语」——tex.web 语义如此，非缺陷
+
+我观察到 `\showit\char65` → `"[\0]65"`，判定为缺陷。**pdfTeX ground truth 否定**：
+
+```
+\def\showit#1{[#1]}
+\message{[A]}\showit\char65\message{[B]}
+
+pdfTeX:  [A] + "! Missing number, treated as zero." + [B]
+NTex  :  [A][B]（无错误）
+```
+
+**tex.web 的实参扫描走 `get_token`——既不展开也不推进条件机**（
+`collect_undelimited_arg` 的既有注释 L348-352 早就写明）。故 `#1` = `\char`
+单 token，`65` 留在外面，`\char` 执行时读不到数字 → **pdfTeX 报
+`Missing number`**。
+
+**NTex 的行为差异（真差异，方向相反）**：NTex **不报错**、静默继续。
+即 NTex 比 tex.web **更宽松**——`\char` 在拿不到数字时未走
+`! Missing number, treated as zero.` 恢复路径。
+
+**已回退**：我曾按"实参应展开"的误判改了 `collect_delimited_arg`（加
+可展开原语执行臂），验证 pdfTeX 后**立即 `git checkout` 回退**——该改动会让
+NTex 偏离 tex.web（在实参位置多做一次展开）。
+
+#### 新增待查项（真差异，低优先）
+
+**NTex 缺 `\char` 无数字时的 Missing number 报错**：
+
+| 构造 | pdfTeX | NTex |
+|---|---|---|
+| `\showit\char65` | `! Missing number, treated as zero.` | 静默（`[\0]65`）|
+| `\expandafter\showit\char65` | 同上 | 静默 |
+
+归类：**错误报告面缺失**（不影响排版结果，影响诊断保真与 TRIP 口径）。
+登记为待办，不阻塞 latx.ltx 推进。
+
+#### 教训（写入纪律）
+
+**探针要先用 pdfTeX 验证「预期是否正确」，再拿 NTex 结果下结论。**
+本轮的两次误判都源于「先假设 tex.web 语义、再造探针」——而 `abcheck.py`
+正是为此存在：**任何"NTex 有 bug"的结论，必须先经 abcheck 确认 pdfTeX
+的行为与之不同**。
+
 ### A2. 连锁：`\reserved@a` 未定义自引用
 
 ```
