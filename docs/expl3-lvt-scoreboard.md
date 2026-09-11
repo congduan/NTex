@@ -34,7 +34,35 @@
 | 2 | `forbidden control sequence \+`（outer 宏出现在展开上下文）—— m3fp-parse002/m3regex005 |
 | 1 each | 组未闭合 / `\f` outer / 双重上标 / `\CS 赋值 RHS` / `\CS 需要寄存器参数` |
 
-**下一刀（已收窄到 3 行最小复现）**：8 例「实参扫描到输入末尾」
+**⭐ 根因已锁定（1 行复现）**：8 例「实参扫描到输入末尾」
+
+```tex
+\immediate\write128{~}      % ← FAIL
+\immediate\write128{a}      % ok
+\immediate\write128{~a}     % ok
+```
+
+**关键事实（推翻了先前 3 行的中间结论）**：
+- **不需要 `\ExplSyntaxOn`** —— 裸 `\immediate\write128{~}` 即可复现；
+- **不是 `collect_undelimited_arg`** —— 报错来自 `\write` 的参数扫描
+  （`io.rs::scan_general_text`，L457+ 的 `fetch()` 返回 None）；
+- **规律**：参数组内**只有 active 字符**（`~`，cat 13）时失败；后面跟任何
+  字符（`~a`）则通过。
+
+**机制推测**：`scan_general_text` 展开组内容，`~`（active）展开为
+`\nobreakspace` 之类 → 压帧 → 该帧读尽后 `fetch()` 立刻返回 None，
+**在「展开结果帧刚耗尽、还需读下一个 token」的边界上配对不齐**。
+
+**位置**：`crates/ntex-core/src/expand/io.rs::scan_general_text`（L457+），
+或 `fetch()` 的帧耗尽 pop 路径。
+
+**影响 8 例**：m3fp-logic004 / m3int001 / m3int003 / m3prg001 / m3skip002 /
+m3skip006 / m3tl002 / m3tlist002
+
+**旧记录（已被本节取代）**：" + old.split("
+")[0].replace("**下一刀（已收窄到 3 行最小复现）**：", "") + "
+
+
 
 ```tex
 \ExplSyntaxOn
