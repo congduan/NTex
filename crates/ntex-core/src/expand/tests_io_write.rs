@@ -32,6 +32,28 @@ use super::*;
     }
 
     #[test]
+    fn end_inside_nested_input_terminates_without_stack_overflow() {
+        // tex.web final_cleanup：`\end` 是终结信号——无论嵌套多深都必须结束
+        // 作业（A1.undevicies 爆栈修复：此前嵌套 \input 内 \end 导致输入栈
+        // 无限增长至 5001 帧爆栈，expl3 LVT 111 例 STACK-END 的根因）。
+        let mut vfs = MemVfs::new();
+        vfs.insert("inner.tex", "X\\end");
+        let (out, _) = expand_vfs("\\input{inner}", vfs).unwrap();
+        // `\end` 后的 token 不再处理（外层无后续 token 场景）
+        assert_eq!(out, "X");
+    }
+
+    #[test]
+    fn end_in_macro_body_inside_nested_input_terminates() {
+        // 更贴近 LVT harness 场景：嵌套 input 内宏展开触发 \end
+        let mut vfs = MemVfs::new();
+        vfs.insert("shim.tex", "\\def\\myend{\\end}\\input{test}\\myend");
+        vfs.insert("test.tex", "OK");
+        let (out, _) = expand_vfs("\\input{shim}", vfs).unwrap();
+        assert!(out.contains("OK"));
+    }
+
+    #[test]
     fn immediate_write_appends() {
         let vfs = MemVfs::new();
         let (_, vfs) = expand_vfs(

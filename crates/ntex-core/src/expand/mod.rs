@@ -1211,6 +1211,17 @@ impl Expander {
                 );
                 step_start = std::time::Instant::now();
             }
+            // `\end` 已执行 → 主循环立即停（tex.web final_cleanup：终结信号，
+            // 无论嵌套多深——expl3 A1.undevicies 爆栈修复）。
+            // 注意：不放 `process_one` 内（flush_writes→expand_region 子展开
+            // 也调 process_one，会误拦 write 内容展开）。
+            if self.ended {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    wd.done.store(true, Ordering::Relaxed);
+                }
+                break;
+            }
             // NTEX_SANITY_CHECK：错误恢复后状态完整性校验（每次迭代检查）
             self.sanity_check_after_error();
             // A3：单步执行（注入输出例程 / flush 写流 / 处理一个 token）——
@@ -1738,17 +1749,6 @@ impl Expander {
 
     /// 单步处理一个 token；返回 false 表示输入耗尽。
     fn process_one(&mut self) -> Result<bool> {
-        // `\end` 已执行 → 立即停（tex.web final_cleanup：`\end` 是**终结信号**，
-        // 主循环此后不再取 token）。
-        //
-        // ⚠ 必须在 `fetch()` **之前**判：`\end` 的实现做 `self.stack.clear()`，
-        // 但**当前正在执行的帧是 `fetch()` 内的局部借用**（字节码帧的 `pc`/`args`
-        // 在 match 臂里被可变借用），`clear()` 清不掉它——`\end` 返回后同一帧
-        // 会继续吐出**后续 token**（`\END` 宏体里 `\@@@end` 之后还有
-        // `\ifnum\currentiflevel` 等），于是 `\END` 被反复重放，输入栈每轮 +1。
-        // 实测：l3build 官方 harness 的 `\END`（`\LOTYPOUT{...}\@@@end` 之后接
-        // 条件检查）触发 4986 轮后 `input stack size=5000` 爆栈（187 例中 111 例
-        // 因此 STACK-END，见 docs/expl3-lvt-scoreboard.md）。
         match self.fetch()? {
             None => Ok(false),
             Some((tok, noexpand)) => {
@@ -1837,14 +1837,9 @@ impl Expander {
 
     /// 处理单个 token（展开宏/原语，其余输出）。
     fn process_token(&mut self, tok: Token) -> Result<()> {
-        // `\end` 已执行 → 不再处理新 token（tex.web final_cleanup 终结语义）。
-        //
-        // ⚠ 仅在**非展开上下文**拦截：`\write`/`\edef` 的参数展开走
-        // `expand_only` 路径，`\end` 收尾时要 flush 已入队的延迟写流
-        // （`flush_writes` → `expand_to_string` → 本函数），若在此一并拦截会
-        // **丢失 write 内容**（实测：`tests_io_write::write_defers_until_end`
-        // 等 3 例失败）。
-        // \edef/\xdef/\write 展开上下文：只展开可展开项，其余保留
+        // 注意：此处不加 `ended` 拦截——`\end` 收尾时要 flush 延迟写流
+        // （`flush_writes` → `expand_to_string` → 本函数），拦截会丢 write
+        // 内容。终结由 `process_one` 顶部检查保证。
         if self.expand_only {
             return self.process_expand_only(tok);
         }
