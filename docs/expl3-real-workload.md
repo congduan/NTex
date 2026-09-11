@@ -356,3 +356,43 @@ expl3 的 `:TF` 分派**不靠 `\if`**，靠**可展开 token 选择**：
   已提交在 `fetch()` 兜底点）。
 - 教训（再次验证）：**报错行号 l.25851 是失真的**（截断 15000 行同样报此号），
   真实现场只能靠栈帧/watchdog 快照。
+
+---
+
+# 🎯 根因补全（2026-09-12 凌晨）：depth 配平语义偏移
+
+## 决定性 trace（NTEX_EDEF_COND_TRACE / NTEX_COND_TRACE）
+
+探针 `\edef\foo{\myiffalse X} \fi:`（`\let\myiffalse\iffalse`）：
+
+```
+[edef-cond] tok=\myiffalse op=IfFalse skip_before=false   ← 别名识别正常
+[trace-cond] op=IfFalse 前栈深=0 []                        ← 帧压入正常
+（此后无任何 trace—— \fi: 被 skip 区吞掉，未触发条件臂/未配平通报）
+排版失败：\if 缺少 \fi（定义 \foo 的替换文本时）            ← 外层守卫报错
+```
+
+## 与 tex.web 的语义差（真根因）
+
+tex.web `scan_toks`：`unbalance:=1` 起始——**首 `{` 已被 `scan_left_brace`/
+参数部消费**，skip 区的 `}` 不减、EOF 未配平 → **Runaway definition 通报**。
+
+NTex `scan_edef_body`：`depth:=0` 起始且**首个 `{` 自己计数（depth=1）**；
+skip 区吞掉体边界 `}` 后 depth 恒 1，`\fi:` 消费后**继续吞源码**；
+最终 EOF → `runaway = depth>0` 理应报 Runaway——但实际路径中
+`\fi:` 先把 skip 关掉、后续 `}` 触发 `depth==0 → break`（**宏体提前正常闭合**），
+**Runaway 判定被完全绕过**，残留条件帧由 expand_region 守卫报
+「缺少 \fi」（错误位置/性质双重失真）。
+
+## 修复方案（下一刀，方向已锁定）
+
+1. `scan_edef_body` 的 skip 区**不得吞掉配平判定权**：对齐 tex.web——
+   skip 区 `{`/`}` 同样维护 unbalance（但不入体），扫到 EOF 未配平 →
+   **Runaway definition 通报**（可恢复，pdfTeX 同）；
+2. `depth` 起点语义对齐 `unbalance:=1`；
+3. 残留条件帧错误**不得**掩盖真实现场（报 Runaway 而非「缺少 \fi」）。
+
+## 诊断设施（本次新增，已验证可用）
+
+- `NTEX_EDEF_COND_TRACE=1`：scan_edef_body 条件臂命中/skip 吞入逐 token trace
+- `NTEX_STACK_DUMP=1`：爆栈时栈帧类型分布

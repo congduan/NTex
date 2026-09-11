@@ -784,10 +784,29 @@ impl Expander {
             }
             // 条件原语：即时求值（优先级与 process_one 相同）
             if let Some(op) = self.cond_op(tok) {
+                if std::env::var_os("NTEX_EDEF_COND_TRACE").is_some() {
+                    let nm = match tok.csid() {
+                        Some(id) => self.intern.name(id).to_owned(),
+                        None => format!("{tok:?}"),
+                    };
+                    eprintln!(
+                        "[edef-cond] line={} tok=\\{} op={op:?} skip_before={}",
+                        self.current_line_no(),
+                        nm,
+                        self.is_skipping()
+                    );
+                }
                 self.step_conditional(op, tok)?;
                 continue;
             }
             if self.is_skipping() {
+                if std::env::var_os("NTEX_EDEF_COND_TRACE").is_some() {
+                    let nm = match tok.csid() {
+                        Some(id) => format!("\\{}", self.intern.name(id)),
+                        None => format!("{tok:?}"),
+                    };
+                    eprintln!("[edef-skip] line={} swallowed={nm}", self.current_line_no());
+                }
                 continue;
             }
             // 组定界：{ } 与 \begingroup/\endgroup（TeX macro_def 模式组定界）
