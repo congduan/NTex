@@ -1966,6 +1966,13 @@ impl Expander {
                         // expl3-code.tex L9320 `\char_set_catcode_active:N \^^L`
                         // 取实参即触发误报 → `Extra \or` 224 条（43.8%）。
                         if def.outer && self.scanner_status != ScannerStatus::Normal {
+                            if std::env::var_os("NTEX_OUTER_SITE").is_some() {
+                                eprintln!(
+                                    "[OUTER-EXPAND] cs={} status={:?}",
+                                    self.intern.name(csid),
+                                    self.scanner_status
+                                );
+                            }
                             let name = match self.warning_index {
                                 Some(cs) => self.cs_display_name(cs),
                                 None => self.cs_display_name(csid),

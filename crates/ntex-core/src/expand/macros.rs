@@ -199,7 +199,9 @@ impl Expander {
             // 实参位置的条件 token（`\if*`/`\else`/`\fi`/`\or`）一律是**数据**
             //（见 collect_undelimited_arg 的归属说明）。
             //
-            // TeX：分隔实参内的 outer 宏 → forbidden
+            // TeX：实参位置的控制序列是 outer 宏 → Forbidden。
+            // ⚠ 仅限**控制序列**（`should_check_outer`）：active char 取作实参
+            // 不报（pdfTeX 对拍 `\csca:N \^^L` = 0 错误）。
             if let Err(e) = self.check_not_outer(tok) {
                 if self.recover_forbidden_outer(&e) {
                     return Ok(Arc::from([]));
@@ -371,7 +373,8 @@ impl Expander {
                         self.recover_par_in_argument(name, t)?;
                         return Ok(Arc::from(tokens));
                     }
-                    // TeX：组实参内的 outer 宏同样 forbidden
+                    // TeX：组实参内的**控制序列** outer 宏同样 forbidden
+                    //（active char 不在其列，见 should_check_outer）。
                     if let Err(e) = self.check_not_outer(t) {
                         if self.recover_forbidden_outer(&e) {
                             return Ok(Arc::from(tokens));
@@ -411,7 +414,10 @@ impl Expander {
                     self.recover_par_in_argument(name, tok)?;
                     return Ok(Arc::from([]));
                 }
-                // TeX：单 token 实参为 outer 宏 → forbidden
+                // TeX：单 token 实参为 **outer 控制序列** → forbidden。
+                // ⚠ active char 豁免（`should_check_outer`）：pdfTeX 对
+                // `\csca:N \^^L` 报 0 错误，对 `\a\x`（\x 是普通 cs）报
+                // Forbidden——差异在「取到的是 active char 而非控制序列」。
                 if let Err(e) = self.check_not_outer(tok) {
                     if self.recover_forbidden_outer(&e) {
                         return Ok(Arc::from([tok]));
@@ -469,7 +475,28 @@ impl Expander {
     /// pdfTeX：`[A]` + `Forbidden control sequence` + **`[B]`**（继续）✅
     /// 旧 NTex：返回致命 `Error::invalid_input` → **作业终止** ❌
     /// （l3kernel `m3fp-parse002`/`m3regex005` 即此因）。
+    /// `check_not_outer` 的**适用性**判据：只对**控制序列** token 报 Forbidden。
+    ///
+    /// tex.web 对 active char 的 `cur_cmd := eq_type(cur_cs)` 也是 `outer_call`
+    /// （故 `check_outer_validity` 会跑），但**宏实参位置取到 active char 的场合
+    /// 不报**——实测对照（pdfTeX ground truth）：
+    ///
+    /// | 输入 | pdfTeX |
+    /// |---|---|
+    /// | `\def\a#1{[#1]}\outer\def\x{A}\a\x` | `! Forbidden ... use of \a.` ✅ 报 |
+    /// | `\csca:N \^^L`（`` `#1 `` 取字符码，`^^L` 是 active char）| **0 错误** ✅ 不报 |
+    fn should_check_outer(&self, tok: Token) -> bool {
+        let Some(csid) = tok.csid() else {
+            return false;
+        };
+        // active char 槽（名字恰为单字符）——取作实参不报
+        !(self.intern.name(csid).chars().count() == 1)
+    }
+
     fn check_not_outer(&self, tok: Token) -> Result<()> {
+        if !self.should_check_outer(tok) {
+            return Ok(());
+        }
         let Some(csid) = tok.csid() else {
             return Ok(());
         };
