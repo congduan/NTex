@@ -61,3 +61,5 @@ crates/ntex-tauri/ui/pkg/
 .workbuddy
 .zcode
 8terminal
+# Tauri 构建生成物（gen/schemas 由 tauri build 生成）
+crates/ntex-tauri/gen/

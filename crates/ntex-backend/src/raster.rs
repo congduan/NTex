@@ -55,7 +55,8 @@ impl Pixmap {
 
     /// 整页填充不透明色（白底用）。
     pub fn fill(&mut self, r: u8, g: u8, b: u8) {
-        for px in self.data.chunks_exact_mut(4) {
+        // clippy::chunks_exact_to_as_chunks（Rust 1.98 新增）：常量块大小用 as_chunks_mut
+        for px in self.data.as_chunks_mut::<4>().0 {
             px[0] = r;
             px[1] = g;
             px[2] = b;
