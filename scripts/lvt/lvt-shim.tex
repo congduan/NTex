@@ -51,6 +51,26 @@
 
 \def\usepackage#1{}
 \def\RequirePackage#1{}
+% ── LaTeX 钩子：`\AtBeginDocument` / `\AtEndDocument` ────────────────────
+%
+% ⚠ 必须提供（2026-09-11 实测，价值极高）：`expl3-code.tex` L13157 用
+%   `\cs_if_exist:NT \@filelist { \AtBeginDocument { … } }` 包裹一段代码块。
+%   这两个宏是 **LaTeX 内核**命令，plain 无。缺失时：
+%     - 报 `! Undefined control sequence. \AtBeginDocument`
+%     - 其后 `}` 配对全乱 → `Argument of \__file_tmp:w has an extra }` 级联
+%     - **载入在 L25851 崩溃，产生 3,114 个错误**（实测）
+%   补上后 expl3-code.tex（40,266 行）**零错误完整载入**。
+%
+%   ⇒ 这 3,114 个错误**全是脚手架缺陷**，不是引擎缺陷。此前多轮
+%     「引擎 bug」误判源于此（与 2026-09-11 那轮 harness 载入两次同类）。
+%
+%   语义：真实 LaTeX 里它们把代码延迟到 `\begin{document}` 执行。垫片无此
+%   时机概念 → 直接执行（expl3 的 `\@filelist` 分支在 plain 下本就不该走，
+%   且该段仅做文件清单记录，副作用可忽略）。
+%   ⚠ 参数必须吃下：用不带 `#1` 的 `\def` 会让 `{…}` 组成为裸组，
+%     组内 `\catcode` 变化泄漏；故必须吞掉实参组。
+\def\AtBeginDocument#1{}
+\def\AtEndDocument#1{}
 \def\makeatletter{\catcode`\@=11 }
 \def\makeatother{\catcode`\@=12 }
 \def\ProvidesFile#1{}
