@@ -236,3 +236,47 @@ scripts/trace-view.py /tmp/m1.jsonl --spikes      # 找自我复制宏链
   不是「latx.ltx 跑到第几行」；
 - 每轮跑分后把 `lvt-results.tsv` 与本表对比，**回退必须解释**；
 - 与 `make blocker-track` 互补：那个看「单文件阻塞点位置」，这个看「用例通过面」。
+
+---
+
+## ⚠ 指标解读的关键限制（2026-09-11 实测，必读）
+
+**当前的 `DIFF` 数字不能直接读作「引擎语义缺口」。** 原因：
+
+`.lvt` 用例假设 **expl3 已载入**（l3build 用 `--fmt=...latex` 预载 format；
+`l3kernel/build.lua` 的 `checkdeps = { }` 印证无需额外包）。但我们的垫片
+**没有载入 expl3**——而用例正文调用的是 expl3 kernel 函数：
+
+```tex
+\TEST{cs~if~exist~use}{
+  \cs_if_exist_use:N   \TRUE          ← expl3 kernel 函数
+  \cs_if_exist_use:NF  \TRUE { \ERROR }
+  ...
+```
+
+实测 `m3basics001` 转录：
+```
+TEST 1: cs if exist use          ← 标题已对（`~`=cat10 修复后）
+! Undefined control sequence.
+\cs_if_exist_use:N               ← 函数未定义 → 落字面文本
+```
+
+**全 187 例共用到 2595 个不同的 expl3 函数** —— 无法靠垫片补齐（那就是 expl3 本身）。
+
+### 因此当前指标的真实含义
+
+| 判定 | 读作 |
+|---|---|
+| `RAN` | harness 跑完了（**不代表任何语义正确**）|
+| `DIFF` | 输出与 `.tlg` 不符 —— 但**大部分差异来自「expl3 未载入」而非引擎缺陷** |
+| **`PASS`** | **真正有意义的目标** —— 需先让 expl3 载入 |
+
+### 正确的推进顺序
+
+1. **先让 expl3 载入**（`\input expl3.ltx` 走通）—— 这正是战役主线目标
+2. 载入后重跑 `lvt-tlg-diff`，此时的 `DIFF`/`PASS` 才**真正度量引擎语义**
+3. 垫片类修复（`~`=cat10、`\debug_on:n`、变量名去 `_`）是**必要的基础**，
+   但**不足以让 PASS > 0**
+
+**教训**：`DIFF 177/189` 这个数字很漂亮（像"只差一点点"），实际是
+**「expl3 缺席」的度量**，不是「引擎快好了」的度量。**指标要有正确的读法。**
