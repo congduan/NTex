@@ -297,7 +297,12 @@ impl Expander {
         loop {
             let tok = self
                 .fetch()?
-                .ok_or_else(|| Error::invalid_input("实参扫描到输入末尾"))?
+                .ok_or_else(|| {
+                    if std::env::var_os("NTEX_ARG_DBG").is_some() {
+                        eprintln!("[ARG-END] 宏 \\{name} 实参扫描到输入末尾（栈深 {}）", self.stack.len());
+                    }
+                    Error::invalid_input("实参扫描到输入末尾")
+                })?
                 .0;
             if tok.catcode() != Some(Catcode::Space) {
                 self.unread(tok);

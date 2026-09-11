@@ -63,6 +63,33 @@
   2. `exec_write` → `scan_number()` 读 `128`
   3. `scan_general_text()` 读 `{~}` ← **此处失败**
 
+#### ⭐⭐ 确凿引擎差异（pdfTeX ground truth）
+
+**最小对照**（纯 plain，无 harness）：
+```tex
+\catcode`\~=\active
+\def~#1{[TIE:#1]}          % active 字符是**带参宏**（harness 里 `~` 正是 `\def~#1{\accent"7E #1}`）
+\immediate\write128{~}    % 实参扫描时 `~` 需 #1，输入已耗尽
+\immediate\write128{[AFTER]}
+\end
+```
+
+| | pdfTeX | NTex |
+|---|---|---|
+| 结果 | `Runaway argument` + 可恢复错误，**继续执行** → 输出 `[AFTER]` ✅ | `! 实参扫描到输入末尾` → **作业终止** ❌ |
+
+**结论：这是错误恢复语义的缺失** —— tex.web 里实参扫描遇输入耗尽报
+`Runaway argument`（**可恢复**，`error` + 继续），NTex 当成**致命错**。
+
+**harness 里的表现**：`~` 被定义成 `\def~#1{\accent"7E #1}`（LaTeX 重音宏），
+于是任何「`~` 作为 write/参数组最后一个 token」的写法都终止整个测试 ——
+8 例 CRASH 全因此。
+
+**修法方向**：参照 tex.web `macro_call` 的实参扫描 EOF 路径（`scan_toks` 的
+`Runaway argument` 恢复），把 NTex 的
+`Error::invalid_input("实参扫描到输入末尾")`（macros.rs L300/L309）
+改为**可恢复**：报 `Runaway argument` 到转录 + 按空实参继续。
+
 **待查**：`scan_number_inner`（L61+）的 token 循环在读完 `128` 后，
 为何会走到 `collect_undelimited_arg` 并因 `~`（active 展开压帧）判输入耗尽。
 
