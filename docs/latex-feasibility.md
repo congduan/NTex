@@ -394,6 +394,54 @@ NTex 偏离 tex.web（在实参位置多做一次展开）。
 即可确定 char 10 之后是否混入了空名 cs。**不要再靠语义猜测造探针**
 （本轮已因此误判两次，见 §A1.octies）。
 
+### A1.decies 首现场再收窄（2026-09-11，⚠ 含一次旧二进制误读的更正）
+
+**⚠ 先更正一个过程错误**：本轮中段一度报告「active LF 后每行报错」，
+那是**跑在含调试插桩的旧二进制**上得到的结果（`git checkout` 回退源码后
+忘记 rebuild）。**重新 build 后该现象消失**。教训：**改完源码必须
+`cargo build` 再验证，否则读的是旧产物**（skill 已记录该坑，此处再次命中）。
+
+#### 干净二进制下的分层结果
+
+| 用例 | 错误数 | 输出 |
+|---|---|---|
+| `{\catcode`\^^J=\active` + 换行 + `\message` | 0 | 正常 |
+| 同上 + `\def\x{Q}` | 0 | 正常 |
+| 同上 + `\edef\x{Q}` | 0 | 正常 |
+| 同上 + `\edef\x{\string^^J}`，再 `\message{[M \meaning\x]}` | **0** | `[M macro:->` + 换行 ✅ |
+| **latex.ltx L301 原场景**（`\def\reserved@a#1#2\@@{...}` + `\edef\reserved@a{\expandafter\reserved@a\string^^J\@@}` + 再 `\message{[…\meaning\reserved@a]}`）| **1** | `[PRE][DEF-OK][DONE]`，**`[EDEF-OK …]` 整条丢** |
+
+#### 错误形态与位置
+
+```
+! Undefined control sequence.
+\                      ← 被报的 cs 名字为空
+l.8   \message{[EDEF-OK \meaning\reserved@a]}}
+```
+错误挂在**下一行**（`l.8`），实际执行的是 `l.7` 的 `\edef` —— **错误上下文行号错位一格**。
+
+#### 已排除（本轮新增，全部经干净二进制复核）
+
+- ✅ `\catcode`\^^J=\active` 后换行本身（多行/单行均正常）
+- ✅ `\edef` 含 active char 的普通内容
+- ✅ `\string^^J` 产出 char 10（插桩确认 `name_bytes=[10]`）
+- ✅ **`\meaning` 对含 char 10 的宏**（`[M macro:->` + 换行，0 错）
+
+#### 未定（最小剩余差异）
+
+与上面「已排除」各项的**唯一差别**是 `\reserved@a` 是**带定界参数文本的宏**
+（`#1#2\@@`），且 `\edef` 体里用 `\expandafter\reserved@a\string^^J\@@`
+把它**递归调用自身**。怀疑点收窄到：
+
+1. `\expandafter` + **带定界实参的宏**在 `\edef` 展开上下文里的实参收集
+   （`\@@` 作定界符的匹配/消费）；
+2. 或 `\meaning` 对**带定界参数文本的宏**输出时，`params.text` 里的 `\@@`
+   与 char 10 的组合。
+
+**下一刀（不靠猜）**：对 `l.7` 的 `\edef` 加 `NTEX_TRACE_JSONL`
+note 事件（在 `exec_def`/`expand_region` 出口打印产出的宏体 token 序列），
+直接看 `\reserved@a` 被赋成了什么。**先 build 再验**。
+
 ### A2. 连锁：`\reserved@a` 未定义自引用
 
 ```
