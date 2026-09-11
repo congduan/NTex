@@ -559,9 +559,9 @@ mod string_active_char {
 }
 
 /// §A1.septies 探针：char 10 token 在宏实参传递中的存活性。
-
+///
 /// §A1.septies 探针：可展开原语在**宏实参位置**是否被展开。
-
+///
 /// 宏实参扫描**不展开**可展开原语（tex.web `get_token` 语义）。
 ///
 /// pdfTeX ground truth（2026-09-11 实测）：
