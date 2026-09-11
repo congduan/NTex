@@ -430,9 +430,14 @@ impl Expander {
                     EqSlot::Undefined => "undefined".to_owned(),
                     EqSlot::Primitive(_) => format!("\\{name}"),
                     EqSlot::Macro(m) => {
-                        let params: String = (1..=m.value.params.num_params)
-                            .map(|n| format!("#{n}"))
-                            .collect();
+                        // tex.web print_cmd_chr `call` 臂（L23707 `print("macro")`）
+                        // + print_meaning（L6324-6327）：`macro:` 后接
+                        // **token_show(参数文本)** 再接 `->` + 宏体。参数文本含
+                        // 定界符与 `#n`（`\gdef\if@12{}` 的 `if`、`\def\a#1#2`
+                        // 的 `#1#2`）——此前只渲染 `#n`，定界符丢失：
+                        // `\uppercase{\gdef\if@12{}}` 的 `\meaning\if@` 误报
+                        // `macro:->`（pdfTeX 为 `macro:if->`）。
+                        let params = detok_tokens(&m.value.params.text, &self.intern);
                         let body = detok_tokens(&m.value.body, &self.intern);
                         // tex.web print_meaning（e-TeX）：protected 宏前缀
                         // `\protected`（长貌 `\long` 前缀需 MacroDef 记录 long

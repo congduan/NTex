@@ -3052,3 +3052,63 @@ ipn2b 形态同理：`\show\x` 显示 `->\lowercase {x}.` 的 `#` 消失是 acti
 `scan_parameter_text` 未消费到。建议先加 token 级插桩（转换输入/输出 + 参数文本
 扫描起点）一次拿全数据，再对照 tex.web `shift_case`（@23609，`back_list` 后
 由常规扫描继续）与 `scan_toks` 的参数文本循环。
+
+## 41. 第三十四刀（修复）：`\meaning` 丢参数文本定界符——§38/§39 的"根因"实为显示层误报（2026-09-11）
+
+§40 把 plain 预载 `\newif` 链的根因判为"`\uppercase` 内 `\gdef` 参数文本丢失"。
+本轮用插桩 + pdfTeX 逐字对照**推翻了该结论**，真缺陷在 `\meaning` 的显示层。
+
+### 41.1 插桩铁证：`\uppercase` 的转换与参数文本都是对的
+
+一次插桩拿全数据（`NTEX_UPCASE_DBG` 打 `case_convert_tokens` 的输入/输出，
+`NTEX_PARAM_DBG` 打 `scan_parameter_text` 的收集结果）：
+
+```
+[upcase] 入参 6 tok: \gdef | \if@ | '1'(cat12) | '2'(cat12) | { | }
+[upcase] 输出 6 tok: \gdef | \if@ | 'i'(cat12) | 'f'(cat12) | { | }
+[param]  num=0 text=2 tok: 'i'(cat12), 'f'(cat12)
+```
+
+- `\uppercase` 把 `1`/`2` 正确转为 `i`/`f`，且**保持 catcode 12**（tex.web
+  `shift_case` 只改 charcode，与本引擎实现一致）；
+- `\gdef` 的参数文本扫描**确实收到了** `i`/`f` —— 参数文本从未丢失。
+
+### 41.2 真缺陷：`\meaning` 不渲染定界符
+
+tex.web `print_meaning`（L6324-6327）：`print_cmd_chr` 对 `call` 打 `macro` 后，
+`print_char(":")` 再 `token_show(cur_chr)` —— **显示的是参数文本 token 列表**。
+NTex 的 `meaning_text`（`expand/primitive.rs`）与 `slot_display`
+（`expand/save.rs`，`{restoring}` 用）却都只渲染 `#n`：
+
+```rust
+let params: String = (1..=m.value.params.num_params).map(|n| format!("#{n}")).collect();
+```
+
+于是 `\meaning\if@` 打 `macro:->` 而非 `macro:if->`——**纯显示失真**，
+但足以让 §38/§39 两轮把根因误判到 `\uppercase` 语义上。
+
+### 41.3 修复与验证
+
+改两处渲染为 `params.text`（`token_show` 等价物）。验证：
+
+| 探针 | pdfTeX | NTex（修复后） |
+|---|---|---|
+| `\meaning\if@`（`\uppercase{\gdef\if@12{}}` 后） | `macro:if->` | `macro:if->` ✅ |
+| `\meaning\ifxx` / `\meaning\ifref` | `macro:if->` / `macro:if->` | 同 ✅ |
+| `\newif\ifmyflag` + `\myflagtrue` 端到端 | `R1-FALSE R2-TRUE` | 同 ✅ |
+
+- 回归测试：`tests_scan.rs` `mod uppercase_param_text`（3 条：定界符转换、
+  普通 `#n` 保住、定界符+`#n` 混合），RED→GREEN 全程留痕；
+- 门禁：`fmt` + `clippy --workspace --all-targets -D warnings` +
+  `cargo test --workspace`（41 套件）全绿；corpus KPI 无回归（5/8 + 3 EMPTY）。
+
+### 41.4 方法论教训（重要）
+
+1. **"两轮定位的根因"也要用插桩复核**。§38/§39 靠 `\meaning` 输出推断语义，
+   而该输出本身有 bug —— **诊断仪器失真会把定位带到错误方向**（与 corpus-probe
+   的双盲区同源教训：仪器先于结论被验证）。
+2. **一次插桩拿全数据**（本轮 `NTEX_UPCASE_DBG` + `NTEX_PARAM_DBG` 一次跑完）
+   直接推翻了"参数文本丢失"假说，比继续读代码快得多。
+3. **catcode 干扰项**：`@` 在 plain.tex 末尾（L1239）被改回 12，故预载后
+   `\if@` 不可访问是**正确行为**（pdfTeX 同样切分成 `\if` + `@`，已对拍证伪
+   "NTex 特有 bug"）；调试 `@` 类 cs 须先 `\catcode`\@=11`。

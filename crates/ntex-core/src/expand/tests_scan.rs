@@ -477,33 +477,43 @@ mod case_convert_semantics {
     }
 }
 
-/// §39 已知偏差（RED，待修）：`\uppercase` 内 `\gdef` 的参数文本未按
-/// `\uccode` 转换。
+/// §41：`\uppercase` 内 `\gdef` 的参数文本按 `\uccode` 转换（语义锁）。
 ///
-/// **ground truth（pdfTeX 实测 /tmp/gd.tex）**：
-/// `{\uccode`1=`i \uccode`2=`f \uppercase{\gdef\if@12{}}}`
-/// → `\meaning\if@` = `macro:if->`（参数文本 = 转换后的 `if`）。
+/// **ground truth（pdfTeX 实测 /tmp/ifxcheck.tex）**：
+/// `{\uccode`1=`i \uccode`2=`f \uppercase{\gdef\ifxx12{}}}` 后
+/// `\meaning\ifxx` = `macro:if->`——数字字符 `1``2` 被转成 `if` 并**作为
+/// 参数文本**（定界符）存入宏定义。
 ///
-/// **NTex 实测**：`macro:->`（参数文本为空）→ plain.tex 预载的 `\newif`
-/// 全链带病（`\@if` 经 `\csname\if@...` 造不出 `\ifus@` 等目标 cs）。
-///
-/// 影响面：plain 预载后所有 `\newif` 开关 + latex.ltx 前置依赖。
+/// **修复前的真缺陷在显示层**：`\meaning` 只渲染 `#n` 而丢定界符 → 误报
+/// `macro:->`，掩盖了"参数文本其实正确"的实情，导致 §38/§39 把根因误判为
+/// `\uppercase` 语义问题。修复 = `meaning_text`/`slot_display` 改渲染
+/// `params.text`（tex.web `print_meaning` 的 `token_show(参数文本)`）。
 #[cfg(test)]
 mod uppercase_param_text {
     use super::*;
 
-    /// `\ifxx`（参数文本应 = uccode 转换后的 `if`）与字面 `\gdef\ifref if{}`
-    /// （参数文本 = 字面 `if`）应 `\ifx` 相等。
+    /// 参数文本 = `if`（非 `#n`）→ `\meaning` 应含 `macro:if->`。
     #[test]
-    #[ignore = "已知偏差：uppercase 内 gdef 参数文本丢失，待修（plain 预载 newif 链）"]
     fn uppercase_gdef_param_text_is_converted() {
         let out = expand(
-            "\\uccode`1=`i \\uccode`2=`f \
-             \\uppercase{\\gdef\\ifxx12{}} \
-             \\gdef\\ifref if{} \
-             \\ifx\\ifxx\\ifref SAME\\else DIFF\\fi",
+            "\\uccode`1=`i \\uccode`2=`f              \\uppercase{\\gdef\\ifxx12{}}              \\meaning\\ifxx",
         )
         .unwrap();
-        assert_eq!(out, "SAME", "参数文本未按 uccode 转换（实测空）");
+        assert_eq!(out.trim(), "macro:if->");
+    }
+
+    /// 对照：普通 `#n` 参数文本仍正常渲染（不得被新实现破坏）。
+    #[test]
+    fn normal_params_still_rendered() {
+        assert_eq!(expand("\\def\\a#1#2{#2#1}\\meaning\\a").unwrap(), "macro:#1#2->#2#1");
+    }
+
+    /// 对照：定界符 + `#n` 混合（`\def\a,#1;{...}`）。
+    #[test]
+    fn mixed_delimiter_and_params_rendered() {
+        assert_eq!(
+            expand("\\def\\a,#1;{#1}\\meaning\\a").unwrap(),
+            "macro:,#1;->#1"
+        );
     }
 }

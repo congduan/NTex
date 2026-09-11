@@ -1122,9 +1122,13 @@ impl Expander {
             // 原语槽：显示 cs 名（`{restoring \box=\box}`）
             EqSlot::Primitive(_) => self.cs_name_display(csid),
             EqSlot::Macro(m) => {
-                let params: String = (1..=m.value.params.num_params)
-                    .map(|n| format!("#{n}"))
-                    .collect();
+                // tex.web print_cmd_chr `call` 臂（L23707 `print("macro")`）+
+                // print_meaning（L6324-6327）：宏打印 = `macro:` 后接
+                // **token_show(参数文本)** 再接 `->` + 宏体。参数文本含定界符
+                // 与 `#n`（如 `\gdef\if@12{}` 的 `if`、`\def\a#1#2` 的 `#1#2`），
+                // 此前只渲染 `#n` → 定界符丢失（`\uppercase{\gdef\if@12{}}`
+                // 的 `\meaning\if@` 误报 `macro:->`，pdfTeX 为 `macro:if->`）。
+                let params = self.show_toks(&m.value.params.text);
                 format!("macro:{params}->{}", self.show_toks(&m.value.body))
             }
             // \let 到字符：`char"XX`（print_esc("char") + print_hex）
