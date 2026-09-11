@@ -2035,12 +2035,30 @@ impl Expander {
                         if m.value.protected && self.suppress_expansion > 0 {
                             return self.sink.token(tok);
                         }
-                        // TeX：\edef 展开上下文中 outer 宏 → forbidden
+                        // tex.web `@<Tell the user what has run away...@>`（L7184-7200）：
+                        // `\edef` 展开上下文里的 outer 宏同样是**可恢复错误**
+                        // （`error`，非 fatal）——`scanner_status=absorbing` 分支
+                        // （L7219-7222）打印 `... while scanning text of \X` +
+                        // **插入 `}`** 后继续。
+                        //
+                        // ⚠ 实测（2026-09-11，expl3 载入现场）：`plain` 的
+                        // `^^L` 是 `\outer\def^^L{\par}`（active char + outer 宏），
+                        // expl3-code.tex L9320 `\char_set_catcode_active:N \^^L`
+                        // 走 `` `#1 `` 取值路径即触发。旧实现抛致命错 →
+                        // 级联（`Argument of \csc has an extra }` / `Missing
+                        // number` / `Too many }'s`）；pdfTeX 报 1 次后**继续**。
                         if m.value.outer {
-                            return Err(Error::invalid_input(format!(
-                                "forbidden control sequence \\{}（outer 宏禁止出现在 \\edef 展开上下文）",
-                                self.intern.name(csid)
-                            )));
+                            let name = self.intern.name(csid).to_owned();
+                            let _ = self.sink.write16(format!(
+                                "! Forbidden control sequence found while scanning text of \\\\{name}.\\n\\
+                                 <inserted text> \\n                }} \\n\\
+                                 I suspect you have forgotten a `}}', causing me\\n\\
+                                 to read past where you wanted me to stop.\\n\\
+                                 I'll try to recover; but if the error is serious,\\n\\
+                                 you'd better type `E' or `X' now and fix your file.\\n"
+                            ));
+                            // 恢复：按空展开继续（不中断作业）
+                            return Ok(());
                         }
                         self.call_macro(csid, m.value.clone())
                     }
