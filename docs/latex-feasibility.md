@@ -357,6 +357,43 @@ NTex 偏离 tex.web（在实参位置多做一次展开）。
 正是为此存在：**任何"NTex 有 bug"的结论，必须先经 abcheck 确认 pdfTeX
 的行为与之不同**。
 
+### A1.nonies 首现场收窄：`\edef` 产出含 char 10 的宏后，后续间歇报 undefined（2026-09-11）
+
+用最小分离实验把 `l.301` 首现场收窄到**可复现的最小形态**（已排除 `\reserved@a`、
+`\@@`、`\if...\fi` 结构）：
+
+```tex
+\input plain
+\catcode`\@=11
+{\catcode`\^^J=\active
+  \edef\x{\string^^J}                       ← 单独执行**成功**（x = char 10）
+  \ifx\x\@empty \message{[ISEMPTY]}\else \message{[NOTEMPTY]}\fi   ← 判定正确
+  \message{[AFTER]}}                          ← 此处前多一条 undefined
+```
+
+**实测**：
+
+| 观察点 | 结果 |
+|---|---|
+| `\edef\x{\string^^J}` 本身 | ✅ 成功（`\x` 非空、`[NOTEMPTY]` 正确）|
+| `\edef\x{abc}`（对照，无 active char）| ✅ 干净无错 |
+| 之后任意 `\message` | ❌ 前多一条 `! Undefined control sequence.` + 孤立 `\` |
+| 错误消息体 | **`\` + 空行** —— 被报的 cs **名字为空** |
+
+**当前判读（未定论）**：`\x` 含 char 10 后，引擎在后续处理中出现「空名 cs」
+被当未定义控制序列报错。可能位置：
+
+1. `\meaning`/`\message` 输出通路遇 char 10 时行结构错位（但本实验已排除
+   `\message` 直接打印 `\x`）；
+2. **intern 表里「空名 cs」的来源** —— `\string` 对 active char 走
+   intern 名首字符，若该名字为空/异常则产出空名 token；
+3. `\ifx` 比较时对含 char 10 的 token 列表的处理。
+
+**下一刀（明确、可执行）**：在 `exec_string`/`string_token` 出口加
+`NTEX_TRACE_JSONL` note 事件打印**产出的 token 序列**（kind/cat/code），
+即可确定 char 10 之后是否混入了空名 cs。**不要再靠语义猜测造探针**
+（本轮已因此误判两次，见 §A1.octies）。
+
 ### A2. 连锁：`\reserved@a` 未定义自引用
 
 ```
