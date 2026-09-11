@@ -145,6 +145,28 @@
 % （187 例官方用例中 112 例 STACK-END，见 docs/expl3-lvt-scoreboard.md）。
 % 官方 l3build 的驱动只用 `\input{testsuite}` 一次，shim 须保持一致语义。
 
+% ── 载入 expl3 本体 ─────────────────────────────────────────────
+% ⚠⚠ 这是「真分数」的前提（2026-09-11 实测，见 docs/expl3-real-workload.md）：
+% 官方 `.lvt` 用例**假定 expl3 已由 LaTeX 内核装载**，直接使用
+% `\cs_if_exist_use:N` 等函数。此前 shim 不载 expl3 → 用例里这些函数
+% **全部 undefined**（实测 77 个/例），却因错误恢复跑到 `END-TEST-LOG`
+% 被判 RAN —— 「RAN 180/187」是假分数（度量的是「能带着一堆 undefined
+% 跑到末尾」）。载入 expl3 后同一用例 undefined 降到 6，真实差异才显现。
+%
+% 用 `expl3.ltx`（**不是** `expl3-code.tex`）：后者有 loader 检查
+% （`\ifx\csname ExplLoaderFileDate\endcsname\relax` → `No expl3 loader detected`），
+% `expl3.ltx` 首行 `\let\ExplLoaderFileDate\ExplFileDate` 提供该标志。
+%
+% ⚠ 不用 `\IfFileExists` / `\openin` 探测——**两者在 NTex 上均不可靠**
+% （2026-09-11 实测：`\IfFileExists{expl3.ltx}` 走 false 分支却仍 `\input`；
+% `\openin`+`\ifeof` 对存在的文件也报 eof）。改为**由 lvt-run.py 显式注入宏**
+% `\lvtuseexplthree`（1 = 载入），职责清晰且不依赖未验证的原语。
+% ⚠ 判据用 `\ifnum...=1`（lvt-run.py 总是先 `\chardef` 注入 0 或 1），
+% 不用 `\ifx...\undefined`——NTex 上 undefined 哨兵语义有坑（见下文 §A1 注释）。
+\ifnum\lvtuseexplthree=1
+  \input expl3.ltx
+\fi
+
 % ── 跑目标测试 ──────────────────────────────────────────────────
 \ifx\LVTFILE\undefined
   \message{[lvt-shim] 未定义 \string\LVTFILE}

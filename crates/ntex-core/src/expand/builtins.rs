@@ -536,6 +536,23 @@ pub(crate) const BUILTINS: [(&str, Primitive); 413] = [
             ("utfinputmode", Primitive::UtfInputMode),
 ];
 
+/// `Primitive → 规范名`（`BUILTINS` 反查；tests.rs
+/// `primitive_builtins_cover_enum` 保证全变体覆盖且名字唯一）。
+///
+/// tex.web `show_eqtb`/`print_cmd_chr` 语义：原语槽打印的是**原语的规范名**，
+/// 不是被查询 cs 自己的名字——`\let\a\else` 后 `\show\a` 须为 `\a=\else.`、
+/// `\meaning\a` 须为 `\else`、`\tracingassigns` 须打 `{into \a=\else}`
+/// （pdfTeX 对拍 2026-09-11）。此前渲染成被查询 cs 名（`\a=\a.`），诊断
+/// 通道输出假信息，直接促成「\global\let 别名自指」的误判。
+pub(crate) fn primitive_name(prim: Primitive) -> &'static str {
+    for &(name, p) in BUILTINS.iter() {
+        if p == prim {
+            return name;
+        }
+    }
+    unreachable!("BUILTINS 覆盖全部 Primitive 变体（tests.rs primitive_builtins_cover_enum）")
+}
+
 impl Expander {
     fn register_builtins(&mut self) {
         for (name, prim) in BUILTINS {

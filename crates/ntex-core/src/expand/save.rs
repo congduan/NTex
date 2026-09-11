@@ -1119,8 +1119,9 @@ impl Expander {
     fn slot_display(&self, csid: u32, slot: &EqSlot) -> String {
         match slot {
             EqSlot::Undefined => "undefined".to_string(),
-            // 原语槽：显示 cs 名（`{restoring \box=\box}`）
-            EqSlot::Primitive(_) => self.cs_name_display(csid),
+            // 原语槽：显示规范名（`{restoring \box=\box}`；`\let\a\else` →
+            // `\else`，pdfTeX 对拍 2026-09-11——见 primitive_name 注释）
+            EqSlot::Primitive(p) => format!("\\{}", primitive_name(*p)),
             EqSlot::Macro(m) => {
                 // tex.web print_cmd_chr `call` 臂（L23707 `print("macro")`）+
                 // print_meaning（L6324-6327）：宏打印 = `macro:` 后接

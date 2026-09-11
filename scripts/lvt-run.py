@@ -57,6 +57,69 @@ L3_URL = "https://github.com/latex3/latex3/archive/refs/heads/main.tar.gz"
 
 TFM_DIR = os.environ.get("NTEX_TFM_DIR", str(Path.home() / ".ntex-fonts"))
 
+# expl3 本体生成物（载入器 + 代码）。**没有它们，187 例跑的不是 expl3。**
+#
+# ⚠ 2026-09-11 实测教训：此前 harness 从不载入 expl3，用例里的
+# `\cs_if_exist_use:N` 等**全部 undefined**（实测 77 个/例），
+# 却因错误恢复跑到 `END-TEST-LOG` 被判 RAN —— 「RAN 180/187」是假分数。
+# 载入 expl3 后同一用例 undefined 降到 6（真实差异才显现）。
+#
+# 必须用 **`expl3.ltx`**（不是 `expl3-code.tex` 直接 input）：后者有 loader 检查
+# （`\expandafter\ifx\csname ExplLoaderFileDate\endcsname\relax` →
+# `\PackageError{expl3}{No expl3 loader detected}`），`expl3.ltx` 首行
+# `\let\ExplLoaderFileDate\ExplFileDate` 才提供该标志。
+EXPL3_FILES = ("expl3.ltx", "expl3-code.tex")
+
+
+def ensure_expl3(tf: Path) -> bool:
+    """确保 `expl3.ltx` + `expl3-code.tex` 在 testfiles 目录里。
+
+    来源优先级：
+      1. 已缓存（`CACHE/expl3-built/`，最快）
+      2. `EXPL3_SRC` 环境变量指向的目录（供手工生成/调试）
+      3. 用 latex3 仓库的 `l3kernel.ins` + 一个 TeX 引擎 docstrip 生成
+
+    返回 True 表示两文件就位。生成失败不致命——退回「无 expl3」模式，
+    但会在判据里显式标注（见 [`run_one`] 的 verdict 前缀）。
+    """
+    if all((tf / f).exists() for f in EXPL3_FILES):
+        return True
+    built = CACHE / "expl3-built"
+    if all((built / f).exists() for f in EXPL3_FILES):
+        for f in EXPL3_FILES:
+            shutil.copy(built / f, tf / f)
+        return True
+    src_env = os.environ.get("EXPL3_SRC")
+    if src_env and all((Path(src_env) / f).exists() for f in EXPL3_FILES):
+        for f in EXPL3_FILES:
+            shutil.copy(Path(src_env) / f, tf / f)
+        return True
+    # 用 l3kernel.ins 生成（需 latex3 源码树已解包 + 可用 TeX 引擎）
+    ins = next(CACHE.glob("latex3-*/l3kernel/l3kernel.ins"), None)
+    if ins is None:
+        return False
+    engine = shutil.which("pdftex") or shutil.which("tex")
+    if engine is None:
+        return False
+    built.mkdir(parents=True, exist_ok=True)
+    try:
+        r = subprocess.run(
+            [engine, "-interaction=nonstopmode", "-output-directory", str(built), "l3kernel.ins"],
+            cwd=ins.parent, capture_output=True, timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        return False
+    if not all((built / f).exists() for f in EXPL3_FILES):
+        # docstrip 可能输出到 cwd
+        for f in EXPL3_FILES:
+            if (ins.parent / f).exists():
+                shutil.copy(ins.parent / f, built / f)
+    if not all((built / f).exists() for f in EXPL3_FILES):
+        return False
+    for f in EXPL3_FILES:
+        shutil.copy(built / f, tf / f)
+    return True
+
 
 def fetch() -> Path:
     """下载/解包 l3kernel 测试树；返回 testfiles 目录。"""
@@ -99,12 +162,20 @@ def run_one(tf: Path, name: str, timeout: int = 30) -> tuple[str, str]:
     if not (tf / base).exists():
         return "MISSING", f"找不到 {base}"
     wd = Path(tempfile.mkdtemp(prefix="lvt-"))
-    for f in ("lvt-shim.tex", "regression-test.tex", "regression-test.cfg", base):
+    files = ["lvt-shim.tex", "regression-test.tex", "regression-test.cfg", base]
+    # ⚠ expl3 本体必须进临时目录：否则用例里 `\cs_if_exist_use:N` 等全 undefined，
+    # 却因错误恢复跑到 END-TEST-LOG → 假 RAN（2026-09-11 实测 77 undefined/例）。
+    files += list(EXPL3_FILES)
+    for f in files:
         if (tf / f).exists():
             shutil.copy(tf / f, wd / f)
     # 驱动文件负责终止作业（shim 不再自带 \end —— 嵌套 input 上下文里执行 \end
     # 会触发输入栈无限增长，见 docs/latex-feasibility.md §A1.undevicies）
+    # ⚠ `\lvtuseexplthree`：显式告知 shim 是否载入 expl3。不用
+    # `\IfFileExists`/`\openin` 探测——两者在 NTex 上均不可靠（实测）。
+    use_expl3 = all((wd / f).exists() for f in EXPL3_FILES)
     (wd / "run.tex").write_text(
+        f"\\chardef\\lvtuseexplthree={1 if use_expl3 else 0}\n"
         f"\\def\\LVTFILE{{{base}}}\n\\input {wd}/lvt-shim\n"
     )
     try:
@@ -152,6 +223,20 @@ def main() -> int:
     args = ap.parse_args()
 
     tf = fetch()
+    # ⚠ expl3 本体就位是**真实分数**的前提。缺失时用例跑的不是 expl3，
+    # 分数无意义（2026-09-11 实测：77 个 expl3 函数 undefined 仍判 RAN）。
+    have_expl3 = ensure_expl3(tf)
+    if not have_expl3:
+        print(
+            "[lvt-run] ⚠⚠ 未找到 expl3.ltx/expl3-code.tex —— 用例将**不载入 expl3**，\n"
+            "          分数是**假分数**（用例里的 expl3 函数全部 undefined）。\n"
+            "          修法：`EXPL3_SRC=/path/to/dir python3 scripts/lvt-run.py …`\n"
+            "          （该目录需含 expl3.ltx + expl3-code.tex），\n"
+            "          或让 latex3 源码树可被 l3kernel.ins 生成。",
+            file=sys.stderr,
+        )
+    else:
+        print("[lvt-run] expl3 本体已就位（expl3.ltx + expl3-code.tex）")
     if args.list:
         for f in sorted(tf.glob("*.lvt")):
             print(f.stem)

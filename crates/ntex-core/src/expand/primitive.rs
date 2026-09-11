@@ -289,7 +289,9 @@ impl Expander {
                 let name = self.intern.name(csid).to_owned();
                 match self.eqtb.slot(csid).clone() {
                     EqSlot::Undefined => format!("\\{name}=undefined."),
-                    EqSlot::Primitive(_) => format!("\\{name}=\\{name}."),
+                    // tex.web show_eqtb：原语槽打印规范名（`\let\a\else` →
+                    // `\a=\else.`，非 `\a=\a.`——见 primitive_name 注释）
+                    EqSlot::Primitive(p) => format!("\\{name}=\\{}.", primitive_name(p)),
                     EqSlot::Macro(m) => {
                         let params: String = (1..=m.value.params.num_params)
                             .map(|n| format!("#{n}"))
@@ -431,7 +433,9 @@ impl Expander {
                 let name = self.intern.name(csid).to_owned();
                 match self.eqtb.slot(csid).clone() {
                     EqSlot::Undefined => "undefined".to_owned(),
-                    EqSlot::Primitive(_) => format!("\\{name}"),
+                    // tex.web print_cmd_chr：原语槽打印规范名（`\meaning\a`，
+                    // `\let\a\else` → `\else`，非 `\a`——见 primitive_name 注释）
+                    EqSlot::Primitive(p) => format!("\\{}", primitive_name(p)),
                     EqSlot::Macro(m) => {
                         // tex.web print_cmd_chr `call` 臂（L23707 `print("macro")`）
                         // + print_meaning（L6324-6327）：`macro:` 后接
