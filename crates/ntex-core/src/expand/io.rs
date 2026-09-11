@@ -154,6 +154,25 @@ impl Expander {
                             .ok_or_else(|| Error::invalid_input("文件名含非法字符"))?;
                         name.push(ch);
                     }
+                    // tex.web `scan_file_name`（L10210）：判据是
+                    //   `if (cur_cmd>other_char)or(cur_chr>255) then back_input; goto done`
+                    // 即**只要不是「命令」就按字符值 `cur_chr` 收集**，catcode 不参与
+                    // 判定。`more_name`（L10023）只在**空格**处返回 false。
+                    // 故下标 `_`(cat 8)、上标 `^`(cat 7)、参数 `#`(cat 6) 等
+                    // **都算文件名字符**。
+                    //
+                    // ⚠ 实测缺此分支的后果：路径含 `_` 时文件名被截断（
+                    // `/tmp/lvt-u_u/x` → 只扫到 `/tmp/lvt-u`）→
+                    // `! 非法输入：找不到文件`。在 l3kernel 测试里表现为
+                    // **随机的假 CRASH**（tempfile.mkdtemp 随机生成含 `_` 的目录名，
+                    // 同一用例时通时不通），曾误导定位多轮（2026-09-11）。
+                    Some(c) if !matches!(c, Catcode::Space) => {
+                        let ch = t
+                            .charcode()
+                            .and_then(char::from_u32)
+                            .ok_or_else(|| Error::invalid_input("文件名含非法字符"))?;
+                        name.push(ch);
+                    }
                     _ => {
                         self.unread(t);
                         break;
