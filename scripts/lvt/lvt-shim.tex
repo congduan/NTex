@@ -46,6 +46,13 @@
 % `\end` 后跟 `{document}` 会误当正文——故用 `\AtEndDocument` 式惰性处理：
 % 把 `\end` 包成"若下一 token 是 `{` 则吞参数组，否则转原语"）。
 \def\begin#1{}
+% ⚠ 顺序关键：必须在 `\def\end{...}` **之前**绑 `\@@end`/`\@@ntex@end@prim`，
+% 此时 `\end` 还是**原语**。regression-test.tex 的 `\ifx\@@end\@undefined`
+% 依赖 `\@@end` 存在（LaTeX 内核里它是 plain `\end` 的别名）→ 走 else →
+% `\let\@@@end\@@end`。若不提供，NTex 下 `\@@end` 为 undefined，
+% harness 会走 `\if` 真分支，`\@@@end` 绑定错误 → `\END` 宏体无限重放爆栈
+% （§A1.terdecies 实测 4986 轮 → input stack size=5000）。
+\let\@@end\end
 \let\@@ntex@end@prim\end
 \def\end{\futurelet\@let@token\@@ntex@end@}
 \def\@@ntex@end@{%

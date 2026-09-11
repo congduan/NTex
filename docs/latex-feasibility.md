@@ -546,6 +546,103 @@ NTex  : [A] + "! Extra \fi." + [B]      ← 完全一致
 `read_floor` 边界。**建议用 JSONL 记录 `call_macro` 的调用者链**（当前 trace 只记
 `push_frame`，未记「谁调用」），这需要给 `call_macro` 加 note 事件。
 
+### A1.terdecies 爆栈根因锁定：`\@@@end` 绑定失败 → `\END` 宏体无限重放（2026-09-11）
+
+**靶子从 4 万行 latex.ltx 缩到 5 行**（关键突破）：
+
+```tex
+\documentclass{minimal}
+\input{regression-test}
+\begin{document}
+\START
+\END
+```
+
+**`\START` + `\END` 即可复现**（不需要 `\TYPE`）。这使 `m3basics001`
+（以及 187 例中 111 例 STACK-END）的爆栈成为**可定点调试**的小问题。
+
+#### 机制（trace 铁证）
+
+```
+step=4127  d=393  MacroArg(14tok)  tok=\immediate
+step=4127  d=393  TokenList(14tok) tok=\immediate
+step=4129  d=392  Bytecode         tok=\@@@end      ← \END 宏体里的 \@@@end
+step=4130  d=393  TokenList(1tok)  tok=\ifnum        ← \END 被从头重放！depth +1
+   …每轮 +1，4986 轮后 input stack size=5000 爆栈
+```
+
+累计 token：`\ifnum`(16.5万) / `\immediate`(6万) / `\LONGTYPEOUT`(9千) / `\@@@end`(4.6千)。
+
+**即 `\END` 的宏体被反复重放**，而**`\end` 原语从未执行**
+（插桩 `NTEX_END_DBG` 实测 `[END]` 出现 **0 次**）。
+
+#### 根因：`\@@@end` 是 undefined，不是 `\end`
+
+harness（`regression-test.tex` L64-68）的绑定：
+
+```tex
+\ifx\@@end\@undefined
+  \let\@@@end\end        ← 本应走这里
+\else
+  \let\@@@end\@@end      ← 实际走了这里（\@@end 存在）
+\fi
+```
+
+**NTex 里 `\@@end` 的实测状态**：
+
+| 探针 | 结果 |
+|---|---|
+| `\meaning\@@end` | `undefined` |
+| `\ifx\@@end\relax` | 假 |
+| `\ifx\@@end\@undefined` | **假**（`\@undefined` 被 shim `\let` 成 `\relax`）|
+
+→ 走了 **else 分支** → `\@@@end := \@@end`（**undefined**）→ `\END` 调 `\@@@end`
+= 调一个 undefined cs → **不终止作业**，`\END` 体继续/重放 → 爆栈。
+
+**根因归类**：「`\ifx` 对『未定义 cs』与『`\relax`』的判定」——tex.web 里
+LaTeX 的 `\@undefined` 约定依赖二者在 `\ifx` 下**同类**。shim 把 `\@undefined`
+设成 `\relax` 后，与真正 undefined 的 `\@@end` **不同类** → 判定翻转。
+
+**注意**：这是 **shim 与 harness 的交互问题**，未必是 NTex 引擎缺陷——
+需先确认 **pdfTeX 下 `\ifx\<未定义>\relax` 的真假**（tex.web：`\ifx` 比较
+eqtb 槽类型，undefined 槽 vs relax 原语槽 **类型不同应为假**）。若 pdfTeX 亦为假，
+则 harness 本就不该走 `\if` 分支——那问题在 shim 该提供 `\@@end`（LaTeX 内核里
+`\@@end` 是 **plain `\end` 的别名，存在**）。
+
+**下一刀**：
+1. 用 pdfTeX 对拍 `\ifx\@@end\@undefined`（真 LaTeX 环境下 `\@@end` 存在）；
+2. 若确认 shim 需补 `\@@end` → 在 shim 中 `\let\@@end\end`（LaTeX 内核同款），
+   使 harness 走 else 分支且 `\@@@end` 绑到真 `\end`。
+
+**这是一处 shim 侧的修复，不是引擎缺陷** —— 修正后 5 行最小复现应不再爆栈，
+再跑 187 例看 STACK-END 衰减。
+
+### A1.quaterdecies 交接受阻点：`\@@@end` 仍被绑成 `\END`（2026-09-11）
+
+§A1.terdecies 判定的「shim 缺 `\@@end`」已实施（`\let\@@end\end`，且在
+`\def\end{...}` **之前**绑原语），但 5 行最小复现**仍爆栈**：
+
+```
+[m1dbg/min5.lvt] \message{[M \meaning\@@@end]}
+  → [M macro:->\ifnum\currentgrouplevel>0 \LONGTYPEOUT{...}\fi\ifnum\c…
+      ↑ \@@@end 的 meaning 显示的是 **\END 自己的宏体**
+```
+
+**判读**：`\@@@end` ≡ `\END`，而非 `\end` 或 wrapper。两种可能：
+
+1. harness L83-87 的第二个 `\ifx\@@end\@undefined` 块改了绑定路径
+   （该块 body 是 `\def\END{...}`，但 `\if` 判定不同会走 else 变体）；
+2. NTex 的 `\ifx` 对 undefined cs 的判定与 pdfTeX 不同，致 harness 走错分支。
+
+**下一刀（明确的 3 步）**：
+1. 打印 harness **两条** `\ifx\@@end\@undefined` 的实际走向（两个块各插探针）；
+2. pdfTeX 对拍同一 harness 的走向（ground truth）；
+3. 据分歧点决定改 shim 还是登记引擎缺陷。
+
+**已确认的引擎侧修复**（保留，独立有效）：
+- `process_one` 顶部 + `process_token` 顶部加 `if self.ended { return ... }`
+  （`\end` 终结语义；简单用例 `\end` 后 `\message` 不输出已验证 ✅）
+
 ### A2. 连锁：`\reserved@a` 未定义自引用
 
 ```

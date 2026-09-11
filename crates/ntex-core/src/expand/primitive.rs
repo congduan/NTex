@@ -100,6 +100,9 @@ impl Expander {
             Primitive::Let => self.exec_let(),
             // ---- 组 / 全局 / 收尾 ----
             Primitive::End => {
+                if std::env::var_os("NTEX_END_DBG").is_some() {
+                    eprintln!("[END] 执行 \\end（栈深 {}）", self.stack.len());
+                }
                 self.stack.clear();
                 self.output_active = false;
                 self.ended = true;

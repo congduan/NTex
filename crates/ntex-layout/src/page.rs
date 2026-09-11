@@ -136,12 +136,10 @@ impl PageBuilder {
     /// 判据（对齐 tex.web `append_to_vlist` 会建 `page_head` 的节点类型）：
     /// `Box` / `Rule` 算；`Glue` / `Kern`(垂直) / `Penalty` / `Mark` / `Insert` 不算。
     pub fn has_shippable_content(&self) -> bool {
-        self.page.iter().any(|n| {
-            matches!(
-                n,
-                Node::Box(_) | Node::Rule { .. } | Node::HBox(_) | Node::VBox(_)
-            )
-        }) || self.has_box
+        self.page
+            .iter()
+            .any(|n| matches!(n, Node::Box(_) | Node::Rule { .. }))
+            || self.has_box
     }
 
     /// 页面最后盒子的深度（push_box 的 interline glue 用；tex.web `prev_depth`）。
