@@ -121,6 +121,29 @@ impl PageBuilder {
         !self.has_box && self.page.is_empty()
     }
 
+    /// 页面是否含**可冲页内容**（tex.web `page_head<>null` 判据）。
+    ///
+    /// tex.web 的 `page_head` 只在 `append_to_vlist` 加入**盒子/规则**时建立；
+    /// 纯胶水（`\vskip`/`\vfill`）、kern、惩罚**不建立** `page_head`。故
+    /// `fire_up` 在 `page_head=null` 时**丢弃该页**——这正是 pdfTeX 对
+    /// `\vfill\supereject\end`（plain `\bye` 的形态）输出 `No pages of output.`
+    /// 的原因，而 NTex 曾冲出一个**纯胶水假页**（corpus `plain/*` 三个 EMPTY）。
+    ///
+    /// ⚠ 注意本判据**只在「冲页触发点」使用**：`\end` 的 `its_all_over` 路径
+    /// 对纯胶水**仍然冲页**（pdfTeX 实测 `\vfill\end` → 1 页）。两条路径的
+    /// 差别见 `docs/latex-feasibility.md` 与 `scripts/page-eject-matrix.py`。
+    ///
+    /// 判据（对齐 tex.web `append_to_vlist` 会建 `page_head` 的节点类型）：
+    /// `Box` / `Rule` 算；`Glue` / `Kern`(垂直) / `Penalty` / `Mark` / `Insert` 不算。
+    pub fn has_shippable_content(&self) -> bool {
+        self.page.iter().any(|n| {
+            matches!(
+                n,
+                Node::Box(_) | Node::Rule { .. } | Node::HBox(_) | Node::VBox(_)
+            )
+        }) || self.has_box
+    }
+
     /// 页面最后盒子的深度（push_box 的 interline glue 用；tex.web `prev_depth`）。
     pub fn prev_depth(&self) -> i64 {
         self.prev_depth

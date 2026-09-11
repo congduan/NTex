@@ -2,7 +2,7 @@
 # 质量门禁：`make check` = fmt + lint + test 三件套全绿。
 
 .PHONY: fmt lint test check fixtures fixture-extras trip diff bench tauri-wasm tauri \
-        instrument-check abcheck blocker-track logtrace
+        instrument-check abcheck blocker-track logtrace lvt-run lvt-fetch
 
 fmt:
 	cargo fmt --all -- --check
@@ -34,6 +34,14 @@ blocker-track:
 # 回答「首现场在哪 / 震中是哪行 / 级联是扇出还是链式 / 哪些错我方独有」
 logtrace:
 	python3 scripts/logtrace.py $(LOG) $(ARGS)
+
+# expl3 官方测试套件（l3kernel .lvt，187 例）：抓取 / 跑单例 / 全量跑分
+# 见 docs/expl3-lvt-scoreboard.md
+lvt-fetch:
+	python3 scripts/lvt-run.py --fetch
+
+lvt-run:
+	python3 scripts/lvt-run.py $(CASE) $(ARGS)
 
 # 获取 TRIP 测试 fixtures（优先 kpsewhich，失败则从 CTAN/GitHub 下载）
 fixtures:

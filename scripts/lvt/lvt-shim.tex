@@ -1,0 +1,87 @@
+% lvt-shim.tex —— 用 plain 承载 l3build 官方测试（.lvt）的最小垫片
+%
+% ## 为什么需要它
+%
+% l3kernel 官方测试（266 个 .lvt / 其中 208 个 l3kernel）是**权威分母**：
+% 每个 .lvt 配一个 .tlg（期望转录，gold standard）。但 .lvt 头部是
+% `\documentclass{minimal}` + `\input{regression-test}` —— 需要 LaTeX 内核，
+% 而 LaTeX 内核又依赖 expl3（循环依赖）。本垫片用 plain 提供那几个 LaTeX 符号，
+% 使测试体（纯 expl3）可在 NTex 上直接跑。
+%
+% ## 用法
+%
+%     ntex-dvi lvt-shim.tex "\def\LVTFILE{<name>}\input{lvt-shim}"
+%
+% 垫片做三件事：
+%   1. 提供 LaTeX 最小符号（\documentclass/\begin/\end/\makeatletter/@catcode）
+%   2. 载入官方 regression-test.tex（提供 \TEST/\TYPE/\START/\END）
+%   3. \input 目标 .lvt（其 `\documentclass{minimal}` 已被垫片吞掉）
+%
+% ## 已知边界
+%
+% 垫片不实现 LaTeX 内核功能；.lvt 体若真用 LaTeX 命令（少数用 `\text`/
+% 环境等）会报差异——那**本身就是有价值的信息**（说明该测试超出 expl3 范围）。
+
+\catcode`\@=11
+
+% ── LaTeX 最小符号 ──────────────────────────────────────────────
+% \documentclass{...}：吃参数，无操作（NTex 走 plain 预载）
+\def\documentclass#1{\@gobbleopt}
+\def\@gobbleopt{\futurelet\@let@token\@gobbleopt@}
+\def\@gobbleopt@{%
+  \ifx\@let@token[%
+    \expandafter\@gobbleopt@@
+  \else
+    \expandafter\@gobbleopt@end
+  \fi
+}
+\def\@gobbleopt@@[#1]{\@gobbleopt@end}
+\def\@gobbleopt@end{}
+
+% \begin{document}/\end{document}：无操作（内容是测试体本身）
+%
+% ⚠ **不可** `\def\end#1{}` 遮蔽原语 `\end`：regression-test.tex 的
+% `\let\@@@end\end` 要绑的是**原语** `\end`（作业终止）。用 `\begin` 单独
+% 吞掉 `{document}` 即可（`\end{document}` 里的 `\end` 交给原语，但原语
+% `\end` 后跟 `{document}` 会误当正文——故用 `\AtEndDocument` 式惰性处理：
+% 把 `\end` 包成"若下一 token 是 `{` 则吞参数组，否则转原语"）。
+\def\begin#1{}
+\let\@@ntex@end@prim\end
+\def\end{\futurelet\@let@token\@@ntex@end@}
+\def\@@ntex@end@{%
+  \ifx\@let@token\bgroup
+    \expandafter\@@ntex@end@group
+  \else
+    \expandafter\@@ntex@end@prim
+  \fi
+}
+\def\@@ntex@end@group#1{\@@ntex@end@prim}
+\def\usepackage#1{}
+\def\RequirePackage#1{}
+\def\makeatletter{\catcode`\@=11 }
+\def\makeatother{\catcode`\@=12 }
+\def\ProvidesFile#1{}
+\def\NeedsTeXFormat#1{}
+\def\ProvidesPackage#1{}
+\def\ProcessOptions{\relax}
+% LaTeX 的「未定义哨兵」：LaTeX 内核里 \@undefined=\relax（tex.web 语义：
+% \ifx<cs>\relax 判存在）。regression-test.tex 多处 `\ifx\X\@undefined`
+% 依赖它；不给会走错分支（把 `\relax` 当字面 cs 比较 → 恒假）。
+\let\@undefined\relax
+% \CurrentFile / \@currname 等 LaTeX 文件名钩子（形参，实际未用）
+\def\CurrentFile{}\def\@currname{}\def\@currext{}
+
+% ── 载入官方 harness ────────────────────────────────────────────
+% regression-test.tex 需从 l3build 包路径读入（由 -I 或 VFS 提供）
+\input regression-test.tex
+
+% ── 跑目标测试 ──────────────────────────────────────────────────
+\ifx\LVTFILE\undefined
+  \message{[lvt-shim] 未定义 \string\LVTFILE}
+\else
+  % ⚠ 不可写 `\input{\LVTFILE}`：TeX 的 `\input` 是**文件名扫描**，不吃 `{...}`
+  % 分组（`{}` 会被当文件名字符 → 「文件名含非法 token」）。须空格分隔。
+  \input \LVTFILE
+\fi
+
+\end

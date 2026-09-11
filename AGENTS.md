@@ -46,6 +46,8 @@ make instrument-check   # 仪器自检：诊断原语与 pdfTeX 逐字对拍（�
 make abcheck TEX=probe.tex ARGS=--trace   # 双引擎差分对拍
 make blocker-track      # 阻塞点单调性看板（跑 latex_probe + 历史对比）
 make logtrace LOG=x.transcript   # 转录/log 结构分析（首现场/震中/级联形状/参考对比）
+make lvt-fetch                  # 抓 expl3 官方测试套件（l3kernel .lvt × 187）
+make lvt-run ARGS=--all         # expl3 官方测试跑分（分母！见 docs/expl3-lvt-scoreboard.md）
 
 # 端到端演示
 cargo run -p ntex-dvi -- demo.tex   # → demo.dvi
@@ -123,6 +125,9 @@ make tauri   # Tauri 桌面壳（wasm 渲染形态）：先构建 ntex-wasm→ui
 
 - [ETRIP-primitives.md](ETRIP-primitives.md) = ETRIP 原语状态**唯一状态源**
   （2026-08-23 更新：A 组 41/42、B 组 36/36、C 组全部已接线、收尾 etrip.log 逐字节比对未开始；`\muexpr` 待校准）；
+- [docs/expl3-lvt-scoreboard.md](docs/expl3-lvt-scoreboard.md) = **expl3 攻坚进度仪表盘**
+  （2026-09-11 新设）——官方 l3kernel 测试套件跑分（187 例，`.tlg` 权威期望）。
+  **这是 expl3「还差多少」的唯一可信分母**；进度看判定分布变化，不看「跑到第几行」；
 - [docs/tooling-trust.md](docs/tooling-trust.md) = **定位基础设施与仪器可信度**
   （2026-09-11 新设）——四件套（`instrument-check`/`abcheck`/`JSONL trace`/`blocker-track`）
   用法 + 五次仪器失真事故登记 + 判读纪律。**开工定位前先读**；改诊断原语后必跑
