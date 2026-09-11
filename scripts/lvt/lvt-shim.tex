@@ -71,10 +71,18 @@
 \def\NeedsTeXFormat#1{}
 \def\ProvidesPackage#1{}
 \def\ProcessOptions{\relax}
-% LaTeX 的「未定义哨兵」：LaTeX 内核里 \@undefined=\relax（tex.web 语义：
-% \ifx<cs>\relax 判存在）。regression-test.tex 多处 `\ifx\X\@undefined`
-% 依赖它；不给会走错分支（把 `\relax` 当字面 cs 比较 → 恒假）。
-\let\@undefined\relax
+% ⚠ 不可 `\let\@undefined\relax`！LaTeX **内核里 `\@undefined` 本身是未定义的**
+% 名字，`\ifx\X\@undefined` 判「X 是否未定义」靠的是 **undefined vs undefined
+% 同类比较**（tex.web：eqtb 空槽 vs 空槽 → 类型同 → 真）。
+% 若把它 `\let` 成 `\relax`，则 `\ifx\<未定义>\@undefined` = `\ifx<空槽><原语槽>`
+% → 类型不同 → **假**，分支翻转。
+%
+% 实测代价（§A1.quaterdecies）：regression-test.tex 的两处
+% `\ifx\@@end\@undefined` 均翻成假 → `\let\@@@end\@@end`（undefined）+
+% `\let\@@end\END` → `\END` 宏体反复重放 → 4986 轮后 input stack size=5000
+% 爆栈（187 例官方用例中 111 例 STACK-END）。
+%
+% 故此处**刻意什么都不做**（让 `\@undefined` 保持未定义），仅留本注释说明原因。
 % \CurrentFile / \@currname 等 LaTeX 文件名钩子（形参，实际未用）
 \def\CurrentFile{}\def\@currname{}\def\@currext{}
 

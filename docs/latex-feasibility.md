@@ -643,6 +643,58 @@ eqtb 槽类型，undefined 槽 vs relax 原语槽 **类型不同应为假**）�
 - `process_one` 顶部 + `process_token` 顶部加 `if self.ended { return ... }`
   （`\end` 终结语义；简单用例 `\end` 后 `\message` 不输出已验证 ✅）
 
+### A1.quindecies ⭐ 确凿引擎差异：`\ifx\<未定义>\@undefined` 在 harness 上下文判假（2026-09-11）
+
+**这是本轮最有价值的发现：有 pdfTeX ground truth 的、可复现的引擎级分歧。**
+
+#### 决定性对照（同一 harness，两引擎）
+
+在 `regression-test.tex` 的两处 `\ifx\@@end\@undefined` 各插 `\message` 探针
+（`/tmp/m1dbg/rt-probe.tex`）：
+
+| 分支 | pdfTeX | NTex |
+|---|---|---|
+| `\ifx\@@end\@undefined`（块 1，L64）| **TRUE** | **FALSE** ❌ |
+| `\ifx\@@end\@undefined`（块 2，L87）| **TRUE** | **FALSE** ❌ |
+
+**pdfTeX 输出**：`[BLOCK1 TRUE] [BLOCK2 TRUE]`
+**NTex 输出**：`[BLOCK1 FALSE] [BLOCK2 FALSE]`
+
+#### 后果链（完整闭环）
+
+```
+NTex 判 FALSE
+  → 块1 else：\let\@@@end\@@end          （\@@end 非 undefined）
+  → 块2 else：\let\@@end\END
+  → \END 宏体里的 \@@@end 指向 \@@end（已被改成 \END）
+  → 调 \@@@end = 调 \END = **宏体自我重放**
+  → 4986 轮后 input stack size=5000 爆栈
+```
+
+**pdfTeX 判 TRUE 则**：`\let\@@@end\end`（真终止符）+ `\let\end\END` →
+`\END` 末尾 `\@@@end` 正确终止作业 → **exit=0，无爆栈**。
+
+#### 注意：纯 plain 环境下 NTex 的 `\@@end` 判定是**正确的**
+
+```
+纯 plain：  \meaning\@@end = undefined
+            \ifx\@@end\@undefined = **真**  ✅
+            \ifx\@@end\relax      = 假     ✅
+```
+
+**即差异只在「harness 上下文」出现** —— 说明有**别的东西在 harness 载入时改了
+`\@@end` 或 `\@undefined` 的槽**。shim 侧的 `\let\@undefined\relax` 与
+`\let\@@end\end` 均已移除，但判定仍为 FALSE → **嫌疑转向 NTex 的 `\ifx`
+对「两个未定义 cs」的比较**，或 harness 自身某条定义链的副作用。
+
+#### 下一刀（精确定位，3 步）
+
+1. **纯 plain + 最小 harness 片段**复现：逐行加 harness 语句，找翻转点；
+2. `\tracingcommands`/`\tracingassigns` 追踪 `\@@end`/`\@undefined` 槽的赋值；
+3. 对照 pdfTeX 同片段（ground truth 已有 `[BLOCK TRUE]` 可复现）。
+
+**这一处修通，187 例中 111 例 STACK-END 应批量转绿**（`docs/expl3-lvt-scoreboard.md`）。
+
 ### A2. 连锁：`\reserved@a` 未定义自引用
 
 ```
