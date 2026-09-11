@@ -255,6 +255,52 @@ string_code: if cur_cs<>0 then sprint_cs(cur_cs) else print_char(cur_chr);
 charcode 的处理，并在 `abcheck` 上加一个固定探针
 （`scripts/abcheck-examples/string-active-newline.tex`）。
 
+### A1.septies 首现场真根因：charcode 10 token 在流中被行尾模型吞掉（2026-09-11）
+
+§A1.sexies 修掉了 `\string` 对 active char 的 escapechar 前缀（真 bug，已入库），
+但 `l.301` 首现场**未消**。本轮用最小对照把真根因钉死。
+
+**决定性实验**：
+
+```tex
+\def\showit#1{[GOT #1]}
+\expandafter\showit\char10
+```
+
+| | 输出 |
+|---|---|
+| **pdfTeX** | `[BEFORE]` + `! Missing number` + `[AFTER]` —— `\showit` **被调用**（char 10 进了 `#1`）|
+| **NTex** | `[BEFORE][AFTER]` —— **`[GOT]` 完全未输出，`\showit` 根本没被调用** |
+
+**根因**：本引擎行模型 **`LF`（charcode 10）cat 5 = 行尾符**（见
+`CatcodeTable::initex()` 的"偏差说明"与 `docs/latex-feasibility.md` A1）。当
+**charcode 10 作为普通 token 进入 token 流**（`\char10`、`\string^^J`、
+`\string` 对 active `^^J`）时，被引擎按行尾处理**吞掉/转换**，无法作为
+字符数据传递。
+
+**影响面**（结构性，非单点）：
+
+1. `\string^^J` 类构造（latex.ltx L301 TeX 版本嗅探、`\@ifnextchar` 变体等）
+2. `\char10` / `\char` 对 10 的使用
+3. 任何 `^^J`（LF）作为 active char 被 `\string`/`\edef` 处理的场景
+4. expl3 的 `\c__char_lf` 相关构造
+
+**为何是深层问题**：`LF=cat 5` 是引擎**字节流直读**设计的直接后果（不剥行尾字节，
+靠 catcode 5 找行尾）。这个设计让「源文件里的 LF」与「token 流里的 char 10」
+**无法区分**——而 tex.web 里读取层剥掉行尾 LF、再补 `\endlinechar`，两者
+天然分离。
+
+**下一刀方向**（两条路，需裁决）：
+
+- **A 路（外科）**：在 `\char`/`\string`/`\edef` 产出 char 10 token 时加
+  「非行尾」标记位（Token 有 8 字节，尚有 spare bit），读取层遇该标记不触发行尾
+  语义。改动小、风险可控，但需全链检查 `fetch()` 的 LF 处理点。
+- **B 路（根治）**：改输入层为「剥行尾 LF + 补 `\endlinechar`」（tex.web 原语义），
+  彻底分离「源字节 LF」与「token char 10」。**波及面大**（所有依赖 LF=5 找行尾
+  的路径：注释跳行、空行→`\par`），需大范围回归。
+
+**建议先走 A 路**（外科、可回退），B 路作为 M 级架构债登记。
+
 ### A2. 连锁：`\reserved@a` 未定义自引用
 
 ```
