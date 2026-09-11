@@ -505,6 +505,47 @@ NTex 是 pdfTeX 的一半。对 expl3 深递归代码，这会**提前触发**�
 尚未单独测试**，即 `\edef <cs> { \if_false: } \fi:` 形态——这正是 L12405 的写法。
 下一刀先补这个最小用例。
 
+### A1.duodecies ⚠ 第三次误判的更正：`\edef{ \if_false: } \fi:` 行为正确（2026-09-11）
+
+**必须记录**：本轮我判定「`scan_edef_body` 的 `is_skipping()` 分支丢弃 `}` 不减
+depth 是爆栈根因」，并依此改了代码（跳过区加组计数）。**该判断被 pdfTeX 证伪**。
+
+**决定性对照**（补全 grep 模式后）：
+
+```tex
+\let\if_false:\iffalse \let\fi:\fi
+\edef\zz{ \if_false: } \fi:
+
+pdfTeX: [A] + "! Extra \fi." + [B]
+NTex  : [A] + "! Extra \fi." + [B]      ← 完全一致
+```
+
+**此前误读的原因**：第一次对拍用的 grep 模式没覆盖 `Extra \fi.`，只看到
+`[A]`/`[B]` 输出就判为「pdfTeX 无错误」。**这是纯粹的仪器用法错误**，
+不是引擎差异。
+
+**已回退**：改动（`scan_edef_body` 跳过区加 `{`/`}` 与 `\begingroup`/`\endgroup`
+组计数，41 行）虽通过全量门禁（41 套件全绿），但**没有证据支撑**，故
+`git checkout` 回退。教训：**改动必须先有证伪过的 ground truth 支撑再落地**。
+
+#### 本轮对爆栈现场的全部结论（净）
+
+**已确证**（trace 铁证，见 §A1.undecies）：
+- step 228182 内 116,850 次压帧，**100% 是 `TokenList(1tok)` + `\tex_edef:D`**
+- 深度**单调递增至 5001，从不回落** → **`\tex_edef:D` 单 token 纯递归**
+
+**已排除（本轮新增）**：
+- 跨组条件惯用法 `\if_false: { \fi: }` → 与 pdfTeX 逐字一致
+- 反序 `{ \if_false: } \fi:` / `\edef\zz{ \if_false: } \fi:` → **两引擎同样报
+  `Extra \fi.`**，NTex 行为正确
+- 深宏递归（`\countdown{200}`）→ 两引擎同样爆（pdfTeX 亦 `input stack size=10000`）
+
+**下一个应查的方向**（换思路，不再猜语义）：`\tex_edef:D` 的**纯自我递归**意味着
+某个 `\edef` 的**参数扫描**不断把 `\tex_edef:D` 送回输入流。可能位置：
+`scan_parameter_text`（tex.web 用 `get_token` 纯词法）或 `expand_region` 的
+`read_floor` 边界。**建议用 JSONL 记录 `call_macro` 的调用者链**（当前 trace 只记
+`push_frame`，未记「谁调用」），这需要给 `call_macro` 加 note 事件。
+
 ### A2. 连锁：`\reserved@a` 未定义自引用
 
 ```
