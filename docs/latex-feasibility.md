@@ -776,6 +776,52 @@ LVT 链路跑官方用例**仍 STACK-END**，但 trace 显示**末步 token 是 
 **下一刀**：查 `\immediate` → `process_token` → `\write` → `scan_general_text`
 这条链上**是否有帧未被弹出**（`feed_one`/`fetch` 的 pop 配对）。
 
+### A1.duodevicies 爆栈仍未消：已在 `\END` 内部，早于 `\@@@end`（2026-09-11）
+
+§A1.septendecies 修好判定翻转（F→T，有 pdfTeX 对拍）后，**LVT 链路仍 STACK-END**。
+本轮做了一系列隔离实验，**推翻多个嫌疑**并收窄位置。
+
+#### 已排除（全部实测）
+
+| 场景 | 结果 | 结论 |
+|---|---|---|
+| `\LT{...}` 宏 + 900 次顺序调用（脱离 harness）| 不爆 | 非累积量问题 |
+| `\begingroup\def\TYPE##1{##1}\immediate\write128{}` | 不爆 | 该体本身无问题 |
+| 宏体内调原语 `\end` | 正常终止 | 字节码帧 + `\end` 组合无问题 |
+| 复刻 `\END` 结构（含两个 `\ifnum` + `\LT` + `\end`）| 正常终止 | 结构本身无问题 |
+| `\futurelet` 读下一 token | 正常工作 | `\futurelet` 无问题 |
+| `\@@@end` 的绑定 | 实测 **= `\end`（wrapper）** ✅ | 绑定正确 |
+| **shim 的 `\end` 包装器**（`\futurelet` 路径）| 探针 `[WRAPPER-CALLED]` **0 次** | **不是原因；已移除，改回裸原语** |
+
+#### 精确定位（trace）
+
+```
+[BEFORE-END] → 输入栈超限        ← 探针证实：\END 执行中爆，早于 \@@@end
+step=1733 d=93  Bytecode   tok=\LONGTYPEOUT
+step=1737 d=94..101  TokenList(1tok)  tok=\immediate
+step=1739 d=93  Bytecode   tok=\@@@end
+step=1740 d=94  TokenList(1tok)  tok=\ifnum      ← \END 重放
+```
+
+`NTEX_END_DBG` 插桩：**`[END]` = 0 次** —— **`\end` 原语从未执行**。
+
+#### 当前结论
+
+爆栈发生在 **`\END` 宏体内部**（`\LONGTYPEOUT{...}` 之后、`\@@@end` 生效之前），
+**与判定翻转（已修）、wrapper（已移除）、累积量（已排除）均无关**。
+
+**剩余嫌疑**：
+1. `\END` 为**字节码帧**执行，`\@@@end` emit 后帧未 pop（已在 `fetch()` 的
+   Bytecode 臂加 `if self.ended` 检查，但 `ended` 未被置位 → 说明 `\end` 未执行）；
+2. **`\LONGTYPEOUT` 与 `\@@@end` 的衔接** —— 前者是 `\begingroup...\endgroup`
+   包裹的 `\immediate\write128`，后者触发作业终止。**组未退出时执行 `\end`**
+   可能触发 `finish()` 的组检查路径；
+3. `\immediate\write128` 在 `\END` 上下文的 `process_token` 嵌套调用
+   （`primitive_io.rs`）是否留下未 pop 的帧。
+
+**下一刀（最直接）**：在 `\LONGTYPEOUT` 调用前后各插 `\immediate\write128` 探针，
+二分出是「`\LONGTYPEOUT` 本身」还是「它之后的 `\@@@end`」引发重放。
+
 ### A2. 连锁：`\reserved@a` 未定义自引用
 
 ```

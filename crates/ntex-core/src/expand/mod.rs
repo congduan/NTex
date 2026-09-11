@@ -2193,6 +2193,18 @@ impl Expander {
                     return Ok(Some((tok, false)));
                 }
                 InputFrame::Bytecode { code, pc, args } => {
+                    // `\end` 已执行 → 帧不再产出 token（tex.web final_cleanup）。
+                    // ⚠ 这是**第三处**必须的检查：`\end` 的实现做
+                    // `self.stack.clear()`，但本臂的 `code`/`pc`/`args` 是
+                    // `frame` 的局部可变借用 —— clear() 清不掉它，本帧会继续
+                    // emit 后续指令。`\END` 宏体（`\LONGTYPEOUT{...}\@@@end`）
+                    // 因此在 `\@@@end` 之后把整段宏体重放，4986 轮后
+                    // input stack size=5000 爆栈（187 例官方用例 111 例
+                    // STACK-END，见 docs/expl3-lvt-scoreboard.md）。
+                    if self.ended {
+                        self.stack.pop();
+                        continue;
+                    }
                     if *pc >= code.len() {
                         self.stack.pop();
                         continue;
