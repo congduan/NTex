@@ -476,3 +476,34 @@ mod case_convert_semantics {
         assert_eq!(expand("\\lccode`A=`a \\lowercase{A}").unwrap(), "a");
     }
 }
+
+/// §39 已知偏差（RED，待修）：`\uppercase` 内 `\gdef` 的参数文本未按
+/// `\uccode` 转换。
+///
+/// **ground truth（pdfTeX 实测 /tmp/gd.tex）**：
+/// `{\uccode`1=`i \uccode`2=`f \uppercase{\gdef\if@12{}}}`
+/// → `\meaning\if@` = `macro:if->`（参数文本 = 转换后的 `if`）。
+///
+/// **NTex 实测**：`macro:->`（参数文本为空）→ plain.tex 预载的 `\newif`
+/// 全链带病（`\@if` 经 `\csname\if@...` 造不出 `\ifus@` 等目标 cs）。
+///
+/// 影响面：plain 预载后所有 `\newif` 开关 + latex.ltx 前置依赖。
+#[cfg(test)]
+mod uppercase_param_text {
+    use super::*;
+
+    /// `\ifxx`（参数文本应 = uccode 转换后的 `if`）与字面 `\gdef\ifref if{}`
+    /// （参数文本 = 字面 `if`）应 `\ifx` 相等。
+    #[test]
+    #[ignore = "已知偏差：uppercase 内 gdef 参数文本丢失，待修（plain 预载 newif 链）"]
+    fn uppercase_gdef_param_text_is_converted() {
+        let out = expand(
+            "\\uccode`1=`i \\uccode`2=`f \
+             \\uppercase{\\gdef\\ifxx12{}} \
+             \\gdef\\ifref if{} \
+             \\ifx\\ifxx\\ifref SAME\\else DIFF\\fi",
+        )
+        .unwrap();
+        assert_eq!(out, "SAME", "参数文本未按 uccode 转换（实测空）");
+    }
+}

@@ -3002,3 +3002,53 @@ ipn2b 形态同理：`\show\x` 显示 `->\lowercase {x}.` 的 `#` 消失是 acti
   也可能因空页报假阳性。指标跃迁（0/8 → 8/8）出现时，先怀疑仪器再庆祝。
 - **产物路径契约**：ntex-dvi / ntex-pdf 的输出 = `<输入路径去扩展名>.<ext>`，
   **保留目录**。写脚本消费产物时不要假设落盘位置。
+
+## 40. 第三十三刀（定位轮）：plain 预载 `\newif` 链根因收敛——`\uppercase` 内 `\gdef` 参数文本丢失（2026-09-11）
+
+§38 遗留的"plain 预载 24 错 / `\if@` 失配"在本轮收敛到单一根因，产出 pdfTeX
+逐字对照铁证与一条 RED 回归测试（未修）。
+
+### 40.1 前置勘误：§38 的 24 错已被 `cd98a94` 消解
+
+§38 记录"plain 预载恒产 24 个 `Use of \if@ doesn't match`"。本轮实测
+`\input plain` 与 `ntex-dvi` 默认预载路径**均为 0 条该错误**——`cd98a94`
+（`\string` 转义符遵 `\escapechar`，print_esc 0..=255）落地后该报错面已消失。
+`\newif` 机制本身**可用**（`\newif\iffoo` + `\footrue` + `\iffoo` 判定正确）。
+
+### 40.2 真根因：`\uppercase` 内 `\gdef` 的参数文本丢失
+
+以 pdfTeX 为 ground truth 逐字对拍（`/tmp/gd.tex`，纯 plain 语义、不依赖预载）：
+
+| 探针 | pdfTeX | NTex | 判定 |
+|---|---|---|---|
+| `\meaning\if@`（源 = `{\uccode`1=`i \uccode`2=`f \uppercase{\gdef\if@12{}}}`） | `macro:if->` | `macro:->` | ❌ **参数文本 `if` 丢失** |
+| `\meaning\ifus@`（`\newif\ifus@` 后） | `\iffalse` | `\ifus@`（未定义） | ❌ 下游连锁 |
+
+**机制**：`\uppercase` 扫描 general text → 按 `\uccode` 转换 `1`→`i`、`2`→`f`
+（此步已正确，`\uppercase{12}` 输出 `if`）→ 重新注入 token 流 → 随后 `\gdef\if@`
+的参数文本扫描**吃不到**这两个转换后的字符，得到空参数文本。
+
+**连锁**：`\if@` 参数文本空 → `\@if#1#2{\csname\expandafter\if@\string#1#2\endcsname}`
+拼出的名字不含 `if` 前缀 → `\newif\ifus@` 造的 `\ifus@`/`\us@true`/`\us@false`
+全部落空。plain.tex 全部 8 处 `\newif` 调用点带病，是 latex.ltx 的前置依赖。
+
+**已证伪的旁支**（避免下一轮重走）：
+- 非 `\uppercase` 相关：`\@if` 顶层 `\def` 单独执行正常（`macro:#1#2->\csname…`）；
+- 非 plain.tex 文件问题：与 TinyTeX `plain.tex` 逐字一致（L264-271  mesma）；
+- 非 `\def` 参数文本机制：字面 `\gdef\ifref if{}` + `\ifref if` 可正常匹配；
+- 非 `\outer` 功能差异：NTex 与 pdfTeX 定义行为一致（仅 `\meaning` 显示少 `\outer` 前缀）。
+
+### 40.3 产出
+
+- **RED 回归测试已固化**：`crates/ntex-core/src/expand/tests_scan.rs`
+  `mod uppercase_param_text`（`#[ignore]`，附 pdfTeX ground truth 注释）；
+  已验证 `--ignored` 运行必红，修复后去掉 `#[ignore]` 即转绿。
+- **登记**：`docs/KNOWN-SIMPLIFICATIONS.md` §7.bis 新增一行（待修 + RED 测试指引）。
+
+### 40.4 下一刀入口
+
+靶心 = `expand/primitive_codes.rs::case_convert_tokens` / `emit_tokens` 的注入与
+`\gdef` 参数文本扫描的衔接：转换后的 token 已进 `InputFrame::TokenList`，但
+`scan_parameter_text` 未消费到。建议先加 token 级插桩（转换输入/输出 + 参数文本
+扫描起点）一次拿全数据，再对照 tex.web `shift_case`（@23609，`back_list` 后
+由常规扫描继续）与 `scan_toks` 的参数文本循环。

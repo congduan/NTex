@@ -110,6 +110,7 @@ demo1 六刀 + 输出例程刀 2/3/5 的修复登记；全部已提交，留作�
 | `ntex-layout/typeset/plain_format.rs` `EmbeddedFormatVfs`/`set_preload_plain` | 格式预载仅 ntex-dvi 默认开；ntex-backend/ntex-wasm/ntex-mcp 未接线 | 各渲染端无 `\input plain` 时行为与 ntex-dvi 不一致 | 待接线（plain-format-survey §5.bis 发现未修 #6） |
 | 预载路径 | 预载后空文档经 `\plainoutput` 收尾冲出一页空页 | corpus 内宏/格式文件（无 `\bye`）页数与真 TeX（0 页）不一致 | 待做（survey #1） |
 | `\lccode/\uccode` 初表 | 预载前初表全 0，未按 INITEX 初值（`a..z`/`A..Z` = 自身）播种 | 预载失败回落时 `\lowercase` 行为偏差 | 待做（survey #2） |
+| `expand/primitive_codes.rs` `case_convert_tokens` | `\uppercase`/`\lowercase` 内 `\gdef` 的**参数文本**未按码表转换（pdfTeX `\meaning\if@` = `macro:if->`，NTex = `macro:->`）→ plain.tex 预载 `\newif` 全链带病（`\@if` 造不出 `\ifus@` 目标 cs） | plain 预载后所有 `\newif` 开关失效；latex.ltx 前置依赖 | **待修**（RED 测试已固化：`tests_scan.rs` `uppercase_param_text`，`#[ignore]`；诊断见 latex-feasibility §38.2/§39） |
 | `expand/scan.rs` | `scan_glue` 胶水上下文不认 dimen 寄存器别名（`\skip_const:Nn \c_zero_skip{\c_zero_dim}` 致命） | latex.ltx l.13899 停点 | ✅ 已修（226c177，`RegKind::Dimen` 臂） |
 | `scripts/corpus-probe.py` | 产物路径按仓库根找（`REPO/<stem>.dvi`），但 ntex-dvi/ntex-pdf 默认输出**保留源文件目录**（`<输入去扩展名>.dvi/.pdf`）→ 全库误判 FAIL | KPI 假阴性（曾把实际成功的 `plain/*.tex` 全判 0/8） | ✅ 已修（2026-09-11，路径按 `tex.parent` 取 + 清理同步） |
 | `scripts/corpus-probe.py` | 只判产物存在性，不判内容 → 宏/格式文件的**空页**也计 PASS | KPI 假阳性（`plain/plain.tex` ink=7 计 PASS） | ✅ 已修（2026-09-11，非白像素判据 `MIN_INK=200`，三级 FAIL/EMPTY/PASS） |
