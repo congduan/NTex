@@ -292,27 +292,41 @@ impl Expander {
     /// 花括号，宏体回填（begin_token_list(parameter)）也不再有剥组环节。
     /// TRIP log 的 45 条 `#N<-…` 追踪（tracing_macros）无一含花括号，与此一致。
     /// **不存在**"连组存储、使用时剥组"的两级模型。
+    /// tex.web `@<Report a runaway argument and abort@>`（L8090+）：宏实参扫描
+    /// 遇**输入耗尽**时报 `Runaway argument` 并**按空实参恢复**，作业继续。
+    ///
+    /// ⚠ 这是可恢复错误，不是致命错。pdfTeX 实测（2026-09-11）：
+    /// ```tex
+    /// \catcode`\~=\active \def~#1{[TIE:#1]}
+    /// \immediate\write128{~}          % ~ 需 #1 而输入已尽
+    /// \immediate\write128{[AFTER]}
+    /// ```
+    /// pdfTeX 输出 `Runaway argument` 后**继续执行**并打出 `[AFTER]`；
+    /// 旧 NTex 报致命 `实参扫描到输入末尾` → **整个作业终止**，导致 l3kernel
+    /// 8 例 CRASH（m3fp-logic004/m3int001/m3int003/m3prg001/m3skip002/
+    /// m3skip006/m3tl002/m3tlist002 —— harness 把 `~` 定义为
+    /// `\def~#1{\accent"7E #1}`，凡 `~` 出现在 write/参数组末尾即触发）。
+    fn recover_runaway_arg(&mut self, name: &str) -> Result<TokenArray> {
+        let _ = self.sink.write16(format!(
+            "Runaway argument?\n\\{name}\n! File ended while scanning use of \\{name}.\n"
+        ));
+        Ok(Arc::from([]))
+    }
+
     fn collect_undelimited_arg(&mut self, long: bool, name: &str) -> Result<TokenArray> {
         // 跳过前导空格
         loop {
-            let tok = self
-                .fetch()?
-                .ok_or_else(|| {
-                    if std::env::var_os("NTEX_ARG_DBG").is_some() {
-                        eprintln!("[ARG-END] 宏 \\{name} 实参扫描到输入末尾（栈深 {}）", self.stack.len());
-                    }
-                    Error::invalid_input("实参扫描到输入末尾")
-                })?
-                .0;
+            let Some(tok) = self.fetch()?.map(|p| p.0) else {
+                return self.recover_runaway_arg(name);
+            };
             if tok.catcode() != Some(Catcode::Space) {
                 self.unread(tok);
                 break;
             }
         }
-        let tok = self
-            .fetch()?
-            .ok_or_else(|| Error::invalid_input("实参扫描到输入末尾"))?
-            .0;
+        let Some(tok) = self.fetch()?.map(|p| p.0) else {
+            return self.recover_runaway_arg(name);
+        };
         // 归属判定（LaTeX 兼容第十一刀）：实参位置的条件终结符
         // `\else`/`\fi`/`\or` **一律是数据**，不交条件机。tex.web 的宏实参扫描
         // （scan_toks(macro=true)，383-389）取 token 用的是 `get_token`——它只做
