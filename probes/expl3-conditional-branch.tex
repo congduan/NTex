@@ -1,0 +1,63 @@
+% probes/expl3-conditional-branch.tex
+%
+% 探针：expl3 条件分支（`:TF`）是否只执行选中支？
+%
+% ## 背景（2026-09-11 定位）
+%
+% l3kernel 跑分剩余 7 例散点中，`m3sort001` 首错为
+%   `! \toks 赋值 RHS 需为 {token list} 或 toks 寄存器`
+% 位于 l.99 `< \sys_if_engine_luatex:TF { 60000 } { 30000 }` ——
+% NTex 把 **true 支 `60000`** 当成了 `\toks` 赋值的 RHS，而 NTex 引擎并非
+% luatex，**应走 false 支**。
+%
+% 一刀定性实验（本探针）显示：不是 `\sys_if_engine_*` 特有，而是
+% **所有 expl3 `:TF` 条件同时执行两个分支**。
+%
+% ## 判据（pdfTeX ground truth）
+%
+%   `\bool_if:NTF \c_true_bool { T } { F }`  → 只输出 `T`
+%   `\int_compare:nNnTF { 2 } = { 3 } { GOT-TRUE } { GOT-FALSE }` → 只输出 `GOT-FALSE`
+%
+% NTex 当前实测：`T` 与 `F` **都**输出；`GOT-TRUE` 与 `GOT-FALSE` **都**输出。
+%
+% 对照（已正确）：裸 TeX `\ifnum 1=1 A \else B \fi` 只输出 `A`。
+% ⇒ 缺陷在 **expl3 建立在 `\prg_new_conditional`/`\if_false:`/`\fi:` 之上的
+%   条件分派**，不在 TeX 原生 `\if` 原语。
+%
+% ## 用法
+%
+%   bash scripts/expl3-cond-probe.sh      # 自动跑本探针并判读
+%
+% 或手工（需 lvt harness 机制，见 scripts/lvt/lvt-shim.tex 头注释）：
+% 把本文件作为 .lvt 体放入 lvt-shim 驱动目录运行。
+
+\documentclass{minimal}
+\input{regression-test}
+\ExplSyntaxOn
+\debug_on:n { check-declarations , deprecation , log-functions }
+\ExplSyntaxOff
+
+\begin{document}
+
+\START
+
+\ExplSyntaxOn
+
+% ── 基线：TeX 原生条件（预期正确）──────────────────────────────
+\TYPE{=== A. bare TeX \ifnum (expect: TRUE-executed only) ===}
+\ifnum 1=1 \TYPE{TRUE-executed} \else \TYPE{FALSE-executed} \fi
+
+% ── 被测：expl3 bool 条件（预期只执行选中支）──────────────────
+\TYPE{=== B. expl3 \bool_if:NTF (expect: T only) ===}
+\bool_if:NTF \c_true_bool { \TYPE{T} } { \TYPE{F} }
+
+% ── 被测：expl3 int 比较条件（预期只执行 false 支）────────────
+\TYPE{=== C. expl3 \int_compare:nNnTF (expect: GOT-FALSE only) ===}
+\int_compare:nNnTF { 2 } = { 3 } { \TYPE{GOT-TRUE} } { \TYPE{GOT-FALSE} }
+
+% ── 被测：引擎条件（m3sort001 现场）───────────────────────────
+\TYPE{=== D. \sys_if_engine_luatex:TF (expect: FALSEBRANCH only) ===}
+\sys_if_engine_luatex:TF { \TYPE{TRUEBRANCH} } { \TYPE{FALSEBRANCH} }
+
+\ExplSyntaxOff
+\END

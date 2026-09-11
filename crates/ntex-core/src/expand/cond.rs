@@ -1,10 +1,38 @@
 impl Expander {
     // ---------- M1-9 条件 ----------
 
+    /// 沿 Alias 链解析到**最终槽**（单一事实源）。
+    ///
+    /// 为什么必须统一走这里：expl3 把**所有** TeX 原语做成间接别名
+    /// （`l3names.dtx:108` `\@@_primitive:NN #1#2 { \tex_global:D \tex_let:D #2 #1 }`），
+    /// 且 `\else:`/`\fi:`/`\or:` 是**两层**别名
+    /// （`\else` ← `\tex_else:D` ← `\else:`）。任何「只 match `EqSlot::Primitive`
+    /// 而不跟随 Alias」的判定都会让 expl3 条件全灭——2026-09-11 实测：
+    /// `cond_op` 曾经直接 `_ => None`，导致所有 `\prg_new_conditional` 派生的
+    /// `:TF` 分派失效（`\bool_if:NTF` / `\int_compare:nNnTF` /
+    /// `\sys_if_engine_*:TF` **两分支都执行**）。
+    ///
+    /// 环检测：别名链可成环（`\let\a\b \let\b\a` → a↔b 互指），无环链长至多
+    /// = csid 总数（有界）；遇环返回 `None`（环无确定含义）。与
+    /// [`Self::meaning_key`] 的 A7 处置一致——仓库契约要求畸形输入不 panic 不死循环。
+    fn resolve_slot(&self, csid: u32) -> Option<EqSlot> {
+        let mut id = csid;
+        let mut seen: Vec<u32> = Vec::with_capacity(8);
+        while let EqSlot::Alias(target) = self.eqtb.slot(id) {
+            if seen.contains(&id) {
+                return None;
+            }
+            seen.push(id);
+            id = *target;
+        }
+        Some(self.eqtb.slot(id).clone())
+    }
+
     fn cond_op(&self, tok: Token) -> Option<CondOp> {
         let csid = tok.csid()?;
-        match self.eqtb.slot(csid) {
-            EqSlot::Primitive(p) => CondOp::from_prim(*p),
+        // 跟随 Alias 链——`\else:`/`\fi:`/`\or:` 是两层别名，不跟随即失效。
+        match self.resolve_slot(csid)? {
+            EqSlot::Primitive(p) => CondOp::from_prim(p),
             _ => None,
         }
     }
