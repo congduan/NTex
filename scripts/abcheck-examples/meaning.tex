@@ -1,0 +1,7 @@
+% 探针：\meaning 对「带定界参数文本的宏」的显示
+% ground truth 期望：MEANING=macro:if->
+\catcode`\@=11
+\uccode`1=`i \uccode`2=`f
+\uppercase{\gdef\ifxx12{}}
+\message{MEANING=\meaning\ifxx}
+\end

@@ -60,6 +60,13 @@ fn main() -> ExitCode {
         }
     };
     let mut ts = ntex_layout::typeset::Typesetter::with_tfm();
+    if no_plain {
+        // `--no-plain` 语义 = 纯 iniTeX 起点（无预载格式）：catcode 表换用
+        // tex.web §1273 INITEX 初表（`{`=12、NUL=9 …）。此前只跳过预载而
+        // 保留 plain 表，与 pdfTeX `-ini` 不对齐（`\the\catcode0` 应为 9
+        // 却是 12），导致 init 语义域的对拍失真——见 scripts/instrument-check.py。
+        ts = ts.initex();
+    }
     {
         // G1 搜索路径 + G2(a) 内嵌格式文件兜底：组合成 Local → 搜索前缀 → 内嵌
         // 三层（内嵌只答 plain.tex/hyphen.tex，且仅在前两层全落空时命中）。

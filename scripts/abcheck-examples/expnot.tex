@@ -1,0 +1,10 @@
+% 探针：\exp_not:N 同 token 探测惯用法（expl3 变体生成器依赖）
+% ground truth 期望：P=SAME
+\catcode`\@=11 \catcode`\:=11
+\let\else:\else \let\fi:\fi
+\def\probe#1{%
+  \exp_after:wN \ifx \exp_after:wN \exp_not:N #1 #1
+    \message{P=SAME}\else:\message{P=DIFF}\fi:}
+\def\cs_new_protected:Npe{X}
+\probe{\cs_new_protected:Npe}
+\end

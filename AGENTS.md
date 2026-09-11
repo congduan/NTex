@@ -41,6 +41,11 @@ make bench      # 基准管路（stub 驱动冒烟）
 make fixtures       # 获取 TRIP/ETRIP fixtures（kpsewhich 优先，失败则下载）
 make fixture-extras  # 获取补充对照 fixtures（pdftex expanded.{tex,txt} 等，详见 fixtures/README.md）
 
+# 定位基础设施（详见 docs/tooling-trust.md —— 开工定位前先读）
+make instrument-check   # 仪器自检：诊断原语与 pdfTeX 逐字对拍（失真即回归）
+make abcheck TEX=probe.tex ARGS=--trace   # 双引擎差分对拍
+make blocker-track      # 阻塞点单调性看板（跑 latex_probe + 历史对比）
+
 # 端到端演示
 cargo run -p ntex-dvi -- demo.tex   # → demo.dvi
 cargo run -p ntex-pdf -- demo.dvi   # → demo.pdf
@@ -117,6 +122,10 @@ make tauri   # Tauri 桌面壳（wasm 渲染形态）：先构建 ntex-wasm→ui
 
 - [ETRIP-primitives.md](ETRIP-primitives.md) = ETRIP 原语状态**唯一状态源**
   （2026-08-23 更新：A 组 41/42、B 组 36/36、C 组全部已接线、收尾 etrip.log 逐字节比对未开始；`\muexpr` 待校准）；
+- [docs/tooling-trust.md](docs/tooling-trust.md) = **定位基础设施与仪器可信度**
+  （2026-09-11 新设）——四件套（`instrument-check`/`abcheck`/`JSONL trace`/`blocker-track`）
+  用法 + 五次仪器失真事故登记 + 判读纪律。**开工定位前先读**；改诊断原语后必跑
+  `make instrument-check`。
 - [fixtures/README.md](fixtures/README.md) = 补充对照 fixtures 状态表与抓取约定；
   当前入库：`pdftex/expanded.{tex,txt}`（David Carlisle/Bruno Le Floch 2018, Public Domain，
   pdftex `\expanded` 原语 12 个端到端 + 36 行期望基线）；抓取：`make fixture-extras`；

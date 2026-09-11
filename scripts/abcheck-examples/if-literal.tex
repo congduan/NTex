@@ -1,0 +1,8 @@
+% 探针：\if 对「字面字符 vs 宏实参」的比较
+% ground truth 期望：A=T（N 匹配 N）、B=F（N 不匹配 X）
+\catcode`\@=11 \catcode`\:=11
+\let\else:\else \let\fi:\fi \let\if:w\if
+\def\t#1{\if:w N#1 \message{R=T}\else:\message{R=F}\fi:}
+\t{N}
+\t{X}
+\end

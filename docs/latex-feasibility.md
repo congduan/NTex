@@ -41,6 +41,44 @@ cargo run --release -p ntex-test-support --example latex_probe -- \
     /tmp/r27b/latex.ltx --initex 2>&1 | tail -30
 ```
 
+### A1.bis 精确定位（2026-09-11，转录首现场）
+
+**`latex.ltx.transcript` 的第一个错误不在末端，而在 expl3-code.tex l.21291**：
+
+```
+! Extra \else.
+l.21291 \cs_new:Npe \__fp_atan_default:w #1#2#3 @ { #1 #2 #3 \c_one_fp @ }
+! Missing number, treated as zero.
+<to be read again> \__fp_sep:
+! Improper alphabetic constant.   ×2（`` ` `` 后跟非单字符）
+! Missing endcsname inserted.
+<to be read again> \__fp_sep:
+```
+
+**根因定性：`Npe` 变体宏未生成**。`\cs_new:Npe` 是
+`\cs_generate_variant:Nn \cs_new:Npn { Npe }` 的产物；生成失败 → `\cs_new:Npe`
+落成未定义/退化宏 → `@`（cat 12 定界符）与 `\c_one_fp` 错位 → 整条链崩
+（2489 条 `Missing endcsname`，末端停在 l.25851，栈超限 5001 帧）。
+
+**变体生成器现场**（expl3-code.tex L2807-2833）：
+- L2807 `\cs_generate_variant:Nn` 定义体用 `\use:e{...}` 包裹
+  `\__cs_generate_variant:nnNN`（**`\use:e` = `\edef` 全展开**）
+- L2822 `\cs_new_protected:Npe \__cs_generate_variant:N` —— **自举**：该宏自身
+  就是 `Npe` 变体，定义体里用双 `\exp_not:N` + 同 token 探测
+  `\cs_new_protected:Npe` 是否已定义
+- L2891 `\__cs_generate_variant_loop:nNwN`：三层嵌套条件
+  `\if:w N #4 \else:\if:w n #4 \else:1\fi:\fi:` + `{ ~ { } \fi: ... } ~`
+
+**已单独验证正常**（排除嫌疑）：
+- `\exp_not:N \exp_not:N #1 #1` 同 token 探测惯用法 → 与 pdfTeX 同为 `SAME`
+- `\if:w N #1 T\else:F\fi:`（字面 char vs 实参）→ 与 pdfTeX 同为 `T`
+- `\ifx` 版嵌套条件短路 → `A0 B0 C10` 正确
+- INITEX 初表 `\catcode0` = 9（与 pdfTeX -ini 一致，**非 G4 问题**）
+
+**下一刀入口**：在 `\use:e`（`\edef` 全展开）路径上验证 `\__cs_generate_variant:nnNN`
+的展开结果——重点看 `\cs_split_function:N` 与 `\tl_to_str:n` 在 `\edef` 内的交互
+（`\exp_not:N` 标记在 `\edef` 中是否被正确消费）。
+
 ### A2. 连锁：`\reserved@a` 未定义自引用
 
 ```

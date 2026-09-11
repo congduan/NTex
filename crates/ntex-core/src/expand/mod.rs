@@ -488,6 +488,131 @@ const DIAG_KEYS: &[&str] = &[
     "NTEX_BIGLIST_TRACE",
 ];
 
+/// 结构化 trace 通道（JSONL）——**挂死/膨胀类定位的核心设施**。
+///
+/// ## 为什么不是 `eprintln`
+///
+/// 文本 `eprintln` 的痛点是**不可机读、不可过滤、不可跨运行比对**；定位
+/// 「输入栈为什么膨胀」这类问题时，watchdog 只能给「最后一帧 + 栈快照」，
+/// 无法回答「是谁 push 了它」。JSONL 每行一个事件，可事后按字段查询。
+///
+/// ## 用法
+///
+/// ```bash
+/// NTEX_TRACE_JSONL=/tmp/t.jsonl ntex-dvi doc.tex
+/// scripts/trace-view.py /tmp/t.jsonl --grep cs_generate   # 按 token 过滤
+/// scripts/trace-view.py /tmp/t.jsonl --around 50000       # 第 5 万步前后
+/// scripts/trace-view.py /tmp/t.jsonl --stack-at 49999     # 那一刻的完整栈
+/// ```
+///
+/// ## 与 `diag_enabled` 的关系
+///
+/// 文本开关（`NTEX_COND_TRACE` 等）保留；JSONL 是**增量**设施，两者可同时开。
+/// 事件 schema：`{"step":N,"kind":"push|pop|fetch|expand|cond|note",
+/// "tok":"\\foo","csid":123,"depth":D,"frame":"Macro(...)","extra":{...}}`
+///
+/// 实现约束：**零成本开关**——未设 `NTEX_TRACE_JSONL` 时 `trace_event` 只做
+/// 一次缓存查表即返回；不得在热路径引入 String 分配（延迟到确实开启时）。
+#[cfg(not(target_arch = "wasm32"))]
+pub mod trace {
+    use std::io::Write;
+    use std::sync::{Mutex, OnceLock};
+
+    /// 事件种类（写进 JSONL 的 `kind` 字段）。
+    pub const KIND_PUSH: &str = "push";
+    pub const KIND_POP: &str = "pop";
+    pub const KIND_FETCH: &str = "fetch";
+    pub const KIND_EXPAND: &str = "expand";
+    pub const KIND_COND: &str = "cond";
+    pub const KIND_NOTE: &str = "note";
+
+    struct Sink {
+        /// 缓冲写出器（唯一写出通道）。进程被 SIGKILL 时尾部会丢——可接受：
+        /// 定位挂死时 watchdog 已打快照；正常退出由 Drop 冲刷。
+        buf: std::io::BufWriter<std::fs::File>,
+    }
+
+    static SINK: OnceLock<Option<Mutex<Sink>>> = OnceLock::new();
+
+    fn sink() -> Option<&'static Mutex<Sink>> {
+        SINK.get_or_init(|| {
+            let path = std::env::var("NTEX_TRACE_JSONL").ok()?;
+            let file = std::fs::File::create(&path).ok()?;
+            Some(Mutex::new(Sink {
+                buf: std::io::BufWriter::new(file),
+            }))
+        })
+        .as_ref()
+    }
+
+    /// 是否开启（供调用点做昂贵字段构造前的短路判断）。
+    #[inline]
+    pub fn enabled() -> bool {
+        std::env::var_os("NTEX_TRACE_JSONL").is_some()
+    }
+
+    /// 写一条事件。字段全部可选，`None` 的键不出现（保持 JSONL 精简）。
+    pub fn event(
+        step: u64,
+        kind: &str,
+        tok: Option<&str>,
+        csid: Option<u32>,
+        depth: usize,
+        frame: Option<&str>,
+        extra: Option<&str>,
+    ) {
+        let Some(m) = sink() else { return };
+        let Ok(mut s) = m.lock() else { return };
+        // 手写 JSON（避免引入 serde 依赖；字段值需转义引号/反斜杠）
+        let esc = |v: &str| v.replace('\\', "\\\\").replace('"', "\\\"");
+        let mut line = format!("{{\"step\":{step},\"kind\":\"{}\"", esc(kind));
+        if let Some(t) = tok {
+            line.push_str(&format!(",\"tok\":\"{}\"", esc(t)));
+        }
+        if let Some(c) = csid {
+            line.push_str(&format!(",\"csid\":{c}"));
+        }
+        line.push_str(&format!(",\"depth\":{depth}"));
+        if let Some(f) = frame {
+            line.push_str(&format!(",\"frame\":\"{}\"", esc(f)));
+        }
+        if let Some(e) = extra {
+            line.push_str(&format!(",\"extra\":\"{}\"", esc(e)));
+        }
+        line.push_str("}\n");
+        let _ = s.buf.write_all(line.as_bytes());
+        // 每条即冲（static 无 Drop，进程退出不会自动 flush）。trace 本就是
+        // 诊断态，性能非目标；保证 SIGKILL 也能拿到已写事件。
+        let _ = s.buf.flush();
+    }
+}
+
+/// WASM 侧空实现（单线程无诊断通道；保持调用点零改动）。
+#[cfg(target_arch = "wasm32")]
+pub mod trace {
+    pub const KIND_PUSH: &str = "push";
+    pub const KIND_POP: &str = "pop";
+    pub const KIND_FETCH: &str = "fetch";
+    pub const KIND_EXPAND: &str = "expand";
+    pub const KIND_COND: &str = "cond";
+    pub const KIND_NOTE: &str = "note";
+    #[inline]
+    pub fn enabled() -> bool {
+        false
+    }
+    #[inline]
+    pub fn event(
+        _step: u64,
+        _kind: &str,
+        _tok: Option<&str>,
+        _csid: Option<u32>,
+        _depth: usize,
+        _frame: Option<&str>,
+        _extra: Option<&str>,
+    ) {
+    }
+}
+
 /// 展开引擎。
 #[derive(Debug)]
 pub struct Expander {
@@ -562,6 +687,9 @@ pub struct Expander {
     ended: bool,
     /// 最近一次处理的 token（watchdog/单步超时诊断用；不参与 .fmt 序列化）。
     last_tok: Option<String>,
+    /// 主循环步数镜像（结构化 trace 的 `step` 字段用；不参与 .fmt 序列化）。
+    /// 由 `run()` 每步同步——未开 trace 时仅一次整数赋值，无分配。
+    steps: u64,
     /// `\tracingcommands`：上次打印的模式（tex.web shown_mode——模式变化才打前缀）。
     shown_trace_mode: Option<String>,
     /// 子展开（`\write` 内容、marks 查询等 expand_region）追踪抑制计数——
@@ -720,6 +848,7 @@ impl Expander {
             error_anchor: None,
             ended: false,
             last_tok: None,
+            steps: 0,
             shown_trace_mode: None,
             trace_suppress: 0,
             output_prev_count: usize::MAX,
@@ -963,6 +1092,7 @@ impl Expander {
         loop {
             // 看门狗：防死循环（ETRIP 诊断用；正常作业远低于此）
             steps += 1;
+            self.steps = steps;
             // TEMP DEBUG：>1M token 的 TokenList 帧出现时打印当年 last_tok + 回溯
             #[cfg(not(target_arch = "wasm32"))]
             if diag_enabled("NTEX_BIGLIST_TRACE") && !biglist_reported {
@@ -2161,6 +2291,54 @@ impl Expander {
             }
         }
         self.stack.push(f);
+        // 结构化 trace（JSONL）：记录每次压帧——定位「栈为什么膨胀」的关键。
+        if crate::expand::trace::enabled() {
+            let (tok, frame) = match self.stack.last() {
+                Some(fr) => {
+                    let desc = match fr {
+                        InputFrame::TokenList { items, .. } => {
+                            format!("TokenList({}tok)", items.len())
+                        }
+                        InputFrame::MacroArg { items, .. } => {
+                            format!("MacroArg({}tok)", items.len())
+                        }
+                        InputFrame::Macro { body, .. } => {
+                            let name = body
+                                .first()
+                                .and_then(|t| t.csid())
+                                .map(|id| self.intern.name(id).to_string())
+                                .unwrap_or_default();
+                            format!("Macro({},{}tok)", name, body.len())
+                        }
+                        InputFrame::One { .. } => "One".to_string(),
+                        InputFrame::OutputRoutine { items, .. } => {
+                            format!("OutputRoutine({}tok)", items.len())
+                        }
+                        InputFrame::Source { bytes, .. } => {
+                            format!("Source({}B)", bytes.len())
+                        }
+                        InputFrame::Bytecode { .. } => "Bytecode".to_string(),
+                        InputFrame::AlignU { items, .. } => {
+                            format!("AlignU({}tok)", items.len())
+                        }
+                        InputFrame::AlignV { items, .. } => {
+                            format!("AlignV({}tok)", items.len())
+                        }
+                    };
+                    (self.last_tok.clone(), desc)
+                }
+                None => (None, String::new()),
+            };
+            crate::expand::trace::event(
+                self.steps,
+                crate::expand::trace::KIND_PUSH,
+                tok.as_deref(),
+                None,
+                self.stack.len(),
+                Some(&frame),
+                None,
+            );
+        }
     }
 
     /// 把 token 放回输入流（等价于压入单元素 token 列表帧）。

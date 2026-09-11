@@ -1,7 +1,8 @@
 # NTex 开发常用命令。
 # 质量门禁：`make check` = fmt + lint + test 三件套全绿。
 
-.PHONY: fmt lint test check fixtures fixture-extras trip diff bench tauri-wasm tauri
+.PHONY: fmt lint test check fixtures fixture-extras trip diff bench tauri-wasm tauri \
+        instrument-check abcheck blocker-track
 
 fmt:
 	cargo fmt --all -- --check
@@ -13,6 +14,21 @@ test:
 	cargo test --workspace
 
 check: fmt lint test
+
+# 仪器自检（P0 纪律）：诊断原语（\meaning/	he/\number/\romannumeral/\string）
+# 与 pdfTeX 逐字对拍。**失真即回归**——见 docs/tooling-trust.md。
+# 依赖：~/.local/bin/pdftex（TinyTeX）+ 先 `cargo build -p ntex-dvi`。
+instrument-check:
+	cargo build -q -p ntex-dvi
+	python3 scripts/instrument-check.py
+
+# 双引擎差分对拍：`make abcheck TEX=probe.tex [ARGS=--trace]`
+abcheck:
+	python3 scripts/abcheck.py $(TEX) $(ARGS)
+
+# 阻塞点单调性看板：跑 latex_probe → 记录 (行号, 首错签名) → 单调性判定
+blocker-track:
+	./scripts/blocker-track.sh
 
 # 获取 TRIP 测试 fixtures（优先 kpsewhich，失败则从 CTAN/GitHub 下载）
 fixtures:
