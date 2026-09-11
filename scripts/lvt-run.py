@@ -49,7 +49,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-REPO = Path("/home/ubuntu/NTex")
+REPO = Path(__file__).resolve().parent.parent  # 不可硬编码绝对路径（曾在 /home/ubuntu 机器上失效）
 NTEX = REPO / "target/debug/ntex-dvi"
 SHIM = REPO / "scripts/lvt/lvt-shim.tex"
 CACHE = Path("/tmp/l3kernel-tests")
@@ -93,6 +93,17 @@ def ensure_expl3(tf: Path) -> bool:
     if src_env and all((Path(src_env) / f).exists() for f in EXPL3_FILES):
         for f in EXPL3_FILES:
             shutil.copy(Path(src_env) / f, tf / f)
+        return True
+    # TeX Live 本地分发（kpsewhich）：loader 与 expl3-code.tex 同版本，
+    # `\ifx\ExplLoaderFileDate\ExplFileDate` 校验必过，比 docstrip 生成快得多。
+    try:
+        r = subprocess.run(["kpsewhich", *EXPL3_FILES], capture_output=True)
+        paths = [Path(p) for p in r.stdout.decode().split()]
+    except FileNotFoundError:
+        paths = []
+    if len(paths) == len(EXPL3_FILES):
+        for f, p in zip(EXPL3_FILES, paths):
+            shutil.copy(p, tf / f)
         return True
     # 用 l3kernel.ins 生成（需 latex3 源码树已解包 + 可用 TeX 引擎）
     ins = next(CACHE.glob("latex3-*/l3kernel/l3kernel.ins"), None)

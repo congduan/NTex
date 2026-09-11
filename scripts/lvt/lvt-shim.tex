@@ -51,6 +51,12 @@
 
 \def\usepackage#1{}
 \def\RequirePackage#1{}
+% ── LaTeX 内核参数选择器（expl3.ltx L66/69 必需）────────────────────────
+% expl3.ltx 用 `\expandafter\@firstofone` / `\expandafter\@gobble` 做
+% 条件参数传递（决定是否 `\input expl3-code.tex`）。plain 无 →
+% "Undefined control sequence" → 级联到 `\__iow_wrap_line_loop:w` 40M token 崩溃。
+\long\def\@firstofone#1{#1}
+\long\def\@gobble#1{}
 % ── LaTeX 钩子：`\AtBeginDocument` / `\AtEndDocument` ────────────────────
 %
 % ⚠ 必须提供（2026-09-11 实测，价值极高）：`expl3-code.tex` L13157 用
@@ -181,4 +187,3 @@
 % `\end` 会触发输入栈无限增长（实测：加 `\end` → `input stack size=5000` 爆栈；
 % 去掉 → 正常）。作业终止由**最外层驱动文件**负责（`run.tex` 或 lvt-run.py 的
 % driver），shim 只做定义 + 载入，不主动结束作业。
-

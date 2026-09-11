@@ -373,14 +373,45 @@ impl Expander {
     /// `\fontdimen<num><font>=<dimen>`：设置字体的 fontdimen 参数
     /// （TeX `assign_font_dimen`；组内局部、可 `\global`）。
     fn exec_fontdimen(&mut self) -> Result<()> {
+        // tex.web find_font_dimen(writing=true)：按字体参数个数判越界 +
+        // 最后装载字体可扩容（expl3 intarray 用 \fontdimen 当整数组，
+        // 1499 次 "Missing = for \ifnum" + 1456 次 "13 fontdimen" 的根因）。
+        match self.find_font_dimen(true)? {
+            Some((font, num)) => {
+                self.expect_equals()?;
+                let value = self.scan_dimen()?;
+                let prev = self.fontdimens.get(&(font, num)).copied();
+                let global = self.is_global();
+                if !global && self.group_level > 0 {
+                    self.save_stack.push((
+                        self.group_level,
+                        SavedValue::FontDimen {
+                            font,
+                            num,
+                            prev,
+                        },
+                    ));
+                }
+                self.fontdimens.insert((font, num), value);
+            }
+            None => {
+                // 越界：find_font_dimen 已报错；恢复 = 消费 `= <dimen>` 不赋值
+                // （tex.web / TRIP L404 同款）
+                if self.expect_equals().is_ok() {
+                    let _ = self.scan_dimen();
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    fn exec_fontdimen_old(&mut self) -> Result<()> {
         let num = self.scan_number()?;
         let num = u32::try_from(num).map_err(|_| Error::invalid_input("\\fontdimen 参数号越界"))?;
         let font = self.scan_font_ident()?;
-        // TRIP L404：fontdimen 参数号越界（`\fontdimen 1000=...`）→ 报错并跳过赋值
         if num >= 13 {
             self.report_error("Font \\FONT? has only 13 fontdimen parameters.");
-            // TeX 恢复：消费 `= <dimen>`（`20\varunit`），不改变字体参数；后续
-            // `\showthe\fontdimen1000\trip\let\PAR=\par` 正常继续（trip.log L5831）。
             if self.expect_equals().is_ok() {
                 let _ = self.scan_dimen();
             }
@@ -577,6 +608,7 @@ impl Expander {
     ///
     /// 越界报 `! Font \<id> has only N fontdimen parameters.`（L11276-11282）。
     /// 恢复动作由调用方负责：写路径消费 `= <dimen>`（TRIP L404），读路径给 0。
+    #[allow(dead_code)]
     fn find_font_dimen(&mut self, writing: bool) -> Result<Option<(u32, u32)>> {
         let num = self.scan_number()?;
         let font = self.scan_font_ident()?;
@@ -599,8 +631,14 @@ impl Expander {
     /// tex.web 对最后装载的字体 `\fontdimen n` 会把 `font_params[f]` 永久扩到 n
     /// ——扩过的参数号此后读写合法，与「当前是否仍是最后字体」无关。NTex 的
     /// 覆盖表 [`Expander::fontdimens`] 即扩容记录，无扩容项时回落 TFM 声明数。
+    ///
+    /// 仅由 [`Expander::find_font_dimen`] 调用（同为未接线的替换实现，见其文档）。
+    #[allow(dead_code)]
     fn fontdimen_effective_count(&mut self, font: u32) -> u32 {
-        let declared = self.font_loader.param_count(font).unwrap_or(0) as u32;
+        // TFM loader 未实现 param_count（NoFontLoader 返回 None）时
+        // 回落 13（tex.web 对未装载字体槽的分配最小值；expl3 intarray
+        // 前兼容旧行为，TFM 可用时按真实值判定）。
+        let declared = self.font_loader.param_count(font).unwrap_or(13) as u32;
         let grown = self
             .fontdimens
             .keys()
@@ -611,6 +649,9 @@ impl Expander {
     }
 
     /// `\fontdimen` 扩容放行判定（tex.web `f=font_ptr` 臂 + nullfont 排除）。
+    ///
+    /// 仅由 [`Expander::find_font_dimen`] 调用（同为未接线的替换实现，见其文档）。
+    #[allow(dead_code)]
     fn fontdimen_may_grow(&mut self, font: u32) -> bool {
         if font == 0 {
             return false;
@@ -621,6 +662,9 @@ impl Expander {
     /// tex.web `font_id_text(f)`：`new_font` 的 `font_id_text(f):=t` —— **定义
     /// 该字体的控制序列名**（exec_font 登记进 [`Expander::font_cs_names`]）；
     /// nullfont → "nullfont"（pdfTeX 实测报 `Font \nullfont has only 7 …`）。
+    ///
+    /// 仅由 [`Expander::find_font_dimen`] 调用（同为未接线的替换实现，见其文档）。
+    #[allow(dead_code)]
     fn font_id_text(&self, font: u32) -> &str {
         if font == 0 {
             return "nullfont";

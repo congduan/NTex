@@ -316,6 +316,19 @@ impl Expander {
                     let v = i64::from(self.catcodes.get(byte).as_u8());
                     return Ok(if neg { -v } else { v });
                 }
+                // 内部整数：\fontdimen<num><font> → 该字体参数值（sp）
+                // tex.web scan_int 的 scan_something_internal 臂——expl3
+                // intarray（\__intarray_entry:w = \tex_fontdimen:D）在 \ifnum/
+                // \numexpr 里读项值全走此路径（expl3-code L14928）。
+                EqSlot::Primitive(Primitive::FontDimen) => {
+                    self.fetch()?; // 消费 \fontdimen
+                    let num = self.scan_number()?;
+                    let num =
+                        u32::try_from(num).map_err(|_| Error::invalid_input("\\fontdimen 参数号越界"))?;
+                    let font = self.scan_font_ident()?;
+                    let v = self.fontdimen(font, num);
+                    return Ok(if neg { -v } else { v });
+                }
                 // 内部只读整数：\badness → 最近盒子的 badness（当前恒 0：
                 // 展开侧尚未跟踪盒排版 badness，trip.tex 第 20 行无盒子时为 0）。
                 EqSlot::Primitive(Primitive::Badness) => {

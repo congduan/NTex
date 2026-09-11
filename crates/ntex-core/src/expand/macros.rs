@@ -26,6 +26,9 @@ impl Expander {
                 && self.match_input_delim(&def.params.text).is_err()
             {
                 let name = self.intern.name(csid).to_owned();
+                if std::env::var_os("NTEX_DELIM_DBG").is_some() {
+                    eprintln!("[delim-mismatch] csid={csid} name={name:?} name_bytes={:?}", name.as_bytes());
+                }
                 let _ = self.sink.write16(format!(
                     "! Use of \\{name} doesn't match its definition.\n\
                      The macro here has not been followed by the required stuff,\n\
@@ -490,7 +493,7 @@ impl Expander {
             return false;
         };
         // active char 槽（名字恰为单字符）——取作实参不报
-        !(self.intern.name(csid).chars().count() == 1)
+        self.intern.name(csid).chars().count() != 1
     }
 
     fn check_not_outer(&self, tok: Token) -> Result<()> {
