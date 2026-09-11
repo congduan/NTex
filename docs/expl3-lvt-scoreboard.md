@@ -53,8 +53,18 @@
 `\nobreakspace` 之类 → 压帧 → 该帧读尽后 `fetch()` 立刻返回 None，
 **在「展开结果帧刚耗尽、还需读下一个 token」的边界上配对不齐**。
 
-**位置**：`crates/ntex-core/src/expand/io.rs::scan_general_text`（L457+），
-或 `fetch()` 的帧耗尽 pop 路径。
+**位置（精确到函数）**：`crates/ntex-core/src/expand/scan.rs::scan_number`（不是
+`scan_general_text`）——`exec_write`（io.rs L379-384）先 `scan_number()` 读流号再
+`scan_general_text()` 读文本；报错文本 `实参扫描到输入末尾` 来自
+`macros.rs::collect_undelimited_arg` L300，只有 `scan_number` 路径经过它。
+
+`\immediate\write128{~}` 的执行序：
+  1. `\immediate` 置前缀（primitive_io.rs）
+  2. `exec_write` → `scan_number()` 读 `128`
+  3. `scan_general_text()` 读 `{~}` ← **此处失败**
+
+**待查**：`scan_number_inner`（L61+）的 token 循环在读完 `128` 后，
+为何会走到 `collect_undelimited_arg` 并因 `~`（active 展开压帧）判输入耗尽。
 
 **影响 8 例**：m3fp-logic004 / m3int001 / m3int003 / m3prg001 / m3skip002 /
 m3skip006 / m3tl002 / m3tlist002
