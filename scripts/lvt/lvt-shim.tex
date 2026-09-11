@@ -74,7 +74,12 @@
 
 % ── 载入官方 harness ────────────────────────────────────────────
 % regression-test.tex 需从 l3build 包路径读入（由 -I 或 VFS 提供）
-\input regression-test.tex
+% ⚠ harness 由**用例自己** `\input{regression-test}` 载入，shim 不再代劳！
+% 曾在此处载入 → harness 被**载入两次**（shim 一次 + 用例一次）→ 重入后的
+% `\let\end\END`（regression-test.tex L87-91 的 BLOCK2 真分支）使 `\END` 宏
+% 体末尾的 `\@@@end` 指向 `\END` 自身 → **无限自我递归** → 输入栈爆
+% （187 例官方用例中 112 例 STACK-END，见 docs/expl3-lvt-scoreboard.md）。
+% 官方 l3build 的驱动只用 `\input{testsuite}` 一次，shim 须保持一致语义。
 
 % ── 跑目标测试 ──────────────────────────────────────────────────
 \ifx\LVTFILE\undefined

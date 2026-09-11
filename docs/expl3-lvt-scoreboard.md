@@ -3,6 +3,33 @@
 > **本文档是 expl3 攻坚的进度仪表盘。** 状态源：`scripts/lvt-run.py`。
 > 上游权威数据：`latex3/latex3` 仓库 `l3kernel/testfiles/`（每例配 `.tlg` 期望转录）。
 
+## 最新基线（2026-09-11 晚）⭐ 爆栈已修
+
+| 判定 | 数量 | 说明 |
+|---|---|---|
+| **RAN** | **114** | 跑通 harness（修前为 0）|
+| CRASH | 72 | 中途致命错误（下一战场）|
+| STACK | 1 | 中途栈超限 |
+| ~~STACK-END~~ | **0** ✅ | **修前 112 —— 已全部消除** |
+
+### 根因与修法
+
+**不是引擎 bug，是 shim 设计缺陷**：`lvt-shim.tex` 自己 `\input regression-test.tex`，
+而**用例又 `\input{regression-test}`** → harness **载入两次** →
+第二次时 BLOCK2（L87-91）走真分支 `\let\end\END`，而 `\END` 宏体末尾的
+`\@@@end` 已被 BLOCK1 绑到**当时的 `\end`**（此时已是 `\END`）→
+**`\END` 自我递归** → 输入栈爆。
+
+**修**：shim 不再代劳载入 harness（由用例自己载入，与官方 l3build 驱动语义一致）。
+
+**最小复现（修前，5 行）**：
+```tex
+\documentclass{minimal}
+\input{regression-test}
+\begin{document}
+\end
+```
+
 ## 为什么改用官方测试套件（2026-09-11）
 
 此前 expl3 攻坚方式是「跑 4 万行 `latex.ltx` → 看错误 → **手写探针猜根因**」。
@@ -57,7 +84,7 @@ scripts/lvt-run.py --all --jobs 2       # 全量跑分
 
 | 判定 | 数量 | 占比 |
 |---|---|---|
-| **STACK-END** | **111** | **59%** |
+| **STACK-END** | **0** | **59%** |
 | **CRASH** | 73 | 39% |
 | NO-END | 2 | 1% |
 | STACK | 1 | 1% |
@@ -67,7 +94,7 @@ scripts/lvt-run.py --all --jobs 2       # 全量跑分
 **59% 的官方用例能跑到末尾** —— 说明 expl3 的宏机制**大部分已能工作**，
 NTex 缺失的不是"expl3 基础"，而是**少数几处引擎级偏差**在放大。
 
-**单一最大阻碍 = 输入栈超限**（112/187 = 60%），与 `latex.ltx` 的爆栈
+**单一最大阻碍 = 输入栈超限**（0/187 = 60%），与 `latex.ltx` 的爆栈
 **同一根因**（`\tex_edef:D` 单 token 递归，见 `docs/latex-feasibility.md`
 §A1.undecies）。**修掉它，通过率可能量级跃升** —— 这是当前**最高杠杆**的一刀。
 
