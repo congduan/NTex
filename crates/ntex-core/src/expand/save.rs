@@ -1116,7 +1116,7 @@ impl Expander {
     }
 
     /// eqtb 槽值显示（tex.web `print_cmd_chr` + 宏体；无结尾点，供 `{restoring ...}`）。
-    fn slot_display(&self, csid: u32, slot: &EqSlot) -> String {
+    fn slot_display(&self, _csid: u32, slot: &EqSlot) -> String {
         match slot {
             EqSlot::Undefined => "undefined".to_string(),
             // 原语槽：显示规范名（`{restoring \box=\box}`；`\let\a\else` →

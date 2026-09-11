@@ -566,8 +566,77 @@ impl Expander {
         Ok(())
     }
 
-    /// 读取字体参数（fontdimen 数值查询；与 [`Self::exec_fontdimen`] 配对）。
-    fn fontdimen(&self, font: u32, num: u32) -> i64 {
-        self.fontdimens.get(&(font, num)).copied().unwrap_or(0)
+    /// tex.web `find_font_dimen(writing)`（L11251-11268）：扫描 `<num><font>`
+    /// 并做参数号判定。`Some((font, num))` = 合法；`None` = 越界（已报错）。
+    ///
+    /// 判据（tex.web，N 为**该字体**的参数个数，非全局常数）：
+    /// - `n<=0` → 越界（`cur_val:=fmem_ptr` → 报错）；
+    /// - `n>font_params[f]`：`writing` 且 `f` 是**最后装载的字体** → 扩容放行
+    ///   （L11284-11294）；否则越界。读路径永不扩容；nullfont 永不扩容
+    ///   （pdfTeX 实测：`\fontdimen20\nullfont` 在它是唯一字体时仍报错）。
+    ///
+    /// 越界报 `! Font \<id> has only N fontdimen parameters.`（L11276-11282）。
+    /// 恢复动作由调用方负责：写路径消费 `= <dimen>`（TRIP L404），读路径给 0。
+    fn find_font_dimen(&mut self, writing: bool) -> Result<Option<(u32, u32)>> {
+        let num = self.scan_number()?;
+        let font = self.scan_font_ident()?;
+        let count = self.fontdimen_effective_count(font);
+        let in_range = 0 < num
+            && num <= i64::from(count)
+            || writing && self.fontdimen_may_grow(font);
+        if in_range {
+            return Ok(Some((font, num as u32)));
+        }
+        self.report_error(&format!(
+            "Font \\{} has only {count} fontdimen parameters.",
+            self.font_id_text(font)
+        ));
+        Ok(None)
+    }
+
+    /// 字体当前有效参数个数 = TFM 声明数与**已写入**的最大参数号的较大者。
+    ///
+    /// tex.web 对最后装载的字体 `\fontdimen n` 会把 `font_params[f]` 永久扩到 n
+    /// ——扩过的参数号此后读写合法，与「当前是否仍是最后字体」无关。NTex 的
+    /// 覆盖表 [`Expander::fontdimens`] 即扩容记录，无扩容项时回落 TFM 声明数。
+    fn fontdimen_effective_count(&mut self, font: u32) -> u32 {
+        let declared = self.font_loader.param_count(font).unwrap_or(0) as u32;
+        let grown = self
+            .fontdimens
+            .keys()
+            .filter_map(|&(f, n)| (f == font).then_some(n))
+            .max()
+            .unwrap_or(0);
+        declared.max(grown)
+    }
+
+    /// `\fontdimen` 扩容放行判定（tex.web `f=font_ptr` 臂 + nullfont 排除）。
+    fn fontdimen_may_grow(&mut self, font: u32) -> bool {
+        if font == 0 {
+            return false;
+        }
+        self.font_loader.last_font() == Some(font)
+    }
+
+    /// tex.web `font_id_text(f)`：`new_font` 的 `font_id_text(f):=t` —— **定义
+    /// 该字体的控制序列名**（exec_font 登记进 [`Expander::font_cs_names`]）；
+    /// nullfont → "nullfont"（pdfTeX 实测报 `Font \nullfont has only 7 …`）。
+    fn font_id_text(&self, font: u32) -> &str {
+        if font == 0 {
+            return "nullfont";
+        }
+        self.font_cs_names
+            .get(font as usize)
+            .and_then(|s| s.as_deref())
+            .unwrap_or("FONT?")
+    }
+
+    /// 读取字体参数：覆盖优先，无覆盖回落 TFM 声明值
+    /// （tex.web `param_base[f]+n` 直读 `font_info` —— TFM 装载时预填）。
+    fn fontdimen(&mut self, font: u32, num: u32) -> i64 {
+        if let Some(v) = self.fontdimens.get(&(font, num)).copied() {
+            return v;
+        }
+        self.font_loader.font_param(font, num as usize).unwrap_or(0)
     }
 }

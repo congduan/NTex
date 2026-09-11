@@ -46,6 +46,25 @@ pub trait FontLoader: std::fmt::Debug {
         None
     }
 
+    /// 该字体声明的 fontdimen 参数个数（tex.web `font_params[f]`）。
+    ///
+    /// `\fontdimen` 的越界判据是**按字体**的（tex.web find_font_dimen：
+    /// `n>font_params[f]` → 报错 `Font x has only N fontdimen parameters`，
+    /// N 为该字体的实际个数）——不是全局常数。TFM 的 `font_params` 段即声明值；
+    /// 未加载的槽（含 nullfont）→ None。
+    fn param_count(&mut self, _font: u32) -> Option<usize> {
+        None
+    }
+
+    /// 最近装载的字体号（tex.web `font_ptr`）。
+    ///
+    /// tex.web find_font_dimen：`n>font_params[f]` 时只有 `f=font_ptr`（最后
+    /// 装载的字体）允许**追加**参数（"use \fontdimen immediately after the
+    /// \font is loaded"），其余字体一律报错。无任何已装载字体 → None。
+    fn last_font(&mut self) -> Option<u32> {
+        None
+    }
+
     /// 该字体的合法字符码上限（`\char`/`\iffontchar`/`\fontchar*` 的校验上界）。
     ///
     /// 默认 255——TeX 8-bit 语义，越界报 `! Bad character code (N).` 并恢复

@@ -103,6 +103,26 @@ impl FontLoader for TfmLoader {
         let fm = table.get(font as usize)?;
         fm.font_params.get(param - 1).copied()
     }
+
+    /// TFM 声明的 fontdimen 参数个数（tex.web `font_params[f]`）。
+    /// nullfont 固定 7（tex.web L10780-10787 初始化：`font_params[null_font]:=7`
+    /// ——pdfTeX 实测 `\fontdimen20\nullfont` 报 "Font \nullfont has only 7
+    /// fontdimen parameters."）；未装载的槽 → None。
+    fn param_count(&mut self, font: u32) -> Option<usize> {
+        if font == 0 {
+            return Some(7);
+        }
+        let table = self.table.borrow();
+        table
+            .get(font as usize)
+            .map(|fm| fm.font_params.len())
+    }
+
+    /// 最近装载的字体号（tex.web `font_ptr`）：表长-1。表空 → None。
+    fn last_font(&mut self) -> Option<u32> {
+        let n = self.table.borrow().len();
+        u32::try_from(n.checked_sub(1)?).ok()
+    }
 }
 
 /// 字体名是否显式带 OpenType 文件后缀（`.otf`/`.ttf`/`.ttc`，大小写不敏感）。

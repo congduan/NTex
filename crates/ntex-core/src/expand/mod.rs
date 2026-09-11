@@ -2010,10 +2010,11 @@ impl Expander {
                                     }
                                 }
                             } else {
-                                let _ = self.sink.write16(format!(
+                                let _ = self.sink.write16(
                                     "! Incomplete \\\\if; all text was ignored after line.\\n\\
                                      A forbidden control sequence occurred in skipped text.\\n"
-                                ));
+                                        .to_string(),
+                                );
                             }
                             return Ok(());
                         }
@@ -2192,7 +2193,7 @@ impl Expander {
         let r = self.call_macro_inner(csid, def);
         self.scanner_status = save_status;
         self.warning_index = save_warning;
-        return r;
+        r
     }
 
     /// `call_macro` 主体（`scanner_status` 由调用方设/恢复）。
