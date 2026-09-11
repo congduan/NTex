@@ -19,8 +19,11 @@
             <option value="288">288</option>
           </select>
         </label>
-        <label class="chk" title="真字形轮廓：fetch Latin Modern OTF 注入 wasm 后走软光栅填充（未注入字体回落方框）">
+        <label class="chk" title="真字形轮廓：fetch Latin Modern / Fandol Song OTF 注入 wasm 后走软光栅填充（未注入字体回落方框）">
           <input type="checkbox" id="glyphs" checked /> 真字形
+        </label>
+        <label class="chk" title="UTF-8 输入：源文件可直接写中文（引擎侧预置 \utfinputmode=1，不改动源码文本）。关闭则回到 TeX 的 bytes 逐字节语义">
+          <input type="checkbox" id="utf8" checked /> UTF-8 中文
         </label>
         <label class="chk" title="排版调试 overlay：盒边界/glue/断点标记（与 ntex-backend --debug 同口径）">
           <input type="checkbox" id="debug" /> debug overlay
@@ -34,7 +37,7 @@
     <main>
       <section id="editor-pane">
         <div class="pane-title">
-          <span>plain TeX（内嵌 CM TFM：cmr10 / cmbx10 / cmti10 / …）</span>
+          <span>plain TeX（内嵌 CM TFM 48 件 · 中文走 Fandol Song）</span>
           <span class="hint">Cmd/Ctrl+S 立即重排 · 草稿自动保存</span>
         </div>
         <div class="editor-wrap">
@@ -42,7 +45,7 @@
           <div class="editor-stack">
             <pre id="hl" aria-hidden="true"><code id="hlcode"></code></pre>
             <textarea id="editor" spellcheck="false" wrap="off"
-              placeholder="输入 plain TeX 源码，右侧实时预览（真字形需字体注入成功，失败回落方框）…"></textarea>
+              placeholder="输入 plain TeX 源码，右侧实时预览（中文需 UTF-8 开关 + 字体注入成功；失败回落方框）…"></textarea>
           </div>
         </div>
       </section>
@@ -70,6 +73,6 @@
       <pre id="log">（等待编译…）</pre>
     </footer>
   </div>
-  <script type="module" src="main.js?v=3"></script>
+  <script type="module" src="main.js?v=4"></script>
 </body>
 </html>

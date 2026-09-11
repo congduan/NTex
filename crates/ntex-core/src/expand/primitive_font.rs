@@ -608,7 +608,6 @@ impl Expander {
     ///
     /// 越界报 `! Font \<id> has only N fontdimen parameters.`（L11276-11282）。
     /// 恢复动作由调用方负责：写路径消费 `= <dimen>`（TRIP L404），读路径给 0。
-    #[allow(dead_code)]
     fn find_font_dimen(&mut self, writing: bool) -> Result<Option<(u32, u32)>> {
         let num = self.scan_number()?;
         let font = self.scan_font_ident()?;
@@ -631,9 +630,6 @@ impl Expander {
     /// tex.web 对最后装载的字体 `\fontdimen n` 会把 `font_params[f]` 永久扩到 n
     /// ——扩过的参数号此后读写合法，与「当前是否仍是最后字体」无关。NTex 的
     /// 覆盖表 [`Expander::fontdimens`] 即扩容记录，无扩容项时回落 TFM 声明数。
-    ///
-    /// 仅由 [`Expander::find_font_dimen`] 调用（同为未接线的替换实现，见其文档）。
-    #[allow(dead_code)]
     fn fontdimen_effective_count(&mut self, font: u32) -> u32 {
         // TFM loader 未实现 param_count（NoFontLoader 返回 None）时
         // 回落 13（tex.web 对未装载字体槽的分配最小值；expl3 intarray
@@ -649,9 +645,6 @@ impl Expander {
     }
 
     /// `\fontdimen` 扩容放行判定（tex.web `f=font_ptr` 臂 + nullfont 排除）。
-    ///
-    /// 仅由 [`Expander::find_font_dimen`] 调用（同为未接线的替换实现，见其文档）。
-    #[allow(dead_code)]
     fn fontdimen_may_grow(&mut self, font: u32) -> bool {
         if font == 0 {
             return false;
@@ -662,9 +655,6 @@ impl Expander {
     /// tex.web `font_id_text(f)`：`new_font` 的 `font_id_text(f):=t` —— **定义
     /// 该字体的控制序列名**（exec_font 登记进 [`Expander::font_cs_names`]）；
     /// nullfont → "nullfont"（pdfTeX 实测报 `Font \nullfont has only 7 …`）。
-    ///
-    /// 仅由 [`Expander::find_font_dimen`] 调用（同为未接线的替换实现，见其文档）。
-    #[allow(dead_code)]
     fn font_id_text(&self, font: u32) -> &str {
         if font == 0 {
             return "nullfont";

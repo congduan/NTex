@@ -55,6 +55,14 @@
 - `expand/primitive.rs:55, 355, 1031, 1033, 1059, 1368`：内部整数/只读整数/胶水分量查询单独出现一律 no-op
   （TeX 主循环不读值；参考 trip `{\tracingstats}` 追踪后无操作；9b0bc69 统一）
 - `expand/scan.rs:1212`：`\pagegoal` 等排版状态参数暂按 0 读（expander 无排版状态）
+- **反例登记（易回退，勿再犯）**：`expand/primitive_param.rs` 的"内部量单独出现 → no-op"
+  判定**必须含 `EqSlot::Char`**（`\chardef` 定义的 cs，如 plain 的 `\bffam=6`）。
+  2026-09-11 修：此前漏掉该臂 → `\fam\bffam`（**每个 `\bf`**！）被判成"单独出现
+  no-op"，`\bffam` 回流主循环后被当**字符**排版——每处 `\bf` 往盒里多插一个字符码 6
+  的节点（cmr10 char 6 宽 7.22222pt；换 Unicode 字体后直接报 `Missing character:
+  There is no ^^F`）。回归锁 `expand/tests_insert_alloc.rs`
+  `chardef_cs_is_a_parameter_value_not_a_character`。
+  判据来源：tex.web `scan_int` 的 internal-integer 臂含 `\chardef`'d cs。
 
 ## 5. 字体/连字/断字
 
@@ -65,6 +73,10 @@
 | `ntex-font/otf.rs` `build_metrics` | OTF 度量只有 advance/height/depth（hmtx+bbox），italic correction 恒 0；无 kerning/连字/HarfBuzz 整形 | 待做（M9 ②） |
 | `ntex-backend` CJK 渲染 | 字形经 cmap 直查（`unicode_native` 字体 codepoint→glyph）；缺字形逐字回落方框；无 CJK 字体链 fallback | 待做 |
 | `ntex-font/tfm.rs:191` | 保留左/右字符的连字（罕见）暂不支持 | 待做 |
+| `ntex-wasm/src/lib.rs` `EMBEDDED_TFMS` | 内嵌 CM TFM 原仅 14 件，而 `set_preload_plain(true)` 的 plain 字体块引用 47 件 → Tauri/WASM 下 34 行 `! Font cmr9 not loadable: Metric (TFM) file not found.` | ✅ 已修（2026-09-11：补齐至 48 件 + `embedded_tfms_cover_plain_preload_set` 回归锁防清单再漂移；清单来源见 `crates/ntex-wasm/fonts/README.md`） |
+| `ntex-wasm/src/lib.rs` `EmbeddedTfmSource::otf_bytes` | 此前只实现 `tfm_bytes`，`otf_bytes` 落 trait 默认 `None` → wasm/Tauri 下 OpenType 字体**拿不到排版度量**，中文只能逐字节报 `Missing character: There is no ^^e5 …` | ✅ 已修（2026-09-11：新增进程级 `OTF_METRICS` 表 + `set_otf_font(tex_name, bytes)` 导出，一次调用同写「排版度量 + 渲染轮廓」两侧） |
+| `ntex-tauri/ui/fonts/FandolSong-Regular.otf` | 中文只有 **Regular 一款**：`\bf` 只切换拉丁字面（cmbx），汉字仍出 Regular 字形 | 待做（M9 中文刀 4：FandolSong-Bold / FandolHei / FandolKai 子集化 + `\bf` 家族按字体名映射） |
+| `scripts/make-cjk-subset.py` | 子集化档位 `sym`/`l1`/`full` 目前只按 GB2312 表 + `EXTRA_PUNCT` 取字符；非 GB2312 汉字（生僻字/异体字）仍缺字形→渲染方框 | 待做（按需并入 `full` 档的 `EXTRA` 码位表，或改走 `--text-file` 按实际文稿取字） |
 | `expand/primitive.rs:893` | `\varunit` 字体单位 no-op | ✅ 无单独场景（TRIP 仅 dimen 上下文 `20\varunit`） |
 | `expand/save.rs:656` | `\the\font` 简化（expander 无排版状态） | 待做 |
 | `hyphen.rs:10,47` | 词界限制 `.` 暂不参与断点过滤 | 待做 |
@@ -148,4 +160,5 @@ demo1 六刀 + 输出例程刀 2/3/5 的修复登记；全部已提交，留作�
 - 2026-09-09：格式预载/scan 线补登（§7.bis 新设）——scan_glue dimen 臂（226c177，latex.ltx l.13899 \skip_const 停点消除）+ scan_int dimendef 数字上下文（04d2023，\z@）+ G3 page 参数（3af87dd）；输出例程刀 4 \newinsert 分配器补登（3ef1f67，§7）；新增三项简化登记：EmbeddedFormatVfs 仅 ntex-dvi 接线、预载空页、\lccode/\uccode 初表全 0（510431b 系）
 - 2026-09-10：M9 中文刀 1 登记（§5 新增三行）——\char 上界按字体判定（`FontLoader::char_code_limit`，8-bit 255/Unicode 0x10FFFF，TRIP/ETRIP 口径不变已对照 HEAD 逐字节验证）+ OTF→FontMetrics 直映通道（`unicode_native`/`unicode_chars`，无 ic/kerning）+ 渲染 cmap 直查；遗留：输入层 UTF-8（A5，刀 2）为源文件直写中文前提
 - 2026-09-11：M9 中文刀 2 登记（§5 首行刷新）——`\utfinputmode`（misc 65）UTF-8 直写通路打通，默认 bytes 零改动；遗留改为：\catcode >255 赋值扩展（刀 3）、CJK 断行/标点挤压（④）
+- 2026-09-11：M9 中文刀 3 登记（**Tauri/WASM 端中文端到端打通**）——本次修自 `resume-plain.tex` 在 Tauri 报错起：① 内嵌 CM TFM 14 → **48 件**（`! Font cmr9 not loadable` ×34 的根因）；② `EmbeddedTfmSource::otf_bytes` + `set_otf_font`（wasm 侧 OpenType **度量**缝，此前只喂渲染轮廓）；③ 引擎级 UTF-8 开关 `Typesetter::set_utf8_input`（经 `Expander::set_misc_int` 写 misc 65，**不改源码**以免 log `l.N` 与编辑器行号错位）；④ `expand/primitive_param.rs` 内部量判定补 `EqSlot::Char`（`\fam\bffam` 误判 → 每个 `\bf` 多插一个字符码 6，见 §4 反例登记）；⑤ `resume-plain.tex` 加 NTex 三分支（`\ifx\utfinputmode\undefined`）。新增回归锁 4 项（ntex-wasm）+ 1 项（ntex-core）。遗留：中文无粗体（同月刀 4）、`\catcode` >255、CJK 断行/标点挤压（④）
 - **收尾纪律提醒**：后续每轮修复后同步更新本清单（已修项标 ✅ + commit；维护记录追加）

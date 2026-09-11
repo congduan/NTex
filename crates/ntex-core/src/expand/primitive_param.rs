@@ -173,9 +173,19 @@ impl Expander {
                         // 不认这个臂 → `\escapechar\m@ne` 被判成"单独出现 no-op"，
                         // \m@ne 回流后当赋值目标吞掉后续 token——plain.tex \newif
                         // 因此把 \m@ne(\count22) 抹成 0，\newinsert 分配器失步。
+                        //
+                        // `EqSlot::Char`（`\chardef` 定义的 cs）同属这一臂：
+                        // tex.web scan_int 的 internal integer 含 \chardef'd cs，
+                        // 其取值为字符码（取值实现见 scan.rs 的 `EqSlot::Char` 臂）。
+                        // 2026-09-11 修：此前漏掉这一臂 → `\fam\bffam`（plain 的
+                        // `\bf`！）被判"单独出现 no-op"，\bffam 回流后被当**字符**
+                        // 排版——每个 `\bf` 都往盒里多插一个字符码 6 的节点
+                        // （cmr10 char 6 宽 7.22pt，DVI 与真实 TeX 不一致；
+                        //  换 Unicode 字体后更直接报 `Missing character: no ^^F`）。
                         let internal_integer = matches!(
                             &slot,
                             EqSlot::Register(..)
+                                | EqSlot::Char { .. }
                                 | EqSlot::Primitive(
                                     Primitive::Count
                                         | Primitive::Dimen

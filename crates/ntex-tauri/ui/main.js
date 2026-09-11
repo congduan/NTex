@@ -2,7 +2,9 @@
 // compile_document() 产出页树句柄（Document），render_page() 走软光栅出
 // RGBA 纹理，putImageData 上 canvas；翻页/调 dpi/debug 不重排版（B 档第一刀）。
 // 引擎不进 Tauri Rust 进程：本文件是纯静态 ES module，无任何 IPC。
-import init, { compile_document, demo_tex, engine_version, set_glyph_font } from './pkg/ntex_wasm.js';
+import init, {
+  compile_document, demo_tex, engine_version, set_glyph_font, set_otf_font, set_utf8_input,
+} from './pkg/ntex_wasm.js';
 
 const $ = (id) => document.getElementById(id);
 const editor = $('editor'), hlcode = $('hlcode'), gutter = $('gutter'), hl = $('hl');
@@ -16,7 +18,7 @@ const HIGHLIGHT_LIMIT = 200_000; // 超长文档跳过高亮（叠层全量重�
 
 const state = {
   doc: null, page: 0, dpi: 96, debug: false, glyphs: true, fontsReady: false,
-  inflight: false, dirty: false, timer: 0,
+  utf8: true, inflight: false, dirty: false, timer: 0,
 };
 
 /* ---------- 引擎 ---------- */
@@ -24,6 +26,7 @@ const state = {
 // 真字形：fetch Latin Modern OTF 注入 wasm（进程级注册表；映射见 ui/fonts/README.md）。
 // 数学族 cmmi/cmsy/cmex 共用 OpenType MATH 单文件 latinmodern-math.otf
 // （LM 无独立数学族 OTF；slot→Unicode 按 OML/OMS/OMX 编码分发，见 glyphs.rs）。
+// 这些字体**有内嵌 TFM 度量**，注入只补轮廓 → set_glyph_font。
 const GLYPH_FONTS = [
   ['cmr10', 'fonts/lmroman10-regular.otf'],
   ['cmr12', 'fonts/lmroman12-regular.otf'],
@@ -41,20 +44,40 @@ const GLYPH_FONTS = [
   ['cmex10', 'fonts/latinmodern-math.otf'],
 ];
 
+// 中文：Fandol Song 子集（OpenType 原生字体，**没有 TFM**）——排版阶段就要
+// 字体字节建度量，故走 set_otf_font（一次写「度量 + 轮廓」两侧）；
+// 用 set_glyph_font 会漏掉度量，`\font\zh=FandolSong-Regular` 直接 not loadable。
+// 名字 = 文件主名，TeX 侧 `\font\zh=FandolSong-Regular at 11pt` 即命中。
+const CJK_FONTS = [
+  ['FandolSong-Regular', 'fonts/FandolSong-Regular.otf'],
+];
+
 async function loadFonts() {
-  const results = await Promise.all(GLYPH_FONTS.map(async ([name, url]) => {
-    try {
-      const bytes = await (await fetch(url)).arrayBuffer();
-      return set_glyph_font(name, new Uint8Array(bytes));
-    } catch { return false; }
-  }));
+  const fetchBytes = async (url) => new Uint8Array(await (await fetch(url)).arrayBuffer());
+  const jobs = [
+    ...GLYPH_FONTS.map(async ([name, url]) => {
+      try { return set_glyph_font(name, await fetchBytes(url)); } catch { return false; }
+    }),
+    ...CJK_FONTS.map(async ([name, url]) => {
+      try { return set_otf_font(name, await fetchBytes(url)); } catch { return false; }
+    }),
+  ];
+  const results = await Promise.all(jobs);
   state.fontsReady = results.some(Boolean);
   if (!state.fontsReady) $('engine-info').textContent += ' · 字体加载失败（方框口径）';
+}
+
+// UTF-8 输入开关：走引擎参数注入口（不拼接源码——拼接会让 log 的 l.N 与
+// 编辑器行号错位）。开 = 源文件可直接写中文；关 = bytes 模式（TeX 原语义）。
+function applyUtf8() {
+  state.utf8 = $('utf8').checked;
+  set_utf8_input(state.utf8);
 }
 
 async function boot() {
   await init();
   $('engine-info').textContent = `${engine_version()} · wasm 软光栅`;
+  applyUtf8();               // UTF-8 输入开关：必须早于首次编译
   const fonts = loadFonts(); // 并行注入，不阻塞首屏（方框 → 字形就绪后重渲染）
   editor.value = localStorage.getItem(DRAFT_KEY) ?? demo_tex();
   refreshOverlay();
@@ -182,6 +205,12 @@ $('glyphs').addEventListener('change', (e) => {
 $('prev-page').addEventListener('click', () => { if (state.page > 0) { state.page--; renderPage(); } });
 $('next-page').addEventListener('click', () => {
   if (state.doc && state.page < state.doc.page_count - 1) { state.page++; renderPage(); }
+});
+$('utf8').addEventListener('change', () => {
+  // 输入编码是编译期语义 → 改了要重排（不只是重渲染）
+  applyUtf8();
+  clearTimeout(state.timer);
+  compileNow();
 });
 canvas.addEventListener('click', () => canvas.classList.toggle('zoom100'));
 

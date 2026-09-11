@@ -93,3 +93,45 @@ fn allocated_number_reaches_insert_and_void_test() {
     assert!(r.is_ok(), "{t}");
     assert!(t.contains("V:voidN:254"), "分配号 254 直接可用：{t}");
 }
+
+// ── 2026-09-11：`\chardef` 定义的 cs 作内部整数参数的**值**（与上文 \m@ne 同源） ──
+//
+// 上文钉的是 `\countdef` 走 `EqSlot::Register` 臂；本组钉 `\chardef` 走
+// `EqSlot::Char` 臂。两者同属 tex.web scan_int 的 <internal integer>，
+// `internal_integer` 判定漏掉 `EqSlot::Char` 时的症状不是"值错"而是
+// **多排版一个字符**：`\fam\bffam`（plain.tex `\def\bf{\fam\bffam\tenbf}`）
+// 被判"单独出现 no-op"→ `\bffam` 回流 → 主循环把它当字符 6 送进盒树。
+//
+// 影响面：**每个 `\bf` 都多插一个字符节点**——
+//   - cmr10 下 char 6 宽 7.22222pt（`\showbox` 实测），DVI 与真实 TeX 不一致；
+//   - 换 Unicode 正文字体（中文场景）后直接报
+//     `Missing character: There is no ^^F in font <name>!`。
+// 现场：Tauri 渲染 resume-plain.tex（2026-09-11）。
+
+/// `\chardef` cs 作参数值：值生效、且**不得**作为字符进入输出流。
+#[test]
+fn chardef_cs_is_a_parameter_value_not_a_character() {
+    // 值生效：\the\fam 回读为 5（chardef 的字符码）。
+    let (r, t) = run_transcript("\\chardef\\five=5 \\fam\\five \\message{F:\\the\\fam}\n");
+    assert!(r.is_ok(), "{t}");
+    assert!(t.contains("F:5"), "chardef'd cs 应作参数值取出：{t}");
+
+    // 且不得被排版：输出为空（修复前会输出字符 '5'）。
+    assert_eq!(
+        expand("\\chardef\\five=5 \\fam\\five").unwrap(),
+        "",
+        "\\fam\\<chardef'd cs> 不得把该 cs 当字符排版"
+    );
+
+    // 对照组（本就正确，锁住不回归）：宏作值（trip.tex `\tracingoutput\on` 形态）
+    // 与字面数字。注意源码里不留尾随空格——空格本身是会被排版出去的字符，
+    // 会让"输出应为空"的判据失真（`\chardef` 那条的数字扫描顺带吃掉分隔空格，
+    // 宏那条不会，两者不可共用同一写法）。
+    assert_eq!(expand("\\fam5").unwrap(), "");
+    assert_eq!(expand("\\def\\five{5}\\fam\\five").unwrap(), "");
+    assert_eq!(expand("\\chardef\\five=5\\fam\\five").unwrap(), "");
+    // 对照：chardef'd cs 直接出现在正文里**应当**被排版（catcode 12 字符）。
+    // 取值是 chardef 给定的**字符码**（`\chardef\cs=65` → 字符 'A'），
+    // 不是数值文本 `65`——别把这条与"作参数值"混淆。
+    assert_eq!(expand("\\chardef\\letter=65\\letter").unwrap(), "A");
+}

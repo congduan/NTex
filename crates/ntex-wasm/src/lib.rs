@@ -32,32 +32,119 @@
 //! 现留在 `MemVfs` 内不回传——`ntex-io` 的 `MemVfs` 暂无枚举 API（只有 `read`/
 //! `write`/`append`/`get`），补枚举接口属 ntex-io 领地，不在本刀范围。
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{LazyLock, Mutex};
+
 use wasm_bindgen::prelude::*;
 
-/// 内嵌 CM 字体（plain 子集 14 个）：来源 TinyTeX `texmf-dist/fonts/tfm/public/cm/`
-/// （Computer Modern，可再分发；来源与许可见 `fonts/README.md`）。
-/// 10pt 七件套覆盖正文与数学文本字号（cmtt10 供 `\tt`）；7/5pt 五件套供数学
-/// 上下标（plain.tex `\scriptfont`/`\scriptscriptfont` 装配口径）；cmr12 供标题
-/// （`scaled` 缩放仅改尺寸不改度量来源）。
+/// 内嵌 CM 字体（**plain 预载全集** 48 个）：来源 TeX Live
+/// `texmf-dist/fonts/tfm/public/{cm,knuth-lib}/`（Computer Modern + manfnt，
+/// 可再分发；来源与许可见 `fonts/README.md`）。
+///
+/// 为什么是"preload 全集"而非"用到哪几个嵌哪几个"：wasm 管线走
+/// `set_preload_plain(true)`（等价源首行 `\input plain`），内嵌 `plain.tex`
+/// 的字体段会把整套 `\preloaded` 字体装进 eqtb——缺一个就吐一行
+/// `! Font cmr9 not loadable: Metric (TFM) file not found.`。A 档只嵌了 14 个
+/// 10pt/7pt/5pt 常用件，于是 resume-plain.tex 这类 plain 作业在 Tauri 里会带
+/// 34 行缺字体噪声（2026-09-11 修复）。全集仅 ~196 KB（每个 TFM 1~1.5 KB），
+/// 换 log 与排版语义干净，值。
+///
+/// 分组：正文族 r / 粗体 bx / 打字机 tt / 斜体 ti / 数学斜体 mi / 数学符号 sy /
+/// 大算符 ex / 无衬线 ss / 细体 sl / 小型大写 csc + manfnt（plain 的 `\manfnt`
+/// 提示字符）。名字逐字对应内嵌 `plain.tex` 的 `\font\preloaded=<name>` 行，
+/// 清单由该文件 grep 得出而非手抄（见 `fonts/README.md` 的「清单来源」）。
 const EMBEDDED_TFMS: &[(&str, &[u8])] = &[
-    ("cmr10", include_bytes!("../fonts/cmr10.tfm")),
-    ("cmbx10", include_bytes!("../fonts/cmbx10.tfm")),
-    ("cmti10", include_bytes!("../fonts/cmti10.tfm")),
-    ("cmtt10", include_bytes!("../fonts/cmtt10.tfm")),
-    ("cmmi10", include_bytes!("../fonts/cmmi10.tfm")),
-    ("cmsy10", include_bytes!("../fonts/cmsy10.tfm")),
-    ("cmex10", include_bytes!("../fonts/cmex10.tfm")),
-    ("cmr12", include_bytes!("../fonts/cmr12.tfm")),
-    ("cmr7", include_bytes!("../fonts/cmr7.tfm")),
+    // 罗马正文族（10pt 基准 + 8/9pt + 脚本层 5/6/7pt + 标题 12pt）
     ("cmr5", include_bytes!("../fonts/cmr5.tfm")),
-    ("cmmi7", include_bytes!("../fonts/cmmi7.tfm")),
+    ("cmr6", include_bytes!("../fonts/cmr6.tfm")),
+    ("cmr7", include_bytes!("../fonts/cmr7.tfm")),
+    ("cmr8", include_bytes!("../fonts/cmr8.tfm")),
+    ("cmr9", include_bytes!("../fonts/cmr9.tfm")),
+    ("cmr10", include_bytes!("../fonts/cmr10.tfm")),
+    ("cmr12", include_bytes!("../fonts/cmr12.tfm")),
+    // 粗体扩展族
+    ("cmbx5", include_bytes!("../fonts/cmbx5.tfm")),
+    ("cmbx6", include_bytes!("../fonts/cmbx6.tfm")),
+    ("cmbx7", include_bytes!("../fonts/cmbx7.tfm")),
+    ("cmbx8", include_bytes!("../fonts/cmbx8.tfm")),
+    ("cmbx9", include_bytes!("../fonts/cmbx9.tfm")),
+    ("cmbx10", include_bytes!("../fonts/cmbx10.tfm")),
+    // 打字机体族
+    ("cmtt8", include_bytes!("../fonts/cmtt8.tfm")),
+    ("cmtt9", include_bytes!("../fonts/cmtt9.tfm")),
+    ("cmtt10", include_bytes!("../fonts/cmtt10.tfm")),
+    // 意大利体族
+    ("cmti7", include_bytes!("../fonts/cmti7.tfm")),
+    ("cmti8", include_bytes!("../fonts/cmti8.tfm")),
+    ("cmti9", include_bytes!("../fonts/cmti9.tfm")),
+    ("cmti10", include_bytes!("../fonts/cmti10.tfm")),
+    // 数学文本斜体（OML）
     ("cmmi5", include_bytes!("../fonts/cmmi5.tfm")),
-    ("cmsy7", include_bytes!("../fonts/cmsy7.tfm")),
+    ("cmmi6", include_bytes!("../fonts/cmmi6.tfm")),
+    ("cmmi7", include_bytes!("../fonts/cmmi7.tfm")),
+    ("cmmi8", include_bytes!("../fonts/cmmi8.tfm")),
+    ("cmmi9", include_bytes!("../fonts/cmmi9.tfm")),
+    ("cmmi10", include_bytes!("../fonts/cmmi10.tfm")),
+    ("cmmib10", include_bytes!("../fonts/cmmib10.tfm")),
+    // 数学符号（OMS）+ 粗体符号
     ("cmsy5", include_bytes!("../fonts/cmsy5.tfm")),
+    ("cmsy6", include_bytes!("../fonts/cmsy6.tfm")),
+    ("cmsy7", include_bytes!("../fonts/cmsy7.tfm")),
+    ("cmsy8", include_bytes!("../fonts/cmsy8.tfm")),
+    ("cmsy9", include_bytes!("../fonts/cmsy9.tfm")),
+    ("cmsy10", include_bytes!("../fonts/cmsy10.tfm")),
+    ("cmbsy10", include_bytes!("../fonts/cmbsy10.tfm")),
+    // 大算符（OMX）
+    ("cmex10", include_bytes!("../fonts/cmex10.tfm")),
+    // 无衬线族（含 `\ssq` 倾斜/引号变体）
+    ("cmss10", include_bytes!("../fonts/cmss10.tfm")),
+    ("cmssbx10", include_bytes!("../fonts/cmssbx10.tfm")),
+    ("cmssi10", include_bytes!("../fonts/cmssi10.tfm")),
+    ("cmssq8", include_bytes!("../fonts/cmssq8.tfm")),
+    ("cmssqi8", include_bytes!("../fonts/cmssqi8.tfm")),
+    // 细体族（cmsl / cmsltt 斜体打字机）
+    ("cmsl8", include_bytes!("../fonts/cmsl8.tfm")),
+    ("cmsl9", include_bytes!("../fonts/cmsl9.tfm")),
+    ("cmsl10", include_bytes!("../fonts/cmsl10.tfm")),
+    ("cmsltt10", include_bytes!("../fonts/cmsltt10.tfm")),
+    // 小型大写 + 装饰 + 数学 U + manfnt（plain `\manfnt` 提示字形）
+    ("cmcsc10", include_bytes!("../fonts/cmcsc10.tfm")),
+    ("cmdunh10", include_bytes!("../fonts/cmdunh10.tfm")),
+    ("cmu10", include_bytes!("../fonts/cmu10.tfm")),
+    ("manfnt", include_bytes!("../fonts/manfnt.tfm")),
 ];
 
 /// 随 crate 发布的示例源（`examples/demo.tex`）：`demo_tex()` 与裸冒烟入口共用。
 const DEMO_TEX: &str = include_str!("../examples/demo.tex");
+
+/// OpenType 度量注册表条目：`(TeX 字体名, 字体文件字节)`。
+type OtfMetricEntry = (String, Vec<u8>);
+
+/// OpenType 度量注册表本体：`LazyLock` 惰性初始化 + `Mutex` 互斥。
+///
+/// 抽成别名而非内联写 `LazyLock<Mutex<Vec<(String, Vec<u8>)>>>`：后者会被
+/// clippy `type_complexity` 拦下（`make lint` 带 `-D warnings`）。
+type OtfMetricRegistry = LazyLock<Mutex<Vec<OtfMetricEntry>>>;
+
+/// 进程级 OpenType 度量注册表（TeX 字体名 → 字体字节），供
+/// [`EmbeddedTfmSource::otf_bytes`] 命中。
+///
+/// 与 [`ntex_backend::glyphs::register_font_bytes`] 的**字形**注册表配对：
+/// 本表喂**排版度量**（ntex-layout `TfmLoader` → `ntex_font::build_metrics`），
+/// 后者喂**渲染轮廓**（ntex-backend `GlyphCache`）。两张表存在的原因是
+/// 排版与渲染是两个 crate、两条独立解析路径；[`set_otf_font`] 一次调用把
+/// 两侧都写上，避免"排出来了但渲染成方框"的半吊子态。
+///
+/// 用 `Mutex` 而非 `thread_local`：wasm32 单线程无所谓，但 native 测试
+/// 多线程并行跑同一 crate，全局表要能安全共享（与 ntex-backend 注册表同构）。
+static OTF_METRICS: OtfMetricRegistry = LazyLock::new(|| Mutex::new(Vec::new()));
+
+/// UTF-8 输入默认开关（宿主经 [`set_utf8_input`] 设置）：进程级，影响后续全部
+/// [`compile_tex`] / [`compile_document`] 调用。
+///
+/// 用 `AtomicBool` 而非 `Mutex`：只有一个 bool、无复合状态，且读点在每次
+/// 编译的热路径上，省一次加锁。
+static UTF8_INPUT: AtomicBool = AtomicBool::new(false);
 
 /// 内嵌 TFM 源：[`ntex_layout::TfmSource`] 的 `include_bytes!` 实现。
 #[derive(Debug)]
@@ -69,6 +156,20 @@ impl ntex_layout::TfmSource for EmbeddedTfmSource {
             .iter()
             .find(|(n, _)| *n == name)
             .map(|(_, bytes)| bytes.to_vec())
+    }
+
+    /// 宿主经 [`set_otf_font`] 注入的 OpenType 字体（CJK/任意 OTF/TTF）。
+    ///
+    /// 无此项时走 trait 默认 `None`，`TfmLoader` 在 wasm32 下只能回落文件
+    /// 系统（不可用）→ `! Font FandolSong-Regular not loadable`：这正是
+    /// Tauri 之前排不了中文的根因（2026-09-11 修复）。
+    fn otf_bytes(&mut self, name: &str) -> Option<Vec<u8>> {
+        OTF_METRICS
+            .lock()
+            .ok()?
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, bytes)| bytes.clone())
     }
 }
 
@@ -94,10 +195,22 @@ pub struct Compiled {
 /// `MemVfs`：`\input`/`\openin`/`\write` 全部封闭在内存（RFC-3；wasm 无文件系统）。
 /// 与 native `ntex-dvi` 驱动同一路径：TFM 模式 + `typeset_dvi`（自动分页）。
 fn compile_pipeline(tex: &str) -> ntex_core::error::Result<Compiled> {
+    compile_pipeline_with(tex, UTF8_INPUT.load(Ordering::Relaxed))
+}
+
+/// [`compile_pipeline`] 的可注入版本（`utf8_input` 显式给出，绕开进程级开关）。
+///
+/// 拆分动机：进程级开关在 `cargo test` 的并行线程间是共享状态，测试要能
+/// 各自指定编码模式而不互相污染。
+fn compile_pipeline_with(tex: &str, utf8_input: bool) -> ntex_core::error::Result<Compiled> {
     // TFM 源注册（幂等：每次编译前重挂，wasm 模块可反复编译无需额外初始化）。
     ntex_layout::set_tfm_source(Box::new(EmbeddedTfmSource));
     let mut ts = ntex_layout::Typesetter::with_tfm();
     ts.set_vfs(Box::new(ntex_io::MemVfs::new()));
+    // UTF-8 直写开关（M9 中文刀 3）：宿主在编译前设定，源文件即可直接写中文。
+    // 走引擎参数注入口（而非在源码前拼 `\utfinputmode=1`）——后者会让 log 的
+    // `l.N` 与编辑器行号错位一行（见 Typesetter::utf8_input_default 注释）。
+    ts.set_utf8_input(utf8_input);
     // 格式预载（G2(a)/G4）：与 native `ntex-dvi` 驱动同路径——内嵌 plain 兜底
     // + 启动预载（等价源首行 `\input plain`）。wasm 无文件系统，`\input plain`
     // 只能走内嵌资源；缺此则 plain 宏（`\hsize` 等）全缺，样例产空页。
@@ -338,14 +451,81 @@ pub fn compile_document(tex: &str) -> Result<Document, JsError> {
 
 /// 注入轮廓字体字节（OTF/TTF；`tex_name` 为 TeX 排版字体名如 `cmr10`）。
 ///
-/// wasm 无文件系统，前端 fetch Latin Modern OTF 后经此注册（进程级表，
-/// 见 ntex-backend `glyphs.rs::register_font_bytes`）；此后
+/// **仅注册渲染字形通道**（ntex-backend `glyphs.rs::register_font_bytes`）——
+/// 用于"已有 TFM 度量（cmr10 等）+ 想补真字形轮廓"的场景。此后
 /// [`Document::set_glyphs`]（true）渲染即走真字形轮廓，未注册字体逐字符
 /// 回落占位方框。坏字节返回 false 不 panic（引擎契约）。Latin Modern
 /// 与 CM 同源（度量一致），文件来源/许可见各前端 `fonts/` 目录 README。
+///
+/// 若字体**没有 TFM**（CJK 等 OpenType 原生字体），须改用 [`set_otf_font`]
+/// ——它同时打通排版度量，只有字形注册的话 `\font\zh=FandolSong-Regular`
+/// 会在排版阶段就报 `not loadable`。
 #[wasm_bindgen]
 pub fn set_glyph_font(tex_name: &str, bytes: &[u8]) -> bool {
     ntex_backend::glyphs::register_font_bytes(tex_name, bytes)
+}
+
+/// 注入 **OpenType 排版字体**（无 TFM 的字体：中文 Fandol/思源、西文 OTF）。
+///
+/// 一次调用注册两侧，`true` 表示度量与字形**均**可用：
+/// 1. **排版度量**：写入本模块 [`OTF_METRICS`] 表，`TfmLoader` 解析
+///    `\font\zh=FandolSong-Regular` 时经 [`ntex_layout::TfmSource::otf_bytes`]
+///    取字节 → `ntex_font::build_metrics` 建度量（hmtx + bbox）；
+/// 2. **渲染字形**：转交 `ntex_backend::glyphs::register_font_bytes`，
+///    `Document::set_glyphs(true)` 后按 cmap 直查画轮廓（`FontMetrics::
+///    unicode_native` 直通 Unicode 码位）。
+///
+/// 同名覆盖（前端重复 fetch 幂等）。坏字节 / 空名字返回 `false` 不 panic
+/// （引擎契约）。**与 [`set_glyph_font`] 的分工**：本函数管"从零接入一个
+/// OpenType 字体"，后者管"给已有 TFM 字体补轮廓"。
+///
+/// JS 侧（Tauri `ui/main.js` 的用法，本地 fetch 后注入）：
+/// ```js
+/// const bytes = new Uint8Array(await (await fetch('fonts/FandolSong-Regular.otf')).arrayBuffer());
+/// set_otf_font('FandolSong-Regular', bytes);   // 排版 + 渲染双通
+/// ```
+#[wasm_bindgen]
+pub fn set_otf_font(tex_name: &str, bytes: &[u8]) -> bool {
+    if tex_name.is_empty() {
+        return false;
+    }
+    // 先验度量可解析——坏字节在此拒绝（而非等到排版时报 not loadable）。
+    if ntex_font::build_metrics(bytes.to_vec(), tex_name).is_err() {
+        return false;
+    }
+    let Ok(mut table) = OTF_METRICS.lock() else {
+        // 锁毒化：持锁线程已 panic，注入失败按"环境无字体"处理（不传播）。
+        return false;
+    };
+    match table.iter_mut().find(|(n, _)| n == tex_name) {
+        Some(slot) => slot.1 = bytes.to_vec(),
+        None => table.push((tex_name.to_owned(), bytes.to_vec())),
+    }
+    drop(table);
+    // 字形侧同步注册：两表同进同出，避免"排了但渲染方框"。
+    ntex_backend::glyphs::register_font_bytes(tex_name, bytes)
+}
+
+/// UTF-8 输入默认开关（M9 中文刀 3）：开则后续编译把 `\utfinputmode` 预置为 1，
+/// 源文件可直接写中文（输入层把 UTF-8 多字节合并成单个 21-bit 字符 token，
+/// >255 码位默认 catcode letter，XeTeX 惯例）。
+///
+/// 引擎默认是 bytes 模式（0）——**TRIP/ETRIP/expl3 的 8-bit 口径依赖它**，
+/// 所以本开关只在宿主侧显式打开（Tauri/浏览器前端按 UI 的「UTF-8」勾选调用）。
+/// 源文件里显式的 `\utfinputmode=0/1` 仍优先生效（后写覆盖预置）。
+///
+/// 与"前端在源码前拼一行 `\utfinputmode=1`"的区别：走引擎参数注入口，
+/// **用户源文本逐字节不动**，log/转录里的 `l.N` 与编辑器行号对齐
+/// （`docs/tooling-trust.md` 的仪器可信度纪律）。
+#[wasm_bindgen]
+pub fn set_utf8_input(on: bool) {
+    UTF8_INPUT.store(on, Ordering::Relaxed);
+}
+
+/// 当前 UTF-8 输入默认开关（前端回显 UI 状态用）。
+#[wasm_bindgen]
+pub fn utf8_input() -> bool {
+    UTF8_INPUT.load(Ordering::Relaxed)
 }
 
 /// 引擎版本与能力描述（一行；JS 侧显示用）。
@@ -392,6 +572,14 @@ pub fn demo_tex() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Tauri 前端实际 fetch 的那份 Fandol Song 子集（`crates/ntex-tauri/ui/fonts/`，
+    /// GPL / CTAN fandol，见 `scripts/make-cjk-subset.py`）——测试直接锁线上字节，
+    /// 避免"测试用一份字体、前端用另一份"的漂移。
+    const FANDOL_BYTES: &[u8] = include_bytes!("../../ntex-tauri/ui/fonts/FandolSong-Regular.otf");
+
+    /// 仓库根的简历示例（原故障现场：Tauri 渲染报 34 行缺字体 + 数百行缺字形）。
+    const RESUME_PLAIN: &str = include_str!("../../../resume-plain.tex");
 
     /// 内嵌示例 → DVI 非空、结构正确（pre=247 / 版本 2，post_post 尾随 4×223）、
     /// 含 cmr10 字体定义、页数 ≥ 1。
@@ -632,5 +820,116 @@ mod tests {
             "预载 plain 后 `\\end` 触发输出例程产 1 页"
         );
         assert!(!compiled.dvi.is_empty(), "有页面即应出 DVI");
+    }
+
+    // ---------- 2026-09-11：Tauri 渲染 resume-plain.tex 报错的两条回归锁 ----------
+
+    /// 内嵌 plain.tex 里 `\font\preloaded=<name>` 引用的全部字体（grep 提取，
+    /// 见 `fonts/README.md` 的「清单来源」）。缺任一 → plain 预载吐一条
+    /// `! Font <name> not loadable: Metric (TFM) file not found.`。
+    ///
+    /// 回归背景：A 档只内嵌 14 个，Tauri 里跑 plain 作业会带 34 行缺字体噪声。
+    const PLAIN_PRELOAD_FONTS: &[&str] = &[
+        "cmbsy10", "cmbx10", "cmbx5", "cmbx6", "cmbx7", "cmbx8", "cmbx9", "cmcsc10", "cmdunh10",
+        "cmex10", "cmmi10", "cmmi5", "cmmi6", "cmmi7", "cmmi8", "cmmi9", "cmmib10", "cmr10",
+        "cmr5", "cmr6", "cmr7", "cmr8", "cmr9", "cmsl10", "cmsl8", "cmsl9", "cmsltt10", "cmss10",
+        "cmssbx10", "cmssi10", "cmssq8", "cmssqi8", "cmsy10", "cmsy5", "cmsy6", "cmsy7", "cmsy8",
+        "cmsy9", "cmti10", "cmti7", "cmti8", "cmti9", "cmtt10", "cmtt8", "cmtt9", "cmu10",
+        "manfnt",
+    ];
+
+    /// 内嵌 TFM 表必须覆盖 plain 预载全集（48 件，含 cmr12）。
+    #[test]
+    fn embedded_tfms_cover_plain_preload_set() {
+        for name in PLAIN_PRELOAD_FONTS {
+            assert!(
+                EMBEDDED_TFMS.iter().any(|(n, _)| n == name),
+                "内嵌 TFM 缺 {name}——plain 预载会报 not loadable"
+            );
+        }
+    }
+
+    /// UTF-8 输入开关（进程级）确实落到引擎 `\utfinputmode`，且**源内显式赋值
+    /// 覆盖宿主默认**（后写赢）。
+    #[test]
+    fn utf8_input_switch_reaches_engine_and_yields_to_source() {
+        let on = compile_pipeline_with("\\message{m=\\the\\utfinputmode}\\end", true)
+            .expect("作业应继续");
+        assert!(on.transcript.contains("m=1"), "开关开：{}", on.transcript);
+
+        let off = compile_pipeline_with("\\message{m=\\the\\utfinputmode}\\end", false)
+            .expect("作业应继续");
+        assert!(off.transcript.contains("m=0"), "开关关：{}", off.transcript);
+
+        let overridden = compile_pipeline_with(
+            "\\utfinputmode=0\\message{m=\\the\\utfinputmode}\\end",
+            true,
+        )
+        .expect("作业应继续");
+        assert!(
+            overridden.transcript.contains("m=0"),
+            "源内显式赋值应覆盖宿主默认：{}",
+            overridden.transcript
+        );
+    }
+
+    /// CJK 通路（M9 中文刀 3）：宿主经 [`set_otf_font`] 注入 OpenType 字体后，
+    /// wasm 壳能排中文——修复前 `EmbeddedTfmSource` 无 `otf_bytes`，
+    /// `\font\zh=FandolSong-Regular` 必然 `not loadable`（Tauri 完全排不了中文）。
+    ///
+    /// 字体字节用仓库内已入库的 Tauri 前端子集（`ui/fonts/`，GPL / CTAN fandol，
+    /// 见 `scripts/make-cjk-subset.py`）——保证测试跑的就是前端实际用的那一份。
+    #[test]
+    fn otf_injection_enables_cjk_typesetting() {
+        assert!(
+            set_otf_font("FandolSong-Regular", FANDOL_BYTES),
+            "合法 OTF 应注册"
+        );
+        assert!(
+            set_otf_font("FandolSong-Regular", FANDOL_BYTES),
+            "同名重复注入应幂等（前端重复 fetch 场景）"
+        );
+        assert!(!set_otf_font("bad-otf", &[0u8; 16]), "坏字节应拒绝");
+        assert!(!set_otf_font("", FANDOL_BYTES), "空名字应拒绝");
+
+        let compiled = compile_pipeline_with(
+            "\\font\\zh=FandolSong-Regular at 12pt\\zh\\hsize=200pt\n中文排版\n\\end",
+            true,
+        )
+        .expect("中文作业应能编译");
+        assert!(
+            !compiled.transcript.contains("not loadable"),
+            "字体已注入，不应再 not loadable：\n{}",
+            compiled.transcript
+        );
+        assert!(
+            !compiled.transcript.contains("Missing character"),
+            "中文字形应全部命中子集字体：\n{}",
+            compiled.transcript
+        );
+        assert!(!compiled.pages.is_empty(), "应产出页面");
+    }
+
+    /// 端到端复现原故障：`resume-plain.tex` 在 wasm 字体口径下编译——
+    /// 转录必须**零 `not loadable`、零 `Missing character`**。
+    ///
+    /// 这条锁同时覆盖两处修复：内嵌 TFM 补齐（plain 预载字体）+ OTF 注入
+    /// （中文字体经 `set_otf_font` 进排版度量）。源文件本身用
+    /// `\ifx\utfinputmode\undefined` 判别 NTex，故这条也顺带锁住该分流。
+    #[test]
+    fn resume_plain_compiles_clean_under_wasm_font_set() {
+        assert!(set_otf_font("FandolSong-Regular", FANDOL_BYTES));
+        let compiled = compile_pipeline_with(RESUME_PLAIN, true).expect("简历示例应能编译");
+        assert!(!compiled.pages.is_empty(), "应至少产出一页");
+        assert!(
+            !compiled.transcript.contains("not loadable"),
+            "plain 预载字体应全部命中内嵌 TFM；转录：\n{}",
+            compiled.transcript
+        );
+        assert!(
+            !compiled.transcript.contains("Missing character"),
+            "中文字形应全部命中子集字体；转录：\n{}",
+            compiled.transcript
+        );
     }
 }

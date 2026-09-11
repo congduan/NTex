@@ -31,7 +31,7 @@
 | 输出例程战 | 刀 1–5 已落（`\outputpenalty`/box255/insert/`\newinsert`/页号链） |
 | 格式预载 | G0–G3 已落；剩 G4（`\lccode/\uccode` 初表）、G5（初表分裂脑收敛） |
 | M5 增量 | 阶段一~五完成（改正文 4.3x / 改宏体 1.1x）；阶段六待办见 §7 |
-| M9 中文 | 刀 1/2 落地（`\char` 扩位按字体判定 + `\utfinputmode`）；A5 部分收口 |
+| M9 中文 | 刀 1/2/3 落地（`\char` 扩位按字体判定 + `\utfinputmode` + 宿主端 Tauri/WASM 端到端）；A5 部分收口 |
 | M2 字节码 | 吞吐 1.01x，≥2x 结构性不可达（RFC-4 IR 与解释器同构）；转 M7 `.fmt` v2 |
 | 技术债 | KNOWN-SIMPLIFICATIONS：30 待办 / 22 已修 |
 
@@ -886,7 +886,8 @@ LaTeX 兼容战役（进行中）
 |---|---|---|
 | TTF/OTF 字体解析 | 🟡 刀 1 已通（2026-09-10）：ttf-parser 度量直映通道 `OtfFont::build_metrics` → `FontMetrics::unicode_native/unicode_chars`，`\char"4E2D` 全链（度量→折行→DVI set2/3/4→PDF/vello/PNG 渲染 cmap 直查）已验证；HarfBuzz 整形/kerning/italic correction 仍无 | ② |
 | HarfBuzz 整形/整形缓存 | 无（M6 铺路条目已列） | ② |
-| 输入层 UTF-8 | 🟡 刀 2 已通（2026-09-11）：`\utfinputmode=1` → scan_token 将 UTF-8 多字节序列合并为单个 21-bit 字符 token（>255 码位默认 letter，XeTeX 惯例；CJK 控制词 `\def\中{}` 可用）；默认 bytes 模式零改动。遗留：`\catcode` >255 赋值扩展（Unicode catcode 表，A5 全量） | ③ |
+| 输入层 UTF-8 | 🟡 刀 2/3 已通（2026-09-11）：`\utfinputmode=1` → scan_token 将 UTF-8 多字节序列合并为单个 21-bit 字符 token（>255 码位默认 letter，XeTeX 惯例；CJK 控制词 `\def\中{}` 可用）；默认 bytes 模式零改动。刀 3 补**引擎级开关** `Typesetter::set_utf8_input`（宿主在编译前写入 misc 65，不改源码，保住 log `l.N` 行号）。遗留：`\catcode` >255 赋值扩展（Unicode catcode 表，A5 全量） | ③ |
+| 宿主端中文端到端（Tauri/WASM） | ✅ 刀 3 已通（2026-09-11）：内嵌 TFM 补齐 48 件（覆盖 plain 预载全集）+ `EmbeddedTfmSource::otf_bytes`/`set_otf_font` 度量缝 + Fandol Song 子集（`full` 档 3.58 MB）；`resume-plain.tex` 在 Tauri 零错误渲染 | ②③ |
 | CJK 断行规则（linebreak locale） | 无 | ④ |
 | 中文标点挤压/字距 | 无 | ④ |
 | ctex 宏包兼容 | 无（xeCJK 最小子集起步） | ⑤ |
@@ -922,6 +923,48 @@ LaTeX 兼容战役（进行中）
 - **遗留**：`\catcode` >255 赋值扩展（Unicode catcode 表，A5 全量收口）、
   CJK 断行/标点挤压（④，样张需空行分段因 letter 无断点）、`.fmt` 快照
   misc 数组扩容的版本兼容注意（MISC_INTS 65→66）。
+
+**刀 3 战果（2026-09-11，宿主端中文端到端：Tauri/WASM 真正排得出中文）**：
+
+起点是**现场故障**：`resume-plain.tex` 在 Tauri 桌面壳里报两类错——34 行
+`! Font cmr9 not loadable: Metric (TFM) file not found.` + 数百行
+`Missing character: There is no ^^e5 in font cmbx10!`（UTF-8 被逐字节切开）。
+
+- **① 内嵌 TFM 覆盖 plain 全集**（`! Font cmr9 not loadable` 的根因）：
+  `EMBEDDED_TFMS` 原仅 14 件，而 `set_preload_plain(true)` 的 plain 字体块引用
+  47 件 → wasm/Tauri 下 34 个字体加载失败。补齐至 **48 件（196 KB）**，
+  清单由 `crates/ntex-layout/resources/plain.tex` grep 得出而非手抄；
+  回归锁 `embedded_tfms_cover_plain_preload_set` 锁死"内嵌集 ⊇ 预载集"。
+- **② wasm 侧 OpenType 度量缝**（中文排不出的根因）：`EmbeddedTfmSource` 此前
+  只实现 `tfm_bytes`，`otf_bytes` 落 trait 默认 `None` → OTF 字体拿不到排版度量。
+  新增进程级 `OTF_METRICS` 表 + `set_otf_font(tex_name, bytes)` 导出；它与
+  `set_glyph_font` 的分工是**排版度量 vs 渲染轮廓**两张独立注册表（排版/渲染是
+  两个 crate 两条解析路径），`set_otf_font` 一次写两侧以避免"排得出但渲染成方框"。
+- **③ 引擎级 UTF-8 开关**（不污染源文本）：新增 `Typesetter::set_utf8_input`
+  （builder + 存取器）+ `Expander::set_misc_int`，把 misc 65 直写进引擎参数，
+  并由 wasm 导出 `set_utf8_input` 供宿主在编译前设定。**关键取舍**：不用"在源码
+  前拼 `\utfinputmode=1`"——那会让 log 的 `l.N` 与编辑器行号错位一行，破坏
+  `docs/tooling-trust.md` 的定位可信度。
+- **④ `\fam\bffam` 误判为 no-op**（换 Unicode 字体后才暴露的真 bug）：
+  `expand/primitive_param.rs` 的"内部量单独出现"判定漏了 `EqSlot::Char`
+  （`\chardef` 定义的 cs）。plain 的 `\bf` = `\fam\bffam\tenbf`，于是**每个 `\bf`**
+  都被判成空操作、`\bffam` 回流后被当**字符码 6** 排版——cmr10 下每处多插一个
+  7.22222pt 宽的节点（DVI 与真实 TeX 不一致），Fandol 下直接报
+  `Missing character: There is no ^^6`。判据 tex.web `scan_int` 的
+  internal-integer 臂含 `\chardef`'d cs。回归锁
+  `chardef_cs_is_a_parameter_value_not_a_character`。
+- **⑤ 宿主字面**：`resume-plain.tex` 改三分支引擎判定——以 NTex 独有的
+  `\ifx\utfinputmode\undefined` 区分于 pdfTeX/XeTeX 分支，NTex 走
+  `\utfinputmode=1` + FandolSong 正文/粗体 + 自装配数学字体族（`\textfont0..3`，
+  内嵌 plain 尚未装配数学族）。中文字体用 CTAN Fandol（GPL）经
+  `scripts/make-cjk-subset.py` 子集化到 **`full` 档（3.58 MB，6763 个 GB2312 汉字）**：
+  交互式编辑器下单个缺字就是方框，故取全档而非 l1 档（实测 sym 136 KB /
+  l1 2.0 MB / full 3.58 MB）。
+- **验证**：`cargo test -p ntex-wasm` 12/12 绿（含新增 4 锁）；native 复现命令
+  `NTEX_OTF_DIR=/tmp/subonly cargo run -q -p ntex-dvi -- resume-plain.tex`
+  零错误（把只有浏览器能复现的故障变成命令行可二分）；`make lint` 全绿。
+- **遗留**：中文只有 Regular 一款（无粗体/斜体，刀 4）、`\catcode` >255（A5）、
+  CJK 断行/标点挤压（④）、`.fmt` 快照 misc 扩容版本兼容。
 
 **分阶段验收标准**：
 

@@ -8,25 +8,62 @@
 %=====================================================================
 
 %------------------------- 全局设置 -------------------------
-% 中文排版说明：请用 XeTeX 编译（xetex resume-plain.tex）。
-% 下面按引擎分支设置字体：XeTeX 下用系统字体支持中文，
-% 其余引擎走默认 Computer Modern（此时中文不可见）。
+% 中文排版说明：本文件按引擎分支设置字体。
+%   XeTeX     → 系统字体（Songti SC），中文可显示；
+%   pdfTeX    → 默认 Computer Modern，中文不可见（本文档的历史行为）；
+%   NTex      → 中文字体 FandolSong（由前端 set_otf_font 注入，见下），
+%               并开启 \utfinputmode=1 以便源文件直写中文。
+% 引擎判别用 \ifx\utfinputmode\undefined——\utfinputmode 是 NTex 独有的
+% 内部整数参数（M9 中文刀 2），pdfTeX/XeTeX 上未定义，故能精确分流。
 \hsize=17cm                     % 版心宽度
 \vsize=24.5cm                   % 版心高度（压缩页边距，一页放下）
 \parindent=0pt                  % 不缩进
 \baselineskip=14pt
-\ifx\XeTeXrevision\undefined
-  \font\sectfont=cmr12 scaled \magstep1
+\ifx\utfinputmode\undefined
+  % ---------- 其它引擎（pdfTeX / XeTeX / LuaTeX） ----------
+  \ifx\XeTeXrevision\undefined
+    \font\sectfont=cmr12 scaled \magstep1     % pdfTeX：Computer Modern
+  \else
+    \XeTeXlinebreaklocale "zh"                 % 中文断行规则
+    \XeTeXlinebreakskip = 0pt plus 1pt minus .1pt
+    \font\tenrm="Songti SC" at 11pt            % 正文（宋体）
+    \font\tenbf="Songti SC/B" at 11pt          % 粗体
+    \font\tentt="Menlo" at 10.5pt              % 等宽
+    \font\sectfont="Songti SC/B" at 14pt       % 节标题
+    \tenrm                                     % 关键：激活中文字体为当前字体
+    \baselineskip=16pt
+  \fi
 \else
-  \XeTeXlinebreaklocale "zh"                 % 中文断行规则
-  \XeTeXlinebreakskip = 0pt plus 1pt minus .1pt
-  \font\tenrm="Songti SC" at 11pt            % 正文（宋体）
-  \font\tenbf="Songti SC/B" at 11pt          % 粗体
-  \font\tentt="Menlo" at 10.5pt              % 等宽
-  \font\sectfont="Songti SC/B" at 14pt       % 节标题
-  \tenrm                                     % 关键：激活中文字体为当前字体
+  % ---------- NTex（含 Tauri / WASM 实时预览） ----------
+  \utfinputmode=1                              % UTF-8 直写：多字节 → 单个字符 token
+  % Fandol Song（CTAN，GPL）由前端 fetch 后经 set_otf_font 注入；
+  % 文件主名即 TeX 字体名。中文暂无粗体件，\bf 与正文同轮廓（已知简化）。
+  % 每个字体单独试加载：失败则 \ifx<cs>\nullfont 成立（TeX 的字体标识符比较），
+  % 退回 Computer Modern——中文仍缺字，但西文至少可读（可恢复错误，不中断作业）。
+  \font\tenrm=FandolSong-Regular at 11pt
+  \ifx\tenrm\nullfont \font\tenrm=cmr10 \fi
+  \font\tenbf=FandolSong-Regular at 11pt
+  \ifx\tenbf\nullfont \font\tenbf=cmbx10 \fi
+  \font\sectfont=FandolSong-Regular at 14pt
+  \ifx\sectfont\nullfont \font\sectfont=cmr12 scaled \magstep1 \fi
+  \tenrm
   \baselineskip=16pt
+  % NTex 的内嵌 plain 尚未装配数学字体族（属 C 档 `.fmt` 路线；见
+  % docs/KNOWN-SIMPLIFICATIONS.md）。不装配时 fam≠0 的 \mathchar 会落到
+  % 正文字体上——本文档的 \bulchar（CMSY 0F，见下方 \mathchardef）就会报
+  % `Missing character: no ^^F in font FandolSong-Regular`。此处显式装配
+  % 三族（文字/数学斜体/符号/大算符），全部走内嵌 CM TFM。
+  \font\tenmrm=cmr10 \font\sevenmrm=cmr7 \font\fivemrm=cmr5
+  \font\tenmi=cmmi10 \font\sevenmi=cmmi7 \font\fivemi=cmmi5
+  \font\tensy=cmsy10 \font\sevensy=cmsy7 \font\fivesy=cmsy5
+  \font\tenex=cmex10
+  \textfont0=\tenmrm \scriptfont0=\sevenmrm \scriptscriptfont0=\fivemrm
+  \textfont1=\tenmi  \scriptfont1=\sevenmi  \scriptscriptfont1=\fivemi
+  \textfont2=\tensy  \scriptfont2=\sevensy  \scriptscriptfont2=\fivesy
+  \textfont3=\tenex  \scriptfont3=\tenex   \scriptscriptfont3=\tenex
 \fi
+% 等宽字体（\tt）保持 Computer Modern Typewriter：文件里只用于 URL 等
+% 纯 ASCII 内容，中文不出现在等宽语境。
 
 %------------------------- 自定义宏 -------------------------
 % 节标题：粗体大字 + 横线

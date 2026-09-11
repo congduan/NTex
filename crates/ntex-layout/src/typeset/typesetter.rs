@@ -231,6 +231,18 @@ pub struct Typesetter {
     preload_plain: bool,
     /// 内嵌格式 VFS 兜底层是否已包（[`Self::use_embedded_format`] 幂等标记）。
     embedded_vfs_installed: bool,
+    /// UTF-8 输入默认开关（M9 中文刀 3）：开则排版入口在用户源之前把
+    /// `\utfinputmode`（`param::MISC_UTF_INPUT_MODE`）置 1，源文件可直接写
+    /// 中文（输入层把 UTF-8 多字节合并成单个 21-bit 字符 token）。
+    ///
+    /// 做成引擎开关而不是"调用方在源码前拼一行"的理由：拼一行会让用户源
+    /// 整体下移，log/转录里的 `l.N` 与编辑器行号错位——而 `l.N` 是 TeX
+    /// 定位的第一现场（docs/tooling-trust.md 的仪器可信度纪律）。走
+    /// [`Expander::set_misc_int`] 则源文本逐字节不动。
+    ///
+    /// 默认关：bytes 是引擎既有语义，TRIP/ETRIP/expl3/latex-probe 口径零
+    /// 影响（`ntex-wasm` 的 Tauri/浏览器前端显式打开）。
+    utf8_input_default: bool,
 }
 
 /// INITEX/plain 大写字母 `\sfcode=999`（tex.web §4852 `for k:="A" to "Z" ...
@@ -267,6 +279,7 @@ impl Typesetter {
             fmt_current_font: 0,
             last_current_font: 0,
             preload_plain: false,
+            utf8_input_default: false,
             embedded_vfs_installed: false,
         }
     }
@@ -337,6 +350,35 @@ impl Typesetter {
         self.preload_plain
     }
 
+    /// UTF-8 输入默认开关（M9 中文刀 3）：开则每次排版在用户源之前把
+    /// `\utfinputmode` 置 1（详见字段 [`Self::utf8_input_default`]）。
+    ///
+    /// 用户源里显式的 `\utfinputmode=0` 仍生效——它后写、覆盖本默认。
+    /// 关闭（false）会把该参数**复位为 0**，使同一个 Typesetter 实例在
+    /// 多次排版之间不残留前一作业的开关。
+    pub fn set_utf8_input(&mut self, on: bool) {
+        self.utf8_input_default = on;
+        self.apply_utf8_input_default();
+    }
+
+    /// [`Self::set_utf8_input`] 的 builder 形式（链式构造）。
+    pub fn utf8_input(mut self, on: bool) -> Self {
+        self.set_utf8_input(on);
+        self
+    }
+
+    /// UTF-8 输入默认是否已开（诊断/测试用）。
+    pub fn utf8_input_on(&self) -> bool {
+        self.utf8_input_default
+    }
+
+    /// 把 [`Self::utf8_input_default`] 落到 `\utfinputmode`（每次排版入口调用）。
+    fn apply_utf8_input_default(&mut self) {
+        let on = i64::from(self.utf8_input_default);
+        self.expander
+            .set_misc_int(ntex_core::param::MISC_UTF_INPUT_MODE, on);
+    }
+
     /// 导出展开引擎状态快照（`.fmt` v1；供 `ntex-format` 序列化）。
     pub fn export_state(&self) -> ntex_core::expand::FmtState {
         let mut st = self.expander.export_state();
@@ -404,6 +446,7 @@ impl Typesetter {
             fmt_current_font: 0,
             last_current_font: 0,
             preload_plain: false,
+            utf8_input_default: false,
             embedded_vfs_installed: false,
         }
     }
@@ -422,6 +465,7 @@ impl Typesetter {
             fmt_current_font: 0,
             last_current_font: 0,
             preload_plain: false,
+            utf8_input_default: false,
             embedded_vfs_installed: false,
         }
     }
@@ -430,6 +474,7 @@ impl Typesetter {
     pub fn typeset(&mut self, text: &str) -> Result<Vec<Node>> {
         self.install_font_loader();
         self.install_builder(NodeBuilder::new(self.fonts.clone()));
+        self.apply_utf8_input_default();
         self.run_plain_preload()?;
         self.expander.run_source(text)?;
         self.finish().map(|out| {
@@ -442,6 +487,7 @@ impl Typesetter {
     pub fn typeset_bytes(&mut self, bytes: impl Into<Vec<u8>>) -> Result<Vec<Node>> {
         self.install_font_loader();
         self.install_builder(NodeBuilder::new(self.fonts.clone()));
+        self.apply_utf8_input_default();
         self.run_plain_preload()?;
         self.expander.feed_source(bytes);
         self.expander.run()?;
@@ -518,6 +564,7 @@ impl Typesetter {
     pub fn typeset_dvi(&mut self, text: &str) -> Result<(Vec<BoxNode>, Vec<FontMetrics>)> {
         self.install_font_loader();
         self.install_builder(NodeBuilder::with_pagination(self.fonts.clone(), true));
+        self.apply_utf8_input_default();
         self.run_plain_preload()?;
         self.expander.run_source(text)?;
         let out = self.finish()?;

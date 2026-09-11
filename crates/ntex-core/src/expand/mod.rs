@@ -2629,6 +2629,21 @@ impl Expander {
         &self.params
     }
 
+    /// 写一个内部整数参数（`Params::misc[idx]`，M9 中文刀 3 新增）。
+    ///
+    /// 用途：宿主/上层要在**用户源文本之外**设引擎级默认值。首个用例是
+    /// `\utfinputmode`——前端若靠"在源码前拼一行 `\utfinputmode=1`"来开启
+    /// UTF-8，用户源会整体下移一行，log 里的 `l.N` 与编辑器行号错位；
+    /// 走这里则源文本逐字节不动（行号即事实，见 docs/tooling-trust.md）。
+    ///
+    /// 越界下标静默忽略（引擎契约：输入可达路径不 panic）。与 `\utfinputmode`
+    /// 赋值同语义：后写的（含用户源里的显式赋值）覆盖先写的。
+    pub fn set_misc_int(&mut self, idx: usize, value: i64) {
+        if let Some(slot) = self.params.misc.get_mut(idx) {
+            *slot = value;
+        }
+    }
+
     // ---------- M5 增量计算：只读状态探针（plan.md §7；incremental 模块用） ----------
     //
     // 两个方法都只读、零语义改动：`value_state` 精确镜像 `.fmt` 未覆盖的值状态，

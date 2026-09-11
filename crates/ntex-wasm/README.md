@@ -8,8 +8,8 @@ plain 子集、无 LaTeX。
 
 | 档 | 内容 | 状态 |
 |---|---|---|
-| **A（本 crate）** | 引擎核心 WASM 化：`compile_tex()` 全链在 wasm 内完成，TFM 经 `ntex_layout::set_tfm_source` 注入（`fonts/` 内嵌 6 个 CM TFM，共 7.7 KB） | ✅ 已建（2026-09-06） |
-| **B** | 渲染。**第一刀已建（2026-09-06）**：`compile_document()` → `Document` 句柄（页盒树常驻）→ `render_page()` 走 ntex-backend **软光栅**（`prims` 事实源 + `Pixmap`，与桌面同代码；vello 经 feature 门控不进 wasm），RGBA 回传 JS `putImageData`；翻页/调 dpi/切 overlay 不重排版。后续：vello/wgpu web 后端、真字形（内嵌 LM OTF）、增量接口 | 🟡 第一刀已建 |
+| **A（本 crate）** | 引擎核心 WASM 化：`compile_tex()` 全链在 wasm 内完成，TFM 经 `ntex_layout::set_tfm_source` 注入（`fonts/` 内嵌 **48 个 CM TFM，共 196 KB** —— 覆盖内嵌 plain 预载字体块全集，2026-09-11 由 14 件补齐；见 `fonts/README.md`） | ✅ 已建（2026-09-06） |
+| **B** | 渲染。**第一刀已建（2026-09-06）**：`compile_document()` → `Document` 句柄（页盒树常驻）→ `render_page()` 走 ntex-backend **软光栅**（`prims` 事实源 + `Pixmap`，与桌面同代码；vello 经 feature 门控不进 wasm），RGBA 回传 JS `putImageData`；翻页/调 dpi/切 overlay 不重排版。**真字形与中文已通**（2026-09-11）：`set_glyph_font`（Latin/Modern，走 ntex-backend 轮廓注册表）+ `set_otf_font`（任意 OTF/TTF，**同时写排版度量与渲染轮廓两侧**）由宿主 fetch 后注入，`Document::set_glyphs(true)` 切轮廓渲染；`set_utf8_input(true)` 让源文件直写中文。后续：vello/wgpu web 后端、增量接口 | 🟡 第一刀 + 真字形/中文已建 |
 | **C** | LaTeX：`.fmt` 快照经 `MemVfs` 喂入 + `Typesetter::import_state`，在薄壳上加 `load_format(bytes)` | 等 `ntex-format` 快照完备（C 档依赖载入战） |
 
 B 档第一刀的实测（M2 MacBook，A4@144dpi）：demo 作业编译 ~3-11ms + 渲染 ~6-9ms，
@@ -66,23 +66,44 @@ cd www && python3 -m http.server 8000   # 浏览器打开 http://localhost:8000
 JS API（wasm-bindgen 生成后）：
 
 ```js
-import init, { compile_document, compile_tex, engine_version, embedded_fonts, demo_tex }
+import init, { compile_document, compile_tex, engine_version, embedded_fonts, demo_tex,
+               set_glyph_font, set_otf_font, set_utf8_input, utf8_input }
     from './pkg/ntex_wasm.js';
 await init();
 
 console.log(engine_version());            // "NTex WASM 0.1.0 (plain subset; ...)"
-console.log(embedded_fonts());            // ["cmr10","cmbx10","cmti10","cmmi10","cmsy10","cmex10"]
+console.log(embedded_fonts().length);      // 48（plain 预载字体块全集）
+console.log(embedded_fonts().slice(0, 6)); // ["cmr5","cmr6","cmr7","cmr8","cmr9","cmr10"]
+
+// —— 字形注入：真字形 + 中文（2026-09-11）——
+// 两张注册表各司其职：set_glyph_font 只喂「渲染轮廓」，set_otf_font 一次写
+// 「排版度量 + 渲染轮廓」两侧（少写度量＝排得出来但渲染方框，反之亦然）。
+const lm = await fetch('fonts/lmroman10-regular.otf').then(r => r.arrayBuffer());
+set_glyph_font('cmr10', new Uint8Array(lm));
+
+const fandol = await fetch('fonts/FandolSong-Regular.otf').then(r => r.arrayBuffer());
+set_otf_font('FandolSong-Regular', new Uint8Array(fandol));   // true = 度量解析成功
+
+set_utf8_input(true);                     // 源文件可直写中文（等价 \utfinputmode=1）
+console.log(utf8_input());                // true
 
 // —— B 档第一刀：编译 → 句柄 → 逐页软光栅渲染 ——
 const doc = compile_document(demo_tex());
 doc.page_count;                           // 2（\shipout 页数）
 doc.transcript;                           // TeX .log 主体
 doc.dvi;                                  // Uint8Array，DVI 字节流（dvipdfmx 类驱动可消费）
+doc.set_glyphs(true);                     // 切真字形轮廓渲染（未注入的字体逐字回落方框）
 
 const img = doc.render_page(0, 144, /*debug=*/false);   // 第 0 页 @144dpi → RGBA
 // img.width × img.height（A4@144dpi = 1191×1684），img.rgba = Uint8Array(w*h*4)
 ctx.putImageData(new ImageData(new Uint8ClampedArray(img.rgba), img.width, img.height), 0, 0);
+```
 
+> 中文文档（plain + Fandol Song）完整可用样例见 `crates/ntex-tauri/ui/`：那里的
+> `index.html`/`main.js` 已按上面的顺序（fetch 字体 → 注入 → 开 UTF-8 → 编译）
+> 接好，配合 `resume-plain.tex` 可端到端验证。
+
+```js
 // —— A 档原接口（一次性拿 DVI + 转录，不持句柄）——
 const r = compile_tex(demo_tex());
 console.log(r.dvi.length, r.page_count, r.fonts);
@@ -104,24 +125,42 @@ try {
    死循环防线剩两条：步数上限（`steps > 10_000_000`，两目标一致）+ 浏览器宿主页面超时。
 3. **字体度量来源**：注册的 `TfmSource`（内嵌字节）而非文件系统查找
    （`ntex-layout` `TfmLoader` 的字节源分叉；`fonts/README.md` 记录了字体来源与许可）。
-4. **渲染口径（B 档第一刀）**：软光栅 + 占位方框——字形通道依赖 kpsewhich/texlive
-   定位 Latin Modern OTF（ntex-backend `glyphs.rs`），wasm 无文件系统恒回落方框，
-   且软光栅本就不走字形通道（桌面 `ntex-backend` 软光栅同口径）；规则/glue/盒子
-   几何与桌面路径逐位同源（`prims.rs` 事实源）。真字形（内嵌 LM OTF）属 B 档后续。
+4. **渲染口径（B 档第一刀 + 真字形）**：字形通道**不再是"wasm 恒回落方框"**
+   （2026-09-11 更新）。wasm 无文件系统，但宿主可 fetch 字体字节后经
+   `set_glyph_font`（轮廓）/ `set_otf_font`（度量+轮廓）注入，再
+   `Document::set_glyphs(true)` 切轮廓渲染；**未注入的字体仍逐字回落方框**
+   （缺字形不 panic）。桌面侧仍走 kpsewhich/texlive 定位（`glyphs.rs`），
+   文本路径与 wasm 的注入路径共用同一轮廓注册表。规则/glue/盒子几何与桌面
+   路径逐位同源（`prims.rs` 事实源）。
+   另注：软光栅与 vello 两后端都支持字形通道；wasm 侧只编软光栅
+   （vello 经 feature 门控不进），故浏览器内不做 GPU 光栅。
 
 除上述四处，wasm 与 native 跑的是同一份引擎代码；native 行为零改动（门控只在
 wasm32 目标 / feature 组合下生效——`ntex-backend` 的 `vello` feature 为 default，
 native 路径不受影响）。
 
+**字体注入的两表设计（易踩）**：`ntex-layout`（排版度量，`TfmSource::otf_bytes`
+→ `ntex_font::build_metrics`）与 `ntex-backend`（渲染轮廓，`glyphs::register_font_bytes`）
+是**两个 crate、两张独立进程级注册表**——排版与渲染是两条独立解析路径。
+`set_glyph_font` 只写后者，`set_otf_font` **两个都写**。CJK 字体必须用
+`set_otf_font`（Fandol 没有 TFM）：只调 `set_glyph_font` 会得到
+「字体加载失败、整段中文消失」，只写度量侧则得到「排得出来但渲染成方框」。
+
 ## 验证边界（重要）
 
-- `cargo test --workspace`（native）全绿，其中 `crates/ntex-wasm` 的 6 个单测在
+- `cargo test --workspace`（native）全绿，其中 `crates/ntex-wasm` 的 12 个单测在
   **native 上跑与 wasm 完全相同的管线**（`compile_pipeline`：内嵌 TFM 注册 →
   `MemVfs` → `typeset_dvi` → DVI；`render_page_core`：盒树 → `prims` → `Pixmap`
   软光栅）——因为 TFM 注入缝与渲染核心函数不分目标编译（见
   `ntex-layout/src/typeset/wasm_fonts.rs` 的取舍说明）。渲染测试锁：A4 尺寸
   （595×842@72dpi / 1191×1684@144dpi）、白底有墨、debug overlay 增墨、
   越界页码与 dpi=0 可恢复报错（不 panic）。
+  2026-09-11 新增 4 个回归锁（针对 Tauri 中文故障）：
+  `embedded_tfms_cover_plain_preload_set`（内嵌 TFM 必须覆盖 plain 预载字体块
+  全集——防清单再漂移）、`utf8_input_switch_reaches_engine_and_yields_to_source`
+  （引擎参数开关不被源文件覆盖）、`otf_injection_enables_cjk_typesetting`
+  （`set_otf_font` 后中文可排）、`resume_plain_compiles_clean_under_wasm_font_set`
+  （真文档 `resume-plain.tex` 在 wasm 字体集下零错误编译）。
 - wasm 目标验证：`cargo check/build --target wasm32-unknown-unknown` 通过；本刀
   （2026-09-06）已做**真实浏览器端到端**（Chromium + wasm-bindgen --target web）：
   demo 作业 canvas 1191×1684、墨迹 ~9×10⁴ px、编译 11ms + 渲染 9.4ms；翻页仅
