@@ -442,6 +442,69 @@ l.8   \message{[EDEF-OK \meaning\reserved@a]}}
 note 事件（在 `exec_def`/`expand_region` 出口打印产出的宏体 token 序列），
 直接看 `\reserved@a` 被赋成了什么。**先 build 再验**。
 
+### A1.undecies 爆栈现场精查（2026-09-11）：单 token 纯递归，非巨型列表
+
+**决定性数据**（trace 二次精查 step 228182 的 116,850 条）：
+
+```
+帧类型分布: TokenList = 116,850（100%）
+token 分布: \tex_edef:D = 116,850（100%，无其他 token）
+
+最后 12 条（爆栈瞬间）：
+  d=4990 TokenList(1tok) tok=\tex_edef:D
+  d=4991 TokenList(1tok) tok=\tex_edef:D
+  …
+  d=5001 TokenList(1tok) tok=\tex_edef:D
+```
+
+**判读（推翻前两轮的假说）**：
+
+- ❌ 此前认为「`\edef` 展开**巨型** token 列表（曾见 `TokenList(33426tok)`）」——
+  那些巨型帧是**早先的**事件；爆栈段**全部是 `TokenList(1tok)`**。
+- ✅ 真相：**`\tex_edef:D` 单 token 纯递归**——深度**单调递增到 5001，从不回落**，
+  每一层都是一个「含 `\tex_edef:D` 的 1-token 帧」。
+
+**唯一可能机制**：`\tex_edef:D` 调用自身（每层只推 1 个 token，且就是 `\tex_edef:D`）。
+
+#### 已排除（本轮实测）
+
+| 嫌疑 | 结果 |
+|---|---|
+| 跨组条件惯用法 `\if_false: { \fi: }` / `{ \if_false: } \fi:`（expl3-code L3801/L3808/L12405 的核心构造）| ✅ **与 pdfTeX 逐字一致**（`[B macro:-> ABC ]`）|
+| 深宏递归本身（`\countdown{200}`）| ✅ 两引擎**同样爆**（pdfTeX 也 `input stack size=10000`）——非 NTex 特有 |
+
+#### 附带发现：栈上限差异（次要，非根因）
+
+| 引擎 | 上限 |
+|---|---|
+| tex.web 源 | `stack_size=200`（L403，**输入源数**）|
+| pdfTeX（TeX Live 编译版） | **10000** |
+| **NTex** | **5000**（`expand/mod.rs:53`）|
+
+NTex 是 pdfTeX 的一半。对 expl3 深递归代码，这会**提前触发**上限——但**不是**本次爆栈的根因（真因是单 token 无终止递归，10000 也照样爆）。
+
+#### 下一刀（明确）
+
+在 `call_macro` / `exec_def` 的入口加 JSONL note，记录**递归深度与调用者**，直接看
+`\tex_edef:D` 自我复制的**触发者**（是 `\__iow_wrap_break:w` 的
+`\tex_edef:D \l__iow_line_part_tl { \if_false: } \fi: …`
+（expl3-code L12405）在 `\if_false:` 跳过区的行为，还是别的）。
+
+**具体待查构造**（expl3-code L12399-12410）：
+
+```tex
+\__iow_tmp:w #1                       ← 外层 \cs_set_protected:Npn，含参数定界
+  { \cs_new:Npn \__iow_wrap_break:w
+      { \tex_edef:D \l__iow_line_part_tl
+          { \if_false: } \fi:        ← `{ \if_false: }` 组 + 组外 \fi:
+            \exp_after:wN \__iow_wrap_break_first:w … } }
+```
+
+**注意 `{ \if_false: } \fi:` 与 `\if_false: { \fi: }` 的**开关顺序差别**——
+本轮只测了后者（`\if_false: { \fi: }`，通过）。**前者（`{ \if_false: } \fi:`）
+尚未单独测试**，即 `\edef <cs> { \if_false: } \fi:` 形态——这正是 L12405 的写法。
+下一刀先补这个最小用例。
+
 ### A2. 连锁：`\reserved@a` 未定义自引用
 
 ```
