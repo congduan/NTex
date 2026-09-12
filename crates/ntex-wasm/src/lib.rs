@@ -38,7 +38,7 @@
 //! `write`/`append`/`get`），补枚举接口属 ntex-io 领地，不在本刀范围。
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 use wasm_bindgen::prelude::*;
 
@@ -54,6 +54,10 @@ use wasm_bindgen::prelude::*;
 /// 34 行缺字体噪声（2026-09-11 修复）。全集仅 ~196 KB（每个 TFM 1~1.5 KB），
 /// 换 log 与排版语义干净，值。
 ///
+/// 内嵌 TFM 是否已灌入 `ntex-font` 的进程级字节注册表（一次性）——
+/// PDF 写出（`ntex-pdf` → `ntex_font::read_tfm`）在 wasm 下唯一的度量来源。
+static TFM_BYTES_FOR_PDF: OnceLock<()> = OnceLock::new();
+
 /// 分组：正文族 r / 粗体 bx / 打字机 tt / 斜体 ti / 数学斜体 mi / 数学符号 sy /
 /// 大算符 ex / 无衬线 ss / 细体 sl / 小型大写 csc + manfnt（plain 的 `\manfnt`
 /// 提示字符）。名字逐字对应内嵌 `plain.tex` 的 `\font\preloaded=<name>` 行，
@@ -210,6 +214,14 @@ fn compile_pipeline(tex: &str) -> ntex_core::error::Result<Compiled> {
 fn compile_pipeline_with(tex: &str, utf8_input: bool) -> ntex_core::error::Result<Compiled> {
     // TFM 源注册（幂等：每次编译前重挂，wasm 模块可反复编译无需额外初始化）。
     ntex_layout::set_tfm_source(Box::new(EmbeddedTfmSource));
+    // PDF 写出（ntex-pdf）经 ntex_font::read_tfm 取度量——wasm 无文件系统，
+    // 注册表是唯一来源。把内嵌全表灌进去（进程级一次性；native 单测同路径，
+    // 保证「内嵌 TFM → 排版 → PDF」全链在无 TeX Live 环境也可回归）。
+    if TFM_BYTES_FOR_PDF.set(()).is_ok() {
+        for (name, bytes) in EMBEDDED_TFMS {
+            ntex_font::register_tfm_bytes(name, bytes);
+        }
+    }
     let mut ts = ntex_layout::Typesetter::with_tfm();
     ts.set_vfs(Box::new(ntex_io::MemVfs::new()));
     // UTF-8 直写开关（M9 中文刀 3）：宿主在编译前设定，源文件即可直接写中文。
@@ -1100,9 +1112,11 @@ mod tests {
             return;
         }
 
-        let compiled =
-            compile_pipeline_with(&format!("\\font\\a={name} \\hsize=200pt\n\\a A\n\\end"), false)
-                .expect("字体不可用应只报警告，作业仍继续");
+        let compiled = compile_pipeline_with(
+            &format!("\\font\\a={name} \\hsize=200pt\n\\a A\n\\end"),
+            false,
+        )
+        .expect("字体不可用应只报警告，作业仍继续");
         assert!(
             compiled.font_names.iter().any(|n| n == name),
             "DVI 字体表应含 {name}：{:?}",
@@ -1112,24 +1126,17 @@ mod tests {
         let pdf = pdf_from_dvi(&compiled.dvi, compiled.pages.len() as u32)
             .expect("缺字体也应产出 PDF（降级，不报错）");
         let s = String::from_utf8_lossy(&pdf);
-        // 报错时把实际写出的名字带出来——降级名是从 DVI 引用名大写兜底的，
-        // 引擎侧改名（如 TFM 自声明名优先）会让这里悄悄漂移。
-        let base_fonts: Vec<&str> = s
-            .match_indices("/BaseFont /")
-            .map(|(i, m)| {
-                let rest = &s[i + m.len()..];
-                rest.split(|c: char| c.is_whitespace() || c == '>').next().unwrap_or("")
-            })
-            .collect();
+        // 逐字体判定而非「全局没有 /FontFile」：同一份 DVI 里可能还有别的字体
+        // （本例段落起手的默认字体）是能正常嵌入的，全局断言会误伤。
+        // 降级分支写的是裸字典 `… /BaseFont /NAME >> endobj`（无 /FontDescriptor）；
+        // 嵌入分支是 `… /BaseFont /NAME /FontDescriptor N 0 R >> endobj`。
         assert!(
-            s.contains("/BaseFont /MANFNT "),
-            "降级时 /BaseFont 仍写入（取 TeX 名大写兜底）；实际写出：{base_fonts:?}，\
-             DVI 字体表：{:?}",
-            compiled.font_names
+            s.contains("/BaseFont /MANFNT >> endobj"),
+            "降级字体应写成无 /FontDescriptor 的裸字体字典（/BaseFont 取 TeX 名大写兜底）"
         );
         assert!(
-            !s.contains("/FontFile "),
-            "无字体字节可嵌 → 不应有 /FontFile 流"
+            !s.contains("/FontName /MANFNT"),
+            "降级字体不该有 /FontDescriptor（那意味着走了嵌入分支）"
         );
     }
 
@@ -1138,5 +1145,43 @@ mod tests {
     fn pdf_export_rejects_empty_document() {
         let err = pdf_from_dvi(&[], 0).expect_err("0 页应报错");
         assert!(err.contains("0 页"), "错误消息应含上下文：{err}");
+    }
+
+    /// `Document::used_fonts` = DVI 字体表（真正被 `set_font` 过的字体），
+    /// **不是** `Document::fonts`（引擎侧已载入全表）。
+    ///
+    /// 这条锁的是前端导出 PDF 的取数口径：按 `used_fonts` 逐名 fetch PFB，
+    /// 恰好只拉该嵌的那几份；误用 `fonts` 会白拉几十份资源，并对正文根本没用到的
+    /// 字体（如 plain 预载的 cmmi10）误报「缺字体」。
+    ///
+    /// 顺带覆盖 `Document::pdf_bytes`（实时预览那条导出路径）——与
+    /// `pdf_from_dvi` 共用核心，差别只在 DVI 取自句柄常驻字节。
+    #[test]
+    fn document_used_fonts_is_dvi_table_and_pdf_export_works() {
+        let doc =
+            compile_document("\\font\\a=cmr10 \\hsize=200pt\\a A\\end").expect("作业应能编译");
+        let used = doc.used_fonts();
+        assert!(used.iter().any(|n| n == "cmr10"), "应含 cmr10：{used:?}");
+        // 编译管线应把内嵌 TFM 灌进 ntex-font 注册表——PDF 写出在 wasm 下的
+        // 唯一度量来源（native 有文件链看不出差别，wasm32 上缺了就导不出）
+        assert!(
+            ntex_font::registered_tfm_bytes("cmr10").is_some(),
+            "编译后 ntex-font 注册表应含 cmr10（TFM_BYTES_FOR_PDF 灌表）"
+        );
+        assert!(
+            used.len() < doc.fonts().len(),
+            "DVI 实际引用（{} 件）应远小于已载入全表（{} 件）：{used:?}",
+            used.len(),
+            doc.fonts().len()
+        );
+        assert!(
+            !used.iter().any(|n| n == "cmmi10"),
+            "正文没用到 cmmi10，不该进 DVI 字体表：{used:?}"
+        );
+
+        let pdf = doc
+            .pdf_bytes()
+            .unwrap_or_else(|_| panic!("Document 路径应能导出 PDF"));
+        assert!(pdf.starts_with(b"%PDF-1.4"), "应以 PDF 头开始");
     }
 }

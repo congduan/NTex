@@ -377,10 +377,11 @@ impl<'a> Parser<'a> {
 }
 
 /// 加载 TFM 并按 DVI 的 (scale, design) 缩放到实际字号。
+///
+/// 字节经 [`ntex_font::read_tfm`]：注册表优先（wasm 唯一来源，见
+/// `ntex-font` 注册表注释），native 回落 find_tfm + 文件读，行为不变。
 fn load_tfm(name: &str, scale: i64, design: i64) -> io::Result<FontMetrics> {
-    let path = ntex_font::find_tfm(name)
-        .ok_or_else(|| io::Error::new(ErrorKind::NotFound, format!("找不到 TFM：{name}")))?;
-    let bytes = std::fs::read(&path)?;
+    let bytes = ntex_font::read_tfm(name)?;
     let mut fm = parse_tfm(&bytes)
         .map_err(|e| io::Error::new(ErrorKind::InvalidData, format!("解析 {name}.tfm：{e}")))?;
     fm.name = name.to_owned();

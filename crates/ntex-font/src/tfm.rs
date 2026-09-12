@@ -489,6 +489,60 @@ pub fn find_tfm(name: &str) -> Option<std::path::PathBuf> {
     None
 }
 
+// ---------- 进程级 TFM 字节注册表（M9：PDF 导出进 wasm） ----------
+
+use std::collections::HashMap;
+use std::io::{self, ErrorKind};
+use std::sync::{LazyLock, Mutex};
+
+/// 进程级 TFM 字节注册表：[`register_tfm_bytes`] 写入，[`read_tfm`] 优先命中。
+static TFM_BYTES: LazyLock<Mutex<HashMap<String, Vec<u8>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// 注册 TFM 字节（`tex_name` 为 TeX 字体名，如 `cmr10`——须与 DVI `fnt_def`
+/// 的外部名一致；同名覆盖）。
+///
+/// 与 [`find_tfm`] 的分工：那条链按**路径**找文件（环境变量 → TeX Live →
+/// kpsewhich），本注册表按**名字**直接给字节——为无文件系统环境（wasm32）
+/// 而设：`ntex-wasm` 启动时把内嵌 CM TFM 全表注册进来，`ntex-pdf` 的 PDF
+/// 写出经 [`read_tfm`] 优先命中。不注册（native 默认）行为不变。
+/// 与 `ntex-layout::set_tfm_source` 的缝分工：那条缝服务排版器（`\font`
+/// 解析），本注册表服务 PDF 写出（读度量）。
+///
+/// 只做字节搬运、不做解析校验：坏 TFM 由 `parse_tfm` 在使用处报带上下文的
+/// 错，注册表不该替调用方预判格式。
+///
+/// 返回 `false` 仅当注册表锁毒化（持锁线程 panic；不传播错误，引擎契约）。
+pub fn register_tfm_bytes(name: &str, bytes: &[u8]) -> bool {
+    match TFM_BYTES.lock() {
+        Ok(mut m) => {
+            m.insert(name.to_owned(), bytes.to_vec());
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// 已注册的 TFM 字节（不触碰文件系统）。
+pub fn registered_tfm_bytes(name: &str) -> Option<Vec<u8>> {
+    TFM_BYTES.lock().ok()?.get(name).cloned()
+}
+
+/// TFM 取数总入口：注册表优先，回落 [`find_tfm`] + `std::fs::read`。
+///
+/// `ntex-pdf` 的 PDF 写出经此读度量——wasm 下文件链恒空（无文件系统亦无
+/// 子进程），注册表是唯一来源；native 未注册时行为与旧的「find_tfm + read」
+/// 逐字一致。
+pub fn read_tfm(name: &str) -> io::Result<Vec<u8>> {
+    if let Some(bytes) = registered_tfm_bytes(name) {
+        return Ok(bytes);
+    }
+    let path = find_tfm(name)
+        .ok_or_else(|| io::Error::new(ErrorKind::NotFound, format!("找不到 TFM：{name}")))?;
+    std::fs::read(&path)
+        .map_err(|e| io::Error::new(e.kind(), format!("读 {}：{e}", path.display())))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -632,5 +686,27 @@ mod tests {
         assert_eq!(z.design_size_sp, 10 * 65_536);
         assert_eq!(z.scale, 0);
         assert_eq!(z.char_metrics(65), (0, 0, 0));
+    }
+
+    /// 注册表语义锁：注册优先于宿主文件链、字节原样搬运（不解析校验）、
+    /// 未注册且宿主也无 → `read_tfm` 报 NotFound。名字用不可能真实存在的
+    /// 前缀，避免与其他并行测试及宿主 TeX Live 冲突。
+    #[test]
+    fn tfm_bytes_registry_roundtrip_and_read_tfm_fallback() {
+        let name = "zz-not-a-real-font-anywhere";
+        assert!(
+            registered_tfm_bytes(name).is_none(),
+            "前置假设：该名字尚未注册"
+        );
+        let bytes: &[u8] = b"\x00\x01\x02\x03-registry-is-a-dumb-transport";
+        assert!(register_tfm_bytes(name, bytes));
+        // 注册命中：read_tfm 返回注册字节本身（哪怕不是合法 TFM——搬运不校验）
+        assert_eq!(read_tfm(name).expect("注册后应命中"), bytes.to_vec());
+        assert_eq!(registered_tfm_bytes(name).as_deref(), Some(bytes));
+
+        // 未注册 + 宿主查找链也命不中 → NotFound 且带字体名上下文
+        let miss = "zz-never-registered-nor-installed";
+        let err = read_tfm(miss).expect_err("不存在于任何来源").to_string();
+        assert!(err.contains(miss), "错误应带字体名：{err}");
     }
 }

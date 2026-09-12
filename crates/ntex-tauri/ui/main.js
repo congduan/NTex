@@ -4,6 +4,7 @@
 // 引擎不进 Tauri Rust 进程：本文件是纯静态 ES module，无任何 IPC。
 import init, {
   compile_document, demo_tex, engine_version, set_glyph_font, set_otf_font, set_utf8_input,
+  set_pfb_font,
 } from './pkg/ntex_wasm.js';
 
 const $ = (id) => document.getElementById(id);
@@ -22,7 +23,12 @@ const state = {
   // 预览显示缩放：zoom 为「位图像素 → 屏幕 CSS 像素」倍率；autoFit 时
   // 每次重排/窗口变化都重算为适配窗口的倍率（手缩放后自动关闭）。
   zoom: 1, autoFit: true,
+  // PDF 导出进行中：compileNow 据此跳过 free()（导出用的是旧 doc 的 DVI，
+  // 中途被 free 会 use-after-free 直接 panic）。
+  exporting: false,
 };
+// 已注入 wasm 的 PFB 名单（进程级注册表幂等，Set 只是省重复 fetch）
+const pfbReady = new Set();
 
 /* ---------- 引擎 ---------- */
 
@@ -101,7 +107,7 @@ function compileNow() {
   const t0 = performance.now();
   try {
     const doc = compile_document(editor.value); // 同步：release wasm 下 demo 量级 ~几十 ms
-    state.doc?.free?.();
+    if (!state.exporting) state.doc?.free?.(); // 导出正拿着旧 doc 解析 DVI，别动它
     state.doc = doc;
     // 钳到 [0, page_count-1]：0 页作业会把上界压成 -1，须同时钳下界，
     // 否则 -1 经 wasm-bindgen 转 u32 回绕成 4294967295（与 www/index.html、
@@ -219,6 +225,87 @@ $('utf8').addEventListener('change', () => {
   applyUtf8();
   clearTimeout(state.timer);
   compileNow();
+});
+
+/* ---------- PDF 导出 ---------- */
+// 路径：doc.used_fonts()（DVI 字体表，**不是** fonts——那是引擎侧已载入全表，
+// 误用会对正文没排到的字体误报缺字体）→ 逐名 fetch ui/pfb/<name>.pfb 经
+// set_pfb_font 注入（ntex-pdf 在 wasm 下无文件系统，宿主查找链必落空）→
+// doc.pdf_bytes() → <a download> 触发落盘（Tauri 壳经 on_download 放行，
+// 见 src/main.rs）。缺字体不阻断导出——引擎本身会静默写「未嵌入」的降级
+// PDF，这里把它变成**明说**的提示，而不是让用户拿到手打开才知道。
+async function exportPdf() {
+  if (state.exporting) return;
+  const doc = state.doc;
+  if (!doc || doc.page_count === 0) {
+    showErrorBar('0 页作业无 PDF 可导出（无 \\shipout 产出）');
+    return;
+  }
+  state.exporting = true;
+  setStatus('busy', '导出 PDF…');
+  try {
+    const missing = [];
+    for (const name of doc.used_fonts()) {
+      if (pfbReady.has(name)) continue;
+      try {
+        const res = await fetch(`pfb/${name}.pfb`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!set_pfb_font(name, new Uint8Array(await res.arrayBuffer()))) {
+          throw new Error('PFB 解析失败');
+        }
+        pfbReady.add(name);
+      } catch {
+        missing.push(name);
+      }
+    }
+    let bytes;
+    try {
+      bytes = doc.pdf_bytes();
+    } catch (e) {
+      // pdf_bytes 的错误消息已带「PDF 写出失败：」上下文（pdf_from_dvi 统一
+      // 拼装），这里只剥 JsError 的 "Error: " 皮，不重复加前缀
+      showErrorBar(String(e).replace(/^Error:\s*/, ''));
+      return;
+    }
+    triggerDownload(new Blob([bytes], { type: 'application/pdf' }), 'ntex.pdf');
+    if (missing.length) {
+      showErrorBar(
+        `已导出 ntex.pdf，但 ${missing.join('、')} 未找到 Type1 字形数据，未嵌入`
+        + '（PDF 查看器将以替代字形显示这些字体）',
+      );
+    } else {
+      setStatus('ok', 'PDF 已导出');
+    }
+  } finally {
+    state.exporting = false;
+  }
+}
+
+function triggerDownload(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+function showErrorBar(text) {
+  errorBar.textContent = text;
+  errorBar.hidden = false;
+}
+
+// Tauri 壳的 on_download 落盘完成后回调（纯浏览器环境没有这个钩子，
+// 靠上面导出时刻的即时状态）。
+window.__downloadDone = (ok) => {
+  if (ok) setStatus('ok', 'PDF 已存入「下载」文件夹');
+  else showErrorBar('PDF 导出失败（下载中断）');
+};
+
+$('export-pdf').addEventListener('click', () => {
+  exportPdf().catch((e) => { showErrorBar(`导出异常：${e}`); setStatus('err', '导出失败'); });
 });
 
 /* ---------- 预览缩放 / 平移 ---------- */
