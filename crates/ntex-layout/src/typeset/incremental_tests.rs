@@ -14,16 +14,26 @@ mod incremental_tests {
     /// 定位含 cmr10.tfm 的目录：NTEX_TFM_DIR 已指到即用；否则试 ~/.ntex-fonts。
     /// 找不到时不覆盖环境（文档退化为 nullfont 全零度量，逐位一致仍成立）。
     fn ensure_tfm_dir() {
+        // 并行测试竞态防护（2026-09-12）：set_var 在多线程下是数据竞争
+        //（Rust 2024 起标 unsafe）——13 例增量测试并行偶发 0 页即此因
+        //（NTEX_TFM_DIR 被并发写坏 → 字体度量退化 → 分页数翻转）。
+        // OnceLock 只初始化一次；首次成功后再无 set_var 调用。
+        static TFM_DIR: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        if TFM_DIR.get().is_some() {
+            return;
+        }
         if std::env::var("NTEX_TFM_DIR")
             .ok()
             .is_some_and(|d| std::path::Path::new(&d).join("cmr10.tfm").exists())
         {
+            let _ = TFM_DIR.set(());
             return;
         }
         let home = std::env::var("HOME").unwrap_or_default();
         let p = std::path::PathBuf::from(home).join(".ntex-fonts");
         if p.join("cmr10.tfm").exists() {
             std::env::set_var("NTEX_TFM_DIR", &p);
+            let _ = TFM_DIR.set(());
         }
     }
 

@@ -27,7 +27,84 @@ impl Expander {
             {
                 let name = self.intern.name(csid).to_owned();
                 if std::env::var_os("NTEX_DELIM_DBG").is_some() {
-                    eprintln!("[delim-mismatch] csid={csid} name={name:?} name_bytes={:?}", name.as_bytes());
+                    let pt: Vec<String> = def
+                        .params
+                        .text
+                        .iter()
+                        .map(|t| {
+                            if let Some(c) = t.csid() {
+                                format!("\\{}", self.intern.name(c))
+                            } else {
+                                format!("{:?}", t.charcode().and_then(char::from_u32))
+                            }
+                        })
+                        .collect();
+                    eprintln!(
+                        "[delim-mismatch] csid={csid} name={name:?} params_text={pt:?}"
+                    );
+                    // 调用者：warning_index = call_macro 设置的「正在扫的宏」
+                    let caller = self
+                        .warning_index
+                        .map(|c| format!("\\{}", self.intern.name(c)))
+                        .unwrap_or_else(|| "(none)".into());
+                    eprintln!("[delim-mismatch] caller={caller}");
+                    let body6: Vec<String> = def
+                        .body
+                        .iter()
+                        .take(6)
+                        .map(|t| {
+                            if let Some(c) = t.csid() {
+                                format!("\\{}", self.intern.name(c))
+                            } else {
+                                format!("{:?}", t.charcode().and_then(char::from_u32))
+                            }
+                        })
+                        .collect();
+                    eprintln!("[delim-mismatch] body6={body6:?}");
+                    for (fi, fr) in self.stack.iter().enumerate().rev().take(4) {
+                        if let crate::expand::InputFrame::TokenList { items, pos } = fr {
+                            let toks: Vec<String> = items
+                                .iter()
+                                .skip(*pos)
+                                .take(4)
+                                .map(|(t, _)| {
+                                    if let Some(c) = t.csid() {
+                                        format!("\\{}", self.intern.name(c))
+                                    } else {
+                                        format!(
+                                            "{:?}",
+                                            t.charcode().and_then(char::from_u32)
+                                        )
+                                    }
+                                })
+                                .collect();
+                            eprintln!("[delim-mismatch] frame[{fi}]@{pos}={toks:?}");
+                        }
+                    }
+                    let kinds: Vec<&str> = self
+                        .stack
+                        .iter()
+                        .rev()
+                        .take(4)
+                        .map(|f| match f {
+                            crate::expand::InputFrame::Macro { .. } => "Macro",
+                            crate::expand::InputFrame::TokenList { .. } => "TokList",
+                            crate::expand::InputFrame::Source { .. } => "Src",
+                            crate::expand::InputFrame::Bytecode { .. } => "Bc",
+                            _ => "?",
+                        })
+                        .collect();
+                    eprintln!("[delim-mismatch] stack(顶→底)={kinds:?}");
+                    // 失配现场：peek 输入流下一个 token（不动流）
+                    if let Ok(Some((nt, _))) = self.fetch() {
+                        let d = if let Some(c) = nt.csid() {
+                            format!("cs:{}", self.intern.name(c))
+                        } else {
+                            format!("char:{:?} cat:{:?}", nt.charcode(), nt.catcode())
+                        };
+                        eprintln!("[delim-mismatch] next_tok={d}");
+                        self.unread(nt);
+                    }
                 }
                 let _ = self.sink.write16(format!(
                     "! Use of \\{name} doesn't match its definition.\n\
@@ -345,7 +422,9 @@ impl Expander {
         };
         if self.scanner_status == ScannerStatus::Matching {
             if let Some(csid) = tok.csid() {
-                if matches!(self.eqtb.slot(csid), EqSlot::Macro(m) if m.value.outer) {
+                if !tok.is_active()
+                    && matches!(self.eqtb.slot(csid), EqSlot::Macro(m) if m.value.outer)
+                {
                     let wname = match self.warning_index {
                         Some(cs) => self.cs_display_name(cs),
                         None => self.cs_display_name(csid),
