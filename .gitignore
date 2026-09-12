@@ -66,3 +66,5 @@ crates/ntex-tauri/gen/
 .hermes/
 __pycache__/
 tests/semantic/work/
+tests/semantic/cases/*.dvi
+*.pdf
