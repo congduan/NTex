@@ -3,7 +3,7 @@
 > 依据：[idea.md](file:///Users/congduan/Desktop/code/_vibe_coding_/NTex/idea.md) 架构 + 性能决策（字节码预编译 / 深 .fmt / CJK 整形捷径 / 并行 / 增量）
 > 原则：**正确性优先、性能架构前置、基准先行**
 
-## 当前进度（2026-09-11）
+## 当前进度（2026-09-12）
 
 > **状态源**：LaTeX 兼容 → [docs/latex-feasibility.md](docs/latex-feasibility.md)（活文档）；
 > 格式预载 → [docs/plain-format-survey.md](docs/plain-format-survey.md)；
@@ -15,8 +15,8 @@
 
 ```
 [✅] plain.tex 预载（G0–G3，1241 行全通；\newif 端到端与 pdfTeX 一致）
-[🔴] expl3 加载          ← 阻塞：输入栈无终止条件（5001 帧 > 5000）
-[⬜] latex.ltx 主体加载   ← 被 expl3 阻塞
+[🟡] expl3 加载          ← 爆栈已修（5001→35 帧，2026-09-12）；新阻塞：iow_wrap 实参组未闭合（载入 ~90%）
+[⬜] latex.ltx 主体加载   ← 被 expl3 尾段（iow_wrap/fp 变体簇）阻塞
 [⬜] \documentclass/article.cls
 [⬜] 结构宏（\maketitle/\section）+ NFSS 字体
 ```

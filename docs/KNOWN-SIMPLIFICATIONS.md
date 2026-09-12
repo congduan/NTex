@@ -88,6 +88,7 @@
 |---|---|---|
 | `expand/macros.rs:175,323` / `save.rs` | `\outer` 限制语义 | ⚠️ 部分已修（a4c2aeb）：展开上下文禁止（宏体/实参——scan_depth>0）+ \def 体跳过 + cs 名 ^^ 转义；Runaway 块/对齐模板场景待错误恢复链统一 |
 | `expand/io.rs:304` | `\write18` shell 转义拒绝（Error） | ✅ 设计如此（RFC-3 副作用隔离；TRIP/ETRIP 不触发） |
+| `expand/io.rs` `expand_to_string` | write 构串展开阶段对 undefined cs **不报** `Undefined control sequence`（静默跳过；pdfTeX 报错后恢复丢弃，输出面恰好一致；`\message`/`\show`/`\special` 共享此函数） | 待做（expl3 载入期大量暂未定义 cs 依赖静默推进） |
 | `typeset/sink.rs:1519,1525` / `mod.rs:841` | `\moveleft/\moveright` 位移不落节点（取走即清） | 待做 |
 | `typeset/sink.rs:1101` | 非引导上下文未定宽度简化落 0 | 待做 |
 | `typeset/sink.rs:1439` | `\showlists` 简化转录（诊断用） | 待做 |

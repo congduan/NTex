@@ -122,7 +122,12 @@ use super::*;
             .lines()
             .find(|l| l.starts_with("C="))
             .unwrap_or_else(|| panic!("缺 C= 输出行：{transcript}"));
-        assert_eq!(line, "C=0", "Missing number 恢复取 0：{transcript}");
+        // pdfTeX 实测（2026-09-12）：`\immediate\write16{C=\count0}` 输出行
+        // = "C=\count 0"——\count 原语不可展开，write 构串按 token_show 打印
+        // （escape + 名 + 控制词尾空格 + 字符 0）；旧期望 "C=0" 系构串丢弃
+        // 不可展开 cs 的错误语义产物（Missing number 恢复取 0 的判据由
+        // Missing number 断言与 \\count 的字面 `0` 共同承担，不依赖此行）。
+        assert_eq!(line, r"C=\count 0", "Missing number 恢复取 0：{transcript}");
     }
     #[test]
     fn expr_terminator_peek_expands_expandable_token() {

@@ -6,13 +6,16 @@
 
 **目标**：`latex.ltx` 加载成功 → `latex.fmt` 构建 → `\documentclass{article}` → PDF。
 
-**当前状态**：🔴 **阻塞在 expl3 加载期的输入栈无终止条件**（见 §A）。
+**当前状态**：🟡 **expl3 载入 ~90%**——爆栈已修（2026-09-12，见 A1.vicies），
+现阻塞在 iow_wrap「实参组未闭合」致命链 + fp 模块变体未生成首错（见 §A）。
 
 ---
 
 ## A. 当前阻塞点（唯一活跃项）
 
-### A1. expl3 变体生成器压栈不终止
+### A1. expl3 变体生成器压栈不终止 ✅ 已修复（2026-09-12，收尾见 A1.vicies）
+
+**历史现场（2026-09-11 复测）**：
 
 ```
 == pass1 ERROR: 输入栈超限（5001 帧 > 5000）
@@ -870,6 +873,28 @@ shim/LVT 是**被 `\input` 进来的**，执行到 `\end` 时输入栈上仍有*
 实现里改 `stack.clear()` 为「清栈 + 标记所有帧失效」**（若帧结构支持）。
 
 **验证指标**：`scripts/lvt-run.py --all` 的 **STACK-END 111 例**应批量转绿。
+
+### A1.vicies ✅ 爆栈修复收尾（2026-09-12）
+
+**「输入栈无终止条件（5001 帧 > 5000）」已修复并复测验证。** 修复链：
+
+| commit | 内容 |
+|---|---|
+| 6569b35 | `scanner_status` 状态机（tex.web L6572-6604）——outer 判据从栈启发式改为条件正确实现 |
+| a641a14 | shim 重复载入 harness 致 `\END` 自递归（STACK-END 112→0） |
+| 4d84d26 | 嵌套 input 内执行 `\end` → run() 主循环加 `ended` 终结检查（tex.web final_cleanup） |
+| 9fbe4c2 | `scan_edef_body` 配平语义对齐 tex.web `unbalance:=1`——Runaway 通报恢复 |
+
+**复测**（rebuild release 后 `latex_probe --initex latex.ltx`，2026-09-12）：
+
+- watchdog 全程栈深 **~35 帧**（无 5001、无 `\END` 重放）；
+- expl3-code.tex（1387070B）消费至 **1248905B（~90%）**，已进入 coffin 模块（后段）；
+- 新终点：`非法输入：实参组未闭合`——`\__iow_wrap_fix_newline:w` 遇 extra `}`
+  → Runaway argument → `Paragraph ended before \__iow_wrap_chunk:nw was complete`；
+- 另有 fp 模块首错 `Use of \??? doesn't match its definition`（l.18141 附近，
+  变体未生成簇的下游症状，与 A1.bis 同簇）。
+
+A2 连锁（`\reserved@a` 自引用）下轮复测确认是否自消。
 
 ### A2. 连锁：`\reserved@a` 未定义自引用
 

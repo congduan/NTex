@@ -509,10 +509,13 @@ impl Expander {
     }
 
     /// 把 token 列表展开成字符串（flush 边界写文件用）：完全展开后
-    /// 字符 token → 字节、空格 → ` `；不可展开的 cs → 报错。
+    /// 字符 token → 字节、空格 → ` `；不可展开的 cs → detokenize 语义打印
+    /// （e-TeX `write_out` 用 `token_show`：escape 字符 + 名字，控制词补尾
+    /// 空格——pdfTeX 实测 `\write\w{\foo}`（\foo protected）→ out.txt =
+    /// `"\foo \n"`；旧实现丢弃不可展开 cs，protected 宏静默消失）。
     ///
-    /// 偏差（有意，范围外）：tex.web `token_show` 对字符 token 一律印其字符
-    /// （含组字符 `{`/`}`），此处只取 cat 10/11/12——共享此函数的
+    /// 偏差（有意，范围外）：tex.web `token_show` 对字符 token 一律印其字符，
+    /// 此处非字母/其他 catcode 字符（math shift 等）仍丢弃——共享此函数的
     /// `\message`/`\show`/`\special` 输出须保持不变。副作用：引擎行模型
     /// LF=5（§latex-feasibility A1 偏差）把 `^^J` 归并为空格 token，故
     /// `\write{a^^Jb}` 写出空格而非 LF；latex.ltx L177 的 texsys.aux 探测
@@ -537,8 +540,27 @@ impl Expander {
                         .ok_or_else(|| Error::invalid_input("\\write 输出含非法字符"))?;
                     s.push(ch);
                 }
-                // 不可转字符的 token（\protected 宏、原语等）：TeX 语义为丢弃（不写内容）
-                _ => {}
+                // 不可展开 token：**已定义** cs 按 detokenize 语义打印（escape
+                // 字符 + 名，控制词补尾空格，同 `detokenize_token`；pdfTeX 实测
+                // 2026-09-12：`\write\w{\foo}`（protected）→ `\foo \n`，
+                // `\immediate\write16{C=\count0}` → `C=\count 0`，
+                // `{R=\relax X}` → `R=\relax X`）；**undefined cs 维持丢弃**——
+                // tex.web 在 write 展开阶段报 Undefined control sequence 后恢复
+                // 跳过该 token（输出面不含），本引擎展开层静默保留至构串（既有
+                // 偏差），丢弃即对齐 pdfTeX 恢复后的输出面。其余 token 维持丢弃
+                _ => {
+                    if t.kind() == TokenKind::ControlSeq {
+                        let csid = t.csid().expect("ControlSeq 必有 csid");
+                        if self.eqtb.slot(csid) != &EqSlot::Undefined {
+                            let name = self.intern.name(csid);
+                            s.push_str(&self.escape_char_str());
+                            s.push_str(name);
+                            if name.bytes().next().is_some_and(|c| c.is_ascii_alphabetic()) {
+                                s.push(' ');
+                            }
+                        }
+                    }
+                }
             }
         }
         Ok(s)
