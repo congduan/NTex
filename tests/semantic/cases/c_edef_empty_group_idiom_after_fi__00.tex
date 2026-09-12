@@ -1,0 +1,5 @@
+%% rule=c_edef_empty_group_idiom_after_fi variant=
+\def\x{Hi}
+\edef\a{\x{} world}
+\immediate\write16{[t]\detokenize\expandafter{\a}}
+\end

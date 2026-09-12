@@ -41,3 +41,30 @@ numexpr-relax 吸收 / numexpr 作 ifnum 操作数；
 - 每修一个语义缺口 → 对应用例从 🔴 转 ✅，**永久回归锁**。
 - 新增规则必须附 tex.web 节号 + pdfTeX 实跑期望。
 - 探针非法（pdfTeX 都打不出确定输出）→ 自动丢弃，不入矩阵。
+
+---
+
+# 更新（2026-09-12 第二轮）：C 组交错场景全绿——推翻重构前提
+
+新增 10 条取 token 交错场景规则（c_*）：
+**10/10 全绿**。`collect_args`/`scan_edef_body`/`expr_peek` 三消费者
+在现有 push_frame 架构下语义正确（含条件 token 作实参数据、hash_brace、
+noexpand 生命周期、protected 抑制、0 参数定界串）。
+
+**结论修正**：此前「三消费者交错需 Expander 级 pending 队列重构」的前提
+被矩阵证伪——现有架构无此缺口；两次队列实验的失败是队列自身破坏了
+expand_once 的「原样返回→exec_primitive」判断链（已归档回退）。
+
+## Number too big 修复补全
+
+报错后**停止数字累计**（tex.web goto done）：pdfTeX 报 1 次 vs NTex 曾
+每位报一次（5 次）。现在两侧均 1 次 + 钳制 2147483647。
+
+## 矩阵现状：26/32 绿
+
+6 红全部归类为「诊断信息保真度校准」（不影响排版结果）：
+- error_line_no 行号锚定（3 例：want l.2/l.3 vs got l.5/l.6）
+- Runaway 的吞入上下文展示行（->ABC \end，2 例）
+- 反引号帮助文本行顺序（1 例）
+
+→ 新立「校准层」待办，与语义修复分离推进。

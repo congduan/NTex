@@ -206,3 +206,105 @@
     \let\myfi\fi
     \immediate\write16{[t]\meaning\myfi}
   variants: [{}]
+
+# ── C 组扩充：取 token 三消费者交错场景（2026-09-12 定性）────────
+# 背景：scan_edef_body（体收集）/ collect_args（实参收集）/ expr_peek
+# （表达式因子）共用输入栈。此前两次队列实验失败源于此。先锁 pdfTeX
+# 行为，再定重构边界。
+
+- id: c_arg_cond_token_data_in_edef
+  group: C
+  texweb: "macro_call collect_args：实参内条件 token 是数据"
+  desc: "edef 体中宏实参里的 else/fi/or 收进 #1，不交条件机"
+  probe: |
+    \def\f#1{[\string#1]}
+    \edef\a{\f\else\f\fi\f\or}
+    \immediate\write16{[t]\detokenize\expandafter{\a}}
+  variants: [{}]
+
+- id: c_arg_cond_token_data_direct
+  group: C
+  texweb: "macro_call collect_args：同上，非 edef 直跑"
+  desc: "宏实参里的条件 token 是数据（直跑形态基线）"
+  probe: |
+    \def\f#1{[\string#1]}
+    \immediate\write16{[t]\f\else\f\fi\f\or}
+  variants: [{}]
+
+- id: c_macro_body_group_preserved_in_edef
+  group: C
+  texweb: "scan_toks 组定界符入体（write 输出字面）"
+  desc: "宏展开产物中的组经 edef 收集后保留"
+  probe: |
+    \def\foo{A{B}C}
+    \edef\a{\foo}
+    \immediate\write16{[t]\detokenize\expandafter{\a}}
+  variants: [{}]
+
+- id: c_edef_empty_group_idiom_after_fi
+  group: C
+  texweb: "空组惯用法 { \\if_false: } \\fi: 之后的代码继续"
+  desc: "惯用法后的代码不受吞入影响"
+  probe: |
+    \def\x{Hi}
+    \edef\a{\x{} world}
+    \immediate\write16{[t]\detokenize\expandafter{\a}}
+  variants: [{}]
+
+- id: c_collect_args_nested_macro_with_group
+  group: C
+  texweb: "collect_args 实参含组（无分隔单 token= 整组）"
+  desc: "无分隔实参 = 单组时整组贡献（含组定界符）"
+  probe: |
+    \def\foo#1{<[#1]>}
+    \immediate\write16{[t]\foo X{Y}}
+  variants: [{}]
+
+- id: c_collect_args_delimited_brace_suffix
+  group: C
+  texweb: "hash_brace #{：定界符 { 消费 + 体尾 { 重开组"
+  desc: "p 型签名实参到 { 为止；体尾 { 与源 } 配对"
+  probe: |
+    \def\foo#1#{<[#1]>{T}}
+    \immediate\write16{[t]\foo X{Y}}
+  variants: [{}]
+
+- id: c_expr_factor_inside_edef_with_macro
+  group: C
+  texweb: "scan_expr 因子位 get_x_token（宏展开产物累计）"
+  desc: "edef 里 numexpr 因子经宏展开继续累计"
+  probe: |
+    \def\two{2}
+    \edef\a{\number\numexpr \two +3\relax}
+    \immediate\write16{[t]\a}
+  variants: [{}]
+
+- id: c_noexpand_data_through_edef
+  group: C
+  texweb: "noexpand 标记在 edef 展开中的生命周期"
+  desc: "noexpand 后的宏在 edef 体中保留一次展开"
+  probe: |
+    \def\x{Hi}
+    \edef\a{\noexpand\x B}
+    \immediate\write16{[t]\detokenize\expandafter{\a}}
+  variants: [{}]
+
+- id: c_protected_in_edef_body
+  group: C
+  texweb: "protected 宏在 edef 体不展开原样入体"
+  desc: "protected 展开抑制基线"
+  probe: |
+    \protected\def\p{P}
+    \edef\a{\p X}
+    \immediate\write16{[t]\detokenize\expandafter{\a}}
+  variants: [{}]
+
+- id: c_zero_param_delim_in_edef
+  group: C
+  texweb: "0 参数宏的纯定界串参数文本在 edef 中消费"
+  desc: "\\def\\X\\fi:{...} 的定界 \\fi 在 edef 体中被匹配吞掉"
+  probe: |
+    \def\X\fi:{[X-BODY]}
+    \edef\a{\X\fi: tail}
+    \immediate\write16{[t]\detokenize\expandafter{\a}}
+  variants: [{}]

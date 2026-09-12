@@ -1,0 +1,5 @@
+%% rule=c_zero_param_delim_in_edef variant=
+\def\X\fi:{[X-BODY]}
+\edef\a{\X\fi: tail}
+\immediate\write16{[t]\detokenize\expandafter{\a}}
+\end

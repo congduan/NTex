@@ -1,0 +1,5 @@
+%% rule=c_protected_in_edef_body variant=
+\protected\def\p{P}
+\edef\a{\p X}
+\immediate\write16{[t]\detokenize\expandafter{\a}}
+\end

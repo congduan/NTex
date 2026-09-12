@@ -1,0 +1,5 @@
+%% rule=c_expr_factor_inside_edef_with_macro variant=
+\def\two{2}
+\edef\a{\number\numexpr \two +3\relax}
+\immediate\write16{[t]\a}
+\end

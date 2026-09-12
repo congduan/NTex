@@ -598,13 +598,19 @@ impl Expander {
             match digit_value(tok) {
                 Some(d) => {
                     // tex.web scan_int @<Scan a decimal constant@>：
-                    // 超 0x7FFFFFFF → "Number too big"（可恢复）+ 钳制到 0x7FFFFFFF。
-                    // 此前静默钳制不通报（语义矩阵 scan_int_overflow_clamp 红）。
+                    // 超 0x7FFFFFFF → "Number too big"（**一次性**，报错后
+                    // goto done 停止数字扫描并钳制——pdfTeX 实测
+                    // \count0=99999999999999 只报 1 次，值=2147483647）。
+                    // 此前两处偏差：阈值用 i64::MAX（永不触发）+ 修复初期
+                    // 每位数字重复报错（未停止扫描）。
                     if val > (0x7FFF_FFFF - i64::from(d)) / 10 {
                         self.report_error("Number too big.");
                         val = 0x7FFF_FFFF;
                         any = true;
-                        continue;
+                        // 报错即终止数字累计（tex.web goto done），后续
+                        // token 留给调用方（\write 文本等）。
+                        self.skip_trailing_spaces()?;
+                        break;
                     }
                     val = val * 10 + i64::from(d);
                     any = true;

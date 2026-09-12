@@ -1,0 +1,5 @@
+%% rule=c_arg_cond_token_data_in_edef variant=
+\def\f#1{[\string#1]}
+\edef\a{\f\else\f\fi\f\or}
+\immediate\write16{[t]\detokenize\expandafter{\a}}
+\end
