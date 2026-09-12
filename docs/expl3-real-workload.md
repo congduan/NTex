@@ -489,3 +489,49 @@ error_line_no 锚定问题）+ 1 例真语义。
 展开产物 push_frame 驻留）需专项改 expand_region/scan_edef_body 的
 帧内联消费（tex.web expand 消费即弹等价物）。此改动涉及
 read_floor/suppress_expansion/query_sink 三重上下文，须单独一轮。
+
+---
+
+# ⏸️ STACK 帧内联消费——首轮实施被证伪回退（2026-09-12）
+
+## 尝试内容
+
+`scan_edef_body` 增设本地 `pending: Vec<(Token,bool)>` 队列：展开产物
+reverse 后 extend 进队列，循环优先 pop 队列、空才 fetch（tex.web expand
+「消费即弹」的本地等价物）。
+
+## 结果（决定性）
+
+| | 回退前（队列） | 回退后（push_frame） |
+|---|---|---|
+| 187 例判定 | **全 CRASH**（消 STACK）| 187 STACK |
+| cargo test | **370/7 失败** | 376/1（原存量） |
+
+**新失败形态**：`forbidden control sequence \f` 全体用例统一报——
+队列模式下 `expand_once` 的「原样返回自身」分支（未识别可展开原语）
+token 入队后被再次 expand_once，与 `exec_primitive` 分支的交互行为
+改变，且 regex 区（L29552 `char_set_catcode_math_subscript` 一带）
+触发 catcode 操纵区的连锁。
+
+## 结论
+
+1. **队列方向可能正确**（STACK 确实消除），但 `expand_once` 的
+   「原样返回自身」语义依赖**压帧重扫**来判断终止（对比
+   `expansion.len()==1 && expansion[0]==tok`）——队列模式绕过了这个
+   判断链，`exec_primitive` 臂的触发条件被破坏。
+2. **回退是正确的**：一轮证伪即回退；6 个测试红 ≠ 可接受的中间态。
+3. **下一轮的正确入口**（需专项）：
+   - `expand_once` 返回「原样返回自身」时，**该 token 必须走
+     `exec_primitive` 而非入队**——即队列模式需复刻「对比再执行」
+     的完整分支，而不仅是改入队位置；
+   - 或回到 `scan_edef_body` 的 Macro 臂内部做**有限深度的就地
+     展开**（depth 计数 + 上限），保持栈操作在局部。
+
+## 保留（不在回退范围）
+
+- unbalance:=1 配平修复（376 绿的一部分）
+- Runaway/File ended 通报
+- outer 检查（两处 skip 路径）
+- Number too big
+- write 组字符字面输出
+- 语义矩阵 16/22
