@@ -1,0 +1,5 @@
+%% rule=scan_int_let_to_space_char variant=
+{\catcode`\~=10 \global\let\gsp= ~}
+\count0=5\gsp
+\immediate\write16{[t]\the\count0 END}
+\end

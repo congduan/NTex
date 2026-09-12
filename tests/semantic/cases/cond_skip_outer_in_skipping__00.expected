@@ -1,0 +1,7 @@
+! Incomplete \ifcase; all text was ignored after line 3.
+<inserted text>
+\fi
+! Extra \fi.
+l.3 \ifcase3 \span\lo Y\fi
+I'm ignoring this; it doesn't match any \if.
+[t]survived

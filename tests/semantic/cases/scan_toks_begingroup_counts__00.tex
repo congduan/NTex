@@ -1,0 +1,4 @@
+%% rule=scan_toks_begingroup_counts variant=
+\def\foo{A\begingroup B}C\endgroup
+\immediate\write16{[t]\meaning\foo}
+\end

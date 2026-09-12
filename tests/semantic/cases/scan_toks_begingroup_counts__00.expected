@@ -1,0 +1,4 @@
+! Extra \endgroup.
+l.2 \def\foo{A\begingroup B}C\endgroup
+Things are pretty mixed up, but I think the worst is over.
+[t]macro:->A\begingroup B

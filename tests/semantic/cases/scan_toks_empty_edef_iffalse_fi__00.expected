@@ -1,0 +1,9 @@
+Runaway definition?
+->: \immediate \write 16{[t]after-edef} \end
+! File ended while scanning definition of \foo.
+<inserted text>
+}
+! Emergency stop.
+<*> scan_toks_empty_edef_iffalse_fi__00.tex
+*** (job aborted, no legal \end found)
+!  ==> Fatal error occurred, no output PDF file produced!

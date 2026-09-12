@@ -1,0 +1,210 @@
+# tex.web 语义规则清单（A: 数字扫描 / B: 宏定义与 scan_toks / E: 诊断通道）
+#
+# 格式：
+#   - id: 规则标识（用例文件名前缀）
+#     group: A|B|C|D|E
+#     texweb: tex.web 节/模块定位
+#     desc: 一句话语义
+#     probe: 探针模板（{{VAR}} 占位）
+#     variants: 显式变体列表（不做笛卡尔积；边界=显式变体）
+#
+# 纪律：期望值一律 pdfTeX 实跑固化；探针打不出确定输出 → gen.py reference 自动丢弃。
+
+- id: scan_int_trailing_space_char
+  group: A
+  texweb: "scan_int .10（数字后 cat-10 消散）"
+  desc: "数字后跟空格字符，消散且不影响后续"
+  probe: |
+    \count0=5 \immediate\write16{[t]\the\count0 END}
+  variants: [{}]
+
+- id: scan_int_let_to_space_char
+  group: A
+  texweb: "scan_int .10（eqtb 查 cmd，cs→space 等价）"
+  desc: "\\let 绑定到空格字符 token 后贴数字尾，消散（\\exp_stop_f: 修复锁）"
+  probe: |
+    {\catcode`\~=10 \global\let\gsp= ~}
+    \count0=5\gsp
+    \immediate\write16{[t]\the\count0 END}
+  variants: [{}]
+
+- id: scan_int_nested_conditional
+  group: A
+  texweb: "scan_int get_x_token 嵌套条件"
+  desc: "数字中途条件展开，分支数字继续累计"
+  probe: |
+    \ifnum0\iftrue 1\fi=01 \immediate\write16{[t]TRUE}\else\immediate\write16{[t]FALSE}\fi
+  variants: [{}]
+
+- id: scan_int_backquote_char
+  group: A
+  texweb: "scan_int `X 字符码"
+  desc: 反引号字符码形式
+  probe: |
+    \count0=`A
+    \immediate\write16{[t]\the\count0}
+  variants: [{}]
+
+- id: scan_int_backquote_alphabetic_err
+  group: A
+  texweb: "Improper alphabetic constant"
+  desc: "反引号后控制词，Improper alphabetic constant 可恢复"
+  probe: |
+    \count0=`\par
+    \immediate\write16{[t]survived}
+  variants: [{}]
+
+- id: scan_int_overflow_clamp
+  group: A
+  texweb: "scan_int 溢出钳制"
+  desc: 超大整数报错钳制不崩
+  probe: |
+    \count0=99999999999999
+    \immediate\write16{[t]survived \the\count0}
+  variants: [{}]
+
+- id: numexpr_terminator_relax
+  group: A
+  texweb: "scan_expr 终止符吸收（relax）"
+  desc: "\\numexpr 以 \\relax 终止且被吸收"
+  probe: |
+    \immediate\write16{[t]\the\numexpr 2+3\relax END}
+  variants: [{}]
+
+- id: numexpr_inside_ifnum
+  group: A
+  texweb: "scan_int 与 scan_expr 交互"
+  desc: "\\numexpr 作 \\ifnum 操作数（relax 吸收后关系符就位）"
+  probe: |
+    \ifnum\numexpr 2+3\relax=5 \immediate\write16{[t]TRUE}\else\immediate\write16{[t]FALSE}\fi
+  variants: [{}]
+
+- id: numexpr_csalias_stop
+  group: A
+  texweb: "scan_expr + 别名到 scan_stop（expl3 __fp_int_eval_end 形态）"
+  desc: "numexpr 以 scan_stop 别名终止（fp 区万级用法）"
+  probe: |
+    \catcode`\_=11
+    \let\mystop\scan_stop:
+    \immediate\write16{[t]\the\numexpr 2+3\mystop END}
+  variants: [{}]
+
+- id: expand_alias_chain_numexpr
+  group: A
+  texweb: "get_x_token 别名链（cs_new_eq:NN 两级）"
+  desc: 别名链在数字扫描位的解引用
+  probe: |
+    \catcode`\_=11
+    \let\mysep\scan_stop:
+    \edef\t{\the\numexpr 4+1\mysep}
+    \immediate\write16{[t]\t END}
+  variants: [{}]
+
+- id: scan_toks_unbalance_start_one
+  group: B
+  texweb: "scan_toks unbalance:=1（首 { 已消费）"
+  desc: "常规 \\def 体配平（基线锁）"
+  probe: |
+    \def\foo{AB{CD}EF}
+    \immediate\write16{[t]\meaning\foo}
+  variants: [{}]
+
+- id: scan_toks_empty_edef_iffalse_fi
+  group: B
+  texweb: "scan_toks + pass_text（空组惯用法）"
+  desc: "edef 吞到下一个配平 }（pdfTeX=File ended 可恢复通报）"
+  probe: |
+    \edef\foo{\if_false:} \fi:
+    \immediate\write16{[t]after-edef}
+  variants: [{}]
+
+- id: scan_toks_skip_zone_brace_not_counted
+  group: B
+  texweb: "pass_text 在 get_token 之下（skip 区 {/} 不影响 unbalance）"
+  desc: 条件假分支里的组不参与宏体配平
+  probe: |
+    \edef\foo{A\iffalse B{C\fi D}
+    \immediate\write16{[t]\meaning\foo}
+  variants: [{}]
+
+- id: scan_toks_runaway_report
+  group: B
+  texweb: "Runaway definition（EOF 未配平必报）"
+  desc: 定义未配平到 EOF 时的通报
+  probe: |
+    \edef\foo{ABC
+  variants: [{}]
+
+- id: scan_toks_hash_brace_delim
+  group: B
+  texweb: "scan_toks hash_brace（#{ 参数定界）"
+  desc: "#{ 收尾参数文本：{ 存为末参定界并追加体尾"
+  probe: |
+    \def\foo#1#{[#1]}
+    \immediate\write16{[t]\foo X{Y}}
+  variants: [{}]
+
+- id: scan_toks_hash_hash_fold
+  group: B
+  texweb: "## 折叠为字面 #（L9416 区）"
+  desc: 宏体内 ## 折叠
+  probe: |
+    \def\foo#1{\def\inner##1{[##1:#1]}}
+    \foo{OUT}
+    \immediate\write16{[t]\meaning\inner}
+  variants: [{}]
+
+- id: scan_toks_illegal_param_recover
+  group: B
+  texweb: "Illegal parameter number 可恢复（back_error）"
+  desc: "体里 # 接非数字，IPN 通报后继续"
+  probe: |
+    \def\foo{a#b}
+    \immediate\write16{[t]survived}
+  variants: [{}]
+
+- id: scan_toks_begingroup_counts
+  group: B
+  texweb: "macro_def 模式 begingroup/endgroup 计数"
+  desc: "begingroup…endgroup 内的 } 不关宏体"
+  probe: |
+    \def\foo{A\begingroup B}C\endgroup
+    \immediate\write16{[t]\meaning\foo}
+  variants: [{}]
+
+- id: cond_skip_outer_in_skipping
+  group: B
+  texweb: "skip 区遇 outer → Incomplete if 恢复（TRIP L363）"
+  desc: 跳过区 outer cs 触发插入 fi 恢复
+  probe: |
+    \outer\def\lo{X}
+    \ifcase3 \span\lo Y\fi
+    \immediate\write16{[t]survived}
+  variants: [{}]
+
+- id: cond_currentifbranch_simple
+  group: B
+  texweb: "currentifbranch（iftrue 后 =1）"
+  desc: e-TeX 分支查询基线
+  probe: |
+    \iftrue \immediate\write16{[t]\the\currentifbranch}\fi
+  variants: [{}]
+
+- id: show_primitive_canonical_name
+  group: E
+  texweb: "show_eqtb 原语槽显示规范名"
+  desc: "let a else 后 show a → a=else.（2026-09-11 修复锁）"
+  probe: |
+    \let\a\else
+    \show\a
+    \immediate\write16{[t]survived}
+  variants: [{}]
+
+- id: show_meaning_primitive_via_alias
+  group: E
+  texweb: "print_cmd_chr 原语规范名"
+  desc: "meaning 经别名 → 原语名"
+  probe: |
+    \let\myfi\fi
+    \immediate\write16{[t]\meaning\myfi}
+  variants: [{}]

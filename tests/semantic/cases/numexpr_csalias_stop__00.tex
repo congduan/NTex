@@ -1,0 +1,5 @@
+%% rule=numexpr_csalias_stop variant=
+\catcode`\_=11
+\let\mystop\scan_stop:
+\immediate\write16{[t]\the\numexpr 2+3\mystop END}
+\end

@@ -1,0 +1,9 @@
+Runaway definition?
+->ABC \end
+! File ended while scanning definition of \foo.
+<inserted text>
+}
+! Emergency stop.
+<*> scan_toks_runaway_report__00.tex
+*** (job aborted, no legal \end found)
+!  ==> Fatal error occurred, no output PDF file produced!

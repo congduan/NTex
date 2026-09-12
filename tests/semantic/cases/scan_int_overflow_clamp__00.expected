@@ -1,0 +1,4 @@
+! Number too big.
+l.2 \count0=9999999999
+9999
+[t]survived 2147483647

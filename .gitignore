@@ -65,3 +65,4 @@ crates/ntex-tauri/ui/pkg/
 crates/ntex-tauri/gen/
 .hermes/
 __pycache__/
+tests/semantic/work/

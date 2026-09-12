@@ -1,0 +1,4 @@
+%% rule=scan_toks_skip_zone_brace_not_counted variant=
+\edef\foo{A\iffalse B{C\fi D}
+\immediate\write16{[t]\meaning\foo}
+\end
