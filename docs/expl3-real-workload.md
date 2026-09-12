@@ -535,3 +535,40 @@ token 入队后被再次 expand_once，与 `exec_primitive` 分支的交互行�
 - Number too big
 - write 组字符字面输出
 - 语义矩阵 16/22
+
+---
+
+# ⏸️⏸️ 队列模式第二版证伪 + 根因升级（2026-09-12）
+
+## 第二版改动
+
+复刻「原样返回自身 → exec_primitive」分支（第一版证伪点）后重试——
+旧 6 红消，但**新增 6 红**（expl3_v_variant / arg_cond_terminators×2 /
+noexpand_defers / zero_param_delim / number_scan_sign_loop）。
+
+## 决定性失败样本
+
+`\def\f#1{[\string#1]}\edef\a{\f\else\f\fi\f\or}\a`
+
+pdfTeX：`[\else][\fi][\or]`（`\else`/`\fi`/`\or` 是 **#1 的数据**，不交条件机）
+NTex 队列版：`! Extra \fi.` + `Extra \or.` + `File ended`——
+**`\f` 的 collect_args 取到 `\else` 时被条件机截走**。
+
+## 根因升级
+
+取 token 路径有三处消费者：`collect_args`（实参收集）、`scan_edef_body`
+（体收集）、`expr_peek_factor`（表达式因子）——**共用输入栈**。
+只给 `scan_edef_body` 加队列，三者的取 token 序列在宏实参嵌套时交错，
+条件帧归属错乱（`\else` 数据被条件机吃掉 → 残帧 → 后续全乱）。
+
+## 结论：这不是补丁级修复，是取 token 通道重构
+
+正确形态：**Expander 级「pending 队列」字段**（所有 fetch 前 pop），
+`scan_edef_body`/`collect_args`/`expr_*` 三处统一走它——等价于 tex.web
+的 `expand()` 直接在输入栈操作的语义。涉及 `fetch`/`unread`/`push_frame`
+的完整契约 + `read_floor` 边界 + checkpoint 快照字段，**改动面 ≈ 6 文件**，
+必须独立一轮（配专项测试先行：先写「三消费者交错」的语义用例锁行为）。
+
+## 已回退确认
+
+第二版已 checkout 回退，376 绿恢复。两轮实验的全部结论已归档本节。
