@@ -12,6 +12,19 @@
 
 合计 ~2.5 KB，git 友好。
 
+## `fixtures/l3kernel/` — expl3 载入数据依赖（2026-09-13 新设）
+
+| 文件 | 内容 | 价值 |
+|---|---|---|
+| `l3kernel/UnicodeData.txt` | Unicode 字符数据库（Unicode, Inc.，Unicode License；本地抓自 TeX Live 2024 `texmf-dist/tex/generic/unicode-data/`，2023-09-19 版，1.9MB） | `expl3-code.tex` codepoint 模块在载入期 `\ior_open:Nn \g__codepoint_data_ior { UnicodeData.txt }` 逐行读取建字符类/ blocks 表。NTex 无 kpathsea 树，**缺失时 `\openin` 失败路径当前会死循环**（见下），必经 `--input-path fixtures/l3kernel` 提供 |
+
+expl3 载入复现（plain 形态，引擎经 `\input expl3-generic.tex`，backend def 缺失时
+NTex fallback 请求 dvips——一并经 `--input-path` 提供拷贝即可）：
+
+```bash
+./target/debug/ntex-dvi probe.tex --input-path fixtures/l3kernel --input-path <expl3 所在目录>
+```
+
 ## `fixtures/recovery/` — 错误恢复语义语料库（2026-09-12 新设）
 
 32 个自包含 case（`\ifcsname` 错误恢复家族，fh9 战役沉淀）：每 case =
