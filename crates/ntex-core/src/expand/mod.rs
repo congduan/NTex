@@ -2320,6 +2320,80 @@ impl Expander {
                         "[stack-dump] depth={} kinds={kinds:?}\n",
                         self.stack.len()
                     ));
+                    // NTEX_STACK_DUMP=frames：逐帧转储头部内容（cs 名/字符），
+                    // 定位「谁在无限展开」——类型计数只回答「哪类帧多」，
+                    // 内容才回答「哪个宏的展开产物在重复压帧」（2026-09-12
+                    // expl3 载入 l__iow_line_part_tl 现场：4997 个 TokenList
+                    // 帧，需要每个帧的前 12 个 token 才能锁定循环主体）。
+                    if std::env::var_os("NTEX_STACK_DUMP_FRAMES").is_some() {
+                        let show = |f: &InputFrame| -> String {
+                            match f {
+                                InputFrame::TokenList { items, pos } => {
+                                    // 帧内容**从头**显示（不看 pos）——已消费帧的
+                                    // 内容同样是「谁在循环展开」的证据。
+                                    let take = items
+                                        .iter()
+                                        .take(12)
+                                        .map(|(t, _)| match t.csid() {
+                                            Some(id) => {
+                                                format!("\\{}", self.intern.name(id))
+                                            }
+                                            None => match t.charcode() {
+                                                Some(c) => match (c as u8) as char {
+                                                    c if c.is_whitespace() => "␣".to_owned(),
+                                                    c => c.to_string(),
+                                                },
+                                                None => "?".to_owned(),
+                                            },
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join(" ");
+                                    format!(
+                                        "TokenList[rem={}/{}] {}",
+                                        items.len() - *pos,
+                                        items.len(),
+                                        take
+                                    )
+                                }
+                                InputFrame::One { tok, .. } => {
+                                    let body = match tok.csid() {
+                                        Some(id) => format!("\\{}", self.intern.name(id)),
+                                        None => match tok.charcode() {
+                                            Some(c) => (c as u8 as char).to_string(),
+                                            None => "?".to_owned(),
+                                        },
+                                    };
+                                    format!("One[{body}]")
+                                }
+                                InputFrame::Bytecode { .. } => "Bytecode".to_owned(),
+                                InputFrame::Source { pos, .. } => {
+                                    format!("Source[pos={pos}]")
+                                }
+                                #[allow(unreachable_patterns)]
+                                _ => "Other".to_owned(),
+                            }
+                        };
+                        // 只转储最顶 60 帧（循环主体必在栈顶附近）+ 底 5 帧
+                        let n = self.stack.len();
+                        let head = n.min(60);
+                        for (i, f) in self.stack[..head].iter().enumerate().rev() {
+                            let _ = self
+                                .sink
+                                .write16(format!("[frame {:>4}] {}\n", n - 1 - i, show(f)));
+                        }
+                        if n > 65 {
+                            let _ = self
+                                .sink
+                                .write16(format!("[frame ...] （省略 {} 帧）\n", n - 65));
+                            for (i, f) in self.stack[n - 5..].iter().enumerate() {
+                                let _ = self.sink.write16(format!(
+                                    "[frame {:>4}] {}\n",
+                                    n - 5 + i,
+                                    show(f)
+                                ));
+                            }
+                        }
+                    }
                 }
                 return Err(Error::invalid_input(format!(
                     "输入栈超限（{} 帧 > {MAX_INPUT_STACK}）——展开/参数扫描疑似无终止条件",

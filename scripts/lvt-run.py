@@ -50,7 +50,9 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent  # 不可硬编码绝对路径（曾在 /home/ubuntu 机器上失效）
-NTEX = REPO / "target/debug/ntex-dvi"
+from ntex_bin import ensure_fresh
+
+NTEX = ensure_fresh()
 SHIM = REPO / "scripts/lvt/lvt-shim.tex"
 CACHE = Path("/tmp/l3kernel-tests")
 L3_URL = "https://github.com/latex3/latex3/archive/refs/heads/main.tar.gz"

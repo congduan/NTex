@@ -47,7 +47,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 PDFTEX = Path.home() / ".local" / "bin" / "pdftex"
-NTEX_DVI = REPO / "target" / "debug" / "ntex-dvi"
+from ntex_bin import ensure_fresh
+
+NTEX_DVI = ensure_fresh()
 TIMEOUT = 60
 
 # 两侧都必须屏蔽的噪声（路径/时间戳/版本横幅）

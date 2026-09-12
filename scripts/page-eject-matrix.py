@@ -36,7 +36,9 @@ import tempfile
 from pathlib import Path
 
 PDFTEX = Path.home() / ".local/bin/pdftex"
-NTEX = Path("/home/ubuntu/NTex/target/debug/ntex-dvi")
+from ntex_bin import ensure_fresh
+
+NTEX = ensure_fresh()
 
 # (标签, 源码体)  —— 源码体后自动补 `\end`
 CASES = [
