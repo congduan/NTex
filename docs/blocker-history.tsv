@@ -1,2 +1,3 @@
 ts	head	furthest_line	first_error	terminal	stack_overflow	verdict
 2026-09-11T05:30:02Z	d0e1373	25851	非法输入：输入栈超限（N 帧 > N）——展开/�	ERROR	1	FIRST
+2026-09-12T06:26:43Z	46ab227	1147	非法输入：\read 流未打开	ERROR	0	REGRESSION

@@ -193,7 +193,7 @@ pub fn default_misc() -> [i64; MISC_INTS] {
         0,     // 21 (unused；曾是 \mathsurround，已改 dimen 参数)
         0,     // 22 LastLineFit
         0,     // 23 PredisplayDirection
-        -1,    // 24 EveryEof（-1 = 无）
+        -1,    // 24（曾映射 \everyeof，已改 toks 字段语义，槽位保留占位）
         0,     // 25 DeadCycles（输出例程循环计数）
         0,     // 26 TracingMacros
         0,     // 27 TracingOutput

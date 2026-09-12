@@ -74,6 +74,11 @@ pub(crate) enum InputFrame {
         state: ScanState,
         /// 行起始偏移表（预建，`current_line_no` 二分用；替代逐帧线性数 `\n`）。
         line_starts: Arc<[u32]>,
+        /// `\endinput` force_eof 截断点（tex.web `force_eof`：**当前行读完**
+        /// 才关文件）。`None`=正常；`Some(n)`=本帧读到字节偏移 `n`（截断行的
+        /// 行尾 `\n` 之后）即视为文件结束——pop 帧时注入 `\everyeof`。
+        /// 主文件（栈中最后一个 Source 帧）截断时置 `ended`（tex.web 同款）。
+        eof_mark: Option<usize>,
     },
     /// 宏展开帧：宏体 + 实参。
     Macro {
@@ -834,6 +839,10 @@ pub struct Expander {
     errhelp_toks: Vec<Token>,
     /// TRIP 补全批次：`\everydisplay` token 列表（显示数学进入时注入）。
     everydisplay_toks: Vec<Token>,
+    /// pdfTeX/e-TeX：`\everyeof` token 列表——**文件帧读尽时注入**（tex.web
+    /// pdfTeX `every_eof` 扩展）。expl3 `\__sys_get` 依赖它在 `\input` 结束
+    /// 边界回注 `\q_no_value` 探测标记。
+    everyeof_toks: Vec<Token>,
     /// TRIP 补全批次：`\skewchar<font>=<num>` 字体偏斜字符表。
     skewchars: HashMap<u32, i64>,
     /// TRIP 冲刺：当前是否处于数学模式（`$`/`$$` 切换；决定 everymath 注入时机）。
@@ -942,6 +951,7 @@ impl Expander {
             everycr_toks: Vec::new(),
             errhelp_toks: Vec::new(),
             everydisplay_toks: Vec::new(),
+            everyeof_toks: Vec::new(),
             skewchars: HashMap::new(),
             in_math: false,
         };
@@ -1078,6 +1088,7 @@ impl Expander {
             bytes,
             pos: 0,
             state: ScanState::LineStart,
+            eof_mark: None,
         });
     }
 
@@ -2187,7 +2198,7 @@ impl Expander {
                         if m.value.outer {
                             let name = self.intern.name(csid).to_owned();
                             let _ = self.sink.write16(format!(
-                                "! Forbidden control sequence found while scanning text of \\\\{name}.\\n\\
+                                "! Forbidden control sequence found while scanning text of \\{name}.\\n\\
                                  <inserted text> \\n                }} \\n\\
                                  I suspect you have forgotten a `}}', causing me\\n\\
                                  to read past where you wanted me to stop.\\n\\
@@ -2377,9 +2388,11 @@ impl Expander {
                         let n = self.stack.len();
                         let head = n.min(60);
                         for (i, f) in self.stack[..head].iter().enumerate().rev() {
-                            let _ = self
-                                .sink
-                                .write16(format!("[frame {:>4}] {}\n", n - 1 - i, show(f)));
+                            let _ = self.sink.write16(format!(
+                                "[frame {:>4}] {}\n",
+                                n - 1 - i,
+                                show(f)
+                            ));
                         }
                         if n > 65 {
                             let _ = self
@@ -2409,38 +2422,75 @@ impl Expander {
             };
             match frame {
                 InputFrame::Source {
-                    bytes, pos, state, ..
-                } => match scan_token(
                     bytes,
                     pos,
-                    &self.catcodes,
-                    &mut self.intern,
                     state,
-                    // M9 中文刀 2：\utfinputmode≠0 → 源码按 UTF-8 解码
-                    //（只作用于字节→token 入口；宏体/实参 token 流不受影响，
-                    // TRIP/ETRIP 默认 bytes 模式零影响）
-                    self.params.misc[crate::param::MISC_UTF_INPUT_MODE] != 0,
-                ) {
-                    Ok(Some(tok)) => return Ok(Some((tok, false))),
-                    Ok(None) => {
-                        self.stack.pop();
-                        continue;
-                    }
-                    // M1-13 错误恢复（TRIP L351）：cat 15 非法字符 → TeX
-                    // "Text line contains an invalid character." + 跳过该字符继续
-                    // （tex.web get_next invalid_char；scan_token 已消费该字节）。
-                    Err(Error::InvalidCharacter { .. }) => {
-                        let mut msg = "! Text line contains an invalid character.\n".to_string();
-                        if let Some((n, line)) = self.error_context() {
-                            msg.push_str(&format!("l.{n} {line}\n"));
+                    eof_mark,
+                    ..
+                } => {
+                    // `\endinput` force_eof（tex.web）：扫描越过截断点 =
+                    // 文件提前结束。弹帧 + 注入 `\everyeof`（pdfTeX every_eof
+                    // 扩展；expl3 \__sys_get 依赖）。
+                    if let Some(mark) = *eof_mark {
+                        if *pos >= mark {
+                            self.stack.pop();
+                            let toks = std::mem::take(&mut self.everyeof_toks);
+                            if !toks.is_empty() {
+                                let seq: Vec<(Token, bool)> =
+                                    toks.into_iter().map(|t| (t, false)).collect();
+                                self.push_frame(InputFrame::TokenList {
+                                    items: Arc::from(seq),
+                                    pos: 0,
+                                });
+                            }
+                            continue;
                         }
-                        msg.push_str("A funny symbol that I can't read has just been input.\n");
-                        msg.push_str("Continue, and I'll forget that it ever happened.\n");
-                        let _ = self.sink.write16(msg);
-                        continue;
                     }
-                    Err(e) => return Err(e),
-                },
+                    match scan_token(
+                        bytes,
+                        pos,
+                        &self.catcodes,
+                        &mut self.intern,
+                        state,
+                        // M9 中文刀 2：\utfinputmode≠0 → 源码按 UTF-8 解码
+                        //（只作用于字节→token 入口；宏体/实参 token 流不受影响，
+                        // TRIP/ETRIP 默认 bytes 模式零影响）
+                        self.params.misc[crate::param::MISC_UTF_INPUT_MODE] != 0,
+                    ) {
+                        Ok(Some(tok)) => return Ok(Some((tok, false))),
+                        Ok(None) => {
+                            self.stack.pop();
+                            // 自然读尽同样注入 `\everyeof`（pdfTeX every_eof
+                            // 语义：文件结束边界统一注入，无论正常 EOF 还是
+                            // \endinput 截断；expl3 \__sys_get 依赖）。
+                            let toks = std::mem::take(&mut self.everyeof_toks);
+                            if !toks.is_empty() {
+                                let seq: Vec<(Token, bool)> =
+                                    toks.into_iter().map(|t| (t, false)).collect();
+                                self.push_frame(InputFrame::TokenList {
+                                    items: Arc::from(seq),
+                                    pos: 0,
+                                });
+                            }
+                            continue;
+                        }
+                        // M1-13 错误恢复（TRIP L351）：cat 15 非法字符 → TeX
+                        // "Text line contains an invalid character." + 跳过该字符继续
+                        // （tex.web get_next invalid_char；scan_token 已消费该字节）。
+                        Err(Error::InvalidCharacter { .. }) => {
+                            let mut msg =
+                                "! Text line contains an invalid character.\n".to_string();
+                            if let Some((n, line)) = self.error_context() {
+                                msg.push_str(&format!("l.{n} {line}\n"));
+                            }
+                            msg.push_str("A funny symbol that I can't read has just been input.\n");
+                            msg.push_str("Continue, and I'll forget that it ever happened.\n");
+                            let _ = self.sink.write16(msg);
+                            continue;
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
                 InputFrame::Macro { body, pos, args } => {
                     if *pos >= body.len() {
                         self.stack.pop();

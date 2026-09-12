@@ -69,6 +69,7 @@ pub(crate) struct ValueExtras {
     pub(crate) everyvbox: Vec<Token>,
     pub(crate) everycr: Vec<Token>,
     pub(crate) everydisplay: Vec<Token>,
+    pub(crate) everyeof: Vec<Token>,
     pub(crate) errhelp: Vec<Token>,
     pub(crate) lccodes: [i64; 256],
     pub(crate) uccodes: [i64; 256],
@@ -152,6 +153,7 @@ impl Expander {
                 everyvbox: self.everyvbox_toks.clone(),
                 everycr: self.everycr_toks.clone(),
                 everydisplay: self.everydisplay_toks.clone(),
+                everyeof: self.everyeof_toks.clone(),
                 errhelp: self.errhelp_toks.clone(),
                 lccodes: self.lccodes,
                 uccodes: self.uccodes,
@@ -229,6 +231,7 @@ impl Expander {
         self.everyvbox_toks = x.everyvbox.clone();
         self.everycr_toks = x.everycr.clone();
         self.everydisplay_toks = x.everydisplay.clone();
+        self.everyeof_toks = x.everyeof.clone();
         self.errhelp_toks = x.errhelp.clone();
         self.lccodes = x.lccodes;
         self.uccodes = x.uccodes;

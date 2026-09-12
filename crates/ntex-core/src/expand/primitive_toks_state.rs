@@ -145,6 +145,31 @@ impl Expander {
                 self.assign_toks(0, Arc::from(val));
                 Ok(())
             }
+            // pdfTeX/e-TeX：\everyeof=<tokens>（文件帧读尽注入；expl3
+            // \__sys_get 依赖）。RHS 语义同 \everydisplay（filler + 组/toks 引用）。
+            Primitive::EveryEof => {
+                self.expect_equals()?;
+                let tok = self
+                    .fetch_non_filler()?
+                    .ok_or_else(|| Error::invalid_input("everyeof 缺少 RHS"))?;
+                let toks = if tok.catcode() == Some(Catcode::BeginGroup) {
+                    self.unread(tok);
+                    self.scan_group_contents(None)?
+                } else if let Some(csid) = tok.csid() {
+                    match self.eqtb.slot(csid).clone() {
+                        EqSlot::Primitive(_) => self.the_tokens_after(tok)?,
+                        EqSlot::Register(RegKind::Toks, idx) => {
+                            self.registers.toks(idx).to_vec()
+                        }
+                        _ => Vec::new(),
+                    }
+                } else {
+                    Vec::new()
+                };
+                self.everyeof_toks = toks;
+                self.finish_assignment();
+                Ok(())
+            }
             // ETRIP 冲刺：\parshape=<n> <indent> <width> ...（段落形状）
             Primitive::Parshape => self.exec_parshape(),
             // ETRIP 冲刺：\parshapelength/indent/dimen 单独出现（无索引）→

@@ -1035,6 +1035,7 @@ impl Expander {
             bytes,
             pos: 0,
             state: ScanState::LineStart,
+            eof_mark: None,
         });
         Ok(())
     }

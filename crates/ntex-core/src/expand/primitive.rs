@@ -342,9 +342,35 @@ impl Expander {
         }
     }
     fn exec_endinput(&mut self) -> Result<()> {
+        // tex.web `force_eof` 语义：**当前行读完才关文件**（同行剩余 token
+        // 照常处理）——不是立即截栈。找最近的 Source 帧，把截断点标记在
+        // 「当前行的行尾 \n 之后」；帧扫描越过该点时视为文件结束（pop +
+        // \everyeof 注入，见 fetch 的 Source eof_mark 臂）。
+        // 若没有 Source 帧（纯 token 流上下文），退回旧语义直接结束作业。
         for i in (0..self.stack.len()).rev() {
-            if matches!(self.stack[i], InputFrame::Source { .. }) {
-                self.stack.truncate(i);
+            if let InputFrame::Source {
+                bytes,
+                pos,
+                line_starts,
+                eof_mark,
+                ..
+            } = &mut self.stack[i]
+            {
+                // 截断点 = 当前行行尾字符（\n 或帧尾）之后。locate_line 返回
+                // (行号, 行起点, 行终点)；tex.web scan_file_end 即 limit 之后。
+                let cur_pos = *pos;
+                let line_end = {
+                    let idx = line_starts.partition_point(|&s| (s as usize) <= cur_pos);
+                    // 行终点：下一行起点（即行尾 \n 之后）；已是最后一行则帧尾
+                    if idx < line_starts.len() {
+                        line_starts[idx] as usize
+                    } else {
+                        bytes.len()
+                    }
+                };
+                *eof_mark = Some(line_end.max(cur_pos));
+                // 主文件（此帧是栈中最后一个 Source）：`\endinput` 结束作业
+                // （tex.web：`\endinput` 在主文件 = `\end` 的文件截断部分）。
                 if self
                     .stack
                     .iter()
@@ -352,9 +378,10 @@ impl Expander {
                 {
                     self.ended = true;
                 }
-                break;
+                return Ok(());
             }
         }
+        self.ended = true;
         Ok(())
     }
 

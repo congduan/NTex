@@ -75,7 +75,12 @@ fn int_param_index(p: Primitive) -> Option<usize> {
         // 槽位保留占位，避免扰动后续整数参数下标。
         Primitive::LastLineFit => 22,
         Primitive::PredisplayDirection => 23,
-        Primitive::EveryEof => 24,
+        // EveryEof 不映射 misc 槽（2026-09-12）：它与 is_param_prim 的
+        // `int_param_index(p).is_some()` 兜底联动会让 dispatcher 把 \everyeof
+        // 抢进 param 臂（scan_number 读 misc[24]），赋值臂永不可达——双赋值
+        // RHS 组 `{` 落数字扫描报 Missing number。toks 语义走
+        // dispatch_toks_state（is_toks_state_prim），`\the\everyeof` 由
+        // the_tokens_after 直读字段。
         Primitive::DeadCycles => 25,
         Primitive::TracingMacros => 26,
         Primitive::TracingOutput => 27,
@@ -717,7 +722,8 @@ fn is_toks_state_prim(p: Primitive) -> bool {
             | Primitive::Toksdef
             | Primitive::MathCharDef
             | Primitive::EveryDisplay
-            | Primitive::EveryMath
+     | Primitive::EveryMath
+     | Primitive::EveryEof
             | Primitive::EveryPar
             | Primitive::EveryHBox
             | Primitive::EveryVBox

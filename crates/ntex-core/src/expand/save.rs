@@ -1416,7 +1416,7 @@ fn misc_int_name(idx: usize) -> &'static str {
         20 => "texxetstate",
         22 => "lastlinefit",
         23 => "predisplaydirection",
-        24 => "everyeof",
+        // 24 曾映射 everyeof，已改 toks 字段语义（占位保留）
         25 => "deadcycles",
         26 => "tracingmacros",
         27 => "tracingoutput",
