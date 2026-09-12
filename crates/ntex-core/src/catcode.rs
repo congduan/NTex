@@ -68,39 +68,22 @@ impl Catcode {
     }
 }
 
-/// 8-bit 字节 → catcode 查表（M1 为单表；快照化见 M6+）。
+/// 8-bit 字节 → catcode 查表 + >255 码位覆盖表（M9 中文刀 2/4）。
+///
+/// `bytes` 是 8-bit 主表（TRIP/ETRIP 口径，`[u8; 256]` 原样）；`unicode_cats`
+/// 是 **>255 码位的赋值覆盖**（A5 全量收口，刀 4）：`\utfinputmode=1` 下
+/// `\catcode`，=13 可把全角逗号设为 active，`get_codepoint` 查表优先于
+/// 默认 letter。未覆盖的 >255 码位仍按 XeTeX 惯例默认 letter。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CatcodeTable([u8; 256]);
+pub struct CatcodeTable {
+    bytes: [u8; 256],
+    unicode_cats: std::collections::BTreeMap<u32, u8>,
+}
 
 impl CatcodeTable {
     /// plain TeX 默认表。
     pub fn new() -> Self {
-        let mut t = [Catcode::Other as u8; 256];
-        // 空白与行尾
-        t[0x09] = Catcode::Space as u8; // tab
-        t[0x20] = Catcode::Space as u8; // space
-        t[0x0A] = Catcode::EndOfLine as u8; // LF
-        t[0x0D] = Catcode::EndOfLine as u8; // CR
-                                            // 特殊字符
-        t[0x5C] = Catcode::Escape as u8; // '\'
-        t[0x7B] = Catcode::BeginGroup as u8; // '{'
-        t[0x7D] = Catcode::EndGroup as u8; // '}'
-        t[0x24] = Catcode::MathShift as u8; // '$'
-        t[0x26] = Catcode::AlignmentTab as u8; // '&'
-        t[0x23] = Catcode::Parameter as u8; // '#'
-        t[0x5E] = Catcode::Superscript as u8; // '^'
-        t[0x5F] = Catcode::Subscript as u8; // '_'
-        t[0x25] = Catcode::Comment as u8; // '%'
-        t[0x7E] = Catcode::Active as u8; // '~'
-        t[0x7F] = Catcode::Invalid as u8; // DEL
-                                          // 字母
-        for b in b'A'..=b'Z' {
-            t[b as usize] = Catcode::Letter as u8;
-        }
-        for b in b'a'..=b'z' {
-            t[b as usize] = Catcode::Letter as u8;
-        }
-        Self(t)
+        Self::from_bytes(Self::plain_bytes())
     }
 
     /// INITEX（iniTeX / 格式构建态）初始表：tex.web §1273 默认表（含一处引擎偏差）。
@@ -132,40 +115,105 @@ impl CatcodeTable {
         for b in b'a'..=b'z' {
             t[b as usize] = Catcode::Letter as u8;
         }
-        Self(t)
+        Self::from_bytes(t)
+    }
+
+    /// plain TeX 默认 8-bit 表体（[`Self::new`] 的内容，独立成函数便于重建）。
+    fn plain_bytes() -> [u8; 256] {
+        let mut t = [Catcode::Other as u8; 256];
+        // 空白与行尾
+        t[0x09] = Catcode::Space as u8; // tab
+        t[0x20] = Catcode::Space as u8; // space
+        t[0x0A] = Catcode::EndOfLine as u8; // LF
+        t[0x0D] = Catcode::EndOfLine as u8; // CR
+                                            // 特殊字符
+        t[0x5C] = Catcode::Escape as u8; // '\'
+        t[0x7B] = Catcode::BeginGroup as u8; // '{'
+        t[0x7D] = Catcode::EndGroup as u8; // '}'
+        t[0x24] = Catcode::MathShift as u8; // '$'
+        t[0x26] = Catcode::AlignmentTab as u8; // '&'
+        t[0x23] = Catcode::Parameter as u8; // '#'
+        t[0x5E] = Catcode::Superscript as u8; // '^'
+        t[0x5F] = Catcode::Subscript as u8; // '_'
+        t[0x25] = Catcode::Comment as u8; // '%'
+        t[0x7E] = Catcode::Active as u8; // '~'
+        t[0x7F] = Catcode::Invalid as u8; // DEL
+                                          // 字母
+        for b in b'A'..=b'Z' {
+            t[b as usize] = Catcode::Letter as u8;
+        }
+        for b in b'a'..=b'z' {
+            t[b as usize] = Catcode::Letter as u8;
+        }
+        t
+    }
+
+    /// 由 8-bit 表体构造（覆盖表为空）。
+    fn from_bytes(bytes: [u8; 256]) -> Self {
+        Self {
+            bytes,
+            unicode_cats: std::collections::BTreeMap::new(),
+        }
     }
 
     /// 查询某字节的 catcode。
     pub fn get(&self, byte: u8) -> Catcode {
-        Catcode::from_u8(self.0[byte as usize]).expect("catcode 表只允许 0..=15")
+        Catcode::from_u8(self.bytes[byte as usize]).expect("catcode 表只允许 0..=15")
     }
 
     /// 查询某 Unicode 码位的 catcode（M9 中文刀 2：UTF-8 输入模式专用）。
     ///
-    /// ≤255 走 8-bit 表（与字节模式同源，ASCII 行为不变）；>255 按 XeTeX
-    /// 惯例默认 **letter**（CJK/扩展文字直接可排版）。8-bit 表保持 `[u8; 256]`
-    /// 不动——`\catcode` 对 >255 码位的赋值扩展留待后续刀（A5 建议方向）。
+    /// ≤255 走 8-bit 表（与字节模式同源，ASCII 行为不变）；>255 先查刀 4
+    /// 的 `\catcode` 赋值覆盖表（`\utfinputmode=1` 下 `\catcode`，=13 可赋），
+    /// 未覆盖按 XeTeX 惯例默认 **letter**（CJK/扩展文字直接可排版）。
+    /// 8-bit 主表保持 `[u8; 256]` 原样——TRIP/ETRIP 口径不受影响。
     pub fn get_codepoint(&self, cp: u32) -> Catcode {
         if cp <= 0xFF {
             self.get(cp as u8)
+        } else if let Some(&v) = self.unicode_cats.get(&cp) {
+            Catcode::from_u8(v).expect("覆盖表只允许 0..=15")
         } else {
             Catcode::Letter
         }
     }
 
-    /// 修改某字节的 catcode（`\catcode` 原语入口）。
+    /// 修改某字节的 catcode（`\catcode` 原语入口，≤255）。
     pub fn set(&mut self, byte: u8, cat: Catcode) {
-        self.0[byte as usize] = cat.as_u8();
+        self.bytes[byte as usize] = cat.as_u8();
+    }
+
+    /// 设置 >255 码位的 catcode 覆盖（刀 4：`\catcode`，=13）。
+    ///
+    /// 仅 `\utfinputmode=1` 下可达（调用方 gate）；≤255 请走 [`Self::set`]。
+    pub fn set_codepoint(&mut self, cp: u32, cat: Catcode) {
+        self.unicode_cats.insert(cp, cat.as_u8());
+    }
+
+    /// 查询 >255 码位是否被显式赋值过（组回滚用；`None` = 默认 letter）。
+    pub fn unicode_codepoint(&self, cp: u32) -> Option<Catcode> {
+        self.unicode_cats
+            .get(&cp)
+            .and_then(|&v| Catcode::from_u8(v))
+    }
+
+    /// 撤销 >255 码位的覆盖（组回滚 / `\global` 恢复默认 letter）。
+    pub fn remove_codepoint(&mut self, cp: u32) {
+        self.unicode_cats.remove(&cp);
+    }
+
+    /// 覆盖表只读视图（`.fmt` 快照导出用；`(码位, catcode 值)` 升序）。
+    pub fn unicode_overrides(&self) -> impl Iterator<Item = (u32, u8)> + '_ {
+        self.unicode_cats.iter().map(|(&cp, &v)| (cp, v))
     }
 
     /// 原始字节表（`.fmt` 快照导出）。
     pub fn raw(&self) -> &[u8; 256] {
-        &self.0
+        &self.bytes
     }
 
-    /// 从原始字节表重建（`.fmt` 快照导入）。
+    /// 从原始字节表重建（`.fmt` 快照导入；覆盖表为空，加载后需回填）。
     pub fn from_raw(raw: [u8; 256]) -> Self {
-        Self(raw)
+        Self::from_bytes(raw)
     }
 }
 
@@ -240,5 +288,40 @@ mod tests {
             assert_eq!(c.as_u8(), v);
         }
         assert!(Catcode::from_u8(16).is_none());
+    }
+
+    #[test]
+    fn unicode_overlay_assign_and_default() {
+        let mut t = CatcodeTable::new();
+        // 未覆盖：默认 letter（刀 2 XeTeX 惯例）
+        assert_eq!(t.get_codepoint(0x4E2D), Catcode::Letter);
+        assert_eq!(t.unicode_codepoint(0x4E2D), None);
+        // 赋 active 后查表优先（刀 4：\catcode`，=13 的底层）
+        t.set_codepoint(0xFF0C, Catcode::Active);
+        assert_eq!(t.get_codepoint(0xFF0C), Catcode::Active);
+        assert_eq!(t.unicode_codepoint(0xFF0C), Some(Catcode::Active));
+        // 8-bit 主表不受覆盖表影响
+        assert_eq!(t.get(b'a'), Catcode::Letter);
+        // 撤销覆盖 → 回默认 letter（组回滚 / \global 语义）
+        t.remove_codepoint(0xFF0C);
+        assert_eq!(t.get_codepoint(0xFF0C), Catcode::Letter);
+    }
+
+    #[test]
+    fn unicode_overlay_does_not_leak_into_byte_range() {
+        let mut t = CatcodeTable::new();
+        t.set_codepoint(0x4E2D, Catcode::Active);
+        // ≤255 恒走 8-bit 表，覆盖表不拦路（TRIP 口径）
+        assert_eq!(t.get_codepoint(0x41), Catcode::Letter);
+        assert_eq!(t.get_codepoint(0x7F), Catcode::Invalid);
+    }
+
+    #[test]
+    fn unicode_override_iteration_is_sorted() {
+        let mut t = CatcodeTable::new();
+        t.set_codepoint(0xFF0C, Catcode::Active);
+        t.set_codepoint(0x4E2D, Catcode::Letter);
+        let v: Vec<(u32, u8)> = t.unicode_overrides().collect();
+        assert_eq!(v, vec![(0x4E2D, 11), (0xFF0C, 13)]);
     }
 }

@@ -28,8 +28,9 @@ const MAGIC: &[u8; 8] = b"NTEXFMT1";
 /// v10：TRIP 冲刺——`\nulldelimiterspace`/`\scriptspace`/`\overfullrule`/`\voffset`/`\hoffset`；
 /// v11：TRIP 冲刺——`\xspaceskip` 胶水参数；
 /// v13：ETRIP——font_loads（pass2 恢复字体表）+ font_cs_names（showbox 字体 cs 名）；
-/// v14：ETRIP——current_font（pass2 恢复当前字体，防全 nullfont）。
-const VERSION: u8 = 14;
+/// v14：ETRIP——current_font（pass2 恢复当前字体，防全 nullfont）；
+/// v15：M9 中文刀 4——catcode >255 码位覆盖表（\utfinputmode=1 的 \catcode`，=13）。
+const VERSION: u8 = 15;
 
 /// 编码一个 `.fmt` 快照。
 pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
@@ -45,6 +46,14 @@ pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
 
     // catcode
     w.write_all(state.catcodes.raw())?;
+    // v15 追加：>255 码位覆盖表（`\utfinputmode=1` 下 `\catcode`，=13 的赋值）。
+    // 必须与 `load` 侧的读取顺序严格对称，否则整体字节流错位。
+    let overrides: Vec<(u32, u8)> = state.catcodes.unicode_overrides().collect();
+    w.write_all(&(overrides.len() as u32).to_le_bytes())?;
+    for (cp, v) in overrides {
+        w.write_all(&cp.to_le_bytes())?;
+        w.write_all(&[v])?;
+    }
 
     // sfcodes
     for v in &state.sfcodes {
@@ -218,7 +227,17 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
     // catcode
     let mut raw_cat = [0u8; 256];
     r.read_exact(&mut raw_cat)?;
-    let catcodes = ntex_core::catcode::CatcodeTable::from_raw(raw_cat);
+    let mut catcodes = ntex_core::catcode::CatcodeTable::from_raw(raw_cat);
+    // v15 追加：>255 码位覆盖表回填
+    let n_overrides = read_u32(r)?;
+    for _ in 0..n_overrides {
+        let cp = read_u32(r)?;
+        let mut b = [0u8; 1];
+        r.read_exact(&mut b)?;
+        if let Some(c) = ntex_core::catcode::Catcode::from_u8(b[0]) {
+            catcodes.set_codepoint(cp, c);
+        }
+    }
 
     // sfcodes
     let mut sfcodes = [0u32; 256];
@@ -458,6 +477,29 @@ mod tests {
         let loaded = roundtrip(&state);
         assert_eq!(state.intern_names, loaded.intern_names);
         assert!(state.intern_names.iter().any(|n| n == "greet"));
+    }
+
+    /// v15：>255 码位覆盖表随快照往返（save/load 字节流对称性的回归锁）。
+    ///
+    /// 覆盖表为空时「写 0 个 + 读 0 个」也能自洽，故须**非空**才真正锁住
+    /// 对称性——空表版本在 save 漏写 `n_overrides` 时仍会通过。
+    #[test]
+    fn fmt_roundtrip_preserves_unicode_catcode_overrides() {
+        use ntex_core::catcode::Catcode;
+        let mut state = sample_state();
+        state.catcodes.set_codepoint(0xFF0C, Catcode::Active); // 全角逗号
+        state.catcodes.set_codepoint(0x4E2D, Catcode::MathShift);
+        let loaded = roundtrip(&state);
+        assert_eq!(loaded.catcodes, state.catcodes, "覆盖表应逐条还原");
+        assert_eq!(
+            loaded.catcodes.get_codepoint(0xFF0C),
+            Catcode::Active,
+            "还原后查表须命中覆盖"
+        );
+        // 空表对照：仍应往返成功（覆盖表为增量的可选段）
+        let empty = sample_state();
+        assert_eq!(empty.catcodes.unicode_overrides().count(), 0);
+        assert_eq!(roundtrip(&empty).catcodes, empty.catcodes);
     }
 
     #[test]

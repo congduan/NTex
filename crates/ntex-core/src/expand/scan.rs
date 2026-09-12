@@ -308,12 +308,17 @@ impl Expander {
                     return Ok(if neg { -v } else { v });
                 }
                 // 内部整数：\catcode<char> → 该字符当前 catcode 值
+                // 刀 4：\utfinputmode=1 时 >255 码位查覆盖表（默认 letter）
                 EqSlot::Primitive(Primitive::Catcode) => {
                     self.fetch()?; // 消费 \catcode
-                    let byte = self.scan_char_code()?;
-                    let byte =
-                        u8::try_from(byte).map_err(|_| Error::invalid_input("\\catcode 字符码越界"))?;
-                    let v = i64::from(self.catcodes.get(byte).as_u8());
+                    let code = self.scan_char_code()?;
+                    let utf8 = self.params.misc[crate::param::MISC_UTF_INPUT_MODE] == 1;
+                    let in_unicode = utf8
+                        && (0..=crate::font::UNICODE_MAX_CHARCODE as i64).contains(&code);
+                    if u8::try_from(code).is_err() && !in_unicode {
+                        return Err(Error::invalid_input("\\catcode 字符码越界"));
+                    }
+                    let v = i64::from(self.catcodes.get_codepoint(code as u32).as_u8());
                     return Ok(if neg { -v } else { v });
                 }
                 // 内部整数：\fontdimen<num><font> → 该字体参数值（sp）

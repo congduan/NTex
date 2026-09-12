@@ -265,6 +265,12 @@ pub(crate) enum SavedValue {
         byte: u8,
         prev: Catcode,
     },
+    /// M9 中文刀 4：>255 码位的 catcode 覆盖（`\utfinputmode=1` 下
+    /// `\catcode`，=13；prev None = 此前未覆盖，回滚为默认 letter）。
+    UnicodeCatcode {
+        cp: u32,
+        prev: Option<Catcode>,
+    },
     Param {
         kind: ParamKind,
         prev: ParamValue,

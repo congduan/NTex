@@ -8,11 +8,21 @@
 
 impl Expander {
     fn exec_catcode(&mut self) -> Result<()> {
-        let byte = self.scan_char_code()?;
-        let byte = u8::try_from(byte).map_err(|_| Error::invalid_input("\\catcode 字符码越界"))?;
+        let code = self.scan_char_code()?;
+        // A5 全量收口（M9 中文刀 4）：\utfinputmode=1 时字符码上界放宽到
+        // 0x10FFFF（>255 走 Unicode 覆盖表）；默认 bytes 模式仍限 0..=255
+        // ——报错时机在 `=` 之前（tex.web scan_char_num 语义），TRIP 口径不变。
+        let utf8 = self.params.misc[crate::param::MISC_UTF_INPUT_MODE] == 1;
+        let cp = if let Ok(b) = u8::try_from(code) {
+            b as u32
+        } else if utf8 && (0..=crate::font::UNICODE_MAX_CHARCODE as i64).contains(&code) {
+            code as u32
+        } else {
+            return Err(Error::invalid_input("\\catcode 字符码越界"));
+        };
         self.expect_equals()?;
-        let code = self.scan_number()?;
-        let cat = match Catcode::from_u8(u8::try_from(code).unwrap_or(u8::MAX)) {
+        let code_val = self.scan_number()?;
+        let cat = match Catcode::from_u8(u8::try_from(code_val).unwrap_or(u8::MAX)) {
             Some(c) => c,
             // TeX assign_catcode（tex.web L3736-3744）：超 0..=15 → "Invalid code" 恢复，
             // 跳过赋值不中断（TRIP L429 `\catcode`\qq1qM=13` 中 scan_int 取 `\1`=49）。
@@ -20,22 +30,36 @@ impl Expander {
                 let _ = self.sink.write16(format!(
                     "! Invalid code ({}), should be in the range 0..15.\n\
                      <to be read again> \nI didn't change it.\n",
-                    code
+                    code_val
                 ));
                 return Ok(());
             }
         };
         let global = self.is_global();
-        if !global && self.group_level > 0 {
-            self.save_stack.push((
-                self.group_level,
-                SavedValue::Catcode {
-                    byte,
-                    prev: self.catcodes.get(byte),
-                },
-            ));
+        if cp <= 0xFF {
+            let byte = cp as u8;
+            if !global && self.group_level > 0 {
+                self.save_stack.push((
+                    self.group_level,
+                    SavedValue::Catcode {
+                        byte,
+                        prev: self.catcodes.get(byte),
+                    },
+                ));
+            }
+            self.catcodes.set(byte, cat);
+        } else {
+            if !global && self.group_level > 0 {
+                self.save_stack.push((
+                    self.group_level,
+                    SavedValue::UnicodeCatcode {
+                        cp,
+                        prev: self.catcodes.unicode_codepoint(cp),
+                    },
+                ));
+            }
+            self.catcodes.set_codepoint(cp, cat);
         }
-        self.catcodes.set(byte, cat);
         self.finish_assignment();
         Ok(())
     }

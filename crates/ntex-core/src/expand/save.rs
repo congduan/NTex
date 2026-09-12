@@ -519,12 +519,18 @@ impl Expander {
                 }
                 // TRIP 冲刺：\the\spacefactor → 活参数实时查询（sink 侧维护；L277/L290/L293）
                 Primitive::SpaceFactor => Ok(emit_count(self.sink.space_factor())),
-                // TRIP：\the\catcode`X → 当前 catcode 值（L295 `\the\catcode`J`）
+                // TRIP：\the\catcode`X → 当前 catcode 值（L295 `\the\catcode`J`）；
+                // 刀 4：\utfinputmode=1 时 >255 码位查覆盖表（默认 letter）
                 Primitive::Catcode => {
                     let code = self.scan_char_code()?;
-                    let byte =
-                        u8::try_from(code).map_err(|_| Error::invalid_input("\\catcode 字符码越界"))?;
-                    Ok(emit_count(i64::from(self.catcodes.get(byte).as_u8())))
+                    let utf8 = self.params.misc[crate::param::MISC_UTF_INPUT_MODE] == 1;
+                    let in_unicode = utf8
+                        && (0..=crate::font::UNICODE_MAX_CHARCODE as i64).contains(&code);
+                    if u8::try_from(code).is_err() && !in_unicode {
+                        return Err(Error::invalid_input("\\catcode 字符码越界"));
+                    }
+                    let v = self.catcodes.get_codepoint(code as u32).as_u8();
+                    Ok(emit_count(i64::from(v)))
                 }
                 // ETRIP 冲刺：e-TeX 只读整数（\the/\number 上下文，与 scan_number 对齐）
                 Primitive::InputLineNo => Ok(emit_count(self.current_line_no() as i64)),
@@ -899,6 +905,10 @@ impl Expander {
             SavedValue::Muskip { idx, prev } => self.registers.set_muskip(idx, prev),
             SavedValue::Toks { idx, prev } => self.registers.set_toks(idx, prev),
             SavedValue::Catcode { byte, prev } => self.catcodes.set(byte, prev),
+            SavedValue::UnicodeCatcode { cp, prev } => match prev {
+                Some(c) => self.catcodes.set_codepoint(cp, c),
+                None => self.catcodes.remove_codepoint(cp),
+            },
             SavedValue::Param { kind, prev } => self.params.set(kind, prev),
             SavedValue::Sfcode { byte, prev } => {
                 self.sfcodes[byte as usize] = prev;
