@@ -588,9 +588,15 @@ pub fn set_otf_font(tex_name: &str, bytes: &[u8]) -> bool {
         return false;
     }
     // 先验度量可解析——坏字节在此拒绝（而非等到排版时报 not loadable）。
-    if ntex_font::build_metrics(bytes.to_vec(), tex_name).is_err() {
-        return false;
-    }
+    let metrics = match ntex_font::build_metrics(bytes.to_vec(), tex_name) {
+        Ok(fm) => fm,
+        Err(_) => return false,
+    };
+    // 合成度量登记进 ntex-font 注册表：PDF 写出器（ntex-pdf）只认
+    // 「TFM 字节/注册度量」，不认排版侧的 otf_bytes 缝——不登记的话
+    // 中文文档导出 PDF 必报「找不到 TFM：FandolSong-Regular」。
+    // 失败不阻断（注册表锁毒化属环境异常，排版/渲染两路不受影响）。
+    ntex_font::register_metrics(tex_name, metrics);
     let Ok(mut table) = OTF_METRICS.lock() else {
         // 锁毒化：持锁线程已 panic，注入失败按"环境无字体"处理（不传播）。
         return false;
@@ -989,6 +995,14 @@ mod tests {
         );
         assert!(!set_otf_font("bad-otf", &[0u8; 16]), "坏字节应拒绝");
         assert!(!set_otf_font("", FANDOL_BYTES), "空名字应拒绝");
+        // 注入即登记合成度量——PDF 写出器（ntex-pdf）不认排版侧的 otf_bytes
+        // 缝，漏登记时中文文档导出必报「找不到 TFM：FandolSong-Regular」
+        // （2026-09-13 用户实测故障）。宿主 TeX Live 若真装了 fandol TFM
+        // 也不会掩盖这条：注册命中优先于文件链。
+        assert!(
+            ntex_font::registered_metrics("FandolSong-Regular").is_some(),
+            "set_otf_font 应把合成度量登记进 ntex-font 注册表"
+        );
 
         let compiled = compile_pipeline_with(
             "\\font\\zh=FandolSong-Regular at 12pt\\zh\\hsize=200pt\n中文排版\n\\end",
@@ -1006,6 +1020,16 @@ mod tests {
             compiled.transcript
         );
         assert!(!compiled.pages.is_empty(), "应产出页面");
+
+        // 中文文档导出 PDF：度量经注册表命中后写出成功。Fandol 无 Type1
+        // PFB → 按既有口径未嵌入降级（/BaseFont 在、/FontFile 无），前端
+        // 对缺 PFB 有显式警告，不再硬报「找不到 TFM」。
+        let pdf = pdf_from_dvi(&compiled.dvi, compiled.pages.len() as u32)
+            .expect("中文文档导出 PDF 应成功（度量走注册表）");
+        assert!(
+            String::from_utf8_lossy(&pdf).contains("/BaseFont /FANDOLSONG-REGULAR "),
+            "降级时 /BaseFont 仍应写入"
+        );
     }
 
     /// 端到端复现原故障：`resume-plain.tex` 在 wasm 字体口径下编译——

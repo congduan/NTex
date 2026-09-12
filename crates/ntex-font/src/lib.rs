@@ -16,6 +16,6 @@ pub mod tfm;
 
 pub use otf::{build_metrics, find_otf, OtfError, OtfFont};
 pub use tfm::{
-    find_tfm, parse_tfm, read_tfm, register_tfm_bytes, registered_tfm_bytes, FontMetrics, LigKern,
-    LigKernStep, TfmError,
+    find_tfm, parse_tfm, read_tfm, register_metrics, register_tfm_bytes, registered_metrics,
+    registered_tfm_bytes, FontMetrics, LigKern, LigKernStep, TfmError,
 };

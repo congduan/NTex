@@ -381,9 +381,17 @@ impl<'a> Parser<'a> {
 /// 字节经 [`ntex_font::read_tfm`]：注册表优先（wasm 唯一来源，见
 /// `ntex-font` 注册表注释），native 回落 find_tfm + 文件读，行为不变。
 fn load_tfm(name: &str, scale: i64, design: i64) -> io::Result<FontMetrics> {
-    let bytes = ntex_font::read_tfm(name)?;
-    let mut fm = parse_tfm(&bytes)
-        .map_err(|e| io::Error::new(ErrorKind::InvalidData, format!("解析 {name}.tfm：{e}")))?;
+    // 注册度量优先：无 TFM 对应物的字体（中文 Fandol 等 OTF 注入件）没有
+    // TFM 字节可读，宿主在注入时把合成好的 FontMetrics 登记进来——直接取用。
+    let mut fm = match ntex_font::registered_metrics(name) {
+        Some(fm) => fm,
+        None => {
+            let bytes = ntex_font::read_tfm(name)?;
+            parse_tfm(&bytes).map_err(|e| {
+                io::Error::new(ErrorKind::InvalidData, format!("解析 {name}.tfm：{e}"))
+            })?
+        }
+    };
     fm.name = name.to_owned();
     // scale = 实际字号 sp，design = 设计字号 sp：维度 × scale/design
     Ok(if design > 0 && scale != design {

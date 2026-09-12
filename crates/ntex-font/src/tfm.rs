@@ -543,6 +543,37 @@ pub fn read_tfm(name: &str) -> io::Result<Vec<u8>> {
         .map_err(|e| io::Error::new(e.kind(), format!("读 {}：{e}", path.display())))
 }
 
+// ---------- 进程级 FontMetrics 注册表（M9：无 TFM 字体的 PDF 导出） ----------
+
+/// 进程级已解析度量注册表：[`register_metrics`] 写入，[`registered_metrics`] 读。
+static METRICS_REG: LazyLock<Mutex<HashMap<String, FontMetrics>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// 注册**已解析**的字体度量（同名覆盖）。
+///
+/// 为没有 TFM 对应物的字体而设——典型如中文 Fandol（OTF 注入，度量由
+/// [`crate::build_metrics`] 从 OpenType 合成）：排版器经
+/// `ntex-layout::TfmSource::otf_bytes` 现场合成，而 PDF 写出器（`ntex-pdf`）
+/// 只有「TFM 字节 → parse」一条路，wasm 下两边都没文件系统。宿主在注入
+/// OTF 字节时把合成结果一并注册进来，PDF 侧经 [`registered_metrics`]
+/// 直接取用，不再追问 TFM。
+///
+/// 返回 `false` 仅当注册表锁毒化（持锁线程 panic；不传播错误，引擎契约）。
+pub fn register_metrics(name: &str, metrics: FontMetrics) -> bool {
+    match METRICS_REG.lock() {
+        Ok(mut m) => {
+            m.insert(name.to_owned(), metrics);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// 已注册的字体度量（克隆出；不触碰文件系统）。
+pub fn registered_metrics(name: &str) -> Option<FontMetrics> {
+    METRICS_REG.lock().ok()?.get(name).cloned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -708,5 +739,26 @@ mod tests {
         let miss = "zz-never-registered-nor-installed";
         let err = read_tfm(miss).expect_err("不存在于任何来源").to_string();
         assert!(err.contains(miss), "错误应带字体名：{err}");
+    }
+
+    /// FontMetrics 注册表语义锁：同名覆盖、克隆取出（注册表内对象不被取走方
+    /// 污染）。度量本体构造借用合成 TFM 的解析结果——注册表只管存取，
+    /// 不关心来源是 parse_tfm 还是 build_metrics。
+    #[test]
+    fn metrics_registry_roundtrip_and_overwrite() {
+        let name = "zz-metrics-registry-probe";
+        assert!(
+            registered_metrics(name).is_none(),
+            "前置假设：该名字尚未注册"
+        );
+        let fm = parse_tfm(&synthetic_tfm()).expect("合成 TFM 应可解析");
+        assert!(register_metrics(name, fm.clone()));
+        let got = registered_metrics(name).expect("注册后应命中");
+        assert_eq!(got, fm, "取出的度量应与注册时一致");
+
+        // 同名覆盖：新值生效
+        let fm2 = fm.scaled_by(65536, 655360);
+        assert!(register_metrics(name, fm2.clone()));
+        assert_eq!(registered_metrics(name), Some(fm2));
     }
 }
