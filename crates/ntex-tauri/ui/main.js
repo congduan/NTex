@@ -29,6 +29,11 @@ const state = {
 };
 // 已注入 wasm 的 PFB 名单（进程级注册表幂等，Set 只是省重复 fetch）
 const pfbReady = new Set();
+// 已 set_otf_font 注入成功的 OTF 名单：这些字体在 PDF 侧已按 Type0/OpenType
+// 嵌入（wasm 内 set_otf_font 顺带登记 ntex-pdf OTF 注册表），导出时**跳过**
+// PFB fetch——Fandol 等中文字体本无 Type1 形态，去 fetch 只会 404 并误报
+// 「未找到 Type1 字形数据」。
+const otfReady = new Set();
 
 /* ---------- 引擎 ---------- */
 
@@ -68,7 +73,11 @@ async function loadFonts() {
       try { return set_glyph_font(name, await fetchBytes(url)); } catch { return false; }
     }),
     ...CJK_FONTS.map(async ([name, url]) => {
-      try { return set_otf_font(name, await fetchBytes(url)); } catch { return false; }
+      try {
+        const ok = set_otf_font(name, await fetchBytes(url));
+        if (ok) otfReady.add(name);
+        return ok; // 返回值参与 fontsReady（决定迟到注入后的重编译）
+      } catch { return false; }
     }),
   ];
   const results = await Promise.all(jobs);
@@ -233,9 +242,12 @@ $('utf8').addEventListener('change', () => {
 
 /* ---------- PDF 导出 ---------- */
 // 路径：doc.used_fonts()（DVI 字体表，**不是** fonts——那是引擎侧已载入全表，
-// 误用会对正文没排到的字体误报缺字体）→ 逐名 fetch ui/pfb/<name>.pfb 经
-// set_pfb_font 注入（ntex-pdf 在 wasm 下无文件系统，宿主查找链必落空）→
-// doc.pdf_bytes() → <a download> 触发落盘（Tauri 壳经 on_download 放行，
+// 误用会对正文没排到的字体误报缺字体）→ 逐名分流：
+// - otfReady 里的（set_otf_font 注入成功）：**跳过**——wasm 侧已顺带登记
+//   PDF 的 OTF 注册表，导出按 Type0/OpenType 嵌入（中文不再报缺 Type1）；
+// - 其余 fetch ui/pfb/<name>.pfb 经 set_pfb_font 注入（ntex-pdf 在 wasm 下
+//   无文件系统，宿主查找链必落空）。
+// → doc.pdf_bytes() → <a download> 触发落盘（Tauri 壳经 on_download 放行，
 // 见 src/main.rs）。缺字体不阻断导出——引擎本身会静默写「未嵌入」的降级
 // PDF，这里把它变成**明说**的提示，而不是让用户拿到手打开才知道。
 async function exportPdf() {
@@ -250,7 +262,7 @@ async function exportPdf() {
   try {
     const missing = [];
     for (const name of doc.used_fonts()) {
-      if (pfbReady.has(name)) continue;
+      if (pfbReady.has(name) || otfReady.has(name)) continue;
       try {
         const res = await fetch(`pfb/${name}.pfb`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);

@@ -28,10 +28,13 @@
 //!    Tauri/浏览器前端 fetch 后注册，wasm 无文件系统）；未注入的字体逐字符
 //!    回落占位方框口径（渲染仍可用）。
 //! 5. PDF 导出（[`Document::pdf_bytes`] / [`CompileResult::pdf_bytes`]）：与
-//!    native `ntex-pdf` 同一份 DVI→PDF 代码，**字体嵌入只能来自宿主注入的
-//!    Type1 PFB**（[`set_pfb_font`]）——`ntex-pdf` 的宿主查找链（环境变量
+//!    native `ntex-pdf` 同一份 DVI→PDF 代码，**字体嵌入只能来自宿主注入**——
+//!    TFM 8-bit 字体走 Type1 PFB（[`set_pfb_font`]），OTF 字体（中文 Fandol
+//!    等）经 [`set_otf_font`] 注入时顺带登记 Type0/OpenType 嵌入用字节
+//!    （`ntex_pdf::otf::register_otf`）。`ntex-pdf` 的宿主查找链（环境变量
 //!    目录 / TeX Live 路径 / kpsewhich）为 native 专属，见
-//!    `ntex-pdf/src/type1.rs::read_host_pfb` 的 wasm 分叉。
+//!    `ntex-pdf/src/type1.rs::read_host_pfb` 与 `otf.rs::read_host_otf`
+//!    的 wasm 分叉。
 //!
 //! 已知缺口（如实记录）：`\write` 到非 16 流 / `\openout` 产出的文件
 //! 现留在 `MemVfs` 内不回传——`ntex-io` 的 `MemVfs` 暂无枚举 API（只有 `read`/
@@ -552,12 +555,14 @@ pub fn set_glyph_font(tex_name: &str, bytes: &[u8]) -> bool {
 ///
 /// **与 [`set_glyph_font`] 是两条独立通道**，别混：
 /// - [`set_glyph_font`] 管**屏幕上的字形轮廓**（OTF/TTF，走 skrifa 提轮廓）；
-/// - 本条管**PDF 里的字体程序**（Type1 PFB，原样写进 `/FontFile`）——
-///   PDF 的 `/FontFile` 只接受 Type1 程序，OTF 塞不进去（那要走 CID/OpenType
-///   嵌入，属另案），故屏幕端用 OTF 也要**另配一份 PFB** 才能嵌出完整 PDF。
+/// - 本条管 **Type1 字体程序**（PFB，原样写进 `/FontFile`）——只服务 TFM
+///   8-bit 字体（cmr10 等）的 PDF 导出。
 ///
 /// 名字与 `doc.fonts`（DVI `fnt_def` 外部名，如 `cmr10`）一致；同名重复注册
 /// 为覆盖。字节非 PFB（段头不是 `0x80 0x01`，如误传 OTF）返回 false 不 panic。
+///
+/// **OTF 字体（中文 Fandol 等）不走这里**——[`set_otf_font`] 注入的字节会
+/// 顺带登记进 PDF 侧 OTF 注册表，导出按 Type0/OpenType 嵌入，无需另配 PFB。
 #[wasm_bindgen]
 pub fn set_pfb_font(tex_name: &str, bytes: &[u8]) -> bool {
     ntex_pdf::type1::register_pfb(tex_name, bytes)
@@ -565,13 +570,16 @@ pub fn set_pfb_font(tex_name: &str, bytes: &[u8]) -> bool {
 
 /// 注入 **OpenType 排版字体**（无 TFM 的字体：中文 Fandol/思源、西文 OTF）。
 ///
-/// 一次调用注册两侧，`true` 表示度量与字形**均**可用：
+/// 一次调用注册三侧，`true` 表示度量与字形**均**可用：
 /// 1. **排版度量**：写入本模块 [`OTF_METRICS`] 表，`TfmLoader` 解析
 ///    `\font\zh=FandolSong-Regular` 时经 [`ntex_layout::TfmSource::otf_bytes`]
 ///    取字节 → `ntex_font::build_metrics` 建度量（hmtx + bbox）；
 /// 2. **渲染字形**：转交 `ntex_backend::glyphs::register_font_bytes`，
 ///    `Document::set_glyphs(true)` 后按 cmap 直查画轮廓（`FontMetrics::
-///    unicode_native` 直通 Unicode 码位）。
+///    unicode_native` 直通 Unicode 码位）；
+/// 3. **PDF 导出**：转交 `ntex_pdf::otf::register_otf`，写出端按
+///    Type0/CIDFontType0 + `/FontFile3 /OpenType` 原样嵌入（CID = Unicode
+///    码位）——中文 PDF 从此真嵌字体，无需 Type1 PFB。
 ///
 /// 同名覆盖（前端重复 fetch 幂等）。坏字节 / 空名字返回 `false` 不 panic
 /// （引擎契约）。**与 [`set_glyph_font`] 的分工**：本函数管"从零接入一个
@@ -580,7 +588,7 @@ pub fn set_pfb_font(tex_name: &str, bytes: &[u8]) -> bool {
 /// JS 侧（Tauri `ui/main.js` 的用法，本地 fetch 后注入）：
 /// ```js
 /// const bytes = new Uint8Array(await (await fetch('fonts/FandolSong-Regular.otf')).arrayBuffer());
-/// set_otf_font('FandolSong-Regular', bytes);   // 排版 + 渲染双通
+/// set_otf_font('FandolSong-Regular', bytes);   // 排版 + 渲染 + PDF 嵌入三通
 /// ```
 #[wasm_bindgen]
 pub fn set_otf_font(tex_name: &str, bytes: &[u8]) -> bool {
@@ -597,6 +605,9 @@ pub fn set_otf_font(tex_name: &str, bytes: &[u8]) -> bool {
     // 中文文档导出 PDF 必报「找不到 TFM：FandolSong-Regular」。
     // 失败不阻断（注册表锁毒化属环境异常，排版/渲染两路不受影响）。
     ntex_font::register_metrics(tex_name, metrics);
+    // PDF 侧同步登记 OTF 字节（Type0/OpenType 嵌入用）。同名覆盖幂等；
+    // 失败不阻断（届时 PDF 端按不嵌入降级，行为同旧版）。
+    ntex_pdf::otf::register_otf(tex_name, bytes);
     let Ok(mut table) = OTF_METRICS.lock() else {
         // 锁毒化：持锁线程已 panic，注入失败按"环境无字体"处理（不传播）。
         return false;
@@ -1021,14 +1032,23 @@ mod tests {
         );
         assert!(!compiled.pages.is_empty(), "应产出页面");
 
-        // 中文文档导出 PDF：度量经注册表命中后写出成功。Fandol 无 Type1
-        // PFB → 按既有口径未嵌入降级（/BaseFont 在、/FontFile 无），前端
-        // 对缺 PFB 有显式警告，不再硬报「找不到 TFM」。
+        // 中文文档导出 PDF：度量经注册表命中后写出成功。OTF 字节已随
+        // [`set_otf_font`] 登记进 PDF 侧注册表（`ntex_pdf::otf::register_otf`）
+        // → 按 Type0/CIDFontType0 + /FontFile3(/OpenType) 原样嵌入（CID =
+        // Unicode 码位），不再是「未嵌入降级」（2026-09-13 修复，警告条原文：
+        // 「FandolSong-Regular 未找到 Type1 字形数据，未嵌入」）。
         let pdf = pdf_from_dvi(&compiled.dvi, compiled.pages.len() as u32)
             .expect("中文文档导出 PDF 应成功（度量走注册表）");
+        let s = String::from_utf8_lossy(&pdf);
+        assert!(s.contains("/Subtype /Type0"), "OTF 已注入应走 Type0 嵌入：{s}");
+        assert!(s.contains("/FontFile3"), "OTF 字节应随 /FontFile3 原样嵌入：{s}");
         assert!(
-            String::from_utf8_lossy(&pdf).contains("/BaseFont /FANDOLSONG-REGULAR "),
-            "降级时 /BaseFont 仍应写入"
+            s.contains("<4E2D>"),
+            "「中」(U+4E2D) 应以两字节 CID 十六进制写出（此前 u8 截断成 2D 乱码）：{s}"
+        );
+        assert!(
+            !s.contains("/BaseFont /FANDOLSONG-REGULAR "),
+            "不应再走大写兜底降级（那是未嵌 OTF 的旧路径）：{s}"
         );
     }
 

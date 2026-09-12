@@ -4,9 +4,14 @@
 //!   词内间隙为 0，避免 poppler 等提取器在逐字符定位下误判出幻影空格）；
 //!   词间空隙插入空格字形并用调整量把后续字符精确落在 TFM 位置；
 //! - 规则用 `re f` 填充矩形；
-//! - 字体：Type1 嵌入（PFB 流，见 [`crate::type1`]），`/Encoding` 不指定——
-//!   查看器用字体程序内建编码（cmr10 的 TeX 编码 = DVI 字符码，天然一致）；
-//!   多字体去重按 `fnt_def` 外部名（同字体多页复用同一组对象）；页面资源字典
+//! - 字体：TFM 8-bit 字体走 Type1 嵌入（PFB 流，见 [`crate::type1`]），
+//!   `/Encoding` 不指定——查看器用字体程序内建编码（cmr10 的 TeX 编码 =
+//!   DVI 字符码，天然一致）；`unicode_native` 字体（中文 Fandol 等，M9）
+//!   走 Type0/CIDFontType0 + `/FontFile3 /OpenType` 嵌入整个 OTF
+//!   （见 [`crate::otf`]），内容流字符写成两字节十六进制串（CID = Unicode
+//!   码位，Identity-H；> 0xFFFF 的码位画不出 2 字节 CID，跳过字形但保留
+//!   定位推进，挂账待住区平面支持）；
+//! - 多字体去重按 `fnt_def` 外部名（同字体多页复用同一组对象）；页面资源字典
 //!   只列本页实际引用的字体（`page_fonts`），跨页互不泄漏（M8 多字体验证）。
 //! - 坐标转换：DVI 原点在页左上、y 向下（sp）；PDF 原点在左下、y 向上（pt），
 //!   字符参考点为基线（DVI 的 v 即基线）。
@@ -14,6 +19,7 @@
 use std::io::{self, Write};
 
 use crate::dvi::{DrawOp, Dvi};
+use crate::otf::load_otf;
 use crate::type1::load_pfb;
 
 /// DVI 单位：1pt = 65536sp（mag=1000）。
@@ -44,8 +50,9 @@ pub fn write_pdf(dvi: &Dvi, opts: &PdfOptions) -> io::Result<Vec<u8>> {
     let mut contents: Vec<Vec<u8>> = Vec::with_capacity(dvi.pages.len());
     for page in &dvi.pages {
         let mut c = Vec::new();
-        // 当前行 run：连续、同字体、同基线的字符（(font, code, x_pt, y_pt)）
-        let mut run: Vec<(u32, u8, f64, f64)> = Vec::new();
+        // 当前行 run：连续、同字体、同基线的字符（(font, code, x_pt, y_pt)；
+        // code 全宽 u32，Unicode 字体的码位可达 0x10FFFF）
+        let mut run: Vec<(u32, u32, f64, f64)> = Vec::new();
         for op in &page.ops {
             match op {
                 DrawOp::Char { font, code, h, v } => {
@@ -92,33 +99,50 @@ pub fn write_pdf(dvi: &Dvi, opts: &PdfOptions) -> io::Result<Vec<u8>> {
 /// （`TJ` 数字：正数左移、负数右移，单位 1/1000 em），把下一字符精确落到
 /// 其 TFM 位置；词间空隙以一个大调整量表达（poppler 等提取器据此识别为
 /// 空格，同 dvipdfmx 的做法）。
-fn emit_line(c: &mut Vec<u8>, dvi: &Dvi, run: &[(u32, u8, f64, f64)]) -> io::Result<()> {
+///
+/// 字体形态分叉：TFM 8-bit 字体写 `(...)` 字面串（DVI 码 = 内建编码）；
+/// `unicode_native` 字体写 `<XXXX>` 两字节十六进制串（CID = Unicode 码位，
+/// Identity-H）。> 0xFFFF 的码位无法表成 2 字节 CID——跳过字形不画，但
+/// 照常计入推进（调整量链保证后续字符仍落 TFM 精确位置；Star 字形挂账）。
+fn emit_line(c: &mut Vec<u8>, dvi: &Dvi, run: &[(u32, u32, f64, f64)]) -> io::Result<()> {
     if run.is_empty() {
         return Ok(());
     }
     let (font, _, x0, y0) = run[0];
     let fm = &dvi.fonts[font as usize];
     let size = font_size_pt(fm);
+    let unicode = fm.unicode_native;
     write!(
         c,
-        "BT /F{} {:.6} Tf 1 0 0 1 {:.4} {:.4} Tm [({})",
+        "BT /F{} {:.6} Tf 1 0 0 1 {:.4} {:.4} Tm [",
         font + 1,
         size,
         x0,
-        y0,
-        escape_byte(run[0].1)
+        y0
     )?;
+    let mut emit_glyph = |c: &mut Vec<u8>, code: u32| -> io::Result<()> {
+        if unicode && code > 0xFFFF {
+            return Ok(()); // 画不出（2 字节 CID 上限）；定位仍由调整量链推进
+        }
+        if unicode {
+            write!(c, "<{code:04X}>")
+        } else {
+            // TFM 字体的 DVI 码恒 ≤ 0xFF（TeX 8-bit 语义）
+            write!(c, "({})", escape_byte(code as u8))
+        }
+    };
+    emit_glyph(c, run[0].1)?;
     let mut prev_code = run[0].1;
     let mut prev_x = x0;
     for &(f, code, x, _) in &run[1..] {
         debug_assert_eq!(f, font, "run 内字体应一致");
-        let w_prev = fm.char_metrics(prev_code as u32).0 as f64 / SP_PER_PT;
+        let w_prev = fm.char_metrics(prev_code).0 as f64 / SP_PER_PT;
         let delta = x - prev_x;
         let adj = (w_prev - delta) * 1000.0 / size;
         if adj.abs() > 0.01 {
             write!(c, " {:.2}", adj)?;
         }
-        write!(c, "({})", escape_byte(code))?;
+        emit_glyph(c, code)?;
         prev_code = code;
         prev_x = x;
     }
@@ -130,6 +154,16 @@ fn emit_line(c: &mut Vec<u8>, dvi: &Dvi, run: &[(u32, u8, f64, f64)]) -> io::Res
 fn font_size_pt(fm: &ntex_font::FontMetrics) -> f64 {
     let sp = (fm.design_size_sp as i128 * fm.scale as i128) >> 20;
     sp as f64 / SP_PER_PT
+}
+
+/// 判定字体是否走 Unicode 直映（Type0/OpenType）路径：取该名字任一 fnt_def
+/// 的度量看 `unicode_native`（同名多尺寸度量的该标记一致——都来自同一注册表）。
+fn is_unicode_font(dvi: &Dvi, name: &str) -> bool {
+    dvi.font_names
+        .iter()
+        .zip(&dvi.fonts)
+        .find(|(n, _)| n.as_str() == name)
+        .is_some_and(|(_, fm)| fm.unicode_native)
 }
 
 /// PDF 字符串转义（字节直出；`( ) \` 与 <0x20、>=0x7F 转八进制）。
@@ -146,39 +180,85 @@ fn escape_byte(b: u8) -> String {
 /// 组装 PDF 文档。
 ///
 /// 对象布局：1 Catalog、2 Pages、每页 (Page, Contents) 两对象、
-/// 每个唯一字体 (Font dict, FontDescriptor, FontFile 流) 三对象。
+/// 之后按字体分配（对象数随形态而定）：Type1 嵌入 3 对象
+/// (Font dict, FontDescriptor, FontFile)、Type0/OpenType 嵌入 4 对象
+/// (Type0 dict, CIDFontType0, FontDescriptor, FontFile3)、降级 1~2 对象。
+///
+/// 字体形态判定：`unicode_native` 度量（M9 中文）走 Type0——CID = Unicode
+/// 码位（Identity-H），OTF 字节按 [`load_otf`] 定位（注册表 → 宿主查找链），
+/// 原样嵌入 `/FontFile3`（`/Subtype /OpenType`）。找不到 OTF 或非 CFF 轮廓
+/// （TrueType glyf，挂账）时降级：保留 Type0 字典与后代字体但不嵌字体程序。
 fn build_document(dvi: &Dvi, contents: &[Vec<u8>], opts: &PdfOptions) -> io::Result<Vec<u8>> {
-    // 字体去重：name → (FontName, PFA)。找不到 PFA 时退化为不嵌入的空字典。
-    // PDF 名字对象统一大写（Adobe Type1 惯例，如 CMBX10）——/BaseFont、
-    // /FontDescriptor /FontName 及不嵌入时的兜底名走同一命名口径。
-    let mut uniq: Vec<(&str, (String, Vec<u8>))> = Vec::new();
+    // 每个唯一字体名的嵌入形态（去重按 fnt_def 外部名，跨页复用同一组对象）。
+    enum Body {
+        /// Type1：PFB 原样进 /FontFile（BaseFont 取 PFB /FontName，大写）。
+        Type1 { name: String, pfb: Vec<u8> },
+        /// Type0：OTF 原样进 /FontFile3（/Subtype /OpenType；仅 CFF/OTTO）。
+        Otf { otf: Vec<u8> },
+        /// 不嵌入降级：unicode=true 时仍给 Type0+后代字典（无 FontFile3），
+        /// false 时退最小裸 Type1 字典（M8 行为）。
+        Bare { unicode: bool },
+    }
+    let mut uniq: Vec<(&str, (String, Body))> = Vec::new();
     for name in &dvi.font_names {
         if uniq.iter().any(|(n, _)| *n == name.as_str()) {
             continue;
         }
-        let entry = match load_pfb(name) {
-            Ok(f) => (f.name, f.pfb),
-            Err(e) => {
-                eprintln!("警告：{e}（以不嵌入方式引用字体）");
-                (name.to_ascii_uppercase(), Vec::new())
+        let unicode = is_unicode_font(dvi, name);
+        let entry = if unicode {
+            match load_otf(name) {
+                Ok(bytes) if bytes.starts_with(b"OTTO") => {
+                    (name.to_owned(), Body::Otf { otf: bytes })
+                }
+                Ok(_) => {
+                    // TrueType 轮廓（glyf）：/OpenType 流只收 CFF，挂账不嵌
+                    eprintln!("警告：{name} 是 TrueType 轮廓，OpenType 嵌入暂不支持（以不嵌入方式引用）");
+                    (name.to_owned(), Body::Bare { unicode: true })
+                }
+                Err(e) => {
+                    eprintln!("警告：{e}（以不嵌入方式引用字体）");
+                    (name.to_owned(), Body::Bare { unicode: true })
+                }
+            }
+        } else {
+            match load_pfb(name) {
+                Ok(f) => {
+                    let base = f.name.clone();
+                    (base, Body::Type1 { name: f.name, pfb: f.pfb })
+                }
+                Err(e) => {
+                    eprintln!("警告：{e}（以不嵌入方式引用字体）");
+                    (name.to_ascii_uppercase(), Body::Bare { unicode: false })
+                }
             }
         };
         uniq.push((name.as_str(), entry));
     }
-    // DVI 字体号 → PDF 字体字典对象号
+    // DVI 字体号 → PDF 字体字典对象号（每族对象数随形态：3/4/2/1）
     let n_pages = contents.len();
-    let font_base = 3 + 2 * n_pages;
-    let font_obj: Vec<u32> = dvi
-        .font_names
-        .iter()
-        .map(|name| {
-            let idx = uniq
-                .iter()
-                .position(|(n, _)| *n == name.as_str())
-                .expect("字体名已注册");
-            (font_base + 3 * idx) as u32
-        })
-        .collect();
+    let font_obj: Vec<u32> = {
+        let mut nums = Vec::with_capacity(uniq.len());
+        let mut cursor = (3 + 2 * n_pages) as u32;
+        for (_, (_, body)) in &uniq {
+            nums.push(cursor);
+            cursor += match body {
+                Body::Type1 { .. } => 3,
+                Body::Otf { .. } => 4,
+                Body::Bare { unicode: true } => 2,
+                Body::Bare { unicode: false } => 1,
+            };
+        }
+        dvi.font_names
+            .iter()
+            .map(|name| {
+                let idx = uniq
+                    .iter()
+                    .position(|(n, _)| *n == name.as_str())
+                    .expect("字体名已注册");
+                nums[idx]
+            })
+            .collect()
+    };
 
     let (w_pt, h_pt) = opts.page_size;
     let mut buf = Vec::new();
@@ -238,50 +318,123 @@ fn build_document(dvi: &Dvi, contents: &[Vec<u8>], opts: &PdfOptions) -> io::Res
         obj(&mut buf, &mut offsets, &body);
     }
 
-    // 字体对象（去重）——/BaseFont 与 /FontDescriptor /FontName 统一取 PFB 内
-    // /FontName（Type1 惯例大写，如 CMR10），而非 DVI 侧小写引用名（tex fnt_def
-    // 名是引擎内部引用键；PDF 名字对象必须与嵌入的 PFB 自声明名一致，否则部分
-    // 查看器按名字匹配字体度量失败）。fallback（无 PFB）路径同样走大写兜底名。
-    for (idx, (_, (pfb_name, pfa))) in uniq.iter().enumerate() {
-        let font_name = pfb_name.as_str();
-        let dict_obj = font_base + 3 * idx;
-        let desc_obj = dict_obj + 1;
-        let file_obj = dict_obj + 2;
-        if pfa.is_empty() {
-            obj(
-                &mut buf,
-                &mut offsets,
-                format!(
-                    "{dict_obj} 0 obj << /Type /Font /Subtype /Type1 /BaseFont /{font_name} >> endobj"
+    // 字体对象（去重后逐族写出）。
+    // - Type1：/BaseFont 与 /FontDescriptor /FontName 统一取 PFB 内 /FontName
+    //   （Type1 惯例大写，如 CMR10），而非 DVI 侧小写引用名（tex fnt_def 名是
+    //   引擎内部引用键；PDF 名字必须与嵌入字体自声明名一致，否则部分查看器
+    //   按名匹配度量失败）。fallback（无 PFB）路径同样走大写兜底名。
+    // - Type0：/BaseFont 用 DVI 引用名原样（FandolSong-Regular 本身即合法
+    //   PostScript 名；CID 体系由 CIDSystemInfo 标识，无需 PFB 式改名）。
+    for (idx, (_, (base_name, body))) in uniq.iter().enumerate() {
+        match body {
+            Body::Type1 { name, pfb } => {
+                let (dict_obj, desc_obj, file_obj) =
+                    (font_obj[idx], font_obj[idx] + 1, font_obj[idx] + 2);
+                obj(
+                    &mut buf,
+                    &mut offsets,
+                    format!(
+                        "{dict_obj} 0 obj << /Type /Font /Subtype /Type1 /BaseFont /{name} \
+                         /FontDescriptor {desc_obj} 0 R >> endobj"
+                    )
+                    .as_bytes(),
+                );
+                obj(
+                    &mut buf,
+                    &mut offsets,
+                    format!(
+                        "{desc_obj} 0 obj << /Type /FontDescriptor /FontName /{name} \
+                         /Flags 4 /ItalicAngle 0 /Ascent 0 /Descent 0 /CapHeight 0 /StemV 0 \
+                         /FontFile {file_obj} 0 R >> endobj"
+                    )
+                    .as_bytes(),
+                );
+                let mut fbody =
+                    format!("{file_obj} 0 obj << /Length {} >>\nstream\n", pfb.len()).into_bytes();
+                fbody.extend_from_slice(pfb);
+                fbody.extend_from_slice(b"\nendstream\nendobj");
+                obj(&mut buf, &mut offsets, &fbody);
+            }
+            Body::Otf { otf } => {
+                let (dict_obj, cid_obj, desc_obj, file_obj) =
+                    (font_obj[idx], font_obj[idx] + 1, font_obj[idx] + 2, font_obj[idx] + 3);
+                obj(
+                    &mut buf,
+                    &mut offsets,
+                    format!(
+                        "{dict_obj} 0 obj << /Type /Font /Subtype /Type0 /BaseFont /{base_name} \
+                         /Encoding /Identity-H /DescendantFonts [{cid_obj} 0 R] >> endobj"
+                    )
+                    .as_bytes(),
+                );
+                obj(
+                    &mut buf,
+                    &mut offsets,
+                    format!(
+                        "{cid_obj} 0 obj << /Type /Font /Subtype /CIDFontType0 /BaseFont \
+                         /{base_name} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) \
+                         /Supplement 0 >> /FontDescriptor {desc_obj} 0 R /DW 1000 >> endobj"
+                    )
+                    .as_bytes(),
+                );
+                // Ascent/Descent 以 CJK 字体典型值占位（upem=1000 口径）——度量
+                // 结构未存 OS/2 上下延；查看器行高推断以嵌入字体自带 hhea/OS2
+                // 为准，此处仅兜底。
+                obj(
+                    &mut buf,
+                    &mut offsets,
+                    format!(
+                        "{desc_obj} 0 obj << /Type /FontDescriptor /FontName /{base_name} \
+                         /Flags 4 /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 0 \
+                         /StemV 0 /FontFile3 {file_obj} 0 R >> endobj"
+                    )
+                    .as_bytes(),
+                );
+                let mut fbody = format!(
+                    "{file_obj} 0 obj << /Subtype /OpenType /Length {} >>\nstream\n",
+                    otf.len()
                 )
-                .as_bytes(),
-            );
-            continue;
+                .into_bytes();
+                fbody.extend_from_slice(otf);
+                fbody.extend_from_slice(b"\nendstream\nendobj");
+                obj(&mut buf, &mut offsets, &fbody);
+            }
+            // 不嵌入降级：Type0 族仍写完整结构（缺 FontFile3/FontDescriptor），
+            // 查看器按 BaseFont 名以本地字体替代；TFM 族退最小裸字典（M8 行为）。
+            Body::Bare { unicode: true } => {
+                let (dict_obj, cid_obj) = (font_obj[idx], font_obj[idx] + 1);
+                obj(
+                    &mut buf,
+                    &mut offsets,
+                    format!(
+                        "{dict_obj} 0 obj << /Type /Font /Subtype /Type0 /BaseFont /{base_name} \
+                         /Encoding /Identity-H /DescendantFonts [{cid_obj} 0 R] >> endobj"
+                    )
+                    .as_bytes(),
+                );
+                obj(
+                    &mut buf,
+                    &mut offsets,
+                    format!(
+                        "{cid_obj} 0 obj << /Type /Font /Subtype /CIDFontType0 /BaseFont \
+                         /{base_name} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) \
+                         /Supplement 0 >> /DW 1000 >> endobj"
+                    )
+                    .as_bytes(),
+                );
+            }
+            Body::Bare { unicode: false } => {
+                obj(
+                    &mut buf,
+                    &mut offsets,
+                    format!(
+                        "{} 0 obj << /Type /Font /Subtype /Type1 /BaseFont /{base_name} >> endobj",
+                        font_obj[idx]
+                    )
+                    .as_bytes(),
+                );
+            }
         }
-        obj(
-            &mut buf,
-            &mut offsets,
-            format!(
-                "{dict_obj} 0 obj << /Type /Font /Subtype /Type1 /BaseFont /{font_name} \
-                 /FontDescriptor {desc_obj} 0 R >> endobj"
-            )
-            .as_bytes(),
-        );
-        obj(
-            &mut buf,
-            &mut offsets,
-            format!(
-                "{desc_obj} 0 obj << /Type /FontDescriptor /FontName /{font_name} \
-                 /Flags 4 /ItalicAngle 0 /Ascent 0 /Descent 0 /CapHeight 0 /StemV 0 \
-                 /FontFile {file_obj} 0 R >> endobj"
-            )
-            .as_bytes(),
-        );
-        let mut body =
-            format!("{file_obj} 0 obj << /Length {} >>\nstream\n", pfa.len()).into_bytes();
-        body.extend_from_slice(pfa);
-        body.extend_from_slice(b"\nendstream\nendobj");
-        obj(&mut buf, &mut offsets, &body);
     }
 
     // xref / trailer
@@ -356,9 +509,9 @@ mod tests {
         let w_h = fm.char_metrics(b'h' as u32).0 as f64 / SP_PER_PT;
         // 一行：T h 空格 h（词距 5pt）——词距以负调整量表达
         let run1 = vec![
-            (0, b'T', 0.0, 10.0),
-            (0, b'h', w_t, 10.0),
-            (0, b'h', w_t + w_h + 5.0, 10.0),
+            (0, u32::from(b'T'), 0.0, 10.0),
+            (0, u32::from(b'h'), w_t, 10.0),
+            (0, u32::from(b'h'), w_t + w_h + 5.0, 10.0),
         ];
         let mut c = Vec::new();
         emit_line(&mut c, &dvi, &run1).unwrap();
@@ -382,7 +535,7 @@ mod tests {
             ops: vec![
                 DrawOp::Char {
                     font: 0,
-                    code: b'T',
+                    code: u32::from(b'T'),
                     h: 0,
                     v: 0,
                 },
@@ -394,7 +547,7 @@ mod tests {
                 },
                 DrawOp::Char {
                     font: 0,
-                    code: b'T',
+                    code: u32::from(b'T'),
                     h: 0,
                     v: 655_360, // 下一行
                 },
@@ -428,7 +581,7 @@ mod tests {
         dvi.pages = vec![Page {
             ops: vec![DrawOp::Char {
                 font: 0,
-                code: b'T',
+                code: u32::from(b'T'),
                 h: 0,
                 v: 0,
             }],
@@ -476,7 +629,7 @@ mod tests {
         let page = |font: u32| Page {
             ops: vec![DrawOp::Char {
                 font,
-                code: b'T',
+                code: u32::from(b'T'),
                 h: 0,
                 v: 0,
             }],
@@ -516,5 +669,133 @@ mod tests {
         // 页面资源字典：页 1 只有 /F1（cmr10 字典对象 7）、页 2 只有 /F2（对象 10）
         assert!(s.contains("/Resources << /Font << /F1 7 0 R >> >>"), "{s}");
         assert!(s.contains("/Resources << /Font << /F2 10 0 R >> >>"), "{s}");
+    }
+
+    /// Unicode 直映字体（M9 中文）：`unicode_native` 度量 + 注入的 OTF 字节
+    /// → Type0/CIDFontType0 + Identity-H + /FontFile3（/OpenType 原样嵌入），
+    /// 内容流字符写两字节十六进制（CID = Unicode 码位）。
+    /// OTF 取仓库内 Tauri 前端自带的 FandolSong（找不到则跳过，不硬依赖）。
+    #[test]
+    fn write_pdf_embeds_unicode_font_as_type0_opentype() {
+        let otf_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../ntex-tauri/ui/fonts/FandolSong-Regular.otf");
+        let Ok(otf) = std::fs::read(&otf_path) else {
+            eprintln!("未找到 {}，跳过", otf_path.display());
+            return;
+        };
+        // 唯一注册名：不污染其他测试的字体注册表
+        let name = "FandolSong-Type0Probe";
+        assert!(crate::otf::register_otf(name, &otf), "OTTO 魔数应注册成功");
+
+        let mut fm = ntex_font::FontMetrics {
+            unicode_native: false,
+            unicode_chars: Vec::new(),
+            design_size_sp: 655_360,
+            scale: 1 << 20,
+            checksum: 0,
+            name: name.to_owned(),
+            chars: vec![None; 128],
+            char_italic: vec![0; 128],
+            slant: 0,
+            space: 0,
+            space_stretch: 0,
+            space_shrink: 0,
+            x_height: 0,
+            quad: 655_360,
+            extra_space: 0,
+            lig_kern_steps: Vec::new(),
+            kern_values: Vec::new(),
+            lig_kern_index: Vec::new(),
+            next_larger: Vec::new(),
+            font_params: Vec::new(),
+        };
+        fm.unicode_native = true;
+        for cp in [0x4E2Du32, 0x56FD] {
+            fm.unicode_chars.push((cp, (1000 * 65536, 0, 0)));
+        }
+        fm.unicode_chars.sort_by_key(|e| e.0);
+
+        let dvi = Dvi {
+            pages: vec![Page {
+                ops: vec![
+                    DrawOp::Char { font: 0, code: 0x4E2D, h: 0, v: 0 },
+                    DrawOp::Char { font: 0, code: 0x56FD, h: 655_360, v: 0 },
+                ],
+            }],
+            fonts: vec![fm],
+            font_names: vec![name.to_owned()],
+        };
+        let pdf = write_pdf(&dvi, &PdfOptions::default()).unwrap();
+        let s = String::from_utf8_lossy(&pdf);
+
+        // Type0 四对象组齐备
+        assert!(s.contains("/Subtype /Type0"), "{s}");
+        assert!(s.contains("/Subtype /CIDFontType0"), "{s}");
+        assert!(s.contains("/Encoding /Identity-H"), "{s}");
+        assert!(s.contains("/FontFile3"), "{s}");
+        assert!(s.contains("/Subtype /OpenType /Length"), "{s}");
+        assert!(s.contains("/DW 1000"), "{s}");
+        // 内容流：CID = Unicode 码位，两字节十六进制
+        assert!(s.contains("<4E2D>"), "{s}");
+        assert!(s.contains("<56FD>"), "{s}");
+        // 不应再有 TFM 时代的八位字面串字形
+        assert!(!s.contains("/Subtype /Type1"), "{s}");
+        // OTF 字节原样嵌入（/FontFile3 流体逐字节等于注册字节）
+        let marker = format!("<< /Subtype /OpenType /Length {} >>\nstream\n", otf.len());
+        let pos = pdf
+            .windows(marker.len())
+            .position(|w| w == marker.as_bytes())
+            .expect("FontFile3 流头");
+        assert_eq!(
+            &pdf[pos + marker.len()..pos + marker.len() + otf.len()],
+            &otf[..],
+            "OTF 应原样嵌入"
+        );
+    }
+
+    /// Unicode 字体未注入 OTF：降级为 Type0+后代字典（无 FontFile3），
+    /// 内容流照写十六进制 CID（查看器按 BaseFont 名以本地字体替代）。
+    #[test]
+    fn unicode_font_without_otf_degrades_to_type0_bare_dict() {
+        // 宿主查找链必然没有这个名字（注册表也未注册）
+        let name = "zz-type0-bare-probe";
+        let mut fm = ntex_font::FontMetrics {
+            unicode_native: false,
+            unicode_chars: Vec::new(),
+            design_size_sp: 655_360,
+            scale: 1 << 20,
+            checksum: 0,
+            name: name.to_owned(),
+            chars: vec![None; 128],
+            char_italic: vec![0; 128],
+            slant: 0,
+            space: 0,
+            space_stretch: 0,
+            space_shrink: 0,
+            x_height: 0,
+            quad: 655_360,
+            extra_space: 0,
+            lig_kern_steps: Vec::new(),
+            kern_values: Vec::new(),
+            lig_kern_index: Vec::new(),
+            next_larger: Vec::new(),
+            font_params: Vec::new(),
+        };
+        fm.unicode_native = true;
+        fm.unicode_chars.push((0x4E2D, (1000 * 65536, 0, 0)));
+
+        let dvi = Dvi {
+            pages: vec![Page {
+                ops: vec![DrawOp::Char { font: 0, code: 0x4E2D, h: 0, v: 0 }],
+            }],
+            fonts: vec![fm],
+            font_names: vec![name.to_owned()],
+        };
+        let pdf = write_pdf(&dvi, &PdfOptions::default()).unwrap();
+        let s = String::from_utf8_lossy(&pdf);
+        assert!(s.contains("/Subtype /Type0"), "{s}");
+        assert!(s.contains("/Encoding /Identity-H"), "{s}");
+        assert!(!s.contains("/FontFile3"), "降级不应带字体流：{s}");
+        assert!(s.contains("<4E2D>"), "{s}");
     }
 }

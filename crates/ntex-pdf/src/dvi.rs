@@ -16,7 +16,10 @@ use ntex_font::{parse_tfm, FontMetrics};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DrawOp {
     /// 字符：`font` 选择器（[`Page::fonts`] 下标）、字符码、参考点 (h, v)。
-    Char { font: u32, code: u8, h: i64, v: i64 },
+    ///
+    /// 码位全宽 u32：Unicode 字体（中文 Fandol 等）经 set2/set3/set4 写出，
+    /// 码位可达 0x10FFFF——曾存 u8 把「中」(U+4E2D) 静默截断成 0x2D。
+    Char { font: u32, code: u32, h: i64, v: i64 },
     /// 规则：覆盖 x ∈ [h, h+width]、y ∈ [v-height, v]（DVI 坐标）。
     Rule {
         h: i64,
@@ -203,23 +206,23 @@ impl<'a> Parser<'a> {
                 0..=127 => {
                     ops.push(DrawOp::Char {
                         font,
-                        code: op,
+                        code: u32::from(op),
                         h,
                         v,
                     });
-                    h += self.char_width(font, op)?;
+                    h += self.char_width(font, u32::from(op))?;
                 }
-                // set1..set4
+                // set1..set4（码位全宽保留，2/3/4 字节形式服务 Unicode 字体）
                 128..=131 => {
                     let n = (op - 127) as usize;
-                    let code = read_uint(self.b, &mut self.i, n)? as u8;
+                    let code = read_uint(self.b, &mut self.i, n)?;
                     ops.push(DrawOp::Char { font, code, h, v });
                     h += self.char_width(font, code)?;
                 }
                 // put1..put4（画字符但不推进）
                 133..=136 => {
                     let n = (op - 132) as usize;
-                    let code = read_uint(self.b, &mut self.i, n)? as u8;
+                    let code = read_uint(self.b, &mut self.i, n)?;
                     ops.push(DrawOp::Char { font, code, h, v });
                 }
                 132 => {
@@ -367,12 +370,12 @@ impl<'a> Parser<'a> {
     }
 
     /// 字符宽度（sp）：按当前缩放后的 TFM 度量。
-    fn char_width(&self, font: u32, code: u8) -> io::Result<i64> {
+    fn char_width(&self, font: u32, code: u32) -> io::Result<i64> {
         let fm = self
             .fonts
             .get(font as usize)
             .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "未定义字体"))?;
-        Ok(fm.char_metrics(code as u32).0)
+        Ok(fm.char_metrics(code).0)
     }
 }
 
@@ -489,7 +492,7 @@ mod tests {
         match &ops[0] {
             DrawOp::Char { font, code, h, v } => {
                 assert_eq!(*font, 0);
-                assert_eq!(*code, b'a');
+                assert_eq!(*code, u32::from(b'a'));
                 assert_eq!(*h, 0);
                 assert_eq!(*v, 0);
             }
@@ -551,7 +554,14 @@ mod tests {
             match op {
                 DrawOp::Char { font, code, .. } => {
                     assert_eq!(*font, expect_font, "code {code}");
-                    assert_eq!(*code, if expect_font == 0 { b'a' } else { b'b' });
+                    assert_eq!(
+                        *code,
+                        if expect_font == 0 {
+                            u32::from(b'a')
+                        } else {
+                            u32::from(b'b')
+                        }
+                    );
                 }
                 other => panic!("预期 Char，得到 {other:?}"),
             }
@@ -631,5 +641,71 @@ mod tests {
         let (w_a, _, _) = dvi.fonts[0].char_metrics(b'a' as u32);
         assert_eq!(char_xy(&ops[1]), (w_a - 655_360, 0), "right3 负值应左移");
         assert_eq!(char_xy(&ops[2]).1, -131_072, "down3 负值应上移");
+    }
+
+    /// set2/set3/set4 的码位全宽保留：Unicode 字体（中文 Fandol 等）的字符
+    /// 以 2~4 字节写出，曾按 `as u8` 截断——「中」(U+4E2D) 变 0x2D（乱码）。
+    #[test]
+    fn wide_char_codes_are_not_truncated() {
+        // 度量用注册表注入（避免依赖宿主 Fandol TFM）：一个全角宽码位表
+        let mut fm = ntex_font::FontMetrics {
+            unicode_native: false,
+            unicode_chars: Vec::new(),
+            design_size_sp: 655_360,
+            scale: 1 << 20,
+            checksum: 0,
+            name: String::new(),
+            chars: vec![None; 128],
+            char_italic: vec![0; 128],
+            slant: 0,
+            space: 0,
+            space_stretch: 0,
+            space_shrink: 0,
+            x_height: 0,
+            quad: 655_360,
+            extra_space: 0,
+            lig_kern_steps: Vec::new(),
+            kern_values: Vec::new(),
+            lig_kern_index: Vec::new(),
+            next_larger: Vec::new(),
+            font_params: Vec::new(),
+        };
+        fm.name = "fandol-probe".into();
+        fm.unicode_native = true;
+        for cp in [0x0041u32, 0x4E2D, 0x2A6A5, 0x10FFFD] {
+            fm.unicode_chars.push((cp, (1000, 0, 0)));
+        }
+        fm.unicode_chars.sort_by_key(|e| e.0);
+        ntex_font::register_metrics("fandol-probe", fm.clone());
+
+        let mut body = Vec::new();
+        push_fnt_def(&mut body, 0, b"fandol-probe");
+        body.push(171); // fnt_num_0
+        body.push(129); // set2 0x4E2D
+        body.extend_from_slice(&0x4E2Du16.to_be_bytes());
+        body.push(130); // set3 0x002A6A5
+        body.extend_from_slice(&0x002A_6A5u32.to_be_bytes()[1..4]);
+        body.push(131); // set4 0x0010FFFD
+        body.extend_from_slice(&0x0010_FFFDu32.to_be_bytes());
+        let mut d = pre_header();
+        push_page(&mut d, &body);
+        d.push(248);
+        d.push(0);
+
+        let dvi = parse(&d).unwrap();
+        let ops = &dvi.pages[0].ops;
+        let codes: Vec<u32> = ops
+            .iter()
+            .map(|op| match op {
+                DrawOp::Char { code, .. } => *code,
+                other => panic!("预期 Char，得到 {other:?}"),
+            })
+            .collect();
+        assert_eq!(codes, vec![0x4E2D, 0x2_A6A5, 0x10_FFFD], "{ops:?}");
+        // 三个字符的推进均来自注入度量（每码位宽 1000 设计单位）
+        match &ops[2] {
+            DrawOp::Char { h, .. } => assert_eq!(*h, 2000, "前两字符各推进一全角宽"),
+            other => panic!("预期 Char，得到 {other:?}"),
+        }
     }
 }

@@ -2,6 +2,9 @@
 //!
 //! 取代临时 Helvetica 切片：解析 `ntex-dvi` 产出的 DVI，写出 PDF 1.4——
 //! Type1 字体以 PFB 嵌入、绝对坐标定位字符、`re f` 填充规则。
+//! Unicode 直映字体（中文 Fandol 等，M9）走 Type0/CIDFontType0 +
+//! `/FontFile3 /OpenType` 嵌入整个 OTF（见 [`otf`]），内容流里字符以
+//! 两字节十六进制串（CID = Unicode 码位）写出。
 //! 多字体（M8，2026-09-04 验证）：CM 全家族（cmr10/cmbx10/cmss12/cmtt10/
 //! cmmi10/cmsy10/cmex10 等多号数）同链嵌入——`/BaseFont`/`/FontDescriptor`
 //! 取 PFB 内 `/FontName`（大写），`/FontFile` 原样嵌 PFB；每页 `/Resources
@@ -12,6 +15,7 @@
 //! 或库 API [`convert`]。
 
 pub mod dvi;
+pub mod otf;
 pub mod pdf;
 pub mod type1;
 
