@@ -81,21 +81,19 @@
 
 - id: numexpr_csalias_stop
   group: A
-  texweb: "scan_expr + 别名到 scan_stop（expl3 __fp_int_eval_end 形态）"
-  desc: "numexpr 以 scan_stop 别名终止（fp 区万级用法）"
+  texweb: "scan_expr + 别名到 relax（expl3 __fp_int_eval_end = scan_stop = relax 形态）"
+  desc: "numexpr 以 relax 的 let 别名终止（fp 区万级用法；plain 无 scan_stop 故用 relax）"
   probe: |
-    \catcode`\_=11
-    \let\mystop\scan_stop:
+    \let\mystop\relax
     \immediate\write16{[t]\the\numexpr 2+3\mystop END}
   variants: [{}]
 
 - id: expand_alias_chain_numexpr
   group: A
   texweb: "get_x_token 别名链（cs_new_eq:NN 两级）"
-  desc: 别名链在数字扫描位的解引用
+  desc: 别名链在数字扫描位的解引用（relax 别名终结）
   probe: |
-    \catcode`\_=11
-    \let\mysep\scan_stop:
+    \let\mysep\relax
     \edef\t{\the\numexpr 4+1\mysep}
     \immediate\write16{[t]\t END}
   variants: [{}]

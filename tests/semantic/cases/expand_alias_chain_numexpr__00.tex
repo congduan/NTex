@@ -1,6 +1,5 @@
 %% rule=expand_alias_chain_numexpr variant=
-\catcode`\_=11
-\let\mysep\scan_stop:
+\let\mysep\relax
 \edef\t{\the\numexpr 4+1\mysep}
 \immediate\write16{[t]\t END}
 \end

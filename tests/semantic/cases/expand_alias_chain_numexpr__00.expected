@@ -1,4 +1,1 @@
-! Undefined control sequence.
-l.4 \edef\t{\the\numexpr 4+1\mysep
-}
 [t]5END

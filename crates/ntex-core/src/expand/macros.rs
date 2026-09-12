@@ -938,6 +938,15 @@ impl Expander {
         }
         if runaway {
             let _ = self.sink.write16("Runaway definition?\n".to_owned());
+            // tex.web @<Report an runaway definition...@>（scan_toks found 之后的
+            // file_end 路径）：`! File ended while scanning definition of \foo.`
+            // 可恢复——插 } 收尾后作业继续（pdfTeX 实测 2026-09-12）。
+            let def = if def_name.is_empty() {
+                String::new()
+            } else {
+                format!(" of \\{def_name}")
+            };
+            self.write_error(&format!("File ended while scanning definition{def}."));
         }
         Ok(out)
     }

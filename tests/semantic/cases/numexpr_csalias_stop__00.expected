@@ -1,4 +1,1 @@
-! Undefined control sequence.
-<write> [t]\the \numexpr 2+3\mystop
-END
 [t]5END

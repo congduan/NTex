@@ -597,10 +597,16 @@ impl Expander {
             // （tex.web scan_int 无分组分支；TRIP l.106 \number{ 漏报修复）。
             match digit_value(tok) {
                 Some(d) => {
-                    // TRIP：防 i64 溢出（超大整数钳制——TeX scan_int 同报错钳制）
-                    if val < i64::MAX / 10 {
-                        val = val * 10 + i64::from(d);
+                    // tex.web scan_int @<Scan a decimal constant@>：
+                    // 超 0x7FFFFFFF → "Number too big"（可恢复）+ 钳制到 0x7FFFFFFF。
+                    // 此前静默钳制不通报（语义矩阵 scan_int_overflow_clamp 红）。
+                    if val > (0x7FFF_FFFF - i64::from(d)) / 10 {
+                        self.report_error("Number too big.");
+                        val = 0x7FFF_FFFF;
+                        any = true;
+                        continue;
                     }
+                    val = val * 10 + i64::from(d);
                     any = true;
                 }
                 None => {

@@ -1821,7 +1821,35 @@ impl Expander {
                     return Ok(true);
                 }
                 if self.is_skipping() {
-                    // 跳过模式：其余 token 直接丢弃（不展开）
+                    // 跳过模式：其余 token 直接丢弃（不展开）。
+                    // tex.web get_next 的 forbidden 检查（TRIP L363）：skip 区
+                    // 出现 **outer 宏** → `Incomplete \if...; all text was
+                    // ignored after line N.` + 插入 \fi 恢复。此前惰性 Skipping
+                    // 帧的主循环丢弃无此检查（\ifcase 真分支 skip_ahead 之外的
+                    // 另一条 skip 路径），pdfTeX 报 Incomplete 而 NTex 静默。
+                    if let Some(csid) = tok.csid() {
+                        if let EqSlot::Macro(m) = self.eqtb.slot(csid) {
+                            if m.value.outer {
+                                let name = self.intern.name(csid).to_owned();
+                                let ifname = Self::if_type_name(self.cur_if_type).to_owned();
+                                let ln = self.error_line_no();
+                                let _ = self.sink.write16(format!(
+                                    "! Incomplete \\{ifname}; all text was ignored after line {ln}.\n\
+                                     <inserted text>\n                \\fi \n\
+                                     <to be read again>\n                   \\{name}\n\
+                                     A forbidden control sequence occurred in skipped text.\n\
+                                     This kind of error happens when you say `\\if...' and forget\n\
+                                     the matching `\\fi'. I've inserted a `\\fi'; this might work.\n"
+                                ));
+                                // 插入 \fi 闭合全部未决条件帧（对齐 skip_ahead
+                                // 的 outer 恢复臂语义）
+                                self.cond_stack.clear();
+                                self.cur_if_type = 0;
+                                self.cur_if_branch = 0;
+                                return Ok(true);
+                            }
+                        }
+                    }
                     return Ok(true);
                 }
                 self.process_token(tok)?;
