@@ -334,9 +334,32 @@ impl Expander {
                 break;
             }
         }
+        // tex.web macro_call：**无定界实参的首 token** 经 get_token 的
+        // check_outer_validity——outer 宏在此报 Forbidden（pdfTeX 对拍
+        // `\outer\def\x{A}\def\a#1{#1}\a\x` → Forbidden + 作业继续）。
+        // 仅 Matching（宏实参扫描）+ 首 token 触发；恢复 = 插入 \par + 空实参续跑。
+        // ⚠ 不可放宽到续 token/组内（2026-09-12 实测：expl3 载入 +231 Undefined，
+        // \newif 类真 outer 宏在实参续位合法出现）。
         let Some(tok) = self.fetch()?.map(|p| p.0) else {
             return self.recover_runaway_arg(name);
         };
+        if self.scanner_status == ScannerStatus::Matching {
+            if let Some(csid) = tok.csid() {
+                if matches!(self.eqtb.slot(csid), EqSlot::Macro(m) if m.value.outer) {
+                    let wname = match self.warning_index {
+                        Some(cs) => self.cs_display_name(cs),
+                        None => self.cs_display_name(csid),
+                    };
+                    let _ = self.sink.write16(format!(
+                        "! Forbidden control sequence found while scanning use of {wname}.\n\
+                         <inserted text> \n                \\par \n"
+                    ));
+                    let par = Token::control_sequence(self.intern.intern("par"));
+                    self.unread(par);
+                    return Ok(Arc::from([]));
+                }
+            }
+        }
         // 归属判定（LaTeX 兼容第十一刀）：实参位置的条件终结符
         // `\else`/`\fi`/`\or` **一律是数据**，不交条件机。tex.web 的宏实参扫描
         // （scan_toks(macro=true)，383-389）取 token 用的是 `get_token`——它只做
@@ -370,6 +393,28 @@ impl Expander {
                         .fetch()?
                         .ok_or_else(|| Error::invalid_input("实参组未闭合"))?
                         .0;
+                    // tex.web scan_toks 组贡献循环同样经 get_token 的
+                    // check_outer_validity（pdfTeX 对拍 `\a{\x}` outer 组内
+                    // → Forbidden + 作业继续）。
+                    if self.scanner_status == ScannerStatus::Matching {
+                        if let Some(acid) = t.csid() {
+                            // active char 不报（tex.web/texdisp 对拍：\^^L 作实参
+                            // 0 错误；NTex active char 走 ControlSeq 表示需显式排除）
+                            if !t.is_active()
+                                && matches!(self.eqtb.slot(acid), EqSlot::Macro(m) if m.value.outer)
+                            {
+                                let wname = match self.warning_index {
+                                    Some(cs) => self.cs_display_name(cs),
+                                    None => self.cs_display_name(acid),
+                                };
+                                let _ = self.sink.write16(format!(
+                                    "! Forbidden control sequence found while scanning use of {wname}.\n\
+                                     <inserted text> \n                \\par \n"
+                                ));
+                                return Ok(Arc::from(tokens));
+                            }
+                        }
+                    }
                     // TeX scan_toks(macro=true)：non-long 宏参数中任意深度的
                     // `\par` 都触发 "Paragraph ended"（TRIP L357 `\b{\par`）
                     if !long && self.is_par_token(t) {

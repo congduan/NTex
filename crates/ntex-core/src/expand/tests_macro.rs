@@ -367,8 +367,8 @@ use super::*;
             "须报 Forbidden（诊断保真）：{t}"
         );
         assert!(
-            t.contains("use of \\x"),
-            "错误须指明宏名（tex.web `sprint_cs(warning_index)`）：{t}"
+            t.contains("use of \\a"),
+            "错误须指明 warning_index（tex.web `sprint_cs`: 正在扫的宏 \\a，非 outer 宏 \\x）：{t}"
         );
         // 组实参内同样报 forbidden 但**不中断**作业
         let (r2, t2) = run_transcript("\\def\\a#1{#1}\\outer\\def\\x{A}\\a{\\x}\\message{[C]}");
