@@ -19,6 +19,9 @@ const HIGHLIGHT_LIMIT = 200_000; // 超长文档跳过高亮（叠层全量重�
 const state = {
   doc: null, page: 0, dpi: 96, debug: false, glyphs: true, fontsReady: false,
   utf8: true, inflight: false, dirty: false, timer: 0,
+  // 预览显示缩放：zoom 为「位图像素 → 屏幕 CSS 像素」倍率；autoFit 时
+  // 每次重排/窗口变化都重算为适配窗口的倍率（手缩放后自动关闭）。
+  zoom: 1, autoFit: true,
 };
 
 /* ---------- 引擎 ---------- */
@@ -126,6 +129,7 @@ function renderPage() {
   canvas.width = img.width;
   canvas.height = img.height;
   ctx.putImageData(new ImageData(new Uint8ClampedArray(img.rgba), img.width, img.height), 0, 0);
+  applyZoom(); // 位图尺寸变了（dpi/页高），显示倍率需重新落到 style 上
   pageLabel.textContent = `${state.page + 1} / ${state.doc.page_count}`;
   $('prev-page').disabled = state.page === 0;
   $('next-page').disabled = state.page >= state.doc.page_count - 1;
@@ -202,9 +206,13 @@ $('glyphs').addEventListener('change', (e) => {
   if (state.glyphs && !state.fontsReady) loadFonts().then(renderPage); // 迟到重试
   else renderPage();
 });
-$('prev-page').addEventListener('click', () => { if (state.page > 0) { state.page--; renderPage(); } });
+$('prev-page').addEventListener('click', () => {
+  if (state.page > 0) { state.page--; renderPage(); previewScroll.scrollTop = 0; }
+});
 $('next-page').addEventListener('click', () => {
-  if (state.doc && state.page < state.doc.page_count - 1) { state.page++; renderPage(); }
+  if (state.doc && state.page < state.doc.page_count - 1) {
+    state.page++; renderPage(); previewScroll.scrollTop = 0;
+  }
 });
 $('utf8').addEventListener('change', () => {
   // 输入编码是编译期语义 → 改了要重排（不只是重渲染）
@@ -212,7 +220,141 @@ $('utf8').addEventListener('change', () => {
   clearTimeout(state.timer);
   compileNow();
 });
-canvas.addEventListener('click', () => canvas.classList.toggle('zoom100'));
+
+/* ---------- 预览缩放 / 平移 ---------- */
+// 口径与 ntex-studio（egui 形态）对齐：滚轮/捏合以指针为锚点缩放、主键拖拽平移；
+// 上下限 5%~1600% 取自 studio 的 ZOOM_MIN/ZOOM_MAX。区别是这里显示的是**倍率**
+// （1:1 = 一个位图像素对一个屏幕 CSS 像素），studio 显示的是相对"适配"的倍数。
+
+const ZOOM_MIN = 0.05, ZOOM_MAX = 16.0;
+const FIT_MIN = 0.01; // 页面远大于视口时的适配兜底，避免倍率退化到 0
+
+const previewScroll = $('preview-scroll'), previewStage = $('preview-stage');
+const zoomLabel = $('zoom-label');
+
+// stage 的 padding（适配计算要从视口里扣掉）；padding 由 CSS 固定，取一次即可
+let stagePad = null;
+function padOf() {
+  if (!stagePad) {
+    const s = getComputedStyle(previewStage);
+    stagePad = {
+      x: parseFloat(s.paddingLeft) + parseFloat(s.paddingRight),
+      y: parseFloat(s.paddingTop) + parseFloat(s.paddingBottom),
+    };
+  }
+  return stagePad;
+}
+
+// 适配倍率：视口内容区里完整放下当前位图
+function fitScale() {
+  if (!canvas.width || !canvas.height) return 1;
+  const p = padOf();
+  const cw = previewScroll.clientWidth - p.x, ch = previewScroll.clientHeight - p.y;
+  if (cw <= 0 || ch <= 0) return 1;
+  return Math.max(FIT_MIN, Math.min(cw / canvas.width, ch / canvas.height));
+}
+
+// 把当前倍率落到 canvas 的显示尺寸上（不重排版、不重渲染——纯显示层）
+function applyZoom() {
+  if (!canvas.width || !canvas.height) return;
+  const s = state.autoFit ? fitScale() : state.zoom;
+  state.zoom = s;
+  canvas.style.width = `${canvas.width * s}px`;
+  canvas.style.height = `${canvas.height * s}px`;
+  zoomLabel.textContent = `${(s * 100).toFixed(s < 0.1 ? 1 : 0)}%`;
+}
+
+function setZoom(s, autoFit = false) {
+  state.autoFit = autoFit;
+  state.zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, s));
+  applyZoom();
+}
+
+// 以视口坐标 (cx, cy) 为锚点缩放：锚点下的那个内容点保持不动（先量后写再校正）
+function zoomAt(cx, cy, factor) {
+  if (!canvas.width || !canvas.height) return;
+  const before = canvas.getBoundingClientRect();
+  const fx = (cx - before.left) / before.width, fy = (cy - before.top) / before.height;
+  setZoom(state.zoom * factor);
+  const after = canvas.getBoundingClientRect();
+  previewScroll.scrollLeft += after.left + fx * after.width - cx;
+  previewScroll.scrollTop += after.top + fy * after.height - cy;
+}
+
+function zoomCenter(factor) {
+  const r = previewScroll.getBoundingClientRect();
+  zoomAt(r.left + r.width / 2, r.top + r.height / 2, factor);
+}
+
+// 缩放到指定倍率（以视口中心为锚点）——「1:1」按钮与 Cmd/Ctrl+1 用
+function zoomTo(target) { zoomCenter(target / state.zoom); }
+
+// 滚轮：Cmd/Ctrl + 滚轮 或 触控板捏合（浏览器把捏合合成为 ctrlKey+wheel）→ 缩放；
+// 其余滚动交给原生（纵向滚动、Shift 横滚）。手感系数 exp(∓d/240) 与 studio 一致。
+previewScroll.addEventListener('wheel', (e) => {
+  if (!e.ctrlKey && !e.metaKey) return;
+  e.preventDefault();
+  const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1; // 行/页模式归一化
+  zoomAt(e.clientX, e.clientY, Math.exp((-e.deltaY * unit) / 240));
+}, { passive: false });
+
+$('zoom-in').addEventListener('click', () => zoomCenter(1.25));
+$('zoom-out').addEventListener('click', () => zoomCenter(0.8));
+$('zoom-fit').addEventListener('click', () => setZoom(1, true));
+$('zoom-one').addEventListener('click', () => zoomTo(1));
+
+// 双击在「适配窗口 ↔ 1:1」之间切换（PDF 阅读器习惯）
+canvas.addEventListener('dblclick', () => (state.autoFit ? zoomTo(1) : setZoom(1, true)));
+
+// 键盘：Cmd/Ctrl + / − / 0 / 1（命中编辑框时也生效——这些组合不产生字符输入）
+addEventListener('keydown', (e) => {
+  if (!e.metaKey && !e.ctrlKey) return;
+  switch (e.key) {
+    case '=': case '+': e.preventDefault(); zoomCenter(1.25); break;
+    case '-': case '_': e.preventDefault(); zoomCenter(0.8); break;
+    case '0': e.preventDefault(); setZoom(1, true); break;
+    case '1': e.preventDefault(); zoomTo(1); break;
+    default: break;
+  }
+});
+
+// 主键/中键拖拽平移（3px 阈值内不接管，避免误伤双击与点击）
+let panDrag = null;
+previewScroll.addEventListener('mousedown', (e) => {
+  if (e.button !== 0 && e.button !== 1) return;
+  // 只在页面本体/舞台留白上起手：滚动条、标题栏等处的按下不该拖页面
+  if (e.target !== canvas && e.target !== previewStage) return;
+  panDrag = {
+    x: e.clientX, y: e.clientY,
+    sl: previewScroll.scrollLeft, st: previewScroll.scrollTop, on: false,
+  };
+});
+addEventListener('mousemove', (e) => {
+  if (!panDrag) return;
+  const dx = e.clientX - panDrag.x, dy = e.clientY - panDrag.y;
+  if (!panDrag.on) {
+    if (Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
+    panDrag.on = true;
+    previewScroll.classList.add('grabbing');
+  }
+  e.preventDefault();
+  previewScroll.scrollLeft = panDrag.sl - dx;
+  previewScroll.scrollTop = panDrag.st - dy;
+});
+const endPan = () => {
+  if (!panDrag) return;
+  previewScroll.classList.remove('grabbing');
+  panDrag = null;
+};
+addEventListener('mouseup', endPan);
+addEventListener('blur', endPan); // 在窗口外松手：别把拖拽状态留在身上
+
+// 分栏拖动/窗口缩放后，处于「适配」模式则跟随重算（倍率不变即不动，避免观察者自激）
+new ResizeObserver(() => {
+  if (!state.autoFit) return;
+  if (Math.abs(fitScale() - state.zoom) < 1e-4) return;
+  applyZoom();
+}).observe(previewScroll);
 
 /* ---------- 分栏拖动 + log 折叠 ---------- */
 

@@ -54,13 +54,27 @@
 
       <section id="preview-pane">
         <div class="pane-title">
-          <span>预览 <b id="page-label" class="page-label">– / –</b></span>
-          <nav>
-            <button id="prev-page" title="上一页（可拖动分栏）">‹</button>
-            <button id="next-page" title="下一页">›</button>
-          </nav>
+          <span>预览 <b id="page-label" class="page-label">– / –</b>
+            <em class="hint">滚轮/捏合缩放 · 拖拽平移</em></span>
+          <div class="pane-actions">
+            <nav class="zoom">
+              <button id="zoom-out" title="缩小（Cmd/Ctrl+−）">−</button>
+              <span id="zoom-label" class="zoom-label"
+                title="显示缩放倍率：1:1 = 一个位图像素对一个屏幕像素">100%</span>
+              <button id="zoom-in" title="放大（Cmd/Ctrl++）">+</button>
+              <button id="zoom-fit" title="适配窗口（Cmd/Ctrl+0）">适配</button>
+              <button id="zoom-one" title="实际大小 1:1（Cmd/Ctrl+1）">1:1</button>
+            </nav>
+            <span class="vsep"></span>
+            <nav>
+              <button id="prev-page" title="上一页">‹</button>
+              <button id="next-page" title="下一页">›</button>
+            </nav>
+          </div>
         </div>
-        <div id="preview-scroll"><canvas id="preview" width="10" height="10"></canvas></div>
+        <div id="preview-scroll">
+          <div id="preview-stage"><canvas id="preview" width="10" height="10"></canvas></div>
+        </div>
         <div id="error-bar" hidden></div>
       </section>
     </main>
@@ -73,6 +87,6 @@
       <pre id="log">（等待编译…）</pre>
     </footer>
   </div>
-  <script type="module" src="main.js?v=4"></script>
+  <script type="module" src="main.js?v=6"></script>
 </body>
 </html>

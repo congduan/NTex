@@ -37,6 +37,12 @@ section { display: flex; flex-direction: column; min-width: 0; }
 .pane-title nav { display: flex; gap: 4px; }
 .pane-title button { background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; width: 26px; height: 22px; cursor: pointer; font-size: 14px; line-height: 1; }
 .pane-title button:hover { border-color: var(--accent); }
+.pane-title .pane-actions { display: flex; align-items: center; gap: 8px; }
+.pane-title .vsep { width: 1px; height: 16px; background: var(--line); }
+/* 缩放控件：文字按钮（适配 / 1:1）要放开固定宽度 */
+.pane-title .zoom { align-items: center; }
+.pane-title .zoom button { width: auto; min-width: 24px; padding: 0 6px; font-size: 12px; }
+.zoom-label { min-width: 46px; text-align: center; font-family: var(--mono); font-size: 11px; color: var(--dim); cursor: default; }
 .page-label { color: var(--fg); font-family: var(--mono); margin-left: 6px; }
 
 /* 编辑器：行号 + 高亮叠层 */
@@ -56,10 +62,18 @@ section { display: flex; flex-direction: column; min-width: 0; }
 .tk-spec { color: #c886f8; }                      /* {} # & ^ _ ~ */
 .tk-num { color: #56d364; }                       /* 数字 */
 
-/* 预览 */
-#preview-scroll { flex: 1; overflow: auto; background: var(--bg2); display: flex; justify-content: center; padding: 14px; }
-#preview { background: #fff; box-shadow: 0 2px 14px rgba(0,0,0,0.45); max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; cursor: zoom-in; }
-#preview.zoom100 { max-width: none; max-height: none; cursor: zoom-out; }
+/* 预览：滚动容器 + 居中的缩放舞台。
+   padding 放在 stage 上、画布用 margin:auto 居中——内容超出时 auto
+   margin 自动归零，四个方向都可达；若改用 flex 的 justify-content:center
+   居中，溢出部分会被裁在滚动区左侧且滚不到（老坑）。 */
+#preview-scroll { flex: 1; min-height: 0; overflow: auto; background: var(--bg2); }
+/* width:max-content 让舞台随着放大的画布一起撑宽（块级盒子默认不会横向包住
+   溢出内容，右内边距会被吃掉）；min-*:100% 保证页面小于视口时铺满以便居中。 */
+#preview-stage { display: flex; width: max-content; min-width: 100%; min-height: 100%; padding: 14px; }
+/* 显示尺寸由 JS 按缩放倍率直接写 style.width/height（原生位图像素 × 倍率），
+   不再用 max-width/max-height 约束：那样只能"适配"，做不出连续缩放。 */
+#preview { margin: auto; flex: none; background: #fff; box-shadow: 0 2px 14px rgba(0,0,0,0.45); cursor: grab; }
+#preview-scroll.grabbing, #preview-scroll.grabbing #preview { cursor: grabbing; }
 #error-bar { padding: 8px 12px; background: rgba(248, 81, 73, 0.12); border-top: 1px solid var(--err); color: var(--err); font-family: var(--mono); font-size: 12px; white-space: pre-wrap; max-height: 96px; overflow: auto; }
 
 /* log 面板 */
