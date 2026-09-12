@@ -1,0 +1,6 @@
+\catcode`\:=11
+\let\csE:\endcsname
+\def\lxx{FLAG}
+\edef\tmp{\ifcsname\lxx 0\csE: Y\else N\fi Z}
+\immediate\write16{ P3:[\tmp]}
+\end

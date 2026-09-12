@@ -1,0 +1,7 @@
+\catcode`\_=11 \catcode`\:=11
+\let\cs_end:\endcsname
+\let\else:\else
+\def\lxx{FLAG}
+\edef\tmp{\ifcsname\lxx 0\cs_end: Y\else:\fi Z}
+\immediate\write16{ U2fix:[\tmp]}
+\end

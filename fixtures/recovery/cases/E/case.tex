@@ -1,0 +1,5 @@
+\def\flag{FLAG}
+\def\tmp{\ifcsname\flag 0\endcsname Y\else N\fi Z}
+\edef\tmp{\tmp}
+\immediate\write16{ E:[\detokenize\expandafter{\tmp}]}
+\end

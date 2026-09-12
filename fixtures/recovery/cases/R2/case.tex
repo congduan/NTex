@@ -1,0 +1,8 @@
+\catcode`\_=11 \catcode`\:=11
+\let\if_cs_exist:w\ifcsname
+\let\elseX\else
+\let\fiX\fi
+\def\lxx{FLAG}
+\edef\tmp{\if_cs_exist:w\lxx 0\endcsname Y\elseX N\fiX Z}
+\immediate\write16{ R2:[\tmp]}
+\end

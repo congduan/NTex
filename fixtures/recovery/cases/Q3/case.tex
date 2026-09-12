@@ -1,0 +1,8 @@
+\catcode`\_=11 \catcode`\:=11
+\let\if_cs_exist:w\ifcsname
+\let\else:\else
+\let\fi:\fi
+\def\lxx{FLAG}
+\edef\tmp{\if_cs_exist:w\lxx 0\endcsname Y\else:N\fi:Z}
+\immediate\write16{ Q3:[\detokenize\expandafter{\tmp}]}
+\end

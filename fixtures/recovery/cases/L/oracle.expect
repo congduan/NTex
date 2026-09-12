@@ -1,0 +1,3 @@
+# oracle 冻结 2026-09-12，pdfTeX TL2026，scripts/abmatrix.py freeze
+# 人工核对: fh9 战役变体；marker 规范化（write16 加前导空格）后重冻结，判据见各 case note.md
+output: L:[NZ]

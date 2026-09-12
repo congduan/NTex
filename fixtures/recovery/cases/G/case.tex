@@ -1,0 +1,9 @@
+\catcode`\_=11 \catcode`\:=11
+\let\if_cs_exist:w\ifcsname
+\let\cs_end:\endcsname
+\let\else:\else
+\let\fi:\fi
+\def\l__str_error_flag{FLAG}
+\if_cs_exist:w\l__str_error_flag 0\cs_end: Y\else:N\fi:Z
+\immediate\write16{ G:done}
+\end

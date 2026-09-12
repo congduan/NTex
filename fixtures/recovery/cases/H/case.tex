@@ -1,0 +1,8 @@
+\let\iffx\ifcsname
+\let\cend\endcsname
+\let\eelse\else
+\let\ff\fi
+\def\lflag{FLAG}
+\edef\tmp{\iffx\lflag 0\cend Y\eelse N\ff Z}
+\immediate\write16{ H:[\detokenize\expandafter{\tmp}]}
+\end

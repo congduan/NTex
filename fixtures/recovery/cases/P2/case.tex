@@ -1,0 +1,5 @@
+\let\cs_end:\endcsname
+\def\lxx{FLAG}
+\edef\tmp{\ifcsname\lxx 0\cs_end: Y\else N\fi Z}
+\immediate\write16{ P2:[\tmp]}
+\end

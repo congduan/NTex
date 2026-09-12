@@ -1,0 +1,9 @@
+\catcode`\_=11 \catcode`\:=11
+\let\ifA\ifcsname
+\let\cB\endcsname
+\let\eC\else
+\let\fD\fi
+\def\lxx{FLAG}
+\edef\tmp{\ifA\lxx 0\cB Y\eC N\fD Z}
+\immediate\write16{ M:[\detokenize\expandafter{\tmp}]}
+\end

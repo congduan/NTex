@@ -1,0 +1,6 @@
+\catcode`\_=11 \catcode`\:=11
+\let\else:\else
+\let\fi:\fi
+\edef\tmp{\ifcsname else\endcsname Y\else:N\fi:Z}
+\immediate\write16{ T3:[\tmp]}
+\end

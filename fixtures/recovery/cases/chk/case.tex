@@ -1,0 +1,10 @@
+\catcode`\_=11 \catcode`\:=11
+\let\cs_end:\endcsname
+\let\else:\else
+\edef\tmp{\ifcsname undefinedXX\endcsname Y\else:\fi Z}
+\immediate\write16{ chk1:[\tmp]}
+\edef\tmp{\ifcsname undefinedXX\cs_end: Y\else:\fi Z}
+\immediate\write16{ chk2:[\tmp]}
+\edef\tmp{\ifcsname undefinedXX\endcsname Y\else N\fi Z}
+\immediate\write16{ chk3:[\tmp]}
+\end

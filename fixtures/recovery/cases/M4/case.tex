@@ -1,0 +1,8 @@
+\catcode`\_=11 \catcode`\:=11
+\let\cs_end:\endcsname
+\let\else:\else
+\let\fi:\fi
+\def\lxx{FLAG}
+\edef\tmp{\ifcsname\lxx 0\cs_end: Y\else:N\fi:Z}
+\immediate\write16{ M4:[\detokenize\expandafter{\tmp}]}
+\end
