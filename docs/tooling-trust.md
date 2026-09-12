@@ -18,7 +18,7 @@ NTex 是「错误恢复式引擎」——它会吞掉错误继续跑。这让两
 
 ---
 
-## 1. 五次真实事故（登记在案，防复发）
+## 1. 七次真实事故（登记在案，防复发）
 
 | # | 事故 | 失真方式 | 后果 | 防复发设施 |
 |---|---|---|---|---|
@@ -28,12 +28,13 @@ NTex 是「错误恢复式引擎」——它会吞掉错误继续跑。这让两
 | 4 | `--no-plain` 语义 | 跳过预载但保留 plain 表，非真 INITEX | `\the\catcode0` 给 12（应 9），init 域对拍失真 | ✅ 已修（`--no-plain` 切 INITEX 表）|
 | 5 | 探针自伤 | 手写探针出错（`\let\else:` 配对、`%` 续行、缺 plain 定义） | 多轮浪费——实测 6 个探针里 3 个是探针自身问题 | ✅ `scripts/abcheck.py`（自动对拍）|
 | 6 | 转录靠手工 grep | 5620 条错误里只能看到「数量最多的那类」 | 首现场判断反复出错（曾以为在 l.21291，实为 **l.301**，早 2 万行）| ✅ `scripts/logtrace.py`（首现场/震中/级联形状）|
+| 7 | **oracle 未冻结 + 旧二进制** | fh9 定位战拿「pdfTeX 会正常恢复」当已知起点，实际其在恢复 edge case 的行为未探明（`\ifcsname` 假条件+`\else:` 别名输出 `[Z]` 丢弃 N——未建档语义）；同时结论基于 stale 二进制 | 25 个手工变体、结论反转 3 次、197 秒无进展被打断；「scan_csname 静默截断」定性被矩阵直接证伪 | ✅ `scripts/abmatrix.py`（freeze 前强制人工核对 + `oracle-verify` 自检）|
 
 **共同模式**：把「工具的输出」当成了「世界的真相」。
 
 ---
 
-## 2. 五件套（按使用频率排）
+## 2. 六件套（按使用频率排）
 
 ### 2.1 `make instrument-check` — 仪器自检（**改诊断原语后必跑**）
 
@@ -137,6 +138,34 @@ python3 scripts/logtrace.py X.transcript --kinds trace,restore,file
 
 ---
 
+### 2.6 `make recovery-check` / `make oracle-verify` — 错误恢复语义矩阵（2026-09-12 新设）
+
+**abcheck 只对拍「正常输出」；报错有无 + 恢复后行为的对拍走这里。**
+
+```bash
+make oracle-verify     # oracle 仪器自检：复跑 pdfTeX 对比冻结判据（先跑这个）
+make recovery-check    # 跑 NTex 出发散地图（OK/DIFF；DIFF=恢复语义发散，非失败）
+python3 scripts/abmatrix.py freeze [case…] --note "人工核对记录"   # 冻结/重冻结
+```
+
+- 语料库：`fixtures/recovery/cases/<name>/{case.tex, oracle.expect, note.md?}`；
+  首批 32 case = `\ifcsname` 错误恢复家族（fh9 战役 25+ 变体沉淀，判据见各 note.md）
+- 判定只比「错误有无 + `\write16` marker 输出（`X:[…]`）」，**不比错误措辞**
+  （中英文必异；措辞分歧在 run 表格错误对比列留档）
+- **判读**：修复验收 = 指定 case DIFF→OK 且 `oracle-verify` 无 DRIFT；矩阵单调转绿
+- 基线（2026-09-12）：**OK 32 / DIFF 0**——含 NTex 复现 pdfTeX 未建档怪异
+  （U2fix `[Z]`、chk `[Z][Z][NZ]`：假 `\ifcsname` 条件丢弃 N 分支，疑与
+  `\last_cs_name` 缓存有关；NTex 行为一致 ⇒ **非修复目标**）
+- **freeze 前必须人工核对语义**（事故七：盲 freeze 会把参考引擎自身的
+  未建档行为冻成「规范」）
+- **防旧二进制门禁**：`scripts/ntex_bin.py::ensure_fresh()` 对比源码树 mtime，
+  落后即自动 `cargo build -p ntex-dvi`（失败硬退；`NTex_SKIP_REBUILD=1` 逃生口）。
+  abcheck / abmatrix / lvt-run / frame_dump / page-eject-matrix 已接线——
+  **新诊断 runner 一律走 `ensure_fresh()`，不再手工保证构建新鲜**
+  （blocker-track 走 `cargo run` 天然免疫）。
+
+---
+
 ## 3. 判读纪律（血泪沉淀）
 
 1. **进度指标 = 阻塞点位置单调前移**，不是「跑完」、不是错误计数。
@@ -147,6 +176,8 @@ python3 scripts/logtrace.py X.transcript --kinds trace,restore,file
    预载后 `\if@` 不可访问是**正确行为**，pdfTeX 同样切成 `\if` + `@`）。
 6. **`> file 2>&1` 全缓冲丢日志**：SIGKILL/OOM 时 eprintln 缓冲丢失。
 7. **`strings` 只提取 ASCII**：中文错误消息会被滤掉，用 `grep -a` 直接作用于原始输出。
+8. **oracle 侧未知语义**：对拍前先冻结参考引擎行为并人工核对（`abmatrix freeze`），
+   两个未知数相减不是定位；NTex 与 pdfTeX **一致地怪** ⇒ 语义事实，不是 bug。
 
 ---
 

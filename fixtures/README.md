@@ -12,6 +12,14 @@
 
 合计 ~2.5 KB，git 友好。
 
+## `fixtures/recovery/` — 错误恢复语义语料库（2026-09-12 新设）
+
+32 个自包含 case（`\ifcsname` 错误恢复家族，fh9 战役沉淀）：每 case =
+`case.tex` + `oracle.expect`（pdfTeX 冻结判据，**freeze 前人工核对**）+ 可选
+`note.md`（语义核对记录）。runner：`scripts/abmatrix.py`（freeze/verify/run
+三模式），入口 `make recovery-check` / `make oracle-verify`，
+判读纪律见 `docs/tooling-trust.md` §2.6 与事故七。
+
 ## 为什么不补这些？
 
 - **Knuth `story.tex/sample.tex/testmath.tex/small.tex`**：CTAN 镜像（`mirrors.ctan.org`）被国内反代到 `sustech/hust.edu.cn` 等被墙节点；`knuth/dist/tex/` 下实际仅含 `tex.web/texbook.tex/trip.*/glue.web`，**没有这些"演示用"文件**。若真要补，需直接 inline（来源公开）——不属于"测试库"。

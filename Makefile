@@ -2,7 +2,7 @@
 # 质量门禁：`make check` = fmt + lint + test 三件套全绿。
 
 .PHONY: fmt lint test check fixtures fixture-extras trip diff bench tauri-wasm tauri \
-        instrument-check abcheck blocker-track logtrace lvt-run lvt-fetch
+        instrument-check abcheck blocker-track logtrace lvt-run lvt-fetch recovery-check oracle-verify
 
 fmt:
 	cargo fmt --all -- --check
@@ -29,6 +29,15 @@ abcheck:
 # 阻塞点单调性看板：跑 latex_probe → 记录 (行号, 首错签名) → 单调性判定
 blocker-track:
 	./scripts/blocker-track.sh
+
+# 错误恢复语义矩阵（fixtures/recovery/cases，oracle=pdfTeX 冻结判据）
+# 修复验收：指定 case DIFF→OK 且 oracle-verify 无 DRIFT。详见 docs/tooling-trust.md §2.6
+recovery-check:
+	python3 scripts/abmatrix.py run
+
+# oracle 仪器自检：复跑 pdfTeX 对比冻结值（DRIFT=环境/语义漂移，先查再跑矩阵）
+oracle-verify:
+	python3 scripts/abmatrix.py verify
 
 # 转录/log 结构分析：`make logtrace LOG=path`（加 ARGS=--compare ref.log 对比参考）
 # 回答「首现场在哪 / 震中是哪行 / 级联是扇出还是链式 / 哪些错我方独有」

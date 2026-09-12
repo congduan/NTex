@@ -48,6 +48,8 @@ make blocker-track      # 阻塞点单调性看板（跑 latex_probe + 历史对
 make logtrace LOG=x.transcript   # 转录/log 结构分析（首现场/震中/级联形状/参考对比）
 make lvt-fetch                  # 抓 expl3 官方测试套件（l3kernel .lvt × 187）
 make lvt-run ARGS=--all         # expl3 官方测试跑分（分母！见 docs/expl3-lvt-scoreboard.md）
+make recovery-check             # 错误恢复语义矩阵（OK/DIFF 地图，tooling-trust §2.6）
+make oracle-verify              # 上述矩阵的 oracle（pdfTeX 冻结判据）仪器自检
 
 # 端到端演示
 cargo run -p ntex-dvi -- demo.tex   # → demo.dvi
