@@ -27,6 +27,11 @@
 //!    注入 Latin Modern OTF 字节（进程级注册表，ntex-backend `glyphs.rs`；
 //!    Tauri/浏览器前端 fetch 后注册，wasm 无文件系统）；未注入的字体逐字符
 //!    回落占位方框口径（渲染仍可用）。
+//! 5. PDF 导出（[`Document::pdf_bytes`] / [`CompileResult::pdf_bytes`]）：与
+//!    native `ntex-pdf` 同一份 DVI→PDF 代码，**字体嵌入只能来自宿主注入的
+//!    Type1 PFB**（[`set_pfb_font`]）——`ntex-pdf` 的宿主查找链（环境变量
+//!    目录 / TeX Live 路径 / kpsewhich）为 native 专属，见
+//!    `ntex-pdf/src/type1.rs::read_host_pfb` 的 wasm 分叉。
 //!
 //! 已知缺口（如实记录）：`\write` 到非 16 流 / `\openout` 产出的文件
 //! 现留在 `MemVfs` 内不回传——`ntex-io` 的 `MemVfs` 暂无枚举 API（只有 `read`/
@@ -239,6 +244,21 @@ fn compile_pipeline_with(tex: &str, utf8_input: bool) -> ntex_core::error::Resul
 
 // ---------- wasm-bindgen 导出面 ----------
 
+/// DVI 字节 → PDF 字节（两个导出面共用；`pages` 仅作 0 页守卫）。
+///
+/// 页尺寸取 [`ntex_pdf::PdfOptions::default`] = A4，与预览
+/// （`ntex_backend::RenderOptions::default`）同口径，导出件与屏幕上看到的一致。
+///
+/// 错误类型取 `String` 而非 `JsError`：本函数是**目标无关的纯 Rust 核心**，
+/// native 单测可直接断言文案；`JsError` 只在两个 wasm 导出面各映射一次。
+fn pdf_from_dvi(dvi: &[u8], pages: u32) -> Result<Vec<u8>, String> {
+    if pages == 0 {
+        return Err("0 页作业无 PDF 可导出（无 \\shipout 产出）".to_owned());
+    }
+    ntex_pdf::convert(dvi, &ntex_pdf::PdfOptions::default())
+        .map_err(|e| format!("PDF 写出失败：{e}"))
+}
+
 /// 编译 plain 子集 TeX 源码 → DVI + log。
 ///
 /// JS 侧：`const r = compile_tex("\\font\\cmr=cmr10\\cmr hello\\end");`
@@ -285,10 +305,32 @@ impl CompileResult {
         self.pages
     }
 
-    /// 用到的字体名（供 B 档渲染器选字形通道）。
+    /// 用到的字体名（供 B 档渲染器选字形通道）。**引擎侧已载入全表**：
+    /// plain 预载的 CM 家族（48 件）哪怕正文一个字符都没用到也会列在这里。
+    /// 要「PDF 里该嵌哪些字体」请用 [`CompileResult::used_fonts`]。
     #[wasm_bindgen(getter)]
     pub fn fonts(&self) -> Vec<String> {
         self.fonts.clone()
+    }
+
+    /// DVI **实际引用**的字体名（`fnt_def` 表）→ PDF 导出该注入的 PFB 清单。
+    ///
+    /// 与 [`CompileResult::fonts`] 的差别是导出正确性的关键：`fonts` 是已载入
+    /// 全表（plain 预载 48 件 CM 全在），而 DVI 只给真正被 `set_font` 过的字体发
+    /// `fnt_def`。按 `fonts` 去 fetch PFB 会白拉几十份资源、并对正文根本没用到的
+    /// 字体误报「缺字体」；按本清单则恰好只取该嵌的那几份。
+    pub fn used_fonts(&self) -> Vec<String> {
+        ntex_pdf::parse_dvi(&self.dvi)
+            .map(|d| d.font_names)
+            .unwrap_or_default()
+    }
+
+    /// PDF 字节（A4；与 [`Document::pdf_bytes`] 同口径，字体须先用
+    /// [`set_pfb_font`] 注册）。本方法每次调用都会重新解析 DVI——`compile_tex`
+    /// 路径只带字节不带页树；实时预览等重复导出场景请走 [`Document`] 句柄
+    /// （页树常驻，成本仍是每次重排 PDF 对象）。
+    pub fn pdf_bytes(&self) -> Result<Vec<u8>, JsError> {
+        pdf_from_dvi(&self.dvi, self.pages).map_err(|e| JsError::new(&e))
     }
 }
 
@@ -364,16 +406,45 @@ impl Document {
         self.transcript.clone()
     }
 
-    /// 用到的字体名清单。
+    /// 用到的字体名清单。**引擎侧已载入全表**（plain 预载 48 件 CM 全在，
+    /// 不区分正文是否真的用到）——PDF 导出该注入哪些 PFB 请用
+    /// [`Document::used_fonts`]。
     #[wasm_bindgen(getter)]
     pub fn fonts(&self) -> Vec<String> {
         self.font_names.clone()
+    }
+
+    /// DVI **实际引用**的字体名（`fnt_def` 表）→ PDF 导出该注入的 PFB 清单。
+    ///
+    /// 导出前对本清单逐名 fetch `<name>.pfb` 并 [`set_pfb_font`] 注入即可；
+    /// 拿不到的字体名就是最终 PDF 里「有 `/BaseFont` 无 `/FontFile`」的那些，
+    /// 前端据此给一次可见提示（而不是静默产出打不开字体的 PDF）。
+    ///
+    /// 与 [`Document::fonts`] 的差别见后者说明；DVI 为空（0 页）时返回空表。
+    pub fn used_fonts(&self) -> Vec<String> {
+        ntex_pdf::parse_dvi(&self.dvi)
+            .map(|d| d.font_names)
+            .unwrap_or_default()
     }
 
     /// DVI 字节（交 dvipdfmx 类驱动或下载；与 `compile_tex` 产物同构）。
     #[wasm_bindgen(getter)]
     pub fn dvi(&self) -> Vec<u8> {
         self.dvi.clone()
+    }
+
+    /// PDF 字节（A4，与预览同页尺寸口径）。
+    ///
+    /// 与 native `ntex-pdf` 命令共用 `ntex_pdf::convert`（DVI 解析 + Type1
+    /// 嵌入 + PDF 1.4 写出）。**字体嵌入依赖已注册的 PFB**：wasm 无文件系统，
+    /// `ntex-pdf` 的宿主查找链在浏览器里必然落空，故导出前须对本
+    /// [`Document::fonts`] 逐名 fetch `<name>.pfb` 并 [`set_pfb_font`] 注入。
+    ///
+    /// 未注册的字体按 `ntex-pdf` 既有口径**降级**：`/BaseFont` 保留但不写
+    /// `/FontFile` 流——多数查看器会以替代字体渲染或干脆留白，所以前端应在
+    /// 调用前把名字注册齐，并对缺字体给出可见提示（Tauri 工作台即如此）。
+    pub fn pdf_bytes(&self) -> Result<Vec<u8>, JsError> {
+        pdf_from_dvi(&self.dvi, self.page_count()).map_err(|e| JsError::new(&e))
     }
 
     /// 渲染第 `index` 页（0 起）→ RGBA8 像素（白底、行主序、每像素 4 字节）。
@@ -463,6 +534,21 @@ pub fn compile_document(tex: &str) -> Result<Document, JsError> {
 #[wasm_bindgen]
 pub fn set_glyph_font(tex_name: &str, bytes: &[u8]) -> bool {
     ntex_backend::glyphs::register_font_bytes(tex_name, bytes)
+}
+
+/// 注入 Type1（PFB）字体字节 → 供 PDF 导出嵌入（`ntex_pdf::type1::register_pfb`）。
+///
+/// **与 [`set_glyph_font`] 是两条独立通道**，别混：
+/// - [`set_glyph_font`] 管**屏幕上的字形轮廓**（OTF/TTF，走 skrifa 提轮廓）；
+/// - 本条管**PDF 里的字体程序**（Type1 PFB，原样写进 `/FontFile`）——
+///   PDF 的 `/FontFile` 只接受 Type1 程序，OTF 塞不进去（那要走 CID/OpenType
+///   嵌入，属另案），故屏幕端用 OTF 也要**另配一份 PFB** 才能嵌出完整 PDF。
+///
+/// 名字与 `doc.fonts`（DVI `fnt_def` 外部名，如 `cmr10`）一致；同名重复注册
+/// 为覆盖。字节非 PFB（段头不是 `0x80 0x01`，如误传 OTF）返回 false 不 panic。
+#[wasm_bindgen]
+pub fn set_pfb_font(tex_name: &str, bytes: &[u8]) -> bool {
+    ntex_pdf::type1::register_pfb(tex_name, bytes)
 }
 
 /// 注入 **OpenType 排版字体**（无 TFM 的字体：中文 Fandol/思源、西文 OTF）。
@@ -931,5 +1017,126 @@ mod tests {
             "中文字形应全部命中子集字体；转录：\n{}",
             compiled.transcript
         );
+    }
+
+    // ---------- 2026-09-12：PDF 导出（DVI → PDF，字体只能经 set_pfb_font 注入） ----------
+
+    /// 造一段最小可解析 PFB（ASCII 段带 `/FontName`，尾部二进制段）。
+    ///
+    /// 与 `ntex-pdf/src/type1.rs` 测试内同名助手同构——那条是 crate 私有
+    /// （`#[cfg(test)]` 内的 fn），此处无法复用，故就地重造。
+    fn fake_pfb(font_name: &str) -> Vec<u8> {
+        let ascii = format!("/FontName /{font_name} def\n");
+        let mut pfb = vec![0x80, 1];
+        pfb.extend((ascii.len() as u16).to_le_bytes());
+        pfb.extend_from_slice(ascii.as_bytes());
+        pfb.extend_from_slice(&[0x80, 2, 0, 0]);
+        pfb
+    }
+
+    /// PDF 导出主链路：DVI → PDF 全程在 wasm 内完成，字体**只能**来自
+    /// [`set_pfb_font`] 注入（wasm 无文件系统，`ntex-pdf` 的宿主查找链必落空）。
+    ///
+    /// 关键断言是 `/BaseFont /CMR10Probe`：注入字节内的 `/FontName` 是
+    /// `CMR10Probe`，而宿主 TeX Live 里真 `cmr10.pfb` 的 `/FontName` 是
+    /// `CMR10`——出现前者才证明 PDF 用的是**注入字节**而非环境字体，
+    /// 也才说明「打包分发不依赖 TeX Live」这条路的字体来源是闭合的。
+    #[test]
+    fn pdf_export_embeds_injected_pfb() {
+        let injected = fake_pfb("CMR10Probe");
+        assert!(set_pfb_font("cmr10", &injected), "合法 PFB 段头应注册成功");
+        assert!(
+            !set_pfb_font("cmr10", b"\x00\x01\x00\x00OTTO"),
+            "OTF 字节段头不符（非 0x80 0x01），应拒绝注册而不是塞进 /FontFile"
+        );
+
+        let compiled = compile_pipeline_with(
+            "\\font\\a=cmr10 \\font\\b=cmbx10 \\hsize=200pt\nAa Bb\n\\end",
+            false,
+        )
+        .expect("作业应能编译");
+        assert!(
+            compiled.font_names.iter().any(|n| n == "cmr10"),
+            "DVI 字体表应含 cmr10：{:?}",
+            compiled.font_names
+        );
+
+        let pages = compiled.pages.len();
+        let pdf = pdf_from_dvi(&compiled.dvi, pages as u32).expect("应能产出 PDF");
+        assert!(pdf.starts_with(b"%PDF-1.4"), "应以 PDF 头开始");
+        assert!(pdf.ends_with(b"%%EOF\n"), "应以 %%EOF 收尾");
+        let s = String::from_utf8_lossy(&pdf);
+        assert!(s.contains(&format!("/Count {pages}")), "页数应写入 PDF");
+        assert!(
+            s.contains("/BaseFont /CMR10Probe "),
+            "应取注入字节的 /FontName（非宿主 cmr10.pfb 的 CMR10）——\
+             只出现 /BaseFont /CMR10 即说明悄悄回了宿主查找链"
+        );
+        assert!(s.contains("/FontFile "), "注入了 PFB 即应写出 /FontFile 流");
+    }
+
+    /// 未注入 PFB 时**不报错**，按 `ntex-pdf` 既有口径降级：`/BaseFont` 仍在
+    /// 但无 `/FontFile`。这条锁住「降级是有意的」——前端据此对缺字体给可见提示，
+    /// 而不是让用户拿到一份打开后页页空白的 PDF 还以为是引擎坏了。
+    ///
+    /// 字体取 `manfnt`：它是内嵌 TFM 清单里**唯一**在标准 TeX Live 下没有
+    /// PFB 对应物的（实测 amsfonts/cm 全家族 48 缺 1），所以「宿主查找链也
+    /// 命不中」这件事可复现；仍加运行时守卫，宿主万一有 `manfnt.pfb` 就跳过
+    /// （环境相关断言不该假绿）。
+    ///
+    /// ⚠ 源里必须真的**选中**该字体（`\a A`）：DVI 只给被 `set_font` 过的字体
+    /// 发 `fnt_def`，而 `Compiled::font_names` 是引擎侧*已载入*全表（plain
+    /// 预载 48 件全在里面）。把两者混为一谈会让断言在「字体压根没用上」
+    /// 的情况下也过——参见 [`Document::used_fonts`] 的说明。
+    #[test]
+    fn pdf_export_degrades_without_pfb_but_still_writes_pdf() {
+        let name = "manfnt";
+        assert!(
+            EMBEDDED_TFMS.iter().any(|(n, _)| *n == name),
+            "前置假设：{name}.tfm 已内嵌（否则 \\font 会退回 nullfont，不进 DVI 字体表）"
+        );
+        if ntex_pdf::type1::find_pfb(name).is_some() {
+            eprintln!("宿主存在 {name}.pfb，跳过降级断言");
+            return;
+        }
+
+        let compiled =
+            compile_pipeline_with(&format!("\\font\\a={name} \\hsize=200pt\n\\a A\n\\end"), false)
+                .expect("字体不可用应只报警告，作业仍继续");
+        assert!(
+            compiled.font_names.iter().any(|n| n == name),
+            "DVI 字体表应含 {name}：{:?}",
+            compiled.font_names
+        );
+
+        let pdf = pdf_from_dvi(&compiled.dvi, compiled.pages.len() as u32)
+            .expect("缺字体也应产出 PDF（降级，不报错）");
+        let s = String::from_utf8_lossy(&pdf);
+        // 报错时把实际写出的名字带出来——降级名是从 DVI 引用名大写兜底的，
+        // 引擎侧改名（如 TFM 自声明名优先）会让这里悄悄漂移。
+        let base_fonts: Vec<&str> = s
+            .match_indices("/BaseFont /")
+            .map(|(i, m)| {
+                let rest = &s[i + m.len()..];
+                rest.split(|c: char| c.is_whitespace() || c == '>').next().unwrap_or("")
+            })
+            .collect();
+        assert!(
+            s.contains("/BaseFont /MANFNT "),
+            "降级时 /BaseFont 仍写入（取 TeX 名大写兜底）；实际写出：{base_fonts:?}，\
+             DVI 字体表：{:?}",
+            compiled.font_names
+        );
+        assert!(
+            !s.contains("/FontFile "),
+            "无字体字节可嵌 → 不应有 /FontFile 流"
+        );
+    }
+
+    /// 0 页作业无 PDF 可导：守卫在解析 DVI **之前**（返回可读错误而非 panic）。
+    #[test]
+    fn pdf_export_rejects_empty_document() {
+        let err = pdf_from_dvi(&[], 0).expect_err("0 页应报错");
+        assert!(err.contains("0 页"), "错误消息应含上下文：{err}");
     }
 }

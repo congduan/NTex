@@ -3460,6 +3460,7 @@ dependencies = [
  "ntex-font",
  "ntex-io",
  "ntex-layout",
+ "ntex-pdf",
  "wasm-bindgen",
 ]
 

@@ -21,6 +21,10 @@ ntex-layout.workspace = true
 ntex-font.workspace = true
 ntex-io.workspace = true
 ntex-dvi.workspace = true
+# PDF 导出（Document::pdf_bytes）：DVI → PDF，与 native `ntex-pdf` 同一份代码。
+# 该 crate 只依赖 ntex-font（无文件系统强耦合），实测可编译到 wasm32；字体
+# 字节在 wasm 下只能经 `set_pfb_font` 注入（见 src/lib.rs 模块文档偏差 5）。
+ntex-pdf = { path = "../ntex-pdf", version = "0.1.0" }
 # B 档第一刀（实时渲染）：软光栅路径（prims + Pixmap + glyphs 均纯 Rust，
 # wasm 兼容）。vello/wgpu web 后端仍另案——default-features = false 把
 # feature `vello`（拖 wgpu）关掉，wasm32 体积与宿主要求都不可行。
