@@ -92,7 +92,11 @@ async function boot() {
   refreshOverlay();
   compileNow();
   await fonts;
-  renderPage(); // 字形就绪：按当前开关重渲染（不重排版）
+  // 字体迟到注入口径分两档：LM 只缺渲染轮廓（TFM 内嵌）→ 重渲染即可；
+  // Fandol 等 set_otf_font 注入的是**排版度量**（无内嵌 TFM），上面首次
+  // compileNow 时字体还不存在，\font 已落 not loadable——必须重编译，
+  // 仅重渲染救不回坏掉的页树。
+  if (state.fontsReady) compileNow(); else renderPage();
 }
 
 function schedule() {
