@@ -393,29 +393,58 @@ pub fn hbox_dimensions(children: &[Node]) -> BoxDimensions {
     dims
 }
 
-/// vbox 维度计算（tex.web `vpackage`）：
-/// `width` = max 子节点 width；`total` = Σ 有纵向维度的子节点（height+depth）；
-/// `height` = 第一个有纵向维度的子节点的 height（无则 0）；`depth` = total − height。
+/// vbox 维度计算（tex.web `vpackage` L13175-13211 的自然维度归并）：
+/// `width` = max 子节点 width；纵向用 (x, d) 二元组推进——
+///
+/// - 盒/规则：`x += d + height; d = depth`（把上一件的挂起深度结转进自然高）；
+/// - **glue/kern**：`x += d + width; d = 0`（tex.web L13196/L13209——胶水宽度
+///   计入自然高）。vbox 里的 `\vskip` 与断行插入的行间 `\baselineskip` glue
+///   都必须占高，否则多行段落折进 `\vtop` 时行间 glue 归零、行盒相互贴死
+///   （resume-plain.tex 换行条目行距消失的根因）；
+/// - leaders 兼具 glue 推进（按 width）与宽度归并；其余节点不推进。
+///
+/// `height` = x（自然高，不含末件挂起深度）；`depth` = d（最后一件的深度）。
+/// 空列表 → 零维度。
 pub fn vbox_dimensions(children: &[Node]) -> BoxDimensions {
     let mut width = 0;
-    let mut total = 0;
-    let mut first_height = 0;
-    let mut found = false;
+    let mut x = 0; // 已结转的自然高（tex.web 的 x）
+    let mut d = 0; // 挂起深度（tex.web 的 d：最后一件的 depth，下一件到来时结转）
     for c in children {
-        let d = c.dimensions();
-        width = width.max(d.width);
-        if c.has_vertical_extent() {
-            total += d.total();
-            if !found {
-                first_height = d.height;
-                found = true;
+        let dims = c.dimensions();
+        width = width.max(dims.width);
+        match c {
+            Node::Box(b) => {
+                x += d + b.height;
+                d = b.depth;
             }
+            Node::Rule { height, depth, .. } => {
+                x += d + height;
+                d = *depth;
+            }
+            // 纵向字符/连字（实际 vlist 不出现，测试与既有行为保留）：与盒同规
+            Node::Char { .. } | Node::Ligature { .. } => {
+                x += d + dims.height;
+                d = dims.depth;
+            }
+            Node::Glue { width: gw, .. } => {
+                x += d + gw;
+                d = 0;
+            }
+            Node::Kern { width: kw } => {
+                x += d + kw;
+                d = 0;
+            }
+            Node::Leaders { width: lw, .. } => {
+                x += d + lw;
+                d = 0;
+            }
+            _ => {}
         }
     }
     BoxDimensions {
         width,
-        height: first_height,
-        depth: total - first_height,
+        height: x,
+        depth: d,
     }
 }
 
@@ -665,20 +694,36 @@ mod tests {
 
     #[test]
     fn vbox_total_is_sum_height_first_depth_remainder() {
-        // 首盒 h=10 d=2，次盒 h=3 d=1：total=16，height=10，depth=6。
+        // 首件 h=10 d=2，次件 h=3 d=1：x = 0+10 + (2+3) = 15，d = 1。
+        // （tex.web 结转算法：height=自然高 x=15，depth=末件挂起 d=1；total=16 不变。）
         let d = vbox_dimensions(&[char_of(5, 10, 2), char_of(5, 3, 1)]);
-        assert_eq!(d.height, 10);
-        assert_eq!(d.depth, 6);
+        assert_eq!(d.height, 15);
+        assert_eq!(d.depth, 1);
         assert_eq!(d.total(), 16);
     }
 
     #[test]
-    fn vbox_glue_only_has_width_but_no_height_depth() {
-        // vpackage 对 width 取所有子节点（含胶水）最大值；胶水不贡献 height/depth。
+    fn vbox_glue_kern_advance_natural_height() {
+        // tex.web L13196/L13209：glue/kern 结转挂起深度并按 width 推进自然高。
+        // glue(10) + kern(5) → height=15，depth=0（无盒则无挂起深度）。
+        // 回归背景：旧实现胶水不占高，\vtop 内多行中文的行间 glue 归零、
+        // 行盒贴死（resume-plain.tex 现场报告）。
         let d = vbox_dimensions(&[glue(10), kern(5), Node::Penalty { penalty: 0 }]);
         assert_eq!(d.width, 10);
-        assert_eq!(d.height, 0);
+        assert_eq!(d.height, 15);
         assert_eq!(d.depth, 0);
+    }
+
+    #[test]
+    fn vbox_glue_between_boxes_flushes_pending_depth() {
+        // 盒(h=8,d=2) + glue(5) + 盒(h=3,d=1)：
+        // x = 8 + (2+5) + 3 = 18，d = 1（末盒深度保持挂起）→ (18+1)。
+        let b1 = BoxNode::new_hbox(vec![char_of(10, 8, 2)]);
+        let b2 = BoxNode::new_hbox(vec![char_of(10, 3, 1)]);
+        let d = vbox_dimensions(&[Node::Box(b1), glue(5), Node::Box(b2)]);
+        assert_eq!(d.height, 18);
+        assert_eq!(d.depth, 1);
+        assert_eq!(d.total(), 19);
     }
 
     #[test]
@@ -697,8 +742,9 @@ mod tests {
 
         let vb = BoxNode::new_vbox(vec![char_of(8, 9, 1), char_of(8, 2, 2)]);
         assert_eq!(vb.width, 8);
-        assert_eq!(vb.height, 9);
-        assert_eq!(vb.depth, 5);
+        // 结转算法：x = 9 + (1+2) = 12，d = 2。
+        assert_eq!(vb.height, 12);
+        assert_eq!(vb.depth, 2);
         assert_eq!(vb.kind, BoxKind::VBox);
     }
 
