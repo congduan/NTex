@@ -461,7 +461,6 @@ impl Expander {
             TokenKind::Char => meaning(tok, &self.intern),
             TokenKind::ControlSeq => {
                 let csid = tok.csid().expect("ControlSeq 必有 csid");
-                let name = self.intern.name(csid).to_owned();
                 match self.eqtb.slot(csid).clone() {
                     EqSlot::Undefined => "undefined".to_owned(),
                     // tex.web print_cmd_chr：原语槽打印规范名（`\meaning\a`，
@@ -497,7 +496,30 @@ impl Expander {
                     EqSlot::Char { catcode, charcode } => {
                         meaning(Token::char(catcode, charcode), &self.intern)
                     }
-                    EqSlot::Font(_) => format!("select font {name}"),
+                    // tex.web print_cmd_chr set_font 臂（L23421-23428）：
+                    // `select font <font_name>`，size≠dsize 再接
+                    // ` at <size>pt`。font_names 在 \font 装载时已按该形态
+                    // 登记（primitive_font.rs：外部名 + at 规格）；nullfont
+                    // （槽 0）按 print_font_identifier 打 `nullfont`。
+                    // 残差：`scaled` 装载 tex.web 同样补 ` at <size>pt`
+                    // （size≠dsize），font_names 未含——FontLoader 无 size
+                    // 访问器，本刀不扩面。
+                    // 此前打 cs 名——expl3 \__cctab_chk_if_valid_aux 靠
+                    // meaning 含 `select font cmr10 at ` 子串判定 intarray
+                    // （intarray 的 pdfTeX 模拟 = at 规格小字号字体），
+                    // cs 名永不含该子串 → \cctab_select 判一切表非法 →
+                    // latex.ltx l.23381 \cctab_const:Nn 全簇崩。
+                    EqSlot::Font(f) => {
+                        let name = if f == 0 {
+                            "nullfont".to_owned()
+                        } else {
+                            self.font_names
+                                .get(f as usize)
+                                .and_then(|n| n.clone())
+                                .unwrap_or_else(|| f.to_string())
+                        };
+                        format!("select font {name}")
+                    }
                     EqSlot::Register(k, n) => format!("\\{}{}", reg_kind_name(k), n),
                     EqSlot::Stream(_, n) => format!("write{n}"),
                     EqSlot::MathChar(code) => format!("\\mathchar\"{code:X}"),

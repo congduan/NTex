@@ -664,3 +664,36 @@ mod arg_scan_does_not_expand {
         assert!(r.contains('5'), "5 应留在实参外：{r:?}");
     }
 }
+
+/// 内部整数读臂：`\hyphenchar`/`\skewchar` 在数字上下文走 tex.web
+/// scan_something_internal 的 `@<Fetch a font integer@>`（L8552-8557）——
+/// `scan_font_ident` 后取 hyphen_char[f]/skew_char[f]。expl3 intarray 的
+/// pdfTeX 模拟里 `\__intarray_count:w` 即字体 `\hyphenchar`，`\number` 读
+/// 数组长度全走此臂；缺臂时 `\number\hyphenchar\font` 报
+/// `! Missing number, treated as zero.`，expl3-code l.23381
+/// `\cctab_const:Nn` 现场级联出 2489× Missing endcsname（本刀震中真根因）。
+/// pdfTeX 对照：`\the\hyphenchar\nullfont` → `-`（45 = \defaulthyphenchar）、
+/// `\the\skewchar\nullfont` → -1（\defaultskewchar），赋值后读回同源。
+#[test]
+fn number_scan_hyphenchar_skewchar_font_integer() {
+    // 未赋值回退默认（与 `\the` 臂同约定；tex.web 建字体时逐字体初始化 L11210）
+    assert_eq!(expand("\\number\\hyphenchar\\nullfont").unwrap(), "45");
+    assert_eq!(expand("\\number\\skewchar\\nullfont").unwrap(), "-1");
+    // 赋值后数字通道读回（exec_hyphenchar 写、scan_number 读，同键）
+    assert_eq!(
+        expand("\\hyphenchar\\nullfont=`a \\number\\hyphenchar\\nullfont").unwrap(),
+        "97"
+    );
+    assert_eq!(
+        expand("\\skewchar\\nullfont=48 \\number\\skewchar\\nullfont").unwrap(),
+        "48"
+    );
+    // \ifnum 操作数位同臂（expl3 intarray 越界检查惯用法
+    // `\if_int_compare:w \__intarray_count:w #1 < ... `）
+    assert_eq!(expand("\\ifnum\\skewchar\\nullfont<0 F\\else T\\fi").unwrap(), "F");
+    let (_, transcript) = run_transcript("\\ifnum\\skewchar\\nullfont<0 F\\else T\\fi");
+    assert!(
+        !transcript.contains("Missing number"),
+        "数字上下文缺 \\skewchar 臂：{transcript}"
+    );
+}

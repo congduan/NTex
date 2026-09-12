@@ -329,6 +329,29 @@ impl Expander {
                     let v = self.fontdimen(font, num);
                     return Ok(if neg { -v } else { v });
                 }
+                // 内部整数：\hyphenchar<font> / \skewchar<font> → 该字体的断字
+                // 字符/skew 字符。tex.web scan_something_internal 的
+                // `@<Fetch a font integer@>`（L8552-8557）：scan_font_ident 后取
+                // hyphen_char[f]/skew_char[f]；scan_int 的 <internal integer> 臂
+                // （§445 cur_cmd∈[min_internal,max_internal]）同样路由至此。
+                // expl3 intarray 的 pdfTeX 模拟里 \__intarray_count:w = 字体
+                // \hyphenchar，\number 读数组长度全走此臂
+                // （expl3-code L15576/L15591/L15601）。
+                // 偏差：tex.web 建字体时按 default_hyphen_char/default_skew_char
+                // 逐字体初始化（L11210）；引擎以 HashMap 惰性覆盖、未覆盖回退常量
+                // 默认（与 `\the` 臂同约定）。
+                EqSlot::Primitive(Primitive::HyphenChar) => {
+                    self.fetch()?; // 消费 \hyphenchar
+                    let font = self.scan_font_ident()?;
+                    let v = self.hyphenchars.get(&font).copied().unwrap_or(45);
+                    return Ok(if neg { -v } else { v });
+                }
+                EqSlot::Primitive(Primitive::SkewChar) => {
+                    self.fetch()?; // 消费 \skewchar
+                    let font = self.scan_font_ident()?;
+                    let v = self.skewchars.get(&font).copied().unwrap_or(-1);
+                    return Ok(if neg { -v } else { v });
+                }
                 // 内部只读整数：\badness → 最近盒子的 badness（当前恒 0：
                 // 展开侧尚未跟踪盒排版 badness，trip.tex 第 20 行无盒子时为 0）。
                 EqSlot::Primitive(Primitive::Badness) => {
@@ -377,11 +400,30 @@ impl Expander {
                     let v = self.lccodes[byte as usize];
                     return Ok(if neg { -v } else { v });
                 }
-                // ETRIP 冲刺：TeX/e-TeX 内部整数参数（\interactionmode/\language/\tracing* 等）
-                EqSlot::Primitive(p) if int_param_index(p).is_some() => {
+                // ETRIP 冲刺：TeX/e-TeX 内部整数参数（\interactionmode/\language/\tracing* 等）。
+                // 值域两处合一：int_param_index 覆盖 misc 索引区；param_kind_of 的
+                // Number 值参数（\endlinechar/\newlinechar/\parindent 类之外的纯整数
+                // 参数）同臂——tex.web scan_something_internal 对 assign_int 区全认，
+                // G3 起读写两侧共用 param_kind_of 一张表，读侧不得自持索引表漏项
+                // （expl3 `\tex_endlinechar:D` 读臂缺此臂时落 Missing number，
+                // `\__cctab_gset:n` 的 `\fontdimen257<font> \tex_endlinechar:D
+                // \c__intarray_sp_dim` 现场级联）。
+                EqSlot::Primitive(p)
+                    if int_param_index(p).is_some()
+                        || matches!(
+                            param_kind_of(p).map(|k| self.params.get(k)),
+                            Some(ParamValue::Number(_))
+                        ) =>
+                {
                     self.fetch()?; // 消费原语
-                    let idx = int_param_index(p).expect("已检查 is_some");
-                    let v = self.params.misc[idx];
+                    if let Some(idx) = int_param_index(p) {
+                        let v = self.params.misc[idx];
+                        return Ok(if neg { -v } else { v });
+                    }
+                    let v = match param_kind_of(p).map(|k| self.params.get(k)) {
+                        Some(ParamValue::Number(v)) => v,
+                        _ => 0,
+                    };
                     return Ok(if neg { -v } else { v });
                 }
                 // TRIP：\mag（放大倍数，数字上下文读取；L160 `.5\mag` 等）
@@ -1697,7 +1739,12 @@ impl Expander {
             // 符号已由上方 multi-minus 处理，此处只取数值。
             let mut number_cs = false;
             if let Some(csid) = self.peek_csid()? {
-                let slot = self.eqtb.slot(csid).clone();
+                // 别名即原义（tex.web §24.4）：expl3 全篇 `\cs_new_eq:NN` 别名
+                // （`\tex_endlinechar:D → \endlinechar` 等）以 Alias 槽落 eqtb，
+                // 判定前须追链，否则 `<dimen>` 数字部分漏认 → `! Missing number`
+                // （`\__cctab_gset:n` 的 `\fontdimen257<font> \tex_endlinechar:D
+                // \c__intarray_sp_dim` 现场即此）。scan_number 分派侧同款追链。
+                let slot = self.eqtb.slot(self.deref_alias_chain(csid)).clone();
                 number_cs = matches!(
                     &slot,
                     EqSlot::Register(RegKind::Count, _) | EqSlot::Char { .. }
@@ -1732,6 +1779,12 @@ impl Expander {
                                 | Primitive::CurrentIfType
                                 | Primitive::CurrentIfBranch
                         ) || int_param_index(*p).is_some()
+                            // Number 值内部参数同数字（与 scan_number 分派臂同一判据，
+                            // 探针勿自持第二张表——\tex_endlinechar:D 即漏项反例）
+                            || matches!(
+                                param_kind_of(*p).map(|k| self.params.get(k)),
+                                Some(ParamValue::Number(_))
+                            )
                 );
             }
             if number_cs {
