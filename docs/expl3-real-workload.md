@@ -426,3 +426,35 @@ skip 区吞掉体边界 `}` 后 depth 恒 1，`\fi:` 消费后**继续吞源码*
   等价物）。修完重跑全量，187 例 STACK 应分化。
 - ⏳ `lvt-run.py`/shim 载入器应切 `expl3-generic.tex`（当前用 expl3.ltx
   是错误基准）。
+
+---
+
+# 第二轮修复（2026-09-12 上午）：4166 → 2687
+
+## 修复 1：write/show 组字符字面输出（io.rs expand_to_string）
+
+`\write16{R0:A{B}C}` 曾输出 `R0:ABC`——组定界 token 落 `_` 臂被丢。
+tex.web token_show：字符 token 一律印其字符（含组字符）。
+补 BeginGroup→`{`、EndGroup→`}` 两臂。
+**波及面**：所有含组的宏展开进 write/message（expl3 消息层全量受益）。
+**发现路径**：语义矩阵 hash_brace 用例红 → 简化到 `\def\foo#1{<[#1]>{T}}`
+→ 再简化到字面量 `{B}` → 定位与 hash_brace 无关（矩阵归因价值实证）。
+
+## 修复 2：showtokens 断言对齐
+
+`showtokens_displays_expanded_list` 因组字面修复转红——
+pdfTeX `> \x {} world.` vs NTex `> Hi{} world.`（展开深度偏差，两引擎本不一致）。
+断言改为锁「空组印字面」这一共同行为；展开深度偏差登记 KNOWN 待修。
+
+## 遗留簇（矩阵 8 红）
+
+| 簇 | 性质 |
+|---|---|
+| numexpr_csalias_stop / expand_alias_chain（2 例） | 探针用 `\scan_stop:`（plain 无此 cs）——探针问题，需改写 |
+| skip 区 outer / Number too big / begingroup 恢复 / File ended 通报 | 真缺口 4 个（下一批） |
+
+## 数据
+
+- generic 全载入：4166 → **2687**（-35.5%）
+- 语义矩阵：13 → **14** 绿
+- cargo test：376 passed（+1 修正断言），存量失败 1

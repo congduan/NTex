@@ -523,6 +523,12 @@ impl Expander {
         for t in expanded {
             match t.catcode() {
                 Some(Catcode::Space) => s.push(' '),
+                // 组定界字符：write 输出**字面** `{`/`}`（tex.web token_show：
+                // 字符 token 一律印其字符，含组字符——pdfTeX 实测
+                // `\write{A{B}C}` → `A{B}C`；expl3 消息组大量依赖。此前落
+                // `_` 臂被丢弃，`\foo` 展开含组的 write 全部丢花括号）。
+                Some(Catcode::BeginGroup) => s.push('{'),
+                Some(Catcode::EndGroup) => s.push('}'),
                 Some(Catcode::Letter) | Some(Catcode::Other) => {
                     let ch = t
                         .charcode()

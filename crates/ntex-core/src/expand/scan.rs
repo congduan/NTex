@@ -796,8 +796,26 @@ impl Expander {
             match self.fetch()? {
                 None => return Ok(()),
                 Some((tok, _)) => {
+                    // cs 别名到空格字符（`\let\exp_stop_f: ~`，l3expan.dtx:1093
+                    // `\use:nn{\cs_new_eq:NN\exp_stop_f:}{~}`）→ **等价空格终结符**
+                    //（tex.web scan_int `.10`：get_token 返回 cmd=space 即消散；
+                    // cs 的 cmd 经 eqtb 查得）。expl3 `\exp_stop_f:` 贴数字尾
+                    // （fp 区 `\__fp_int_eval:w <n> \exp_stop_f: = ...` 万级出现）
+                    // 不解引用则落 `\ifnum` 关系符位 → "Missing = inserted"
+                    // 1500 次主簇（2026-09-12 定性）。
                     if tok.catcode() == Some(Catcode::Space) {
                         continue;
+                    }
+                    if let Some(csid) = tok.csid() {
+                        match self.resolve_slot(csid) {
+                            Some(EqSlot::Char {
+                                catcode: Catcode::Space,
+                                ..
+                            }) => continue,
+                            // \let\sp=\space 型原语别名（Primitive::ControlSpace）
+                            Some(EqSlot::Primitive(Primitive::ControlSpace)) => continue,
+                            _ => {}
+                        }
                     }
                     self.unread(tok);
                     return Ok(());
