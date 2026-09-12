@@ -2007,7 +2007,14 @@ impl Expander {
                         // 实证：plain `^^L` 为 active char + `\outer\def^^L{\par}`，
                         // expl3-code.tex L9320 `\char_set_catcode_active:N \^^L`
                         // 取实参即触发误报 → `Extra \or` 224 条（43.8%）。
-                        if def.outer && self.scanner_status != ScannerStatus::Normal {
+                        if def.outer
+                            && !tok.is_active()
+                            && self.scanner_status != ScannerStatus::Normal
+                        {
+                            // active char token 不报（tex.web：active char 的
+                            // cur_cmd=active 走 active 臂；plain \outer\def^^L
+                            // 的槽残留 outer 不影响 ^^L active 使用——expl3
+                            // L9320-9321 依赖此语义重定义 ^^L）
                             if std::env::var_os("NTEX_OUTER_SITE").is_some() {
                                 eprintln!(
                                     "[OUTER-EXPAND] cs={} status={:?}",

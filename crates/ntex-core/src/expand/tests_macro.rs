@@ -992,8 +992,8 @@ use super::*;
         .unwrap();
         assert_eq!(
             vfs.get("out.txt").map(|b| String::from_utf8_lossy(b).into_owned()),
-            Some("\n".to_owned()),
-            "protected 宏不展开 → 写空行（TeX 语义）"
+            Some("\\foo \n".to_owned()),
+            "protected 宏不展开 → detokenize 打印 \\foo（pdfTeX ground truth：out.txt = \"\\foo \\n\"，2026-09-12 实测；旧期望空行系 \\write cs-丢弃错误语义）"
         );
     }
 

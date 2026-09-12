@@ -1,0 +1,37 @@
+% 探针组：expl3 载入攻坚已修复语义的回归锁（2026-09-12 战役沉淀）
+% 每个探针ground truth 一行 P= 期望；abcheck.py 双引擎对拍应全 SAME。
+%
+% ---- 1. f-展开 protected 停驻（\exp_not:f 语义，fp_set 链前置）----
+% tex.web：f 展开展开到首个不可展开 token 为止（protected 宏停驻保留）
+\catcode`\@=11 \catcode`\:=11
+\let\else:\else \let\fi:\fi
+\protected\def\pA{X}
+\edef\zB{\detokenize\expandafter{\unexpanded{\pA Y}}}
+\message{F-PROTECT=\zB}
+%
+% ---- 2. edef 内嵌 \exp:w romannumeral 环（fp_parse 展开链前置）----
+\edef\zC{\romannumeral-`\0\relax Z}
+\message{RN-NEST=[\zC]}
+%
+% ---- 3. outer 宏作无定界实参首 token：Forbidden + 作业继续 ----
+\outer\def\oX{A}
+\def\aOne#1{[#1]}
+\aOne\oX
+\message{OUTER-ARG=CONTINUED}
+%
+% ---- 4. outer 宏作组实参内 token：同样 Forbidden + 继续 ----
+\aOne{\oX}
+\message{OUTER-GROUP=CONTINUED}
+%
+% ---- 5. active char 持 outer 槽：不报 Forbidden（tex.web active 臂）----
+\catcode`\^^L=13
+\outer\def^^L{\par}
+\def\aAct#1{[#1]}
+\aAct^^L
+\message{ACTIVE-OUTER=NO-FORBIDDEN}
+%
+% ---- 6. csname 中空格忽略（构名不含空格；prefix 构名依赖）----
+\expandafter\def\csname AB C\endcsname{W}
+\message{CSNAME-SPACE=[\csname AB C\endcsname]}
+%
+\end
