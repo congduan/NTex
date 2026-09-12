@@ -112,9 +112,11 @@ impl CatcodeTable {
     ///
     /// **偏差说明**：tex.web 里 INITEX 的 LF 是 12（行结束符由读取层剥掉、再补一个
     /// `\endlinechar`=13/CR）。本引擎的扫描器是字节流直读（`input.rs::scan_token`），
-    /// 不剥行尾字节——原始 LF 就是行尾符，`Comment` 跳行、空行→`\par` 都靠
-    /// catcode 5 找行尾。若按 tex.web 原样给 LF=12，第一条注释会一路吞到 EOF。
-    /// 故此处 LF 与 CR 同为 5（等价于"行尾符必有 catcode 5"的引擎行模型）。
+    /// 不剥行尾字节——原始 LF 就是行尾符。物理行边界按**字节身份**（`b == b'\n'`）
+    /// 识别，与 catcode(0x0A) 无关（tex.web 行尾字节按位置写入 `end_line_char`，
+    /// 见 `scan_token` 的 `b == b'\n'` 注释）；catcode 5 只是行尾语义（空行→`\par`、
+    /// 行尾→空格、注释跳行终止）的另一入口——`^^M` 解码产物、CR 字节等仍走
+    /// catcode 臂。故此处 LF 与 CR 同为 5（等价于"行尾符必有 catcode 5"的引擎行模型）。
     pub fn initex() -> Self {
         let mut t = [Catcode::Other as u8; 256];
         t[0x00] = Catcode::Ignored as u8; // NUL

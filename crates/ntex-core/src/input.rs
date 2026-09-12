@@ -4,6 +4,8 @@
 //! token 一经生成，其 catcode 即固化，之后修改 catcode 不回写已生成 token。
 //!
 //! 扫描状态机（对照 tex.web `get_next` 的 `state`：new_line/mid_line/in_space）：
+//! - **物理行边界 = LF 字节**（按字节身份识别，与 catcode(0x0A) 无关——tex.web
+//!   行尾字节是按位置写入的 `end_line_char`，OS 换行字节不进 buffer）；
 //! - 行首（[`ScanState::LineStart`]）空格忽略；行首行尾 → `\par`（**空行**语义）；
 //! - 行中行尾 → 空格；连续空格折叠为单个；行尾后回到行首状态；
 //! - 注释（cat 14）吞掉整行（**含**行尾字符，TeX 语义：注释行不产生 token）；
@@ -150,7 +152,13 @@ pub fn scan_token(
             Catcode::Comment => {
                 // 注释吞掉整行（**含**行尾字符）：不产生 token
                 // （tex.web：注释行不触发空行判定，如 `a%c\nb` → "ab"）。
-                while *pos < bytes.len() && !catcodes.get(bytes[*pos]).is_end_of_line() {
+                // 物理行尾（LF 字节）按字节身份终止丢弃——tex.web 注释丢弃是
+                // 按位置的（`loc:=limit+1`），catcode(0x0A) 被 `\catcode`\^^J=…`
+                // 改写后注释不得吞过物理行尾（否则一条注释吞掉余下整个文件）。
+                while *pos < bytes.len()
+                    && bytes[*pos] != b'\n'
+                    && !catcodes.get(bytes[*pos]).is_end_of_line()
+                {
                     *pos += 1;
                 }
                 *pos += 1; // 越过行尾字符（若存在）
@@ -243,10 +251,15 @@ pub fn scan_token(
                     let name = std::str::from_utf8(&name)
                         .map_err(|_| Error::invalid_input("控制词含非 UTF-8 字节"))?;
                     let csid = intern.intern(name);
-                    // TeX：控制词后跟随的空格被吞掉（含行尾转换的空格）
+                    // TeX：控制词后跟随的空格被吞掉（含行尾转换的空格）。
+                    // 物理行尾（LF 字节）同样吞掉且**不产 token**——tex.web
+                    // `skip_blanks+car_ret` → "Finish line, goto switch"（无
+                    // token）；否则 catcode(0x0A) 被改写为非 cat-5 后（如
+                    // latex.ltx L299 `\catcode`\^^J=\active`），行尾字节漏到
+                    // 主分派被当数据处理。
                     while *pos < bytes.len() {
                         let c2 = catcodes.get(bytes[*pos]);
-                        if !(c2.is_space() || c2.is_end_of_line()) {
+                        if !(c2.is_space() || c2.is_end_of_line() || bytes[*pos] == b'\n') {
                             break;
                         }
                         *pos += 1;
@@ -263,6 +276,31 @@ pub fn scan_token(
                 // 字符三路解码 ^^ 转义：catcode 7 的 ^ 后随 ^ → 解码为单个字符 token
                 let ch: u32;
                 let mut cat = cat;
+                if b == b'\n' {
+                    // 物理行边界按**字节身份**走行尾，与其 catcode 无关。
+                    //
+                    // tex.web 锚点（get_next）：行尾字节是按**位置**写入的
+                    // `end_line_char`——`@<Read next line of file...@>` 末尾
+                    // `if end_line_char_inactive then decr(limit)
+                    //  else buffer[limit]:=end_line_char`（L7578-7579），OS 换行
+                    // 字节根本不进 buffer；行尾 token 由 end_line_char 的 catcode
+                    // 分派（INITEX 下 13→cat 5 → mid_line+car_ret「emit a space」）。
+                    // 用户 `\catcode`\^^J=…` 改的是 char **10** 而非
+                    // end_line_char(13)，故行尾分派不受影响——latex.ltx L299
+                    // `\catcode`\^^J=\active` 正依赖这一点。
+                    //
+                    // 本引擎行模型以文件内 LF 字节为物理边界（`line_starts` 同按
+                    // 字节身份切行），该字节即 tex.web end_line_char 的**位置**
+                    // 等价物；若按其可变 catcode 分派，改写 catcode(0x0A) 的代码
+                    // 会把每个物理行尾当**数据**扫出：
+                    //   - active（latex.ltx L299）→ 未定义 active char token →
+                    //     主循环 "! Undefined control sequence."（首现场 l.301，
+                    //     `\edef\reserved@a{\expandafter\reserved@a\string^^J\@@}`
+                    //     的 TeX 版本嗅探；pdfTeX 对照 INITEX 同段 0 错误）；
+                    //   - cat 12（expl3-code L24551 `\char_set_catcode_other:N
+                    //     \^^J`）→ char-10 token 静默混入 token 流。
+                    cat = Catcode::EndOfLine;
+                }
                 if utf8_input && b >= 0x80 {
                     // UTF-8 多字节（M9 中文刀 2）：领先字节/孤儿续字节 ≥0x80 →
                     // 尝试整体解码为单个 21-bit 字符 token；失败（孤儿续字节/
@@ -765,5 +803,102 @@ mod tests {
         let toks = scan_all_mode("^^5e", true);
         assert_eq!(toks.len(), 1);
         assert_eq!(toks[0].charcode(), Some(0x5E));
+    }
+
+    // ---------- 物理行边界按字节身份（catcode(0x0A) 改写不影响行尾） ----------
+    //
+    // tex.web get_next：行尾字节是按**位置**写入的 end_line_char
+    // （`@<Read next line of file...@>` 末尾 `buffer[limit]:=end_line_char`，
+    // L7578-7579），OS 换行字节不进 buffer；`\catcode`\^^J=…` 改的是 char 10
+    // 而非 end_line_char(13)，行尾分派（INITEX cat 5 → space/\par）不受影响。
+    // pdfTeX ground truth（2026-09-12，INITEX + `\catcode`\^=7`）：
+    // latex.ltx L299-302 的 TeX 版本嗅探段（含 `\catcode`\^^J=\active`）执行
+    // **0 错误**、`\reserved@a` 成为空宏；本引擎修复前每个物理行尾被扫成
+    // 未定义 active char token → 逐行 "! Undefined control sequence."。
+    //
+    // 对照（latex.ltx L299 之后改写 catcode(0x0A) 的第二处）：
+    // expl3-code L24551 `\char_set_catcode_other:N \^^J`（组内）——行尾按
+    // catcode 会产出 char-10 **数据** token 静默混入 token 流。
+
+    /// 自定义 catcode 表版 `scan_all`（返回 intern 以便核对 active 名）。
+    fn scan_all_with(catcodes: CatcodeTable, src: &str) -> (Vec<Token>, InternTable) {
+        let mut intern = InternTable::new();
+        let mut pos = 0usize;
+        let mut state = ScanState::LineStart;
+        let mut out = Vec::new();
+        while let Some(t) = scan_token(
+            src.as_bytes(),
+            &mut pos,
+            &catcodes,
+            &mut intern,
+            &mut state,
+            false,
+        )
+        .unwrap()
+        {
+            out.push(t);
+        }
+        (out, intern)
+    }
+
+    #[test]
+    fn active_newline_keeps_line_ends_as_line_ends() {
+        // `\catcode`\^^J=\active`（latex.ltx L299）后：物理行尾仍是行尾
+        // （空格 token，且下一行行首空格照常忽略），**不得**产出 active char
+        // token——修复前行尾字节按 catcode 走 active 臂。
+        let mut catcodes = CatcodeTable::new();
+        catcodes.set(0x0A, Catcode::Active);
+        let (toks, _) = scan_all_with(catcodes, "a\n  b\n");
+        // a <行尾空格> b <行尾空格>（行首空格被忽略、无任何 active token）
+        assert_eq!(toks.len(), 4, "tokens: {toks:?}");
+        assert_eq!(toks[0].charcode(), Some(b'a' as u32));
+        assert_eq!(toks[1].catcode(), Some(Catcode::Space), "行尾 → 空格");
+        assert_eq!(toks[2].charcode(), Some(b'b' as u32), "行首空格被忽略");
+        assert_eq!(toks[3].catcode(), Some(Catcode::Space));
+        assert!(
+            toks.iter().all(|t| !t.is_active()),
+            "行尾不得产出 active char token：{toks:?}"
+        );
+    }
+
+    #[test]
+    fn decoded_circumflex_newline_is_active_data() {
+        // ^^J 的**解码产物**是数据：catcode(0x0A)=Active 时 `^^J` → active char
+        // token（`\string^^J` 的实参、latex.ltx L301 版本嗅探依赖此形态）；
+        // 同行随后的物理行尾仍是行尾（空格）——二者不得混淆。
+        let mut catcodes = CatcodeTable::new();
+        catcodes.set(0x0A, Catcode::Active);
+        let (toks, intern) = scan_all_with(catcodes, "^^J\n");
+        assert_eq!(toks.len(), 2, "tokens: {toks:?}");
+        assert!(toks[0].is_active(), "解码 ^^J → active char：{toks:?}");
+        assert_eq!(intern.name(toks[0].csid().unwrap()), "\n");
+        assert_eq!(toks[1].catcode(), Some(Catcode::Space), "物理行尾 → 空格");
+    }
+
+    #[test]
+    fn comment_stops_at_physical_line_end_when_newline_recoded() {
+        // catcode(0x0A) 非 cat 5（expl3-code L24551 设 cat 12）时注释仍止于
+        // 物理行尾——否则一条注释吞掉余下整个文件。
+        let mut catcodes = CatcodeTable::new();
+        catcodes.set(0x0A, Catcode::Other);
+        let (toks, _) = scan_all_with(catcodes, "a% junk\nb\n");
+        assert_eq!(toks.len(), 3, "tokens: {toks:?}");
+        assert_eq!(toks[0].charcode(), Some(b'a' as u32));
+        assert_eq!(toks[1].charcode(), Some(b'b' as u32));
+        assert_eq!(toks[2].catcode(), Some(Catcode::Space));
+    }
+
+    #[test]
+    fn control_word_trailing_newline_yields_no_token_when_recoded() {
+        // 控制词行尾：tex.web `skip_blanks+car_ret` → 无 token；catcode(0x0A)
+        // 被改写后行尾字节不得漏到主分派（修复前 → active char token）。
+        let mut catcodes = CatcodeTable::new();
+        catcodes.set(0x0A, Catcode::Active);
+        let (toks, _) = scan_all_with(catcodes, "\\foo\nb\n");
+        assert_eq!(toks.len(), 3, "tokens: {toks:?}");
+        assert_eq!(toks[0].kind(), TokenKind::ControlSeq);
+        assert_eq!(toks[1].charcode(), Some(b'b' as u32));
+        assert_eq!(toks[2].catcode(), Some(Catcode::Space));
+        assert!(toks.iter().all(|t| !t.is_active()), "tokens: {toks:?}");
     }
 }

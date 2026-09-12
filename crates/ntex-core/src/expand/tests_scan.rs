@@ -558,6 +558,66 @@ mod string_active_char {
     }
 }
 
+/// latex.ltx L299-302 TeX 版本嗅探段端到端（首现场 l.301 的机制级最小复现）。
+///
+/// ```tex
+/// {\catcode`\^^J=\active
+///    \def\reserved@a#1#2\@@{\if#1\string^3\fi}
+///    \edef\reserved@a{\expandafter\reserved@a\string^^J\@@}
+///    \ifx\reserved@a\@empty\else\gdef\@TeXversion{3}\fi}
+/// ```
+///
+/// pdfTeX ground truth（2026-09-12 实测，pdfTeX 3.141592653 -ini，catcode 先行
+/// 归位 `{`=1 `}`=2 `#`=6 `^`=7 `@`=11 + `\chardef\active=13`）：整段执行
+/// **0 错误**，`\show\reserved@a` → `> \reserved@a=macro:` + `->.`（空宏——
+/// `\string^^J`（active）产出裸 char 10 ≠ `\string^` 的 char 94，`\if` 假、
+/// 分支被跳过）。
+///
+/// 修复前本引擎逐物理行尾报 "! Undefined control sequence."（未定义 active
+/// char token）：行尾字节按其**可变 catcode** 分派——`\catcode`\^^J=\active`
+/// 改写 catcode(0x0A) 后每个行尾被当数据扫成 active char。tex.web get_next
+/// 的行尾字节是按位置写入的 `end_line_char`（L7578-7579
+/// `buffer[limit]:=end_line_char`），OS 换行字节不进 buffer，故 char 10 的
+/// catcode 改写**不可能**触及行尾分派——物理行边界须按字节身份识别。
+#[cfg(test)]
+mod latex_ltx_l301_sniff {
+    use super::*;
+
+    /// `\edef` + `\expandafter\string<active char>`：无 Undefined 错误、
+    /// `\reserved@a` 为空宏（与 pdfTeX 逐字节一致）。
+    #[test]
+    fn l301_sniff_runs_without_undefined_cs() {
+        let src = concat!(
+            "\\catcode`\\@=11 \\chardef\\active=13 %\n",
+            "\\catcode`\\^^J=\\active %\n",
+            "\\def\\reserved@a#1#2\\@@{\\if#1\\string^3\\fi}%\n",
+            "\\edef\\reserved@a{\\expandafter\\reserved@a\\string^^J\\@@}%\n",
+            "\\meaning\\reserved@a"
+        );
+        let (r, transcript) = run_transcript(src);
+        r.unwrap();
+        assert!(
+            !transcript.contains("Undefined control sequence"),
+            "行尾被当数据扫成未定义 active char：{transcript}"
+        );
+        // `expand` 输出即 `\meaning` 文本：空宏（pdfTeX `->.` 对照）
+        assert_eq!(expand(src).unwrap(), "macro:->");
+    }
+
+    /// 对照（v_f 探针形态）：`\catcode`\^^J=\active` 之后的多行源码，
+    /// 每个物理行尾都不得产出 active char token（修复前 l.4 起逐行报错）。
+    #[test]
+    fn line_ends_stay_silent_after_active_newline() {
+        let src = "\\chardef\\active=13 %\n\\catcode`\\^^J=\\active %\n\\relax\n\\relax\n";
+        let (r, transcript) = run_transcript(src);
+        r.unwrap();
+        assert!(
+            !transcript.contains("Undefined control sequence"),
+            "行尾泄漏未定义 active char：{transcript}"
+        );
+    }
+}
+
 /// §A1.septies 探针：char 10 token 在宏实参传递中的存活性。
 ///
 /// §A1.septies 探针：可展开原语在**宏实参位置**是否被展开。
