@@ -141,7 +141,11 @@ impl Expander {
                 self.sink.semisimple_begin()?;
                 self.begin_group()
             }
-            Primitive::EndGroup => self.end_group(),
+            Primitive::EndGroup => {
+                // 组外闭合报错文本区分：原语 `\endgroup` vs `}` 字符
+                self.cur_group_close_via_primitive = true;
+                self.end_group()
+            }
             // ---- 条件原语（process_one 拦截，不应到达此处） ----
             Primitive::If
             | Primitive::IfCat

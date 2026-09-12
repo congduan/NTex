@@ -808,8 +808,18 @@ impl Expander {
 
     fn end_group(&mut self) -> Result<()> {
         if self.group_level == 0 {
-            // TeX：多余的 `}` → "! Too many }'s." 报错恢复（忽略并继续；TRIP L291）
-            self.report_error("Too many }'s.");
+            // tex.web 组外闭合语义（pdfTeX 实测 2026-09-12）：
+            // - `\endgroup` **原语**在组外 → `! Extra \endgroup.`；
+            // - `}` **字符**在组外 → `! Too many }'s.`（TRIP L291）。
+            // 二者文本不同但恢复动作相同（忽略并继续）。此前 `\endgroup`
+            // 误报 Too many }'s.——语义矩阵 scan_toks_begingroup_counts 红即此。
+            // 区分：本次闭合由 exec 原语臂进入（primitive=true）还是字符臂。
+            let msg = if self.cur_group_close_via_primitive {
+                "Extra \\endgroup."
+            } else {
+                "Too many }'s."
+            };
+            self.report_error(msg);
             return Ok(());
         }
         // \setbox/\moveleft 的 box 参数组（\vbox{} 等）在组结束时恢复追踪：

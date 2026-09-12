@@ -693,6 +693,9 @@ pub struct Expander {
     err_snapshot: Option<(u32, usize)>,
     /// 组层级（M1-11）。
     group_level: u32,
+    /// 本次 `end_group` 是否由 `\endgroup` 原语进入（vs `}` 字符）：
+    /// 组外闭合的报错文本不同（`Extra \endgroup.` vs `Too many }'s.`）。
+    cur_group_close_via_primitive: bool,
     /// `\left`/`\middle` 打开的 math left group（16）嵌套深度：expander 侧配对
     /// 保护——`\left` +1、`\middle` 关一开一（净 0）、`\right` -1；为 0 时
     /// `\right`/`\middle` 不触发 end_group（避免关掉外层非数学组；TeX 语义
@@ -873,6 +876,7 @@ impl Expander {
             cond_stack: Vec::new(),
             err_snapshot: None,
             group_level: 0,
+            cur_group_close_via_primitive: false,
             math_left_depth: 0,
             align_frames: Vec::new(),
             align_state: 0,
@@ -1916,7 +1920,11 @@ impl Expander {
                         let c = Token::char(catcode, charcode);
                         match catcode {
                             Catcode::BeginGroup => self.begin_group(),
-                            Catcode::EndGroup => self.end_group(),
+                            Catcode::EndGroup => {
+                                // `}` 字符闭合：报错文本区分标志（见 end_group）
+                                self.cur_group_close_via_primitive = false;
+                                self.end_group()
+                            }
                             _ => self.sink.token(c),
                         }
                     }
@@ -2126,7 +2134,11 @@ impl Expander {
                 // 处理；此处只建立/结束普通组。
                 match tok.catcode() {
                     Some(Catcode::BeginGroup) => self.begin_group(),
-                    Some(Catcode::EndGroup) => self.end_group(),
+                    Some(Catcode::EndGroup) => {
+                        // `}` 字符闭合：报错文本区分标志（见 end_group）
+                        self.cur_group_close_via_primitive = false;
+                        self.end_group()
+                    }
                     _ => self.sink.token(tok),
                 }
             }

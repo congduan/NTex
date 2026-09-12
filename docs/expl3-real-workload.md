@@ -458,3 +458,34 @@ pdfTeX `> \x {} world.` vs NTex `> Hi{} world.`（展开深度偏差，两引擎
 - generic 全载入：4166 → **2687**（-35.5%）
 - 语义矩阵：13 → **14** 绿
 - cargo test：376 passed（+1 修正断言），存量失败 1
+
+---
+
+# 第三轮（2026-09-12 上午）：outer 检查 + Number too big + File ended + begingroup 文本分叉 + generic 接线
+
+## 已落地
+
+1. **惰性 Skipping 帧的 outer 检查**（mod.rs 主循环）：报
+   `! Incomplete \if<类型>; ...`（类型名动态取）+ 清帧恢复。
+   TRIP L363 形态验证：报错 + survived ✅
+2. **Number too big**：钳制阈值从 i64::MAX 修正为 0x7FFFFFFF，
+   报 `Number too big.`（pdfTeX 一致）；正常值不受影响 ✅
+3. **File ended while scanning definition**：runaway 通报补全（pdfTeX 一致）✅
+4. **Extra \endgroup vs Too many }'s 文本分叉**：新增
+   `cur_group_close_via_primitive` 标志区分原语/字符闭合（pdfTeX 一致）✅
+5. **探针纯化**：numexpr 两例的 `\scan_stop:`（plain 无）改为
+   `\let\mystop\relax` 等价形态
+6. **generic 载入器接线**：lvt-shim `\input exgeneric.tex`
+   （expl3-generic.tex 改名副本），lvt-run.py EXPL3_FILES 同步
+
+## 语义矩阵：16/22 绿
+
+剩余 6 红 = 5 例行号/文本校准（语义行为已一致，含 begingroup 用例的
+error_line_no 锚定问题）+ 1 例真语义。
+
+## STACK 主攻未完（下一轮，需专注）
+
+`\l__iow_line_part_tl` 现场仍 5001 帧——**帧累积根因**（scan_edef_body
+展开产物 push_frame 驻留）需专项改 expand_region/scan_edef_body 的
+帧内联消费（tex.web expand 消费即弹等价物）。此改动涉及
+read_floor/suppress_expansion/query_sink 三重上下文，须单独一轮。

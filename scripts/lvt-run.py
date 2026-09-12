@@ -68,7 +68,7 @@ TFM_DIR = os.environ.get("NTEX_TFM_DIR", str(Path.home() / ".ntex-fonts"))
 # （`\expandafter\ifx\csname ExplLoaderFileDate\endcsname\relax` →
 # `\PackageError{expl3}{No expl3 loader detected}`），`expl3.ltx` 首行
 # `\let\ExplLoaderFileDate\ExplFileDate` 才提供该标志。
-EXPL3_FILES = ("expl3.ltx", "expl3-code.tex")
+EXPL3_FILES = ("exgeneric.tex", "expl3-code.tex")
 
 
 def ensure_expl3(tf: Path) -> bool:

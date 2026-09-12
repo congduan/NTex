@@ -170,7 +170,7 @@
 % ⚠ 判据用 `\ifnum...=1`（lvt-run.py 总是先 `\chardef` 注入 0 或 1），
 % 不用 `\ifx...\undefined`——NTex 上 undefined 哨兵语义有坑（见下文 §A1 注释）。
 \ifnum\lvtuseexplthree=1
-  \input expl3.ltx
+  \input exgeneric.tex
 \fi
 
 % ── 跑目标测试 ──────────────────────────────────────────────────
