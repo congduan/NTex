@@ -396,3 +396,33 @@ skip 区吞掉体边界 `}` 后 depth 恒 1，`\fi:` 消费后**继续吞源码*
 
 - `NTEX_EDEF_COND_TRACE=1`：scan_edef_body 条件臂命中/skip 吞入逐 token trace
 - `NTEX_STACK_DUMP=1`：爆栈时栈帧类型分布
+
+---
+
+# 🏁 终局对拍（2026-09-12 上午）——expl3-generic 才是 plain 正确载入器 + 双引擎吞入行为一致
+
+## 关键对拍矩阵（完整 expl3 环境）
+
+| 探针 | pdfTeX | NTex |
+|---|---|---|
+| `\input expl3.ltx`（2ekernel loader） | ❌ 10 err（`\@` 家族缺失）→ **plain 上本就不该用** | ❌ 3114 err |
+| `\input expl3-generic.tex`（**generic loader，plain 正解**） | ✅ **0 err 载完** | ⚠ 4166 err，仍 STACK 于同一现场 |
+| 完整 expl3 下 `\tex_edef:D \l_tl { \if_false: } \fi:` | ❌ `File ended while scanning definition`（吞到文件尾） | ❌ 同样吞到尾 → **STACK**（帧累积） |
+
+## 两条定论
+
+1. **载入器**：plain 形态引擎必须用 `expl3-generic.tex`；`expl3.ltx` 依赖
+   LaTeX 内核 `\@` 宏，此前所有「expl3.ltx 在 NTex 上」的实验对比基准都是错的。
+2. **吞入语义**：空组惯用法「吞到下一个配平 `}`」**两引擎一致**（pdfTeX 同样
+   File ended）。差异不在配平，在**吞入期间的帧管理**：pdfTeX `expand`
+   消费即弹，NTex `expand_once`+`push_frame` 帧驻留累积 → 5001 爆栈。
+
+## 修复状态
+
+- ✅ `scan_edef_body` unbalance 语义对齐 tex.web（起点 1、skip 区维护配平、
+  Runaway 通报恢复）——376 测试绿（较此前 +3）
+- ⏳ **下一刀（明确）**：吞入期间的帧内联消费——`scan_edef_body` Macro 臂的
+  `expand_once` 产物不压帧，直接续入扫描循环（tex.web `expand` 消费即弹
+  等价物）。修完重跑全量，187 例 STACK 应分化。
+- ⏳ `lvt-run.py`/shim 载入器应切 `expl3-generic.tex`（当前用 expl3.ltx
+  是错误基准）。

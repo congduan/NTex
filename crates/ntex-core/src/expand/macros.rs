@@ -771,11 +771,20 @@ impl Expander {
     ///   （latex.ltx --initex 256 条 IPN 的根因，2026-09-08 修复）。
     fn scan_edef_body(&mut self, def_name: &str, in_definition: bool) -> Result<Vec<Token>> {
         let mut out = Vec::new();
-        let mut depth = 0usize;
+        // tex.web scan_toks（L9394）：`unbalance:=1` 起始——首个 `{` 已被
+        // scan_left_brace/参数部消费，体扫描从「已开一个未配平组」起算。
+        // NTex 由调用方 scan_left_brace 消费 `{`（或调用点等价保证），此处
+        // 起点 1 与之对齐。此前的 `depth:=0` + 首 `{` 自计使配平判定整体
+        // 偏移 1：skip 区吞掉体边界 `}` 后，`\fi:` 闭合 skip，后续源码的
+        // `}` 触发 `depth==0 → break` —— 宏体「正常」提前闭合，**Runaway
+        // 判定被整个绕过**，残留条件帧由 expand_region 守卫误报「缺少 \fi」
+        // （expl3-code L25851 `{ \if_false: } \fi:` 空组惯用法现场，
+        // 187 例全 STACK 的根因；2026-09-12 trace 定性）。
+        let mut unbalance = 1usize;
         let mut runaway = false;
         'scan: loop {
             let Some((tok, noexpand)) = self.fetch()? else {
-                runaway = depth > 0;
+                runaway = unbalance > 0;
                 break 'scan;
             };
             if noexpand {
@@ -809,18 +818,24 @@ impl Expander {
                 }
                 continue;
             }
-            // 组定界：{ } 与 \begingroup/\endgroup（TeX macro_def 模式组定界）
+            // 组定界：{ } 与 \begingroup/\endgroup（TeX macro_def 模式组定界）。
+            // unbalance 语义（tex.web L9394 `unbalance:=1`）：体扫描开始时已有
+            // 一个未配平组；`}` 使 unbalance 归 0 即体结束。skip 区的组定界
+            // token 已在上方 is_skipping 臂消费（不入体、**同样维护配平**——
+            // tex.web 的 pass_text 在 get_token 层之下，此处对齐手段是把
+            // skip 吞入也计入 unbalance，否则空组惯用法 `{ \if_false: } \fi:`
+            // 的 `}` 丢失配平 → 体吞掉后续全部源码）。
             match tok.catcode() {
                 Some(Catcode::EndGroup) => {
-                    if depth == 0 {
+                    unbalance -= 1;
+                    if unbalance == 0 {
                         break 'scan; // 外层 }：宏体结束（不收入体）
                     }
-                    depth -= 1;
                     out.push(tok);
                     continue;
                 }
                 Some(Catcode::BeginGroup) => {
-                    depth += 1;
+                    unbalance += 1;
                     out.push(tok);
                     continue;
                 }
@@ -866,14 +881,14 @@ impl Expander {
                 // 29-34 行版本宏惯用 `\egroup` 于 \edef 体内即依赖此语义）→
                 // 落入 `_` 原样收集，不改深度。
                 EqSlot::Primitive(Primitive::BeginGroup) => {
-                    depth += 1;
+                    unbalance += 1;
                     out.push(tok);
                 }
                 EqSlot::Primitive(Primitive::EndGroup) => {
-                    if depth == 0 {
+                    unbalance -= 1;
+                    if unbalance == 0 {
                         break 'scan;
                     }
-                    depth -= 1;
                     out.push(tok);
                 }
                 // protected 宏在展开抑制上下文（\edef/\write）不展开 → 原样收入
