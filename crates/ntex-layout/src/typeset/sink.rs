@@ -599,9 +599,16 @@ impl CoreSink for NodeBuilder {
             let width = if width == ntex_core::NULL_FLAG { 0 } else { width };
             return self.math_push_atom(MathAtom::Rule { width, height, depth });
         }
-        // 非引导上下文：未定宽度（TeX 在 hpack/vpack 解析；NTex 简化落 0）。
-        let width = if width == ntex_core::NULL_FLAG { 0 } else { width };
-        self.append(Node::Rule { width, height, depth });
+        // 非引导上下文：hrule 未定宽度保持 null 哨兵（tex.web scan_rule_spec
+        // L9126 起——`\hrule` 扫描期只定 height=0.4pt/depth=0，width 留
+        // null_flag；出货时 `rule_wd:=width(this_box)` 解析为包含盒宽，
+        // L12598）。此前简化落 0，DVI/渲染按 width>0 判定跳过不画，
+        // `\hrule` 整体消失（resume-plain.tex 节标题横线丢失的根因）。
+        self.append(Node::Rule {
+            width,
+            height,
+            depth,
+        });
         Ok(())
     }
     fn param_changed(&mut self, kind: ParamKind, value: ParamValue) -> Result<()> {

@@ -31,6 +31,9 @@ pub use node::{
     LeadersKind, Node, GLUE_ORDER_FIL,
 };
 pub use typeset::{IncrementalStats, IncrementalTypesetter, MetricsFn, SpaceFn, Typesetter};
+// 规则未定宽度哨兵（tex.web `null_flag`——`\hrule` 无 width 说明时保持到
+// vlist 出货/渲染，再解析为包含盒宽，见 `typeset/sink.rs` rule 分支注释）。
+pub use ntex_core::NULL_FLAG;
 // M8-A WASM 骨架线：TFM 字节源缝（宿主注入 TFM 字节；默认空 → native 走文件系统不变，
 // 详见 typeset/wasm_fonts.rs 模块注释）。M9 中文刀 1 追加 OpenType 字节缝
 // （`TfmSource::otf_bytes` / `registered_otf_bytes`，CJK 字体注入）。

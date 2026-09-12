@@ -228,6 +228,33 @@ mod tests {
         assert!(matches!(main[3], Node::Box(_)), "末项应为新起的段落盒");
     }
 
+    /// tex.web L21160/L21162（head_for_vmode）：`\hrule` 只在垂直模式直接落
+    /// vlist；主水平模式先隐式 end_graf。回归背景：`A\n\hrule B` 此前把规则
+    /// 追加进后段行盒内部（resume-plain.tex 节标题横线现场，2026-09-12）。
+    /// 无 width 说明的 hrule 保持 null_flag 哨兵（tex.web scan_rule_spec），
+    /// 出货端解析为包含盒宽（L12598 `rule_wd:=width(this_box)`）。
+    #[test]
+    fn hrule_in_paragraph_ends_it_and_keeps_null_width() {
+        let main = typeset(r"a\hrule height 3pt b").unwrap();
+        // 结构：段落盒(a) + 规则 + 段落盒(b……含 parfillskip)
+        let rule_idx = main
+            .iter()
+            .position(|n| matches!(n, Node::Rule { .. }))
+            .expect("主垂直列表应有独立规则节点");
+        assert!(
+            main[..rule_idx].iter().all(|n| matches!(n, Node::Box(_))),
+            "规则前只应有段落盒（隐式 \\par 生效），得到 {:?}",
+            &main[..rule_idx]
+        );
+        match &main[rule_idx] {
+            Node::Rule { width, height, .. } => {
+                assert_eq!(*height, 3 * SP_PER_PT);
+                assert_eq!(*width, ntex_core::NULL_FLAG, "无 width 说明保持 null 哨兵");
+            }
+            other => panic!("预期 Rule，得到 {other:?}"),
+        }
+    }
+
     /// 同上：\vfill 类无限阶垂直胶水在水平模式同样先隐式 \par（\vfil kind=3）。
     #[test]
     fn vfil_in_paragraph_ends_it_implicitly() {

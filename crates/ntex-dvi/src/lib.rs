@@ -328,11 +328,18 @@ impl<'a> Writer<'a> {
                     height,
                     depth,
                 } => {
+                    // tex.web L12598：vlist 里 rule 的 null 宽 = 包含盒宽
+                    // （`\hrule` 无 width 说明 → 默认 \hsize）
+                    let w = if *width == ntex_layout::NULL_FLAG {
+                        bx.width
+                    } else {
+                        *width
+                    };
                     self.cur_v += height + depth; // 移到规则底
-                    if *height + *depth > 0 && *width > 0 {
+                    if *height + *depth > 0 && w > 0 {
                         self.synch_h();
                         self.synch_v();
-                        self.put_rule(*height + *depth, *width);
+                        self.put_rule(*height + *depth, w);
                     }
                 }
                 Node::Penalty { .. }

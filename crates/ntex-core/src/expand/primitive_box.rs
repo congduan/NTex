@@ -50,6 +50,14 @@ impl Expander {
                 self.sink.penalty(p)
             }
             Primitive::HRule | Primitive::VRule => {
+                // tex.web L21160/L21162：`\hrule` 只在垂直模式直接落 vlist；
+                // 主水平模式经 head_for_vmode → end_graf 先隐式结束段落（规则
+                // 落回 vlist，而非塞进行盒内部——此前缺这一步，`A\n\hrule B`
+                // 的规则被追加进 B 段的行盒）。`\vrule` 任意模式合法（行内
+                // 竖线，L20519 hmode+vrule 臂）。
+                if matches!(prim, Primitive::HRule) {
+                    self.vertical_command_implicit_par()?;
+                }
                 let [h, d, w] = self.scan_rule_specs(prim)?;
                 self.sink.rule(w, h, d)
             }

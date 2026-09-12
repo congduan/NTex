@@ -825,12 +825,19 @@ fn collect_vlist(
                 height,
                 depth,
             } => {
+                // tex.web L12598：vlist 里 rule 的 null 宽 = 包含盒宽
+                // （`\hrule` 无 width 说明 → 默认 \hsize）
+                let w = if *width == ntex_layout::NULL_FLAG {
+                    bx.width
+                } else {
+                    *width
+                };
                 let top = ry + sp_to_px(cur_v, dpi);
                 RectPrim::push(
                     out,
                     rx,
                     top,
-                    sp_to_px(*width, dpi),
+                    sp_to_px(w.max(0), dpi),
                     sp_to_px(height + depth, dpi),
                     (0, 0, 0),
                 );
