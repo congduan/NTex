@@ -7,7 +7,7 @@
 //! - 字体：TFM 8-bit 字体走 Type1 嵌入（PFB 流，见 [`crate::type1`]），
 //!   `/Encoding` 不指定——查看器用字体程序内建编码（cmr10 的 TeX 编码 =
 //!   DVI 字符码，天然一致）；`unicode_native` 字体（中文 Fandol 等，M9）
-//!   走 Type0/CIDFontType0 + `/FontFile3 /OpenType` 嵌入整个 OTF
+//!   走 Type0/CIDFontType0 + `/FontFile3 /CIDFontType0C`（裸 CFF）
 //!   （见 [`crate::otf`]），内容流字符写成两字节十六进制串（Identity-H），
 //!   **串值 = 字体 CFF charset 里的真 CID**（Unicode →（cmap）→ GID →
 //!   （charset）→ CID，见 [`crate::cid`]；Fandol 即 Adobe-GB1 CID——写
@@ -266,12 +266,23 @@ fn width_array(used: Option<&BTreeMap<u16, i64>>) -> String {
 
 /// 一族字体的嵌入形态。
 enum FontForm {
-    /// Type1：PFB 原样进 `/FontFile`（`/BaseFont` 取 PFB 内 `/FontName`，大写）。
-    Type1 { name: String, pfb: Vec<u8> },
-    /// Type0：OTF 原样进 `/FontFile3`（`/Subtype /OpenType`；仅 CFF/OTTO）。
+    /// Type1：PFB 原样进 `/FontFile`（`/BaseFont` 取 PFB 内 `/FontName`，大写）；
+    /// `/Widths` 按 TFM 度量逐码位列出（缺它查看器推进为 0，字形叠架）；
+    /// `/Encoding /Differences` 按 PFB 内建编码显式声明（缺它 CoreGraphics
+    /// 按 StandardEncoding 兜底，TeX 编码控制区的字形画成 notdef）。
+    Type1 {
+        name: String,
+        pfb: Vec<u8>,
+        /// 码位 0..=255 的推进宽（1/1000 em）。
+        widths: Vec<u16>,
+        /// 码位 0..=255 的字形名（PFB 内建编码，`None` = 未定义）。
+        encoding: Vec<Option<String>>,
+    },
+    /// Type0：裸 CID-keyed CFF 进 `/FontFile3`（`/Subtype /CIDFontType0C`，
+    /// 见 [`crate::cid::bare_cff`]）。
     /// `cid` = Unicode→真 CID 映射（见 [`crate::cid`]）；`None` 表示 CFF 解析
     /// 失败——此时内容流画不出任何字形，退回不嵌入降级以免写错映射。
-    Otf { otf: Vec<u8>, cid: Option<CidMap> },
+    Otf { cff: Vec<u8>, cid: Option<CidMap> },
     /// 不嵌入降级：`unicode=true` 仍给 Type0+后代字典（无 `/FontFile3`），
     /// `false` 退最小裸 Type1 字典（M8 行为）。
     Bare { unicode: bool },
@@ -334,7 +345,7 @@ fn classify_fonts(dvi: &Dvi) -> FontForms {
         let entry = if fm.unicode_native {
             classify_unicode(name)
         } else {
-            classify_type1(name)
+            classify_type1(name, fm)
         };
         of_font.push(uniq.len());
         uniq.push(entry);
@@ -378,15 +389,38 @@ fn classify_unicode(name: &str) -> FontEntry {
             return bare(name.to_owned());
         }
     };
+    // 剥掉 sfnt 壳只嵌裸 CFF（/CIDFontType0C）：整包 OTTO 以 /OpenType 嵌入
+    // 时 poppler/CoreGraphics 会把 CID 解析到错误字形（见 [`cid::bare_cff`]）
+    let cff = match cid::bare_cff(&bytes) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("警告：{e}（{name} 以不嵌入方式引用）");
+            return bare(name.to_owned());
+        }
+    };
     FontEntry {
         tex_name: name.to_owned(),
         base_name: name.to_owned(),
-        form: FontForm::Otf { otf: bytes, cid },
+        form: FontForm::Otf { cff, cid },
     }
 }
 
 /// TFM 8-bit 字体：Type1/PFB；找不到 PFB 则退裸字典（`/BaseFont` 用大写兜底名）。
-fn classify_type1(name: &str) -> FontEntry {
+///
+/// `widths_thousandths`：逐码位推进宽（1/1000 em 口径，与 TFM 度量同源）。
+/// 实测 poppler/CoreGraphics 在 Type1 无 `/Widths` 时把字形推进当 0 处理，
+/// 全行字形叠架成一团（resume 的 `\tt` 行与列表圆点即此症状），故必须写。
+fn type1_widths(fm: &ntex_font::FontMetrics) -> Vec<u16> {
+    let size_pt = font_size_pt(fm);
+    (0..=255u32)
+        .map(|code| {
+            let w_pt = fm.char_metrics(code).0 as f64 / SP_PER_PT;
+            (w_pt / size_pt * 1000.0).round() as u16
+        })
+        .collect()
+}
+
+fn classify_type1(name: &str, fm: &ntex_font::FontMetrics) -> FontEntry {
     match load_pfb(name) {
         Ok(f) => FontEntry {
             tex_name: name.to_owned(),
@@ -394,6 +428,8 @@ fn classify_type1(name: &str) -> FontEntry {
             form: FontForm::Type1 {
                 name: f.name,
                 pfb: f.pfb,
+                widths: type1_widths(fm),
+                encoding: f.encoding,
             },
         },
         Err(e) => {
@@ -512,13 +548,37 @@ fn build_document(
         } = e;
         let base_obj = nums[idx];
         match form {
-            FontForm::Type1 { name, pfb } => {
+            FontForm::Type1 {
+                name,
+                pfb,
+                widths,
+                encoding,
+            } => {
                 let (dict_obj, desc_obj, file_obj) = (base_obj, base_obj + 1, base_obj + 2);
+                let widths_str = widths
+                    .iter()
+                    .map(|w| w.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                // /Differences：仅列 PFB 内建编码给出的码位（逐项显式编号，
+                // 容忍稀疏）；内建编码缺失（非标准 PFB）时省略整个键
+                let diffs: String = encoding
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(code, g)| g.as_ref().map(|g| format!("{code} /{g}")))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let enc_key = if diffs.is_empty() {
+                    String::new()
+                } else {
+                    format!(" /Encoding << /Differences [{diffs}] >>")
+                };
                 obj(
                     &mut buf,
                     &mut offsets,
                     format!(
                         "{dict_obj} 0 obj << /Type /Font /Subtype /Type1 /BaseFont /{name} \
+                         /FirstChar 0 /LastChar 255 /Widths [{widths_str}]{enc_key} \
                          /FontDescriptor {desc_obj} 0 R >> endobj"
                     )
                     .as_bytes(),
@@ -539,7 +599,7 @@ fn build_document(
                 fbody.extend_from_slice(b"\nendstream\nendobj");
                 obj(&mut buf, &mut offsets, &fbody);
             }
-            FontForm::Otf { otf, cid } => {
+            FontForm::Otf { cff, cid } => {
                 let (dict_obj, cid_obj, desc_obj, file_obj) =
                     (base_obj, base_obj + 1, base_obj + 2, base_obj + 3);
                 // CIDSystemInfo：如实照抄字体的 ROS；缺 ROS（退化映射）时保持
@@ -587,11 +647,11 @@ fn build_document(
                     .as_bytes(),
                 );
                 let mut fbody = format!(
-                    "{file_obj} 0 obj << /Subtype /OpenType /Length {} >>\nstream\n",
-                    otf.len()
+                    "{file_obj} 0 obj << /Subtype /CIDFontType0C /Length {} >>\nstream\n",
+                    cff.len()
                 )
                 .into_bytes();
-                fbody.extend_from_slice(otf);
+                fbody.extend_from_slice(cff);
                 fbody.extend_from_slice(b"\nendstream\nendobj");
                 obj(&mut buf, &mut offsets, &fbody);
             }
@@ -842,6 +902,29 @@ mod tests {
         // /BaseFont 来自 PFB /FontName（Type1 惯例大写）
         assert!(s.contains("/BaseFont /CMR10 "), "{s}");
         assert!(s.contains("/BaseFont /CMTT10 "), "{s}");
+        // /Widths 必写（1/1000 em，与 TFM 度量同源）：缺它 poppler/CoreGraphics
+        // 把字形推进当 0，整行字形叠架成一团（2026-09-13 resume \tt 行现场）
+        assert_eq!(s.matches("/Widths [").count(), 2, "{s}");
+        // cmr10 'T'（0x54）槽位的宽度 = TFM 推进折算千分数（与度量自洽）
+        {
+            let probe = test_dvi().expect("cmr10 度量");
+            let fm0 = &probe.fonts[0];
+            let w1000 = (fm0.char_metrics(u32::from(b'T')).0 as f64 / SP_PER_PT / font_size_pt(fm0)
+                * 1000.0)
+                .round() as u16;
+            let widths = s
+                .split("/Widths [")
+                .nth(1)
+                .unwrap()
+                .split(']')
+                .next()
+                .unwrap();
+            assert_eq!(
+                widths.split_whitespace().nth(0x54),
+                Some(&w1000.to_string()[..]),
+                "cmr10 0x54 槽位应为 TFM 宽度 {w1000}：[{widths}]"
+            );
+        }
         // 两组 FontDescriptor + /FontFile（6 字体同机制，此处抽查 2 族）
         assert_eq!(s.matches("/FontFile ").count(), 2, "{s}");
 
@@ -947,7 +1030,11 @@ mod tests {
         assert!(s.contains("/Subtype /CIDFontType0"), "{s}");
         assert!(s.contains("/Encoding /Identity-H"), "{s}");
         assert!(s.contains("/FontFile3"), "{s}");
-        assert!(s.contains("/Subtype /OpenType /Length"), "{s}");
+        assert!(s.contains("/Subtype /CIDFontType0C /Length"), "{s}");
+        assert!(
+            !s.contains("/Subtype /OpenType"),
+            "不得再以 OTTO 整包嵌入：{s}"
+        );
         assert!(s.contains("/DW 1000"), "{s}");
         // CIDSystemInfo 照抄字体 CFF 的 ROS（FandolSong = Adobe-GB1-5）
         assert!(
@@ -975,18 +1062,25 @@ mod tests {
         );
         // 不应再有 TFM 时代的八位字面串字形
         assert!(!s.contains("/Subtype /Type1"), "{s}");
-        // OTF 字节原样嵌入（/FontFile3 流体逐字节等于注册字节）——嵌入的是
-        // 字体本体，CID 改写只发生在内容流侧，字体不需要任何重组
-        let marker = format!("<< /Subtype /OpenType /Length {} >>\nstream\n", otf.len());
+        // 裸 CID-keyed CFF 嵌入（/CIDFontType0C）：流体 = sfnt 内 CFF 表原样，
+        // 以裸 CFF 魔数（header major=1）开始；整包 OTTO 嵌入会让 poppler/
+        // CoreGraphics 把 CID 解析到错误字形（2026-09-13 实验定标）
+        let marker = format!("<< /Subtype /CIDFontType0C /Length {} >>\nstream\n", {
+            let cff = crate::cid::bare_cff(&otf).unwrap();
+            assert_ne!(cff.len(), otf.len(), "裸 CFF 应小于 sfnt 整包");
+            cff.len()
+        });
         let pos = pdf
             .windows(marker.len())
             .position(|w| w == marker.as_bytes())
             .expect("FontFile3 流头");
+        let cff = crate::cid::bare_cff(&otf).unwrap();
         assert_eq!(
-            &pdf[pos + marker.len()..pos + marker.len() + otf.len()],
-            &otf[..],
-            "OTF 应原样嵌入"
+            &pdf[pos + marker.len()..pos + marker.len() + cff.len()],
+            &cff[..],
+            "裸 CFF 应原样嵌入"
         );
+        assert_eq!(&cff[..2], &[0x01, 0x00], "CFF 头魔数");
     }
 
     /// Unicode 字体未注入 OTF：降级为 Type0+后代字典（无 FontFile3），

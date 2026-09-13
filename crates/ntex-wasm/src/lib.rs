@@ -30,7 +30,7 @@
 //! 5. PDF 导出（[`Document::pdf_bytes`] / [`CompileResult::pdf_bytes`]）：与
 //!    native `ntex-pdf` 同一份 DVI→PDF 代码，**字体嵌入只能来自宿主注入**——
 //!    TFM 8-bit 字体走 Type1 PFB（[`set_pfb_font`]），OTF 字体（中文 Fandol
-//!    等）经 [`set_otf_font`] 注入时顺带登记 Type0/OpenType 嵌入用字节
+//!    等）经 [`set_otf_font`] 注入时顺带登记 Type0（裸 CFF）嵌入用字节
 //!    （`ntex_pdf::otf::register_otf`）。`ntex-pdf` 的宿主查找链（环境变量
 //!    目录 / TeX Live 路径 / kpsewhich）为 native 专属，见
 //!    `ntex-pdf/src/type1.rs::read_host_pfb` 与 `otf.rs::read_host_otf`
@@ -562,7 +562,7 @@ pub fn set_glyph_font(tex_name: &str, bytes: &[u8]) -> bool {
 /// 为覆盖。字节非 PFB（段头不是 `0x80 0x01`，如误传 OTF）返回 false 不 panic。
 ///
 /// **OTF 字体（中文 Fandol 等）不走这里**——[`set_otf_font`] 注入的字节会
-/// 顺带登记进 PDF 侧 OTF 注册表，导出按 Type0/OpenType 嵌入，无需另配 PFB。
+/// 顺带登记进 PDF 侧 OTF 注册表，导出按 Type0（裸 CFF）嵌入，无需另配 PFB。
 #[wasm_bindgen]
 pub fn set_pfb_font(tex_name: &str, bytes: &[u8]) -> bool {
     ntex_pdf::type1::register_pfb(tex_name, bytes)
@@ -578,7 +578,7 @@ pub fn set_pfb_font(tex_name: &str, bytes: &[u8]) -> bool {
 ///    `Document::set_glyphs(true)` 后按 cmap 直查画轮廓（`FontMetrics::
 ///    unicode_native` 直通 Unicode 码位）；
 /// 3. **PDF 导出**：转交 `ntex_pdf::otf::register_otf`，写出端按
-///    Type0/CIDFontType0 + `/FontFile3 /OpenType` 嵌入；内容流 CID 由
+///    Type0/CIDFontType0 + `/FontFile3 /CIDFontType0C`（裸 CFF）嵌入；内容流 CID 由
 ///    `ntex_pdf::cid` 按字体 cmap+charset 换算为**字体真 CID**（Fandol 为
 ///    Adobe-GB1，非 Unicode 码位）——中文 PDF 从此真嵌字体，无需 Type1 PFB。
 ///
@@ -606,7 +606,7 @@ pub fn set_otf_font(tex_name: &str, bytes: &[u8]) -> bool {
     // 中文文档导出 PDF 必报「找不到 TFM：FandolSong-Regular」。
     // 失败不阻断（注册表锁毒化属环境异常，排版/渲染两路不受影响）。
     ntex_font::register_metrics(tex_name, metrics);
-    // PDF 侧同步登记 OTF 字节（Type0/OpenType 嵌入用）。同名覆盖幂等；
+    // PDF 侧同步登记 OTF 字节（Type0 裸 CFF 嵌入用）。同名覆盖幂等；
     // 失败不阻断（届时 PDF 端按不嵌入降级，行为同旧版）。
     ntex_pdf::otf::register_otf(tex_name, bytes);
     let Ok(mut table) = OTF_METRICS.lock() else {
@@ -1035,7 +1035,7 @@ mod tests {
 
         // 中文文档导出 PDF：度量经注册表命中后写出成功。OTF 字节已随
         // [`set_otf_font`] 登记进 PDF 侧注册表（`ntex_pdf::otf::register_otf`）
-        // → 按 Type0/CIDFontType0 + /FontFile3(/OpenType) 嵌入，内容流写
+        // → 按 Type0/CIDFontType0 + /FontFile3(/CIDFontType0C) 嵌入，内容流写
         // 字体真 CID（`ntex_pdf::cid` 换算），不再是「未嵌入降级」
         // （2026-09-13 修复，警告条原文：「FandolSong-Regular 未找到 Type1
         // 字形数据，未嵌入」）。

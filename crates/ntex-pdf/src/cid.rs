@@ -101,6 +101,24 @@ impl fmt::Display for CidError {
 
 impl std::error::Error for CidError {}
 
+/// 从 sfnt（OTTO）容器抽出裸 CFF 表。
+///
+/// 用于 PDF 嵌入：CIDFontType0 的 `/FontFile3` 应为 **裸 CID-keyed CFF**
+/// （`/Subtype /CIDFontType0C`，dvipdfmx 同款做法）。实验证实：整包 OTTO
+/// 以 `/Subtype /OpenType` 嵌入时，poppler/CoreGraphics 对同一 CID 解析出
+/// 错误字形（内容流 CID 与 xdvipdfmx 逐字节一致仍错），剥壳后即正常。
+pub fn bare_cff(bytes: &[u8]) -> Result<Vec<u8>, CidError> {
+    let tables = sfnt_tables(bytes).ok_or_else(|| CidError("非 sfnt 字节（无表目录）".into()))?;
+    let (cff_off, cff_len) = tables
+        .iter()
+        .find(|(tag, _)| *tag == *b"CFF ")
+        .ok_or_else(|| CidError("无 CFF 表（TrueType/glyf 轮廓）".into()))?
+        .1;
+    Ok(slice(bytes, cff_off, cff_len)
+        .ok_or_else(|| CidError("CFF 表越界".into()))?
+        .to_vec())
+}
+
 /// 从 sfnt（OTTO/CFF）字节构建 CID 映射。
 pub fn build(bytes: &[u8]) -> Result<CidMap, CidError> {
     let tables = sfnt_tables(bytes).ok_or_else(|| CidError("非 sfnt 字节（无表目录）".into()))?;

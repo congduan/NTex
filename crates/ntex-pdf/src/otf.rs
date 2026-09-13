@@ -1,7 +1,8 @@
 //! OTF/CFF 字体（OpenType）嵌入支撑（M9 中文 PDF 导出）。
 //!
 //! 中文 Fandol 等字体只有 OTF/CFF 形态、无 Type1 PFB——PDF 侧按
-//! Type0/CIDFontType0 + `/FontFile3 /OpenType` 嵌入整个 sfnt 文件
+//! Type0/CIDFontType0 路径的 sfnt 定位与登记（写出端取其裸 CFF 表作
+//! `/FontFile3 /CIDFontType0C`，见 [`crate::cid::bare_cff`]）
 //! （PDF 1.6+ 合法；PDF 头仍写 1.4 时多数查看器同样接受，见 [`crate::pdf`]）。
 //! 本层与 [`crate::type1`] 对称：只负责**定位与校验字体字节**，不解析
 //! 字形数据；CID 映射与对象组装在 [`crate::pdf`]。

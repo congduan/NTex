@@ -2,11 +2,15 @@
 //!
 //! 取代临时 Helvetica 切片：解析 `ntex-dvi` 产出的 DVI，写出 PDF 1.4——
 //! Type1 字体以 PFB 嵌入、绝对坐标定位字符、`re f` 填充规则。
-//! Unicode 直映字体（中文 Fandol 等，M9）走 Type0/CIDFontType0 +
-//! `/FontFile3 /OpenType` 嵌入整个 OTF（见 [`otf`]），内容流里字符以
-//! 两字节十六进制串写出，**串值 = 字体 CFF charset 里的真 CID**（中文
+//! Unicode 直映字体（中文 Fandol 等，M9）走 Type0/CIDFontType0，内容流里
+//! 字符以两字节十六进制串写出，**串值 = 字体 CFF charset 里的真 CID**（中文
 //! Fandol 即 Adobe-GB1 CID，见 [`cid`]；写 Unicode 会让查看器 CID→字形
-//! 查表落空、整页空白——2026-09-13 修复）。
+//! 查表落空、整页空白——2026-09-13 修复）；嵌入取 sfnt 内**裸 CFF 表**
+//! （`/Subtype /CIDFontType0C`，见 [`cid::bare_cff`]；整包 OTTO 以
+//! `/OpenType` 嵌入时 poppler/CoreGraphics 会把同一 CID 解析到错误字形）。
+//! Type1（[`type1`]）除 PFB 外还写 `/Widths`（TFM 同源，缺它查看器推进
+//! 为 0、整行字形叠架）与 `/Encoding /Differences`（PFB 内建编码，缺它
+//! CoreGraphics 按 StandardEncoding 兜底、控制区字形画成 notdef）。
 //!
 //! 多字体（M8，2026-09-04 验证）：CM 全家族（cmr10/cmbx10/cmss12/cmtt10/
 //! cmmi10/cmsy10/cmex10 等多号数）同链嵌入——`/BaseFont`/`/FontDescriptor`

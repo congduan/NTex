@@ -65,6 +65,12 @@ pub struct Type1Font {
     pub name: String,
     /// 原始 PFB 字节（PDF `/FontFile` 流内容）。
     pub pfb: Vec<u8>,
+    /// 内建编码表：码位 → 字形名（下标即码位，0..=255；`None` = 未定义）。
+    /// 取自 PFB ASCII 段的 `/Encoding 256 array … dup N /Name put` 程序。
+    /// 写出端据此生成 `/Encoding << /Differences … >>`——实测 CoreGraphics
+    /// 对无 `/Encoding` 的 Type1 按 StandardEncoding 兜底，TeX 编码里落在
+    /// 控制区的字形（cmsy10 的 `\cdot`=0x01、bullet=0x0F）会画成 notdef。
+    pub encoding: Vec<Option<String>>,
 }
 
 impl Type1Font {
@@ -72,7 +78,12 @@ impl Type1Font {
     /// 两条来源（注册表/文件系统）共用，保证 `/BaseFont` 命名口径一致。
     fn from_pfb(tex_name: &str, pfb: Vec<u8>) -> Self {
         let name = extract_font_name(&pfb).unwrap_or_else(|| tex_name.to_ascii_uppercase());
-        Self { name, pfb }
+        let encoding = extract_encoding(&pfb);
+        Self {
+            name,
+            pfb,
+            encoding,
+        }
     }
 }
 
@@ -212,6 +223,59 @@ fn extract_font_name(pfb: &[u8]) -> Option<String> {
     Some(name.trim().to_owned())
 }
 
+/// 从 PFB ASCII 段解析 `/Encoding` 的 `dup N /Name put` 序列。
+///
+/// CM 系列 PFB 的写法固定为 `/Encoding 256 array 0 1 255 {…put} for` 后跟
+/// 逐项 `dup N /Name put`；非此形态（如 `StandardEncoding def`）返回全
+/// `None`，调用方跳过 `/Differences`。容忍截断/乱序：解析到多少算多少。
+fn extract_encoding(pfb: &[u8]) -> Vec<Option<String>> {
+    let mut out = vec![None; 256];
+    let Some(text) = ascii_segment(pfb) else {
+        return out;
+    };
+    let Some(enc_start) = text.find("/Encoding") else {
+        return out;
+    };
+    // 编码程序体：从 /Encoding 起到收束的 `def`（`readonly def` 或行首独立
+    // `def`）。**不能用子串查找 "def"**——CM 字体的填充循环里就有 `/.notdef`，
+    // 会把编码块错切一半（2026-09-13 圆点缺失现场：dup 序列全被丢弃）。
+    let body_full = &text[enc_start..];
+    let body_end = body_full
+        .find("readonly def")
+        .or_else(|| body_full.find("\ndef"))
+        .unwrap_or(body_full.len());
+    let body = &body_full[..body_end];
+    let mut search = 0;
+    while let Some(rel) = body[search..].find("dup ") {
+        let p = search + rel + 4;
+        let rest = &body[p..];
+        let tokens: Vec<&str> = rest.split_whitespace().collect();
+        // 完整形态是三 token：`<code> /<name> put`——要求 `put` 收尾，
+        // 避免把别处 `dup` 用法（如 `dict dup begin`）误当编码项
+        if tokens.len() >= 3 && tokens[2] == "put" {
+            if let (Ok(code), Some(glyph)) =
+                (tokens[0].parse::<usize>(), tokens[1].strip_prefix('/'))
+            {
+                if code < 256 && !glyph.is_empty() {
+                    out[code] = Some(glyph.to_owned());
+                }
+            }
+        }
+        search = p;
+    }
+    out
+}
+
+/// PFB 首个 ASCII 段的文本（无则 `None`）。
+fn ascii_segment(pfb: &[u8]) -> Option<&str> {
+    let head = pfb.iter().position(|&b| b == 0x80)? + 4;
+    let ascii_end = pfb[head..]
+        .iter()
+        .position(|&b| b == 0x80)
+        .map_or(pfb.len(), |p| head + p);
+    std::str::from_utf8(&pfb[head..ascii_end]).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,6 +314,41 @@ mod tests {
             assert_eq!(font.name, expected, "{name} 的 /FontName 应为 {expected}");
             assert_eq!(&font.pfb[..2], &[0x80, 1], "PFB 头应原样（0x80 01）");
         }
+    }
+
+    #[test]
+    fn extracts_real_cm_encoding_despite_notdef_trap() {
+        // 回归（2026-09-13）：CM PFB 的填充循环 `{ 1 index exch /.notdef put} for`
+        // 里 `/.notdef` 含子串 "def"——旧实现按首个 "def" 截断，编码块被错切
+        // 一半，`/Encoding /Differences` 整个丢失，CoreGraphics 把 TeX 控制
+        // 区字形（如 cmsy10 的 \bullet=0x0F）按 StandardEncoding 画成错形。
+        // 用真实 cmsy10.pfb 验证（机器上有备料则跑真件，否则用等形构造件）。
+        if let Ok(font) = load_pfb("cmsy10") {
+            assert_eq!(
+                font.encoding[0].as_deref(),
+                Some("minus"),
+                "cmsy10 码位 0 应为 /minus"
+            );
+            assert_eq!(
+                font.encoding[0x0F].as_deref(),
+                Some("bullet"),
+                "cmsy10 码位 0x0F 应为 /bullet（\\item 圆点）"
+            );
+        }
+        // 构造件：与 CM 形态逐字一致，不依赖环境备料
+        let ascii = b"/FontName /CMXX10 def\n\
+                      /Encoding 256 array\n\
+                      0 1 255 { 1 index exch /.notdef put} for\n\
+                      dup 0 /minus put\n\
+                      dup 15 /bullet put\n\
+                      readonly def\n";
+        let mut pfb = vec![0x80, 1];
+        pfb.extend((ascii.len() as u16).to_le_bytes());
+        pfb.extend_from_slice(ascii);
+        let font = Type1Font::from_pfb("cmxx10", pfb);
+        assert_eq!(font.encoding[0].as_deref(), Some("minus"));
+        assert_eq!(font.encoding[15].as_deref(), Some("bullet"));
+        assert!(font.encoding[1].is_none(), "未列码位应保持 None");
     }
 
     #[test]
