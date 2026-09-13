@@ -17,6 +17,8 @@
 | 文件 | 内容 | 价值 |
 |---|---|---|
 | `l3kernel/UnicodeData.txt` | Unicode 字符数据库（Unicode, Inc.，Unicode License；本地抓自 TeX Live 2024 `texmf-dist/tex/generic/unicode-data/`，2023-09-19 版，1.9MB） | `expl3-code.tex` codepoint 模块在载入期 `\ior_open:Nn \g__codepoint_data_ior { UnicodeData.txt }` 逐行读取建字符类/ blocks 表。NTex 无 kpathsea 树，**缺失时 `\openin` 失败路径当前会死循环**（见下），必经 `--input-path fixtures/l3kernel` 提供 |
+| `l3kernel/expl3-code.tex` | expl3 宏层实现本体（docstrip 生成版，1387070B，LPPL 1.3c；md5 `7a1cc7249b9eeccb4029956317d7a295`，与 `/tmp/l3kernel-tests` 缓存一致） | LaTeX 兼容战役与 lvt 跑分（`scripts/lvt-run.py`）的核心分母。2026-09-13 入库——此前只存 `/tmp`，整机重启即丢（blocker-history 有先例），`lvt-run.py` 的 `ensure_expl3` 与 `expl3_probe.py` 均已接 fixtures 回落臂 |
+| `l3kernel/exgeneric.tex` | expl3 generic 载入器（3040B，plain 形态正解，见 `docs/expl3-real-workload.md` 终局对拍节） | 与 expl3-code.tex 配对使用；`lvt-run.py` EXPL3_FILES 同源 |
 
 expl3 载入复现（plain 形态，引擎经 `\input expl3-generic.tex`，backend def 缺失时
 NTex fallback 请求 dvips——一并经 `--input-path` 提供拷贝即可）：

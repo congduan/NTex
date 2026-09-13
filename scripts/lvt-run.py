@@ -79,6 +79,9 @@ def ensure_expl3(tf: Path) -> bool:
     来源优先级：
       1. 已缓存（`CACHE/expl3-built/`，最快）
       2. `EXPL3_SRC` 环境变量指向的目录（供手工生成/调试）
+      2.5. 仓库内 `fixtures/l3kernel/`（2026-09-13 入库，LPPL；md5
+           7a1cc7249b9eeccb4029956317d7a295——/tmp 缓存随整机重启丢失，
+           fixtures 让跑分/探针开箱即用）
       3. 用 latex3 仓库的 `l3kernel.ins` + 一个 TeX 引擎 docstrip 生成
 
     返回 True 表示两文件就位。生成失败不致命——退回「无 expl3」模式，
@@ -95,6 +98,11 @@ def ensure_expl3(tf: Path) -> bool:
     if src_env and all((Path(src_env) / f).exists() for f in EXPL3_FILES):
         for f in EXPL3_FILES:
             shutil.copy(Path(src_env) / f, tf / f)
+        return True
+    fixtures = REPO / "fixtures" / "l3kernel"
+    if all((fixtures / f).exists() for f in EXPL3_FILES):
+        for f in EXPL3_FILES:
+            shutil.copy(fixtures / f, tf / f)
         return True
     # TeX Live 本地分发（kpsewhich）：loader 与 expl3-code.tex 同版本，
     # `\ifx\ExplLoaderFileDate\ExplFileDate` 校验必过，比 docstrip 生成快得多。

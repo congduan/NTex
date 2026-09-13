@@ -12,9 +12,10 @@ pdfTeX（TinyTeX，`~/.local/bin/pdftex -interaction=nonstopmode <probe>`
 | `probe-pdfstrcmp-expand.tex`（stub12）| `\pdfstrcmp`（`\__fp_str_if_eq:nn`）实参组内展开 | V1 `1`（原义收集则 0）|
 | `probe-fp.tex` + `exgeneric.tex` | 全载 expl3 + `\fp_const:Nn \c_e_fp`（fp 首错现场，l.18141）| 2 错（探针自身）/ FP-OK 1 |
 
-`exgeneric.tex` 是 expl3 载入垫片（来源 = `scripts/lvt` harness 同款），
-`probe-fp.tex` 依赖同目录的 `expl3-code.tex`（未入库，从
-`/tmp/l3kernel-tests/` 或 TL tlnet 取，md5 7a1cc7249b9eeccb4029956317d7a295）。
+`exgeneric.tex` 是 expl3 载入垫片（来源 = `scripts/lvt` harness 同款，
+**已入库** `fixtures/l3kernel/`），`probe-fp.tex` 依赖同目录的
+`expl3-code.tex`（基准件已入库 `fixtures/l3kernel/`，md5
+7a1cc7249b9eeccb4029956317d7a295；跑前 `cp` 过来即可）。
 
 第四刀（数字循环尾无条件展开，573→23）补丁正文与落地清单：
 `docs/expl3-lvt-scoreboard.md` 第三刀节 + 附录 A。

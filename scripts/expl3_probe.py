@@ -37,8 +37,19 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 PDFTEX = Path.home() / ".local" / "bin" / "pdftex"
-EXPL3 = Path("/tmp/l3kernel-tests/testfiles/expl3-code.tex")
-GEN = Path("/tmp/iw/exgeneric.tex")
+# expl3 备料优先级：/tmp 缓存 → 仓库 fixtures（2026-09-13 入库，防 /tmp
+# 随整机重启丢失）→ 可用环境变量 EXPL3_SRC 覆盖。
+_FIX_EXPL3 = REPO / "fixtures" / "l3kernel"
+EXPL3 = (
+    Path("/tmp/l3kernel-tests/testfiles/expl3-code.tex")
+    if Path("/tmp/l3kernel-tests/testfiles/expl3-code.tex").exists()
+    else _FIX_EXPL3 / "expl3-code.tex"
+)
+GEN = (
+    Path("/tmp/iw/exgeneric.tex")
+    if Path("/tmp/iw/exgeneric.tex").exists()
+    else _FIX_EXPL3 / "exgeneric.tex"
+)
 
 # 载入完成判据 stub（探测 LOADED-OK 与否）
 DEFAULT_TAIL = "\\end\n"
@@ -167,7 +178,7 @@ def main():
 
     args = ap.parse_args()
     if not EXPL3.exists() or not GEN.exists():
-        print("环境缺失：需要 /tmp/l3kernel-tests/testfiles/expl3-code.tex 与 /tmp/iw/exgeneric.tex",
+        print(f"环境缺失：需要 expl3-code.tex 与 exgeneric.tex（找过 /tmp 缓存与 {_FIX_EXPL3}）",
               file=sys.stderr)
         return 2
     return {"dist": cmd_dist, "first": cmd_first, "bisect": cmd_bisect}.get(
