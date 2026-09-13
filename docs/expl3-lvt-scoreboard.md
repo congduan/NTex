@@ -3,6 +3,77 @@
 > **本文档是 expl3 攻坚的进度仪表盘。** 状态源：`scripts/lvt-run.py`。
 > 上游权威数据：`latex3/latex3` 仓库 `l3kernel/testfiles/`（每例配 `.tlg` 期望转录）。
 
+## 09-13 复测·四（载入终点定位）爆栈循环主体 = expl3 quark `\q_stop` 自展开
+
+**本节的分数与上一节相同**（`lvt-run.py --all` 仍 STACK 187/187）——它记的是
+**定位推进**：载入的硬阻塞（终点爆栈）**第一次拿到 token 级现场**。探针入库：
+`probes/fp-load/probe-load.tex`（纯载入唯一口径，走通才打印 `[LOAD-DONE]`）。
+
+### 仪器侧（先修仪器；事故 #8，见 `docs/tooling-trust.md` §2.7）
+
+`NTEX_STACK_DUMP*` 在宏递归爆栈现场**此前永远不触发**：
+- 转储只挂在 `fetch()` 的 `len > MAX_INPUT_STACK` 兜底上，而宏帧守卫
+  `call_macro_inner` 用 `len >= MAX_INPUT_STACK` **先命中** → 最需要现场的
+  宏/字节码递归爆栈恰恰拿不到转储；
+- 逐帧转储取 `stack[..head]`（栈**底**）却按 `n-1-i` 标注成「栈顶帧」——
+  **底/顶反转**：栈顶看循环主体、栈底看起点，方向反了结论必反；
+- 帧型渲染漏 `Macro`/`MacroArg`/`AlignU`/`AlignV`/`OutputRoutine` 五种
+  （全部落 `Other`），而宏递归现场全是 `Macro`/`Bytecode` 帧。
+
+修后新增：`at=`（帧的**当前 pos** = 正在展开哪几个 token；`head=` 只说明
+「这是哪一帧」，长宏体上只看 head 会失明）、`NTEX_STACK_DUMP_BOTTOM=N`、
+`NTEX_CALL_TRACE=N`（宏调用环形轨迹——栈只含**未弹出**帧，入口帧早已弹出）。
+方向性单测：`crates/ntex-core/src/expand/tests_diag.rs`（8 例）。
+
+### 现场（`probe-load.tex`，`57cf379` 之后）
+
+| 量 | 值 |
+|---|---|
+| 错误数 / `\???` 签名 | 573 / 6 —— 与第三刀基线**逐位一致**（文档数字未漂移）|
+| 最远到达 | ≈ l.27,200（l3regex 段；watchdog `Source(pos=937113/1387070)` = 67.6%）|
+| 终止形态 | `TeX capacity exceeded, sorry [input stack size = 5000]`，无 `[LOAD-DONE]` |
+| 栈型直方图 | `{Bytecode: 4997, MacroArg: 2, TokenList: 1}` |
+| 栈顶 60 帧签名 | **60 × `Bytecode[\q_stop end]`**（100% 同一族）|
+| 自展开层数 | `\q_stop` **4993 层** |
+
+**入口链（调用轨迹一次给出，可复跑复现）**：
+
+```
+… \ior_if_eof:NF \use_i:nn \tl_head:w \c_hash_str \tl_if_blank:nF \use:n
+  \__codepoint_data_auxi:w → \__codepoint_data_auxii:w → \__codepoint_data_auxiii:w
+  → \cs_set_nopar:cpe → \exp_args:Nc → \q_stop × 4993
+```
+
+**定性**：`\q_stop` 是 expl3 **quark**——`\quark_new:N`（expl3-code L3250-3254）
+用 `\cs_gset_nopar:Npn #1 {#1}` 把它定义成**自展开宏**，语义上只能当**定界符**
+被吞掉（在 TeX 里被当普通宏展开同样会死循环，所以这不是「NTex 怕自展开」）。
+NTex 走到了「把它当普通宏展开」的位置：`\exp_args:Nc`（L1511-1512
+`\exp_after:wN #1 \cs:w #2 \cs_end:`，即 `c` 变体的 csname 构造路径），
+4993 层自复制把输入栈打满。
+
+**已证伪的假设（两次对照电池，双引擎取值逐字一致——别在下一轮重走）**：
+
+| 假设 | 对照形状 | 结果 |
+|---|---|---|
+| 定界符匹配失败（单 token / 多参数） | `\C p \q_stop`、`\D m;n\q_stop`、`\B a;…;i \q_stop` | 双引擎 `<C:p\|>`/`<D:m\|n\|>`/`<B:a\|i>` **一致** |
+| 跨外层组 `}` 继续扫描（L36057 形状） | `\U{ \auxA X lower Y } \q_stop` | 一致 `<A:X\|lower\|Y\|\|>` |
+| `;`+空格 多 token 定界（L36055 形状） | `\U{ \auxB p; q; r; } ; \q_stop`、`\U{ \auxC m; n; o } \q_stop` | 一致 `<B:p\| q\| r\|  \| >` / `<C:m\| n\| o  >` |
+| `\csname` 内 quark 的差异 | `\csname \q_stop ab\endcsname` | **双引擎都无限循环**（`\csname` 会展开内容）⇒ 非 NTex 独有，**别拿它当靶子** |
+
+**下一刀靶子（按信息量排）**：
+1. **`\exp_args:Nc` 的 `#2`（csname 规格）为何带出 439-token 的 MacroArg**，
+   且 `\cs_end:` 未被先匹配到——栈底现场 frame 6 = `MacroArg[rem=334/439]`，
+   `at=` 显示 `{ grapheme } \ior_close:N \g__codepoint_data_ior \exp_after:wN
+   \__iow_wrap_line_loop:w …`（据 pos 推进量推断，被展开的 `\q_stop` 在该
+   MacroArg 索引 ~104 处）。即 `\cs_set_nopar:cpe`（L2086-2089 `\__cs_tmp:w`
+   生成的**只发射 token 的别名** `{ \exp_args:Nc \cs_set_nopar:Npe }`）→
+   `\exp_args:Nc` 这一段。
+2. **栈底 frame 0 是 `TokenList[rem=1/1] \par`** —— 一个游离 `\par` 进入了
+   `\ior_str_map_inline` 行映射循环。若它破坏了 `;` 字段对齐，
+   `\__codepoint_data_auxiii:w`（L35767，9 个 `;` 字段 + `~ \q_stop`）会向前
+   扫到 `\q_stop` 才停 —— 与「入口链里 auxiii 紧邻出现」的现象吻合。
+3. cctab 集群（522/573 = 91%）仍未定性（本轮未推进）。
+
 ## 最新基线（2026-09-13 复测·第三刀）fp 首错三偏差修复 + 第四偏差（数字循环全展开）已定位待落地
 
 | 指标（全载探针 `probe-fp.tex`：exgeneric + expl3-code 全文 + `\fp_const:Nn \c_e_fp`） | 二刀后 | 本刀（落地部分） | 本刀（含实验版第四刀，未落地） |

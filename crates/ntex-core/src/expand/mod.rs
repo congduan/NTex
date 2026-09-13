@@ -16,7 +16,7 @@
 //! - M1-11 组作用域（朴素快照回滚 + `\global`）已实现；
 //! - 空行 → `\par` 已实现（`scan_token` 行状态机，A2）。
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 // 原子量/Mutex 仅线程看门狗用（M8-A WASM 骨架线：wasm32 下看门狗整段门控，
 // 随之不导入，免 wasm 构建出现 unused import 警告）。
 #[cfg(not(target_arch = "wasm32"))]
@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::sync::{Arc, OnceLock};
 
-use crate::bytecode::{compile, Bytecode};
+use crate::bytecode::{compile, Bytecode, Instruction};
 use crate::catcode::{Catcode, CatcodeTable};
 use crate::eqtb::{EqSlot, Eqtb, Primitive, StreamKind};
 use crate::error::{Error, Result};
@@ -51,6 +51,17 @@ type FontLoad = (String, Option<i64>, Option<i64>);
 /// sorry [input stack size=N]" 致命终止；本引擎由 [`Expander::call_macro`]
 /// 入口检查同一上限（防御单步内的无界递归——主循环 10M 步看门狗够不到）。
 const MAX_INPUT_STACK: usize = 5000;
+
+/// 宏调用轨迹环形缓冲上限（诊断用；`NTEX_CALL_TRACE=N` 开启，N = 转储段数）。
+///
+/// 输入栈只保留**未弹出的**帧，而递归循环的入口帧往往早已弹出——想回答
+/// 「谁把自展开的宏打进流里」只能靠调用轨迹（2026-09-13 expl3 载入 l.27200
+/// 现场：栈上 4997 帧全是 `\q_stop`，看不出上游是谁）。
+///
+/// ⚠ 容量必须**大于输入栈上限**：循环自身就把栈压到 5000 帧，缓冲若比它小，
+/// 尾巴全被循环吞掉，入口帧（答案所在）已被挤出（4096 首版即栽在这里）。
+/// 取 64K 段 ≈ 256 KB，仅诊断开启时分配。
+const MACRO_TRACE_CAP: usize = 1 << 16;
 
 /// `Params.misc` 下标（与 `free::int_param_index` 对齐）：`\deadcycles`、
 /// `\maxdeadcycles`、`\outputpenalty`（输出例程刀 1 的 fire_up 点火侧语义）。
@@ -685,6 +696,9 @@ pub struct Expander {
     /// .,?!=3000、:=2000、;=1500、,=1250，由排版器按 plain 默认初始化）。
     sfcodes: [u32; 256],
     stack: Vec<InputFrame>,
+    /// 宏调用环形轨迹（诊断开关；默认 `None` = 零开销）。
+    /// 见 [`MACRO_TRACE_CAP`]：栈帧只回答「谁还在栈上」，轨迹才回答「谁调用了谁」。
+    macro_trace: Option<VecDeque<u32>>,
     /// 输出 sink（M3-2）：token/组/原语事件流；默认 [`VecSink`] 收集 token。
     sink: Box<dyn TokenSink>,
     /// 展开区域（\edef/\write/\message）期间 sink 被临时替换为 VecSink，
@@ -884,6 +898,11 @@ impl Expander {
             catcodes: CatcodeTable::new(),
             sfcodes: [1000; 256],
             stack: Vec::new(),
+            macro_trace: std::env::var("NTEX_CALL_TRACE")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+                .filter(|n| *n > 0)
+                .map(|n| VecDeque::with_capacity(n.min(MACRO_TRACE_CAP))),
             sink: Box::new(VecSink::default()),
             query_sink: None,
             output_trigger_line: 0,
@@ -2256,6 +2275,14 @@ impl Expander {
 
     /// `call_macro` 主体（`scanner_status` 由调用方设/恢复）。
     fn call_macro_inner(&mut self, csid: u32, def: Arc<MacroDef>) -> Result<()> {
+        // 诊断轨迹（`NTEX_CALL_TRACE`）：在守卫**之前**记录，溢出那一次调用
+        // 也要在内——「谁调用了爆栈的宏」的答案就在它前面几条。
+        if let Some(t) = self.macro_trace.as_mut() {
+            if t.len() >= MACRO_TRACE_CAP {
+                t.pop_front();
+            }
+            t.push_back(csid);
+        }
         // TeX 输入栈上限（tex.web `stack_size`；TeX Live 取 5000）：宏递归展开
         // 无终止条件时以此报错终止，而非耗尽内存。此前无此保护——latex.ltx 加载
         // 曾触发单步内无界递归（每层压一个 Bytecode 帧，主循环 10M 步上限够不到），
@@ -2267,6 +2294,9 @@ impl Expander {
                 "TeX capacity exceeded, sorry [input stack size = {MAX_INPUT_STACK}].\n"
             ));
             self.report_error_context();
+            // 现场转储必须紧邻致命报错做掉：宏/字节码递归爆栈的现场只在栈帧里
+            // （此类循环中报错行号是失真的——见 2026-09-11/09-13 两次排查结论）。
+            self.dump_input_stack("call-macro");
             return Err(Error::invalid_input(format!(
                 "输入栈超限（{MAX_INPUT_STACK} 帧）——宏 \\{name} 递归展开疑似无终止条件"
             )));
@@ -2315,6 +2345,346 @@ impl Expander {
         }
     }
 
+    /// 输入栈转储（诊断开关）。
+    ///
+    /// 触发变量：
+    /// - `NTEX_STACK_DUMP`：帧类型直方图 + 栈顶帧签名重复度 + 逐帧内容；
+    /// - `NTEX_STACK_DUMP_FRAMES`：仅逐帧内容（单独设置亦生效）；
+    /// - `NTEX_STACK_DUMP_TOP=N`：栈顶逐帧转储条数（默认 60）；
+    /// - `NTEX_STACK_DUMP_BOTTOM=N`：栈底逐帧转储条数（默认 5；调大可看
+    ///   「循环墙从哪一帧开始」——墙的起点在栈底侧）；
+    /// - `NTEX_CALL_TRACE=N`：宏调用环形轨迹（N = 显示段数，默认 120；
+    ///   未设 = 零开销，见 [`MACRO_TRACE_CAP`]）。
+    ///
+    /// **两处守卫共用本入口的原因**（2026-09-13 修正）：宏帧守卫
+    /// [`Self::call_macro_inner`] 用 `>= MAX_INPUT_STACK`，比 fetch 的统一兜底
+    /// （`>`）**先命中**——此前转储只挂在 fetch 上，于是「宏/字节码递归不终止」
+    /// 这类最需要现场的爆栈（expl3 载入 l.27200：`\q_stop 递归展开疑似无终止
+    /// 条件`）反而永远拿不到转储。两侧改为调用同一函数。
+    ///
+    /// 转储三件套的分工：类型直方图回答「哪类帧多」；**帧签名重复度**回答
+    /// 「哪一族帧在自复制」（循环主体的直接证据）；逐帧详解给出 token 级现场。
+    fn dump_input_stack(&mut self, reason: &str) {
+        let kinds_on = std::env::var_os("NTEX_STACK_DUMP").is_some();
+        let frames_on = std::env::var_os("NTEX_STACK_DUMP_FRAMES").is_some();
+        if !kinds_on && !frames_on {
+            return;
+        }
+        let n = self.stack.len();
+        let top: usize = std::env::var("NTEX_STACK_DUMP_TOP")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(60);
+        // 栈底条数：定位「循环从哪一帧开始」要的是**墙的起点**（栈底侧），
+        // 只看栈顶一堆同样的帧反而不知道是谁把第一个 `\q_stop` 打进流里的。
+        let bottom: usize = std::env::var("NTEX_STACK_DUMP_BOTTOM")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(5);
+        if kinds_on {
+            let mut kinds: BTreeMap<&'static str, usize> = BTreeMap::new();
+            for f in &self.stack {
+                *kinds.entry(Self::frame_kind(f)).or_default() += 1;
+            }
+            let _ = self.sink.write16(format!(
+                "[stack-dump] reason={reason} depth={n} kinds={kinds:?}\n"
+            ));
+            // 栈顶 top 帧的签名重复度：循环主体必在此处高频自复制。
+            let sig_n = top.min(n);
+            let mut sigs: BTreeMap<String, usize> = BTreeMap::new();
+            for f in &self.stack[n - sig_n..] {
+                *sigs.entry(self.frame_marker(f)).or_default() += 1;
+            }
+            let mut ranked: Vec<(String, usize)> = sigs.into_iter().collect();
+            ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            let _ = self.sink.write16(format!(
+                "[stack-dump] 栈顶 {sig_n} 帧签名重复度（top 8）：\n"
+            ));
+            for (sig, cnt) in ranked.iter().take(8) {
+                let _ = self
+                    .sink
+                    .write16(format!("[stack-dump]   {cnt:>5} × {sig}\n"));
+            }
+            // 宏调用轨迹：栈上没有的「已弹出入口帧」只能从这里看出来。
+            // 连续同名合并（`\q_stop×4993`），否则表格被同一个名字淹掉。
+            if let Some(tr) = &self.macro_trace {
+                let mut runs: Vec<(u32, usize)> = Vec::new();
+                for &id in tr.iter() {
+                    match runs.last_mut() {
+                        Some((prev, cnt)) if *prev == id => *cnt += 1,
+                        _ => runs.push((id, 1)),
+                    }
+                }
+                let intern = &self.intern;
+                let rendered: Vec<String> = runs
+                    .iter()
+                    .map(|(id, cnt)| Self::fmt_call_run(intern, *id, *cnt))
+                    .collect();
+                let show: usize = std::env::var("NTEX_CALL_TRACE")
+                    .ok()
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(120)
+                    .max(1);
+                let start = rendered.len().saturating_sub(show);
+                let _ = self.sink.write16(format!(
+                    "[stack-dump] 宏调用轨迹（共 {} 次，旧→新，显示末 {show} 段）：\n[stack-dump]   {}\n",
+                    tr.len(),
+                    rendered[start..].join(" ")
+                ));
+            }
+        }
+        if frames_on {
+            let (plan, omitted) = Self::frame_dump_plan(n, top, bottom);
+            for slot in plan {
+                match slot {
+                    Some(idx) => {
+                        let _ = self.sink.write16(format!(
+                            "[frame {:>5}] {}\n",
+                            idx,
+                            self.render_frame_head(&self.stack[idx])
+                        ));
+                    }
+                    None => {
+                        let _ = self
+                            .sink
+                            .write16(format!("[frame ...] （省略 {omitted} 帧）\n"));
+                    }
+                }
+            }
+        }
+    }
+
+    /// 逐帧转储计划：返回 `(帧序号槽位, 中间省略的帧数)`；`None` = 省略标记行。
+    ///
+    /// 槽位顺序即输出顺序：**栈顶 `top` 帧（降序）+ 省略 + 栈底 `bottom` 帧（升序）**。
+    ///
+    /// ⚠ 这里是 2026-09-13 修掉的一处**仪器 bug**：原实现取 `stack[..head]`
+    /// （栈**底** head 帧）却按 `n-1-i` 标注成「栈顶帧」——**底/顶正好反了**。
+    /// 宏递归每层都压在顶上，循环主体在栈顶；看栈底等于只看最外层作业帧，
+    /// 必然误判（09-11 那次「4997 个 TokenList 帧」的结论其实是栈底视图）。
+    /// 抽成纯函数是为了让这个方向性约定能被单测钉住。
+    fn frame_dump_plan(n: usize, top: usize, bottom: usize) -> (Vec<Option<usize>>, usize) {
+        let head = n.min(top);
+        let tail = bottom.min(n - head);
+        let omitted = n - head - tail;
+        let mut plan = Vec::with_capacity(head + tail + 1);
+        for idx in (n - head..n).rev() {
+            plan.push(Some(idx));
+        }
+        if omitted > 0 {
+            plan.push(None);
+        }
+        for idx in 0..tail {
+            plan.push(Some(idx));
+        }
+        (plan, omitted)
+    }
+
+    /// 渲染一段连续同名调用：`\name` / `\name×n`（转储轨迹用）。
+    fn fmt_call_run(intern: &InternTable, csid: u32, n: usize) -> String {
+        let name = intern.name(csid);
+        if n <= 1 {
+            format!("\\{name}")
+        } else {
+            format!("\\{name}×{n}")
+        }
+    }
+
+    /// 栈帧类型名（转储直方图用）。
+    fn frame_kind(f: &InputFrame) -> &'static str {
+        match f {
+            InputFrame::Source { .. } => "Source",
+            InputFrame::Macro { .. } => "Macro",
+            InputFrame::Bytecode { .. } => "Bytecode",
+            InputFrame::TokenList { .. } => "TokenList",
+            InputFrame::MacroArg { .. } => "MacroArg",
+            InputFrame::One { .. } => "One",
+            InputFrame::OutputRoutine { .. } => "OutputRoutine",
+            InputFrame::AlignU { .. } => "AlignU",
+            InputFrame::AlignV { .. } => "AlignV",
+        }
+    }
+
+    /// 帧签名（转储分组用）：**类型 + 头部 token，不含进度**——同一宏体的不同
+    /// 进度应归为同一族，重复度才看得出「谁在自复制」。
+    fn frame_marker(&self, f: &InputFrame) -> String {
+        let (kind, desc) = match f {
+            InputFrame::Source { .. } => ("Source", String::new()),
+            InputFrame::Macro { body, .. } => ("Macro", self.render_token_head(body, 8)),
+            InputFrame::Bytecode { code, .. } => ("Bytecode", self.render_bytecode_head(code, 8)),
+            InputFrame::TokenList { items, .. } => ("TokenList", self.render_pairs_head(items, 8)),
+            InputFrame::MacroArg { items, .. } => ("MacroArg", self.render_token_head(items, 8)),
+            InputFrame::One { tok, .. } => ("One", self.render_token(*tok)),
+            InputFrame::OutputRoutine { items, .. } => {
+                ("OutputRoutine", self.render_pairs_head(items, 8))
+            }
+            InputFrame::AlignU { items, .. } => ("AlignU", self.render_token_head(items, 8)),
+            InputFrame::AlignV { items, .. } => ("AlignV", self.render_token_head(items, 8)),
+        };
+        if desc.is_empty() {
+            kind.to_owned()
+        } else {
+            format!("{kind}[{desc}]")
+        }
+    }
+
+    /// 逐帧详解（转储用）：类型 + 进度 + 头部内容。
+    ///
+    /// 帧内容**从头**显示（不看 pos）——已消费帧的内容同样是「谁在循环展开」
+    /// 的证据。此前实现漏了 [`InputFrame::Macro`]/`MacroArg`/`AlignU`/`AlignV`/
+    /// `OutputRoutine` 五个帧型（落进 `Other`），而宏递归爆栈现场恰恰全是
+    /// Macro 帧，等于转储在最需要的地方失明。
+    fn render_frame_head(&self, f: &InputFrame) -> String {
+        match f {
+            InputFrame::Source { pos, bytes, .. } => format!("Source[pos={pos}/{}]", bytes.len()),
+            InputFrame::Macro { body, pos, args } => format!(
+                "{} args={}",
+                self.render_seq_frame("Macro", body, *pos),
+                args.len()
+            ),
+            InputFrame::Bytecode { code, pc, args } => format!(
+                "Bytecode[pc={pc}/{} args={}] head={} at={}",
+                code.len(),
+                args.len(),
+                self.render_bytecode_span(code, 0, 8),
+                self.render_bytecode_span(code, *pc, 8)
+            ),
+            InputFrame::TokenList { items, pos } => {
+                self.render_pair_frame("TokenList", items, *pos)
+            }
+            InputFrame::MacroArg { items, pos } => self.render_seq_frame("MacroArg", items, *pos),
+            InputFrame::One { tok, .. } => format!("One[{}]", self.render_token(*tok)),
+            InputFrame::OutputRoutine { items, pos } => {
+                self.render_pair_frame("OutputRoutine", items, *pos)
+            }
+            InputFrame::AlignU { items, pos } => self.render_seq_frame("AlignU", items, *pos),
+            InputFrame::AlignV { items, pos } => self.render_seq_frame("AlignV", items, *pos),
+        }
+    }
+
+    /// token 序列帧的通用渲染：`Kind[rem=r/total] head=… at=…`。
+    ///
+    /// `head` 用来看「这一帧是什么」（帧从头显示）；**`at` 才是当前现场**——
+    /// 长宏体/长实参（本例 439 token 的 MacroArg）上只看 head 会完全失明：
+    /// 正被展开的 token 在 pos 处，不在帧头。
+    fn render_seq_frame(&self, kind: &str, items: &[Token], pos: usize) -> String {
+        format!(
+            "{kind}[rem={}/{}] head={} at={}",
+            items.len().saturating_sub(pos),
+            items.len(),
+            self.render_token_span(items, 0, 6),
+            self.render_token_span(items, pos, 14)
+        )
+    }
+
+    /// `(token, noexpand)` 序列帧的通用渲染（TokenList/OutputRoutine）。
+    fn render_pair_frame(&self, kind: &str, items: &[(Token, bool)], pos: usize) -> String {
+        format!(
+            "{kind}[rem={}/{}] head={} at={}",
+            items.len().saturating_sub(pos),
+            items.len(),
+            self.render_pairs_span(items, 0, 6),
+            self.render_pairs_span(items, pos, 14)
+        )
+    }
+
+    /// 渲染 token 序列头部（转储用）；超出 `max` 的以 `…(+k)` 计数收尾。
+    fn render_token_head(&self, items: &[Token], max: usize) -> String {
+        self.render_token_span(items, 0, max)
+    }
+
+    /// 渲染 token 序列从 `from` 起的 `max` 个 token（转储用）。
+    fn render_token_span(&self, items: &[Token], from: usize, max: usize) -> String {
+        let from = from.min(items.len());
+        let rest = items.len() - from;
+        let take = rest.min(max);
+        let mut parts: Vec<String> = Vec::with_capacity(take + 1);
+        for t in &items[from..from + take] {
+            parts.push(self.render_token(*t));
+        }
+        if rest > take {
+            parts.push(format!("…(+{})", rest - take));
+        }
+        parts.join(" ")
+    }
+
+    /// 渲染 `(token, noexpand)` 序列头部（TokenList/OutputRoutine 帧转储用）。
+    /// `noexpand` 标记以 `~` 前缀表示（`\noexpand` 冻结的 token）。
+    fn render_pairs_head(&self, items: &[(Token, bool)], max: usize) -> String {
+        self.render_pairs_span(items, 0, max)
+    }
+
+    /// 渲染 `(token, noexpand)` 序列从 `from` 起的 `max` 个元素。
+    fn render_pairs_span(&self, items: &[(Token, bool)], from: usize, max: usize) -> String {
+        let from = from.min(items.len());
+        let rest = items.len() - from;
+        let take = rest.min(max);
+        let mut parts: Vec<String> = Vec::with_capacity(take + 1);
+        for (t, ne) in &items[from..from + take] {
+            let s = self.render_token(*t);
+            parts.push(if *ne { format!("~{s}") } else { s });
+        }
+        if rest > take {
+            parts.push(format!("…(+{})", rest - take));
+        }
+        parts.join(" ")
+    }
+
+    /// 渲染字节码帧头部（转储用）：token 原值按 `\name`，`#n` 实参，`end` 结束。
+    fn render_bytecode_head(&self, code: &Bytecode, max: usize) -> String {
+        self.render_bytecode_span(code, 0, max)
+    }
+
+    /// 渲染字节码从第 `from` 个字起的 `max` 条指令（转储用；`from` 通常取 pc，
+    /// 因为待执行指令从 pc 开始，头部已执行部分不是现场）。
+    fn render_bytecode_span(&self, code: &Bytecode, from: usize, max: usize) -> String {
+        let words = code.words();
+        let from = from.min(words.len());
+        let rest = words.len() - from;
+        let take = rest.min(max);
+        let mut parts: Vec<String> = Vec::with_capacity(take + 1);
+        for &w in &words[from..from + take] {
+            parts.push(match Instruction::decode(w) {
+                Instruction::Emit { token } => self.render_token(token),
+                Instruction::EmitArg { n } => format!("#{n}"),
+                Instruction::End => "end".to_owned(),
+            });
+        }
+        if rest > take {
+            parts.push(format!("…(+{})", rest - take));
+        }
+        parts.join(" ")
+    }
+
+    /// 单个 token 的可读渲染（转储用）：`\name` / 可打印字符 / `#n`；
+    /// 空白显示为 `␣`，其余控制字符显示为 `^XX`。
+    fn render_token(&self, t: Token) -> String {
+        match t.kind() {
+            TokenKind::ControlSeq => match t.csid() {
+                Some(id) => format!("\\{}", self.intern.name(id)),
+                None => "\\?".to_owned(),
+            },
+            TokenKind::MacroParam => match t.param_number() {
+                Some(n) => format!("#{n}"),
+                None => "#?".to_owned(),
+            },
+            TokenKind::EndGroup => "}".to_owned(),
+            TokenKind::Char => match t.charcode() {
+                Some(c) => {
+                    let ch = char::from_u32(c).unwrap_or('\u{FFFD}');
+                    if ch == ' ' {
+                        "␣".to_owned()
+                    } else if ch.is_ascii_graphic() {
+                        ch.to_string()
+                    } else {
+                        format!("^{:02X}", c & 0x7F)
+                    }
+                }
+                None => "?".to_owned(),
+            },
+        }
+    }
+
     /// 取下一个 token；返回 `(token, noexpand)`。输入耗尽或越过读取下限返回 None。
     fn fetch(&mut self) -> Result<Option<(Token, bool)>> {
         loop {
@@ -2322,104 +2692,7 @@ impl Expander {
             // 只盖宏帧，TokenList/Source 等帧的循环注入同样能把栈撑爆——此处统一
             // 兜底（每次压帧后必经 fetch，故为全帧型的唯一收口点）。
             if self.stack.len() > MAX_INPUT_STACK {
-                // 诊断开关（NTEX_STACK_DUMP）：爆栈时输出栈帧类型分布 + 最近帧名，
-                // 用于定位「递归不终止」的循环主体（2026-09-11 expl3 载入
-                // L25851 现场排查：报错行号失真，栈帧才是真现场）。
-                if std::env::var_os("NTEX_STACK_DUMP").is_some() {
-                    use std::collections::BTreeMap;
-                    let mut kinds: BTreeMap<&'static str, usize> = BTreeMap::new();
-                    for f in &self.stack {
-                        let k = match f {
-                            InputFrame::One { .. } => "One",
-                            InputFrame::TokenList { .. } => "TokenList",
-                            InputFrame::Bytecode { .. } => "Bytecode",
-                            InputFrame::Source { .. } => "Source",
-                            #[allow(unreachable_patterns)]
-                            _ => "Other",
-                        };
-                        *kinds.entry(k).or_default() += 1;
-                    }
-                    let _ = self.sink.write16(format!(
-                        "[stack-dump] depth={} kinds={kinds:?}\n",
-                        self.stack.len()
-                    ));
-                    // NTEX_STACK_DUMP=frames：逐帧转储头部内容（cs 名/字符），
-                    // 定位「谁在无限展开」——类型计数只回答「哪类帧多」，
-                    // 内容才回答「哪个宏的展开产物在重复压帧」（2026-09-12
-                    // expl3 载入 l__iow_line_part_tl 现场：4997 个 TokenList
-                    // 帧，需要每个帧的前 12 个 token 才能锁定循环主体）。
-                    if std::env::var_os("NTEX_STACK_DUMP_FRAMES").is_some() {
-                        let show = |f: &InputFrame| -> String {
-                            match f {
-                                InputFrame::TokenList { items, pos } => {
-                                    // 帧内容**从头**显示（不看 pos）——已消费帧的
-                                    // 内容同样是「谁在循环展开」的证据。
-                                    let take = items
-                                        .iter()
-                                        .take(12)
-                                        .map(|(t, _)| match t.csid() {
-                                            Some(id) => {
-                                                format!("\\{}", self.intern.name(id))
-                                            }
-                                            None => match t.charcode() {
-                                                Some(c) => match (c as u8) as char {
-                                                    c if c.is_whitespace() => "␣".to_owned(),
-                                                    c => c.to_string(),
-                                                },
-                                                None => "?".to_owned(),
-                                            },
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join(" ");
-                                    format!(
-                                        "TokenList[rem={}/{}] {}",
-                                        items.len() - *pos,
-                                        items.len(),
-                                        take
-                                    )
-                                }
-                                InputFrame::One { tok, .. } => {
-                                    let body = match tok.csid() {
-                                        Some(id) => format!("\\{}", self.intern.name(id)),
-                                        None => match tok.charcode() {
-                                            Some(c) => (c as u8 as char).to_string(),
-                                            None => "?".to_owned(),
-                                        },
-                                    };
-                                    format!("One[{body}]")
-                                }
-                                InputFrame::Bytecode { .. } => "Bytecode".to_owned(),
-                                InputFrame::Source { pos, .. } => {
-                                    format!("Source[pos={pos}]")
-                                }
-                                #[allow(unreachable_patterns)]
-                                _ => "Other".to_owned(),
-                            }
-                        };
-                        // 只转储最顶 60 帧（循环主体必在栈顶附近）+ 底 5 帧
-                        let n = self.stack.len();
-                        let head = n.min(60);
-                        for (i, f) in self.stack[..head].iter().enumerate().rev() {
-                            let _ = self.sink.write16(format!(
-                                "[frame {:>4}] {}\n",
-                                n - 1 - i,
-                                show(f)
-                            ));
-                        }
-                        if n > 65 {
-                            let _ = self
-                                .sink
-                                .write16(format!("[frame ...] （省略 {} 帧）\n", n - 65));
-                            for (i, f) in self.stack[n - 5..].iter().enumerate() {
-                                let _ = self.sink.write16(format!(
-                                    "[frame {:>4}] {}\n",
-                                    n - 5 + i,
-                                    show(f)
-                                ));
-                            }
-                        }
-                    }
-                }
+                self.dump_input_stack("fetch");
                 return Err(Error::invalid_input(format!(
                     "输入栈超限（{} 帧 > {MAX_INPUT_STACK}）——展开/参数扫描疑似无终止条件",
                     self.stack.len()
