@@ -157,6 +157,7 @@ mod tests {
             code: None,
             protected: false,
             outer: false,
+            active_slot: false,
         }
     }
 

@@ -3,7 +3,36 @@
 > **本文档是 expl3 攻坚的进度仪表盘。** 状态源：`scripts/lvt-run.py`。
 > 上游权威数据：`latex3/latex3` 仓库 `l3kernel/testfiles/`（每例配 `.tlg` 期望转录）。
 
-## 最新基线（2026-09-13 复测）⚠ STACK 187/187——shim harness 与引擎修复批次脱节
+## 最新基线（2026-09-13 复测·第二刀）首错前移 l.9320 → l.18141——outer 双槽位修复落地
+
+| 判定 | 一刀前 | 本轮 |
+|---|---|---|
+| STACK | 187 | 187（判定分布未变，首错前移）|
+
+**主控独立复测**（8217f86 + 本刀工作树，2026-09-13 10:40）：单例 m3basics001
+转录 4933 行，首错 = `Use of \??? doesn't match its definition`（fp 模块），
+总错误 625 → 623；`\???` 签名 15 → 15（非本刀回归铁证）、
+`Forbidden control sequence` 2 → 1（靶错消除）。全量 `lvt-run.py --all`
+仍 187 STACK（fp 首错阻断载入，到不了 END-TEST-LOG）。
+
+**本轮修复（2026-09-13，定性见 `docs/latex-feasibility.md` §A3）**：上一节
+两个候选根因里，**候选 2 成立但机理更具体**——不是 scanner_status 误判，而是
+**eqtb 单槽合并了 active char 与同名单字符 cs**：plain.tex L20
+`\outer\def^^L{\par}` 写进 active 槽的 outer 被 cs 形式 `\^^L` 继承，expl3
+L9320 `\char_set_catcode_active:N \^^L` 实参扫描即报
+`Forbidden control sequence`（pdfTeX 同点 0 错）。修复 =
+`MacroDef::active_slot` 位 + 统一判据 `is_outer_for_token`（**outer 仅在
+token 形式 ↔ 槽写入形式一致时可见**，tex.web L242 双槽语义的压缩替身），
+8 处 token 面检查点统一；`.fmt` v16 序列化一字节伴随（codec.rs）。
+
+**效果**：载入首错 char 模块 l.9320 → **fp 模块 l.18141**
+（`\fp_const:Nn \c_e_fp { 2.718 2818 2845 9045 }`，症状
+`! Use of \??? doesn't match its definition.`——msg 渲染机症状，真偏差在
+`\__fp_parse:n`；旧转录同签名已有 15 条，非本刀回归）。全载探针
+错误 625 → 623。**判定分布未翻盘**（fp 首错仍阻断 END-TEST-LOG），
+按「首错单调前移」口径记一刀；下一刀靶子见 §A3.2。
+
+## 09-13 复测·一（历史）⚠ STACK 187/187——shim harness 与引擎修复批次脱节
 
 | 判定 | 数量 |
 |---|---|

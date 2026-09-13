@@ -38,6 +38,23 @@ pub struct MacroDef {
     /// `\outer`：禁止出现在宏实参 / `\edef` / general text / `\read` 的 token 列表
     /// 中（tex.web：outer 宏只能在正常展开上下文使用）。
     pub outer: bool,
+    /// 定义目标是 **active char token**（`\def^^L{…}`）还是控制序列 token
+    /// （`\def\^^L{…}`）。
+    ///
+    /// tex.web 有两个独立 eqtb 区：active char c 在 `active_base+c`，单字符 cs
+    /// chr(c) 在 `single_base+c`（L242 `single_base=active_base+256`）——同名但
+    /// **互不可见**。plain.tex L20 `\outer\def^^L{\par}` 只把 outer 写进 active
+    /// 区；cs 槽 `\^^L` 保持 undefined。expl3-code.tex L9320 依赖这一点：
+    /// `\char_set_catcode_active:N \^^L` 取 cs 形式实参、`` `\^^L `` 取字符码，
+    /// 全程不触碰 outer 槽（pdfTeX ground truth：`\h\^^L` → "Undefined control
+    /// sequence"，`^^L` 作实参才 Forbidden）。
+    ///
+    /// 本引擎 csid 是 InternTable 下标、无 active 区（token.rs CS_ACTIVE_FLAG
+    /// 只在表示层），两种形式**共享一个槽**——用此位记录「写进的是哪个 tex.web
+    /// 槽」，outer 判据按「token 形式 ↔ 槽形式一致」匹配（`is_outer_for_token`），
+    /// 否则 cs 形式 `\^^L` 会继承 plain 写进 active 槽的 outer → expl3 载入
+    /// Forbidden 级联（187/187 STACK 的首错，2026-09-13 定性）。
+    pub active_slot: bool,
 }
 
 impl PartialEq for MacroDef {
@@ -67,6 +84,7 @@ mod tests {
             code: None,
             protected: false,
             outer: false,
+            active_slot: false,
         };
         assert_eq!(def.params.num_params, 1);
         assert!(def.params.long);
@@ -89,6 +107,7 @@ mod tests {
             code: Some(Arc::new(Bytecode::default())),
             protected: false,
             outer: false,
+            active_slot: false,
         };
         let b = MacroDef {
             params: ParamSpec {
@@ -100,6 +119,7 @@ mod tests {
             code: None,
             protected: false,
             outer: false,
+            active_slot: false,
         };
         assert_eq!(a, b, "\\ifx 语义不应受编译产物影响");
     }

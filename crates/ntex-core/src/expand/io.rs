@@ -326,6 +326,7 @@ impl Expander {
             code: None,
             protected: false,
             outer: false,
+            active_slot: false,
         };
         self.define_macro_scoped(csid, def);
         Ok(())

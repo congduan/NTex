@@ -422,9 +422,7 @@ impl Expander {
         };
         if self.scanner_status == ScannerStatus::Matching {
             if let Some(csid) = tok.csid() {
-                if !tok.is_active()
-                    && matches!(self.eqtb.slot(csid), EqSlot::Macro(m) if m.value.outer)
-                {
+                if self.is_outer_for_token(tok) {
                     let wname = match self.warning_index {
                         Some(cs) => self.cs_display_name(cs),
                         None => self.cs_display_name(csid),
@@ -477,11 +475,11 @@ impl Expander {
                     // → Forbidden + 作业继续）。
                     if self.scanner_status == ScannerStatus::Matching {
                         if let Some(acid) = t.csid() {
-                            // active char 不报（tex.web/texdisp 对拍：\^^L 作实参
-                            // 0 错误；NTex active char 走 ControlSeq 表示需显式排除）
-                            if !t.is_active()
-                                && matches!(self.eqtb.slot(acid), EqSlot::Macro(m) if m.value.outer)
-                            {
+                            // tex.web L7398/L7433：active char 与 cs 各查**自己的
+                            // 槽**——plain `\outer\def^^L{\par}` 写的是 active 槽，
+                            // cs 形式 `\^^L` 的实参（expl3 L9320）不报（见
+                            // `is_outer_for_token`）
+                            if self.is_outer_for_token(t) {
                                 let wname = match self.warning_index {
                                     Some(cs) => self.cs_display_name(cs),
                                     None => self.cs_display_name(acid),
@@ -602,37 +600,36 @@ impl Expander {
     /// pdfTeX：`[A]` + `Forbidden control sequence` + **`[B]`**（继续）✅
     /// 旧 NTex：返回致命 `Error::invalid_input` → **作业终止** ❌
     /// （l3kernel `m3fp-parse002`/`m3regex005` 即此因）。
-    /// `check_not_outer` 的**适用性**判据：只对**控制序列** token 报 Forbidden。
+    /// outer 判据（tex.web 双槽语义的压缩表示，2026-09-13 定性）：
+    /// 只有「**token 形式 ↔ 槽的写入形式一致**」时槽里的 outer 才对该 token 可见。
     ///
-    /// tex.web 对 active char 的 `cur_cmd := eq_type(cur_cs)` 也是 `outer_call`
-    /// （故 `check_outer_validity` 会跑），但**宏实参位置取到 active char 的场合
-    /// 不报**——实测对照（pdfTeX ground truth）：
+    /// tex.web（L242 `single_base=active_base+256`）里 active char 与同名单字符
+    /// cs 是**两个槽**：plain.tex L20 `\outer\def^^L{\par}` 只写 active 槽，cs 槽
+    /// `\^^L` 保持 undefined。pdfTeX ground truth（2026-09-13 实测）：
     ///
     /// | 输入 | pdfTeX |
     /// |---|---|
-    /// | `\def\a#1{[#1]}\outer\def\x{A}\a\x` | `! Forbidden ... use of \a.` ✅ 报 |
-    /// | `\csca:N \^^L`（`` `#1 `` 取字符码，`^^L` 是 active char）| **0 错误** ✅ 不报 |
-    fn should_check_outer(&self, tok: Token) -> bool {
+    /// | `\outer\def\O{a}\def\f#1{[#1]}\f\O`（cs 形式、cs 写入）| Forbidden ✅ 报 |
+    /// | `\outer\def^^L{\par}\def\g#1{[#1]}\g^^L`（active 形式、active 写入）| Forbidden ✅ 报 |
+    /// | `\def\h#1{[#1]}\h\^^L`（cs 形式、槽是 active 写入）| **不报**（后续用到才 Undefined）|
+    ///
+    /// ⚠ 旧实现用「名字是否单字符」豁免（`should_check_outer`）——两处都错：
+    /// 单字符 **cs** 写入的 outer（`\O`）被漏报，active 写入被误继承给 cs 形式
+    /// （expl3 L9320 `\char_set_catcode_active:N \^^L` → Forbidden 级联 →
+    /// lvt 187/187 STACK 首错）。
+    fn is_outer_for_token(&self, tok: Token) -> bool {
         let Some(csid) = tok.csid() else {
             return false;
         };
-        // active char 槽（名字恰为单字符）——取作实参不报
-        self.intern.name(csid).chars().count() != 1
+        matches!(self.eqtb.slot(csid), EqSlot::Macro(m) if m.value.outer && m.value.active_slot == tok.is_active())
     }
 
     fn check_not_outer(&self, tok: Token) -> Result<()> {
-        if !self.should_check_outer(tok) {
-            return Ok(());
-        }
-        let Some(csid) = tok.csid() else {
-            return Ok(());
-        };
-        if let EqSlot::Macro(m) = self.eqtb.slot(csid) {
-            if m.value.outer {
-                return Err(Error::recoverable_outer(
-                    self.intern.name(csid).to_owned(),
-                ));
-            }
+        if self.is_outer_for_token(tok) {
+            let csid = tok.csid().expect("is_outer_for_token 已判 csid");
+            return Err(Error::recoverable_outer(
+                self.intern.name(csid).to_owned(),
+            ));
         }
         Ok(())
     }
@@ -642,6 +639,9 @@ impl Expander {
             .fetch()?
             .ok_or_else(|| Error::invalid_input("\\def 后缺少控制序列"))?
             .0;
+        // tex.web：`\def` 目标若是 **active char token**，定义写进 `active_base+c`
+        // 槽（与同名单字符 cs 槽互不可见）——见 [`MacroDef::active_slot`]。
+        let active_slot = name.is_active();
         let csid = name.csid().map(Ok).unwrap_or_else(|| {
             // TeX：`\def{...}`（非 cs）→ "! Missing control sequence inserted."
             // 恢复（插入 \inaccessible；TRIP L347 `\outer\def{}?`）。**offending
@@ -706,6 +706,7 @@ impl Expander {
             code: None,
             protected,
             outer,
+            active_slot,
         };
         if diag_enabled("NTEX_IFX_TRACE") && cs_name.contains("cs_replacement_spec") {
             let body_dbg: Vec<String> = def.body.iter().map(|t| format!("{t:?}")).collect();

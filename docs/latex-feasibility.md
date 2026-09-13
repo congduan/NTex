@@ -1053,3 +1053,59 @@ end
 
 **下一刀**：引入 `scanner_status` 状态机（tex.web `normal/skipping/defining/
 matching/aligning/absorbing`），把 outer 检查从「栈启发式」改为条件正确实现。
+
+### A3. ✅ L9320 首错根治（active_slot 双槽位）+ 新停点：fp 模块 `\???`（2026-09-13）
+
+#### A3.1 根因定性：eqtb 单槽合并了「active char」与「同名单字符 cs」
+
+tex.web eqtb 是**三区域模型**：active char 在 `active_base+c`，单字符 cs 在
+`single_base+c`（`single_base := active_base+256`，tex.web L242），多字符 cs 走
+hash——**同名 active char 与单字符 cs 是两个独立槽**。NTex 的 eqtb 只有
+`Vec<EqSlot>` 按 csid 索引（token.rs:28-37 注释早已标注此差异，"表示层另一刀"），
+于是：
+
+- plain.tex L20 `\outer\def^^L{\par}` 把 **outer+active** 写进槽；
+- expl3 L9320 `\char_set_catcode_active:N \^^L` 里 `\^^L`（cs 形式）与 L9321
+  `\cs_set:Npn ^^L { }`（active 形式）**命中同一槽**，cs 形式继承了
+  active 槽的 outer → `Forbidden control sequence`（pdfTeX 同点 0 错，p4 探针
+  实测：`\f\O`（1 字符 cs + outer）必须报，`\h\^^L`（cs 形式）必须不报——
+  旧 `should_check_outer` 的「1 字符名豁免」启发式两个方向都错）。
+
+**修复**：`MacroDef::active_slot: bool`（定义目标是 active char token 还是 cs
+token，`.fmt` v16 序列化），统一判定 `is_outer_for_token`：**outer 仅在
+token 形式（active/cs）与槽记录形式一致时可见**。这是 tex.web 双槽语义的
+压缩替身，8 处 token 面检查点（宏首参/组参循环/展开/skip/edef 吸收/条件
+skip/toks 赋值）统一走它；`\ifx`/快照面未动。**表示层双槽仍是长期正解**
+（token.rs:28-37），本刀不动表示层。
+
+**效果**：载入首错从 char 模块 l.9320 前移至 fp 模块 l.18141；全载探针
+错误 625 → 623（签名直方图几乎不变，`Use of \???` 在旧转录已有 15 条——
+新首错非本刀回归，是被 l.9320 级联掩盖的独立偏差）。
+
+#### A3.2 新首错（下一刀靶子）
+
+**位置**：`expl3-code.tex` l.18141
+
+```tex
+\fp_const:Nn \c_e_fp { 2.718 2818 2845 9045 }
+```
+
+**症状**：
+
+```
+! Use of \??? doesn't match its definition.
+<argument> \???
+l.18141 ...\fp_const:Nn \c_e_fp { 2.718 2818 2845 9045 }
+```
+
+**机理**：`\???` 是 msg 模块的**可展开错误渲染机**（l.11729
+`\exp_args:Nc \__msg_tmp:w { ??? }` → `\cs_new:Npn ??? ? { }`），fp 解析失败
+走 `\msg_expandable_error` 渲染时报「不匹配」。即：**真偏差在
+`\__fp_parse:n` 对 `2.718 2818 2845 9045`（分段带空格的十进制）的解析**，
+`\???` 只是下游症状。pdfTeX 对同一行 0 错。
+
+**下一刀**：最小复现 `\fp_const:Nn \c_e_fp {2.718 2818 2845 9045}`（fp 模块
+载入后单独调用），探 `\__fp_parse:n` 在哪一步丢数字——注意 fp 解析大量用
+`\if_meaning:w`/`\cs:w … \cs_end:` 动态构造，且 `\???` 侧还有本机 l.11728
+链路的 15 条同签名残留，须先区分「fp 解析偏差」与「msg 渲染机偏差」两个
+候选（write16 探针插桩在 `\__fp_parse:n` 入口/出口计数即可二分）。

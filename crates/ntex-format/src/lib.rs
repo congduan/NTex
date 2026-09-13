@@ -29,8 +29,9 @@ const MAGIC: &[u8; 8] = b"NTEXFMT1";
 /// v11：TRIP 冲刺——`\xspaceskip` 胶水参数；
 /// v13：ETRIP——font_loads（pass2 恢复字体表）+ font_cs_names（showbox 字体 cs 名）；
 /// v14：ETRIP——current_font（pass2 恢复当前字体，防全 nullfont）；
-/// v15：M9 中文刀 4——catcode >255 码位覆盖表（\utfinputmode=1 的 \catcode`，=13）。
-const VERSION: u8 = 15;
+/// v15：M9 中文刀 4——catcode >255 码位覆盖表（\utfinputmode=1 的 \catcode`，=13）；
+/// v16：outer 双槽位（MacroDef::active_slot，expl3 L9320 Forbidden 根治的伴随序列化）。
+const VERSION: u8 = 16;
 
 /// 编码一个 `.fmt` 快照。
 pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {

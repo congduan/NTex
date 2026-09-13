@@ -1140,7 +1140,9 @@ impl Expander {
             if let Some(name) = forbidden {
                 if let Some(csid) = t.csid() {
                     if let EqSlot::Macro(m) = self.eqtb.slot(csid) {
-                        if m.value.outer {
+                        // 槽形式匹配（`MacroDef::active_slot`）：active char 与
+                        // 同名单字符 cs 在 tex.web 是两个槽
+                        if m.value.outer && m.value.active_slot == t.is_active() {
                             let csname = self.cs_display_name(csid);
                             let _ = self.sink.write16(format!(
                                 "Runaway text?\n\

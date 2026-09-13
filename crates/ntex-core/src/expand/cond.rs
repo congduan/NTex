@@ -372,7 +372,9 @@ saved_if_type: saved_type,
                 // `\^^C{{ \span\ifcase3 \lo...`：\lo 为 \outer，触发本恢复）。
                 if let Some(csid) = tok.csid() {
                     if let EqSlot::Macro(m) = self.eqtb.slot(csid) {
-                        if m.value.outer {
+                        // 槽形式匹配（`MacroDef::active_slot`）：active char 与
+                        // 同名单字符 cs 在 tex.web 是两个槽
+                        if m.value.outer && m.value.active_slot == tok.is_active() {
                             let name = self.intern.name(csid).to_owned();
                             let ln = self.error_line_no();
                             let _ = self.sink.write16(format!(

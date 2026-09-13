@@ -1037,10 +1037,11 @@ impl Expander {
                         v.value.body.clone(),
                         v.value.protected,
                         v.value.outer,
+                        v.value.active_slot,
                     )),
                     _ => None,
                 };
-                if let Some((params, body, protected, outer)) = pending {
+                if let Some((params, body, protected, outer, active_slot)) = pending {
                     let code = Arc::new(compile(&body));
                     if let EqSlot::Macro(v) = eqtb.slot_mut(csid) {
                         v.value = Arc::new(MacroDef {
@@ -1049,6 +1050,7 @@ impl Expander {
                             code: Some(code),
                             protected,
                             outer,
+                            active_slot,
                         });
                     }
                 }
@@ -1848,13 +1850,11 @@ impl Expander {
                     // ignored after line N.` + 插入 \fi 恢复。此前惰性 Skipping
                     // 帧的主循环丢弃无此检查（\ifcase 真分支 skip_ahead 之外的
                     // 另一条 skip 路径），pdfTeX 报 Incomplete 而 NTex 静默。
-                    if let Some(csid) = tok.csid() {
-                        if let EqSlot::Macro(m) = self.eqtb.slot(csid) {
-                            if m.value.outer {
-                                let name = self.intern.name(csid).to_owned();
-                                let ifname = Self::if_type_name(self.cur_if_type).to_owned();
-                                let ln = self.error_line_no();
-                                let _ = self.sink.write16(format!(
+                    if tok.csid().is_some() && self.is_outer_for_token(tok) {
+                        let name = self.intern.name(tok.csid().expect("已判 csid")).to_owned();
+                        let ifname = Self::if_type_name(self.cur_if_type).to_owned();
+                        let ln = self.error_line_no();
+                        let _ = self.sink.write16(format!(
                                     "! Incomplete \\{ifname}; all text was ignored after line {ln}.\n\
                                      <inserted text>\n                \\fi \n\
                                      <to be read again>\n                   \\{name}\n\
@@ -1862,14 +1862,12 @@ impl Expander {
                                      This kind of error happens when you say `\\if...' and forget\n\
                                      the matching `\\fi'. I've inserted a `\\fi'; this might work.\n"
                                 ));
-                                // 插入 \fi 闭合全部未决条件帧（对齐 skip_ahead
-                                // 的 outer 恢复臂语义）
-                                self.cond_stack.clear();
-                                self.cur_if_type = 0;
-                                self.cur_if_branch = 0;
-                                return Ok(true);
-                            }
-                        }
+                        // 插入 \fi 闭合全部未决条件帧（对齐 skip_ahead
+                        // 的 outer 恢复臂语义）
+                        self.cond_stack.clear();
+                        self.cur_if_type = 0;
+                        self.cur_if_branch = 0;
+                        return Ok(true);
                     }
                     return Ok(true);
                 }
@@ -2013,8 +2011,11 @@ impl Expander {
                         // 实证：plain `^^L` 为 active char + `\outer\def^^L{\par}`，
                         // expl3-code.tex L9320 `\char_set_catcode_active:N \^^L`
                         // 取实参即触发误报 → `Extra \or` 224 条（43.8%）。
+                        // （2026-09-13 再定性：该误报的真正机制是 active char 槽
+                        // 与同名单字符 cs 槽共享——见 `MacroDef::active_slot`，
+                        // 判据改为「token 形式 ↔ 槽形式一致」。）
                         if def.outer
-                            && !tok.is_active()
+                            && (tok.is_active() == def.active_slot)
                             && self.scanner_status != ScannerStatus::Normal
                         {
                             // active char token 不报（tex.web：active char 的
@@ -2202,13 +2203,11 @@ impl Expander {
                         // （L7219-7222）打印 `... while scanning text of \X` +
                         // **插入 `}`** 后继续。
                         //
-                        // ⚠ 实测（2026-09-11，expl3 载入现场）：`plain` 的
-                        // `^^L` 是 `\outer\def^^L{\par}`（active char + outer 宏），
-                        // expl3-code.tex L9320 `\char_set_catcode_active:N \^^L`
-                        // 走 `` `#1 `` 取值路径即触发。旧实现抛致命错 →
-                        // 级联（`Argument of \csc has an extra }` / `Missing
-                        // number` / `Too many }'s`）；pdfTeX 报 1 次后**继续**。
-                        if m.value.outer {
+                        // ⚠ 实测（2026-09-13 再定性）：`plain` 的 `^^L` 是
+                        // `\outer\def^^L{\par}`（写进 tex.web active 槽），cs 形式
+                        // `\^^L` 的槽是 undefined——expl3 L9320 靠这一点不报。
+                        // 判据按「token 形式 ↔ 槽形式一致」（`is_outer_for_token`）。
+                        if self.is_outer_for_token(tok) {
                             let name = self.intern.name(csid).to_owned();
                             let _ = self.sink.write16(format!(
                                 "! Forbidden control sequence found while scanning text of \\{name}.\\n\\
