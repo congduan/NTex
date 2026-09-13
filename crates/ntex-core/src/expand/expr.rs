@@ -366,8 +366,8 @@ impl Expander {
                     out.extend(toks.into_iter().map(|t| (t, false)));
                 }
                 EqSlot::Primitive(Primitive::PdfStrCmp) => {
-                    let a = self.scan_group_contents_expanding()?;
-                    let b = self.scan_group_contents_expanding()?;
+                    let a = self.scan_group_contents_xpand(true)?;
+                    let b = self.scan_group_contents_xpand(true)?;
                     let v = pdf_strcmp_value(&a, &b, &self.intern, self.params.misc[34]);
                     out.extend(emit_count(v).into_iter().map(|t| (t, false)));
                 }

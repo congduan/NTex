@@ -541,7 +541,7 @@ impl Expander {
                 // \mathchardef 绑定：数字上下文返回数学字符码（TeX scan_int）
                 EqSlot::MathChar(code) => {
                     self.fetch()?; // 消费 cs
-                    return Ok(code as i64);
+                    return Ok(if neg { -(code as i64) } else { code as i64 });
                 }
                 // ETRIP：\gluestretchorder/\glueshrinkorder<胶水> → 无穷阶（整数上下文）
                 EqSlot::Primitive(Primitive::GlueStretchOrder) => {
@@ -697,6 +697,10 @@ impl Expander {
                     // 项（`\number`/`\the`/宏）保持旧行为（停在它们处放回，
                     // 全展开会把 `\count0=5\number\count0` 后续 `\number` 吸入
                     // 当前数，与既有语义/测试相悖；报告 §18 偏差记录）。
+                    // ⚠ 该偏差 tex.web 真语义是**无条件**展开吸收（L8797-8812
+                    // 循环尾 get_x_token；pdfTeX 实测 `\count11=2\zz`→24），
+                    // fp 解析机正卡在此处——第四刀靶子，见
+                    // docs/expl3-lvt-scoreboard.md 第三刀节/附录 A。
                     if let Some(csid) = tok.csid() {
                         if matches!(
                             self.eqtb.slot(csid),
@@ -1213,6 +1217,18 @@ impl Expander {
     /// `\relax` 或外层 `}` 终止；平衡组在输入耗尽时补 `}` 收尾（TeX 语义，
     /// 如 `\unexpanded\expandafter{\1}` 中 `\1` 展开含不平衡花括号）。
     fn scan_group_contents_expanding(&mut self) -> Result<Vec<Token>> {
+        self.scan_group_contents_xpand(false)
+    }
+
+    /// 同上，但可选花括号**内**展开：tex.web scan_toks(macro_def, xpand) 的
+    /// body 循环（L9378-9391）对**每个** token 位先 `if xpand then
+    /// @<Expand the next part of the input@> else get_token`——`{`/`}` 只
+    /// 进出 unbalance 计数、照常存储，展开不分层停。xpand=true 对应
+    /// `<general text>` 原义（`scan_general_text` → scan_toks(false,true)，
+    /// L21237：\write/\showtokens/\pdfstrcmp 实参）；xpand=false 是 e-TeX
+    /// 特例 \detokenize/\unexpanded（实测 pdftex `\detokenize{\zzz}` 存
+    /// `\zzz` 不存 `xy`）。
+    fn scan_group_contents_xpand(&mut self, xpand: bool) -> Result<Vec<Token>> {
         let mut tokens = Vec::new();
         loop {
             let open = self
@@ -1298,10 +1314,31 @@ impl Expander {
             return Ok(tokens);
         }
         let mut depth = 0usize;
-        while let Some((fetched, _)) = self.fetch()? {
+        while let Some((fetched, noexpand)) = self.fetch()? {
             // cur_tok 判定（tex.web scan_toks）：组定界别名 cs 在组内是数据
             //（`\def\f#1{[#1]}\edef\x{\f\bg}` 真 TeX 存 `\bg`）。
             let t = fetched;
+            if xpand && !noexpand {
+                // scan_toks 的 xpand 臂（L9378-9391）：每个 token 位先展开，
+                // 产物交回平衡计数（宏体里的 `{`/`}` 照常进出 unbalance）。
+                if let Some(csid) = t.csid() {
+                    let expandable = match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
+                        EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
+                        EqSlot::Primitive(p) if p.is_expandable() => true,
+                        _ => false,
+                    };
+                    if expandable {
+                        let mut expansion = Vec::new();
+                        self.expand_once((t, false), &mut expansion)?;
+                        let items: Vec<(Token, bool)> = expansion.into_iter().collect();
+                        self.push_frame(InputFrame::TokenList {
+                            items: Arc::from(items),
+                            pos: 0,
+                        });
+                        continue;
+                    }
+                }
+            }
             match t.catcode() {
                 Some(Catcode::BeginGroup) => {
                     depth += 1;

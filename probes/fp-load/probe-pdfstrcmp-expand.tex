@@ -1,0 +1,6 @@
+\def\zzz{xy}
+\iow_log:e { V1-macro: [\int_eval:n { \__fp_str_if_eq:nn {\zzz}{xy} } ] }
+\iow_log:e { V2-noexp: [\int_eval:n { \__fp_str_if_eq:nn {\exp_not:N \scan_stop:}{\scan_stop:} } ] }
+\iow_log:e { V3-num: [\int_eval:n { \__fp_str_if_eq:nn {\the\count0}{0} } ] }
+\iow_log:e { V4-end }
+\end

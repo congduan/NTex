@@ -120,8 +120,8 @@ impl Expander {
             // \pdfstrcmp{<text1>}{<text2>}：字符串比较 → -1/0/1（pdfTeX 可展开；
             // l3kernel L5129 无条件别名 \tex_strcmp:D，expl3 字符串比较全走这里）
             Primitive::PdfStrCmp => {
-                let a = self.scan_group_contents_expanding()?;
-                let b = self.scan_group_contents_expanding()?;
+                let a = self.scan_group_contents_xpand(true)?;
+                let b = self.scan_group_contents_xpand(true)?;
                 let v = pdf_strcmp_value(&a, &b, &self.intern, self.params.misc[34]);
                 self.emit_tokens(emit_count(v))
             }

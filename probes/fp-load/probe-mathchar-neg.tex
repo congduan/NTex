@@ -1,0 +1,10 @@
+\count1=10000
+\iow_log:e { M-meaning: [\meaning \c__fp_minus_min_exponent_int] }
+\iow_log:e { J-neg-is-pos: [\if_int_compare:w -\c__fp_minus_min_exponent_int = 10000 POS \else: BAD \fi:] }
+\iow_log:e { K-cnt-neg: [\if_int_compare:w -\count1 = -10000 NEG \else: BAD \fi:] }
+\iow_log:e { L-cnt-neg-lit: [\if_int_compare:w -\count1 < 0 NEG \else: BAD \fi:] }
+\iow_log:e { N-assign: [\int_eval:n { 5 - -\c__fp_minus_min_exponent_int } ] }
+\iow_log:e { O-eval-neg: [\int_eval:n { -\c__fp_minus_min_exponent_int } ] }
+\iow_log:e { P-assign-cnt: [\int_eval:n { -\count1 } ] }
+\iow_log:e { S7-end }
+\end

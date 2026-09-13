@@ -3,7 +3,81 @@
 > **本文档是 expl3 攻坚的进度仪表盘。** 状态源：`scripts/lvt-run.py`。
 > 上游权威数据：`latex3/latex3` 仓库 `l3kernel/testfiles/`（每例配 `.tlg` 期望转录）。
 
-## 最新基线（2026-09-13 复测·第二刀）首错前移 l.9320 → l.18141——outer 双槽位修复落地
+## 最新基线（2026-09-13 复测·第三刀）fp 首错三偏差修复 + 第四偏差（数字循环全展开）已定位待落地
+
+| 指标（全载探针 `probe-fp.tex`：exgeneric + expl3-code 全文 + `\fp_const:Nn \c_e_fp`） | 二刀后 | 本刀（落地部分） | 本刀（含实验版第四刀，未落地） |
+|---|---|---|---|
+| NTex 总错误 | 623 | **573** | **23** |
+| `\???` 签名 | 15 | **6** | **0** |
+| FP-OK | 0 | 0 | 0 |
+| pdfTeX 同探针 | 2 错（自身）/FP-OK 1 | 同 | 同 |
+
+**本刀落地三个真偏差**（各自探针双引擎验证，`make check` 全绿）：
+
+1. **`\mathchardef` 操作数丢负号**（`scan.rs` EqSlot::MathChar 臂）。tex.web
+   L8707-8721：scan_int 收尾处**一条无条件** `if negative then negate(cur_val)`
+   盖全部取值臂（字母常量/内部量/数值常量）；`\mathchardef` 常量经
+   `scan_something_internal`（L8373 `char_given,math_given:scanned_result`）
+   流入同一收尾。NTex 只在数值常量臂取负 →
+   `-\c__fp_minus_min_exponent_int`（=`\mathchar"2710`=10000）得 +10000，
+   fp 舍入机把 −2³⁰ 垃圾指数当真。pdfTeX 探针 t7：取负前 2 错→取负后同点
+   0 错。
+2. **`\noexpand` cs 在 `\if`/`\ifcat` 操作数位的码值臆测**（`cond.rs` ~L941）。
+   第十五刀的 `256+csid`/cat-13 猜测证伪。tex.web L9816-9838：
+   `get_x_token_or_active_char` 后「非字符」归一为 `relax/256` 哨兵——`\noexpand`
+   只在操作数是 **active char** 时回填字符码（L7509-7517 标记路径 +
+   L4527/L6169 token 基址证明 cs 形式 cur_chr≥256 恒为哨兵）。NTex 的
+   active char 是带 noexpand 标志的 Char token，走字符臂自然命中；cs 形式
+   返回 `(None,None)` 即对齐。pdfTeX 探针 t9 CC2 验证。
+3. **`\pdfstrcmp` 实参按原义收集**（`scan_group_contents_xpand(bool)` 新增 +
+   expr.rs/primitive_expand.rs 两处 PdfStrCmp 调用点）。tex.web
+   `scan_toks(macro_def,xpand)` body 循环（L9378-9391）在每个 token 位先展开，
+   `{`/`}` 只进 unbalance；`<general text>` = `scan_toks(false,true)`
+   （L21237）。`\__fp_str_if_eq:nn`（= `\pdfstrcmp`，expl3-code L16158）靠
+   `\noexpand` 把表达式终结符 cs 原样送进串比较（L17579），组内不展开则串里
+   多出 `\exp_not:N` 原语名 → 终结符漏判 → 表达式机级联 extra-}。
+   pdfTeX 探针 t12 决定性验证。
+   **⚠ e-TeX 特例必须保留非展开**：`\detokenize`/`\unexpanded`/`\scantokens`
+   五处调用点继续走 `scan_group_contents_expanding()`（xpand=false，实测
+   pdftex `\detokenize{\zzz}` 存 `\zzz` 原义；两条单测钉死）。本轮曾一刀
+   全改 xpand(true) → 立刻砸 2 测，已回退。
+
+**第四偏差（已定位、pdfTeX 决定性证实、573→23 的主杠杆）——下一刀靶子**：
+
+- **机制**：tex.web @<Accumulate the constant...@>（L8797-8812）数字循环尾是
+  **无条件 `get_x_token`**（L7825：get_next → 可展开则 expand → 重来），即
+  数字串后紧跟的宏/可展开原语**就地展开、产物继续累计**，首个不可展开产物
+  `back_input`。NTex 数字循环尾停在第一个 cs 放回（第十二轮权宜，报告
+  §18 已记偏差），`\<可展开>` 不被吸收。
+- **pdfTeX 决定性证据**（INITEX，`\write16` 通道）：
+  `\def\zz{4} \count11=2\zz` → `B=24`（**吸收**，非 NTex 的 2）。
+- **对 fp 的杠杆**：expl3 fp 数字消化机 `\ifnum 9 < 1 \token_to_str:N #1
+  \exp_stop_f:`（expl3-code L16681/L16749）左操作数停在 1、`9<1` 为假 →
+  数字被当 other 分派 → `\__fp_parse_one_other:NN`/`\__fp_parse_infix:NN`
+  级联错位。实验版补丁（数字循环尾换成无条件展开臂，`Macro` 臂带
+  `protected && suppress_expansion>0` 抑制）使全载探针 **573 → 23 错、
+  `\???` 6 → 0**。
+- **落地阻塞（本轮未过门禁的原因）**：28 项既有 ntex-core 单测钉死了
+  「数字后停在可展开项」的旧语义，典型如
+  `advance_register_arithmetic`（`\count20=0\advance\count20 1\the\count20`
+  期望 `2`，tex.web 真语义 `\the\count20` 被吸收进当前数 → 12）、
+  `number_scan_skips_false_branch_of_nested_romannumeral`、
+  `scan_left_brace_expandable_filler` 等。其中**部分测试的输入是钉偏差而非钉
+  tex.web**（pdfTeX `B=24` 已证），须逐条重算期望值；另有十二/十八/二十二轮
+  在数字/表达式扫描周边打磨出的帧收口语义（`\expandafter` 揭示条件开始、
+  表达式终结符前瞻 `\relax` 单次吸收）可能与全展开相互作用，须在 TRIP 基线
+  签名锚点下重验。**这是独立的第四刀，不是本刀的收尾活**。
+- 实验版补丁正文（可整段替换数字循环尾的 `\expandafter` 特例块）见
+  本文档末尾附录 A。
+
+**结论（按 90 分钟止损口径）**：fp 首错未达 FP-OK；三偏差修复落地（门禁全绿、
+双引擎各自验证）；第四偏差完成定性 + 双引擎证实 + 杠杆量化（573→23），
+落地（含 28 测期望值重算与 TRIP 重验）留给下一刀。
+`lvt-run.py --all` 复测（本刀工作树）：**STACK 187/187 判定分布未变**——
+fp 首错仍阻断 END-TEST-LOG，本刀收益在探针层（错误 623→573、`\???` 15→6；
+含实验版 23/0），不到 harness 判定层；按「探针首错前移」口径记刀。
+
+## 09-13 复测·二（历史）首错前移 l.9320 → l.18141——outer 双槽位修复落地
 
 | 判定 | 一刀前 | 本轮 |
 |---|---|---|
@@ -345,3 +419,34 @@ TEST 1: cs if exist use          ← 标题已对（`~`=cat10 修复后）
 
 **教训**：`DIFF 177/189` 这个数字很漂亮（像"只差一点点"），实际是
 **「expl3 缺席」的度量**，不是「引擎快好了」的度量。**指标要有正确的读法。**
+
+## 附录 A：第四刀实验版补丁（数字循环尾无条件展开，573→23 未过门禁）
+
+替换 `crates/ntex-core/src/expand/scan.rs` 数字循环尾的
+「`\expandafter` 揭示条件开始才展开」整块（自
+`// 数字循环尾只对 ...` 注释起至其闭合 `}` 止）为：
+
+```rust
+                    // tex.web @<Accumulate the constant...@>（L8797-8812）循环尾的**无条件**
+                    // `get_x_token`：展开直到不可展开（实验版，28 项既有测试回归——见
+                    // 本文档「第三刀」节）
+                    if let Some(csid) = tok.csid() {
+                        let expandable = match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
+                            EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
+                            EqSlot::Primitive(p) if p.is_expandable() => true,
+                            _ => false,
+                        };
+                        if expandable {
+                            let mut expansion = Vec::new();
+                            self.expand_once((tok, false), &mut expansion)?;
+                            if !expansion.is_empty() {
+                                self.push_frame(InputFrame::TokenList { items: expansion.into(), pos: 0 });
+                            }
+                            continue;
+                        }
+                    }
+```
+
+落地清单（下一刀）：① 28 项单测逐条重算期望值（pdfTeX 逐条裁决，钉偏差的
+改输入或改期望，钉 tex.web 的保留）；② 十二/十八/二十二轮的帧收口与
+`\expandafter`/表达式终结符语义在 TRIP 基线签名下重验；③ `make check` 全绿。

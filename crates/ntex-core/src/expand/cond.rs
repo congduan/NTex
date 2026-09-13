@@ -928,8 +928,23 @@ saved_if_type: self.cur_if_type,
                     }
                 }
                 if noexpand {
-                    // \noexpand 冻结 cs → active char（cat 13），码取 cs 哨兵
-                    return Ok((Some(256 + csid), Some(Catcode::Active)));
+                    // tex.web L9816-9826（get_x_token_or_active_char + "非字符"
+                    // 归一）：`\noexpand` 标记只在操作数是 **active char** 时回填
+                    // 字符码——`cur_chr:=cur_tok-cs_token_flag-active_base`，
+                    // active char 的 eqtb 槽在区 1（cur_cs=active_base+charcode）
+                    // 所以正好还原 charcode；真 cs 的槽在 single/hash 区
+                    // （cur_cs≥257）→ cur_chr≥256，落 `(cur_cmd>active_char) or
+                    // (cur_chr>255)` 的"非字符"臂 → relax/256 哨兵。故
+                    //   `\if_catcode:w \scan_stop: \exp_not:N \s__fp_expr_mark`
+                    // 两侧都是"非字符"（m=cur_cmd=relax）→ **真**
+                    // （expl3-code L17577 `\__fp_parse_infix:NN` 靠它把表达式
+                    // 终结符 `\s__fp_expr_mark` 判进终止臂；此前把 noexpand cs
+                    // 当 cat-13 字符 → 终结符漏判 → `` `#2 `` 对多字符 cs 报
+                    // "Improper alphabetic constant" → fp 表达式解析 8682 错）。
+                    // 第十五刀的 `256+csid`/cat-13 臆测证伪。NTex 的 active char
+                    // 是 Char token（catcode Active），带 noexpand 标志时走下方
+                    // `return Ok((tok.charcode(), tok.catcode()))` 自然命中。
+                    return Ok((None, None));
                 }
                 // 不可展开 cs（\relax、\hbox、字符型 cs …）→ 非字符
                 return Ok((None, None));
