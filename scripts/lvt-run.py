@@ -168,9 +168,12 @@ def fetch() -> Path:
     if tf.exists():
         shutil.rmtree(tf)
     shutil.copytree(src, tf)
-    # regression-test.tex 从 l3build 取
+    # regression-test.tex 从 l3build 取；/tmp 缓存不在时回落仓库内
+    # fixtures/l3build（2026-09-13 入库，基准件勿依赖外网）
     rt = next(CACHE.glob("latex3-*/texmf/tex/latex/l3build/regression-test.tex"), None)
-    if rt:
+    if rt is None:
+        rt = REPO / "fixtures" / "l3build" / "regression-test.tex"
+    if rt.exists():
         shutil.copy(rt, tf / "regression-test.tex")
     (tf / "regression-test.cfg").write_text("")
     shutil.copy(SHIM, tf / "lvt-shim.tex")

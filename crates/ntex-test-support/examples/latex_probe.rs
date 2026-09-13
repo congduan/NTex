@@ -20,6 +20,8 @@ const INITEX_CATCODE_SHIM: &str = concat!(
 #[derive(Debug)]
 struct SurveyVfs {
     root: String,
+    /// 额外查找目录（CLI `--input-path`，主 root miss 后依次尝试）。
+    extra_roots: Vec<String>,
     mem: MemVfs,
 }
 
@@ -36,9 +38,11 @@ fn normalize(path: &str) -> String {
 }
 
 impl SurveyVfs {
+    #[allow(dead_code)] // mem 直构后保留的便捷构造（工具示例代码）
     fn new(root: impl Into<String>) -> Self {
         Self {
             root: root.into(),
+            extra_roots: Vec::new(),
             mem: MemVfs::new(),
         }
     }
@@ -48,12 +52,20 @@ impl Vfs for SurveyVfs {
     fn read(&mut self, path: &str) -> std::io::Result<Option<Vec<u8>>> {
         let path = &normalize(path);
         let stripped = path.strip_prefix(&self.root).unwrap_or(path);
-        let p = std::path::Path::new(&self.root).join(stripped);
-        match std::fs::read(&p) {
-            Ok(bytes) => Ok(Some(bytes)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => self.mem.read(path),
-            Err(e) => Err(e),
+        // 多路查找：主 root 优先，其后 extra_roots（--input-path，对齐
+        // ntex-dvi CLI 语义）。latex.ltx 载入闭包跨目录时必需（如源在
+        // fixtures/latex2e/ 而 expl3-code.tex 在 fixtures/l3kernel/）。
+        let mut roots = vec![self.root.clone()];
+        roots.extend(self.extra_roots.iter().cloned());
+        for root in &roots {
+            let p = std::path::Path::new(root).join(stripped);
+            match std::fs::read(&p) {
+                Ok(bytes) => return Ok(Some(bytes)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(e),
+            }
         }
+        self.mem.read(path)
     }
     fn write(&mut self, path: &str, bytes: &[u8]) -> std::io::Result<()> {
         self.mem.write(&normalize(path), bytes)
@@ -75,6 +87,33 @@ fn main() -> Result<()> {
         .find(|a| !a.starts_with('-'))
         .map(String::as_str)
         .unwrap_or("/tmp/latexsurvey/tex/latex/base/latex.ltx");
+    // --input-path <dir>（可多次）：额外文件查找目录，供载入闭包跨目录取件
+    //（如 fixtures/latex2e 的 latex.ltx 要 input fixtures/l3kernel 的
+    // expl3-code.tex）。对齐 ntex-dvi CLI 语义。
+    let mut extra_roots: Vec<String> = Vec::new();
+    let mut ai = args.iter().peekable();
+    while let Some(a) = ai.next() {
+        if a == "--input-path" {
+            if let Some(dir) = ai.peek() {
+                extra_roots.push((*dir).clone());
+                ai.next();
+            }
+        }
+    }
+    // 未显式给 --input-path 时默认带上仓库 fixtures 的 l3kernel+latex2e 兄弟
+    // 目录（源在 fixtures 内时）——跑 `fixtures/latex2e/latex.ltx` 即开箱即用。
+    if extra_roots.is_empty() {
+        let src_root = std::path::Path::new(path)
+            .parent()
+            .unwrap_or(std::path::Path::new("."));
+        for probe in ["../l3kernel", ".", "../probes"] {
+            if let Ok(d) = src_root.join(probe).canonicalize() {
+                if d != src_root.canonicalize().unwrap_or(d.clone()) {
+                    extra_roots.push(d.to_string_lossy().into_owned());
+                }
+            }
+        }
+    }
     let root = std::path::Path::new(path)
         .parent()
         .and_then(|p| p.to_str())
@@ -92,7 +131,11 @@ fn main() -> Result<()> {
     if initex {
         ts = ts.initex();
     }
-    ts.set_vfs(Box::new(SurveyVfs::new(root)));
+    ts.set_vfs(Box::new(SurveyVfs {
+        root,
+        extra_roots,
+        mem: MemVfs::new(),
+    }));
     let res = ts.typeset_bytes(input);
     let transcript = ts.take_transcript();
 

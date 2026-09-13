@@ -23,7 +23,12 @@ set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HIST="$REPO/docs/blocker-history.tsv"
+# 默认源优先仓库内 fixtures（2026-09-13 入库，防 /tmp/r27b 随整机重启丢失）；
+# 显式传参或 /tmp 备料树存在时仍可覆盖（旧口径不变）。
 SRC_DEFAULT="/tmp/r27b/latex.ltx"
+if [[ ! -f "$SRC_DEFAULT" && -f "$REPO/fixtures/latex2e/latex.ltx" ]]; then
+    SRC_DEFAULT="$REPO/fixtures/latex2e/latex.ltx"
+fi
 PROBE_LOG="$(mktemp -t blocker-probe-XXXX.log)"
 
 if [[ "${1:-}" == "--show" ]]; then
@@ -46,8 +51,15 @@ export PATH="$HOME/.cargo/bin:$PATH"
 export NTEX_TFM_DIR="${NTEX_TFM_DIR:-$HOME/.ntex-fonts}"
 
 echo "== 跑 latex_probe（--initex）…"
+# ⚠ latex_probe 的 `\input` 文件查找依赖 `--input-path`：源在 /tmp 备料树时
+# 用源所在目录；在仓库 fixtures 时带上 fixtures/latex2e（2026-09-13 接线）。
+SRC_DIR="$(dirname "$SRC")"
+INPUT_PATH_ARGS=(--input-path "$SRC_DIR")
+if [[ "$SRC" == "$REPO"/* ]]; then
+    INPUT_PATH_ARGS=(--input-path "$REPO/fixtures/latex2e")
+fi
 timeout 600 cargo run -q --release -p ntex-test-support --example latex_probe -- \
-    "$SRC" --initex > "$PROBE_LOG" 2>&1
+    "$SRC" --initex "${INPUT_PATH_ARGS[@]}" > "$PROBE_LOG" 2>&1
 probe_rc=$?
 
 # ── 抽取信号 ────────────────────────────────────────────────────────────

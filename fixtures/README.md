@@ -19,6 +19,27 @@
 | `l3kernel/UnicodeData.txt` | Unicode 字符数据库（Unicode, Inc.，Unicode License；本地抓自 TeX Live 2024 `texmf-dist/tex/generic/unicode-data/`，2023-09-19 版，1.9MB） | `expl3-code.tex` codepoint 模块在载入期 `\ior_open:Nn \g__codepoint_data_ior { UnicodeData.txt }` 逐行读取建字符类/ blocks 表。NTex 无 kpathsea 树，**缺失时 `\openin` 失败路径当前会死循环**（见下），必经 `--input-path fixtures/l3kernel` 提供 |
 | `l3kernel/expl3-code.tex` | expl3 宏层实现本体（docstrip 生成版，1387070B，LPPL 1.3c；md5 `7a1cc7249b9eeccb4029956317d7a295`，与 `/tmp/l3kernel-tests` 缓存一致） | LaTeX 兼容战役与 lvt 跑分（`scripts/lvt-run.py`）的核心分母。2026-09-13 入库——此前只存 `/tmp`，整机重启即丢（blocker-history 有先例），`lvt-run.py` 的 `ensure_expl3` 与 `expl3_probe.py` 均已接 fixtures 回落臂 |
 | `l3kernel/exgeneric.tex` | expl3 generic 载入器（3040B，plain 形态正解，见 `docs/expl3-real-workload.md` 终局对拍节） | 与 expl3-code.tex 配对使用；`lvt-run.py` EXPL3_FILES 同源 |
+| `l3build/regression-test.tex` | l3build 官方测试 harness（7963B，与 latex3-main 仓库逐字节一致） | lvt 跑分每例必用（`\TEST`/`\TYPE`/`\START`/`\END`）。TinyTeX 不带 l3build、此前只存 /tmp 解包树，`lvt-run.py --fetch` 已接 fixtures 回落 |
+| `l3build/regression-test.cfg` | 空文件占位 | harness L127 `\InputIfFileExists{regression-test.cfg}`，缺失时 `\openin` 路径不稳（NTex 已知坑） |
+
+### `fixtures/latex2e/` — LaTeX 内核备料（2026-09-13 入库，原 /tmp/r27b）
+
+`latex.ltx`（776142B，md5 `16e51c96…`，与 TinyTeX `tex/latex/base/latex.ltx`
+逐字节一致）+ 载入期全家：`expl3.ltx`/`fonttext.{ltx,cfg}`/`fontmath.{ltx,cfg}`/
+`hyphen.ltx`/`preload.{ltx,cfg}`/`texsys.cfg`/`latex2e-first-aid-for-external-files.ltx`。
+消费者：`latex_probe --initex`（LaTeX 战役主料，载入链 `\input` 这些文件）、
+`scripts/blocker-track.sh`（默认源已改 fixtures 优先）。**跨机器克隆即用，
+不再依赖 /tmp 备料树**。
+
+### `fixtures/probes/` — 战役探针与判据（2026-09-13 入库，原 /tmp/r27b）
+
+`l301.tex`（+`l301.baseline`）：latex.ltx 首现场最小复现（tooling-trust 事故六，
+`\string^^J` 版本嗅探）；`v_{a..h}.tex`：行尾模型实验组探针。均为 transcription
+差分的小输入，随仓库走。
+
+> 体积注记：`fixtures/latex2e/` ~840KB。lvt 语料（.lvt×187 + .tlg×266，12MB，
+> 上游常更新）**不冻结入库**，保持 `make lvt-fetch` 下载——只有「变了会破坏
+> 旧跑分可比性」的基准件才入库。
 
 expl3 载入复现（plain 形态，引擎经 `\input expl3-generic.tex`，backend def 缺失时
 NTex fallback 请求 dvips——一并经 `--input-path` 提供拷贝即可）：
