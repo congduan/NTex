@@ -4,7 +4,10 @@
 //! Type1 字体以 PFB 嵌入、绝对坐标定位字符、`re f` 填充规则。
 //! Unicode 直映字体（中文 Fandol 等，M9）走 Type0/CIDFontType0 +
 //! `/FontFile3 /OpenType` 嵌入整个 OTF（见 [`otf`]），内容流里字符以
-//! 两字节十六进制串（CID = Unicode 码位）写出。
+//! 两字节十六进制串写出，**串值 = 字体 CFF charset 里的真 CID**（中文
+//! Fandol 即 Adobe-GB1 CID，见 [`cid`]；写 Unicode 会让查看器 CID→字形
+//! 查表落空、整页空白——2026-09-13 修复）。
+//!
 //! 多字体（M8，2026-09-04 验证）：CM 全家族（cmr10/cmbx10/cmss12/cmtt10/
 //! cmmi10/cmsy10/cmex10 等多号数）同链嵌入——`/BaseFont`/`/FontDescriptor`
 //! 取 PFB 内 `/FontName`（大写），`/FontFile` 原样嵌 PFB；每页 `/Resources
@@ -14,6 +17,7 @@
 //! 用法：`ntex-pdf <input.dvi> [output.pdf] [-p <W>x<H>]`（页面尺寸 pt，默认 A4）；
 //! 或库 API [`convert`]。
 
+pub mod cid;
 pub mod dvi;
 pub mod otf;
 pub mod pdf;

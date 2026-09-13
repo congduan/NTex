@@ -8,16 +8,22 @@
 //!   `/Encoding` 不指定——查看器用字体程序内建编码（cmr10 的 TeX 编码 =
 //!   DVI 字符码，天然一致）；`unicode_native` 字体（中文 Fandol 等，M9）
 //!   走 Type0/CIDFontType0 + `/FontFile3 /OpenType` 嵌入整个 OTF
-//!   （见 [`crate::otf`]），内容流字符写成两字节十六进制串（CID = Unicode
-//!   码位，Identity-H；> 0xFFFF 的码位画不出 2 字节 CID，跳过字形但保留
-//!   定位推进，挂账待住区平面支持）；
+//!   （见 [`crate::otf`]），内容流字符写成两字节十六进制串（Identity-H），
+//!   **串值 = 字体 CFF charset 里的真 CID**（Unicode →（cmap）→ GID →
+//!   （charset）→ CID，见 [`crate::cid`]；Fandol 即 Adobe-GB1 CID——写
+//!   Unicode 会让查看器 CID→字形查表落空、整页中文空白，2026-09-13 修复）。
+//!   同时按**排版器自己用的度量**写 `/W` 宽度数组：查看器推进量与排版器
+//!   一致，逐字调整量才落得准；字体未覆盖的码位跳过字形（不画也不推进）。
+//!
 //! - 多字体去重按 `fnt_def` 外部名（同字体多页复用同一组对象）；页面资源字典
 //!   只列本页实际引用的字体（`page_fonts`），跨页互不泄漏（M8 多字体验证）。
 //! - 坐标转换：DVI 原点在页左上、y 向下（sp）；PDF 原点在左下、y 向上（pt），
 //!   字符参考点为基线（DVI 的 v 即基线）。
 
+use std::collections::BTreeMap;
 use std::io::{self, Write};
 
+use crate::cid::{self, CidMap, Mapping};
 use crate::dvi::{DrawOp, Dvi};
 use crate::otf::load_otf;
 use crate::type1::load_pfb;
@@ -47,6 +53,12 @@ impl Default for PdfOptions {
 /// 把解析出的 DVI 写成 PDF 字节。
 pub fn write_pdf(dvi: &Dvi, opts: &PdfOptions) -> io::Result<Vec<u8>> {
     let (_, h_pt) = opts.page_size;
+    // 字体形态只分类一次：写内容流（要按 CID 映射取字节）与组装对象字典
+    // （要按同一形态定对象数）必须同源，否则两边各说一套
+    let forms = classify_fonts(dvi);
+    // 内容流实际写出的 CID：字体号 →（CID → 宽度，1/1000 em），供 `/W`。
+    // BTreeMap 而非 HashMap：写出顺序确定，PDF 可复现 diff。
+    let mut used: Vec<BTreeMap<u16, i64>> = vec![BTreeMap::new(); dvi.fonts.len()];
     let mut contents: Vec<Vec<u8>> = Vec::with_capacity(dvi.pages.len());
     for page in &dvi.pages {
         let mut c = Vec::new();
@@ -61,7 +73,7 @@ pub fn write_pdf(dvi: &Dvi, opts: &PdfOptions) -> io::Result<Vec<u8>> {
                     let y = h_pt - ORIGIN_PT - *v as f64 / SP_PER_PT;
                     match run.last() {
                         Some(&(pf, _, _, py)) if pf != *font || (py - y).abs() > 0.001 => {
-                            emit_line(&mut c, dvi, &run)?;
+                            emit_line(&mut c, dvi, &run, &forms, &mut used)?;
                             run.clear();
                         }
                         _ => {}
@@ -74,7 +86,7 @@ pub fn write_pdf(dvi: &Dvi, opts: &PdfOptions) -> io::Result<Vec<u8>> {
                     width,
                     height,
                 } => {
-                    emit_line(&mut c, dvi, &run)?;
+                    emit_line(&mut c, dvi, &run, &forms, &mut used)?;
                     run.clear();
                     let x = ORIGIN_PT + *h as f64 / SP_PER_PT;
                     let w = *width as f64 / SP_PER_PT;
@@ -86,32 +98,75 @@ pub fn write_pdf(dvi: &Dvi, opts: &PdfOptions) -> io::Result<Vec<u8>> {
                 }
             }
         }
-        emit_line(&mut c, dvi, &run)?;
+        emit_line(&mut c, dvi, &run, &forms, &mut used)?;
         contents.push(c);
     }
 
-    build_document(dvi, &contents, opts)
+    build_document(dvi, &contents, &forms, &used, opts)
 }
 
 /// 写一行字符（一个 `TJ` 数组）。
 ///
-/// `Tm` 定基线起点；逐字符用字体宽度推进。每个转移都发一个调整量
-/// （`TJ` 数字：正数左移、负数右移，单位 1/1000 em），把下一字符精确落到
-/// 其 TFM 位置；词间空隙以一个大调整量表达（poppler 等提取器据此识别为
-/// 空格，同 dvipdfmx 的做法）。
+/// `Tm` 定基线起点（取本行**第一个画得出的**字形位置）；此后每遇到下一个
+/// 已画字形都发一个调整量（`TJ` 数字：正数左移、负数右移，单位 1/1000 em），
+/// 把笔位移到该字形的排版位置。词间空隙因此自然表现为一个大调整量
+/// （poppler 等提取器据此识别为空格，同 dvipdfmx 的做法）。
+///
+/// 调整量以**上一个已画字形**的宽度为基准，所以被跳过的字形（字体未覆盖的
+/// 码位）既不画、也不推进笔位——落点仍精确，不会因缺字形把后续字符整体推移。
+///
+/// 与 `/W` 的自洽性：调整量成立的前提是「查看器推进量 == 排版器推进量」，
+/// 故 [`write_pdf`] 按同一份度量把用到的每个 CID 写进 `/W` 宽度数组。
 ///
 /// 字体形态分叉：TFM 8-bit 字体写 `(...)` 字面串（DVI 码 = 内建编码）；
-/// `unicode_native` 字体写 `<XXXX>` 两字节十六进制串（CID = Unicode 码位，
-/// Identity-H）。> 0xFFFF 的码位无法表成 2 字节 CID——跳过字形不画，但
-/// 照常计入推进（调整量链保证后续字符仍落 TFM 精确位置；Star 字形挂账）。
-fn emit_line(c: &mut Vec<u8>, dvi: &Dvi, run: &[(u32, u32, f64, f64)]) -> io::Result<()> {
+/// `unicode_native` 字体写 `<XXXX>` 两字节十六进制串（Identity-H），串值取
+/// [`crate::cid`] 给出的**字体真 CID**（不是 Unicode 码位）。
+fn emit_line(
+    c: &mut Vec<u8>,
+    dvi: &Dvi,
+    run: &[(u32, u32, f64, f64)],
+    forms: &FontForms,
+    used: &mut [BTreeMap<u16, i64>],
+) -> io::Result<()> {
     if run.is_empty() {
         return Ok(());
     }
-    let (font, _, x0, y0) = run[0];
+    let font = run[0].0;
+    let y0 = run[0].3;
     let fm = &dvi.fonts[font as usize];
     let size = font_size_pt(fm);
-    let unicode = fm.unicode_native;
+    // 字号非法（畸形 DVI 的 d/s 域）：本行整行不画——写出去会引入除零/NaN
+    if !size.is_finite() || size <= 0.0 {
+        return Ok(());
+    }
+    let cid_map = match forms.form(font) {
+        Some(FontForm::Otf { cid, .. }) => cid.as_ref(),
+        _ => None,
+    };
+
+    // 先筛出真正画得出的字形：Unicode 字体查 CID 映射，字体未覆盖的码位跳过
+    let mut glyphs: Vec<(u32, f64, Option<u16>)> = Vec::with_capacity(run.len());
+    for &(_, code, x, _) in run {
+        if fm.unicode_native {
+            let cid = match cid_map {
+                // 正路：字体真 CID（见 [`crate::cid`]）
+                Some(map) => map.cid(code),
+                // 无映射（字体未注入/映射构建失败）：保留降级旧口径——把码位当
+                // CID 直写（> 0xFFFF 表不成 2 字节，跳过），查看器按 `/BaseFont`
+                // 名以本地字体替代时或有可显示之机；这是最后手段，非正路。
+                None => (code <= 0xFFFF).then_some(code as u16),
+            };
+            match cid {
+                Some(cid) => glyphs.push((code, x, Some(cid))),
+                None => continue, // 画不出：不画也不推进（不进 glyphs）
+            }
+        } else {
+            glyphs.push((code, x, None));
+        }
+    }
+    let Some(&(_, x0, _)) = glyphs.first() else {
+        return Ok(()); // 整行无可画字形（如全落在字体 cmap 覆盖之外）
+    };
     write!(
         c,
         "BT /F{} {:.6} Tf 1 0 0 1 {:.4} {:.4} Tm [",
@@ -120,29 +175,26 @@ fn emit_line(c: &mut Vec<u8>, dvi: &Dvi, run: &[(u32, u32, f64, f64)]) -> io::Re
         x0,
         y0
     )?;
-    let emit_glyph = |c: &mut Vec<u8>, code: u32| -> io::Result<()> {
-        if unicode && code > 0xFFFF {
-            return Ok(()); // 画不出（2 字节 CID 上限）；定位仍由调整量链推进
-        }
-        if unicode {
-            write!(c, "<{code:04X}>")
-        } else {
-            // TFM 字体的 DVI 码恒 ≤ 0xFF（TeX 8-bit 语义）
-            write!(c, "({})", escape_byte(code as u8))
-        }
-    };
-    emit_glyph(c, run[0].1)?;
-    let mut prev_code = run[0].1;
+
+    let mut prev_code = glyphs[0].0;
     let mut prev_x = x0;
-    for &(f, code, x, _) in &run[1..] {
-        debug_assert_eq!(f, font, "run 内字体应一致");
-        let w_prev = fm.char_metrics(prev_code).0 as f64 / SP_PER_PT;
-        let delta = x - prev_x;
-        let adj = (w_prev - delta) * 1000.0 / size;
-        if adj.abs() > 0.01 {
-            write!(c, " {:.2}", adj)?;
+    for (i, &(code, x, cid)) in glyphs.iter().enumerate() {
+        if i > 0 {
+            let w_prev = fm.char_metrics(prev_code).0 as f64 / SP_PER_PT;
+            let delta = x - prev_x;
+            let adj = (w_prev - delta) * 1000.0 / size;
+            if adj.abs() > 0.01 {
+                write!(c, " {:.2}", adj)?;
+            }
         }
-        emit_glyph(c, code)?;
+        match cid {
+            Some(cid) => write!(c, "<{cid:04X}>")?,
+            // TFM 字体的 DVI 码恒 ≤ 0xFF（TeX 8-bit 语义）
+            None => write!(c, "({})", escape_byte(code as u8))?,
+        }
+        if let (Some(cid), Some(entry)) = (cid, used.get_mut(font as usize)) {
+            entry.entry(cid).or_insert_with(|| width_1000(fm, code));
+        }
         prev_code = code;
         prev_x = x;
     }
@@ -150,20 +202,23 @@ fn emit_line(c: &mut Vec<u8>, dvi: &Dvi, run: &[(u32, u32, f64, f64)]) -> io::Re
     Ok(())
 }
 
+/// 字体宽度的 1/1000 em 表示（PDF `/W` 口径），与排版器给的 sp 宽度同源。
+///
+/// 「查看器推进量 == 排版器推进量」是逐字调整量落得准的前提：两者不同源时，
+/// 每画一个字都会累积一次（PDF 宽度 − 排版宽度）的偏移。
+fn width_1000(fm: &ntex_font::FontMetrics, code: u32) -> i64 {
+    let size_sp = (fm.design_size_sp as i128 * fm.scale as i128) >> 20;
+    if size_sp <= 0 {
+        return 1000; // 防御：尺度非法时退全角（与 /DW 同值）
+    }
+    let w = i128::from(fm.char_metrics(code).0) * 1000 / size_sp;
+    w.clamp(0, i128::from(i64::MAX)) as i64
+}
+
 /// 字体的实际字号（pt）：design × scale / 2^20（`scaled_by` 后的 scale 字段）。
 fn font_size_pt(fm: &ntex_font::FontMetrics) -> f64 {
     let sp = (fm.design_size_sp as i128 * fm.scale as i128) >> 20;
     sp as f64 / SP_PER_PT
-}
-
-/// 判定字体是否走 Unicode 直映（Type0/OpenType）路径：取该名字任一 fnt_def
-/// 的度量看 `unicode_native`（同名多尺寸度量的该标记一致——都来自同一注册表）。
-fn is_unicode_font(dvi: &Dvi, name: &str) -> bool {
-    dvi.font_names
-        .iter()
-        .zip(&dvi.fonts)
-        .find(|(n, _)| n.as_str() == name)
-        .is_some_and(|(_, fm)| fm.unicode_native)
 }
 
 /// PDF 字符串转义（字节直出；`( ) \` 与 <0x20、>=0x7F 转八进制）。
@@ -177,95 +232,211 @@ fn escape_byte(b: u8) -> String {
     }
 }
 
+/// PDF 字面字符串（`(...)`，用于 `/CIDSystemInfo` 的 ROS 名）内容转义。
+fn escape_pdf_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        if matches!(ch, '(' | ')' | '\\') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// `/W` 宽度数组：`[ cid [w] cid [w] … ]`（单 CID 用紧凑形 `[w]`）。
+///
+/// 只列内容流**实际写出**的 CID——未出现的 CID 由 `/DW`（1000，全角）兜底。
+/// 取的是排版器自己用的那份度量（见 [`width_1000`]），宽度口径与 `/DW` 一致
+/// （1/1000 em）。空表写 `[]`（`/W` 允许空数组，等价于全用 `/DW`）。
+fn width_array(used: Option<&BTreeMap<u16, i64>>) -> String {
+    let Some(map) = used else {
+        return "[]".to_owned();
+    };
+    let mut s = String::from("[");
+    for (i, (cid, w)) in map.iter().enumerate() {
+        if i > 0 {
+            s.push(' ');
+        }
+        s.push_str(&format!("{cid} [{w}]"));
+    }
+    s.push(']');
+    s
+}
+
+/// 一族字体的嵌入形态。
+enum FontForm {
+    /// Type1：PFB 原样进 `/FontFile`（`/BaseFont` 取 PFB 内 `/FontName`，大写）。
+    Type1 { name: String, pfb: Vec<u8> },
+    /// Type0：OTF 原样进 `/FontFile3`（`/Subtype /OpenType`；仅 CFF/OTTO）。
+    /// `cid` = Unicode→真 CID 映射（见 [`crate::cid`]）；`None` 表示 CFF 解析
+    /// 失败——此时内容流画不出任何字形，退回不嵌入降级以免写错映射。
+    Otf { otf: Vec<u8>, cid: Option<CidMap> },
+    /// 不嵌入降级：`unicode=true` 仍给 Type0+后代字典（无 `/FontFile3`），
+    /// `false` 退最小裸 Type1 字典（M8 行为）。
+    Bare { unicode: bool },
+}
+
+/// 去重后的一族字体。
+struct FontEntry {
+    /// DVI `fnt_def` 外部名（去重键，也是 `/F<n>` 资源名与 CSS 名之外的引用键）。
+    tex_name: String,
+    /// PDF `/BaseFont` 名（Type1 取 PFB 内 `/FontName`；Type0 用 DVI 名原样）。
+    base_name: String,
+    /// 嵌入形态。
+    form: FontForm,
+}
+
+/// 全文的字体分类结果。
+struct FontForms {
+    /// 每个唯一字体名一项（跨页/多号数复用同一组 PDF 对象）。
+    uniq: Vec<FontEntry>,
+    /// DVI 字体号 → [`Self::uniq`] 下标。
+    of_font: Vec<usize>,
+}
+
+impl FontForms {
+    /// 按 DVI 字体号取嵌入形态。
+    fn form(&self, font_id: u32) -> Option<&FontForm> {
+        self.of_font
+            .get(font_id as usize)
+            .and_then(|&i| self.uniq.get(i))
+            .map(|e| &e.form)
+    }
+}
+
+impl FontForm {
+    /// 本形态占用的 PDF 对象数（供对象号分配）。
+    fn object_count(&self) -> u32 {
+        match self {
+            FontForm::Type1 { .. } => 3,
+            FontForm::Otf { .. } => 4,
+            FontForm::Bare { unicode: true } => 2,
+            FontForm::Bare { unicode: false } => 1,
+        }
+    }
+}
+
+/// 给每个 DVI 字体定嵌入形态（去重与告警按外部名，每个名字只报一次）。
+///
+/// 判定：`unicode_native` 度量（M9 中文）走 Type0——OTF 字节按 [`load_otf`]
+/// 定位（注册表 → 宿主查找链）原样嵌入，并构建 CID 映射（见 [`crate::cid`]；
+/// 映射构建失败或非 CFF 轮廓时降级不嵌）。其余走 Type1/PFB。
+fn classify_fonts(dvi: &Dvi) -> FontForms {
+    let mut uniq: Vec<FontEntry> = Vec::new();
+    let mut of_font: Vec<usize> = Vec::with_capacity(dvi.fonts.len());
+    for (name, fm) in dvi.font_names.iter().zip(&dvi.fonts) {
+        // 同名字体（多号数/多页）复用首次结论：不重复加载字体、不重复告警
+        if let Some(pos) = uniq.iter().position(|e| e.tex_name == *name) {
+            of_font.push(pos);
+            continue;
+        }
+        let entry = if fm.unicode_native {
+            classify_unicode(name)
+        } else {
+            classify_type1(name)
+        };
+        of_font.push(uniq.len());
+        uniq.push(entry);
+    }
+    FontForms { uniq, of_font }
+}
+
+/// Unicode 直映字体：Type0 + 真 CID 映射；失败则如实告警并降级。
+fn classify_unicode(name: &str) -> FontEntry {
+    let bare = |base: String| FontEntry {
+        tex_name: name.to_owned(),
+        base_name: base,
+        form: FontForm::Bare { unicode: true },
+    };
+    let bytes = match load_otf(name) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("警告：{e}（以不嵌入方式引用字体）");
+            return bare(name.to_owned());
+        }
+    };
+    if !bytes.starts_with(b"OTTO") {
+        // TrueType 轮廓（glyf）：/OpenType 流只收 CFF，挂账不嵌
+        eprintln!("警告：{name} 是 TrueType 轮廓，OpenType 嵌入暂不支持（以不嵌入方式引用）");
+        return bare(name.to_owned());
+    }
+    let cid = match cid::build(&bytes) {
+        Ok(m) => {
+            if m.mapping() == Mapping::GlyphIdFallback {
+                // name-keyed CFF：charset 存的是 SID 而非 CID，PDF 侧造不出真
+                // 映射，只能退 CID = GID 的兼容口径（部分查看器可显示）——挂账
+                eprintln!(
+                    "警告：{name} 的 CFF 非 CID-keyed（无 ROS），PDF CID 映射退化为 \
+                     CID = GID（部分查看器可能显示不出）"
+                );
+            }
+            Some(m)
+        }
+        Err(e) => {
+            eprintln!("警告：{e}（{name} 以不嵌入方式引用）");
+            return bare(name.to_owned());
+        }
+    };
+    FontEntry {
+        tex_name: name.to_owned(),
+        base_name: name.to_owned(),
+        form: FontForm::Otf { otf: bytes, cid },
+    }
+}
+
+/// TFM 8-bit 字体：Type1/PFB；找不到 PFB 则退裸字典（`/BaseFont` 用大写兜底名）。
+fn classify_type1(name: &str) -> FontEntry {
+    match load_pfb(name) {
+        Ok(f) => FontEntry {
+            tex_name: name.to_owned(),
+            base_name: f.name.clone(),
+            form: FontForm::Type1 {
+                name: f.name,
+                pfb: f.pfb,
+            },
+        },
+        Err(e) => {
+            eprintln!("警告：{e}（以不嵌入方式引用字体）");
+            FontEntry {
+                tex_name: name.to_owned(),
+                base_name: name.to_ascii_uppercase(),
+                form: FontForm::Bare { unicode: false },
+            }
+        }
+    }
+}
+
 /// 组装 PDF 文档。
 ///
 /// 对象布局：1 Catalog、2 Pages、每页 (Page, Contents) 两对象、
-/// 之后按字体分配（对象数随形态而定）：Type1 嵌入 3 对象
-/// (Font dict, FontDescriptor, FontFile)、Type0/OpenType 嵌入 4 对象
-/// (Type0 dict, CIDFontType0, FontDescriptor, FontFile3)、降级 1~2 对象。
+/// 之后按字体分配（对象数随形态而定，见 [`FontForm::object_count`]）。
 ///
-/// 字体形态判定：`unicode_native` 度量（M9 中文）走 Type0——CID = Unicode
-/// 码位（Identity-H），OTF 字节按 [`load_otf`] 定位（注册表 → 宿主查找链），
-/// 原样嵌入 `/FontFile3`（`/Subtype /OpenType`）。找不到 OTF 或非 CFF 轮廓
-/// （TrueType glyf，挂账）时降级：保留 Type0 字典与后代字体但不嵌字体程序。
-fn build_document(dvi: &Dvi, contents: &[Vec<u8>], opts: &PdfOptions) -> io::Result<Vec<u8>> {
-    // 每个唯一字体名的嵌入形态（去重按 fnt_def 外部名，跨页复用同一组对象）。
-    enum Body {
-        /// Type1：PFB 原样进 /FontFile（BaseFont 取 PFB /FontName，大写）。
-        Type1 { name: String, pfb: Vec<u8> },
-        /// Type0：OTF 原样进 /FontFile3（/Subtype /OpenType；仅 CFF/OTTO）。
-        Otf { otf: Vec<u8> },
-        /// 不嵌入降级：unicode=true 时仍给 Type0+后代字典（无 FontFile3），
-        /// false 时退最小裸 Type1 字典（M8 行为）。
-        Bare { unicode: bool },
-    }
-    let mut uniq: Vec<(&str, (String, Body))> = Vec::new();
-    for name in &dvi.font_names {
-        if uniq.iter().any(|(n, _)| *n == name.as_str()) {
-            continue;
-        }
-        let unicode = is_unicode_font(dvi, name);
-        let entry = if unicode {
-            match load_otf(name) {
-                Ok(bytes) if bytes.starts_with(b"OTTO") => {
-                    (name.to_owned(), Body::Otf { otf: bytes })
-                }
-                Ok(_) => {
-                    // TrueType 轮廓（glyf）：/OpenType 流只收 CFF，挂账不嵌
-                    eprintln!(
-                        "警告：{name} 是 TrueType 轮廓，OpenType 嵌入暂不支持（以不嵌入方式引用）"
-                    );
-                    (name.to_owned(), Body::Bare { unicode: true })
-                }
-                Err(e) => {
-                    eprintln!("警告：{e}（以不嵌入方式引用字体）");
-                    (name.to_owned(), Body::Bare { unicode: true })
-                }
-            }
-        } else {
-            match load_pfb(name) {
-                Ok(f) => {
-                    let base = f.name.clone();
-                    (
-                        base,
-                        Body::Type1 {
-                            name: f.name,
-                            pfb: f.pfb,
-                        },
-                    )
-                }
-                Err(e) => {
-                    eprintln!("警告：{e}（以不嵌入方式引用字体）");
-                    (name.to_ascii_uppercase(), Body::Bare { unicode: false })
-                }
-            }
-        };
-        uniq.push((name.as_str(), entry));
-    }
-    // DVI 字体号 → PDF 字体字典对象号（每族对象数随形态：3/4/2/1）
+/// 字体形态由 [`classify_fonts`] 决定（与内容流写字节同一份结论）：Type0
+/// 分支除 Type0/后代/描述符/`/FontFile3` 四对象外，还按字体 ROS 写
+/// `/CIDSystemInfo`、按内容流实际用到的 CID 写 `/W` 宽度数组。
+fn build_document(
+    dvi: &Dvi,
+    contents: &[Vec<u8>],
+    forms: &FontForms,
+    used: &[BTreeMap<u16, i64>],
+    opts: &PdfOptions,
+) -> io::Result<Vec<u8>> {
+    // 每族字体字典的对象号（去重表下标 → 对象号）+ DVI 字体号 → 对象号
     let n_pages = contents.len();
-    let font_obj: Vec<u32> = {
-        let mut nums = Vec::with_capacity(uniq.len());
+    let (nums, font_obj): (Vec<u32>, Vec<u32>) = {
+        let mut nums = Vec::with_capacity(forms.uniq.len());
         let mut cursor = (3 + 2 * n_pages) as u32;
-        for (_, (_, body)) in &uniq {
+        for e in &forms.uniq {
             nums.push(cursor);
-            cursor += match body {
-                Body::Type1 { .. } => 3,
-                Body::Otf { .. } => 4,
-                Body::Bare { unicode: true } => 2,
-                Body::Bare { unicode: false } => 1,
-            };
+            cursor += e.form.object_count();
         }
-        dvi.font_names
+        let font_obj = forms
+            .of_font
             .iter()
-            .map(|name| {
-                let idx = uniq
-                    .iter()
-                    .position(|(n, _)| *n == name.as_str())
-                    .expect("字体名已注册");
-                nums[idx]
-            })
-            .collect()
+            .map(|&idx| nums.get(idx).copied().unwrap_or(cursor))
+            .collect();
+        (nums, font_obj)
     };
 
     let (w_pt, h_pt) = opts.page_size;
@@ -332,12 +503,17 @@ fn build_document(dvi: &Dvi, contents: &[Vec<u8>], opts: &PdfOptions) -> io::Res
     //   引擎内部引用键；PDF 名字必须与嵌入字体自声明名一致，否则部分查看器
     //   按名匹配度量失败）。fallback（无 PFB）路径同样走大写兜底名。
     // - Type0：/BaseFont 用 DVI 引用名原样（FandolSong-Regular 本身即合法
-    //   PostScript 名；CID 体系由 CIDSystemInfo 标识，无需 PFB 式改名）。
-    for (idx, (_, (base_name, body))) in uniq.iter().enumerate() {
-        match body {
-            Body::Type1 { name, pfb } => {
-                let (dict_obj, desc_obj, file_obj) =
-                    (font_obj[idx], font_obj[idx] + 1, font_obj[idx] + 2);
+    //   PostScript 名）。/CIDSystemInfo 照抄字体 CFF 的 ROS（Fandol 即
+    //   Adobe-GB1-5）；/W 按内容流实际用到的 CID 写宽度——与排版器度量同源，
+    //   查看器推进量才与逐字调整量自洽（见 `emit_line` 文档）。
+    for (idx, e) in forms.uniq.iter().enumerate() {
+        let FontEntry {
+            base_name, form, ..
+        } = e;
+        let base_obj = nums[idx];
+        match form {
+            FontForm::Type1 { name, pfb } => {
+                let (dict_obj, desc_obj, file_obj) = (base_obj, base_obj + 1, base_obj + 2);
                 obj(
                     &mut buf,
                     &mut offsets,
@@ -363,13 +539,20 @@ fn build_document(dvi: &Dvi, contents: &[Vec<u8>], opts: &PdfOptions) -> io::Res
                 fbody.extend_from_slice(b"\nendstream\nendobj");
                 obj(&mut buf, &mut offsets, &fbody);
             }
-            Body::Otf { otf } => {
-                let (dict_obj, cid_obj, desc_obj, file_obj) = (
-                    font_obj[idx],
-                    font_obj[idx] + 1,
-                    font_obj[idx] + 2,
-                    font_obj[idx] + 3,
-                );
+            FontForm::Otf { otf, cid } => {
+                let (dict_obj, cid_obj, desc_obj, file_obj) =
+                    (base_obj, base_obj + 1, base_obj + 2, base_obj + 3);
+                // CIDSystemInfo：如实照抄字体的 ROS；缺 ROS（退化映射）时保持
+                // Identity（此时 CID = GID，Identity 正是对应口径）
+                let info = match cid.as_ref().and_then(|m| m.ros()) {
+                    Some(ros) => format!(
+                        "/Registry ({}) /Ordering ({}) /Supplement {}",
+                        escape_pdf_string(&ros.registry),
+                        escape_pdf_string(&ros.ordering),
+                        ros.supplement
+                    ),
+                    None => "/Registry (Adobe) /Ordering (Identity) /Supplement 0".to_owned(),
+                };
                 obj(
                     &mut buf,
                     &mut offsets,
@@ -384,8 +567,9 @@ fn build_document(dvi: &Dvi, contents: &[Vec<u8>], opts: &PdfOptions) -> io::Res
                     &mut offsets,
                     format!(
                         "{cid_obj} 0 obj << /Type /Font /Subtype /CIDFontType0 /BaseFont \
-                         /{base_name} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) \
-                         /Supplement 0 >> /FontDescriptor {desc_obj} 0 R /DW 1000 >> endobj"
+                         /{base_name} /CIDSystemInfo << {info} >> /FontDescriptor {desc_obj} 0 R \
+                         /DW 1000 /W {} >> endobj",
+                        width_array(used.get(idx))
                     )
                     .as_bytes(),
                 );
@@ -413,8 +597,8 @@ fn build_document(dvi: &Dvi, contents: &[Vec<u8>], opts: &PdfOptions) -> io::Res
             }
             // 不嵌入降级：Type0 族仍写完整结构（缺 FontFile3/FontDescriptor），
             // 查看器按 BaseFont 名以本地字体替代；TFM 族退最小裸字典（M8 行为）。
-            Body::Bare { unicode: true } => {
-                let (dict_obj, cid_obj) = (font_obj[idx], font_obj[idx] + 1);
+            FontForm::Bare { unicode: true } => {
+                let (dict_obj, cid_obj) = (base_obj, base_obj + 1);
                 obj(
                     &mut buf,
                     &mut offsets,
@@ -435,13 +619,12 @@ fn build_document(dvi: &Dvi, contents: &[Vec<u8>], opts: &PdfOptions) -> io::Res
                     .as_bytes(),
                 );
             }
-            Body::Bare { unicode: false } => {
+            FontForm::Bare { unicode: false } => {
                 obj(
                     &mut buf,
                     &mut offsets,
                     format!(
-                        "{} 0 obj << /Type /Font /Subtype /Type1 /BaseFont /{base_name} >> endobj",
-                        font_obj[idx]
+                        "{base_obj} 0 obj << /Type /Font /Subtype /Type1 /BaseFont /{base_name} >> endobj"
                     )
                     .as_bytes(),
                 );
@@ -526,7 +709,9 @@ mod tests {
             (0, u32::from(b'h'), w_t + w_h + 5.0, 10.0),
         ];
         let mut c = Vec::new();
-        emit_line(&mut c, &dvi, &run1).unwrap();
+        let forms = classify_fonts(&dvi);
+        let mut used = vec![BTreeMap::new(); dvi.fonts.len()];
+        emit_line(&mut c, &dvi, &run1, &forms, &mut used).unwrap();
         let s = String::from_utf8(c).unwrap();
         assert!(s.starts_with("BT /F1 10.000000 Tf 1 0 0 1 0.0000 10.0000 Tm ["));
         // 词内相邻字符无调整量（delta == 字符宽），词距产生负调整量 -500
@@ -685,8 +870,14 @@ mod tests {
 
     /// Unicode 直映字体（M9 中文）：`unicode_native` 度量 + 注入的 OTF 字节
     /// → Type0/CIDFontType0 + Identity-H + /FontFile3（/OpenType 原样嵌入），
-    /// 内容流字符写两字节十六进制（CID = Unicode 码位）。
+    /// 内容流字符写两字节十六进制（**CID = 字体 CFF charset 里的真 CID**，
+    /// 不是 Unicode 码位），/CIDSystemInfo 照抄字体 ROS，/W 按用到的 CID 写宽。
     /// OTF 取仓库内 Tauri 前端自带的 FandolSong（找不到则跳过，不硬依赖）。
+    ///
+    /// 判据来源：xdvipdfmx 对**同一字体**写出的内容流为
+    /// `[<11cf0ed30b8603f104a90d6b>…]`（中=0x11CF=4559=Adobe-GB1 CID），
+    /// 本测试据此锁死「中」的 CID——写 Unicode 时查看器按 4559 反查落空，
+    /// 中文整页空白（2026-09-13 修复的现场）。
     #[test]
     fn write_pdf_embeds_unicode_font_as_type0_opentype() {
         let otf_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -722,8 +913,9 @@ mod tests {
             font_params: Vec::new(),
         };
         fm.unicode_native = true;
+        // 全角宽 1 em（Fandol 全系 upem=1000，汉字前进宽度即 1000）
         for cp in [0x4E2Du32, 0x56FD] {
-            fm.unicode_chars.push((cp, (1000 * 65536, 0, 0)));
+            fm.unicode_chars.push((cp, (655_360, 0, 0)));
         }
         fm.unicode_chars.sort_by_key(|e| e.0);
 
@@ -757,12 +949,34 @@ mod tests {
         assert!(s.contains("/FontFile3"), "{s}");
         assert!(s.contains("/Subtype /OpenType /Length"), "{s}");
         assert!(s.contains("/DW 1000"), "{s}");
-        // 内容流：CID = Unicode 码位，两字节十六进制
-        assert!(s.contains("<4E2D>"), "{s}");
-        assert!(s.contains("<56FD>"), "{s}");
+        // CIDSystemInfo 照抄字体 CFF 的 ROS（FandolSong = Adobe-GB1-5）
+        assert!(
+            s.contains("/Registry (Adobe) /Ordering (GB1) /Supplement 5"),
+            "ROS 应如实照抄：{s}"
+        );
+        // 内容流：真 CID——「中」= 0x11CF（GB1 CID 4559，与 xdvipdfmx 一致），
+        // 「国」为该字体 charset 给出的另一个 CID（此处按映射自洽校验）
+        assert!(s.contains("<11CF>"), "「中」应写 GB1 CID 0x11CF：{s}");
+        let map = crate::cid::build(&otf).expect("构建 CID 映射");
+        assert_eq!(map.cid(0x4E2D), Some(0x11CF), "「中」的 CID 应为 4559");
+        let guo = map.cid(0x56FD).expect("「国」应在字体 cmap 内");
+        assert!(
+            s.contains(&format!("<{guo:04X}>")),
+            "「国」应写其真 CID：{s}"
+        );
+        // 不应把 Unicode 码位当 CID 写（修复前正是这样，导致查看器查不到字形）
+        assert!(!s.contains("<4E2D>"), "不得再写 Unicode 码位作 CID：{s}");
+        // /W 按内容流实际用到的 CID 列宽（与排版器度量同源：全角 1000/1000 em；
+        // 表按 CID 升序，故「国」(1875) 在「中」(4559) 前）
+        assert_eq!(guo, 0x0753, "「国」的 CID 应为 1875（GB1 口径）");
+        assert!(
+            s.contains("/W [1875 [1000] 4559 [1000]]"),
+            "应列用到的 CID 及其宽度：{s}"
+        );
         // 不应再有 TFM 时代的八位字面串字形
         assert!(!s.contains("/Subtype /Type1"), "{s}");
-        // OTF 字节原样嵌入（/FontFile3 流体逐字节等于注册字节）
+        // OTF 字节原样嵌入（/FontFile3 流体逐字节等于注册字节）——嵌入的是
+        // 字体本体，CID 改写只发生在内容流侧，字体不需要任何重组
         let marker = format!("<< /Subtype /OpenType /Length {} >>\nstream\n", otf.len());
         let pos = pdf
             .windows(marker.len())
