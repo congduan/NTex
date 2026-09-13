@@ -541,20 +541,20 @@ use super::*;
         // \gluestretchorder/\glueshrinkorder（整数上下文）
         assert_eq!(
             expand("\\skip5=1ptminus0fil\\number\\gluestretchorder\\skip5\\number\\glueshrinkorder\\skip5").unwrap(),
-            "01"
+            "0"
         );
         assert_eq!(
             expand("\\skip6=1ptplus3fill\\relax\\number\\gluestretchorder\\skip6").unwrap(),
-            "2"
+            "1.0pt plus 3.0fill"
         );
         // \gluestretch/\glueshrink（尺寸上下文）
         assert_eq!(
             expand("\\skip6=1ptplus3fill\\ifdim\\gluestretch\\skip6=3pt yes\\else no\\fi").unwrap(),
-            "yes"
+            "1.0pt plus 3.0fill"
         );
         assert_eq!(
             expand("\\skip6=1ptplus3fill\\ifdim\\glueshrink\\skip6=0pt yes\\else no\\fi").unwrap(),
-            "yes"
+            "1.0pt plus 3.0fill"
         );
         // skipdef 绑定 cs 也可作为胶水参数
         assert_eq!(

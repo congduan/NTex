@@ -684,78 +684,31 @@ impl Expander {
                         self.step_conditional(op, tok)?;
                         continue;
                     }
-                    // get_x_token 展开语义的**窄子集**：仅当数字中途的
-                    // `\expandafter` 揭示的是**条件开始**（\if*）才展开。
-                    // expl3 引擎门闩 `\ifnum0\expandafter\ifx\csname …=0`：
-                    // `0` 后 `\expandafter\ifx…`——不展开则左操作数停在 0、
-                    // 关系符扫描拿到内层 `\ifx` 假分支（\else 后）的活跃数字
-                    // 1，报 "Missing = inserted for \ifnum"（第十二轮）；展开后
-                    // 条件链在数字循环内就地求值、分支数字 1 继续累计（01=1）。
-                    // 限条件开始：`\ifnum1=1\expandafter\chardef\else…` 右操作数
-                    // 后是已完成数外的 `\expandafter`（指向 \chardef 非条件）——
-                    // 展开会把帧外 \else 急切消费致结构错乱（回归）。其他可展开
-                    // 项（`\number`/`\the`/宏）保持旧行为（停在它们处放回，
-                    // 全展开会把 `\count0=5\number\count0` 后续 `\number` 吸入
-                    // 当前数，与既有语义/测试相悖；报告 §18 偏差记录）。
-                    // ⚠ 该偏差 tex.web 真语义是**无条件**展开吸收（L8797-8812
-                    // 循环尾 get_x_token；pdfTeX 实测 `\count11=2\zz`→24），
-                    // fp 解析机正卡在此处——第四刀靶子，见
-                    // docs/expl3-lvt-scoreboard.md 第三刀节/附录 A。
+                    // tex.web @<Accumulate the constant...@>（L8797-8812）循环尾的**无条件**
+                    // `get_x_token`：数字串后紧跟的宏/可展开原语**就地展开、产物继续
+                    // 累计**，首个不可展开产物 `back_input`。
+                    //
+                    // 2026-09-13 第四刀落地：此前为「仅 `\\expandafter` 揭示条件开始
+                    // 才展开」的窄子集（第十二轮权宜），是 expl3 fp 解析机首错
+                    // （l.18141 `\\fp_const:Nn \\c_e_fp {2.718 2818 2845 9045}`）的根因。
+                    // pdfTeX 决定性证据：`\\def\\zz{4} \\count11=2\\zz` → 24（吸收，
+                    // 非 2）。定性见 docs/expl3-lvt-scoreboard.md 第三刀节/附录 A。
                     if let Some(csid) = tok.csid() {
-                        if matches!(
-                            self.eqtb.slot(csid),
-                            EqSlot::Primitive(Primitive::Expandafter)
-                        ) {
-                            let reveals_cond_start = match self.fetch()? {
-                                Some((nt, _)) => {
-                                    let c = nt.csid().is_some_and(|nid| {
-                                        matches!(
-                                            self.eqtb.slot(nid),
-                                            EqSlot::Primitive(p)
-                                                if matches!(
-                                                    CondOp::from_prim(*p),
-                                                    Some(
-                                                        CondOp::If
-                                                            | CondOp::IfCat
-                                                            | CondOp::IfNum
-                                                            | CondOp::IfDim
-                                                            | CondOp::IfX
-                                                            | CondOp::IfOdd
-                                                            | CondOp::IfCase
-                                                            | CondOp::IfTrue
-                                                            | CondOp::IfFalse
-                                                            | CondOp::IfDefined
-                                                            | CondOp::IfCsname
-                                                            | CondOp::IfPrimitive
-                                                            | CondOp::IfInner
-                                                            | CondOp::IfVMode
-                                                            | CondOp::IfHMode
-                                                            | CondOp::IfMMode
-                                                            | CondOp::IfEof
-                                                            | CondOp::IfVoid
-                                                            | CondOp::IfHBox
-                                                            | CondOp::IfVBox
-                                                            | CondOp::IfFontChar
-                                                    )
-                                                )
-                                        )
-                                    });
-                                    self.unread(nt);
-                                    c
-                                }
-                                None => false,
-                            };
-                            if reveals_cond_start {
-                                let mut expansion = Vec::new();
-                                self.expand_once((tok, false), &mut expansion)?;
-                                if !expansion.is_empty() {
-                                    self.push_frame(InputFrame::TokenList {
-                                        items: Arc::from(expansion),
-                                        pos: 0,
-                                    });
-                                }
-                                continue;
+                        let expandable = match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
+                            EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
+                            EqSlot::Primitive(p) if p.is_expandable() => true,
+                            _ => false,
+                        };
+                        if expandable {
+                            let mut expansion = Vec::new();
+                            self.expand_once((tok, false), &mut expansion)?;
+                            if !expansion.is_empty() {
+                                self.push_frame(InputFrame::TokenList {
+                                    items: Arc::from(expansion),
+                                    pos: 0,
+                                });
                             }
+                            continue;
                         }
                     }
                     self.unread(tok);
@@ -1417,7 +1370,66 @@ impl Expander {
     /// - `mu`：mu 上下文——合法单位仅 "mu"（其他单位/无单位/fil 阶 → "(mu inserted)"）；
     ///   pt 上下文中 "mu" 单位不合法（→ "(pt inserted)"）。
     /// - `inf`：是否允许 fil/fill/filll 阶词（glue 的 width 不允许，stretch/shrink 允许）。
+    /// tex.web scan_dimen 尾部（"Scan for \(plus|minus\)"，L9400 前后）的循环：
+    /// 尺寸读完后**无条件** `get_x_token`——可展开 token 就地展开并重新检查产物，
+    /// 空格吃掉继续，plus/minus 与其他不可展开 token `back_input` 结束。
+    /// pdfTeX 实证（/tmp/e3probe p 系列）：
+    /// - `\hsize 100pt\the\hsize` → \the 在此展开，产物 "469.75499pt"（赋值前
+    ///   旧值 6.5in）back_input 进主输入排出；hsize=100pt 赋值不差分毫（a19）
+    /// - `\hsize=10pt\the\hsize` → box "100.0pt"，advance/赋值照常完成（a0）
+    /// - `\hsize=10pt\relax\the\hsize` / `\hsize=10pt \the\hsize` → \relax/
+    ///   空格阻断（不可展开 back_input / spacer 吃掉），\the 留主输入完整执行
+    fn dimen_trailing_expand(&mut self) -> Result<()> {
+        loop {
+            self.skip_spaces()?;
+            let Some((tok, ne)) = self.fetch()? else {
+                return Ok(());
+            };
+            if let Some(csid) = tok.csid() {
+                let csid = self.deref_alias_chain(csid);
+                let slot = self.eqtb.slot(csid).clone();
+                match slot {
+                    EqSlot::Undefined => {}
+                    _ => {
+                        // 条件原语：get_x_token 对 if_test 就地求值（步进条件机）
+                        if self.maybe_eval_cond(tok)? {
+                            continue;
+                        }
+                        let expandable = match &slot {
+                            EqSlot::Macro(m) => {
+                                !(m.value.protected && self.suppress_expansion > 0)
+                            }
+                            EqSlot::Primitive(p) => p.is_expandable(),
+                            _ => false,
+                        };
+                        if expandable {
+                            let mut expansion = Vec::new();
+                            self.expand_once((tok, ne), &mut expansion)?;
+                            if !expansion.is_empty() {
+                                self.push_frame(InputFrame::TokenList {
+                                    items: Arc::from(expansion),
+                                    pos: 0,
+                                });
+                            }
+                            continue;
+                        }
+                    }
+                }
+            }
+            self.unread(tok);
+            return Ok(());
+        }
+    }
+
     fn scan_dimen_inner(&mut self, mu: bool, inf: bool) -> Result<(i64, u8)> {
+        let r = self.scan_dimen_body(mu, inf);
+        if r.is_ok() {
+            self.dimen_trailing_expand()?;
+        }
+        r
+    }
+
+    fn scan_dimen_body(&mut self, mu: bool, inf: bool) -> Result<(i64, u8)> {
         self.skip_spaces()?;
         // 报错锚点：值扫描起始位置（clamp_dimen 报错时 pos 已推进——回溯用）
         for frame in self.stack.iter().rev() {

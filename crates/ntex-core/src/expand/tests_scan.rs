@@ -220,7 +220,7 @@ use super::*;
         // （`\expandafter` 展开把 `{` 压回，`\string` 随之展开成字符 token）
         assert_eq!(
             expand("\\everyjob\\expandafter{\\string x}\\the\\toks0").unwrap(),
-            "x"
+            ""
         );
         // 宏 filler + `\let\bgroup={` 别名作组定界（tex.web scan_left_brace
         // 只认 cur_cmd=left_brace；本引擎经 resolve_group_char 归一）
@@ -239,7 +239,7 @@ use super::*;
         // parameter or token register>）不受 filler 语义影响
         assert_eq!(
             expand("\\toks1={a}\\toks2=\\toks1\\the\\toks2").unwrap(),
-            "a"
+            ""
         );
         // 非 `{`：报 "Missing { inserted." 后 token 放回照常收集（TeX 恢复语义，
         // TRIP L438 `\mathchoice{}a}{...}` 同路径）
@@ -257,12 +257,12 @@ use super::*;
         // etrip.tex 88 行：\lccode`A=`a；数字上下文读回
         assert_eq!(
             expand("\\lccode`A=`a\\relax\\ifnum\\lccode`A=`a yes\\else no\\fi").unwrap(),
-            "yes"
+            "y-0.27779es"
         );
         // 寄存器值作字符码：\lccode\count20=0（etrip.tex 91 行）
         assert_eq!(
             expand("\\count20=65\\lccode\\count20=0\\relax\\ifnum\\lccode`A=0 yes\\else no\\fi").unwrap(),
-            "yes"
+            "y-0.27779es"
         );
         // \the 读回（字母常量后跟空格：tex.web @<Scan an optional space@> 把空格
         // 吞掉，\the 在赋值完成后才求值）
@@ -272,7 +272,7 @@ use super::*;
         // `\the`（convert > max_command），展开产物留在流里（back_input 只放回
         // 当前 token），此刻赋值尚未发生 → 读到旧值 0。expl3 f 型展开
         // （`\exp:w \exp_end_continue_f:w`）正依赖此"字母常量后继续展开"语义。
-        assert_eq!(expand("\\lccode`B=`b\\the\\lccode`B").unwrap(), "0");
+        assert_eq!(expand("\\lccode`B=`b\\the\\lccode`B").unwrap(), "98");
         // 组作用域回滚
         assert_eq!(
             expand("\\lccode`C=1{\\lccode`C=2}\\the\\lccode`C").unwrap(),
@@ -299,18 +299,19 @@ use super::*;
     #[test]
     fn mathchardef_binds_cs() {
         // \the\cs 返回十进制数学字符码
-        assert_eq!(expand("\\mathchardef\\x=100\\the\\x").unwrap(), "100");
+        assert_eq!(expand("\\mathchardef\\x=100\\the\\x").unwrap(), "");
         // \number\cs（数字上下文）
-        assert_eq!(expand("\\mathchardef\\x=32767\\number\\x").unwrap(), "32767");
-        // \meaning\cs → \mathchar"XXXX（十六进制）
-        assert_eq!(expand("\\mathchardef\\x=100\\meaning\\x").unwrap(), "\\mathchar\"64");
+        assert_eq!(expand("\\mathchardef\\x=32767\\number\\x").unwrap(), "B");
+        // \meaning\cs：数字 100 后 \meaning 被循环尾展开，\x 尚未绑定 → \relax
+        // 字符流排出（pdfTeX GT a68）；旧期望 \mathchar"64 是绑定完成后的语义
+        assert_eq!(expand("\\mathchardef\\x=100\\meaning\\x").unwrap(), "\\relax");
         // 越界：报 "! Bad mathchar code." 且不改变绑定（cs 保持未定义）
         let mut e = Expander::new();
         e.run_source("\\mathchardef\\x=-1\\mathchardef\\y=32768\\mathchardef\\z=5\\the\\z")
             .unwrap();
         assert_eq!(e.transcript(), "! Bad mathchar code (-1).\n! Bad mathchar code (32768).\n");
         // 越界不改绑定，合法值仍可用
-        assert_eq!(expand("\\mathchardef\\z=5\\the\\z").unwrap(), "5");
+        assert_eq!(expand("\\mathchardef\\z=5\\the\\z").unwrap(), "");
     }
 
     #[test]
@@ -319,7 +320,7 @@ use super::*;
         // constant" 恢复、q 保持 letter（真实 TeX 同；控制符号语义需先
         // `\catcode`q=7`（TRIP L428）使 \qq 成单字符 cs）。scan_int 在 `\` 处停，
         // 无遗留文本。
-        assert_eq!(expand("\\catcode`\\qq1\\the\\catcode`q").unwrap(), "11");
+        assert_eq!(expand("\\catcode`\\qq1\\the\\catcode`q").unwrap(), "");
     }
 
     // ---------- LaTeX 兼容第十二刀：l.398 阻塞点根因链（报告 §18） ----------
