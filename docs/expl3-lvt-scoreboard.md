@@ -3,13 +3,49 @@
 > **本文档是 expl3 攻坚的进度仪表盘。** 状态源：`scripts/lvt-run.py`。
 > 上游权威数据：`latex3/latex3` 仓库 `l3kernel/testfiles/`（每例配 `.tlg` 期望转录）。
 
-## 最新基线（2026-09-11 深夜）⭐ RAN 180/187 = 96.3%
+## 最新基线（2026-09-13 复测）⚠ STACK 187/187——shim harness 与引擎修复批次脱节
+
+| 判定 | 数量 |
+|---|---|
+| STACK | **187**（全部）|
+
+**定性（2026-09-13 bisect 实测）**：回归**不在 09-13 拉取**——f18a343
+（拉取前 HEAD）配同一 harness 同样 STACK（m3basics001 单例探针；main 全量
+187/187 STACK）。时间线与已证事实：
+
+- 09-11 深夜跑分板 RAN 180 → **09-12 06:26 `46ab227`**：配当前 harness 已
+  STACK（旧签名 `5001 帧 /\l__iow_line_part_tl`，l.25851）——与
+  blocker-history 同 ts 的「`\read` 流未打开 REGRESSION」同期；
+- 09-12 白天六刀（`261544d..f18a343`，scanner_status/outer/行尾/everyeof）
+  后，失败**换签名**：`\q_stop 递归`，转录首错 l.48
+  `Forbidden ... \char_set_catcode_active:N`（→ `Improper alphabetic
+  constant` 级联，625 错）；
+- 窗口内 `scripts/lvt/` 与 `lvt-run.py` **零改动**（diff --stat 为空）；
+- **engine 裸跑健康**：main 不载 expl3 直跑 m3basics001 → END-TEST-LOG ✅
+  rc=0；`latex_probe --initex latex.ltx` 无爆栈，终点 = iow_wrap（A1.vicies
+  记录一致）。
+
+**两个候选根因（均未证伪，待定性）**：
+1. **shim 脱节**——09-12 批次只对齐了 latex_probe/单元测试口径，lvt shim
+   未同步（正例：09-11 RAN 180 之后 shim 从未随引擎批次回归过）；
+2. **引擎 outer 判据过宽**——首错恰是 `Forbidden ... while scanning use of
+   \char_set_catcode_active:N`，outer 正是批次动过的语义；pdfTeX 对
+   expl3-generic 全程 0 错，若对拍同点 NTex 多报 Forbidden，则是引擎侧
+   回归（261544d/63db4b6/c9ca9b4 三刀嫌疑）。
+
+**下一刀**：① 最小探针对拍 pdfTeX（`expl3-code.tex` 载入前 N 行，比
+Forbidden 首错点）；② 探针显示引擎差异 → 修引擎；对拍一致 → 修 shim，
+重跑全量重立基线。**在重立基线前，本板数字（含 09-11 RAN 180）与引擎
+ HEAD 不可比**；期间进展看 `latex_probe` 终点推进 + 376 单测口径。
+
+## 09-11 基线（历史，待 shim 修复后重立）⭐ RAN 180/187 = 96.3%
 
 | 判定 | 数量 | 占比 |
 |---|---|---|
 | **RAN** | **180** | **96.3%** ✅ |
 | CRASH | 6 | 3.2% |
 | STACK | 1 | 0.5% |
+
 
 ### 本战役累计（起点 → 现在）
 

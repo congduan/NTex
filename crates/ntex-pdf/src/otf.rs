@@ -60,9 +60,8 @@ pub fn registered_otf(tex_name: &str) -> Option<Vec<u8>> {
 /// 字体目录 → texlive → kpsewhich；支持 .otf/.ttf 双扩展名）。
 #[cfg(not(target_arch = "wasm32"))]
 fn read_host_otf(name: &str) -> io::Result<Vec<u8>> {
-    let path = ntex_font::find_otf(name).ok_or_else(|| {
-        io::Error::new(ErrorKind::NotFound, format!("找不到 OTF 字体：{name}"))
-    })?;
+    let path = ntex_font::find_otf(name)
+        .ok_or_else(|| io::Error::new(ErrorKind::NotFound, format!("找不到 OTF 字体：{name}")))?;
     std::fs::read(&path)
 }
 
@@ -138,6 +137,6 @@ mod tests {
         // 写出端目前按不嵌入降级。
         let name = "zz-ttf-magic-probe";
         assert!(register_otf(name, &[0x00, 0x01, 0x00, 0x00, 0, 0]));
-        assert_eq!(registered_otf(name).is_some(), true);
+        assert!(registered_otf(name).is_some());
     }
 }

@@ -19,7 +19,12 @@ pub enum DrawOp {
     ///
     /// 码位全宽 u32：Unicode 字体（中文 Fandol 等）经 set2/set3/set4 写出，
     /// 码位可达 0x10FFFF——曾存 u8 把「中」(U+4E2D) 静默截断成 0x2D。
-    Char { font: u32, code: u32, h: i64, v: i64 },
+    Char {
+        font: u32,
+        code: u32,
+        h: i64,
+        v: i64,
+    },
     /// 规则：覆盖 x ∈ [h, h+width]、y ∈ [v-height, v]（DVI 坐标）。
     Rule {
         h: i64,
@@ -684,7 +689,7 @@ mod tests {
         body.push(129); // set2 0x4E2D
         body.extend_from_slice(&0x4E2Du16.to_be_bytes());
         body.push(130); // set3 0x002A6A5
-        body.extend_from_slice(&0x002A_6A5u32.to_be_bytes()[1..4]);
+        body.extend_from_slice(&0x0002_A6A5_u32.to_be_bytes()[1..4]);
         body.push(131); // set4 0x0010FFFD
         body.extend_from_slice(&0x0010_FFFDu32.to_be_bytes());
         let mut d = pre_header();

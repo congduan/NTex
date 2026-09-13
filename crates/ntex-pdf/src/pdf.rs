@@ -120,7 +120,7 @@ fn emit_line(c: &mut Vec<u8>, dvi: &Dvi, run: &[(u32, u32, f64, f64)]) -> io::Re
         x0,
         y0
     )?;
-    let mut emit_glyph = |c: &mut Vec<u8>, code: u32| -> io::Result<()> {
+    let emit_glyph = |c: &mut Vec<u8>, code: u32| -> io::Result<()> {
         if unicode && code > 0xFFFF {
             return Ok(()); // 画不出（2 字节 CID 上限）；定位仍由调整量链推进
         }
@@ -212,7 +212,9 @@ fn build_document(dvi: &Dvi, contents: &[Vec<u8>], opts: &PdfOptions) -> io::Res
                 }
                 Ok(_) => {
                     // TrueType 轮廓（glyf）：/OpenType 流只收 CFF，挂账不嵌
-                    eprintln!("警告：{name} 是 TrueType 轮廓，OpenType 嵌入暂不支持（以不嵌入方式引用）");
+                    eprintln!(
+                        "警告：{name} 是 TrueType 轮廓，OpenType 嵌入暂不支持（以不嵌入方式引用）"
+                    );
                     (name.to_owned(), Body::Bare { unicode: true })
                 }
                 Err(e) => {
@@ -224,7 +226,13 @@ fn build_document(dvi: &Dvi, contents: &[Vec<u8>], opts: &PdfOptions) -> io::Res
             match load_pfb(name) {
                 Ok(f) => {
                     let base = f.name.clone();
-                    (base, Body::Type1 { name: f.name, pfb: f.pfb })
+                    (
+                        base,
+                        Body::Type1 {
+                            name: f.name,
+                            pfb: f.pfb,
+                        },
+                    )
                 }
                 Err(e) => {
                     eprintln!("警告：{e}（以不嵌入方式引用字体）");
@@ -356,8 +364,12 @@ fn build_document(dvi: &Dvi, contents: &[Vec<u8>], opts: &PdfOptions) -> io::Res
                 obj(&mut buf, &mut offsets, &fbody);
             }
             Body::Otf { otf } => {
-                let (dict_obj, cid_obj, desc_obj, file_obj) =
-                    (font_obj[idx], font_obj[idx] + 1, font_obj[idx] + 2, font_obj[idx] + 3);
+                let (dict_obj, cid_obj, desc_obj, file_obj) = (
+                    font_obj[idx],
+                    font_obj[idx] + 1,
+                    font_obj[idx] + 2,
+                    font_obj[idx] + 3,
+                );
                 obj(
                     &mut buf,
                     &mut offsets,
@@ -718,8 +730,18 @@ mod tests {
         let dvi = Dvi {
             pages: vec![Page {
                 ops: vec![
-                    DrawOp::Char { font: 0, code: 0x4E2D, h: 0, v: 0 },
-                    DrawOp::Char { font: 0, code: 0x56FD, h: 655_360, v: 0 },
+                    DrawOp::Char {
+                        font: 0,
+                        code: 0x4E2D,
+                        h: 0,
+                        v: 0,
+                    },
+                    DrawOp::Char {
+                        font: 0,
+                        code: 0x56FD,
+                        h: 655_360,
+                        v: 0,
+                    },
                 ],
             }],
             fonts: vec![fm],
@@ -786,7 +808,12 @@ mod tests {
 
         let dvi = Dvi {
             pages: vec![Page {
-                ops: vec![DrawOp::Char { font: 0, code: 0x4E2D, h: 0, v: 0 }],
+                ops: vec![DrawOp::Char {
+                    font: 0,
+                    code: 0x4E2D,
+                    h: 0,
+                    v: 0,
+                }],
             }],
             fonts: vec![fm],
             font_names: vec![name.to_owned()],

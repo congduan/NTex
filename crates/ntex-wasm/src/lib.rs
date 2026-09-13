@@ -1040,8 +1040,14 @@ mod tests {
         let pdf = pdf_from_dvi(&compiled.dvi, compiled.pages.len() as u32)
             .expect("中文文档导出 PDF 应成功（度量走注册表）");
         let s = String::from_utf8_lossy(&pdf);
-        assert!(s.contains("/Subtype /Type0"), "OTF 已注入应走 Type0 嵌入：{s}");
-        assert!(s.contains("/FontFile3"), "OTF 字节应随 /FontFile3 原样嵌入：{s}");
+        assert!(
+            s.contains("/Subtype /Type0"),
+            "OTF 已注入应走 Type0 嵌入：{s}"
+        );
+        assert!(
+            s.contains("/FontFile3"),
+            "OTF 字节应随 /FontFile3 原样嵌入：{s}"
+        );
         assert!(
             s.contains("<4E2D>"),
             "「中」(U+4E2D) 应以两字节 CID 十六进制写出（此前 u8 截断成 2D 乱码）：{s}"
