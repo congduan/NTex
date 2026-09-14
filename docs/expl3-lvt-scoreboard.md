@@ -521,3 +521,67 @@ TEST 1: cs if exist use          ← 标题已对（`~`=cat10 修复后）
 落地清单（下一刀）：① 28 项单测逐条重算期望值（pdfTeX 逐条裁决，钉偏差的
 改输入或改期望，钉 tex.web 的保留）；② 十二/十八/二十二轮的帧收口与
 `\expandafter`/表达式终结符语义在 TRIP 基线签名下重验；③ `make check` 全绿。
+
+## GT 采集方法缺陷更正（2026-09-14，第四刀 31 红复盘）
+
+457615a（第四刀完整落地）带进 31 项门禁红灯。复盘结论：**绝大多数红灯不是
+引擎吸收语义错了，而是此前采集期望值用的 GT 方法本身有缺陷**——期望值是从
+失真通道里抄出来的，第四刀只是把引擎推进到 tex.web 语义后暴露了它们。
+
+### 三条失效通道（全部 pdftex 实测证伪）
+
+1. **宏扰动 typeout 污染**：用 `\def\zz{\immediate\write16{...}}` 夹在
+   数字扫描中段采 `\the` 输出。`\write` 实参在宏体内**不经过**数字循环的
+   `get_x_token` 现场——扫描早已收口，采到的是赋值后的值。
+   `r.tex`（裸形 `\advance\count200by3\the\count200`）GT = `40`
+   （旧值 `5` 的 `5` 被 `by3` 之后的数字循环折叠成 `35`→`by35`）；
+   `z.tex`（`\the` 藏在 `\write` 里）采到 `8`。**探针形状决定读时序**，
+   形状错了真值就换了一个语义。
+2. **盒内容通道 kern 残留**：`\showbox` 通道对 `expandafter` 轮的
+   `macro:->\chardef\relax` 断言给出过"kern/glue 残留"形态的文本——
+   盒通道是排版产物，混入 italic-correction/前次残留，不能当 token 流真值。
+3. **plain 格式初表掩盖读时序**：`\lccode`B`=`b\the\lccode`B` 在 plain
+   下得 `98`，看似"赋值后才读"；实为 plain.tex 预设了 lccode`B=98，
+   **赋值前读**也返回 98，两种时序不可分辨。换 plain 初表为 0 的字符
+   （`!`）即证：赋值前读 → `0`。引擎 INITEX 表给 `0` 是对的。
+
+### 判据权威：pdftex 字符流/裸形实测
+
+据此校准 **12 条期望**（`tests_scan.rs` / `tests_expr.rs` / `tests_macro.rs`
+/ `tests.rs`），全部先跑 `/tmp/gt9/{v,w,x,y,z,r,p2,j1,j2,s,h}.tex` 取真值：
+
+| 断言 | 旧期望（失真通道） | pdftex GT | 语义 |
+|---|---|---|---|
+| `\lccode`B=`b\the\lccode`B` | `98` | `0` | 字母常量后读 lccode 在赋值**前**（plain 初表掩盖过） |
+| glue plus 形 `\skip1=...pt plus...` | 尾部折叠 | `0.0pt` | 单位尾 optional-space 只回放**首 token**，整个展开留守 |
+| glue_order fill 尾 `\ifdim` | `no` | `yes` | scan_keyword `get_x_token` 展开后续 `\ifdim`，对**未赋值** skip6 求值 |
+| `expandafter` meaning | kern 残留 | `macro:->\chardef\relax` | 盒通道污染（\meaning 空格为引擎格式化器遗留偏差） |
+| `expandafter` 嵌套 | 有输出 | ``（空） | s.tex N1：\else 在 \chardef 目标扫描位展开→缺 cs 插入→`\a` 未绑定 |
+| `\advance\count200by3\the\count200` | `8` | `[40]` | 数字循环折叠旧值 `5`→`by35`（裸形 vs write 形） |
+| `\multiply` 同形 | `15` | `[175]` | `5`×`by35` |
+| `\divide` 同形 | `2` | `[0]` | `35`/`by5` |
+
+`\count2000` 系旧期望（`15`/`2`）是 **e-TeX 32768 寄存器 vs 引擎 256 槽**
+的遗留缺口，非吸收语义问题（pdftex N4 = 15）。
+
+### 引擎收窄：1 处
+
+唯一引擎修复 = **`scan_keyword` 补 `get_x_token` 展开**（tex.web
+L8239-8260，注释"recursion is possible here"）：关键字匹配位展开可展开
+token、不匹配则 `back_input(cur_tok)` + `back_list(字母)`，spacer 仅在
+未收字母时跳过。此前引擎在此位不展开 → fill 尾 `\ifdim` 求值时序偏差。
+数字循环尾/单位尾/字母常量尾/寄存器索引位的 tex.web 语义
+（457615a 已落地）**全部 pdftex 复核无误，保留**。
+
+### 附带发现（归 layout 所有者，本次不动——领地约束）
+
+- `crates/ntex-layout/src/typeset/tests.rs:331` `expansion_inside_hbox`
+  期望 `vec![x,y,7]`：`h.tex` GT = `vec![x,y]`（`7` 为 italic-kern 残留
+  进盒通道的又一实例）。HEAD 上本红，非本次引入。
+- `crates/ntex-layout/src/typeset/tests_math.rs:142` `math_display_formula`
+  硬编码 `13*4_736_286/2`（=30 785 859）：pdftex `\number\hsize` GT =
+  **30 785 863**（6.5in = 93951/200 pt，sp 圆整 30 785 863.68 → 进位）。
+  本次 hsize 修正使其转红。
+- 同值双通道输出不一致：`\the\hsize` → `469.75499pt`（与 pdftex 一致），
+  而 TRIP 盒宽通道印 `469.75498`——layout 侧格式化器未走 tex.web
+  `print_scaled` 圆整。真 trip.log 亦印 `469.75499`。

@@ -1,3 +1,21 @@
+/// tex.web @<Scan for all other units and adjust |cur_val| and |f|...@>
+/// （L9023-9040）的精确换算分数：in=7227/100、pc=12/1、cm=7227/254、
+/// mm=7227/2540、bp=7227/7200、pt=1/1。sp 单位 `goto done` 直接收整数部分
+/// （f 丢弃不进位）——落回调用方 unit_to_sp 旧路。dd/cc 精确分数
+/// （1238/1157、14856/1157）暂不入表：TRIP 钉值走 unit_to_sp 常数。
+/// 返回 None → 调用方走 em/ex/mu/sp/dd/cc 专路。
+fn unit_num_denom(unit: &str) -> Option<(i64, i64)> {
+    match unit {
+        "in" => Some((7227, 100)),
+        "pc" => Some((12, 1)),
+        "cm" => Some((7227, 254)),
+        "mm" => Some((7227, 2540)),
+        "bp" => Some((7227, 7200)),
+        "pt" => Some((1, 1)),
+        _ => None,
+    }
+}
+
 impl Expander {
     // ---------- 数字与赋值辅助 ----------
 
@@ -882,23 +900,20 @@ impl Expander {
             .fetch()?
             .ok_or_else(|| Error::invalid_input("预期寄存器下标"))?
             .0;
-        if let Some(csid) = t.csid() {
-            match self.eqtb.slot(csid) {
-                EqSlot::Register(k, idx) if *k == kind => Ok(*idx),
-                _ => {
-                    // tex.web do_register_command：寄存器号走 scan_eight_bit_int
-                    // （eTeX 扩到 15 位）= 完整 scan_int 的**值**语义——
-                    // `\count\count1`（TRIP L336 \xx 体 `\global\count\count1=`）
-                    // 以 count1 的当前值 2 为下标；内部整数/可展开 token 皆可，
-                    // 非数字 cs 报 Missing number 恢复而非致命错误。
-                    self.unread(t);
-                    self.scan_register_index()
-                }
-            }
-        } else {
-            self.unread(t);
-            self.scan_register_index()
-        }
+        self.unread(t);
+        // tex.web do_register_command @<Compute the register location...@>（L23098
+        // 起）：q=register（`\count\C` 形态）时下标走 scan_eight_bit_int = 完整
+        // scan_int 的**值**语义——countdef'd cs（tex.web 绑 assign_int@count_base+n，
+        // 属内部整数）在此取出的是**寄存器当前值**当下标：`\count\C=-4`（\count5=0）
+        // 写 \count0 而非 \count5（pdfTeX 盒探针 n5/t14，2026-09-14；此前此处把
+        // \C 的绑定下标 5 直作下标 → muldiv_L259 act "-4" ≠ GT ""）。
+        // 内部整数/chardef 字符码/可展开 token 皆可；非数字 cs 报 Missing number
+        // 恢复而非致命错误（`\count\count1` 以 count1 的值作下标，TRIP L336）。
+        // 注意与 `\advance\C` 不同：q≠register 分支的 get_x_token 命中
+        // assign_int..assign_mu_glue 时 l:=cur_chr **直接**落位（cs 即目标），
+        // exec_advance 的 Register 槽臂同语义。
+        let _ = kind;
+        self.scan_register_index()
     }
 
     /// 扫描寄存器下标（eTeX 0..=32767；越界报 "! Bad register code." 并钳到 0，
@@ -1370,51 +1385,73 @@ impl Expander {
     /// - `mu`：mu 上下文——合法单位仅 "mu"（其他单位/无单位/fil 阶 → "(mu inserted)"）；
     ///   pt 上下文中 "mu" 单位不合法（→ "(pt inserted)"）。
     /// - `inf`：是否允许 fil/fill/filll 阶词（glue 的 width 不允许，stretch/shrink 允许）。
-    /// tex.web scan_dimen 尾部（"Scan for \(plus|minus\)"，L9400 前后）的循环：
-    /// 尺寸读完后**无条件** `get_x_token`——可展开 token 就地展开并重新检查产物，
-    /// 空格吃掉继续，plus/minus 与其他不可展开 token `back_input` 结束。
-    /// pdfTeX 实证（/tmp/e3probe p 系列）：
-    /// - `\hsize 100pt\the\hsize` → \the 在此展开，产物 "469.75499pt"（赋值前
-    ///   旧值 6.5in）back_input 进主输入排出；hsize=100pt 赋值不差分毫（a19）
-    /// - `\hsize=10pt\the\hsize` → box "100.0pt"，advance/赋值照常完成（a0）
-    /// - `\hsize=10pt\relax\the\hsize` / `\hsize=10pt \the\hsize` → \relax/
-    ///   空格阻断（不可展开 back_input / spacer 吃掉），\the 留主输入完整执行
-    fn dimen_trailing_expand(&mut self) -> Result<()> {
+    ///
+    /// tex.web @<Scan an optional space@>（L8755-8757）：
+    /// `begin get_x_token; if cur_cmd<>spacer then back_input; end`
+    /// ——**单次** get_x_token：可展开 token 展开至不可展开产物浮出（get_x_token
+    /// 的链式语义），spacer（含 cs 别名到空格）**消费**收场，其余 `back_input`。
+    /// 站位：字面数字+单位路径尾（scan_dimen）、字母常量后（scan_int）。
+    /// pdfTeX 盒探针实证（/tmp/gt7、/tmp/gt8，2026-09-14）：
+    /// - `\dimen0=2.5pt\the\dimen0` → \the 在此展开，产物（赋值前旧值）back_input
+    ///   进主输入排出，box "0.0pt"（旧值）；赋值 2.5pt 照常完成
+    /// - `\dimen0=2.5pt \the\dimen0`（一个空格）→ spacer 消费即收场，\the 留主
+    ///   输入**赋值后**执行，box "2.5pt"——此前 skip_spaces 先行+循环吸收把
+    ///   空格后的可展开 token 也吸了（31 红根因之一，2026-09-14 拔除）
+    /// - `\hsize 100pt\the\hsize` → box "469.75499pt"（旧值 6.5in）
+    ///
+    /// **内部量路径没有这一站**：tex.web scan_dimen/scan_glue 对 register/internal
+    /// 量 `goto attach_sign`（glue 量直接 `return`）——`\dimen0=\dimen1\the\dimen0`、
+    /// `\muskip5=\gluetomu\skip5 \ifnum...`、`\dimen0=\dimexpr 1pt+2pt \relax\the\dimen0`
+    /// 的 \the/\ifnum 留主输入读到**新**值（pdfTeX 同款）。
+    fn scan_optional_space(&mut self) -> Result<()> {
         loop {
-            self.skip_spaces()?;
             let Some((tok, ne)) = self.fetch()? else {
                 return Ok(());
             };
-            if let Some(csid) = tok.csid() {
-                let csid = self.deref_alias_chain(csid);
-                let slot = self.eqtb.slot(csid).clone();
-                match slot {
-                    EqSlot::Undefined => {}
-                    _ => {
-                        // 条件原语：get_x_token 对 if_test 就地求值（步进条件机）
-                        if self.maybe_eval_cond(tok)? {
-                            continue;
-                        }
-                        let expandable = match &slot {
-                            EqSlot::Macro(m) => {
-                                !(m.value.protected && self.suppress_expansion > 0)
-                            }
-                            EqSlot::Primitive(p) => p.is_expandable(),
-                            _ => false,
-                        };
-                        if expandable {
-                            let mut expansion = Vec::new();
-                            self.expand_once((tok, ne), &mut expansion)?;
-                            if !expansion.is_empty() {
-                                self.push_frame(InputFrame::TokenList {
-                                    items: Arc::from(expansion),
-                                    pos: 0,
-                                });
-                            }
-                            continue;
-                        }
-                    }
+            if tok.csid().is_none() {
+                if tok.catcode() == Some(Catcode::Space) {
+                    return Ok(()); // spacer 消费收场
                 }
+                self.unread(tok);
+                return Ok(());
+            }
+            let csid = tok.csid().unwrap();
+            if matches!(self.eqtb.slot(csid), EqSlot::Undefined) {
+                self.unread(tok);
+                return Ok(());
+            }
+            // cs 别名到空格字符/`\space` 原语 ≡ spacer（tex.web \let 复制 cmd，
+            // cur_cmd=spacer 即消费；expl3 `\exp_stop_f:` 贴数字尾依赖此语义）
+            if let Some(slot) = self.resolve_slot(csid) {
+                if matches!(
+                    slot,
+                    EqSlot::Char {
+                        catcode: Catcode::Space,
+                        ..
+                    } | EqSlot::Primitive(Primitive::ControlSpace)
+                ) {
+                    return Ok(());
+                }
+            }
+            // 条件原语：get_token 对 if_test 就地步进条件机后继续取
+            if self.maybe_eval_cond(tok)? {
+                continue;
+            }
+            let expandable = match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
+                EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
+                EqSlot::Primitive(p) => p.is_expandable(),
+                _ => false,
+            };
+            if expandable {
+                let mut expansion = Vec::new();
+                self.expand_once((tok, ne), &mut expansion)?;
+                if !expansion.is_empty() {
+                    self.push_frame(InputFrame::TokenList {
+                        items: Arc::from(expansion),
+                        pos: 0,
+                    });
+                }
+                continue; // get_x_token 链：产物重新检查
             }
             self.unread(tok);
             return Ok(());
@@ -1422,11 +1459,9 @@ impl Expander {
     }
 
     fn scan_dimen_inner(&mut self, mu: bool, inf: bool) -> Result<(i64, u8)> {
-        let r = self.scan_dimen_body(mu, inf);
-        if r.is_ok() {
-            self.dimen_trailing_expand()?;
-        }
-        r
+        // 可空格扫描**只**在 scan_dimen_body 的字面单位路径尾（tex.web 结构）；
+        // 内部量/表达式臂早退不经此站（见 scan_optional_space 文档）。
+        self.scan_dimen_body(mu, inf)
     }
 
     fn scan_dimen_body(&mut self, mu: bool, inf: bool) -> Result<(i64, u8)> {
@@ -2114,15 +2149,33 @@ impl Expander {
             let param = if unit == "em" { 6 } else { 5 };
             let unit_sp = i128::from(self.font_loader.font_param(font, param).unwrap_or(0));
             num_pt * unit_sp / i128::from(SP_PER_PT)
+        } else if let Some((num, denom)) = unit_num_denom(&unit) {
+            // tex.web @<Scan for all other units...@>（L9023-9045）：物理单位按精确
+            // 分数 num/denom 换算 + xn_over_d 的 f 进位（f 以 65536 分之一 pt 跟随
+            // 整段换算，不丢小数尾数）。6.5in = 30_785_863sp → \the "469.75499pt"
+            // （pdfTeX GT）；按 4_736_286sp 常数一步乘除截成 30_785_858 →
+            // "469.75488pt"（差 5sp，hsize_L1040 红）。
+            let int_p = num_pt / i128::from(SP_PER_PT);
+            let mut f = num_pt % i128::from(SP_PER_PT);
+            let prod = int_p * i128::from(num);
+            let rem = prod % i128::from(denom);
+            f = (i128::from(num) * f + i128::from(SP_PER_PT) * rem) / i128::from(denom);
+            let v = prod / i128::from(denom) + f / i128::from(SP_PER_PT);
+            f %= i128::from(SP_PER_PT);
+            v * i128::from(SP_PER_PT) + f
         } else {
+            // dd/cc 沿用 unit_to_sp 常数（TRIP L331 `\halign spread-12.truedd`
+            // 等钉值；tex.web 的 1238/1157、14856/1157 精确分数另行立项对拍）
             let unit_sp =
                 unit_to_sp(&unit).ok_or_else(|| Error::invalid_input(format!("未知单位：{unit}")))?;
             num_pt * i128::from(unit_sp) / i128::from(SP_PER_PT)
         };
         let scaled = if neg { -scaled } else { scaled };
         let scaled = i64::try_from(scaled).map_err(|_| Error::invalid_input("尺寸溢出"))?;
-        // TeX 规则：尺寸后跟随的空格被吞掉
-        self.skip_trailing_spaces()?;
+        // tex.web @<Scan an optional space@>：字面单位路径尾的单次 get_x_token
+        // （可展开 token 展开后浮出的不可展开产物放回——`\dimen0=2.5pt\the\dimen0`
+        // 的 \the 在此展开、旧值回主输入排出；spacer 消费收场，多空格只吃一个）
+        self.scan_optional_space()?;
         Ok((scaled, order))
     }
 
@@ -2324,19 +2377,70 @@ impl Expander {
         })
     }
 
-    /// 跳过空格后读取一个裸字母词（TeX `scan_keyword` 语义：`\hskip 5pt plus 2pt`
-    /// 中的 `plus`、`\hrule height 1pt` 中的 `height` 都是裸字母词）。
-    /// `is_kw` 判定是否为关键字；非关键字时字母原样放回（保持顺序）并返回 None。
+    /// 跳过空格后读取一个裸字母词（tex.web scan_keyword，L8239-8260：
+    /// `\hskip 5pt plus 2pt` 中的 `plus`、`\hrule height 1pt` 中的 `height`
+    /// 都是裸字母词）。`is_kw` 判定是否为关键字；非关键字时字母原样放回
+    /// （保持顺序）并返回 None。
+    ///
+    /// tex.web 循环体是 `get_x_token`（原文注释 "recursion is possible here"）：
+    /// 关键字位遇可展开 token **就地展开**后继续匹配——`\skip4=\zd\the\skip4`
+    /// 的 `\the` 在 plus/minus 关键字位被展开，读到的是**赋值前**旧值
+    /// （pdfTeX GT y.tex P4 盒内 "0.0pt"；此前引擎此处不展开 → 误读赋值后
+    /// 新值 "7.0pt"）。不匹配的首 token `back_input` 放回、展开余部留在流里
+    /// （与 back_list 只回存已收集字母同构）。条件机/跳过区臂与十进制数字
+    /// 循环同款（get_x_token 对 if_test/fi_or_else 一视同仁）。
     fn scan_keyword(&mut self, is_kw: impl Fn(&str) -> bool) -> Result<Option<String>> {
         self.skip_spaces()?;
         let mut word = String::new();
         let mut letters: Vec<(Token, bool)> = Vec::new();
-        while let Some((tok, _)) = self.fetch()? {
+        while let Some((tok, ne)) = self.fetch()? {
+            // 跳过区先行（tex.web pass_text 内联消费，调用方根本见不到这些
+            // token；引擎惰性跳过模型下须在字母收集**之前**丢弃，否则假支
+            // 字母被当关键字收集——`...\ifdim... yes\else no\fi` 的 "no"）。
+            if self.is_skipping() {
+                if let Some(op) = self.cond_op(tok) {
+                    self.step_conditional(op, tok)?;
+                }
+                continue;
+            }
             if let Some(ch) = tok.charcode().and_then(char::from_u32) {
                 if ch.is_ascii_alphabetic() {
                     word.push(ch);
-                    letters.push((tok, false));
+                    letters.push((tok, ne));
                     continue;
+                }
+            }
+            if let Some(op) = self.cond_op(tok) {
+                if matches!(op, CondOp::Fi | CondOp::Else | CondOp::Or)
+                    && self.cond_stack.is_empty()
+                {
+                    self.unread(tok);
+                    break;
+                }
+                self.step_conditional(op, tok)?;
+                continue;
+            }
+            if !ne {
+                if let Some(csid) = tok.csid() {
+                    let expandable =
+                        match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
+                            EqSlot::Macro(m) => {
+                                !(m.value.protected && self.suppress_expansion > 0)
+                            }
+                            EqSlot::Primitive(p) if p.is_expandable() => true,
+                            _ => false,
+                        };
+                    if expandable {
+                        let mut expansion = Vec::new();
+                        self.expand_once((tok, false), &mut expansion)?;
+                        if !expansion.is_empty() {
+                            self.push_frame(InputFrame::TokenList {
+                                items: Arc::from(expansion),
+                                pos: 0,
+                            });
+                        }
+                        continue;
+                    }
                 }
             }
             self.unread(tok);

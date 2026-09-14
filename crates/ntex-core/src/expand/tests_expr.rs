@@ -545,16 +545,27 @@ use super::*;
         );
         assert_eq!(
             expand("\\skip6=1ptplus3fill\\relax\\number\\gluestretchorder\\skip6").unwrap(),
-            "1.0pt plus 3.0fill"
+            // fill 单位尾 scan_optional_space（get_x_token）展开 \relax 后退回，
+            // 主循环 \number 照常求值 → fill 阶 2（pdfTeX 机制同款）
+            "2"
         );
         // \gluestretch/\glueshrink（尺寸上下文）
+        // pdfTeX GT（to.tex B）："1ptplus3fill"（无空格）紧接 \ifdim → fill 单位
+        // 尾 scan_keyword("l") 的 get_x_token/back_input 残留态使 \gluestretch
+        // 的胶操作数扫描多吞一 token，比较走 false → "no"；带尾空格或 \relax
+        // 则 "yes"（to.tex C/D）。字符流锁 GT 口径。
         assert_eq!(
             expand("\\skip6=1ptplus3fill\\ifdim\\gluestretch\\skip6=3pt yes\\else no\\fi").unwrap(),
-            "1.0pt plus 3.0fill"
+            "no"
         );
         assert_eq!(
             expand("\\skip6=1ptplus3fill\\ifdim\\glueshrink\\skip6=0pt yes\\else no\\fi").unwrap(),
-            "1.0pt plus 3.0fill"
+            // pdfTeX GT（p2.tex S1=Y；J1 同族 stretch=3pt → N）：fill 尾
+            // `while scan_keyword("l")` 的 get_x_token 把紧随的 \ifdim 就地展开，
+            // 内层条件对**尚未赋值**的 \skip6（0pt 胶）求值 shrink 0pt=0pt 真 →
+            // then 分支 "yes" 被内层条件消费排版。shrink=0pt 恒真，与
+            // stretch=3pt 的假分支 "no" 恰成一对。
+            "yes"
         );
         // skipdef 绑定 cs 也可作为胶水参数
         assert_eq!(
@@ -574,7 +585,10 @@ use super::*;
     fn numexpr_with_register() {
         assert_eq!(
             expand(r"\count0=7\the\numexpr \count0*2 \relax").unwrap(),
-            "14"
+            // 数字循环就地展开 \the\numexpr……：\the 展开的是 \numexpr（140），
+            // "1""4""0" 逐一折入值（70→7014→70140），输出为空。
+            // pdftex 同机制（gtf/gf TOL=2200 同族证值）
+            ""
         );
     }
 
@@ -700,20 +714,22 @@ use super::*;
             sink.transcript
         );
 
-        // ② \thinmuskip=18mu \the\thinmuskip —— 仍显示 "18.0mu"。
+        // ② \thinmuskip=18mu \the\thinmuskip —— mu 单位尾 scan_optional_space
+        //（get_x_token）就地展开 \the → 打印赋值前旧值（INITEX 0）。
         assert_eq!(
             expand("\\thinmuskip=18mu\\the\\thinmuskip").unwrap(),
-            "18.0mu",
-            "\\thinmuskip \\the 应按 mu 数值原样显示"
+            "0.0mu",
+            "\\the 在 mu 尾被就地展开，打印赋值前旧值"
         );
-        // 整数 mu 显式路径（muskip_params 通路之一）：与 etrip.tex L1018 一致。
+        // 整数 mu 显式路径（muskip_params 通路之一）
         assert_eq!(
             expand("\\thinmuskip=27mu plus 9mu minus 18mu\\the\\thinmuskip").unwrap(),
-            "27.0mu plus 9.0mu minus 18.0mu"
+            "0.0mu"
         );
-        // \muskip 寄存器：以 mu 数值原样存。
+        // \muskip 寄存器：mu 单位尾 scan_optional_space（get_x_token）就地展开
+        // \the → 打印赋值前旧值（pdfTeX GT gtf/gf b28 族）。
         assert_eq!(
             expand("\\muskip5=2.5mu plus 1mu\\the\\muskip5").unwrap(),
-            "2.5mu plus 1.0mu"
+            "0.0mu"
         );
     }

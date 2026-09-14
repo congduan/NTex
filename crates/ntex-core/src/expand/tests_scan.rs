@@ -93,20 +93,22 @@ use super::*;
             "\\long\\def\\use_i:nn#1#2{#1}\\long\\def\\use_ii:nn#1#2{#2} %\n",
             "\\def\\prg_return_true:{\\expandafter\\use_i:nn\\romannumeral} %\n",
             "\\def\\prg_return_false:{\\expandafter\\use_ii:nn\\romannumeral} %\n",
-            // normal 臂：真/假两支
-            "\\edef\\ga{\\number\\ifnum1=1\\prg_return_true:\\else\\prg_return_false:\\fi",
-            "\\exp_end:\\c_true_bool\\c_false_bool} %\n",
-            "\\edef\\gb{\\number\\ifnum1=2\\prg_return_true:\\else\\prg_return_false:\\fi",
-            "\\exp_end:\\c_true_bool\\c_false_bool} %\n",
-            // fast 臂（`\__prg_p_true:w` 形态）作对照
-            "\\def\\prgp_true:w#1\\fi\\c_false_bool{\\fi\\c_true_bool} %\n",
-            "\\edef\\gc{\\number\\ifnum1=1\\prgp_true:w\\fi\\c_false_bool} %\n",
-            "\\immediate\\write16{GA=\\ga,GB=\\gb,GC=\\gc}"
+            // 平衡形式（真/假支各带 \exp_end: 终结符）：romannumeral 吞掉
+            // \exp_end:(0) 产空，\use_i/ii:nn 取 #1=\c_true_bool/#2=\exp_end:
+            // → 真支 yield \c_true_bool、假支 yield \c_false_bool
+            "\\edef\\ga{\\number\\ifnum1=1\\prg_return_true:\\exp_end:\\c_true_bool\\exp_end:",
+            "\\else\\prg_return_false:\\exp_end:\\c_false_bool\\exp_end:\\fi} %\n",
+            "\\edef\\gb{\\number\\ifnum1=2\\prg_return_true:\\exp_end:\\c_true_bool\\exp_end:",
+            "\\else\\prg_return_false:\\exp_end:\\c_false_bool\\exp_end:\\fi} %\n",
+            // fast 臂（`\__prg_p_true:w` 形态）在 pdfTeX 本身就报 Missing
+            // number（gi.log 2026-09-14：GC=0\relax \c_true_bool）——通道噪声
+            // 不入判据
+            "\\immediate\\write16{GA=\\ga,GB=\\gb}"
         );
         let (_r, transcript) = run_transcript(src);
         assert!(
-            transcript.contains("GA=1,GB=0,GC=1"),
-            "normal 臂真支应取 \\c_true_bool(1)：{transcript}"
+            transcript.contains("GA=1,GB=0"),
+            "平衡形式：真支取 \\c_true_bool(1)、假支取 \\c_false_bool(0)：{transcript}"
         );
         assert!(
             !transcript.contains("Missing number") && !transcript.contains("Extra"),
@@ -217,19 +219,21 @@ use super::*;
         // tex.web scan_left_brace（L8194-8206）：toks 值扫描的 `{` 入口是
         // get_x_token（可展开 filler）——latex.ltx L727
         // `\everyjob\expandafter{\the\everyjob\the\LaTeXReleaseInfo}` 的最小复现
-        // （`\expandafter` 展开把 `{` 压回，`\string` 随之展开成字符 token）
+        // （`\expandafter` 展开把 `{` 压回，`\string` 随之展开成字符 token）。
+        // 赋值目标用 \toks0 而非 \everyjob：真实 TeX 里 \everyjob 不落 toks0，
+        // （pdfTeX GT /tmp/gt8/t2 box9 = "x"）
         assert_eq!(
-            expand("\\everyjob\\expandafter{\\string x}\\the\\toks0").unwrap(),
-            ""
+            expand("\\toks0\\expandafter{\\string x}\\the\\toks0").unwrap(),
+            "x"
         );
-        // 宏 filler + `\let\bgroup={` 别名作组定界（tex.web scan_left_brace
-        // 只认 cur_cmd=left_brace；本引擎经 resolve_group_char 归一）
+        // 宏 filler 作 `{` 入口：scan_left_brace 的 get_x_token 展开 \f，
+        // 体循环按 cur_tok（自然字符 token catcode 1/2）记 unbalance 收口。
+        // 注意不能用 `\def\f{\bgroup y\egroup}` 别名定界——tex.web L9368
+        // `cur_tok<right_brace_limit` 只对字符 token 生效，cs 别名 \egroup
+        // 不收口（pdfTeX 实测 runaway，/tmp/gt8/t4）；真实 TeX 永不终止。
+        // `\def\f{{y}}` 体里是自然花括号，pdfTeX GT /tmp/gt8/t8 box12 = "y"。
         assert_eq!(
-            expand(
-                "\\let\\bgroup={\\let\\egroup=}\
-                 \\def\\f{\\bgroup y\\egroup}\\everyjob\\f\\the\\toks0"
-            )
-            .unwrap(),
+            expand("\\def\\f{{y}}\\toks0\\f\\the\\toks0").unwrap(),
             "y"
         );
         // spacer 与 \relax 跳过（tex.web L8210 `until (cur_cmd<>spacer)
@@ -257,22 +261,29 @@ use super::*;
         // etrip.tex 88 行：\lccode`A=`a；数字上下文读回
         assert_eq!(
             expand("\\lccode`A=`a\\relax\\ifnum\\lccode`A=`a yes\\else no\\fi").unwrap(),
-            "y-0.27779es"
+            // 旧期望的 -0.27779 是盒内容 GT 通道 kern 残留；字符流就是 "yes"
+            // （pdfTeX GT gtf/gf b11 同值）
+            "yes"
         );
-        // 寄存器值作字符码：\lccode\count20=0（etrip.tex 91 行）
+        // 寄存器值作字符码：\lccode\count20=0（etrip.tex 91 行）；内部量做
+        // 字符码走 scan_int 内部量臂（无数字循环尾），\relax 后照常读回
+        // （旧期望的 "-0.27779" 是盒内容 GT 通道 kern 残留；字符流就是 "yes"，
+        // pdfTeX GT gtf/gf b11 同族）
         assert_eq!(
             expand("\\count20=65\\lccode\\count20=0\\relax\\ifnum\\lccode`A=0 yes\\else no\\fi").unwrap(),
-            "y-0.27779es"
+            "yes"
         );
         // \the 读回（字母常量后跟空格：tex.web @<Scan an optional space@> 把空格
         // 吞掉，\the 在赋值完成后才求值）
         assert_eq!(expand("\\lccode`B=`b \\the\\lccode`B").unwrap(), "98");
         // 字母常量后**紧跟** \the：tex.web @<Scan an optional space@> 是
-        // `get_x_token; if cur_cmd<>spacer then back_input`——get_x_token 会展开
-        // `\the`（convert > max_command），展开产物留在流里（back_input 只放回
-        // 当前 token），此刻赋值尚未发生 → 读到旧值 0。expl3 f 型展开
+        // `get_x_token; if cur_cmd<>spacer then back_input`——get_x_token 把
+        // `\the` 就地展开（convert > max_command），读到的是**赋值前**的旧值
+        // （INITEX lccode`B=0 → 字符流 "0"）；expl3 f 型展开
         // （`\exp:w \exp_end_continue_f:w`）正依赖此"字母常量后继续展开"语义。
-        assert_eq!(expand("\\lccode`B=`b\\the\\lccode`B").unwrap(), "98");
+        // pdfTeX GT（z.tex Q1：\lccode`!=`A\the\lccode`! 盒内 "0"）同机制——
+        // 早前 `B 形探针盒内 "98" 是 plain 初表 lccode`B 本就 98 的假象。
+        assert_eq!(expand("\\lccode`B=`b\\the\\lccode`B").unwrap(), "0");
         // 组作用域回滚
         assert_eq!(
             expand("\\lccode`C=1{\\lccode`C=2}\\the\\lccode`C").unwrap(),
@@ -300,16 +311,26 @@ use super::*;
     fn mathchardef_binds_cs() {
         // \the\cs 返回十进制数学字符码
         assert_eq!(expand("\\mathchardef\\x=100\\the\\x").unwrap(), "");
-        // \number\cs（数字上下文）
-        assert_eq!(expand("\\mathchardef\\x=32767\\number\\x").unwrap(), "B");
+        // \number\cs（数字上下文）：\number 在 mathchardef 值数字循环里被
+        // 就地展开，\x 尚未绑定 → Missing number→0 折入 → 327670 越界报
+        // "Bad mathchar code"（pdfTeX GT gtf/gf b12：盒空 + 该错误）
+        assert_eq!(expand("\\mathchardef\\x=32767\\number\\x").unwrap(), "");
         // \meaning\cs：数字 100 后 \meaning 被循环尾展开，\x 尚未绑定 → \relax
         // 字符流排出（pdfTeX GT a68）；旧期望 \mathchar"64 是绑定完成后的语义
         assert_eq!(expand("\\mathchardef\\x=100\\meaning\\x").unwrap(), "\\relax");
-        // 越界：报 "! Bad mathchar code." 且不改变绑定（cs 保持未定义）
+        // 越界：报 "! Bad mathchar code." 且不改变绑定（cs 保持未定义）。
+        // 第三个 \mathchardef\z=5 的值数字循环就地展开 \the\z：\z 尚未绑定 →
+        // "You can't use `\relax' after \the" + 按零续扫，"0" 折入值 → \z=50
+        // （与上行 b12 "Bad mathchar 327670" 同族机制）
         let mut e = Expander::new();
         e.run_source("\\mathchardef\\x=-1\\mathchardef\\y=32768\\mathchardef\\z=5\\the\\z")
             .unwrap();
-        assert_eq!(e.transcript(), "! Bad mathchar code (-1).\n! Bad mathchar code (32768).\n");
+        assert_eq!(
+            e.transcript(),
+            "! Bad mathchar code (-1).\n! Bad mathchar code (32768).\n\
+             ! You can't use `\\relax' after \\the.\n\
+             I'm forgetting what you said and using zero instead.\n\n"
+        );
         // 越界不改绑定，合法值仍可用
         assert_eq!(expand("\\mathchardef\\z=5\\the\\z").unwrap(), "");
     }
@@ -394,25 +415,34 @@ ab5c}").unwrap();
     /// l.13899 停点根因）。
     #[test]
     fn glue_scan_accepts_internal_dimen() {
-        // 基本转换：\skip1=\dimen0 → width=5pt、零阶
+        // 基本转换：\skip1=\dimen0 → width=5pt、零阶。注意 \the 落在寄存器
+        // 下标数字循环里被就地展开：\skip1 的 "0"（\the\skip1 旧值首字符）
+        // 折入下标、其余 ".0pt" 照排——pdfTeX GT（pe 盒0/gtf 同族）同值，
+        // 赋值实际落入下标折入后的寄存器，此处只锁字符流。
         assert_eq!(
             expand(r"\dimen0=5pt\skip1=\dimen0\the\skip1").unwrap(),
-            "5.0pt"
+            ".0pt"
         );
         // 前导负号作用于整个胶水（width 取负，stretch/shrink 本就为 0）
         assert_eq!(
             expand(r"\dimen0=3pt\skip1=-\dimen0\the\skip1").unwrap(),
-            "-3.0pt"
+            ".0pt"
         );
-        // 内部 dimen 后 plus/minus 照常扫描
+        // 内部 dimen 后 plus/minus 照常扫描。\the 落在 stretch 尾部
+        // scan_optional_space（get_x_token 展开后放回首 token）→ 整串 "0.0pt"
+        // 照排（**无**首字符折入：折入只发生在寄存器下标数字循环）
+        // —— pdfTeX GT（y.tex P3 盒内 "0.0pt"）。
         assert_eq!(
             expand(r"\dimen0=1pt\skip2=\dimen0 plus 2pt\the\skip2").unwrap(),
-            "1.0pt plus 2.0pt"
+            "0.0pt"
         );
-        // dimendef 绑定的 cs 同样走 Register(Dimen) 臂
+        // dimendef 绑定的 cs 同样走 Register(Dimen) 臂。\the 落在 scan_glue 的
+        // plus/minus 关键字扫描（tex.web scan_keyword=get_x_token）里被就地
+        // 展开 → 打印赋值前旧值 "0.0pt"（pdfTeX GT y.tex P4 盒内同值；cs 即
+        // 寄存器本体，无下标数字循环可折）
         assert_eq!(
             expand(r"\dimendef\zd=3\dimen3=7pt\skip4=\zd\the\skip4").unwrap(),
-            "7.0pt"
+            "0.0pt"
         );
     }
 
@@ -436,7 +466,9 @@ ab5c}").unwrap();
             "mu 上下文遇 dimen 应报 Incompatible glue units：{}",
             sink.transcript
         );
-        assert_eq!(out, "2.0mu", "1mu=1pt 恢复口径");
+        // 下标数字循环吸收 \the\muskip0 的 "0"（下标不变）、".0mu" 照排
+        // ——pdfTeX GT（pe 盒2）同值；宽度保留口径另见 transcript 断言
+        assert_eq!(out, ".0mu", "1mu=1pt 恢复口径：\"0\" 折入下标后余 .0mu");
     }
 
 /// `\uppercase`/`\lowercase` 语义锁（tex.web `shift_case` @23609）：
@@ -698,3 +730,4 @@ fn number_scan_hyphenchar_skewchar_font_integer() {
         "数字上下文缺 \\skewchar 臂：{transcript}"
     );
 }
+

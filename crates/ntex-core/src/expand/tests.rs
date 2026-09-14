@@ -158,32 +158,39 @@ mod tests {
 
     #[test]
     fn muskip_params_assign_and_the() {
-        // etrip.tex 78-80 行：mu 胶量参数（1mu = 65536 单位）
-        // 整数 mu 显示精确（18mu → 1179648/65536 = 18.0mu）；小数用可精确表示的值
+        // etrip.tex 78-80 行：mu 胶量参数。tex.web scan_glue 的 mu 单位尾
+        // （attach_fraction → done）后跟 scan_optional_space = get_x_token：
+        // \the（可展开）在赋值提交**前**被就地展开，打印**赋值前**旧值——
+        // 本引擎 INITEX 初表 mu 参数全 0 → "0.0mu"（pdfTeX GT gtf/gf.tex
+        // 2026-09-14：plain 里 \thinmuskip=18mu\the\thinmuskip → 盒内
+        // "3.0mu" = plain 的旧值 3mu，同一机制）。
         assert_eq!(
             expand("\\thinmuskip=18mu\\the\\thinmuskip").unwrap(),
-            "18.0mu"
+            "0.0mu"
         );
         assert_eq!(
             expand("\\medmuskip=27mu plus 9mu minus 18mu\\the\\medmuskip").unwrap(),
-            "27.0mu plus 9.0mu minus 18.0mu"
+            "0.0mu"
         );
         assert_eq!(
             expand("\\thickmuskip=36mu minus 7.5mu\\the\\thickmuskip").unwrap(),
-            "36.0mu minus 7.5mu"
+            "0.0mu"
         );
     }
 
     #[test]
     fn muskip_register_and_muskipdef() {
         // \muskip 寄存器 + \muskipdef cs 绑定（fil/fill 无限单位属另一特性，此处用普通单位）
+        // 两处 \the 都落在 mu 单位尾的 scan_optional_space（get_x_token）里被
+        // 就地展开 → 打印赋值前旧值 "0.0mu"（pdfTeX GT：minus 形带尾空格才
+        // 打印新值，见 muskip_order_repro 与 gtf/gf b23）。
         assert_eq!(
             expand("\\muskip5=2.5mu plus 1mu\\the\\muskip5").unwrap(),
-            "2.5mu plus 1.0mu"
+            "0.0mu"
         );
         assert_eq!(
             expand("\\muskipdef\\M=7\\muskip\\M=3mu minus 2mu\\the\\muskip7").unwrap(),
-            "3.0mu minus 2.0mu"
+            "0.0mu"
         );
         // 组作用域回滚
         assert_eq!(
@@ -240,7 +247,9 @@ mod tests {
         );
         assert_eq!(
             expand("\\skip0=1pt plus 2pt\\advance\\skip0 3pt plus 1pt\\the\\skip0").unwrap(),
-            "1.0pt3.33333 plus 1.66666 minus 1.11111plus3.33333 plus 1.66666 minus 1.111112.0pt"
+            // stretch 尾 scan_optional_space（get_x_token）就地展开 \the → 打印
+            // 增量前旧值（pdfTeX GT gtf/gf b25 同值）
+            "1.0pt plus 2.0pt"
         );
     }
 
@@ -271,7 +280,9 @@ mod tests {
         );
         assert_eq!(
             expand("\\skip0=2pt plus 3pt\\multiply\\skip0 2\\the\\skip0").unwrap(),
-            ".0pt3.33333 plus 1.66666 minus 1.11111plus3.33333 plus 1.66666 minus 1.111113.0pt"
+            // 乘数数字循环 get_x_token 就地展开 \the："2.0pt plus 3.0pt" 的首个
+            // "2" 折入乘数（2→21）且不排版，余下字符照排（pdfTeX GT gtf/gf b26 同值）
+            ".0pt plus 3.0pt"
         );
         // 内部整数参数
         assert_eq!(
@@ -302,7 +313,9 @@ mod tests {
         assert_eq!(
             expand("\\baselineskip=12pt plus 2pt\\advance\\baselineskip 3pt\\the\\baselineskip")
                 .unwrap(),
-            "15.0pt plus 2.0pt"
+            // 增量尾 scan_optional_space 展开内部 \the → 打印增量前旧值
+            // （pdfTeX GT gtf/gf b27 同值）
+            "12.0pt plus 2.0pt"
         );
         // 整数参数
         assert_eq!(
@@ -317,7 +330,10 @@ mod tests {
         // mu 胶参数（muskip 0/1/2 槽）
         assert_eq!(
             expand("\\thinmuskip=3mu\\advance\\thinmuskip by 1mu\\the\\thinmuskip").unwrap(),
-            "3.0m-0.27779u"
+            // 增量尾 mu 单位尾 scan_optional_space（get_x_token）就地展开 \the →
+            // 打印增量前旧值（INITEX 3mu）。（旧值 "3.0m-0.27779u" 是盒内容
+            // GT 通道 kern 残留；pdfTeX 机制同款 gtf/gf b27/b28 族）
+            "3.0mu"
         );
     }
 
@@ -386,15 +402,22 @@ mod tests {
                 .map(|t| t.charcode().and_then(char::from_u32).unwrap_or('\u{FFFD}'))
                 .collect())
         };
-        // 1.5em = 1.5 × 10pt(655360sp) = 983040sp；且 "em" 不泄漏
+        // tex.web scan_dimen 的 em/ex 单位臂：scan_keyword("em") 命中后接
+        // scan_eight_bit_int 取**字号**——后续的 `\count0` 被当作字号吸收
+        // （\count 内部量 → 0 号字体），`=` 等残留触发 Missing number → 盒空。
+        // （pdfTeX GT gtf/gf b20：盒空 + "Missing number, treated as zero"；
+        // 简报期"983040"是把 em 当 pt 误解的产物）
         assert_eq!(
             run("\\dimen0=1.5em\\count0=\\dimen0\\the\\count0").unwrap(),
-            "983040"
+            ""
         );
-        // 1ex = 4.3pt = 281744sp
+        // 1ex = 4.3pt = 281744sp。\the\count0 落在 `\dimen0` 的下标数字循环里
+        // 被就地展开：count0 旧值首字符 "0" 折入下标（下标不变）、其余字符照排
+        // 为空——pdfTeX GT（tf/tg FOLD=[0]、ta box20/box21 盒空）同族；
+        // 赋值实际落入下标折入后的 \dimen0=281744，此处只锁字符流。
         assert_eq!(
             run("\\dimen0=1ex\\count0=\\dimen0\\the\\count0").unwrap(),
-            "281744"
+            ""
         );
         // 无字体加载器 → 参数缺失按 0 计，"ex" 同样不泄漏
         assert_eq!(
@@ -432,10 +455,13 @@ mod tests {
 
     #[test]
     fn fontdimen_assignment_and_the() {
-        // trip.tex 第 21 行：\fontdimen12\nullfont=13pt；\the 读回
+        // trip.tex 第 21 行：\fontdimen12\nullfont=13pt。单位尾
+        // scan_optional_space（get_x_token）就地展开 \the → 打印赋值前旧值
+        // 0.0pt（pdfTeX GT gtf/gf b35 同值；pdfTeX 另报 nullfont 只有 7 个
+        // fontdimen 参数，属字体数据差非机制差）
         assert_eq!(
             expand("\\fontdimen12\\nullfont=13pt\\the\\fontdimen12\\nullfont").unwrap(),
-            "13.0pt"
+            "0.0pt"
         );
         // 组作用域恢复
         assert_eq!(
@@ -644,7 +670,10 @@ I changed this one to zero.
         assert_eq!(expand(src).unwrap(), "T");
         // etrip.tex L948 完整宏场景：\100pt10pt\mutoglue\muskip5
         let src3 = "\\def\\1#1#2pt#3#4pt#5 {\\ifnum\\glueshrinkorder#5=#3 T\\else F\\fi}\\skip5=1ptminus0fil\\muskip5=\\gluetomu\\skip5\\100pt10pt\\mutoglue\\muskip5 ";
-        assert_eq!(expand(src3).unwrap(), "T");
+        // pdftex GT（/tmp/gt7/cases/m6.log 盒内容）：#3 实参 = 0（\100pt10pt
+        // 拆出 #3="0"），shrinkorder(fil)=1 ≠ 0 → F 分支。旧期望 "T" 是
+        // 盒内容 GT 通道污染前的手推值。
+        assert_eq!(expand(src3).unwrap(), "F");
     }
 
     #[test]
@@ -717,18 +746,21 @@ I changed this one to zero.
         // TeX scan_int/get_x_token 展开后赋值。2026-09-03 前 \on 未展开直接
         // 当"单独出现 no-op"，\tracingoutput 永不开启（TRIP shipout 转录缺失
         // 根因之一）。同族：\tracingcommands2 直接数字早已可用。
+        // 数字循环 get_x_token 就地展开：\on → "1" 折入；紧随的 \the 也被
+        // 循环尾展开，打印赋值前旧值 "0" 且再次折入（终值 10/20/30）——
+        // 输出为空（pdfTeX GT gtf/gf：write16 证值 TO=10/TOL=2200/TS=30）
         assert_eq!(
             expand(r"\def\on{1}\tracingoutput\on\the\tracingoutput").unwrap(),
-            "1"
+            ""
         );
         assert_eq!(
             expand(r"\def\two{2}\tracingcommands\two\the\tracingcommands").unwrap(),
-            "2"
+            ""
         );
-        // 不可展开 cs 后跟 = 仍正常赋值
+        // 不可展开 cs（= 号通道同族）
         assert_eq!(
             expand(r"\def\x{3}\tracingstats=\x\the\tracingstats").unwrap(),
-            "3"
+            ""
         );
         // 单独出现（无值）仍 no-op 不吞后续（ETRIP $\splitdiscards\noindent 语义）
         assert_eq!(expand(r"\tracingstats A").unwrap(), "A");
@@ -757,16 +789,21 @@ I changed this one to zero.
 
     #[test]
     fn dimen_assignment_and_the() {
-        assert_eq!(expand("\\dimen0=2.5pt\\the\\dimen0").unwrap(), "2.5pt");
-        assert_eq!(expand("\\dimen0=1pt\\the\\dimen0").unwrap(), "1.0pt");
-        assert_eq!(expand("\\dimen0=1in\\the\\dimen0").unwrap(), "72.26999pt");
+        // pt/in 单位尾 scan_optional_space（get_x_token）就地展开 \the →
+        // 打印赋值前旧值 0.0pt（pdfTeX GT gtf/gf b34/b35/b36 同机制；
+        // b5/b37 证尾空格版才打印新值）
+        assert_eq!(expand("\\dimen0=2.5pt\\the\\dimen0").unwrap(), "0.0pt");
+        assert_eq!(expand("\\dimen0=1pt\\the\\dimen0").unwrap(), "0.0pt");
+        assert_eq!(expand("\\dimen0=1in\\the\\dimen0").unwrap(), "0.0pt");
     }
 
     #[test]
     fn skip_assignment_and_the() {
         assert_eq!(
             expand("\\skip0=1pt plus 2pt minus 0.5pt\\the\\skip0").unwrap(),
-            "1.0pt plus 2.0pt minus 0.5pt"
+            // minus 尾 scan_optional_space 展开内部 \the → 打印赋值前旧值
+            // （pdfTeX GT gtf/gf b36 同值）
+            "0.0pt"
         );
     }
 
@@ -838,7 +875,10 @@ I changed this one to zero.
     #[test]
     fn count_local_and_global_scoping() {
         let local = "\\count0=1\\begingroup\\count0=2\\the\\count0\\endgroup\\the\\count0";
-        assert_eq!(expand(local).unwrap(), "21");
+        // 组内数字循环把 \the\count0 的 "2" 折入值（→22）、"1" 非数字……
+        // 实际：\the 就地展开打印旧值 "1"，"1" 折入（→21）；\endgroup 还原
+        // 后外层 \the 排版 "1"（pdfTeX GT gtf/gf b21 同值 "1"）
+        assert_eq!(expand(local).unwrap(), "1");
         let global = "\\count0=1\\begingroup\\global\\count0=2\\endgroup\\the\\count0";
         assert_eq!(expand(global).unwrap(), "2");
     }

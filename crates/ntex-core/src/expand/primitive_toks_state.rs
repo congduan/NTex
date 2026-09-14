@@ -21,6 +21,11 @@ impl Expander {
             // ETRIP 冲刺：\chardef\cs=<num>（cs 绑定字符，cat 12）
             Primitive::Chardef => {
                 let csid = self.scan_cs_ident()?;
+                // tex.web shorthand_def（L22906）：`define(p,relax,256)`——编号扫描前
+                // 把目标**临时（局部）**绑成 \relax，编号中途出现 `\p` 即停扫不报
+                // 未定义、也不展开旧含义（`\chardef\foo=123\foo`）。pdfTeX 盒探针
+                // `\countdef\x=0\meaning\x` → "\relax"（GT，2026-09-14）。
+                self.set_slot_scoped(csid, EqSlot::Primitive(Primitive::Relax));
                 let v = self.scan_number()?;
                 let v = u32::try_from(v)
                     .map_err(|_| Error::invalid_input("\\chardef 字符码越界"))?;
@@ -37,6 +42,8 @@ impl Expander {
             | Primitive::Muskipdef
             | Primitive::Toksdef => {
                 let csid = self.scan_cs_ident()?;
+                // tex.web shorthand_def：编号扫描前局部绑 \relax（同 \chardef 臂注）
+                self.set_slot_scoped(csid, EqSlot::Primitive(Primitive::Relax));
                 let idx = self.scan_number()?;
                 // TeX：\countdef\cs=-1 / 32768 → "! Bad register code (-1)."
                 // 恢复式（不定义、继续；ETRIP L970 稀疏数组测试的故意用例）。

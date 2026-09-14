@@ -760,6 +760,17 @@ impl Expander {
                     };
                     Ok(emit_glue(g))
                 }
+                // \the\relax（shorthand_def 预绑目标的扫描中期读）：tex.web
+                // @<Complain...@>——"! You can't use `\relax' after \the." +
+                // "I'm forgetting what you said and using zero instead."，按
+                // int 0 恢复（数字上下文里 "0" 被数字循环吸走，pdfTeX GT
+                // mathchar/global 三案 2026-09-14；此前硬 Err 致测试 unwrap 崩）
+                Primitive::Relax => {
+                    let _ = self
+                        .sink
+                        .write16("! You can't use `\\relax' after \\the.\nI'm forgetting what you said and using zero instead.\n".to_owned());
+                    Ok(emit_count(0))
+                }
                 _ => Err(Error::invalid_input(
                     "\\the 只支持 \\count\\dimen\\skip\\toks 与内部参数",
                 )),

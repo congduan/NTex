@@ -546,6 +546,9 @@ impl Expander {
     /// 越界值（<0 或 >32767）报 "! Bad mathchar code." 且不改变绑定（TeX 语义）。
     fn exec_mathchardef(&mut self) -> Result<()> {
         let csid = self.scan_cs_ident()?;
+        // tex.web shorthand_def：编号扫描前局部绑 \relax（同 \chardef 臂注；
+        // 编号中途出现 `\p` 停扫不报未定义、不展开旧含义）
+        self.set_slot_scoped(csid, EqSlot::Primitive(Primitive::Relax));
         self.expect_equals()?;
         let v = self.scan_number()?;
         if !(0..=0x7FFF).contains(&v) {

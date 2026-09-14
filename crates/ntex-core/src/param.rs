@@ -369,8 +369,10 @@ impl Default for Params {
             baselineskip: Glue::new(12 * SP_PER_PT, 0, 0),
             lineskip: Glue::new(0, 0, 0),
             lineskiplimit: 0,
-            // 6.5in = 13/2 × 4_736_286 sp
-            hsize: 13 * 4_736_286 / 2,
+            // plain `\hsize=6.5in`：tex.web 精确分数换算 6.5 × 7227/100 =
+            // 30_785_863sp（pdfTeX \the\hsize → "469.75499pt"）；按 4_736_286sp
+            // 常数一步乘除得 30_785_859（"469.75493pt"，差 4sp）
+            hsize: 30_785_863,
             tolerance: 200,
             // plain \vsize：643.20255pt × 2^16（TeX 内部存为 scaled 四舍五入）
             vsize: 42_152_922,
