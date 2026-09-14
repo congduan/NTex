@@ -1,4 +1,8 @@
-\catcode`\:=11 \catcode`\_=11
+\catcode`\:=11 \catcode\_=11
 \input exgeneric.tex
-\typeout{[LOAD-DONE]}
+% 成功信号必须用 \message（plain 的 \message = \immediate\write16）：
+% \typeout 不是原语、plain.tex 无此定义（kpsewhich plain.tex | grep typeout = 0），
+% NTex crates 内亦无实现——两引擎实测：\typeout → pdfTeX "! Undefined control sequence"、
+% NTex 无输出；\message → 两侧均有输出（2026-09-14 /tmp/sigchk）。
+\message{[LOAD-DONE]}
 \end

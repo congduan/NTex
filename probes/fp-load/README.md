@@ -7,16 +7,41 @@ pdfTeX（TinyTeX，`~/.local/bin/pdftex -interaction=nonstopmode <probe>`
 
 | 文件 | 靶 | pdfTeX 期望 |
 |---|---|---|
-| `probe-load.tex` | **纯载入**（exgeneric + expl3-code 全文，不带 fp 后缀）| 打印 `[LOAD-DONE]` |
+| `probe-load.tex` | **纯载入**（exgeneric + expl3-code 全文，不带 fp 后缀）| 打印 `[LOAD-DONE]`（信号 = `\message`，**不是** `\typeout`：后者非原语、plain 无定义，两引擎实测均打不出）|
 | `probe-mathchar-neg.tex`（stub7）| `\mathchardef` 操作数取负（`-\c__fp_minus_min_exponent_int`）| 取负后同点 0 错 |
 | `probe-noexpand-operand.tex`（stub9）| `\noexpand` cs 在 `\if_catcode:w`/`\if_meaning:w` 操作数位 | CC2/MM2 均 EQ（L9816-9838 归一）|
 | `probe-pdfstrcmp-expand.tex`（stub12）| `\pdfstrcmp`（`\__fp_str_if_eq:nn`）实参组内展开 | V1 `1`（原义收集则 0）|
 | `probe-fp.tex` + `exgeneric.tex` | 全载 expl3 + `\fp_const:Nn \c_e_fp`（fp 首错现场，l.18141）| 2 错（探针自身）/ FP-OK 1 |
 
 **`probe-load.tex` 是「载入是否走通」的唯一口径**（`probe-fp.tex` 只在载入走通后
-才轮得到 fp）：走通才打印 `[LOAD-DONE]`。当前状态 = **未走通**，终止于
-`TeX capacity exceeded [input stack size = 5000]`——expl3 quark `\q_stop`
-自展开 4993 层（现场与入口链见 `docs/expl3-lvt-scoreboard.md` 09-13 复测·四）。
+才轮得到 fp）：走通才打印 `[LOAD-DONE]`。**当前状态 = 未走通**，终止于
+`输入栈超限（5001 帧 > 5000）`。
+
+复测（2026-09-14 23:50，HEAD `b1cce11`，即补 `WordBreakProperty.txt` 之后）：
+
+| 量 | 值 |
+|---|---|
+| 载入期错误 | **3 条**：expl3 语义错仅 **1 条**（`Forbidden control sequence … scanning definition of ^^L`，l.26865）；另 2 条是 **preload/hyphenation 段**的 `\unhbox` 噪声（发生在 expl3 之前，与 expl3 无关）。09-13 口径为 573 |
+| pdfTeX | 改用 `\message` 后**打出 `[LOAD-DONE]`** ✅（旧 `\typeout` 版不可能打出，见下）|
+| 载入终点 | **l.36005** —— UnicodeData 装载组收尾 `}`，紧邻 `\group_begin: \ior_open:Nn { CaseFolding.txt }`（l.36006）|
+| 进度 | **89.4% 行**（36005 / 40266）、**90.0% 字节**（1248905 / 1387070）|
+| 耗时 / 步数 | ~31s，末次 watchdog `steps=1160576`，`last_tok=\exp_after:wN` |
+| 栈型 | `{Bytecode: 4978, MacroArg: 6, Source: 3, TokenList: 14}`，depth=5001 |
+| 自旋环（`NTEX_CALL_TRACE`）| 6 段环 `\tl_if_eq:ccT → \exp_args:Ncc → \tl_if_eq:NNT → \use_none:n → \__int_step:Nw → \__int_map_1:w`（末 40 段全在此环内）|
+
+**确定性**：终点 l.36005 在 5 次跑（含 1 次干净目录）中 **5/5 一致**；错误条数
+4/5 为 3 条，首跑只录到 1 条 —— 差值恰为上表两条 preload 噪声，
+**疑似转录通道丢块（仪器侧，待查；tooling-trust 纪律：先怀疑仪器）**。
+
+**墙的主体** = `\__codepoint_finalize_blocks_aux:n`（expl3-code l.35939 起）的
+`\int_step_inline:nn { \tl_use:c { l__codepoint_ #1 _block_tl } - 1 }` 块循环
+——正是 `docs/expl3-lvt-scoreboard.md`「下一刀」标的 `\__int_step:Nw` 家族。
+WordBreak 数据补齐后 wordbreak 段真实数据进入同一 finalize，墙的位置随之
+前移到 CaseFolding 入口。完整现场与「载入还差哪几段」见该文档复测节。
+
+**pdfTeX 路径**：本文档原写 `~/.local/bin/pdftex`（TinyTeX）——**本机无此文件**，
+实际为 TeX Live 2024：`/Library/TeX/texbin/pdftex`（`preloaded format=pdftex`）。
+注意该预载格式里 **`\typeout` 也未定义**，故对拍信号一律用 `\message`。
 
 爆栈现场取法（诊断开关说明见 `docs/tooling-trust.md` §2.7）。**在临时目录跑**，
 不要往库里拷 `expl3-code.tex`（未被 .gitignore 覆盖，会脏工作区）：

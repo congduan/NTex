@@ -3,6 +3,62 @@
 > **本文档是 expl3 攻坚的进度仪表盘。** 状态源：`scripts/lvt-run.py`。
 > 上游权威数据：`latex3/latex3` 仓库 `l3kernel/testfiles/`（每例配 `.tlg` 期望转录）。
 
+## 载入终点复测（2026-09-14 23:50，`b1cce11`）终点前移 **l.35967 → l.36005**，载入期错误 **573 → 3**（expl3 语义错仅剩 1）
+
+口径 = 纯载入探针 `probes/fp-load/probe-load.tex`（exgeneric + expl3-code 全文，
+不带 fp 后缀，成功信号 = `\message{[LOAD-DONE]}`）。复现：
+
+```bash
+d=$(mktemp -d); cd /Users/congduan/Desktop/code/_vibe_coding_/NTex
+cp fixtures/l3kernel/* probes/fp-load/{probe-load.tex,exgeneric.tex} "$d"/ && cd "$d"
+target/debug/ntex-dvi probe-load.tex > trans.txt 2>&1     # NTex（转录走 stdout）
+/Library/TeX/texbin/pdftex -interaction=nonstopmode probe-load.tex   # pdfTeX GT
+```
+
+| 量 | 第六刀口径（09-13 复测·四）| **本复测（补 `WordBreakProperty.txt` 后）** |
+|---|---|---|
+| 载入期错误 | 573 / 6 签名 | **3**（见下方分解；expl3 载入期**语义错只有 1 条**）|
+| 载入终点 | UnicodeData 段 l.35967（category/finalize 家族）| **l.36005** = UnicodeData 装载组收尾，紧邻 CaseFolding 入口（l.36006）|
+| 进度 | — | **89.4% 行**（36005/40266）+ **90.0% 字节**（1248905/1387070）|
+| 终止 | 输入栈超限 5001 帧 | 同（depth=5001）|
+| 栈型 | `Bytecode` 主导 | `{Bytecode: 4978, MacroArg: 6, Source: 3, TokenList: 14}` |
+| 自旋环 | `\q_stop` 自展开 4993 层（09-13）| 6 段环 `\tl_if_eq:ccT → \exp_args:Ncc → \tl_if_eq:NNT → \use_none:n → \__int_step:Nw → \__int_map_1:w` |
+| 耗时 | — | ~31s，末次 watchdog `steps=1160576 last_tok=\exp_after:wN` |
+
+**3 条错误分解**：
+
+| # | 签名 | 位置 | 归因 |
+|---|---|---|---|
+| 1 | `Forbidden control sequence … scanning definition of ^^L` | l.26865（regex 段）| **根因 #3**（active/cs 共用 intern 槽），不阻断 |
+| 2-3 | `Missing number, treated as zero`（`<to be read again> \unhbox`）+ `Incompatible list can't be unboxed` | **preload/hyphenation 段**（expl3 之前）| plain 预载段噪声，与 expl3 语义无关；首跑（`trans.txt`）曾只录到 1 条 → **转录通道疑似丢块**（5 跑 4 次为 3 条，终点 5/5 一致），仪器侧待查 |
+
+⚠ 即：**expl3 载入期"真错"已从 573 降至 1**（且不阻断）；终点由数据流而非错误恢复决定。
+
+**墙的主体（未变，仍是「下一刀」标的）**：`\__codepoint_finalize_blocks_aux:n`
+（expl3-code l.35939 起）的 `\int_step_inline:nn { \tl_use:c { l__codepoint_ #1 _block_tl } - 1 }`
+块循环 —— `\__int_step:Nw` 家族。WordBreak 数据补齐后 wordbreak 段的**真实**数据
+进入同一 finalize，墙随数据流前移到 CaseFolding 入口；旧口径的 `\q_stop` 自展开
+退居次要（本轮栈型已无 4993 层同族帧）。
+
+**「还差多少」的剩余段（l.36006 → 40266，10.6% 行）**：
+
+| 段 | 行 | 内容 |
+|---|---|---|
+| codepoint 收尾 | 36006–36087 | CaseFolding.txt / SpecialCasing.txt 装载（`\__codepoint_data_auxi:w` 9 字段 + `~` 定界）|
+| l3text | 36175 / 36865 / 38447 / 39013 / 39556 | text / text-case / text-map / text-purify / text-utils（依赖 Unicode 表，最重的尾段）|
+| l3legacy + l3deprecation | 39958 / 39986 | 遗留名映射与弃用补丁 |
+| 文件尾 | 40266 | `%% End of file expl3-code.tex` |
+| **exgeneric 尾** | — | `\sys_load_backend:n {}` → `l3backend-dvips.def`（37KB）+ `\l@expl@tidy@tl` 收尾 |
+
+⚠ **instrument 修正（本轮新发现）**：探针成功信号原为 `\typeout{[LOAD-DONE]}`，
+但 **`\typeout` 两引擎都打不出来**——它不是原语、plain.tex 无定义
+（`kpsewhich plain.tex | grep -c typeout` = 0），crates 内亦无实现。
+实测（/tmp/sigchk）：`\typeout{T1}` → pdfTeX `! Undefined control sequence`、
+NTex 无输出；`\message{M1}` → 两侧均有输出。**即「载入走通」这条唯一判据此前
+不可能复现**（探针已改用 `\message`，改用后 pdfTeX 侧立即打出现 `[LOAD-DONE]` ✅，
+README 同步）。另：本机 pdfTeX 实际路径 = `/Library/TeX/texbin/pdftex`（TeX Live 2024），
+非文档旧写的 `~/.local/bin/pdftex`。
+
 ## 第六刀跑分（2026-09-14）⚠ RAN 3→0：不是倒退，是墙前移（30s 超时口径失效）
 
 | 判定 | 第五刀 | 第六刀（默认 30s）| 第六刀（手动 120s 实测 m3bitset002）|

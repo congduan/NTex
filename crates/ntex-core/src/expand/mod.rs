@@ -45,12 +45,23 @@ use ntex_io::{LocalVfs, Vfs};
 /// 字体加载记录：外部名 + at 规格 + scaled（pass2 恢复字体表用；.fmt 不含字体表）。
 type FontLoad = (String, Option<i64>, Option<i64>);
 
-/// 输入栈帧数上限（tex.web `stack_size`；TeX Live 默认 5000）。
+/// 输入栈帧数上限（tex.web `stack_size`；TeX Live 2024 `texmf.cnf` 实际 10000）。
 ///
-/// 宏递归展开（`\def\x{\x}\x` 类）在 tex.web 里以 "TeX capacity exceeded,
+/// 宏递归展开（`\def\x{\x a}\x` 类）在 tex.web 里以 "TeX capacity exceeded,
 /// sorry [input stack size=N]" 致命终止；本引擎由 [`Expander::call_macro`]
 /// 入口检查同一上限（防御单步内的无界递归——主循环 10M 步看门狗够不到）。
-const MAX_INPUT_STACK: usize = 5000;
+///
+/// ⚠ 2026-09-15 修正：原值 5000 与注释「TeX Live 默认 5000」均属事实错误。
+/// 权威值 = `texmf-dist/web2c/texmf.cnf: stack_size = 10000  % simultaneous
+/// input sources`，pdfTeX 实测报错原文即 `[input stack size=10000]`。取回
+/// 同值使本引擎的致命报告与 GT 逐字一致（此前 GT 侧 10000、本侧 5000，
+/// 报错文本不可直接对拍）。
+///
+/// ⚠ 注意本常量**不是**尾递归的判据：[`Expander::drain_depleted_frames`]
+/// 修掉尾递归线性涨栈后，纯自尾调用（`\def\x{\x}\x`）不再涨栈——tex.web
+/// 同款进无限循环（pdfTeX 实测挂死，不报容量错）；只有**调用者帧仍有余 token**
+/// 的递归（`\def\x{\x a}\x`）才真正涨栈并命中本上限。
+const MAX_INPUT_STACK: usize = 10000;
 
 /// 宏调用轨迹环形缓冲上限（诊断用；`NTEX_CALL_TRACE=N` 开启，N = 转储段数）。
 ///
@@ -2895,8 +2906,91 @@ impl Expander {
         }
     }
 
+    /// 帧是否「已耗尽」：下一个 [`Self::fetch`] 对它的唯一动作就是 `pop`
+    /// （tex.web `loc=null`，module 6638 的定义）。
+    ///
+    /// **只有游标型帧（`pos`/`pc` 推进式）参与判定**。`One` 虽小却是
+    /// 「弹出并返回 token」型——它在栈上时 token **尚未被消费**，永远不算
+    /// 耗尽（`fetch` 的 One 臂 `pop` 与 `return Ok(Some(...))` 同时发生）。
+    fn frame_depleted(f: &InputFrame) -> bool {
+        match f {
+            InputFrame::Bytecode { code, pc, .. } => {
+                // bytecode 体末尾恒有一个 `End` 指令占位，而 tex.web 的 token
+                // 链表以 `null` 收尾——故「已耗尽」= 越过 `words()` 尾 **或**
+                // 游标正指 `End` 终止字（与 fetch 的 `_ =>` 臂同判据）。
+                *pc >= code.len()
+                    || code.words()[*pc] >> crate::bytecode::TAG_SHIFT
+                        > crate::bytecode::EMIT_ARG_TAG
+            }
+            InputFrame::Macro { body, pos, .. } => *pos >= body.len(),
+            InputFrame::TokenList { items, pos } => *pos >= items.len(),
+            InputFrame::MacroArg { items, pos } => *pos >= items.len(),
+            // 以下帧型**不参与** drain，理由各不相同（对照 fetch 各臂）：
+            // - `Source`：tex.web 的循环条件 `state=token_list` 同样排除文件层；
+            //   其弹出还要注入 `\everyeof`（非纯 pop）；
+            // - `One`：见上，在栈上即未消费；
+            // - `OutputRoutine`：弹出带 `end_group` + 复位输出例程激活标志；
+            // - `AlignU`/`AlignV`：弹出带 `align_u_exhausted`/`align_fin_col`
+            //   钩子（tex.web 只排除 v_template，此处从保守侧一并对齐排除）。
+            InputFrame::Source { .. }
+            | InputFrame::One { .. }
+            | InputFrame::OutputRoutine { .. }
+            | InputFrame::AlignU { .. }
+            | InputFrame::AlignV { .. } => false,
+        }
+    }
+
+    /// 清掉栈顶**已耗尽**的纯帧（tex.web `end_token_list` 的 "conserve stack
+    /// space" 步骤）。
+    ///
+    /// tex.web module 7978（`macro_call` 的 `@<Feed the macro body and its
+    /// parameters to the scanner@>`）与 module 7025（`back_input`）在**压新层
+    /// 之前**都执行同一循环，原文附注即点明其目的：
+    ///
+    /// ```text
+    /// while (state=token_list)and(loc=null)and(token_type<>v_template) do
+    ///   end_token_list; {conserve stack space}
+    /// ```
+    ///
+    /// > "Then a user macro that ends with a call to itself will not require
+    /// >  unbounded stack space."
+    ///
+    /// 缺此步骤时，**尾递归宏**（自调用是该帧最后一串 token）每轮都把已耗尽的
+    /// 调用者帧留在栈上：[`Self::fetch`] 只在帧成为**栈顶**时才弹它，而下一轮的
+    /// 帧立刻压在其上——调用者永远等不到再次成为栈顶。栈深随迭代数线性增长。
+    ///
+    /// [实测 2026-09-15] 这是 expl3 载入在 l.36005 撞墙（`TeX capacity exceeded
+    /// [input stack size]`）的**根因**，且与 expl3 无关——纯 plain TeX 复现：
+    ///
+    /// | 用例 | NTex（修复前）| pdfTeX（GT）|
+    /// |---|---|---|
+    /// | `\def\step{...\read...\step}` 逐行读完 UnicodeData.txt（34k 行）| 输入栈超限 | 正常读完 |
+    /// | `\int_step_inline:nn {5000}{\relax}`（expl3 已载入）| 输入栈超限 | 正常（20000 亦无事）|
+    ///
+    /// 全栈转储佐证：5001 帧中 **4932 帧**是 `\__ior_map_variable_loop:NNNn`
+    /// （每读一行漏 1 帧）、35 帧是 `\__int_step:Nw`，其余为作业帧。
+    ///
+    /// `read_floor` 是子展开（`\edef`/`\expanded`/`\csname`）边界，其下的帧
+    /// 属外层上下文，不得越界——与 [`Self::fetch`] 的 `stack.len() <= read_floor`
+    /// 同口径（fetch 允许弹到恰好 `read_floor`，本循环同）。
+    fn drain_depleted_frames(&mut self) {
+        while self.stack.len() > self.read_floor {
+            match self.stack.last() {
+                Some(f) if Self::frame_depleted(f) => {
+                    self.stack.pop();
+                }
+                _ => break,
+            }
+        }
+    }
+
     /// 压入输入帧（全帧型统一入口；TEMP DEBUG 挂钩巨型 TokenList 定位）。
+    ///
+    /// 压栈前先跑 [`Self::drain_depleted_frames`]：tex.web 把该步骤放在
+    /// `macro_call`/`back_input` 两处，这里收到唯一入口——不变量是「栈顶已耗尽
+    /// 的纯帧对后续任何读取都不可见」，故在各调用点均等价（见该函数文档）。
     fn push_frame(&mut self, f: InputFrame) {
+        self.drain_depleted_frames();
         #[cfg(not(target_arch = "wasm32"))]
         if diag_enabled("NTEX_BIGLIST_TRACE") {
             if let InputFrame::TokenList { items, .. } = &f {
