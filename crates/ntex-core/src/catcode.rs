@@ -86,25 +86,27 @@ impl CatcodeTable {
         Self::from_bytes(Self::plain_bytes())
     }
 
-    /// INITEX（iniTeX / 格式构建态）初始表：tex.web §1273 默认表（含一处引擎偏差）。
+    /// INITEX（iniTeX / 格式构建态）初始表：tex.web §1273 默认表。
     ///
-    /// 除 `\`=0、`%`=14、空格=10、**LF=5**、CR=5、DEL=15、字母=11、NUL=9 外
-    /// **全部 12**（`^^I` 也是 12——INITEX 不给 tab 任何特殊待遇）。plain 表
-    /// （[`Self::new`]）是 plain.tex 装载后的产物，差异（`{`=1 `~`=13 `_`=8 等）
-    /// 正是 latex.ltx L98 `\ifnum\catcode`\{=1` 判别"是否已预载格式"的依据。
+    /// 除 `\`=0、`%`=14、空格=10、CR=5、DEL=15、字母=11、NUL=9 外
+    /// **全部 12**（`^^I` 也是 12——INITEX 不给 tab 任何特殊待遇；LF=12 同）。
+    /// plain 表（[`Self::new`]）是 plain.tex 装载后的产物，差异（`{`=1 `~`=13
+    /// `_`=8 等）正是 latex.ltx L98 `\ifnum\catcode`\{=1` 判别"是否已预载格式"
+    /// 的依据。
     ///
-    /// **偏差说明**：tex.web 里 INITEX 的 LF 是 12（行结束符由读取层剥掉、再补一个
-    /// `\endlinechar`=13/CR）。本引擎的扫描器是字节流直读（`input.rs::scan_token`），
-    /// 不剥行尾字节——原始 LF 就是行尾符。物理行边界按**字节身份**（`b == b'\n'`）
-    /// 识别，与 catcode(0x0A) 无关（tex.web 行尾字节按位置写入 `end_line_char`，
-    /// 见 `scan_token` 的 `b == b'\n'` 注释）；catcode 5 只是行尾语义（空行→`\par`、
-    /// 行尾→空格、注释跳行终止）的另一入口——`^^M` 解码产物、CR 字节等仍走
-    /// catcode 臂。故此处 LF 与 CR 同为 5（等价于"行尾符必有 catcode 5"的引擎行模型）。
+    /// **行模型说明**：tex.web 里行结束符由读取层剥掉、再按位置补一个
+    /// `\endlinechar`=13/CR（INITEX 给它 cat 5）。本引擎的扫描器是字节流直读
+    /// （`input.rs::scan_token`），物理行边界按**字节身份**（`b == b'\n'`）识别、
+    /// 与 catcode(0x0A) 无关——该位置判定才是"行尾符"的载体。表项 catcode(0x0A)
+    /// 保持 tex.web INITEX 的 12（other）：行中 `^^J` 解码产物是**普通 cat 12
+    /// 字符 token**（可作宏定界符、进 `\message` 等，pdfTeX 对拍一致）；若把它
+    /// 设成 5，`\__iow_wrap_fix_newline:w #1 ^^J #2 ^^J` 这类 chr(10) 定界符在
+    /// 定义位变 `\par`、调用位被吞（expl3 iow_wrap 全线失配，fp 载入探针
+    /// 3+2+2+3 错的根因）。
     pub fn initex() -> Self {
         let mut t = [Catcode::Other as u8; 256];
         t[0x00] = Catcode::Ignored as u8; // NUL
-        t[0x0A] = Catcode::EndOfLine as u8; // LF（引擎行模型：行尾字节，见上偏差说明）
-        t[0x0D] = Catcode::EndOfLine as u8; // CR
+        t[0x0D] = Catcode::EndOfLine as u8; // CR（endlinechar=13 的 cat）
         t[0x20] = Catcode::Space as u8; // space
         t[0x25] = Catcode::Comment as u8; // '%'
         t[0x5C] = Catcode::Escape as u8; // '\'
@@ -121,10 +123,10 @@ impl CatcodeTable {
     /// plain TeX 默认 8-bit 表体（[`Self::new`] 的内容，独立成函数便于重建）。
     fn plain_bytes() -> [u8; 256] {
         let mut t = [Catcode::Other as u8; 256];
-        // 空白与行尾
+        // 空白与行尾（plain.tex 不改 chr(10)：INITEX 的 cat 12 原样继承；
+        // 物理行尾由扫描器按字节身份判定，见 initex 的行模型说明）
         t[0x09] = Catcode::Space as u8; // tab
         t[0x20] = Catcode::Space as u8; // space
-        t[0x0A] = Catcode::EndOfLine as u8; // LF
         t[0x0D] = Catcode::EndOfLine as u8; // CR
                                             // 特殊字符
         t[0x5C] = Catcode::Escape as u8; // '\'
@@ -240,7 +242,10 @@ mod tests {
         assert_eq!(t.get(b'_'), Catcode::Subscript);
         assert_eq!(t.get(b'%'), Catcode::Comment);
         assert_eq!(t.get(b'~'), Catcode::Active);
-        assert_eq!(t.get(0x0A), Catcode::EndOfLine);
+        // plain.tex 不改 chr(10)：INITEX 的 cat 12 原样继承（物理行尾由扫描器
+        // 按字节身份判定；行中 ^^J 解码产物是普通 cat 12 字符 token）
+        assert_eq!(t.get(0x0A), Catcode::Other);
+        assert_eq!(t.get(0x0D), Catcode::EndOfLine);
         assert_eq!(t.get(b' '), Catcode::Space);
         assert_eq!(t.get(0x7F), Catcode::Invalid);
     }
@@ -265,9 +270,9 @@ mod tests {
         assert_eq!(t.get(0x00), Catcode::Ignored);
         assert_eq!(t.get(b'a'), Catcode::Letter);
         assert_eq!(t.get(b'Z'), Catcode::Letter);
-        // INITEX 里这些都不是特殊字符（plain 表才是）；LF 例外——见
-        // [`CatcodeTable::initex`] 的引擎行模型偏差说明。
-        assert_eq!(t.get(b'\n'), Catcode::EndOfLine);
+        // INITEX 里这些都不是特殊字符（plain 表才是）；LF=12 同 tex.web §1273——
+        // 行界由扫描器按字节身份判定（[`CatcodeTable::initex`] 行模型说明）。
+        assert_eq!(t.get(b'\n'), Catcode::Other);
         for &b in b"{}$&#^_~\t" {
             assert_eq!(t.get(b), Catcode::Other, "byte 0x{b:02X}");
         }

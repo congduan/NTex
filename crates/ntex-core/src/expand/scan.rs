@@ -16,6 +16,22 @@ fn unit_num_denom(unit: &str) -> Option<(i64, i64)> {
     }
 }
 
+/// cs 名是否恰一字符，是则返回该字符（tex.web eqtb 的 single_base 区语义，
+/// L8742-8744：alphabetic constant 对单字符 cs 取其字符码）。
+///
+/// NTex cs 名按 UTF-8 `String` 存储，`` `\^^fe `` 这类 ≥0x80 的单字符 cs
+/// 占多字节——判定/取值必须按字符数（char code），按字节数会把
+/// `` `\^^fe `` 误判成多字符控制词而报 "Improper alphabetic constant"
+/// （expl3 str 模块 l.24913 `\char_set_catcode_other:N \^^fe` 现场，
+/// pdfTeX 对拍 0 错）。
+fn single_char_cs(name: &str) -> Option<char> {
+    let mut it = name.chars();
+    match (it.next(), it.next()) {
+        (Some(c), None) => Some(c),
+        _ => None,
+    }
+}
+
 impl Expander {
     // ---------- 数字与赋值辅助 ----------
 
@@ -755,11 +771,12 @@ impl Expander {
             return Ok(None);
         };
         let name = self.intern.name(csid);
-        if name.len() == 1 && !name.as_bytes()[0].is_ascii_alphabetic() {
-            Ok(Some(name.as_bytes()[0] as i64))
-        } else {
-            self.unread(tok);
-            Ok(None)
+        match single_char_cs(name) {
+            Some(c) if !c.is_ascii_alphabetic() => Ok(Some(c as u32 as i64)),
+            _ => {
+                self.unread(tok);
+                Ok(None)
+            }
         }
     }
 
@@ -785,8 +802,8 @@ impl Expander {
             TokenKind::Char => Ok(Some(t2.charcode().expect("Char 必有 charcode") as i64)),
             TokenKind::ControlSeq => {
                 let name = self.intern.name(t2.csid().expect("ControlSeq 必有 csid"));
-                if name.len() == 1 {
-                    Ok(Some(name.as_bytes()[0] as i64))
+                if let Some(c) = single_char_cs(name) {
+                    Ok(Some(c as u32 as i64))
                 } else {
                     // TeX：反引号后多字符 cs → "! Improper alphabetic constant."
                     // 恢复插入 \0（TRIP L249 `\delcode`\relax`）。

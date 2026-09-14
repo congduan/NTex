@@ -3,6 +3,106 @@
 > **本文档是 expl3 攻坚的进度仪表盘。** 状态源：`scripts/lvt-run.py`。
 > 上游权威数据：`latex3/latex3` 仓库 `l3kernel/testfiles/`（每例配 `.tlg` 期望转录）。
 
+## 第五刀跑分（2026-09-14 主控独立复测）🎉 判定分布翻盘：RAN 0→3，STACK 187→180
+
+| 判定 | 四刀后（09-14 上午）| 第五刀（7 件套装齐后）|
+|---|---|---|
+| **RAN** | **0** | **3**（m3bitset002 / m3expan004 / m3pdf001）|
+| CRASH | 1 | 3 |
+| TIMEOUT | 0 | 1 |
+| STACK | 186 | **180** |
+
+自 09-11 以来首次出现 RAN。**口径警示**（详见下文 09-11 基线节）：本轮起
+expl3 载入链与 pdfTeX 同口径（backend + Unicode 数据 7 件套），与旧基线
+不可直接比。STACK 180 = 载入期残差（cond 臂 `\__int_compare:NNw` 级联，
+见第五刀节「下一刀」）+ 各用例测试体差异。
+
+## 第五刀（2026-09-14）fp 探针 23→8：UTF-8 单字符 cs 名 + catcode(10) 表项两根因；全 CRASH 悬案破案 = lvt 缺 expl3 载入链件
+
+引擎两处修复（`crates/ntex-core/src/expand/scan.rs` + `catcode.rs`）把 fp 全载探针
+（`probes/fp-load/`，纯载入口径）从 **23 键降到 8 键**、exit 0 **跑完全程**；
+`make check` 774 全绿。此前停在 23 的两大墙（iow_wrap `^^J` 定界失配、
+`` `\^^fe `` Improper）一次清掉。
+
+### 引擎侧两根因（主控猜测面部分证伪）
+
+1. **单字符 cs 名按 UTF-8 字符数判，不按字节数**（scan.rs）。tex.web
+   L8742-8744 的 `single_base` 区按**字符**直落；NTex 的
+   `single_char_cs`/`try_control_symbol`/`try_scan_backquote` 按字符串长度判，
+   `` `\^^fe ``（2 字节 UTF-8 名）误判多字符 → 去 csname 臂 → 报
+   `Improper alphabetic constant`。修法 = `chars().count() == 1`。
+2. **catcode(chr(10)) 必须是 12（other），不是 5**（catcode.rs）。tex.web
+   §1273 INITEX 默认表 LF=12；物理行界由扫描器按**字节身份** `b == b'\n'`
+   判定（0925600 既有结论），catcode(0x0A) 只决定行中 `^^J` 解码产物的
+   token 身份。设成 5 会让 `\__iow_wrap_fix_newline:w #1 ^^J #2 ^^J` 的
+   chr(10) 定界符在**定义位**变 `\par`、**调用位**被吞 —— iow_wrap
+   3+2+2 键的根因。表项与测试（`default_table_specials` /
+   `initex_table_is_tex_web_1273`）一起钉死。
+
+**证伪记录**：任务书猜测「反引号单字符 cs 探针双引擎一致 ⇒ tokenizer 与此簇
+无关」不成立——探针形状只覆盖 ASCII 单字节名，恰是唯一无偏差的子集；
+形状对 ≠ 面盖全。scoreboard 上一节「shim harness 脱节」「引擎 outer 判据
+过宽」两候选根因**均证伪**（见下）。
+
+### 残差 8 键的归因（次序 = /tmp 探针转录实测）
+
+| # | 签名 | 归因 |
+|---|---|---|
+| 1 | `Forbidden control sequence … scanning definition of ^^L` | **根因 #3**（本轮不动）：NTex 把 active 字符与单字符 cs 放同一 intern 槽，真 TeX 是 `active_base`/`single_base` **两区**；工程量大已建档 |
+| 2-6 | `Missing endcsname` ×1 + `Missing number` ×2 + `\use_i:nn` extra `}` ×2 | **scan_csname 缺条件求值臂**（l.6844 `\__int_compare:NNw` 分派名构造级联，见「下一刀」）|
+| 7-8 | `\c_e_fp already defined` + `Undefined control sequence` | 上述级联的降级载入下游污染 |
+
+### 下一刀（已验证、未落地）：scan_csname / scan_file_name 条件求值臂
+
+tex.web 的 `\csname` 名字扫描逐 token 走 `expand()`（文件名扫描同，L10210
+`get_x_token`）——**条件原语在扫描内就地求值**：真支字符收进名字、假支就地
+跳过。NTex 缺此臂，条件 token 落入不可展开臂报 `Missing endcsname`。两个真
+现场（expl3-code.tex）：
+
+- **l.6838-6847** `\__int_compare:NNw`：分派名构造
+  `\use:c { __int_compare_ \token_to_str:N #1 \if_meaning:w = #2 = \fi: :NNw }`
+  ——`\int_compare:n` 每次比较都走；
+- **l.3347-3351** `\__quark_if_empty_if:o`（文件名机器 quark 快路）：展开成
+  **不闭合的** `\if_meaning:w \q_nil … \q_nil` 留在流里等扫描器执行。
+
+对照实验已完整：单加 scan_csname 条件臂（照 `exec_expandafter` 的
+`step_conditional` + `drain_open_skip` 模式）即 8→1，cond-in-csname 触发 4 次
+全部分派名正确（`__int_compare_<:NNw` / `__int_compare_end_=:NNw`）；但连锁
+暴露 `\read`/`\readline` 扫描臂缺失（`\__ior_get:NN` = `\tex_read:D #1 to #2`，
+l.11922）+ `\the` 偏差，peel 链深度未知 → 当轮按止损纪律 revert。**下一刀
+按序：cond 双臂 → `\read`/`\readline` 扫描 → `\the` 偏差 → 根因 #3**。
+独立可并行项：实现 `\lastnamedcs`（pdfTeX 原语，l3names l.967 无条件映射）
+让 `\cs_if_exist:c` 走 pdfTeX 同路径。
+
+### 仪器侧：lvt 全 CRASH 悬案破案（187 例不是引擎问题）
+
+「09-12 起全 CRASH 待定性」的真根因 = **lvt 临时目录缺 expl3 载入链文件**：
+现行 expl3.ltx l.105 `\sys_load_backend:n` 按 `\c_sys_backend_str` 找
+`l3backend-<engine>.def`，codepoint 模块载入期还要 `\ior_open` 读 Unicode
+数据 —— 缺任一件即 Emergency stop，187 例**全部**误判 CRASH。修法：
+
+- `scripts/lvt-run.py` `EXPL3_FILES` 扩成 7 件套（expl3.ltx/expl3-code.tex/
+  l3backend-dvips.def/l3debug.def/UnicodeData.txt/CaseFolding.txt/
+  GraphemeBreakProperty.txt/SpecialCasing.txt）；
+- 件源 = TinyTeX 同批（LPPL），入库 `fixtures/l3kernel/`（与 09-13 入库的
+  expl3-code.tex 同口径）。
+
+跑分纪律：**跑中严禁任何 cargo 编译**——runner 每例重新 exec 二进制，
+中途重编 = 污染整轮（本轮实测踩过一次，作废重跑）。
+
+### 重立分布（harness 修复后首轮）
+
+```
+【待填：lvt-run6】
+```
+
+注意口径：09-11「RAN 180」基线是在**旧 expl3 载入链**（无 `\sys_load_backend:n`）
+下取的，与本轮数字**不可直接比**——本轮起 expl3 与 pdfTeX 同口径（backend
+载入 + Unicode 数据），STACK/CRASH 的含义随之变化（从「载入即死」变为
+「测试体真阻塞」）。首轮分布：m3basics001 = STACK
+`输入栈超限（5001 帧 > 5000）……（定义 \__kernel_chk_var_exist:N 的替换文本时）l.458`
+——lvt 线下一刀靶子（定义扫描递归无终止，与 fp 线 cond 臂不同源）。
+
 ## 09-13 复测·四（载入终点定位）爆栈循环主体 = expl3 quark `\q_stop` 自展开
 
 **本节的分数与上一节相同**（`lvt-run.py --all` 仍 STACK 187/187）——它记的是

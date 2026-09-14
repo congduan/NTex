@@ -70,7 +70,22 @@ TFM_DIR = os.environ.get("NTEX_TFM_DIR", str(Path.home() / ".ntex-fonts"))
 # （`\expandafter\ifx\csname ExplLoaderFileDate\endcsname\relax` →
 # `\PackageError{expl3}{No expl3 loader detected}`），`expl3.ltx` 首行
 # `\let\ExplLoaderFileDate\ExplFileDate` 才提供该标志。
-EXPL3_FILES = ("exgeneric.tex", "expl3-code.tex")
+# ⚠ expl3 载入不止两个文件：现行 expl3.ltx 的 `\sys_load_backend:n`（l.105）
+#    按 `\c_sys_backend_str` 找 `l3backend-<engine>.def`，codepoint 模块载入期
+#    还要 `\ior_open` 读 Unicode 数据——缺任一件即 Emergency stop，187 例
+#    **全部**误判 CRASH（2026-09-14 定位：此前「全 CRASH 待定性」的真根因，
+#    非 shim 亦非引擎 outer）。件源 = TinyTeX 同批（LPPL），已入库
+#    `fixtures/l3kernel/`（与 09-13 入库的 expl3-code.tex 同口径）。
+EXPL3_FILES = (
+    "exgeneric.tex",
+    "expl3-code.tex",
+    "l3backend-dvips.def",
+    "l3debug.def",
+    "UnicodeData.txt",
+    "CaseFolding.txt",
+    "GraphemeBreakProperty.txt",
+    "SpecialCasing.txt",
+)
 
 
 def ensure_expl3(tf: Path) -> bool:
