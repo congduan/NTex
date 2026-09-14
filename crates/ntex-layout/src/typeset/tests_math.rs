@@ -138,8 +138,10 @@ use super::*;
             other => panic!("预期 abovedisplayshortskip，得到 {other:?}"),
         }
         let boxed = as_box(&main[2]);
-        // 公式盒 = \hbox to \hsize 居中（两侧 \hfil），中为 x
-        assert_eq!(boxed.width, 13 * 4_736_286 / 2, "公式盒宽 = \\hsize");
+        // 公式盒 = \hbox to \hsize 居中（两侧 \hfil），中为 x。
+        // 30_785_863 = 469.75499pt（tex.web 1in 常量；pdfTeX `HS=[\the\hsize]`
+        // 实测同值，2026-09-14）——旧值 30_785_859 是 6.5in 换算的圆整残差。
+        assert_eq!(boxed.width, 30_785_863, "公式盒宽 = \\hsize");
         assert_eq!(boxed.children.len(), 3, "hfil + x + hfil");
         assert_eq!(as_char(&boxed.children[1]), b'x' as u32);
         match &main[3] {

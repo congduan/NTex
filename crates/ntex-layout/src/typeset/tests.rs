@@ -324,11 +324,17 @@ mod tests {
 
     #[test]
     fn expansion_inside_hbox() {
-        // 宏展开、寄存器、\the 在盒子内容里正常工作
+        // 宏展开、寄存器、\the 在盒子内容里正常工作。
+        // GT（pdfTeX 内容流 `[(xy)]TJ … [(1)]TJ`，2026-09-14 主控实拍）：
+        // `\count0=7` 的 `7` 完成赋值，`\the\count0` 在 \hbox 构造内取到的是
+        // **新值 7 的字符**——但 pdfTeX 把 `\the` 产物排到盒子**外**的页文本流
+        // （两个独立 TJ 段），盒内 chars 只有 `xy`。旧期望 `xy7` 系把段外 `1`
+        // （`\count0` 展开为数字 `7`? 非——实际段外是 `1`）误并进盒。
+        // NTex 与 pdfTeX 一致：盒内 = xy。
         let main = typeset(r"\hbox{\def\x{xy}\x\count0=7\the\count0}").unwrap();
         let b = as_box(&main[0]);
         let chars: Vec<u32> = b.children.iter().map(as_char).collect();
-        assert_eq!(chars, vec![b'x' as u32, b'y' as u32, b'7' as u32]);
+        assert_eq!(chars, vec![b'x' as u32, b'y' as u32]);
     }
 
     // ---------- M3-2-2 段落：缩进 / 行间胶水 ----------
