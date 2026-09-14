@@ -3,6 +3,101 @@
 > **本文档是 expl3 攻坚的进度仪表盘。** 状态源：`scripts/lvt-run.py`。
 > 上游权威数据：`latex3/latex3` 仓库 `l3kernel/testfiles/`（每例配 `.tlg` 期望转录）。
 
+## 第六刀跑分（2026-09-14）⚠ RAN 3→0：不是倒退，是墙前移（30s 超时口径失效）
+
+| 判定 | 第五刀 | 第六刀（默认 30s）| 第六刀（手动 120s 实测 m3bitset002）|
+|---|---|---|---|
+| **RAN** | **3** | 0 | 0（未到 END-TEST-LOG）|
+| CRASH | 3 | 0 | — |
+| TIMEOUT | 1 | **187** | — |
+| STACK | 180 | 0 | **STACK**（输入栈超限 5001）|
+
+（120s 手动实测 3 例：m3bitset002 / m3expan004 / m3pdf001——第五刀的 RAN 3——
+全部同一终点：`输入栈超限（5001 帧）`，指纹同 2 键，无一例到 END-TEST-LOG。）
+
+**机理（本轮实测定性，勿按表面数字读）**：第五刀的 RAN 3 靠的是载入期错误恢复
+**快速跳过**重区；本刀把载入修**对**之后，expl3 装载真做功（clist/tl 巨实参区，
+watchdog 实拍 3686-token 实参的 `\__clist_concat:NNNN`，单步超时 5s 诊断），
+
+- 30s 内跑不完 → 全例 TIMEOUT（口径失效：30s 是按「错误恢复快跳」校准的）；
+- 给足时间（120s）则全撞**残差①**新墙——UnicodeData 段 `\__int_step:Nw`/
+  `\let` 终结符 numexpr 自旋栈超限（与 fp 探针终点同一处，错误指纹同 2 键：
+  Forbidden ^^L + WordBreakProperty not found）。
+
+即：**fp 探针 8→2 的同一批修复把 187 例全部推到同一堵新墙前**。RAN 恢复的
+前提 = 打掉残差①（下一刀靶）；在那之前 lvt 全量跑分建议 `--timeout 120`
+并按 STACK 计数（预计 ~187 STACK，即「载入终点点位」口径）。
+对照锚点：HEAD 上 m3bitset002 仍 RAN（2026-09-14 22:41 stash 对照实测），
+本刀未破坏 HEAD 行为之外的东西——是墙的位置变了。
+
+## 第六刀（2026-09-14）主靶落地：csname/文件名条件求值臂 + 连锁 peel 4 站，fp 探针 8→2
+
+主靶 = 上一刀已验证未落地的 **scan_csname / scan_file_name 条件求值臂**。
+本刀落地两臂 + 沿连锁修 4 站，每修一处跑一次探针，fp 探针错误单调降：
+**8 键 → 4984 条 Missing number 洪水 → 1237 → 2 键**。`make check` 774 全绿。
+
+### 引擎五处修复（全部有 tex.web / pdfTeX GT 对拍）
+
+| # | 站 | 修 | 依据 |
+|---|---|---|---|
+| 1 | `expr.rs` scan_csname | 条件原语在名字扫描内**就地求值**（`cond_op` → `step_conditional` + `drain_open_skip`，非 `Fi` 才排水；展开位置语义，同 `\expandafter` 臂）| tex.web scan_csname 循环逐 token 走 `get_x_token`；真支收进名字、假支跳过。现场：l.6838 `\__int_compare:NNw` 分派名构造、l.3347 `\__quark_if_empty_if:o` 不闭合 `\if_meaning:w` |
+| 2 | `io.rs` scan_file_name | 同款条件臂（文件名扫描同走 `get_x_token`，L10210）| 同上；`\ior_open:Nn` 的引号机 `\__file_quark_if_nil:nTF` 全程经由 |
+| 3 | `scan.rs` scan_keyword | **命中即停**：整词判定不再多读一个收束 token——中间取 token 位是 `get_x_token`，跟随者若是可展开宏被就地展开（`\tex_readline:D #1 to #2` 的 `#2` 被空展开吃掉、`\int_set:Nn` 连带消化）| tex.web scan_keyword 循环边界 `while k<str_start[s+1]` 决定全匹配后立即返回、绝不多读追随 token |
+| 4 | `primitive.rs` exec_readline | 行内空格 **catcode 10**（原全 cat 12）| etex-manual "Readline"：一律 cat 12、唯空格保持 cat 10。全 Other 时 `~`=空格定界符失配——codepoint auxi `#1 ;~ #2 ~ #3 \q_stop` 参数全错位 |
+| 5 | `primitive_codes.rs` \romannumeral | 删 4999 钳制（**无上限**）| tex.web print_roman_int（L1663）对任意大 n 连续输出 `m`；TeX82 无 "Roman numeral too large"（那是 LaTeX 计数器的 "Counter too large"）。此前码点 ≥0x1388 的 1235 行 codepoint cs 名全灭 |
+| 6 | `io.rs` exec_read | `\read` 行尾**附加 `\endlinechar`**（>0 时）| tex.web read_toks（L9471）`buffer[limit]:=end_line_char` 后再 token 化；`\read` 与 e-TeX `\readline` 同站。expl3 载入态 `\endlinechar=32`：auxiii `#9 ~ \q_stop`（l.35768，`~` 是 cat 10 定界）靠行尾空格收束第 9 字段 |
+
+### pdfTeX GT 对拍（/tmp/rdchk，2026-09-14 实拍）
+
+| 场景 | pdfTeX | NTex（本刀后）|
+|---|---|---|
+| `\read` 行 "Hello" | `macro:->Hello `（**含尾空格**）| 同 |
+| `\endlinechar=-1` 后 `\read` | `macro:->World` | 同 |
+| `\readline` 行 | `macro:->Hello^^M` | 同（期望钉 "Hello World\r"）|
+| `\write\w{\line}` 回显 | 文件内容 `Hello \n`（带尾空格）| 同 |
+| `\input"q" A`（q.tex=Q）| box 内容 `glue 3.33333` + `A`（**终止空格留在流**）| 同 |
+
+### 测试期望对齐 3 处（钉的是引擎旧偏差，非引擎错）
+
+- `tests_io_write::read_line_defines_cs`：`"Hello"` → `"Hello "`；
+- `tests_io_write::quoted_file_name_is_unquoted`：`" Hello"` → `" Hello "`；
+- `ntex-layout typeset::tests::vfs_read_then_write_roundtrip`：`"42\n"` → `"42 \n"`
+  （⚠ 领地外一处，按 893b7b3「layout 陈旧期望对齐 pdfTeX GT」先例，仅期望+注释，
+  无引擎改动；上表第 4 行为其 GT）。
+
+### peel 深度实测（连锁比预期深一站）
+
+任务书预判连锁 = `\read`/`\readline` 扫描臂 + `\the`。实测：
+
+1. cond 双臂落地后：Missing endcsname / extra `}` 簇清零，载入推进到 codepoint
+   数据装载段，撞 **4984 × `Missing number`** 洪水（新现场，任务书没猜到）；
+2. 洪水链 = scan_keyword 多读展开（#3）→ `\readline` 目标抓错 → 空格 catcode
+   （#4）→ csname 内 `\tex_romannumeral:D "0600` 被钳制（#5）——三层同源；
+3. **`\the` 偏差未复现**（级联假设证伪：洪水真因是 romannumeral 钳制，不是 `\the`）。
+
+### 残差（fp 探针 2 键 + 终点）
+
+| # | 签名 | 归因 |
+|---|---|---|
+| 1 | `Forbidden control sequence … scanning definition of ^^L` | **根因 #3**（active/cs 共用 intern 槽，两区制工程量大，已建档，不动）|
+| 2 | `File 'WordBreakProperty.txt' not found` | fixture 集本就没有该件（EXPL3_FILES 7 件套不含）。TinyTeX 有现成件：`~/.TinyTeX/texmf-dist/tex/generic/unicode-data/WordBreakProperty.txt`（l3kernel 同源 LPPL），fixtures/ 件归口者可一键补齐——补齐后此键即消失 |
+
+**终点栈超限（残差①既有，非本刀引入）**：WordBreak 报错后载入推进到
+UnicodeData 段（l.35967 起），在 category/`\__int_step:Nw` 家族处
+`输入栈超限（5001 帧）`。帧签名（NTEX_STACK_DUMP=1 实拍）：
+`4978 × Bytecode[\if_int_compare:w #2 #1 #4 \exp_stop_f: \prg_break:n \fi: …]`
++ `TokenList[3]` 壳 ×10 + `\int_step_function:nnnN` / `\if_eof:w …\ior_map_break:`/
+`\int_compare:nNnT { "#1 } > \l__codepoint_category_next_tl`——
+**`\let` 终结符（`\__kernel_int_sep:`）在 numexpr 求值处自旋**（第五刀已建档的
+下一刀靶）。对照：pdftex 同口径下该点之后是 CaseFolding/SpecialCasing 装载
+（l.36005/36053）。
+
+### 下一刀
+
+`\__int_step:Nw` 步进循环的 `\let` 终结符 numexpr 求值（残差①）——过此点
+codepoint 数据装载（UnicodeData → CaseFolding → SpecialCasing）应一路走通，
+fp 探针有望收敛到 1 键（只剩根因 #3）。
+
 ## 第五刀跑分（2026-09-14 主控独立复测）🎉 判定分布翻盘：RAN 0→3，STACK 187→180
 
 | 判定 | 四刀后（09-14 上午）| 第五刀（7 件套装齐后）|

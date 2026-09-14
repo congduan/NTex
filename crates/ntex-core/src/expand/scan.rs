@@ -2424,6 +2424,18 @@ impl Expander {
                 if ch.is_ascii_alphabetic() {
                     word.push(ch);
                     letters.push((tok, ne));
+                    // tex.web scan_keyword（read_to_cs 的 `to` 等）：逐字母匹配
+                    // 固定串 s，循环边界 `while k<str_start[s+1]` 决定了全匹配
+                    // 后**立即返回、绝不多读追随 token**。整词判定必须多读一个
+                    // 非字母才能收束，而中间取 token 位是 get_x_token：跟随者
+                    // 若是可展开宏就被就地展开——`\tex_readline:D #1 to #2` 的
+                    // `#2`（expl3 `\__ior_str_get:NN` 的 `\l__ior_tmp_tl`/用户
+                    // tl，常为空宏）被空展开吃掉、紧随的 `\int_set:Nn` 连带消化
+                    // 实参 `\tex_endlinechar:D {32}`，推回的 `\tex_endlinechar:D`
+                    // 反成了 readline 目标（行内容被赋给整数参数）。命中即停。
+                    if is_kw(&word) {
+                        return Ok(Some(word));
+                    }
                     continue;
                 }
             }

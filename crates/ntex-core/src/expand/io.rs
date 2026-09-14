@@ -95,6 +95,30 @@ impl Expander {
         } else {
             self.unread(first);
             while let Some((t, _)) = self.fetch()? {
+                // 条件原语在文件名扫描内**就地求值**（tex.web scan_file_name
+                // L10210 的循环逐 token 走 `get_x_token`：if_test/fi_or_else 的
+                // cur_cmd=105/106 落在 `>max_command` 且 `<call` 区间 → expand，
+                // 真支字符收进名字、假支就地跳过）。缺此臂时条件 token 落入
+                // catcode 匹配臂按"非字符"退栈 → 文件名收成空串（"缺少文件名"
+                // 致命）。真现场：expl3-code l.3347 `\__quark_if_empty_if:o`
+                // 展开成**不闭合的** `\if_meaning:w \q_nil … \q_nil` 留在流里；
+                // `\ior_open:Nn` → `\openin` 的名字流里 `\__file_quark_if_nil:nTF`
+                // （l.12628 起的引号机）即此形态，UnicodeData.txt/CaseFolding.txt
+                // 载入全部经由它。语义与 scan_csname 臂同款：step_conditional +
+                // drain_open_skip（展开位置，get_x_token 本身）。
+                if let Some(op) = self.cond_op(t) {
+                    let before = self.cond_stack.len();
+                    self.step_conditional(op, t)?;
+                    if !matches!(op, CondOp::Fi) {
+                        let depth = if matches!(op, CondOp::Else | CondOp::Or) {
+                            before.saturating_sub(1)
+                        } else {
+                            before
+                        };
+                        self.drain_open_skip(depth)?;
+                    }
+                    continue;
+                }
                 // `\jobname`：展开为作业名（TeX 文件名扫描展开 \jobname）
                 if let Some(csid) = t.csid() {
                     if self.eqtb.slot(csid) == &EqSlot::Primitive(Primitive::JobName) {
@@ -294,8 +318,20 @@ impl Expander {
                 .position(|&b| b == b'\n')
                 .map(|i| start + i)
                 .unwrap_or(stream.data.len());
-            let line = stream.data[start..end].to_vec();
+            let mut line = stream.data[start..end].to_vec();
             stream.pos = if end < stream.data.len() { end + 1 } else { end };
+            // tex.web read_toks：行尾附加 `\endlinechar`（>0 时）——`\read` 与
+            // e-TeX `\readline` 同站（buffer[limit+1] := end_line_char 后再 token 化）。
+            // expl3 载入态 `\endlinechar=32`：codepoint 数据装载
+            // `\__codepoint_data_auxiii:w ... #9 ~ \q_stop`（expl3-code l.35768，
+            // `~` 是 catcode 10 空格定界符）靠行尾空格收束第 9 字段；缺此站则
+            // 定界扫描吞掉 `\q_stop`，级联成无终止递归（输入栈超限 fatal）。
+            // `\exec_readline` 同款站见 primitive.rs（含尾随空白剥离，`\read` 无剥离）。
+            if let ParamValue::Number(eol) = self.params.get(ParamKind::EndlineChar) {
+                if eol > 0 {
+                    line.push(eol as u8);
+                }
+            }
             line
         };
         // token 化（catcode 表；行状态从行首开始——\read 每次读一行；

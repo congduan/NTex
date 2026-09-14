@@ -173,13 +173,15 @@ use super::*;
         assert_eq!(out, "Q ");
         let mut vfs = MemVfs::new();
         vfs.insert("data.txt", "Hello\n");
-        // 名字终止空格留在输入流（既有文件名扫描偏差）→ 前导空格
+        // 名字终止空格留在输入流（既有文件名扫描偏差）→ 前导空格。
+        // pdfTeX 对拍：引号名后的终止空格确实留在流（\setbox0=\hbox{\input"q" A}
+        // 的 box 内容含 `glue 3.33333` + `A`）；\read 行尾空格同上（read_toks）。
         let (out, _) = expand_vfs(
             "\\newread\\r\\openin\\r=\"data.txt\" \\read\\r to \\l\\l",
             vfs,
         )
         .unwrap();
-        assert_eq!(out, " Hello");
+        assert_eq!(out, " Hello ");
     }
 
     #[test]
@@ -212,7 +214,11 @@ use super::*;
             vfs,
         )
         .unwrap();
-        assert_eq!(out, "Hello");
+        // tex.web read_toks（L9471）：`buffer[limit]:=end_line_char` 后再 token 化，
+        // mid_line 状态遇行尾字符 → 「Finish line, emit a space」——\read 行**含
+        // 尾随空格**。pdfTeX 实测（/tmp/rdchk rt.tex）：`\meaning\line` =
+        // `macro:->Hello `；`\endlinechar=-1` 时 = `macro:->World`。
+        assert_eq!(out, "Hello ");
     }
 
     #[test]

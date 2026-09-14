@@ -1125,6 +1125,30 @@ impl Expander {
                 if self.eqtb.slot(id) == &EqSlot::Primitive(Primitive::EndCsname) {
                     break;
                 }
+                // 条件原语在名字扫描内**就地求值**（tex.web scan_csname 的循环逐
+                // token 走 `get_x_token` → expand 的 if_test/fi_or_else 分支）：
+                // 真支字符收进名字、假支就地跳过。缺此臂时条件 token 落入不可展开
+                // 臂报 "Missing endcsname inserted"（expl3-code l.6838
+                // `\__int_compare:NNw` 分派名构造
+                // `\use:c { __int_compare_ \token_to_str:N #1
+                //  \if_meaning:w = #2 = \fi: :NNw }`——`\int_compare:n` 每次比较
+                // 都走；l.3347 `\__quark_if_empty_if:o` 展开成不闭合的
+                // `\if_meaning:w \q_nil … \q_nil` 留在流里等扫描器执行）。语义与
+                // expr.rs `\expandafter` 臂同款：step_conditional + drain_open_skip
+                // （不可用 maybe_eval_cond——此处是展开位置，get_x_token 本身）。
+                if let Some(op) = self.cond_op(tok) {
+                    let before = self.cond_stack.len();
+                    self.step_conditional(op, tok)?;
+                    if !matches!(op, CondOp::Fi) {
+                        let depth = if matches!(op, CondOp::Else | CondOp::Or) {
+                            before.saturating_sub(1)
+                        } else {
+                            before
+                        };
+                        self.drain_open_skip(depth)?;
+                    }
+                    continue;
+                }
                 match self.eqtb.slot(csid).clone() {
                     EqSlot::Macro(m) => {
                         // 0 参数宏同样须匹配纯定界串参数文本（tex.web macro_call

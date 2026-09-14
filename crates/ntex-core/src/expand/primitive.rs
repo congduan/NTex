@@ -733,7 +733,20 @@ impl Expander {
         };
         let toks: Vec<Token> = line
             .into_iter()
-            .map(|b| Token::char(Catcode::Other, u32::from(b)))
+            .map(|b| {
+                // e-TeX \readline 语义：行内字符一律 catcode 12（other），**唯
+                // 空格保持 catcode 10**（etex-manual "Readline"：tokens are
+                // character tokens of catcode 12, with spaces of catcode 10）。
+                // 全 Other 时空格不参与宏定界符匹配——expl3 codepoint 数据装载
+                // `\__codepoint_data_auxi:w #1 ;~ #2 ~ #3 \q_stop`（l.35705，
+                // `~` 在 expl3 语法里是 catcode 10 空格）的参数全部错位，级联
+                // 成 csname 内 `\tex_romannumeral:D "#1` 读数失败。
+                if b == b' ' {
+                    Token::char(Catcode::Space, u32::from(b))
+                } else {
+                    Token::char(Catcode::Other, u32::from(b))
+                }
+            })
             .collect();
         let def = MacroDef {
             params: ParamSpec {

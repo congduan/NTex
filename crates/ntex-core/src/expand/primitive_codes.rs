@@ -120,8 +120,13 @@ impl Expander {
     }
 
     /// TRIP：`\romannumeral<number>`：数字 → 小写罗马数字文本（tex.web
-    /// `print_roman_numeral`；l.94 `\romannumeral1 \gobble`）。非正数 → 空；
-    /// >4999 → "! Roman numeral too large." 并截断为 4999。输出字符为 other。
+    /// `print_roman_int`；l.94 `\romannumeral1 \gobble`）。非正数 → 空；
+    /// **无上限**——tex.web `print_roman_int` 对任意大 n 连续输出 `m`（1000 一次），
+    /// TeX82 无 "Roman numeral too large" 错误（那是 LaTeX 计数器 `\Roman` 的
+    /// "Counter too large"）。此前 >4999 截断为 4999 是自创偏差：expl3
+    /// codepoint 数据装载 `\cs_set_nopar:cpe { l__codepoint_grapheme_
+    /// \tex_romannumeral:D "0600 _tl }`（expl3-code l.35711）按字符码构造
+    /// cs 名，码点 ≥ 0x1388 的 1235 行全灭。输出字符为 other。
     fn exec_roman_numeral(&mut self) -> Result<()> {
         let out = self.roman_numeral_tokens()?;
         self.emit_tokens(out)
@@ -130,14 +135,6 @@ impl Expander {
     /// `\romannumeral` 展开 token 计算（exec 与 expand_once 共用；n≤0 → 空列表）。
     fn roman_numeral_tokens(&mut self) -> Result<Vec<Token>> {
         let mut n = self.scan_number()?;
-        if n > 4999 {
-            let mut msg = "! Roman numeral too large.\n".to_string();
-            if let Some((ln, line)) = self.error_context() {
-                msg.push_str(&format!("l.{ln} {line}\n"));
-            }
-            let _ = self.sink.write16(msg);
-            n = 4999;
-        }
         let mut out = Vec::new();
         if n > 0 {
             const TABLES: [(&str, i64); 13] = [

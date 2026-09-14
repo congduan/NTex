@@ -840,7 +840,10 @@ mod tests {
             .as_any_mut()
             .downcast_mut::<ntex_io::MemVfs>()
             .expect("MemVfs");
-        assert_eq!(vfs.get("o.txt"), Some(b"42\n".as_slice()));
+        // tex.web read_toks（L9471）`\buffer[limit]:=end_line_char` 后 token 化，
+        // mid_line+car_ret → 「Finish line, emit a space」：\read 行含尾随空格。
+        // pdfTeX 实测（\write\w{\line} 回显）写出 `Hello \n`（带尾空格）。
+        assert_eq!(vfs.get("o.txt"), Some(b"42 \n".as_slice()));
     }
 
     /// 收集盒子树全部文本（集成断言用）。
