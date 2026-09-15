@@ -309,14 +309,11 @@ impl Expander {
                         };
                         format!("\\{name}={head}{params}->{body}.")
                     }
-                    EqSlot::Char { catcode, charcode } => {
-                        let ch = char::from_u32(charcode).unwrap_or('\u{FFFD}');
-                        let desc = if catcode == Catcode::Letter {
-                            format!("the letter {ch}")
-                        } else {
-                            format!("the character {ch}")
-                        };
-                        format!("\\{name}={desc}.")
+                    EqSlot::Char { charcode, .. } => {
+                        // 同 meaning_text char_given 臂：\char"<十六进制>（pdfTeX
+                        // GT ia4 探针 2026-09-15：\chardef\y=123 \show\y →
+                        // `\y=\char"7B`）；catcode 字段是展开面 token 的属性。
+                        format!("\\{name}=\\char\"{charcode:X}.")
                     }
                     EqSlot::Font(f) => format!("\\{name}=select font {f}."),
                     EqSlot::Register(k, n) => format!("\\{name}=\\{}{}.", reg_kind_name(k), n),
@@ -493,8 +490,13 @@ impl Expander {
                         };
                         format!("{head}{params}->{body}")
                     }
-                    EqSlot::Char { catcode, charcode } => {
-                        meaning(Token::char(catcode, charcode), &self.intern)
+                    EqSlot::Char { charcode, .. } => {
+                        // tex.web print_cmd_chr char_given 臂（print_hex 带 `"`
+                        // 前缀）：\chardef 绑定显示 \char"<十六进制>，不按字符
+                        // catcode 描述——pdfTeX GT ia4 探针 2026-09-15：
+                        // \chardef\y=123 \meaning\y → `\char"7B`（旧实现印
+                        // "the character {"）。
+                        format!("\\char\"{charcode:X}")
                     }
                     // tex.web print_cmd_chr set_font 臂（L23421-23428）：
                     // `select font <font_name>`，size≠dsize 再接
@@ -546,9 +548,9 @@ impl Expander {
     /// 越界值（<0 或 >32767）报 "! Bad mathchar code." 且不改变绑定（TeX 语义）。
     fn exec_mathchardef(&mut self) -> Result<()> {
         let csid = self.scan_cs_ident()?;
-        // tex.web shorthand_def：编号扫描前局部绑 \relax（同 \chardef 臂注；
-        // 编号中途出现 `\p` 停扫不报未定义、不展开旧含义）
-        self.set_slot_scoped(csid, EqSlot::Primitive(Primitive::Relax));
+        // tex.web shorthand_def：编号扫描前临时绑 \relax（同 \chardef 臂注；
+        // 编号中途出现 `\p` 停扫不报未定义、不展开旧含义；不消费 \global）
+        self.set_slot_temp_relax(csid);
         self.expect_equals()?;
         let v = self.scan_number()?;
         if !(0..=0x7FFF).contains(&v) {

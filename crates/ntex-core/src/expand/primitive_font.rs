@@ -371,7 +371,7 @@ impl Expander {
     }
 
     /// `\fontdimen<num><font>=<dimen>`：设置字体的 fontdimen 参数
-    /// （TeX `assign_font_dimen`；组内局部、可 `\global`）。
+    /// （TeX `assign_font_dimen`；**恒全局**，见下方 tex.web 注）。
     fn exec_fontdimen(&mut self) -> Result<()> {
         // tex.web find_font_dimen(writing=true)：按字体参数个数判越界 +
         // 最后装载字体可扩容（expl3 intarray 用 \fontdimen 当整数组，
@@ -380,18 +380,15 @@ impl Expander {
             Some((font, num)) => {
                 self.expect_equals()?;
                 let value = self.scan_dimen()?;
-                let prev = self.fontdimens.get(&(font, num)).copied();
-                let global = self.is_global();
-                if !global && self.group_level > 0 {
-                    self.save_stack.push((
-                        self.group_level,
-                        SavedValue::FontDimen {
-                            font,
-                            num,
-                            prev,
-                        },
-                    ));
-                }
+                // tex.web：字体参数赋值**恒为全局**（不进 save stack，\group_end
+                // 不回滚）。l3intarray pdftex 回退分支（expl3-code l.15574-15690）
+                // 把 intarray 模拟成字体——count 存 \hyphenchar、条目存 \fontdimen，
+                // codepoint 数据装载在 \group_begin: 内 finalize，若局部回滚则全部
+                // \c__codepoint_*_intarray 出组即失 count → 每行 CaseFolding 读取
+                // 触发 OOB + \??? 级联（2026-09-15 ia2/fp4 探针：pdfTeX
+                // [out:100][out-fd:14.0pt] vs NTex [out:45][out-fd:4.30554pt]）。
+                // 仍消费 \global 旗标，避免前缀泄漏到下一条赋值。
+                let _global = self.is_global();
                 self.fontdimens.insert((font, num), value);
             }
             None => {
@@ -516,37 +513,24 @@ impl Expander {
     }
 
     /// `\hyphenchar<font>=<int>`：设置字体的断字符（TeX assign_font_int；
-    /// 组内局部、可 `\global`；覆盖表存 expander 侧，排版器断字时读取）。
+    /// **恒全局**，同 \fontdimen 臂注；覆盖表存 expander 侧，排版器断字时读取）。
     fn exec_hyphenchar(&mut self) -> Result<()> {
         let font = self.scan_font_ident()?;
         self.expect_equals()?;
         let value = self.scan_number()?;
-        let prev = self.hyphenchars.get(&font).copied();
-        let global = self.is_global();
-        if !global && self.group_level > 0 {
-            self.save_stack.push((
-                self.group_level,
-                SavedValue::HyphenChar { font, prev },
-            ));
-        }
+        // tex.web：字体参数赋值恒全局，不进 save stack（同 \fontdimen 臂注）。
+        let _global = self.is_global();
         self.hyphenchars.insert(font, value);
         self.finish_assignment();
         Ok(())
     }
 
-    /// TRIP 补全批次：`\skewchar<font>=<num>`：设置字体偏斜字符（仿 \hyphenchar）。
+    /// TRIP 补全批次：`\skewchar<font>=<num>`：设置字体偏斜字符（恒全局，同上）。
     fn exec_skewchar(&mut self) -> Result<()> {
         let font = self.scan_font_ident()?;
         self.expect_equals()?;
         let value = self.scan_number()?;
-        let prev = self.skewchars.get(&font).copied();
-        let global = self.is_global();
-        if !global && self.group_level > 0 {
-            self.save_stack.push((
-                self.group_level,
-                SavedValue::SkewChar { font, prev },
-            ));
-        }
+        let _global = self.is_global();
         self.skewchars.insert(font, value);
         self.finish_assignment();
         Ok(())

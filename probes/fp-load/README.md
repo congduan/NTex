@@ -8,16 +8,20 @@ pdfTeX（TinyTeX，`~/.local/bin/pdftex -interaction=nonstopmode <probe>`
 | 文件 | 靶 | pdfTeX 期望 |
 |---|---|---|
 | `probe-load.tex` | **纯载入**（exgeneric + expl3-code 全文，不带 fp 后缀）| 打印 `[LOAD-DONE]`（信号 = `\message`，**不是** `\typeout`：后者非原语、plain 无定义，两引擎实测均打不出）|
+| `probe-chardef-scope.tex`（第八刀）| `\chardef` 作用域（`\global` 组内绑定不回滚/局部回滚）+ char_given 显示面（`\meaning` → `\char"7B`）+ `\if` 不透视 char_given + 无空格数字 `\the` 续数 | 六信号两引擎逐字一致（见文件头注释）|
+| `probe-fontparam-global.tex`（第八刀，ia2）| 字体参数赋值恒全局（`\hyphenchar`/`\fontdimen`/`\skewchar` 不进 save stack）——l3intarray pdftex 回退分支的 intarray 模拟依赖此语义 | `[out:100][out-fd:14.0pt][skew:100]` 出组不回滚 |
 | `probe-mathchar-neg.tex`（stub7）| `\mathchardef` 操作数取负（`-\c__fp_minus_min_exponent_int`）| 取负后同点 0 错 |
 | `probe-noexpand-operand.tex`（stub9）| `\noexpand` cs 在 `\if_catcode:w`/`\if_meaning:w` 操作数位 | CC2/MM2 均 EQ（L9816-9838 归一）|
 | `probe-pdfstrcmp-expand.tex`（stub12）| `\pdfstrcmp`（`\__fp_str_if_eq:nn`）实参组内展开 | V1 `1`（原义收集则 0）|
 | `probe-fp.tex` + `exgeneric.tex` | 全载 expl3 + `\fp_const:Nn \c_e_fp`（fp 首错现场，l.18141）| 2 错（探针自身）/ FP-OK 1 |
 
 **`probe-load.tex` 是「载入是否走通」的唯一口径**（`probe-fp.tex` 只在载入走通后
-才轮得到 fp）：走通才打印 `[LOAD-DONE]`。**当前状态 = 已走通**（第七刀，
-2026-09-15，见 `docs/expl3-real-scoreboard.md` 第七刀节）：`[LOAD-DONE]` 打出，
-全量 ~11.0M 步（旧步数上限 10M 曾在 ~90% 处击杀，伪装成「死循环」）；
-残余 2486 条 `Use of \???` 聚在 l.36007 CaseFolding 解析环（第八刀标的）。
+才轮得到 fp）：走通才打印 `[LOAD-DONE]`。**当前状态 = 走通且载入期错误已清至
+残差**（第八刀，2026-09-15，见 `docs/expl3-real-scoreboard.md` 第八刀节）：
+`\???` 2486→0、Missing font identifier 4599→0、错误总数 2492→3
+（`Forbidden ^^L` 根因#3 + `\unhbox` 簇 2 条），rc=0、DVI 落盘。
+载入墙钟的主体已转到 intarray 的 pdftex 字体模拟臂（每条目 = 一次
+`\fontdimen` 写），秒级未达，快速通道是下一刀标的。
 
 <details><summary>历史：第七刀之前的状态（l.36005 爆栈墙，已于 6172da3 + 第七刀解除）</summary>
 

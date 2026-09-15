@@ -1,0 +1,35 @@
+% 第八刀 GT 探针（2026-09-15）：\chardef 作用域 + char_given 显示面语义。
+% 双引擎对拍（本探针只用 plain 已有原语）：
+%   ntex-dvi probe-chardef-scope.tex out.dvi 2>&1 | grep '\['
+%   pdftex -interaction=nonstopmode probe-chardef-scope.tex
+% pdfTeX 期望（GT 权威，两引擎一致）：
+%   [G:\char"41]             \global\chardef 组内绑定不随 \group_end 回滚；
+%                            meaning 的 char_given 臂 = \char"<十六进制>
+%   [local-rolled-back]      组内局部 chardef 出组回滚（cs 回到未定义 ≡ \relax）
+%   [m:\char"7B]             同上，123 → "7B
+%   [if:no][ifx:no]          \if 不透视 char_given（cs token ≠ 字符 token）；
+%                            \ifx 对 \relax 亦假
+%   [num:120]                无空格数字后续 `\the` 就地续数（12*10+\count0；
+%                            此位 \gnum 是临时 \relax 绑定 → "can't use
+%                            \relax after \the" 报一次后按 0 续；
+%                            裸内部量如 `\count0` 不续、back_input）
+\begingroup
+  \global\chardef\gcharA=65
+\endgroup
+\message{[G:\meaning\gcharA]}
+\begingroup
+  \chardef\gcharB=66
+\endgroup
+\expandafter\ifx\csname gcharB\endcsname\relax
+  \message{[local-rolled-back]}%
+\else
+  \message{[local-survived]}%
+\fi
+\chardef\gcharC=123
+\message{[m:\meaning\gcharC]}
+\message{[if:\if\gcharC B yes\else no\fi]}
+\message{[ifx:\ifx\gcharC\relax yes\else no\fi]}
+\count0=0
+\chardef\gnum=12\the\count0
+\message{[num:\the\gnum]}
+\end

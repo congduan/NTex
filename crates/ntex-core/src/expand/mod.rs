@@ -306,20 +306,11 @@ pub(crate) enum SavedValue {
     Output {
         prev: Option<TokenArray>,
     },
-    /// `\fontdimen`：字体参数覆盖（prev None = 此前无覆盖）。
+    /// `\fontdimen`：字体参数覆盖（仅旧实现路径构造；tex.web 语义恒全局，
+    /// 活跃路径不进 save stack——见 primitive_font.rs exec_fontdimen 臂注）。
     FontDimen {
         font: u32,
         num: u32,
-        prev: Option<i64>,
-    },
-    /// `\hyphenchar`：字体断字符覆盖（prev None = 此前无覆盖）。
-    HyphenChar {
-        font: u32,
-        prev: Option<i64>,
-    },
-    /// `\skewchar`：字体偏斜字符覆盖（TRIP 补全批次）。
-    SkewChar {
-        font: u32,
         prev: Option<i64>,
     },
     /// `\delcode`：定界符码表项（ETRIP；组内局部保存）。

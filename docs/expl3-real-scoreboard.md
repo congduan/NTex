@@ -107,3 +107,73 @@ END-TEST-LOG」）。接线后建议再进一档：
 （`\__codepoint_load_data:nn { CaseFolding }` → clist/intarray 写入路径）。
 载入能走完是错误恢复在兜底；要把 CaseFolding 数据载对（`\str_case`
 折叠系函数才可用），下一刀从 l.36007 的 `\???` 首现场开。
+
+## 第八刀：`\tex_chardef:D` 流号死循环破案——真根因两处都在 eqtb 作用域层（2026-09-15）
+
+**简报假设 vs 实测**：简报指向 l.36007 单点错误恢复重试（`\ior_open:Nn` →
+`\__ior_open_stream:Nn` Missing number → `\g__codepoint_data_ior` 无流 → 2486
+`\???` + ~10M 步）。链路方向对，但「第一块骨牌」不在 ior/chardef 分配本身，
+也不需要给错误恢复加上限——**作用域层两处语义偏差**修掉后级联整体消失：
+
+### 真根因（两处，GT 见 `probes/fp-load/probe-{chardef-scope,fontparam-global}.tex`）
+
+1. **`\global\chardef` 组内绑定被回滚**（`save.rs` / `primitive_toks_state.rs`）。
+   tex.web shorthand_def 的临时 `define(p,relax,256)` 与最终 `define(p,a,…)`
+   **读同一 `global_defs`**（读取非消费）；旧实现临时绑定走
+   `set_slot_scoped` 抢走 `\global` 旗标 → 最终绑定落局部 → `\group_end:`
+   回滚成临时 `\relax`。expl3 的 `\g__codepoint_data_ior` 系流号 chardef
+   全在此墙下：cd2 探针 pdfTeX `[out:\char"41]` vs NTex `[out:\relax]`。
+   修复 = `peek_global()`（只读裁决）+ `set_slot_temp_relax()`（不引燃
+   `\afterassignment`）+ `set_slot_scoped_with(…, fire_after)`。
+2. **字体参数赋值被局部化**（`primitive_font.rs`）。tex.web：`\fontdimen`/
+   `\hyphenchar`/`\skewchar` 赋值**恒全局**、不进 save stack。l3intarray 的
+   pdftex 回退分支（expl3-code l.15574-15690）把 intarray 模拟成字体——
+   count 存 `\hyphenchar`、条目存 `\fontdimen<n>`——而 codepoint finalize
+   （l.35939 起）在 `\group_begin:` 内做 `\cs_gset_eq:cc` + `\cs_undefine:c`，
+   出组即回滚 → 每个 `\c__codepoint_*_intarray` 读数报
+   `Missing font identifier` + count=45（cmr10 \hyphenchar 默认）→ OOB →
+   `\msg_expandable_error` → `\???` 车辆错误 ×2486（每行 CaseFolding 3+1 条）。
+   ia2 探针 pdfTeX `[out:100][out-fd:14.0pt]` vs NTex 旧 `[out:45][out-fd:4.30554pt]`。
+
+附带同刀落地：`\meaning`/`\show` 的 char_given 臂改 tex.web print_cmd_chr
+语义 `\char"<十六进制>`（ia4 GT：`\chardef\y=123 \meaning\y` → `\char"7B`；
+旧印 `the character {`）。
+
+### 复测（probe-load.tex 全量，本刀 HEAD）
+
+| 量 | 第七刀 | 第八刀 |
+|---|---|---|
+| `Use of \???` | 2486 | **0** |
+| `Missing font identifier` | 4599 | **0** |
+| 载入期错误总数 | 2492 | **4**（残差见下）|
+| rc / `[LOAD-DONE]` / DVI | ✅ | ✅（205B 落盘）|
+| 单步超时事件 | 134 | 37 |
+| 墙钟 | 11:52 | **12:33**（`time` 实测 752.6s，user 11m45）|
+
+**任务题设「600s→秒级」未达成**：死循环（错误恢复重试）解除后，腾出的步数
+预算被**真实的数据装载**吃掉——watchdog 末段采样聚在 pos=1,248,905（l.36007
+CaseFolding 装载环），`last_tok` 高频命中 `\__intarray_bounds:NNnTF` /
+`\__intarray_gset_overflow_test:nw`：intarray 的 pdftex 字体模拟臂
+（每条目 = 一次 `\fontdimen` 写 + `\hyphenchar` 边界读）是**新墙**。
+pdfTeX 同一模拟分支原生 `fontdimen` 是 C 数组写；NTex 每次写走全量
+eqtb/字体机制。**下一刀标的 = 字体模拟臂的快速通道**（`\fontdimen` 写路径
+常量级开销），而非错误恢复。
+
+### 残差（3 条，均不阻断）
+
+- `Forbidden control sequence … scanning definition of ^^L`（l.26865 regex 段）
+  ——根因#3（active/cs 共用 intern 槽），已记录可保留。
+- `Missing number`（`<to be read again> \unhbox`）+ `Incompatible list can't
+  be unboxed`（plain 预载段，expl3 之前）——第七刀已记为 preload 噪声；
+  本刀从 3 条减到 2 条（`\global\chardef` 盒寄存器分配语义修直后）。
+
+### GT 方法附记（本刀新钉，防复踩）
+
+- **无空格数字后续 `\the` 就地续数**：`\chardef\gX=12\the\gX` → 报
+  `You can't use `\relax' after \the.` 且 **\gX=120**（数字循环出环 token 是
+  `\the` → 就地扫内部量，临时 `\relax` 绑定被当 0；th4/th5 两引擎一致）。
+  裸内部量不续、back_input：`\count0=12\count5\relax` → [bare:12]（th6）。
+- **`\if` 不透视 char_given**：`\chardef\gB=66 \if\gB B` → no（th8，两引擎
+  一致；if_test 只认 letter/other_char token）。
+- **探针 cs 名粘连**：`\if\gXB` 是单个 cs 名 `gXB`（th7 pdfTeX
+  `Undefined control sequence`）——写探针须在 cs 名后留空格。

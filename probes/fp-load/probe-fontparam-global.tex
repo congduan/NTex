@@ -1,0 +1,22 @@
+% 第八刀 GT 探针（2026-09-15，ia2）：字体参数赋值**恒全局**语义。
+% tex.web：\fontdimen/\hyphenchar/\skewchar 赋值不进 save stack，
+% \group_end 不回滚。l3intarray 的 pdftex 回退分支（expl3-code
+% l.15574-15690）把 intarray 模拟成字体——count 存 \hyphenchar、
+% 条目存 \fontdimen<n>——expl3 codepoint 数据装载在 \group_begin: 内
+% finalize；若局部回滚则全部 \c__codepoint_*_intarray 出组即失 count。
+% 双引擎对拍：
+%   ntex-dvi probe-fontparam-global.tex out.dvi 2>&1 | grep '\['
+%   pdftex -interaction=nonstopmode probe-fontparam-global.tex
+% pdfTeX 期望（GT 权威，两引擎一致）：
+%   [in:100][in-fd:14.0pt]   组内读回写入值
+%   [out:100][out-fd:14.0pt] 出组**不回滚**（旧 NTex：[out:45][out-fd:4.30554pt]）
+%   [skew:100]               \skewchar 同语义
+\font\Fa=cmr10 at 10pt
+\begingroup
+  \hyphenchar\Fa=100
+  \fontdimen5\Fa=14pt
+  \skewchar\Fa=100
+  \message{[in:\the\hyphenchar\Fa][in-fd:\the\fontdimen5\Fa]}
+\endgroup
+\message{[out:\the\hyphenchar\Fa][out-fd:\the\fontdimen5\Fa][skew:\the\skewchar\Fa]}
+\end

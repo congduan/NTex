@@ -937,22 +937,6 @@ impl Expander {
                     self.fontdimens.remove(&(font, num));
                 }
             },
-            SavedValue::HyphenChar { font, prev } => match prev {
-                Some(v) => {
-                    self.hyphenchars.insert(font, v);
-                }
-                None => {
-                    self.hyphenchars.remove(&font);
-                }
-            },
-            SavedValue::SkewChar { font, prev } => match prev {
-                Some(v) => {
-                    self.skewchars.insert(font, v);
-                }
-                None => {
-                    self.skewchars.remove(&font);
-                }
-            },
             SavedValue::DelCode { byte, prev } => match prev {
                 Some(v) => {
                     self.delcodes.insert(u32::from(byte), v);
@@ -1267,6 +1251,14 @@ impl Expander {
     /// 带作用域的 eqtb 槽赋值（`\chardef`/`\countdef` 等；组内局部保存）。
     fn set_slot_scoped(&mut self, csid: u32, slot: EqSlot) {
         let global = self.is_global();
+        self.set_slot_scoped_with(csid, slot, global, true);
+    }
+
+    /// 显式作用域版本（shorthand_def 两次绑定共用同一裁决时用）。
+    /// `fire_after` 控制是否触发 `\afterassignment`——tex.web 的 after_assignment
+    /// 在 prefixed_command **整条赋值结束后**触发一次，编号扫描前的临时 `\relax`
+    /// 绑定不得提前引燃。
+    fn set_slot_scoped_with(&mut self, csid: u32, slot: EqSlot, global: bool, fire_after: bool) {
         // e-TeX \tracingassigns（misc 5）：赋值追踪（changing/into/reassigning）
         if self.params.misc[5] > 0 {
             let prev = self.eqtb.slot(csid).clone();
@@ -1284,7 +1276,32 @@ impl Expander {
         }
         *self.eqtb.slot_mut(csid) = slot;
         self.eq_mark_level(csid, global);
-        self.finish_assignment();
+        if fire_after {
+            self.finish_assignment();
+        }
+    }
+
+    /// 只读版 `\global` 裁决（不消费旗标）。tex.web 的 `global_defs` 是**读取**
+    /// 而非消费：shorthand_def 的临时 `define(p,relax,256)` 与最终 `define(p,a,..)`
+    /// 同一裁决、同作用域。此前临时绑定走 `set_slot_scoped` 抢走了 `\global`
+    /// 旗标，`\global\chardef\cs=\count15` 的最终绑定落成局部 → `\group_end:`
+    /// 回滚成临时 `\relax` → expl3 `\ior_close:N`（`\cs_gset_eq:NN` 后重开流）
+    /// 在 CaseFolding/SpecialCasing 段全链 `Missing number` 级联
+    /// （2026-09-15 cd2 探针：pdfTeX `[out:\char"41]` vs NTex `[out:\relax]`）。
+    fn peek_global(&self) -> bool {
+        match self.params.misc[36] {
+            n if n < 0 => false, // \globaldefs<0：显式 \global 也被取消
+            0 => self.global_pending,
+            _ => true, // \globaldefs>0：隐式 \global
+        }
+    }
+
+    /// shorthand_def 编号扫描前的临时 `\relax` 绑定（tex.web L22906
+    /// `define(p,relax,256)`）：**不消费 `\global`**、不引燃 `\afterassignment`
+    /// （两者都是 prefixed_command 级语义，属于最终绑定）。
+    fn set_slot_temp_relax(&mut self, csid: u32) {
+        let global = self.peek_global();
+        self.set_slot_scoped_with(csid, EqSlot::Primitive(Primitive::Relax), global, false);
     }
 
     /// e-TeX `\tracingassigns`：寄存器赋值追踪（`\count17=` 的

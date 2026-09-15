@@ -463,15 +463,18 @@ mod tests {
             expand("\\fontdimen12\\nullfont=13pt\\the\\fontdimen12\\nullfont").unwrap(),
             "0.0pt"
         );
-        // 组作用域恢复
+        // tex.web：字体参数赋值**恒全局**，组内赋值不回滚（pdfTeX GT
+        // 2026-09-15 ia2 探针：[in:100][out:100][in-fd:14.0pt][out-fd:14.0pt]；
+        // 旧期望 13.0pt 是把局部作用域钉进了门禁）。l3intarray pdftex 回退分支
+        // 把 intarray 模拟成字体，expl3 codepoint 装载在组内 finalize 依赖此语义。
         assert_eq!(
             expand(
                 "\\fontdimen12\\nullfont=13pt{\\fontdimen12\\nullfont=7pt}\\the\\fontdimen12\\nullfont"
             )
             .unwrap(),
-            "13.0pt"
+            "7.0pt"
         );
-        // \global 前缀跨组生效
+        // \global 前缀冗余但允许（消费旗标不泄漏）
         assert_eq!(
             expand("{\\global\\fontdimen12\\nullfont=7pt}\\the\\fontdimen12\\nullfont").unwrap(),
             "7.0pt"
@@ -591,6 +594,81 @@ I changed this one to zero.
         assert_eq!(
             expand("\\countdef\\1=32767 \\count32767=42 \\the\\1").unwrap(),
             "42"
+        );
+    }
+
+    #[test]
+    fn chardef_texweb_semantics() {
+        // 数字后必须带终结空格：tex.web 十进制数字循环以 get_x_token 出环，
+        // 无空格时 `\the` 形态就地续数（12*10+v，§445；裸内部量如 `\count5`
+        // 则 back_input 不续——pdfTeX GT th6 探针 2026-09-15：
+        // `\count0=12\count5\relax` → [bare:12]、`\count0=12\the\count6\relax`
+        // → [the-form:120]）。`\chardef\gX=12\the\gX` 更报
+        // "You can't use `\relax' after \the."（\gX 此刻是临时 \relax 绑定被
+        // \the 扫到当 0 用）→ \gX=120，两引擎一致（th4/th5）。
+        assert_eq!(
+            expand("\\chardef\\gX=12\\the\\count0\\relax\\the\\gX").unwrap(),
+            "120"
+        );
+        // tex.web scan_char_def 语义钉（pdfTeX GT cd1 探针 2026-09-15：
+        // `\chardef\gX=12 \message{[\the\gX]}` → [12]；右端 <number> 走
+        // scan_int 展开宏取数：`\def\tl{5}\chardef\gY=\tl\relax` → [5]，
+        // 且 \tl 不被展开进绑定（绑定的是字符码 5，不是 token 列表））。
+        assert_eq!(expand("\\chardef\\gX=12 \\the\\gX").unwrap(), "12");
+        assert_eq!(
+            expand("\\def\\tl{5}\\chardef\\gX=\\tl\\relax\\the\\gX").unwrap(),
+            "5"
+        );
+        // \if 不透视 char_given：绑定 cs 是不可展开的 cs token，与字符 token
+        // 比较为假（tex.web §520 if_test 只认 letter/other_char；pdfTeX GT
+        // th8 探针 2026-09-15：\chardef\gB=66 \if\gB B → [cmpB:no]、
+        // \if\gB A → [cmpA:no]，两引擎一致）
+        assert_eq!(
+            expand("\\chardef\\gB=66 \\if\\gB B yes\\else no\\fi").unwrap(),
+            "no"
+        );
+        assert_eq!(
+            expand("\\chardef\\gB=66 \\ifx\\gB\\relax yes\\else no\\fi").unwrap(),
+            "no"
+        );
+        // meaning：tex.web print_cmd_chr char_given 臂 → \char"<十六进制>
+        // （pdfTeX GT ia4 探针：\chardef\y=123 \meaning\y → `\char"7B`；
+        // 旧实现按字符 catcode 印 "the character {"）
+        assert_eq!(
+            expand("\\chardef\\y=123 \\meaning\\y").unwrap(),
+            "\\char\"7B"
+        );
+    }
+
+    #[test]
+    fn chardef_global_group_scope() {
+        // tex.web eqtb 层级：\global\chardef 组内绑定不随组回滚（pdfTeX GT
+        // cd2 探针 2026-09-15：[in:the character A][out:the character A]
+        // [the:65]）。旧实现 shorthand_def 的临时 \relax 绑定消费了 \global
+        // 旗标、最终绑定落局部——出组回滚成 \relax，expl3
+        // \g__codepoint_data_ior 系 chardef 全失流 → 第八刀 \??? 死循环主根因。
+        assert_eq!(
+            expand("\\begingroup\\global\\chardef\\gX=65 \\endgroup\\the\\gX").unwrap(),
+            "65"
+        );
+        // 组内局部 chardef 出组回滚（cs 回到未定义 ≡ \relax 含义）
+        assert_eq!(
+            expand(
+                "\\begingroup\\chardef\\gY=66 \\endgroup\\expandafter\\ifx\\csname gY\\endcsname\\relax rolled\\else alive\\fi"
+            )
+            .unwrap(),
+            "rolled"
+        );
+        // 组内局部绑定组内可见
+        assert_eq!(
+            expand("\\begingroup\\chardef\\gZ=66 \\the\\gZ\\endgroup").unwrap(),
+            "66"
+        );
+        // \global 旗标被消费不泄漏：其后的赋值仍按局部处理
+        assert_eq!(
+            expand("\\begingroup\\global\\chardef\\gX=1 \\count0=7 \\endgroup\\the\\count0")
+                .unwrap(),
+            "0"
         );
     }
 
