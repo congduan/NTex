@@ -931,10 +931,10 @@ impl Expander {
             }
             SavedValue::FontDimen { font, num, prev } => match prev {
                 Some(v) => {
-                    self.fontdimens.insert((font, num), v);
+                    self.fontdimens.insert(font, num, v);
                 }
                 None => {
-                    self.fontdimens.remove(&(font, num));
+                    self.fontdimens.remove(font, num);
                 }
             },
             SavedValue::DelCode { byte, prev } => match prev {

@@ -389,7 +389,7 @@ impl Expander {
                 // [out:100][out-fd:14.0pt] vs NTex [out:45][out-fd:4.30554pt]）。
                 // 仍消费 \global 旗标，避免前缀泄漏到下一条赋值。
                 let _global = self.is_global();
-                self.fontdimens.insert((font, num), value);
+                self.fontdimens.insert(font, num, value);
             }
             None => {
                 // 越界：find_font_dimen 已报错；恢复 = 消费 `= <dimen>` 不赋值
@@ -416,7 +416,7 @@ impl Expander {
         }
         self.expect_equals()?;
         let value = self.scan_dimen()?;
-        let prev = self.fontdimens.get(&(font, num)).copied();
+        let prev = self.fontdimens.get(font, num);
         let global = self.is_global();
         if !global && self.group_level > 0 {
             self.save_stack.push((
@@ -424,7 +424,7 @@ impl Expander {
                 SavedValue::FontDimen { font, num, prev },
             ));
         }
-        self.fontdimens.insert((font, num), value);
+        self.fontdimens.insert(font, num, value);
         self.finish_assignment();
         Ok(())
     }
@@ -619,12 +619,9 @@ impl Expander {
         // 回落 13（tex.web 对未装载字体槽的分配最小值；expl3 intarray
         // 前兼容旧行为，TFM 可用时按真实值判定）。
         let declared = self.font_loader.param_count(font).unwrap_or(13) as u32;
-        let grown = self
-            .fontdimens
-            .keys()
-            .filter_map(|&(f, n)| (f == font).then_some(n))
-            .max()
-            .unwrap_or(0);
+        // 第九刀：扩容分量走缓存 O(1)（原全表扫描在 expl3 intarray
+        // 载入是 O(N²)，见 fontdimens.rs 头注）。
+        let grown = self.fontdimens.max_num(font);
         declared.max(grown)
     }
 
@@ -652,7 +649,7 @@ impl Expander {
     /// 读取字体参数：覆盖优先，无覆盖回落 TFM 声明值
     /// （tex.web `param_base[f]+n` 直读 `font_info` —— TFM 装载时预填）。
     fn fontdimen(&mut self, font: u32, num: u32) -> i64 {
-        if let Some(v) = self.fontdimens.get(&(font, num)).copied() {
+        if let Some(v) = self.fontdimens.get(font, num) {
             return v;
         }
         self.font_loader.font_param(font, num as usize).unwrap_or(0)

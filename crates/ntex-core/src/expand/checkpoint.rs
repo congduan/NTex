@@ -75,7 +75,7 @@ pub(crate) struct ValueExtras {
     pub(crate) uccodes: [i64; 256],
     pub(crate) mathcodes: HashMap<u32, u32>,
     pub(crate) delcodes: HashMap<u32, u32>,
-    pub(crate) fontdimens: HashMap<(u32, u32), i64>,
+    pub(crate) fontdimens: FontDimens,
     pub(crate) hyphenchars: HashMap<u32, i64>,
     pub(crate) skewchars: HashMap<u32, i64>,
     /// 字体表（加载记录/外部名/cs 名；`\font` 副作用）。
@@ -237,7 +237,7 @@ impl Expander {
         self.uccodes = x.uccodes;
         self.mathcodes = x.mathcodes.clone();
         self.delcodes = x.delcodes.clone();
-        self.fontdimens = x.fontdimens.clone();
+        self.fontdimens.replace_from(&x.fontdimens);
         self.hyphenchars = x.hyphenchars.clone();
         self.skewchars = x.skewchars.clone();
         self.font_loads = x.font_loads.clone();

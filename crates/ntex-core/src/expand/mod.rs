@@ -839,7 +839,8 @@ pub struct Expander {
     long_pending: bool,
     /// `\fontdimen` 覆盖表：(font_id, 参数号) → 值（sp）。TFM 度量在排版层，
     /// 此处仅存覆盖项；无覆盖读回 0（后续接入 TFM 时回退真实参数）。
-    fontdimens: HashMap<(u32, u32), i64>,
+    /// （第九刀：附每字体最大参数号缓存——越界判定 O(1)，见 fontdimens.rs。）
+    fontdimens: FontDimens,
     /// `\hyphenchar` 覆盖表：font_id → 断字符码（无覆盖 = 字体默认 45）。
     hyphenchars: HashMap<u32, i64>,
     /// `\delcode` 表：字符码 → 定界符码（TeX delcode；无覆盖 = 0x500000 默认）。
@@ -982,7 +983,7 @@ impl Expander {
             protected_pending: false,
             outer_pending: false,
             long_pending: false,
-            fontdimens: HashMap::new(),
+            fontdimens: FontDimens::new(),
             hyphenchars: HashMap::new(),
             delcodes: HashMap::new(),
             // TRIP 冲刺：initex 默认 mathcode（tex.web `init_math_codes`）：
@@ -3398,6 +3399,9 @@ impl Default for Expander {
         Self::new()
     }
 }
+
+// ---------- 数据分片：fontdimens.rs（\fontdimen 覆盖表：map + 每字体最大参数号缓存） ----------
+include!("fontdimens.rs");
 
 // ---------- 方法分片（include! 嵌入；原 impl Expander 方法按域拆分） ----------
 // ---------- 方法分片：macros.rs ----------
