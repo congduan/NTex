@@ -310,7 +310,28 @@ impl Expander {
                 return Err(Error::invalid_input("\\read 流未打开"));
             };
             if stream.pos >= stream.data.len() {
-                return Err(Error::invalid_input("\\read 到文件末尾（EOF）"));
+                // tex.web read_toks（L9510-9517）：input_ln 失败 → `a_close +
+                // read_open:=closed`——**不报错**，本次赋空表，`\ifeof<n>` 随之
+                // 为真（if_eof_code L9765 判 `read_open=closed`）。l3kernel 的
+                // `\__ior_map_variable_loop` 靠 `\if_eof:w` 在读前收束，靠的正是
+                // 这个语义；此前此站报致命错，eof 标志永不立起。流条目一并撤下
+                // （⇔ closed）：再 `\read` 该流按"closed → 终端输入"走（批量模式
+                // 下 TeX 同为 fatal），保持"流未打开"错。
+                self.read_streams[idx] = None;
+                let def = MacroDef {
+                    params: ParamSpec {
+                        num_params: 0,
+                        long: false,
+                        text: Default::default(),
+                    },
+                    body: Arc::from(Vec::new()),
+                    code: None,
+                    protected: false,
+                    outer: false,
+                    active_slot: false,
+                };
+                self.define_macro_scoped(csid, def);
+                return Ok(());
             }
             let start = stream.pos;
             let end = stream.data[start..]

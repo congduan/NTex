@@ -509,6 +509,38 @@ pub(crate) fn diag_enabled(key: &'static str) -> bool {
         .unwrap_or(false)
 }
 
+/// 展开步数上限（死循环防线；`NTEX_MAX_STEPS` 可覆盖，非法/空值回落默认）。
+///
+/// expl3 真载入（codepoint 三表 `\read` 装载 + finalize + CaseFolding/
+/// SpecialCasing）2026-09-15 实测超 10⁷ 步——原 10⁷ 常数会把合法慢载入
+/// 误判成死循环（探针死于 `\__codepoint_finalize_blocks` 中段）。
+pub(crate) fn max_steps() -> u64 {
+    // 测试内收紧用线程局部覆盖——env 是进程全局，cargo test 并行线程会互相污染。
+    #[cfg(test)]
+    if let Some(v) = MAX_STEPS_OVERRIDE.with(std::cell::Cell::get) {
+        return v;
+    }
+    static CACHE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *CACHE.get_or_init(|| {
+        std::env::var("NTEX_MAX_STEPS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .filter(|&v| v > 0)
+            .unwrap_or(64_000_000)
+    })
+}
+
+#[cfg(test)]
+thread_local! {
+    static MAX_STEPS_OVERRIDE: std::cell::Cell<Option<u64>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn set_max_steps_override(v: Option<u64>) {
+    MAX_STEPS_OVERRIDE.with(|c| c.set(v));
+}
+
 /// [`diag_enabled`] 认识的全部诊断开关。
 const DIAG_KEYS: &[&str] = &[
     "NTEX_COND_TRACE",
@@ -1231,7 +1263,11 @@ impl Expander {
                 *wd.state.lock().unwrap_or_else(|p| p.into_inner()) = state;
             }
             // 步数上限：无时钟依赖（wasm32 同样生效），是 wasm 侧唯一的应用层死循环防线。
-            if steps > 10_000_000 {
+            // expl3 真载入（codepoint 三表 \read 装载 + finalize + CaseFolding/
+            // SpecialCasing）2026-09-15 实测 ~1.3×10⁷ 步（2-CPU VM 25k steps/s），
+            // 10⁷ 上限把合法慢载入误判成死循环（探针死于 finalize 中段）。
+            // 默认 6400 万（≈5x 余量）；NTEX_MAX_STEPS 可覆盖（探针/lvt 收紧用）。
+            if steps > max_steps() {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     wd.done.store(true, Ordering::Relaxed);

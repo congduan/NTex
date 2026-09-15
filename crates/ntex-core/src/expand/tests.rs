@@ -1221,14 +1221,30 @@ I changed this one to zero.
 
     #[test]
     fn unbounded_macro_recursion_hits_input_stack_limit() {
-        // tex.web `stack_size`（TeX Live 取 5000）：无终止宏递归按 TeX 同款
-        // "TeX capacity exceeded, sorry [input stack size=N]" 报错终止，
-        // 而非无界推深输入栈直至耗尽内存（latex.ltx 加载挂死 root-cause，A4）。
-        let e = expand(r"\def\x{\x}\x");
+        // GT（pdfTeX 2026-09-15 实测 /tmp/gtrec4）：能长住输入栈的递归形
+        // （条件机包住递归调用）→ "TeX capacity exceeded, sorry [input stack
+        // size=10000]"。tex.web `stack_size` 上限语义由此形兑现。
+        let e = expand(r"\def\x{\iftrue\x\fi}\x");
         assert!(e.is_err(), "无界递归应报错终止");
         let err = e.unwrap_err().to_string();
         assert!(err.contains("输入栈超限"), "错误信息：{err}");
         assert!(err.contains(r"\x"), "应指明递归宏名：{err}");
+    }
+
+    #[test]
+    fn pure_tail_macro_recursion_bounded_by_step_cap() {
+        // GT（pdfTeX 实测）：纯尾递归 `\def\x{\x}\x` 真TeX **死循环不报错**
+        // （token 列表帧耗尽即弹，输入栈不生长）。6172da3 drain_depleted_frames
+        // 后本引擎同为平尾（栈深恒 2，旧测期望的"栈超限"是对 GT 的背离钉子）；
+        // 批处理引擎以步数上限收束（wasm 侧唯一应用层防线）；测试线程内把
+        // 上限收到 20 万步（覆盖钩子是线程局部的，不污染并行测试；默认
+        // 6400 万步在本测要跑几十秒）。
+        set_max_steps_override(Some(200_000));
+        let e = expand(r"\def\x{\x}\x");
+        set_max_steps_override(None);
+        assert!(e.is_err(), "无终止尾递归应由步数上限收束");
+        let err = e.unwrap_err().to_string();
+        assert!(err.contains("处理步骤超限"), "错误信息：{err}");
     }
 
     // ---------- M3 收尾（RFC-3）：VFS 副作用原语 ----------

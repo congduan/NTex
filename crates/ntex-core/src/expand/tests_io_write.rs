@@ -222,12 +222,54 @@ use super::*;
     }
 
     #[test]
-    fn read_eof_errors() {
+    fn read_eof_closes_stream_assigns_empty() {
+        // 2026-09-15 第七刀更正：tex.web read_toks（L9510-9517）EOF 读不报错
+        // （a_close + read_open:=closed + 赋空表），旧期望"报错"系本引擎私设。
         let mut vfs = MemVfs::new();
         vfs.insert("empty.txt", "");
+        let (out, _) = expand_vfs(
+            "\\newread\\r\\openin\\r=empty.txt\\read\\r to \\line\\ifeof\\r T\\else F\\fi\\end",
+            vfs,
+        )
+        .unwrap();
+        assert_eq!(out, "T");
+    }
+
+    #[test]
+    fn read_at_eof_closes_stream_no_error() {
+        // tex.web read_toks（L9510-9517）：input_ln 失败 → a_close +
+        // read_open:=closed，不报错、赋空表，`\ifeof` 随之为真。
+        // l3kernel `\__ior_map_variable_loop` 的 `\if_eof:w` 收束靠此语义。
+        let mut vfs = MemVfs::new();
+        vfs.insert("data.txt", "one\ntwo\n");
+        let (out, _) = expand_vfs(
+            concat!(
+                "\\newread\\r\\openin\\r=data.txt",
+                "\\read\\r to \\a\\read\\r to \\b",
+                "\\ifeof\\r T\\else F\\fi",
+                // 第三次读触发 EOF 臂：不报错、撤流条目（⇔ closed）、赋空表
+                "\\read\\r to \\c\\ifeof\\r T\\else F\\fi",
+                "\\def\\empty{}\\ifx\\c\\empty E\\else N\\fi",
+                "\\end",
+            ),
+            vfs,
+        )
+        .unwrap();
+        assert_eq!(out, "TTE");
+
+        // 已 closed 的流再 \read：tex.web 转终端输入（非停等模式 = fatal），
+        // 本引擎报"流未打开"错——作业终止而非静默吞。（读 1 取行、读 2 触发
+        // EOF 臂撤流条目，读 3 才是 closed 流再读。）
+        let mut vfs = MemVfs::new();
+        vfs.insert("data.txt", "one\n");
+        let err = expand_vfs(
+            "\\newread\\r\\openin\\r=data.txt\\read\\r to \\a\\read\\r to \\b\\read\\r to \\c\\end",
+            vfs,
+        )
+        .unwrap_err();
         assert!(
-            expand_vfs("\\newread\\r\\openin\\r=empty.txt\\read\\r to \\line", vfs)
-                .is_err()
+            err.to_string().contains("流未打开"),
+            "closed 流再读应报错，实得：{err}"
         );
     }
 

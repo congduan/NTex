@@ -14,8 +14,12 @@ pdfTeX（TinyTeX，`~/.local/bin/pdftex -interaction=nonstopmode <probe>`
 | `probe-fp.tex` + `exgeneric.tex` | 全载 expl3 + `\fp_const:Nn \c_e_fp`（fp 首错现场，l.18141）| 2 错（探针自身）/ FP-OK 1 |
 
 **`probe-load.tex` 是「载入是否走通」的唯一口径**（`probe-fp.tex` 只在载入走通后
-才轮得到 fp）：走通才打印 `[LOAD-DONE]`。**当前状态 = 未走通**，终止于
-`输入栈超限（5001 帧 > 5000）`。
+才轮得到 fp）：走通才打印 `[LOAD-DONE]`。**当前状态 = 已走通**（第七刀，
+2026-09-15，见 `docs/expl3-real-scoreboard.md` 第七刀节）：`[LOAD-DONE]` 打出，
+全量 ~11.0M 步（旧步数上限 10M 曾在 ~90% 处击杀，伪装成「死循环」）；
+残余 2486 条 `Use of \???` 聚在 l.36007 CaseFolding 解析环（第八刀标的）。
+
+<details><summary>历史：第七刀之前的状态（l.36005 爆栈墙，已于 6172da3 + 第七刀解除）</summary>
 
 复测（2026-09-14 23:50，HEAD `b1cce11`，即补 `WordBreakProperty.txt` 之后）：
 
@@ -79,3 +83,5 @@ Path(f't{N}.tex').write_text(
 ```
 
 （截断到 l.18140 = fp 首错行 l.18141 之前，使 stub 成为首个 fp 调用。）
+
+</details>
