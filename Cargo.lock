@@ -3355,6 +3355,7 @@ name = "ntex-dvi"
 version = "0.1.0"
 dependencies = [
  "ntex-font",
+ "ntex-format",
  "ntex-io",
  "ntex-layout",
 ]

@@ -22,11 +22,27 @@ fn main() -> ExitCode {
     let mut input_paths: Vec<String> = Vec::new();
     let mut quiet = false;
     let mut no_plain = false;
+    let mut dump_fmt: Option<String> = None;
+    let mut load_fmt: Option<String> = None;
     let mut it = args[1..].iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--quiet" => quiet = true,
             "--no-plain" => no_plain = true,
+            "--dump" => match it.next() {
+                Some(p) => dump_fmt = Some(p.clone()),
+                None => {
+                    eprintln!("--dump 需要一个 .fmt 输出路径参数");
+                    return ExitCode::from(2);
+                }
+            },
+            "--fmt" => match it.next() {
+                Some(p) => load_fmt = Some(p.clone()),
+                None => {
+                    eprintln!("--fmt 需要一个 .fmt 输入路径参数");
+                    return ExitCode::from(2);
+                }
+            },
             "--input-path" => match it.next() {
                 Some(p) => input_paths.push(p.clone()),
                 None => {
@@ -67,6 +83,26 @@ fn main() -> ExitCode {
         // 却是 12），导致 init 语义域的对拍失真——见 scripts/instrument-check.py。
         ts = ts.initex();
     }
+    // M7 fmt 快路径第一步：`--fmt x.fmt` 载入预存格式（expl3/latex.ltx 全量
+    // 状态毫秒级恢复，载入不再每次 62s）。fmt 优先于 plain 预载——两者互斥
+    // （fmt 已含目标格式全量状态，再叠 plain 会污染）。
+    if let Some(fmt_path) = &load_fmt {
+        let data = match fs::read(fmt_path) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("读取 {fmt_path} 失败：{e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let state = match ntex_format::load(&mut &data[..]) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("解析 {fmt_path} 失败：{e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        ts.import_state(state);
+    }
     {
         // G1 搜索路径 + G2(a) 内嵌格式文件兜底：组合成 Local → 搜索前缀 → 内嵌
         // 三层（内嵌只答 plain.tex/hyphen.tex，且仅在前两层全落空时命中）。
@@ -94,6 +130,28 @@ fn main() -> ExitCode {
             t.push('\n');
         }
         eprint!("{t}");
+    }
+    // M7 fmt 快路径：`--dump x.fmt` 把（含 `\dump` 后的）全量状态存盘。
+    // 语义对齐 tex.web：`\dump` 只在 INITEX 合法；这里宽松处理——若引擎报
+    // dumped=false 则拒绝保存（防止把半载状态当格式分发）。
+    if let Some(fmt_path) = &dump_fmt {
+        if !ts.dumped() {
+            eprintln!("--dump：源未执行 \\dump（或非 \\dump 收尾），拒绝保存不完整格式");
+            return ExitCode::FAILURE;
+        }
+        let state = ts.export_state();
+        let mut buf = Vec::new();
+        if let Err(e) = ntex_format::save(&mut buf, &state) {
+            eprintln!("序列化 {fmt_path} 失败：{e}");
+            return ExitCode::FAILURE;
+        }
+        match fs::write(fmt_path, &buf) {
+            Ok(()) => println!("已写出 {fmt_path}（{} 字节，格式快照）", buf.len()),
+            Err(e) => {
+                eprintln!("写出 {fmt_path} 失败：{e}");
+                return ExitCode::FAILURE;
+            }
+        }
     }
     let (pages, fonts) = match outcome {
         Ok(v) => v,

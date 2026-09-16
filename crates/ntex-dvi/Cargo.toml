@@ -10,6 +10,7 @@ rust-version.workspace = true
 ntex-layout.workspace = true
 ntex-font.workspace = true
 ntex-io.workspace = true
+ntex-format.workspace = true
 
 [lints]
 workspace = true
