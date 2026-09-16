@@ -218,9 +218,13 @@ impl Expander {
                     self.sink.write16(format!("! Improper \\{name}.\n"))
                 }
             }
-            // ETRIP 冲刺：\dump（initex 收尾）：标记 dumped 并结束作业（驱动负责写 fmt）
+            // ETRIP 冲刺：\dump（initex 收尾）：标记 dumped 并结束作业（驱动负责写 fmt）。
+            // M7 fmt 快路径：\dump 是 tex.web 的作业终结点（preserve_tail: end of
+            // session）——dumped 后主循环立即停，dump 之后源里剩余 token 一律不执行
+            //（此前清栈后继续读，\dump 后的探针语句引发错误链 + dumped 语义被搅）。
             Primitive::Dump => {
                 self.dumped = true;
+                self.ended = true;
                 self.stack.clear();
                 self.output_active = false;
                 self.cond_stack.clear();

@@ -4,7 +4,7 @@
 /// TRIP 冲刺补充 13 个标准参数原语；LaTeX 兼容第八刀补 pdfTeX 引擎探测/兼容族
 /// 12 项；M9 中文刀 2 补 \utfinputmode），供 `register_builtins` 注册与
 /// `tests.rs` 的一致性测试共用。
-pub(crate) const BUILTINS: [(&str, Primitive); 413] = [
+pub(crate) const BUILTINS: [(&str, Primitive); 414] = [
     ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -348,6 +348,10 @@ pub(crate) const BUILTINS: [(&str, Primitive); 413] = [
             ("everyjob", Primitive::EveryJob),
             // ETRIP 冲刺：\dump（initex 收尾：写 fmt + 结束作业）
             ("dump", Primitive::Dump),
+            // M7 fmt：expl3 \__kernel_primitive:NN \dump \tex_dump:D 把原语改名
+            // 载入（expl3-code l.339）——latex.ltx 末尾的 \dump 经此路径触发。
+            // 缺此注册时 \dump 变 undefined → fmt dump 永远不触发。
+            ("tex_dump", Primitive::Dump),
             // ETRIP 冲刺：TeXXeT 方向原语（\TeXXeTstate=1 时创建方向节点）
             ("beginL", Primitive::BeginL),
             ("endL", Primitive::EndL),
