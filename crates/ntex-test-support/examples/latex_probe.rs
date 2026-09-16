@@ -82,9 +82,22 @@ fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let shim = args.iter().any(|a| a == "--shim");
     let initex = args.iter().any(|a| a == "--initex");
+    // 主输入文件 = 首个非旗标且非 `--input-path 值` 的参数（值跟在旗标后，
+    // 不跳过会把查找目录误当主文件读 → "Is a directory"）。
+    let mut args_skip_next = false;
     let path = args
         .iter()
-        .find(|a| !a.starts_with('-'))
+        .find(|a| {
+            if args_skip_next {
+                args_skip_next = false;
+                return false;
+            }
+            if a.as_str() == "--input-path" {
+                args_skip_next = true;
+                return false;
+            }
+            !a.starts_with('-')
+        })
         .map(String::as_str)
         .unwrap_or("/tmp/latexsurvey/tex/latex/base/latex.ltx");
     // --input-path <dir>（可多次）：额外文件查找目录，供载入闭包跨目录取件
