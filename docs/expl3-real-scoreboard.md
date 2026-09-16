@@ -343,3 +343,76 @@ V1–V4 四变体（首条赋值生效、次条失效）与 X1/X2 全部由此�
 3. **数字扫描终止位会就地展开可展开 token**（空格吸收后 get_x_token 续扫）——
   `12⏎\expandableTHING{…}` 的 arg 在**上一赋值落地前**扫入；whiteboard 上
   "行间语句"直感在此失效。latex.ltx 大量依赖"不可展开原语紧邻赋值行"的时序。
+
+---
+
+## 第十一刀（2026-09-16）：`\ifincsname` 缺失——braced `\input{name}` 链真根因 + br.tex 探针证伪
+
+### 结论（一修复，一证伪，一环境补件）
+
+| 项 | 内容 |
+|---|------|
+| 任务命题 | `\@ifnextchar\bgroup` braced `\input{name}` 判定失败（l.14365 56.1% 墙） |
+| 真根因 | **e-TeX 原语 `\ifincsname` 全缺失**。2025 版 latex.ltx 的 `\IfFileExists`/`\InputIfFileExists`/`\typeout` 全是 `\DeclareRobustCommand` 产物，其 robust 体首 token 即 `\ifincsname`（l.1409 惯用法：csname 内取 `\string` 形/外取实体形）→ `\InputIfFileExists{fonttext.cfg}`（l.14357）一调用就 `! Undefined control sequence` → 文件探测机器散架 → `\@iinput` missing 分支 → `File '.tex' not found`（空名）→ `\@missingfileerror` → `\read\m@ne`（终端流）NTex fatal |
+| 修复 | `Primitive::IfInCsname` + `CondOp::IfInCsname`（`\currentiftype` 码 22）+ `Expander::name_in_progress` 旗标（`scan_csname` 包装层保存/还原——嵌套 csname 内层出口不清外层、`?` 错误路径同还原）+ BUILTINS 414→415 |
+| GT（pdftex 1.40.29 四例） | csname 扫描内**经任意深度宏展开**旗标皆真（`\def\q{\ifincsname T\else F\fi}` 两层包裹仍 `mT`）；`\ifcsname` 自己的名字扫描内亦真；扫描外/`\endcsname` 闭合后为假；嵌套 `\csname` 内层结果 cs 落外层扫描 = Missing endcsname（NTex 既有臂同判） |
+
+### 任务书"二选一"双双证伪（第三答案）
+
+- **`\@ifnextchar` peek 语义无罪**：修复后 ltxinit 全量实踪，`\input {omlenc.def}` 族
+  经 `\input→\@ifnextchar\bgroup→\@iinput→\InputIfFileExists` 全部载入成功
+  （`File: omlenc.def/omsenc.def/ot1enc.def` 消息在场）。
+- **`\IfFileExists` openin/ifeof 探测链无罪**：`fonttext.cfg` 探测命中（cfg 横幅打出），
+  broken 的是其 robust 入口体，非 openin/ifeof。
+- **真答案**：2020+ latex.ltx 把 robust 体拆成 `\ifincsname` 双形——缺原语 = 所有
+  `\DeclareRobustCommand` 产品的体在首次使用即爆。braced 判定链三层（futurelet 剥空格/
+  `\bgroup` 比较/文件探测）本刀前根本没跑到第二层。
+
+### br.tex 复现伪命题（任务书验收项 2 的字面形式不成立）
+
+`--no-plain` INITEX 下 `{`=catcode 12 是 **tex.web 真语义**（plain.tex 才设 `{`=1；
+latex.ltx l.98-102 自管同理）——br.tex 的 `\input{fonttext.ltx}` 文件名被字面扫成
+`{fonttext.ltx}`。**GT：真 pdftex -ini 对同一 br.tex 报一模一样的
+`! I can't find file '{fonttext.ltx}'`**。上一轮"BRACED-OK 打出"的记录与 br.log
+（Emergency stop、无 typeout）矛盾，系误读。验收意图（宏层 braced input 族无
+`can't find`）由 ltxinit 全量实踪达成（见上）。
+
+### 环境补件（非代码）
+
+`/tmp/fp11` 缺 latex base 运行时件：已从 `~/.TinyTeX/texmf-dist/tex/latex/base/`
+补 36 × `*.def` + 41 × `*.fd` + `language.dat`。**第十一刀后的 ltxinit 复跑必须先
+补这批件**，否则停在 `File 'omlenc.def' not found`（该报错本身即证探测链已通）。
+
+### 验收
+
+- `make check` 782 全绿；新增 3 测（`ifincsname_false_outside_csname`/
+  `ifincsname_true_during_csname_scan`/`ifincsname_robust_body_idiom`，双轨等价）。
+- ltxinit 推进：l.14365 停点（`\input{fonttext.ltx}` 未执行）→ **fonttext.ltx 内部
+  omlenc/omsenc/ot1enc 三件载入完成**，新终端墙在 ot1enc.def 末行（l.129=EOF 行）
+  输入栈超限。`\InputIfFileExists`/`\@ifnextchar`/braced input 链全通。
+
+### 新阻塞点（第十二刀入口，按执行序）
+
+1. **NFSS 定义群静默丢失**（预存在，第十刀已录 77 条，本刀复核非回归）：preload.ltx
+  消费时 `\IfFontSeriesContextTF`/`\normalfont`/`\fontfamily`/`\em`/`\emreset`/
+  `\symbol`/`\boldmath`/`\unboldmath` 全 undefined——定义区在 l.5000-10500 却没到
+  preload.ltx（l.14350）。另有 21 条 `\__hook_make_name:w extra }`（lthooks 区）。
+2. **ot1enc.def EOF 输入栈超限**：现场标注"定义 `\cdp@list` 替换文本时"，但独立最小
+  复现（`\def\clist{}\def\celt{\noexpand\celt}\xdef\clist{\clist\celt{#1}}` × 3 连）
+  **通过** → 非该构造本体，疑为 1 的 knock-on（`\DeclareTextSymbol` 机器残破后的
+  实参扫描无终止）。
+3. **`\read` 终端流语义缺失**：tex.web 未开流/流 -1 = 终端读（nonstopmode 下 EOF
+  得空行）；NTex 现报 `\read 流未打开` fatal。`\@missingfileerror` 的
+  `\read\m@ne to\@gtempa` 走此路。
+4. **toks 参数 RHS 语义**（GT 已锚）：`\errhelp\@err@`（RHS 为宏）NTex 走数字扫描
+  报 `Missing number`；tex.web/真 pdftex = `Missing { inserted` + 组扫描恢复。
+
+### 方法论沉淀
+
+1. **报错名带字面花括号 = catcode 现场，不是名字构造 bug**：`{fonttext.ltx}` 作文件名
+   报出，先查当下 catcode 表（INITEX `{`=12），再查名字机器。
+2. **2020+ latex.ltx 的入口机器全在 robust 体里**：`\DeclareRobustCommand` 产品
+   （`\typeout`/`\IfFileExists`/`\InputIfFileExists`…）首 token `\ifincsname`——
+   任何"文件探测链"问题先核该原语在不在。
+3. **任务书的探针要先过 GT**：br.tex 这类探针若真 TeX 也过不了，复现的是真语义
+   而非缺陷；"上一轮打出 OK"与 log 矛盾时信 log。

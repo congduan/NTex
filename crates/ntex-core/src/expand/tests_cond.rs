@@ -503,6 +503,76 @@ use super::*;
         );
     }
 
+    // ---- 第十一刀：e-TeX `\ifincsname`（GT pdftex 1.40.29 四例对拍） ----
+
+    #[test]
+    fn ifincsname_false_outside_csname() {
+        // GT A=F：csname 名字扫描外恒假
+        assert_eq!(expand(r"\ifincsname yes\else no\fi").unwrap(), "no");
+        // GT D（\csname z\endcsname 后 F）：endcsname 闭合即复位
+        assert_eq!(
+            expand(r"\csname zzneverdefined\endcsname\ifincsname yes\else no\fi").unwrap(),
+            "no"
+        );
+    }
+
+    #[test]
+    fn ifincsname_true_during_csname_scan() {
+        // GT ONE/TWO=YES：扫描内宏展开任意深度旗标皆真——T 支字符收进名字。
+        // 用 \ifcsname 判定收进的是 T 而非 F 支：xF 已造槽时名字若误收 F 会判 yes。
+        assert_eq!(
+            expand(
+                r"\def\q{\ifincsname T\else F\fi}%
+\csname xF\endcsname\ifcsname x\q\endcsname yes\else no\fi"
+            )
+            .unwrap(),
+            "no"
+        );
+        assert_eq!(
+            expand(
+                r"\def\q{\ifincsname T\else F\fi}%
+\def\qq{\q}%
+\csname nF\endcsname\ifcsname n\qq\endcsname yes\else no\fi"
+            )
+            .unwrap(),
+            "no"
+        );
+        // \csname 造出的 relax 槽算已定义：置 xT 后同名探测应判 yes
+        assert_eq!(
+            expand(
+                r"\def\q{\ifincsname T\else F\fi}%
+\csname xT\endcsname\ifcsname x\q\endcsname yes\else no\fi"
+            )
+            .unwrap(),
+            "yes"
+        );
+        // GT IFCS=YES：\ifcsname 自己的名字扫描内旗标亦真
+        assert_eq!(
+            expand(
+                r"\def\q{\ifincsname T\else F\fi}%
+\csname aF\endcsname\ifcsname a\q\endcsname yes\else no\fi"
+            )
+            .unwrap(),
+            "no"
+        );
+    }
+
+    #[test]
+    fn ifincsname_robust_body_idiom() {
+        // latex.ltx l.1409 \declare@robustcommand@auxii 惯用法（\DeclareRobustCommand
+        // 生成的命令体）：csname 外取实体形、csname 扫描内取 \string 形——
+        // 这是 2025 版 \IfFileExists/\InputIfFileExists 的入口体。
+        let src = r"\long\def\f#1#2{#1}\long\def\s#1#2{#2}%
+\def\probe{\ifincsname\expandafter\f\else\expandafter\s\fi{IN}{OUT}}";
+        assert_eq!(expand(&format!("{src}\\probe")).unwrap(), "OUT");
+        // 扫描内 \probe 展开为 IN → 建 cs "IN"（未定义则造 relax 槽）→ 判 yes
+        assert_eq!(
+            expand(&format!("{src}\\csname\\probe\\endcsname\\ifcsname IN\\endcsname yes\\else no\\fi"))
+                .unwrap(),
+            "yes"
+        );
+    }
+
     #[test]
     fn unless_reverses_condition() {
         assert_eq!(expand(r"\unless\iftrue yes\else no\fi").unwrap(), "no");

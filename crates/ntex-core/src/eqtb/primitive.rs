@@ -233,6 +233,7 @@ define_primitives! {
     Protected,
     IfDefined,
     IfCsname,
+    IfInCsname,
     Unless,
     NumExpr,
     Detokenize,

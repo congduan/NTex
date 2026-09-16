@@ -4,7 +4,7 @@
 /// TRIP 冲刺补充 13 个标准参数原语；LaTeX 兼容第八刀补 pdfTeX 引擎探测/兼容族
 /// 12 项；M9 中文刀 2 补 \utfinputmode），供 `register_builtins` 注册与
 /// `tests.rs` 的一致性测试共用。
-pub(crate) const BUILTINS: [(&str, Primitive); 414] = [
+pub(crate) const BUILTINS: [(&str, Primitive); 415] = [
     ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -113,6 +113,7 @@ pub(crate) const BUILTINS: [(&str, Primitive); 414] = [
             ("protected", Primitive::Protected),
             ("ifdefined", Primitive::IfDefined),
             ("ifcsname", Primitive::IfCsname),
+            ("ifincsname", Primitive::IfInCsname),
             ("unless", Primitive::Unless),
             ("numexpr", Primitive::NumExpr),
             ("detokenize", Primitive::Detokenize),

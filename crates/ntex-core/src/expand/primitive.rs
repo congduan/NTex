@@ -167,7 +167,8 @@ impl Expander {
             | Primitive::Else
             | Primitive::Fi
             | Primitive::Or => Err(Error::internal("条件原语不应到达 exec_primitive")),
-            Primitive::IfDefined | Primitive::IfCsname | Primitive::IfPrimitive => {
+            Primitive::IfDefined | Primitive::IfCsname | Primitive::IfInCsname
+            | Primitive::IfPrimitive => {
                 Err(Error::internal("条件原语不应到达 exec_primitive"))
             }
             Primitive::IfFontChar => Err(Error::internal("\\iffontchar 不应到达 exec_primitive")),

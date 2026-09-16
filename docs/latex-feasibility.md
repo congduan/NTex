@@ -6,31 +6,42 @@
 
 **目标**：`latex.ltx` 加载成功 → `latex.fmt` 构建 → `\documentclass{article}` → PDF。
 
-**当前状态**：🟡 **latex.ltx 全文载入推进至 l.14365（2026-09-16 第十刀后）**——
-\prg_return_*: 归约挂死已修（unless 白名单分裂）、\lowercase 失能已修（INITEX
-lccode/uccode 预载）、\rem@pt 惯用法已修（\uppercase/\lowercase 误列可展开白名单）；
-现阻塞在 **braced `\input{name}` 文件名扫空**（l.14365 `{\input{fonttext.ltx}}`）。
-残余 77 条 undefined cs + 21 条 \__hook_make_name:w（lthooks 区）。第十刀全链
-见 [expl3-real-scoreboard.md](expl3-real-scoreboard.md) 第十刀节。
+**当前状态**：🟡 **latex.ltx 载入推进至 fonttext.ltx 内部（2026-09-16 第十一刀后）**——
+l.14365 braced `\input{name}` 墙真根因 = **e-TeX `\ifincsname` 缺失**（`\DeclareRobustCommand`
+robust 体首 token，`\IfFileExists`/`\InputIfFileExists`/`\typeout` 全中招），已补原语 +
+`name_in_progress` 旗标（scan_csname 进出维持）。现终端墙在 **ot1enc.def 末行输入栈
+超限**（疑为 NFSS 定义群静默丢失的 knock-on；独立最小复现不炸）。残余 72 条 undefined cs
+（preload.ltx 消费时 `\normalfont`/`\IfFontSeriesContextTF` 等未定义，预存在）+
+21 条 `\__hook_make_name:w`。第十一刀全链见
+[expl3-real-scoreboard.md](expl3-real-scoreboard.md) 第十一刀节。
 
 ---
 
 ## A. 当前阻塞点（唯一活跃项）
 
-### A0. 当前真实阻塞点（2026-09-16 第十刀收尾更新）
+### A0. 当前真实阻塞点（2026-09-16 第十一刀收尾更新）
 
-**第十刀已修**：① `\unless` 未进 `Primitive::is_expandable()` 白名单（双表分裂）→
-l.6699 `\NewDocumentCommand` 经 `\str_tail:n` 的 `\reverse_if:N \if_charcode:w`
-条件体被当实参吞掉 → lthooks 区条件栈失衡 → 后段 `\prg_return_*:` 归约挂死；
-② INITEX lccode/uccode 全零初表 → `\lowercase` 对字母失能；③ `\uppercase`/
-`\lowercase` 误入可展开白名单 → 数字扫描终止位（`12⏎\lowercase`）被就地展开，
-arg 在 `\catcode`T=12` 赋值落地**前**用旧表扫入 → `\rem@pt` 定界符 cat 错
-→ "! Paragraph ended before \rem@pt was complete."（l.10732 惯用法全灭）。
+**第十一刀已修**：`\ifincsname` 原语缺失 → `\DeclareRobustCommand` robust 体
+（`\IfFileExists`/`\InputIfFileExists`/`\typeout` 全是）首用即爆 → l.14365
+`\InputIfFileExists{fonttext.cfg}` 散架、braced `\input` 链未到第二层。修复 =
+`Primitive::IfInCsname` + `Expander::name_in_progress`（scan_csname 包装层
+保存/还原）。GT 锚：csname 扫描内经任意深度宏展开皆真、`\ifcsname` 扫描内真、
+闭合后假。**br.tex 字面探针是伪命题**（INITEX `{`=cat12 系 tex.web 真语义，
+真 pdftex -ini 同报 `can't find file '{fonttext.ltx}'`）。
 
-**现阻塞（第十一刀入口）**：l.14365 `{\input{fonttext.ltx}}`——braced
-`\input{name}` 文件名扫成空（报 `File '.tex' not found`，文件实际在搜索路径上）；
-裸 `\input{tt}` 探针复现 "Missing { inserted"。tex.web scan_file_name 语义 +
-LaTeX `\input` 宏形态（`\let\@@input\input` 后重定义）需同刀核。
+**现阻塞（第十二刀入口，按执行序）**：
+① NFSS 定义群静默丢失（预存在）：preload.ltx（l.14350）消费 `\normalfont`/
+   `\IfFontSeriesContextTF`/`\em`/`\symbol` 等全 undefined——定义区 l.5000-10500；
+   另 21 条 `\__hook_make_name:w extra }`（lthooks 区）；
+② ot1enc.def 末行输入栈超限（现场标"定义 `\cdp@list` 时"；独立最小复现不炸，
+   疑为①的 knock-on）；
+③ `\read` 终端流语义（tex.web 未开流=终端读；NTex fatal）——`\@missingfileerror`
+   的 `\read\m@ne` 走此路；
+④ toks 参数 RHS 为宏时 NTex 走数字扫描（GT=「Missing { inserted」+组扫描恢复）。
+
+**复现环境注意**：`/tmp/fp11` 需补 latex base 运行时件（`omlenc.def` 等 36 def +
+41 fd + language.dat，源 `~/.TinyTeX/texmf-dist/tex/latex/base/`），否则停在
+`File 'omlenc.def' not found`。
 
 
 ### A1. expl3 变体生成器压栈不终止 ✅ 已修复（2026-09-12，收尾见 A1.vicies）

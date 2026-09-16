@@ -1124,7 +1124,18 @@ impl Expander {
     /// `\csname` 名字扫描（`\csname`/`\ifcsname` 用）：收集直到 `\endcsname` 的名字字符。
     /// get_x_token 语义：宏/可展开原语在名字中先展开一次；`\endcsname` 终止；
     /// 其余不可展开控制序列报错（TeX "Missing endcsname inserted"）。
+    ///
+    /// e-TeX `\ifincsname` 旗标由本层进出维持：保存旧值再置真（嵌套 csname 的
+    /// 内层出口不得清掉外层旗标），错误路径（`?` 传播）同样还原。
     fn scan_csname(&mut self) -> Result<String> {
+        let saved = std::mem::replace(&mut self.name_in_progress, true);
+        let r = self.scan_csname_body();
+        self.name_in_progress = saved;
+        r
+    }
+
+    /// scan_csname 本体（`name_in_progress` 旗标由包装层管理）。
+    fn scan_csname_body(&mut self) -> Result<String> {
         let mut name = String::new();
         loop {
             let tok = self

@@ -186,6 +186,7 @@ impl Expander {
             | CondOp::IfFalse
             | CondOp::IfDefined
             | CondOp::IfCsname
+            | CondOp::IfInCsname
             | CondOp::IfPrimitive
             | CondOp::IfInner
             | CondOp::IfVMode
@@ -599,6 +600,8 @@ saved_if_type: self.cur_if_type,
             CondOp::IfCsname => 19,
             CondOp::IfFontChar => 20,
             CondOp::IfPrimitive => 21,
+            // e-TeX（\currentiftype 手册表）：\ifincsname = 22
+            CondOp::IfInCsname => 22,
             _ => 0,
         }
     }
@@ -627,6 +630,7 @@ saved_if_type: self.cur_if_type,
             19 => "\\ifcsname",
             20 => "\\iffontchar",
             21 => "\\ifprimitive",
+            22 => "\\ifincsname",
             _ => "\\if",
         }
     }
@@ -781,6 +785,11 @@ saved_if_type: self.cur_if_type,
                     Some(id) if !matches!(self.eqtb.slot(id), EqSlot::Undefined)
                 ))
             }
+            // e-TeX（M4-5）：`\ifincsname` —— 仅读 `name_in_progress` 旗标，
+            // 无操作数。真值由 scan_csname 进出维持（GT pdftex 1.40.29：csname
+            // 扫描内经任意深度宏展开皆真、`\ifcsname` 扫描内真；扫描外与
+            // `\endcsname` 之后为假）。
+            CondOp::IfInCsname => Ok(self.name_in_progress),
             // e-TeX（M4-5）：\ifprimitive <cs> —— cs 的 eqtb 槽是内建原语
             CondOp::IfPrimitive => {
                 let tok = self

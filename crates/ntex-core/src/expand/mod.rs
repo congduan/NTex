@@ -192,6 +192,7 @@ enum CondOp {
     // e-TeX（M4-5）
     IfDefined,
     IfCsname,
+    IfInCsname,
     IfPrimitive,
     IfInner,
     // ETRIP 冲刺：模式/盒子/EOF 条件
@@ -223,6 +224,7 @@ impl CondOp {
             Primitive::IfFalse => Self::IfFalse,
             Primitive::IfDefined => Self::IfDefined,
             Primitive::IfCsname => Self::IfCsname,
+            Primitive::IfInCsname => Self::IfInCsname,
             Primitive::IfPrimitive => Self::IfPrimitive,
             Primitive::IfInner => Self::IfInner,
             Primitive::IfVMode => Self::IfVMode,
@@ -746,6 +748,10 @@ pub struct Expander {
     read_floor: usize,
     /// 条件栈（M1-9）。
     cond_stack: Vec<CondFrame>,
+    /// e-TeX `\ifincsname` 旗标（e-tex.web `name_in_progress`）：当前正处于
+    /// `\csname`/`\ifcsname` 名字扫描。由 scan_csname 进出置位/还原（保存
+    /// 旧值而非置假——嵌套 csname 时内层还原不得清掉外层）。
+    name_in_progress: bool,
     /// NTEX_SANITY_CHECK 设施：错误恢复前状态快照 (组级, 条件栈深)。
     /// report_error 时记录第一个错误；主循环下一次迭代校验恢复后的状态
     /// 与错误前是否大幅偏离（偏离 = 错误恢复本身写坏了状态，内部 bug 信号）。
@@ -943,6 +949,7 @@ impl Expander {
             output_trigger_line: 0,
             read_floor: 0,
             cond_stack: Vec::new(),
+            name_in_progress: false,
             err_snapshot: None,
             group_level: 0,
             cur_group_close_via_primitive: false,
