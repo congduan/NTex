@@ -274,16 +274,16 @@ use super::*;
             "yes"
         );
         // \the 读回（字母常量后跟空格：tex.web @<Scan an optional space@> 把空格
-        // 吞掉，\the 在赋值完成后才求值）
-        assert_eq!(expand("\\lccode`B=`b \\the\\lccode`B").unwrap(), "98");
+        // 吞掉，\the 在赋值完成后才求值）。选 `C`：预载 lccode`C=99（第十刀
+        // tex.web §191 INITEX 初表）≠ 赋值目标 98，读回 "98" 即证赋值已落地。
+        assert_eq!(expand("\\lccode`C=`b \\the\\lccode`C").unwrap(), "98");
         // 字母常量后**紧跟** \the：tex.web @<Scan an optional space@> 是
         // `get_x_token; if cur_cmd<>spacer then back_input`——get_x_token 把
         // `\the` 就地展开（convert > max_command），读到的是**赋值前**的旧值
-        // （INITEX lccode`B=0 → 字符流 "0"）；expl3 f 型展开
+        // （第十刀后 INITEX 预载 lccode`C=99 → 字符流 "99"）；expl3 f 型展开
         // （`\exp:w \exp_end_continue_f:w`）正依赖此"字母常量后继续展开"语义。
-        // pdfTeX GT（z.tex Q1：\lccode`!=`A\the\lccode`! 盒内 "0"）同机制——
-        // 早前 `B 形探针盒内 "98" 是 plain 初表 lccode`B 本就 98 的假象。
-        assert_eq!(expand("\\lccode`B=`b\\the\\lccode`B").unwrap(), "0");
+        // （旧期望 "0" 是全零初表的假象——tex.web §191 本就预载 lccode[A-Z]=+@'40。）
+        assert_eq!(expand("\\lccode`C=`b\\the\\lccode`C").unwrap(), "99");
         // 组作用域回滚
         assert_eq!(
             expand("\\lccode`C=1{\\lccode`C=2}\\the\\lccode`C").unwrap(),

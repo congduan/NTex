@@ -991,8 +991,11 @@ impl Expander {
             // 其余 letter/other_char（catcode 11/12）→ 0x7000+码（class 7
             // variable, family 0），其余 → 0x8000（无效，"Missing character"）。
             mathcodes: default_mathcodes(),
-            lccodes: [0; 256],
-            uccodes: [0; 256],
+            // tex.web INITEX 初表（default_lccodes 文档）：全零会让
+            // `\lowercase` 对字母失能，latex.ltx l.10734 `\rem@pt` 即死于
+            // 该惯用法（第十刀收尾新阻塞点根因）。
+            lccodes: default_lccodes(),
+            uccodes: default_uccodes(),
             dumped: false,
             unless_pending: false,
             cur_if_type: 0,

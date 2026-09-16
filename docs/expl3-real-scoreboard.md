@@ -270,3 +270,76 @@ UnicodeData ~5 次调用）每次做 `\clist_put_right:cn` + `\clist_count:c`，
    重构（Arc 共享实参帧、eqtb 读借用化），非单刀工作量。
 3. **长步摊平**：0.1-1ms 的 105.5k 步 = clist 机器整段展开塞在单步里，
    若第 2 条做完仍不达秒级，考虑 expl3 源面调研（上游协作）。
+
+---
+
+## 第十刀（2026-09-16）：`\prg_return_*:` 条件归约挂死根治 + 一条意外收获
+
+### 结论（三条修复，一次提交）
+
+| # | 根因 | 修复 | 现场 |
+|---|------|------|------|
+| 1 | `\unless` 只在 `free.rs is_expandable_prim`（执行侧），未进 `eqtb/primitive.rs` 的 `EXPANDABLE:` 清单（扫描侧 ~20 处守卫用）——**守卫双表分裂**，`\unless` 在 edef/write/数字扫描等展开上下文掉成数据 | `Unless` 入 `EXPANDABLE:` + expand_once 补 `expand_unless_in_place`（就地拉取下一 `\if*` 取反求值） | l.6699 首 `\NewDocumentCommand` → `\str_tail:n` → `\expandafter\__str_tail_auxi:w \reverse_if:N \if_charcode:w a a X\else Y\fi` 条件体被当实参吞 → `! Extra \fi` → lthooks 区条件栈失衡 → 全载后段 `\prg_return_true:/\prg_return_false:` 交替归约**真挂死**（steps=10,955,000） |
+| 2 | INITEX `lccodes/uccodes` 全零初表；tex.web §191 `@!init` 段本就预载 `lccode[A-Z]=+@'40`、`lccode[a-z]=自身`、uccode 对称 | `default_lccodes()/default_uccodes()` 预载（expand/mod.rs 初始化） | `\lowercase` 对字母失能（lc 探针 `LC1:[PT]` 原样）；latex.ltx 自身**不设** lccode（INITEX 直载假定引擎自带） |
+| 3 | `\uppercase/\lowercase` 误列 `EXPANDABLE:` 清单——tex.web 二者**不可展开** | 移出清单（edef 体内回归 tex.web 语义：存数据、用时执行；`ZZ=[macro:->\lowercase{\def\q{AB}}]`→`Q=[macro:->ab]`） | **数字扫描终止位就地展开**（见下） |
+
+### 根因 3 的归因链（本轮最曲折，记录方法论）
+
+`rem@pt` 惯用法（latex.ltx l.10732-10737）：
+
+```tex
+\begingroup \catcode`P=12 \catcode`T=12
+\lowercase{\def\x{\def\rem@pt##1.##2PT{...}}}
+\expandafter\endgroup\x
+```
+
+症状：`\rem@pt` 定界符扫描成 `p`(cat-12) + `t`(cat-11)——`T` 的 catcode 赋值"未生效"。
+
+排查弯路（**先证伪的三个假说**）：赋值延迟落表（`\the\catcode`T` 立即读回 12，证伪）；
+组回滚吞写（`\endgroup` 前读回也 12，证伪）；两张 catcode 表实例（只有一张，证伪）。
+真正的破案点是**给 `\catcode` 与 `\lowercase` 各插一行日志看事件序**：
+
+```
+[exec] cs=catcode line=3      ← \catcode`T=12 分派
+[tok-born] ch=84 cat=11       ← \lowercase arg 里的 T 已用旧表扫入！
+[lc-dbg] …X2 的 arg 扫描完成   ← \lowercase 整个 arg 扫完
+[cat-set] byte=84 cat=12      ← \catcode`T=12 的赋值此刻才落地
+```
+
+执行序倒挂 ⇒ `\lowercase` 是在 `\catcode`T=12` 的 **`scan_number` 终止段**被展开的：
+tex.web `scan_int` 数字循环退出后吸收**一个空格**再 `get_x_token` 找续数字——EOL 变
+空格被吸收，下一个 token `\lowercase` **可展开** ⇒ 就地展开 ⇒ arg 在赋值落地前用
+旧表扫入。真 TeX 中 `\lowercase` 不可展开，`get_x_token` 原样退回，赋值先行。
+V1–V4 四变体（首条赋值生效、次条失效）与 X1/X2 全部由此一击解释。
+
+### 验收
+
+- `make check` 全绿（41 个 test-result ok；`lccode_assign_and_read` 期望值随
+  lccode 预载更新：`\lccode`C=`b\the\lccode`C` 就地展开读**预载值** 99 而非旧
+  全零表的 0——判别力保住，机制断言不变）。
+- 全载 `ltxinit.tex`：**0 挂死**（原 steps=10.9M 真挂死），68s 推进至 **l.14365**
+  `{ \input{fonttext.ltx} }`；l.14061 `\rem@pt` 旧阻塞点消失。
+- 探针全绿：u3/M3 `macro:->Y`（unless 取反走 `\else` 支）；`\rem@pt` 全链
+  `ZZ=[rempt:[12][5]]`（`\strip@pt\dimen0`、`\dimen0=12.5pt`）。
+- expl3 fmt 链保持：pass1 62s / **pass2 0.07s**（基准 0.05s 同量级）。
+
+### 新阻塞点（第十一刀入口）
+
+**braced `\input{name}` 文件名扫空**：l.14365 `{ \input{fonttext.ltx} }` 报
+`File '.tex' not found`（文件在搜索路径上）；裸探针 `\input{tt}` 复现
+`! Missing { inserted.`。归因两选一（下一刀核）：引擎 `\input` 文件名扫描
+不支持 braced 形态（tex.web `scan_file_name` 的 quote/end 语义），或 latex.ltx
+对 `\input` 的宏重定义（`\let\@@input\input` + braced 参数宏）未生效。
+残余错误面：77 undefined cs（既有）、21 `\__hook_make_name:w extra }`
+（lthooks 区，新浮出）。
+
+### 方法论沉淀（可复用）
+
+1. **守卫双表是结构性陷阱**：`Primitive::is_expandable()`（扫描侧 ~20 守卫）与
+  `is_expandable_prim`（执行侧）两清单必须同刀核对，新增可展开原语两处都改；
+  本刀第一修复（Unless）与第三修复（Uppercase/Lowercase 除名）是同一陷阱的正反两面。
+2. **"赋值未生效"类偏差先插桩看事件序**，别急着建表实例/回滚假说——执行序倒挂
+  一眼定位到"扫描发生在赋值前"，假说空间瞬间收敛。
+3. **数字扫描终止位会就地展开可展开 token**（空格吸收后 get_x_token 续扫）——
+  `12⏎\expandableTHING{…}` 的 arg 在**上一赋值落地前**扫入；whiteboard 上
+  "行间语句"直感在此失效。latex.ltx 大量依赖"不可展开原语紧邻赋值行"的时序。

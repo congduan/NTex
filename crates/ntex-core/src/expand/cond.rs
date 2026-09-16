@@ -475,6 +475,63 @@ saved_if_type: self.cur_if_type,
         Ok(())
     }
 
+    /// 该 cs 是否（沿别名链）指向 `\unless` 原语。
+    fn slot_is_unless(&self, tok: Token) -> bool {
+        let Some(csid) = tok.csid() else {
+            return false;
+        };
+        matches!(
+            self.resolve_slot(csid),
+            Some(EqSlot::Primitive(Primitive::Unless))
+        )
+    }
+
+    /// 展开位处理待展开 token = `\unless`（e-TeX `expand` 的 unless_code 臂）：
+    /// **就地**取下一 token，是 `\if*` 则置 unless 旗标并立即按条件处理（求值、
+    /// 压帧、必要时 `drain_open_skip` 急切消费假支），不是则原样退回。
+    ///
+    /// 为什么不能只置旗标：主循环里 `\unless` 置旗、下一个 `\if*` 再消费，
+    /// 两步间隔为零；但 `\expandafter \A \unless \if_charcode:w …`（l3str
+    /// `\str_tail:n`，`\reverse_if:N` = `\unless` 别名）里 `\unless` 是
+    /// `\expandafter` 的一次展开对象——旗标置完即返回，`\A` 的定界实参扫描
+    /// 随即把 `\if_charcode:w` **连同其操作数**当数据吞进实参（`#1 X #2` 扫到
+    /// 第一个 `X`），宏体首 `\fi:` 落在空条件栈上报 "! Extra \fi"，条件帧
+    /// 从此错位。latex.ltx l.6699 起 `\NewDocumentCommand` 首用经
+    /// `\__cmd_check_definable_aux:nN` → `\str_tail:n` 触发（expl3 单独载入
+    /// 不经此路径，故七~九刀 62s 全程无恙），错误恢复后 lthooks 区条件栈
+    /// 失衡 → 全载后段 `\prg_return_*:` 归约挂死（第十刀）。
+    ///
+    /// 返回 `true` = 已就地消费（调用方放回 t1 后收工）；`false` = `\unless`
+    /// 后非条件或输入耗尽——调用方走原路径（unless 按数据回填，旗标语义由
+    /// 主循环兜底）。
+    fn expand_unless_in_place(&mut self) -> Result<bool> {
+        let Some((t3, _)) = self.fetch()? else {
+            return Ok(false);
+        };
+        match self.cond_op(t3) {
+            Some(op) => {
+                self.unless_pending = true;
+                let before = self.cond_stack.len();
+                self.step_conditional(op, t3)?;
+                if !matches!(op, CondOp::Fi) {
+                    let depth = if matches!(op, CondOp::Else | CondOp::Or) {
+                        before.saturating_sub(1)
+                    } else {
+                        before
+                    };
+                    self.drain_open_skip(depth)?;
+                }
+                Ok(true)
+            }
+            None => {
+                // `\unless` 后非 `\if*`：e-TeX 此处报错；保守退回 token 走
+                // 原路径（不丢 token，不置旗标）。
+                self.unread(t3);
+                Ok(false)
+            }
+        }
+    }
+
     /// 跳过结束于本条件的 `\else`/`\or` 时进入该分支。
     ///
     /// 本条件的帧已在栈顶（调用方 skip_ahead 的 target 处）：tex.web

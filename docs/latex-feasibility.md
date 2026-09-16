@@ -6,12 +6,32 @@
 
 **目标**：`latex.ltx` 加载成功 → `latex.fmt` 构建 → `\documentclass{article}` → PDF。
 
-**当前状态**：🟡 **expl3 载入 ~90%**——爆栈已修（2026-09-12，见 A1.vicies），
-现阻塞在 iow_wrap「实参组未闭合」致命链 + fp 模块变体未生成首错（见 §A）。
+**当前状态**：🟡 **latex.ltx 全文载入推进至 l.14365（2026-09-16 第十刀后）**——
+\prg_return_*: 归约挂死已修（unless 白名单分裂）、\lowercase 失能已修（INITEX
+lccode/uccode 预载）、\rem@pt 惯用法已修（\uppercase/\lowercase 误列可展开白名单）；
+现阻塞在 **braced `\input{name}` 文件名扫空**（l.14365 `{\input{fonttext.ltx}}`）。
+残余 77 条 undefined cs + 21 条 \__hook_make_name:w（lthooks 区）。第十刀全链
+见 [expl3-real-scoreboard.md](expl3-real-scoreboard.md) 第十刀节。
 
 ---
 
 ## A. 当前阻塞点（唯一活跃项）
+
+### A0. 当前真实阻塞点（2026-09-16 第十刀收尾更新）
+
+**第十刀已修**：① `\unless` 未进 `Primitive::is_expandable()` 白名单（双表分裂）→
+l.6699 `\NewDocumentCommand` 经 `\str_tail:n` 的 `\reverse_if:N \if_charcode:w`
+条件体被当实参吞掉 → lthooks 区条件栈失衡 → 后段 `\prg_return_*:` 归约挂死；
+② INITEX lccode/uccode 全零初表 → `\lowercase` 对字母失能；③ `\uppercase`/
+`\lowercase` 误入可展开白名单 → 数字扫描终止位（`12⏎\lowercase`）被就地展开，
+arg 在 `\catcode`T=12` 赋值落地**前**用旧表扫入 → `\rem@pt` 定界符 cat 错
+→ "! Paragraph ended before \rem@pt was complete."（l.10732 惯用法全灭）。
+
+**现阻塞（第十一刀入口）**：l.14365 `{\input{fonttext.ltx}}`——braced
+`\input{name}` 文件名扫成空（报 `File '.tex' not found`，文件实际在搜索路径上）；
+裸 `\input{tt}` 探针复现 "Missing { inserted"。tex.web scan_file_name 语义 +
+LaTeX `\input` 宏形态（`\let\@@input\input` 后重定义）需同刀核。
+
 
 ### A1. expl3 变体生成器压栈不终止 ✅ 已修复（2026-09-12，收尾见 A1.vicies）
 

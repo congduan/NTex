@@ -27,6 +27,42 @@ fn default_mathcodes() -> HashMap<u32, u32> {
     m
 }
 
+/// INITEX 初始 lccode/uccode 表（tex.web `@<Initialize table entries...@>` 的
+/// `@!init` 段）：`lccode[A-Z]=+@'40`、`lccode[a-z]=自身`、`uccode[A-Z]=自身`、
+/// `uccode[a-z]=-@'40`，其余码点为 0（`\lowercase`/`\uppercase` 对 lccode=0 的
+/// 字符原样保留）。
+///
+/// 此前全零初表的实害（第十刀收尾复现，lc2/lc3 探针）：latex.ltx l.10732-10736
+/// `\begingroup \catcode`P=12 \catcode`T=12 \lowercase{\def\x{\def\rem@pt##1.
+/// ##2PT{…}}}` 惯用法里 `\lowercase` 失能 → `\rem@pt` 定界符落成大写 `PT`，
+/// 与 `\the<dimen>` 产物 `12.5pt` 永不匹配 → "! Paragraph ended before
+/// \rem@pt was complete."（`\strip@pt` 全灭，`\CalculateScale`/
+/// `\DeclareMathVersion` l.13984 区级联，残散 `p` 字符再砸进 `\ifnum`
+/// 关系位报 "Missing number"）→ NFSS `\prepare@family@series@update`
+/// （l.14061）堵死 latex.ltx 全载。latex.ltx 自身**不设** lccode
+/// （INITEX 直载假定引擎自带该初表），只能由引擎预载。
+fn default_lccodes() -> [i64; 256] {
+    let mut t = [0i64; 256];
+    for i in 0x41..=0x5Au32 {
+        t[i as usize] = i64::from(i + 0x20); // A-Z → a-z
+    }
+    for i in 0x61..=0x7Au32 {
+        t[i as usize] = i64::from(i); // a-z → 自身
+    }
+    t
+}
+
+fn default_uccodes() -> [i64; 256] {
+    let mut t = [0i64; 256];
+    for i in 0x41..=0x5Au32 {
+        t[i as usize] = i64::from(i); // A-Z → 自身
+    }
+    for i in 0x61..=0x7Au32 {
+        t[i as usize] = i64::from(i - 0x20); // a-z → A-Z
+    }
+    t
+}
+
 /// 宏体实参替换：`#n` → 第 n 个实参（整段借用，零拷贝）。
 fn materialize(body: &[Token], args: &[TokenArray]) -> Vec<Token> {
     let mut out = Vec::with_capacity(body.len());

@@ -25,6 +25,16 @@ impl Expander {
         // 条件终结符（\else/\fi/\or）：TeX expand() 把 fi_or_else 展开为空格
         // （tex.web expand 的 fi_or_else 分支）——消耗该 token 并推进条件机，
         // 不重新输出（否则会被宏实参扫描吞掉，如 `\expandafter\2\fi`）。
+        // `\unless`（e-TeX）：先于条件终结符判定——它须**就地拉取**下一个
+        // `\if*` 求值（expand_unless_in_place 文档）。
+        if self.slot_is_unless(t2.0) && self.expand_unless_in_place()? {
+            let seq = vec![t1];
+            self.push_frame(InputFrame::TokenList {
+                items: Arc::from(seq),
+                pos: 0,
+            });
+            return Ok(());
+        }
         if let Some(op) = self.cond_op(t2.0) {
             // tex.web：`\expandafter` 对第二个 token 走 get_x_token → expand，
             // 分支跳过（false 的 \if*、\else/\or 的待弃分支）是**就地**完成的，
@@ -124,6 +134,11 @@ impl Expander {
                         .fetch()?
                         .ok_or_else(|| Error::invalid_input("\\expandafter 链中断"))?;
                     out.push(a);
+                    // \unless：与 exec_expandafter 同理——就地拉取下一个 \if*
+                    // 求值（\str_tail:n 的 `\expandafter\X\reverse_if:N\if…`）。
+                    if self.slot_is_unless(b.0) && self.expand_unless_in_place()? {
+                        return Ok(());
+                    }
                     // \else/\fi/\or：TeX expand() 的 fi_or_else 分支（展开为空格并推进条件机）；
                     // 开着的跳过区同样就地消费（见 exec_expandafter 的说明）
                     if let Some(op) = self.cond_op(b.0) {
@@ -334,6 +349,16 @@ impl Expander {
                 // LaTeX 兼容第八刀：pdfTeX 可展开族（is_expandable_prim 白名单成员，
                 // 此处必须有分支——否则 `_` 原样保留触发"展开后重试"空转，
                 // 见上方 fuzz 挂死修复注释）。语义与 dispatch_expandable 对齐。
+                EqSlot::Primitive(Primitive::Unless) => {
+                    // e-TeX：`\unless` 可展开（f/e 型实参扫描同 \edef 语义）——
+                    // 就地拉取下一个 `\if*` 取反求值（expand_unless_in_place
+                    // 文档）。u3 探针：`\edef\zz{\reverse_if:N \if_charcode:w
+                    // a a X\else Y\fi}` 应得 `Y`（unless 取反：`\if_charcode`
+                    // 真 → 假 → 走 \else 支），而非未展开残留 `\reverse_if:NX`。
+                    if !self.expand_unless_in_place()? {
+                        out.push((tok, false));
+                    }
+                }
                 EqSlot::Primitive(Primitive::PdfTeXVersion) => {
                     out.extend(emit_count(140).into_iter().map(|t| (t, false)));
                 }

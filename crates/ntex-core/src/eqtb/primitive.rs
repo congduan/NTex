@@ -72,6 +72,16 @@ define_primitives! {
         // （pdfTeX ≥1.30 可展开原语；expl3 L196 引擎门闩 `\ifx\csname expanded
         // \endcsname\relax` 与 l3names 别名表都要求它存在）。
         Expanded,
+        // e-TeX `\unless` 可展开（e-tex.web expand 的 unless_code 臂：就地拉取
+        // 下一个 `\if*` 取反求值）。守卫双表曾分裂：执行侧 primitive.rs:237 用
+        // free.rs is_expandable_prim（含 Unless，主循环旗标语义可用），而本清单
+        // 二十余处展开上下文守卫（scan_edef_body/process_expand_only/scan.rs
+        // 数字与通用文本扫描…）全部掉成数据——latex.ltx l.6699 首个
+        // \NewDocumentCommand 经 \str_tail:n 的
+        // `\expandafter\__str_tail_auxi:w \reverse_if:N \if_charcode:w …`
+        // 即因此条件体被当实参吞掉（! Extra \fi）→ lthooks 区条件栈失衡 →
+        // 全载后段 \prg_return_*: 归约挂死（第十刀根因之一）。
+        Unless,
         // \eTeXrevision 可展开（→".6"，etrip 版本宏习语 `\number\eTeXversion\eTeXrevision`）；
         // \eTeXversion 是内部整数（非可展开），`\the\eTeXversion` 由 the_tokens_after 直读。
         ETeXRevision,
@@ -88,10 +98,17 @@ define_primitives! {
         SplitTopMarks,
         SplitBotMarks,
         // TRIP 冲刺：可展开原语（\romannumeral/\char/\uppercase/\lowercase/\endinput/\ignorespaces/\fontname）
+        // 第十刀勘误：\uppercase/\lowercase 移出本清单——tex.web 二者不可展开
+        // （get_x_token 只展开 if_test/fi_or_else/if_case/macro/cs_name/the 族），
+        // 数字扫描终止位（`12⏎\lowercase…`，一个空格吸收后 get_x_token 找续数字）
+        // 曾把它们就地展开：latex.ltx l.10732 `\rem@pt` 惯用法
+        // `\catcode`P=12 \catcode`T=12 \lowercase{\def\x{\def\rem@pt##1.##2PT{…}}}`
+        // 的 `\lowercase` 因此在 `\catcode`T=12` 的**赋值落地前**展开，arg 用旧表
+        // 扫入 → 定界符 `T` 落 cat-11，与 `\the<dimen>` 产物（全 cat-12）永不匹配
+        // → "! Paragraph ended before \rem@pt was complete."（l.13984
+        // \DeclareMathVersion 区级联堵死全载）。
         RomanNumeral,
         Char,
-        Uppercase,
-        Lowercase,
         EndInput,
         Ignorespaces,
         FontName,
