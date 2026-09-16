@@ -17,11 +17,14 @@ pdfTeX（TinyTeX，`~/.local/bin/pdftex -interaction=nonstopmode <probe>`
 
 **`probe-load.tex` 是「载入是否走通」的唯一口径**（`probe-fp.tex` 只在载入走通后
 才轮得到 fp）：走通才打印 `[LOAD-DONE]`。**当前状态 = 走通且载入期错误已清至
-残差**（第八刀，2026-09-15，见 `docs/expl3-real-scoreboard.md` 第八刀节）：
-`\???` 2486→0、Missing font identifier 4599→0、错误总数 2492→3
-（`Forbidden ^^L` 根因#3 + `\unhbox` 簇 2 条），rc=0、DVI 落盘。
-载入墙钟的主体已转到 intarray 的 pdftex 字体模拟臂（每条目 = 一次
-`\fontdimen` 写），秒级未达，快速通道是下一刀标的。
+残差**（第九刀口径修正，2026-09-16）：错误总数 3 → **1**
+（探针首行加 `\let\_\relax` 消除 `\unhbox` 簇 2 条——GT 实证：那 2 条
+pdfTeX 跑旧探针同样报（plain l.667 `\def\_{\leavevmode…}` 在数字位被
+`\catcode` 链触发），是探针写法噪声而非引擎缺陷；修后 pdfTeX 0 错、
+NTex 仅剩 `Forbidden ^^L` 根因#3 一条）。rc=0、DVI 落盘。
+载入墙钟 4:58（第九刀 `0e0ea5d` O(N²) 根治后；第七刀 11:07），秒级
+未达——剩余为解释器常量因子（~115ns/token vs pdfTeX 15-25ns，跨帧
+重构另立项）。
 
 <details><summary>历史：第七刀之前的状态（l.36005 爆栈墙，已于 6172da3 + 第七刀解除）</summary>
 

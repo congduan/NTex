@@ -159,13 +159,15 @@ pdfTeX 同一模拟分支原生 `fontdimen` 是 C 数组写；NTex 每次写走�
 eqtb/字体机制。**下一刀标的 = 字体模拟臂的快速通道**（`\fontdimen` 写路径
 常量级开销），而非错误恢复。
 
-### 残差（3 条，均不阻断）
+### 残差（第九刀口径修正后 = 1 条，不阻断）
 
 - `Forbidden control sequence … scanning definition of ^^L`（l.26865 regex 段）
   ——根因#3（active/cs 共用 intern 槽），已记录可保留。
-- `Missing number`（`<to be read again> \unhbox`）+ `Incompatible list can't
-  be unboxed`（plain 预载段，expl3 之前）——第七刀已记为 preload 噪声；
-  本刀从 3 条减到 2 条（`\global\chardef` 盒寄存器分配语义修直后）。
+- ~~`Missing number`（`<to be read again> \unhbox`）+ `Incompatible list can't
+  be unboxed`~~ ——**第九刀 GT 对拍证伪为探针噪声**（2026-09-16）：pdfTeX 跑
+  旧探针同样报这 2 条（plain l.667 `\def\_{\leavevmode…}`：探针首行
+  `\catcode`\_=11` 触发 `\_` 展开链落在数字位）。探针首行加 `\let\_\relax`
+  后 pdfTeX 0 错、NTex 仅剩 Forbidden ^^L 1 条。
 
 ### GT 方法附记（本刀新钉，防复踩）
 
