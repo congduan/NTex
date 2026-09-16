@@ -254,6 +254,35 @@ mod tests {
     }
 
     #[test]
+    fn advance_target_csname_constructed() {
+        // latex.ltx l.13368（\new@symbolfont 的 \version@elt）：
+        //   `\global\advance\csname c@\expandafter\@gobble\string##1\endcsname\@ne`
+        // 目标由 \csname 就地构造。tex.web do_register_command 的目标扫描是
+        // get_x_token：可展开原语（\csname/\the/\number…）就地展开后重判。
+        // 修复前 `\csname` 本身被当目标 → fontmath.ltx l.59
+        // `\DeclareSymbolFont{operators}{OT1}{cmr}{m}{n}` 墙。
+        // （数字后的 `\relax` 是终结哨兵：否则终结位 get_x_token 展开出
+        // 数字 token 会被十进制循环吸收，重演 `\the\count0` 被吞形态。）
+        assert_eq!(
+            expand(
+                "\\catcode`\\@=11 \\countdef\\c@mv@normal=20 \\c@mv@normal=3 \
+                 \\advance\\csname c@mv@normal\\endcsname 4 \\relax\\number\\c@mv@normal"
+            )
+            .unwrap(),
+            "7"
+        );
+        // \let 别名 → 可展开原语（跟随到目标再重判）
+        assert_eq!(
+            expand(
+                "\\let\\cnt=\\csname \\countdef\\mycount=7 \\count7=1 \
+                 \\advance\\cnt mycount\\endcsname 2 \\relax\\number\\count7"
+            )
+            .unwrap(),
+            "3"
+        );
+    }
+
+    #[test]
     fn multiply_divide_register_arithmetic() {
         // ETRIP 惯用法：\multiply/\divide 带可选 by 关键字
         assert_eq!(

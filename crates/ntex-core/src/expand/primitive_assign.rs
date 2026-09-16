@@ -10,38 +10,45 @@
 // 表见 free.rs::param_kind_of——tex.web do_register_command 的 assign_* 区）。
 
 impl Expander {
-    /// 读取寄存器运算目标（`\advance/\multiply/\divide` 共用）：TeX get_x_token
-    /// 语义——宏别名（etrip `\edef\2{\csname count\endcsname}` 使 `\advance\22000by…`
-    /// 即 `\advance\count2000by…`）与 `\let` 别名须展开/跟随到不可展开目标。
+    /// 读取寄存器运算目标（`\advance/\multiply/\divide` 共用）：tex.web
+    /// do_register_command 的目标扫描是 **get_x_token**——宏（etrip `\edef\2{\csname
+    /// count\endcsname}` 使 `\advance\22000by…` 即 `\advance\count2000by…`）、
+    /// `\let` 别名，以及**可展开原语**（`\csname`/`\the`/`\number`…）都要展开/
+    /// 跟随到不可展开目标后才重判。latex.ltx l.13368（`\new@symbolfont` 的
+    /// `\version@elt`）`{\global\advance\csname c@\expandafter
+    /// \@gobble\string##1\endcsname\@ne}` 的目标即由 `\csname` 就地构造——
+    /// 修复前 `\csname` 本身被当目标返回（fontmath.ltx `\DeclareSymbolFont`
+    /// 墙：`! \advance 目标必须是寄存器或内部参数`）。
     fn fetch_register_target(&mut self, prim_name: &str) -> Result<u32> {
-        let mut tok = self
-            .fetch()?
-            .ok_or_else(|| Error::invalid_input(format!("{prim_name} 后缺少寄存器")))?
-            .0;
+        let missing = || Error::invalid_input(format!("{prim_name} 后缺少寄存器"));
+        let mut tok = self.fetch()?.ok_or_else(missing)?.0;
         loop {
             let Some(csid) = tok.csid() else {
                 return Err(Error::invalid_input(format!(
                     "{prim_name} 后必须是寄存器"
                 )));
             };
-            match self.eqtb.slot(csid).clone() {
-                // 宏别名：展开后压帧，继续读下一个 token（展开结果可能仍是宏）
-                EqSlot::Macro(m) if !(m.value.protected && self.suppress_expansion > 0) => {
-                    let mut expansion = Vec::new();
-                    self.expand_once((tok, false), &mut expansion)?;
-                    self.push_frame(InputFrame::TokenList {
-                        items: Arc::from(expansion),
-                        pos: 0,
-                    });
-                    tok = self
-                        .fetch()?
-                        .ok_or_else(|| Error::invalid_input(format!("{prim_name} 后缺少寄存器")))?
-                        .0;
+            // get_x_token 判据：宏（非 protected 抑制面）与可展开原语就地展开
+            // 一次（primitive_param.rs 同款习语）；`\let` 别名跟随目标。
+            let expandable = match self.eqtb.slot(csid).clone() {
+                EqSlot::Alias(target) => {
+                    tok = Token::control_sequence(target);
+                    continue;
                 }
-                // \let 别名：跟随目标
-                EqSlot::Alias(target) => tok = Token::control_sequence(target),
-                _ => return Ok(csid),
+                EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
+                EqSlot::Primitive(p) => p.is_expandable(),
+                _ => false,
+            };
+            if !expandable {
+                return Ok(csid);
             }
+            let mut expansion = Vec::new();
+            self.expand_once((tok, false), &mut expansion)?;
+            self.push_frame(InputFrame::TokenList {
+                items: Arc::from(expansion),
+                pos: 0,
+            });
+            tok = self.fetch()?.ok_or_else(missing)?.0;
         }
     }
 

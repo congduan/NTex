@@ -163,8 +163,16 @@ impl Expander {
                     out.push((t.0, true));
                 }
                 EqSlot::Primitive(Primitive::The) => {
+                    // `\the` 冻结位（tex.web L9395-9411：scan_toks 的 xpand
+                    // 展开器把 `the_toks` 产物直接接进收集表，"without
+                    // expanding it further"）。展开收集语境（suppress>0：
+                    // \edef/\xdef 体、`\expanded`）产物不再展开——`\g@addto@macro`
+                    // 的 `\xdef#1{\the\toks@}` 惯用法（latex.ltx l.12705 NFSS
+                    // 钩子链）依赖此语义；主循环 ins_list 路径照常展开。
+                    // 详见 exec_the（save.rs）注解。
+                    let freeze = self.suppress_expansion > 0;
                     let tokens = self.the_tokens()?;
-                    out.extend(tokens.into_iter().map(|t| (t, false)));
+                    out.extend(tokens.into_iter().map(|t| (t, freeze)));
                 }
                 // M4-5 e-TeX/可展开原语（与 `is_expandable()` 对齐）：\number/\unexpanded/
                 // \detokenize/\eTeXversion/\eTeXrevision。此前落入 `_` 分支被当作不可展开

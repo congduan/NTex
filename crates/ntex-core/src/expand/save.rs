@@ -312,9 +312,24 @@ impl Expander {
     }
 
     /// `\the<寄存器>`：把寄存器值展开为 token 流。
+    ///
+    /// tex.web（L9395-9411）：scan_toks 的 xpand 展开器遇 `\the` **不走**
+    /// `ins_the_toks`/`ins_list`，而是把 `the_toks` 产物**直接接进正在收集的
+    /// token 表**（"Here we insert an entire token list created by |the_toks|
+    /// without expanding it further"）——`\edef/\xdef` 体与 `\write/\message`
+    /// 的 general text 里，`\the⟨toks⟩` 的内容原样落表：cs 保持冻结的宏
+    /// token、组字符不过配平、条件原语不过条件机、`#` 不做参数处理。
+    /// 主循环（非收集语境）才走 ins_list，产物照常展开执行（GT pdftex
+    /// 1.40.29：`\edef\x{\the\T}` 体存 `\reinstallA` 且定义期不执行；
+    /// `\message{[\the\T]}` 打 `\reinstallA `；主循环 `\the\T` 照常执行）。
+    /// NTex 对应：展开收集语境（`suppress_expansion > 0`：\edef/\xdef 体、
+    /// expand_region（\write/\message/\errmessage）、`\expanded`）帧位带
+    /// noexpand 冻结标记——`scan_edef_body` 的 noexpand 裸推臂与
+    /// `process_one` 的 noexpand 输出臂恰为 tex.web 的接表语义。
     fn exec_the(&mut self) -> Result<()> {
+        let freeze = self.suppress_expansion > 0;
         let tokens = self.the_tokens()?;
-        let items: Vec<(Token, bool)> = tokens.into_iter().map(|t| (t, false)).collect();
+        let items: Vec<(Token, bool)> = tokens.into_iter().map(|t| (t, freeze)).collect();
         self.push_frame(InputFrame::TokenList {
             items: Arc::from(items),
             pos: 0,

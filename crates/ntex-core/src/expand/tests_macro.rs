@@ -50,6 +50,82 @@ use super::*;
         assert_eq!(expand("\\number-7").unwrap(), "-7");
     }
 
+    // ── 第十三刀：`\the⟨toks⟩` 在展开收集语境的冻结语义（tex.web L9395-9411）──
+    // scan_toks 的 xpand 展开器遇 `\the` 把产物**直接接进收集表**（"without
+    // expanding it further"）；主循环 ins_list 路径照常展开执行。
+
+    #[test]
+    fn the_toks_frozen_in_edef_deferred_execution() {
+        // 任务最小复现（GT pdftex 1.40.29：DEF-DONE → R-EXEC → CALL-DONE）：
+        // `\the\T` 产物在 \edef 期冻结为宏 token，调用 `\x` 时才执行。
+        // 修复前签名：R-EXEC 提前于 DEF-DONE（体被内联展开）。
+        let (r, t) = run_transcript(
+            "\\catcode`\\@=11 \n\\toksdef\\T=0\n\\def\\reinstallA{\\message{R-EXEC}}\n\
+             \\T={\\reinstallA}\n\\edef\\x{\\the\\T}\\message{DEF-DONE}\\x\\message{CALL-DONE}",
+        );
+        assert!(r.is_ok(), "{r:?}");
+        let def_done = t.find("DEF-DONE").expect("DEF-DONE 应在转录中");
+        assert!(
+            !t[..def_done].contains("R-EXEC"),
+            "R-EXEC 提前于 DEF-DONE（\\the 产物在 edef 被再展开）：{t}"
+        );
+        assert!(t.contains("CALL-DONE"), "转录：{t}");
+    }
+
+    #[test]
+    fn the_toks_gaddto_macro_body_stays_frozen() {
+        // latex.ltx l.12705 NFSS 钩子链惯用法：`\xdef#1{\the\toks@}` 的体必须
+        // 保宏 token 原样（GT pdftex：`macro:->BASE\reinstall@nfss@defs `；
+        // 修复前体被内联展开成 `\message{R-IN}`，NFSS 钩子链整段失效）。
+        let (r, t) = run_transcript(
+            "\\catcode`\\@=11 \n\\toksdef\\toks@=0\n\\def\\reinstall@nfss@defs{\\message{R-IN}}\n\
+             \\def\\g@addto@macro#1#2{\\begingroup \\toks@\\expandafter{#1#2}\\xdef#1{\\the\\toks@}\\endgroup}\n\
+             \\def\\kb{BASE}\n\\g@addto@macro\\kb{\\reinstall@nfss@defs}\n\
+             \\message{M1:[\\meaning\\kb]}",
+        );
+        assert!(r.is_ok(), "{r:?}");
+        assert!(
+            t.contains("macro:->BASE\\reinstall@nfss@defs"),
+            "\\g@addto@macro 体被内联展开：{t}"
+        );
+        let m1 = t.find("M1:").expect("M1 应在转录中");
+        assert!(!t[..m1].contains("R-IN"), "R-IN 提前于 M1（体被展开执行）：{t}");
+    }
+
+    #[test]
+    fn the_toks_frozen_in_message_context() {
+        // GT：`\message{[\the\T]}` 打 `\reinstallA `（cs 冻结、不执行）。
+        // 修复前：内联执行后转录含 R-EXEC、消息体为空。
+        let (r, t) = run_transcript(
+            "\\catcode`\\@=11 \n\\toksdef\\T=0\n\\def\\reinstallA{\\message{R-EXEC}}\n\
+             \\T={\\reinstallA}\n\\message{MSG:[\\the\\T]}",
+        );
+        assert!(r.is_ok(), "{r:?}");
+        assert!(t.contains("MSG:[\\reinstallA ]"), "转录：{t}");
+        assert!(!t.contains("R-EXEC"), "\\the 产物在 message 展开被执行：{t}");
+    }
+
+    #[test]
+    fn the_toks_still_executes_in_main_loop() {
+        // 主循环（非收集语境）`\the\T` 产物照常执行（GT：EXEC-A）——冻结只在
+        // 展开收集语境，不得砸掉横/竖模式执行语义（第十二刀语义零回退面）。
+        assert_eq!(expand("\\toksdef\\T=0\\def\\A{X}\\T={\\A}\\the\\T").unwrap(), "X");
+    }
+
+    #[test]
+    fn the_toks_frozen_group_chars_preserved() {
+        // GT：`\T={{x}}` + `\edef\y{a\the\T b}` → `\y=macro:->a{x}b`——冻结
+        // token 的组字符原样落表（tex.web 接表语义：不过配平、不建组）。
+        assert_eq!(
+            expand(
+                "\\toksdef\\T=0\\T={{x}}\\edef\\y{a\\the\\T b}\
+                 \\expandafter\\detokenize\\expandafter{\\y}"
+            )
+            .unwrap(),
+            "a{x}b"
+        );
+    }
+
     #[test]
     fn let_alias() {
         assert_eq!(expand("\\def\\a{XY}\\let\\b\\a\\b").unwrap(), "XY");

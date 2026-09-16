@@ -458,3 +458,34 @@ latex.ltx l.98-102 自管同理）——br.tex 的 `\input{fonttext.ltx}` 文件
 
 - `make check` **787 全绿**（785 基线 + 新增 2 测：`ifcat_noexpand_active_char_stays_cat13`/`ifcat_noexpand_undefined_cs_is_silent_relax`），EXIT=0。
 - ltxinit：`Undefined control sequence` **80→0**；ot1enc.def EOF 栈超限消失（knock-on 归因成立）；语义零回退清单各项不动。
+
+## 第十三刀（2026-09-17）：`\the⟨toks⟩` 在展开收集语境的冻结位——`\g@addto@macro` 惯用法根治（l.12777 `\set@fontsize` 区 Missing endcsname 墙）
+
+### 结论（两处点位、一个判据）
+
+| 项 | 内容 |
+|---|------|
+| 任务命题 | `\xdef#1{\the\toks@}` 的产物在 edef/xdef 被再展开（`exec_the` push 裸 TokenList 帧），`\g@addto@macro` 全家族（NFSS 钩子链 `\@kernel@after@begindocument@before` 等）体被内联执行 → l.12777 `\set@fontsize` 区 Missing endcsname/Paragraph ended 级联 |
+| 机制出处 | tex.web L9395-9411（`scan_toks` 的 `@<Expand the next part of the input@>`）：xpand 展开器遇 `\the` **不走** `ins_the_toks`/`ins_list`，而是把 `the_toks` 产物**直接接进正在收集的 token 表**（"Here we insert an entire token list created by \|the_toks\| without expanding it further"）——cs 保持宏 token、组字符不过配平、条件原语不过条件机、`#` 不做参数处理；主循环（非收集语境）才走 ins_list，产物照常展开执行 |
+| 修复 | 判据 `suppress_expansion > 0`（增点恰为 tex.web scan_toks(xpand=true) 全集：`\edef/\xdef` 体、`expand_region`（\write/\message/\errmessage）、`\expanded`；checkpoint 已快照、零新状态）。两处点位：`exec_the`（save.rs，expand_region 主循环路径）+ `expand_once` 的 `The` 臂（expr.rs:165，`\edef` 体路径）——帧 items 带 noexpand 冻结标记后，`scan_edef_body` 的 noexpand 裸推臂与 `process_one` 的 noexpand 输出臂恰为 tex.web 接表语义 |
+| GT 归一表（pdftex 1.40.29） | ① `\edef\x{\the\T}`：体存 `\reinstallA`，定义期零执行，调用 `\x` 才执行（DEF-DONE→R-EXEC→CALL-DONE）；② `\message{[\the\T]}`：打 `\reinstallA `（冻结）；③ `\write`：`\string` 冻结（`[\string \BB ]`）；④ 主循环 `\the\T`（竖/横模式）：产物**照常执行**（EXEC-A）——冻结只在收集语境；⑤ 组字符参与配平的真边界在 **toks 赋值扫描**而非冻结位（`\T={{x}` 不配平 → Runaway text@\T 吃到 EOF）；平衡 `{{x}}` 原样落体（`macro:->a{x}b`）；⑥ `\expanded{\the\T}`：`\the` 产物在 `\expanded` 内展开一次（其结果 ins_list 回流，外层 xpand 重取再展开）→ 体 `\message{R-EXEC}`，无双重展开 |
+| NTex 修复前后对拍 | `\g@addto@macro\kb{\reinstall@nfss@defs}`：修复前 `\meaning\kb`=`macro:->BASE\message{R-IN}`（内联）；修复后 `macro:->BASE\reinstall@nfss@defs`（GT 同，唯 cs 后分隔空格为既有良性偏差——第二十九刀观察项） |
+
+### 证据链
+
+1. **\meaning 对拍**：mean.tex（自带 catcode 序幕 + `\toksdef\toks@=0`）双引擎：GT 体保 cs、NTex 体 `\message{R-IN}`。宏体内容失真是真判据——可见输出顺序（DEF-DONE 序）在最小探针里碰巧不分化（`\message` 不可展开被收进体），任务书"NTex 当前 R-EXEC 在 edef 时即打出"仅在体含**可展开侧效应**时成立（`\reinstall@nfss@defs` 体是 `\protected\def` 群，定义期执行即炸 csname 扫描）。
+2. **两处点位定位**：`\edef` 体走 `scan_edef_body`→`expand_once`（expr.rs The 臂）；`\write/\message` 走 `expand_region`→`process_expand_only`→`exec_primitive(The)`→`exec_the`（save.rs）。任缺一处即漏半边。
+3. **判据选型**：`expand_only` 只盖 expand_region（`exec_def` 路径不设）；`suppress_expansion` 恰为 tex.web 展开收集语境全集且 `\unexpanded` 已同款使用（expr.rs L190 无条件 true 的帧位、L1009 的 `flag = self.expand_only`）。
+4. **边角对拍**（修复后全数与 GT 一致）：`\expanded` 双层语义（g6/g6n）；主循环执行语义不砸（`the_toks_still_executes_in_main_loop`）；平衡组字符落体（`the_toks_frozen_group_chars_preserved`）。
+
+### 遗留观察（未追）
+
+1. **`\message`/`\write` 语境里 toks 内容含字面 `\noexpand`**：冻结帧把 `\noexpand` cs 本身当数据收集（串里印 `\noexpand \foo`），GT 在 write_out 展开期让 `\noexpand` 完成标记（印 `\foo`）。latex.ltx `\g@addto@macro` 主通路是 edef 体（裸推臂原样保留 `\noexpand` ✓ tex.web 接表语义同），不受影响；根治需冻结位随 token 存进收集产物（表示层改动，非本轮）。
+2. **`Primitive::Toks` 臂（`\the\toks0` 文本转换）保持原样**：cs→cat-12 文本转换是 TRIP 钉子（`\showthe` 打印面），与 Register 臂（裸 token，latex.ltx 真路径）并存；冻结位对纯字符产物惰性。
+3. **`\meaning` cs 后分隔空格缺失**（第二十九刀顺带观察）仍在：本轮对拍用它作判据时取不含空格子串。
+
+### 验收
+
+- `make check` **792 全绿**（787 基线 + 新增 5 测：`the_toks_frozen_in_edef_deferred_execution`/`the_toks_gaddto_macro_body_stays_frozen`/`the_toks_frozen_in_message_context`/`the_toks_still_executes_in_main_loop`/`the_toks_frozen_group_chars_preserved`）。
+- 最小复现：DEF-DONE → R-EXEC → CALL-DONE ✓；`\g@addto@macro` 体保 cs ✓。
+- ltxinit 推进结果：见下节补记。
