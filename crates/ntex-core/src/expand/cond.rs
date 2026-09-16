@@ -911,6 +911,35 @@ saved_if_type: self.cur_if_type,
                 continue;
             }
             if let Some(csid) = tok.csid() {
+                // `\noexpand` 冻结位（tex.web no_expand 臂：token 打标记后原样
+                // 返回，**不查 eqtb、不报未定义错**——`\noexpand` 对未定义
+                // cs/active char 同样合法）。操作数归一（GT pdftex 1.40.29 四例
+                // 定案：undefined-active vs undefined-cs=F、defined-active vs
+                // undefined-cs=F、undef vs def-active=T、undef-act vs macro=F）：
+                //   - active char（定义与否无关）→ catcode 13 参战。tex.web
+                //     get_x_token_or_active_char 对 active 区槽位回填
+                //     `cur_chr:=cur_cs-active_base` → 字符码+active_char；
+                //     latex.ltx l.1398 `\ifcat\noexpand~\noexpand#1` robust
+                //     分派判别式（`\declare@robustcommand` 选 auxi/auxiii）靠
+                //     它在 `~` 尚未定义时判 F（cs 臂 16）——此前 undefined 臂
+                //     先执行，报 `\~`/`#1` 两条 Undefined 且两侧都落 relax
+                //     哨兵 → 判 T → 全体 `\DeclareRobustCommand` 产物走 active
+                //     char 的 auxi 误路（若incsname 体、`foo␣` 星形 csname 缺失
+                //     → NFSS 定义群 80 条静默丢失）。
+                //   - 真名 cs → relax/256 哨兵（下方 `(None, None)`）。
+                if noexpand {
+                    if tok.is_active() {
+                        let chr = self
+                            .intern
+                            .name(csid)
+                            .chars()
+                            .next()
+                            .map(|c| c as u32)
+                            .unwrap_or(256);
+                        return Ok((Some(chr), Some(Catcode::Active)));
+                    }
+                    return Ok((None, None));
+                }
                 let expandable = match self.eqtb.slot(csid).clone() {
                     EqSlot::Undefined => {
                         let _ = self.sink.write16(format!(
@@ -1007,9 +1036,11 @@ saved_if_type: self.cur_if_type,
                     // 终结符 `\s__fp_expr_mark` 判进终止臂；此前把 noexpand cs
                     // 当 cat-13 字符 → 终结符漏判 → `` `#2 `` 对多字符 cs 报
                     // "Improper alphabetic constant" → fp 表达式解析 8682 错）。
-                    // 第十五刀的 `256+csid`/cat-13 臆测证伪。NTex 的 active char
-                    // 是 Char token（catcode Active），带 noexpand 标志时走下方
-                    // `return Ok((tok.charcode(), tok.catcode()))` 自然命中。
+                    // 第十五刀的 `256+csid`/cat-13 臆测证伪。（active char 走
+                    // 本函数顶部的 noexpand 臂回填字符码+cat13——它们是带
+                    // CS_ACTIVE_FLAG 的 ControlSeq token，见 input.rs Catcode::
+                    // Active 生成位；「Char token 自然命中」的旧注解与表示层
+                    // 不符，第十二刀更正。）
                     return Ok((None, None));
                 }
                 // 不可展开 cs（\relax、\hbox、字符型 cs …）→ 非字符

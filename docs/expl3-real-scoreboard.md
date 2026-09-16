@@ -416,3 +416,45 @@ latex.ltx l.98-102 自管同理）——br.tex 的 `\input{fonttext.ltx}` 文件
    任何"文件探测链"问题先核该原语在不在。
 3. **任务书的探针要先过 GT**：br.tex 这类探针若真 TeX 也过不了，复现的是真语义
    而非缺陷；"上一轮打出 OK"与 log 矛盾时信 log。
+
+## 第十二刀（2026-09-16）：`\ifcat\noexpand~\noexpand#1` 操作数归一——`\noexpand` 冻结位缺失致 `\DeclareRobustCommand` 全群误路（NFSS 定义群 80 条静默丢失根治）
+
+### 结论（一修复，一归因；靶2 系 knock-on）
+
+| 项 | 内容 |
+|---|------|
+| 任务命题（靶1） | NFSS 定义群静默丢失：`\IfFontSeriesContextTF`/`\normalfont`/`\fontfamily`/`\em`/`\emreset`/`\symbol`/`\boldmath`/`\unboldmath` 在 preload.ltx（l.14350）消费时全 undefined，定义区（l.5000-10500）却跑过 |
+| 真根因 | `get_x_char_operand`（cond.rs）的 undefined 臂**先于 noexpand 检查**执行：`\declare@robustcommand` 分派判别式 `\ifcat\noexpand~\noexpand#1`（l.1397-1398）两侧操作数（active `~`、参数位真名 cs `#1`）都带 `\noexpand` 前缀，双双命中 undefined 臂 → 各报一条 `Undefined control sequence` 且都落 relax/256 哨兵 → `\ifcat` 判 **T** → 全体 `\DeclareRobustCommand` 产品走 auxi（active char）误路，体写成 ifincsname 形而非 `foo␣` 星 csname 形 → 正确名字上从未定义（80 条定义位报错 + NFSS 群静默丢失） |
+| 修复 | cond.rs `get_x_char_operand` 顶部加 noexpand 臂（tex.web no_expand 语义：token 打标记后原样返回，**不查 eqtb、不报未定义错**）：active char（定义与否无关）→ 回填字符码 + `Catcode::Active`（tex.web get_x_token_or_active_char 的 `cur_chr:=cur_cs-active_base`）；真名 cs → relax/256 哨兵。同时更正 l.1039 旧注解（"active char 是 Char token 自然命中"与表示层不符——active char 是带 CS_ACTIVE_FLAG 的 ControlSeq，见 input.rs Catcode::Active 生成位） |
+| GT（pdftex 四例定案） | undefined-active vs undefined-cs=F；defined-active vs undefined-cs=F；undef-act vs def-act=T；undef-act vs macro=F。`\expandafter\meaning\noexpand~`→`\relax`（不报错） |
+| 靶2（ot1enc.def l.129 EOF 输入栈超限） | **knock-on 实证**：修复后该 fatal 消失（`\cdp@list` 栈超限 → 不再出现），无需独立修复。第十一刀的"独立最小复现通过 → 疑 knock-on"判断成立 |
+
+### 证据链（事件流，非对拍猜）
+
+1. **转录对位**：80 条 Undefined 全部是 `\DeclareRobustCommand` 产品定义位，且与 `\~` 报错交错（`~` cat13 判别式两臂都炸）。
+2. **前缀二分**：micro（latex.ltx l.1393-1460 鲁棒机器 + l.1805-1806 `\makeatletter`）独立复现；p12600 前缀干净、错误自 l.1805 区起。
+3. **GT 四例**（`&gtpro` fmt 即时探针）定案操作数归一表（见上）。
+4. **修复**：micro 探针 F/F/F、auxiii 星 csname 形正确；全量 `Undefined 80→0`、`Extra } 0`。
+5. **前后对照**：run1（修复前）= 80 Undefined + fatal 栈超限@`\cdp@list`（ot1enc EOF）；run3（修复后）= 0 Undefined + fatal 栈超限@`\@kernel@after@begindocument@before`（新墙，见下）。
+
+### 新阻塞点（第十三刀入口）：`\the⟨toks⟩` 在 edef/xdef 里的冻结语义缺失
+
+- **现场**：修复后首错 `! Missing endcsname inserted. <to be read again> \updefault`（1 条，恢复后继续），最终 fatal 栈超限在吸收 `\@kernel@after@begindocument@before` 替换文本时（残局推进到 l.12745-12777 区）。
+- **隔离探针（gam4 vs gt4，双方显式 catcode+`\toksdef\toks@=0`）**：`\edef\kb{\let\expandafter\noexpand\csname __hook env/document/begin\endcsname\noexpand\@empty}` + `\g@addto@macro\kb{\reinstall@nfss@defs\init@series@setup}` 后 `\meaning\kb`：
+  - GT（真 pdftex）：`macro:->\let \__hook env/document/begin \@empty \reinstall@nfss@defs \init@series@setup`——`\reinstall@nfss@defs` **原样保留**（`\the` 产物冻结，这正是 `\g@addto@macro` 惯用法 `\xdef#1{\the\toks@}` 的存在理由）。
+  - NTex：`macro:->\let\__hook env/document/begin\@emptyUPDEFx\init@series@setup`——**宏被再展开内联**。
+- **链式后果**：l.12705 `\g@addto@macro\@kernel@after@begindocument@before{\reinstall@nfss@defs\init@series@setup}` 把 `\reinstall@nfss@defs`（体 = 一摞 `\protected\def\upshape{…\fontshape\updefault\selectfont}`，l.12681-12702）当场执行，`\fontshape`（robust→星 csname→`\csname` 拼名）在 xdef 吸收区跑起来，csname 扫描吞到 `\updefault` 报 Missing endcsname；残局让后续同 cs 吸收（`\expandafter{#1#2}`）无界递归 → 栈超限。
+- **代码点位**：`exec_the`（save.rs）把 `\the` 产物 push 成裸 `InputFrame::TokenList`，edef/xdef 扫描器对帧内宏照常展开。修复方向：给 `\the`（至少 toks/宏 token 列表臂）产物以"不得再展开"的帧级标记（tex.web `ins_the_toks`/`end_the_toks` + `backed_up` 输入态是机制出处，落地时按 tex.web 对拍）。
+- **顺带观察（未追）**：(a) NTex `\meaning` 的 cs 后不打印分隔空格（GT `\let \foo \bar` vs NTex `\let\foo\bar`）；(b) NTex robust 产物 `\x@protect<cs>` 前缀比 GT 多一截（`\string`/escapechar 相关）。两处暂良性，但 `\meaning` 文本是 expl3 变体判据（第二十八刀 l.9386 IPN 教训），留观。
+
+### 方法论沉淀（探针陷阱复盘，两轮误诊自纠）
+
+1. **裸 INITEX 探针必须设全 catcode 序幕**：`\catcode`\{=1 \catcode`\}=2 \catcode`\#=6 \catcode`\@=11`——只设 `#` 不够。本轮 g3/g4/g5/gam2/m1 家族探针因缺 `{`=1 而全线假红（`\def` 体开括号被当 cat12 字面量 → "参数文本未闭合"/"Missing { inserted"）。第一轮误诊为"`#`=cat12 参数机制坏"、第二轮误诊为"edef 内带参宏调用坏"，**A/B 同探针跑 HEAD（git stash 二分）排除修复回归后**才定位到探针自身。 latex.ltx 上下文探针（micro/前缀）不受此坑——它自带序幕。
+2. **`\catcode`\#=6` 反引号-单字符 cs 形式在 NTex 本身是好的**（scan.rs `try_scan_backquote` 单字符 cs 臂 + `single_char_cs` 按 UTF-8 字符数），无须绕道十进制码。
+3. **GT `&gtpro` fmt 即时探针法**：`pdftex -interaction=nonstopmode -jobname=X '&gtpro' '\input probe.tex' '\end'` 秒级对拍；fmt 由 latex.ltx 生成故 catcode 与内核宏齐备，但探针若引用 fmt 截止点之后的宏（如 `\g@addto@macro`）须自带定义。
+4. **凡"修复后墙反而前移"先别当回归**：修复前"推进更远"可能是带病滑行（80 条定义位报错后 `\@kernel@after@begindocument@before` 处于空/半成品态，同一行恰好不炸）。对照口径应是**错误签名**而非停点行号。
+
+### 验收
+
+- `make check` **787 全绿**（785 基线 + 新增 2 测：`ifcat_noexpand_active_char_stays_cat13`/`ifcat_noexpand_undefined_cs_is_silent_relax`），EXIT=0。
+- ltxinit：`Undefined control sequence` **80→0**；ot1enc.def EOF 栈超限消失（knock-on 归因成立）；语义零回退清单各项不动。

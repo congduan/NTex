@@ -68,6 +68,50 @@ use super::*;
     }
 
     #[test]
+    fn ifcat_noexpand_active_char_stays_cat13() {
+        // GT pdftex 1.40.29 四例定案（第十二刀）：`\noexpand` 冻结的 active
+        // char 在 `\ifcat` 眼里仍是 catcode 13（定义与否无关）；真名 cs 是
+        // relax 哨兵（16 类）。latex.ltx l.1398 `\declare@robustcommand` 的
+        // auxi/auxiii 分派判别式 `\ifcat\noexpand~\noexpand#1` 依赖此语义：
+        // `~` 尚未定义时须判 F（否则全体 `\DeclareRobustCommand` 产物走
+        // active char 的 auxi 误路 → NFSS 定义群静默丢失）。
+        assert_eq!(
+            expand("\\catcode`\\~=13 \\ifcat\\noexpand~\\noexpand\\fooxyz T\\else F\\fi")
+                .unwrap()
+                .trim(),
+            "F"
+        );
+        // 两 active char（都未定义）→ 相等 → T
+        assert_eq!(
+            expand("\\catcode`\\~=13 \\ifcat\\noexpand~\\noexpand~ T\\else F\\fi")
+                .unwrap()
+                .trim(),
+            "T"
+        );
+        // 未定义 active char vs 已定义宏 → F（cat13 vs cs）
+        assert_eq!(
+            expand("\\catcode`\\~=13 \\def\\mac{xx}\\ifcat\\noexpand~\\noexpand\\mac T\\else F\\fi")
+                .unwrap()
+                .trim(),
+            "F"
+        );
+    }
+
+    #[test]
+    fn ifcat_noexpand_undefined_cs_is_silent_relax() {
+        // tex.web no_expand：`\noexpand` 冻结的未定义 cs **不报** Undefined
+        // control sequence（当 \relax/哨兵）。第十二刀前 undefined 臂先执行，
+        // latex.ltx 每个 `\DeclareRobustCommand` 定义点都误报两条
+        // （`\~` + 被定义名）。此处校验判定结果不因报错臂翻面。
+        assert_eq!(
+            expand("\\expandafter\\ifcat\\noexpand\\undefinedxyz\\noexpand~ T\\else F\\fi")
+                .unwrap()
+                .trim(),
+            "F"
+        );
+    }
+
+    #[test]
     fn ifnum_with_relations() {
         assert_eq!(expand("\\ifnum3>2 yes\\else no\\fi").unwrap(), "yes");
         assert_eq!(expand("\\ifnum2>3 yes\\else no\\fi").unwrap(), "no");
