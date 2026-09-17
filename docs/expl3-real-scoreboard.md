@@ -600,3 +600,29 @@ Missing number 0（修复后，GT 同）。
 - 领地：仅 `crates/ntex-core/src/expand/{scan.rs,primitive_font.rs}`；无临时
   插桩入库（诊断走既有 `write16`/`NTEX_COND_TRACE` 通道）。
 
+## 第十六刀（上）（54f68b7，2026-09-17）
+
+### 修复
+1. **expand_region 护栏**：子展开 process_one 递归不经主循环步数检查——l.16900
+   \@preamble \edef 无限循环 900s 无护栏。region_steps 计数（max_steps 同源）
+   + 栈深上限（入口+4096）。
+2. **more_name 条件深度护栏**：l3kernel quark 惯用法（\__file_quark_if_nil:nTF
+   不闭合 \if_meaning:w 对）在名字流内每次展开再入条件机——cond_stack 无限加深
+   直至 OOM/SIGKILL（1GB 内存实测 470s 被 kill）。深度 >64 终止名字。
+3. **\ifx 测试对齐 GT**：pdfTeX -ini 实证名字扫描遇 \ifx 就地求值、真支收进
+   名字（\a=nullfont）——测试改 \relax 终止名字。主控的"裸流守卫"（IfX
+   终止名字）被 GT 证伪后回滚——探针必须先过 GT 的又一次验证。
+
+### 进展
+ltxinit 主帧 64.4% → **88.4%**（l.20700 区）。
+
+### 新墙（第十七刀靶，已归因）
+`\prg_map_break:Nn` 的 **break 炸弹在 bytecode 执行器内单步不返回**
+（watchdog「疑似挂死 10441ms 无心跳」，\prg_map_break + 双 Bytecode 帧，
+last_tok=\char_set_catcode:nn）。break 跨帧跳转（tex.web炸栈到 \prg_break_point:
+标记再回卷）未在字节码执行器实现——与第十刀 \prg_return_* 解释器挂死同族，
+但战场在字节码层。
+
+### 方法论
+- 字节码帧（Bytecode(pc=N)）内的死循环不经过主循环 watchdog 步数计数——
+  「watchdog 停更 + 进程存活」= 卡在单步内部或子展开，两种护栏都要设。
