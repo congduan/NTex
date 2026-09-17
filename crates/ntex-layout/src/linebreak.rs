@@ -176,6 +176,200 @@ fn preprocess(hlist: &[Node]) -> Vec<BreakSpec> {
     out
 }
 
+// ============================================================================
+// M9 中文刀 5：汉字字间断点（`\cjkbreakmode`）
+// ============================================================================
+
+/// 汉字字间胶水的可拉伸量（0.5pt/处，同 XeTeX inter-character skip 的量级）。
+///
+/// 一行为 40 余字时全行可拉伸约 20pt——足以吸收「末字数不满一行」的余量，
+/// 使中文段落**两端对齐**而非参差右边缘。取值不宜大：每处拉伸量就是字间距
+/// 的实际变化量（0.5pt 上限 ≈ 字号的 4.5%，肉眼近于均匀）。
+pub const CJK_GLUE_STRETCH: i64 = ntex_core::register::SP_PER_PT / 2;
+
+/// 汉字字间胶水的可收缩量（0.05pt/处）。字间断点不会被选中成超宽行，
+/// 此量只用于兜住"禁则连成一片"的极端行（如连续 `）「` 组合）的溢出。
+pub const CJK_GLUE_SHRINK: i64 = ntex_core::register::SP_PER_PT / 20;
+
+/// 行首禁则：**不得位于行首**（等价：不得在其**前**断开）。
+///
+/// 判据落在 gap 上而非字符上——[`cjk_breakable`] 拿到的是相邻两字的码位，
+/// 故开/闭禁则都能双向落地（只按单个字符判定的宏方案做不到：行尾禁则需要
+/// 看后一个字符，而 `\catcode` active 宏只能看自己）。
+const CJK_NO_BREAK_BEFORE: &[u32] = &[
+    0x3001, // 、
+    0x3002, // 。
+    0x3009, // 〉
+    0x300B, // 》
+    0x300D, // 」
+    0x300F, // 』
+    0x3011, // 】
+    0x3015, // 〕
+    0x3017, // 〗
+    0x3019, // 〙
+    0x301B, // 〛
+    0xFF09, // ）
+    0xFF3D, // ］
+    0xFF5D, // ｝
+    0xFF0C, // ，
+    0xFF0E, // ．
+    0xFF1A, // ：
+    0xFF1B, // ；
+    0xFF01, // ！
+    0xFF1F, // ？
+    0xFF1D, // ＝
+    0x2019, // ’
+    0x201D, // ”
+    0x2014, // —
+    0x2026, // …
+];
+
+/// 行尾禁则：**不得位于行尾**（等价：不得在其**后**断开）。
+const CJK_NO_BREAK_AFTER: &[u32] = &[
+    0x3008, // 〈
+    0x300A, // 《
+    0x300C, // 「
+    0x300E, // 『
+    0x3010, // 【
+    0x3014, // 〔
+    0x3016, // 〖
+    0x3018, // 〘
+    0x301A, // 〚
+    0xFF08, // （
+    0xFF3B, // ［
+    0xFF5B, // ｛
+    0x2018, // ‘
+    0x201C, // “
+];
+
+/// 表意文字/假名（字间断点的一侧）。区段取 Unicode 15 的区块表；
+/// `0x2A700..=0x2EBE0` 一并覆盖扩展 C/D/E/F（中间的空洞是未分配平面区）。
+fn is_cjk_ideograph(cp: u32) -> bool {
+    matches!(cp,
+        0x3005 | 0x3007 | 0x303B          // 々 〇 〻
+        | 0x3040..=0x30FF                 // 平假名 + 片假名
+        | 0x31F0..=0x31FF                 // 片假名语音扩展
+        | 0x3400..=0x4DBF                 // CJK 扩展 A
+        | 0x4E00..=0x9FFF                 // CJK 基本区
+        | 0xF900..=0xFAFF                 // CJK 兼容表意文字
+        | 0x20000..=0x2A6DF               // 扩展 B
+        | 0x2A700..=0x2EBE0               // 扩展 C/D/E/F
+        | 0x2F800..=0x2FA1F               // 兼容表意文字补充
+    )
+}
+
+/// CJK 标点（含全角形式）。判据只为把标点纳入"两侧皆 CJK"的前提——
+/// 具体开/闭禁则由 [`CJK_NO_BREAK_BEFORE`]/[`CJK_NO_BREAK_AFTER`] 决定。
+fn is_cjk_punct(cp: u32) -> bool {
+    matches!(cp,
+        0x2014 | 0x2018 | 0x2019 | 0x201C | 0x201D | 0x2026
+        | 0x3001..=0x303F               // CJK 符号与标点
+        | 0xFF01..=0xFF20               // 全角 ！..＠
+        | 0xFF3B..=0xFF40               // 全角 ［..｀
+        | 0xFF5B..=0xFF65               // 全角 ｛..･
+    )
+}
+
+/// ASCII 字母/数字（拉丁词或数字 run 的内容）。码位可能超出 255（UTF-8 模式），
+/// 故先按 `< 0x80` 收窄再判——非 ASCII 一律不算"西文词"。
+fn is_ascii_alnum(cp: u32) -> bool {
+    cp < 0x80 && (cp as u8).is_ascii_alphanumeric()
+}
+
+/// 「断在其后」的 ASCII 符号（UAX #14 的 **SY** 类）。
+///
+/// 只取 `/`：这是本仓库实测有需求的一个（`Python/Java`）。UAX #14 的 SY 类还含
+/// `& % + < = > | ~ \` 等，本轮不铺开——铺开会让纯西文文档的断点集明显变宽，
+/// 而当前收益只在中西文混排的 `/`（路径、并列）处被验证过。**这是已知简化**。
+const BREAK_AFTER_SYMBOLS: &[u32] = &[0x2F]; // /
+
+/// 相邻两字之间是否可断（汉字字间位置 / 中西文交界 / SY 符号之后）。
+///
+/// 三类位置可断：
+/// 1. **CJK ↔ CJK**（汉字/假名/标点）：受开/闭禁则约束；
+/// 2. **CJK ↔ ASCII 字母数字**：拉丁词/数字**整体不拆**，断点只落在"汉字
+///    与拉丁词的**交界**"上；
+/// 3. **ASCII SY 符号（`/`）之后**接字母数字或 CJK：`Python/Java` → `Python/` ¦ `Java`。
+///
+/// 第 2、3 类不是可选项——XeTeX 的 `\XeTeXlinebreaklocale "zh"` 同样给出这两处
+/// 断点。实测（`…数据库原理、Python/Java开发`，6.5in / 11pt / FandolSong）：
+/// - 只给字间断点：`Python/Java开` 留成超宽行（**Overfull 20.6pt**）；
+/// - 补上第 2 类：断在 `Java` 后 → 仍超宽 9.6pt（`Python/Java` 整串无法再分）；
+/// - 再补上第 3 类：断在 `/` 后 → 长度恰好落在 `\hsize` 内（XeTeX 同款结果）。
+///
+/// 缺这两类断点的后果：一串西文（如 `Python/Java`）与前一汉字之间的**唯一**
+/// 断点距离可达数十 pt，折行器要么超宽出页、要么把整行拉散，二者皆不可接受。
+///
+/// 其余位置（ASCII 标点旁、空白旁、两个非 CJK 且前一非 SY 之间）一律留给 TeX
+/// 原有语义（西文侧本来就有空格胶水可断），本刀不改动。
+fn cjk_breakable(prev: u32, next: u32) -> bool {
+    let cjk = |cp: u32| is_cjk_ideograph(cp) || is_cjk_punct(cp);
+    if CJK_NO_BREAK_BEFORE.contains(&next) {
+        return false; // 标点不得起行
+    }
+    if CJK_NO_BREAK_AFTER.contains(&prev) {
+        return false; // 标点不得收行
+    }
+    // SY 之后：接字母数字或 CJK 才断（`15%` 后接 `，` 已被上面的禁则挡住）
+    if BREAK_AFTER_SYMBOLS.contains(&prev) {
+        return is_ascii_alnum(next) || cjk(next);
+    }
+    match (cjk(prev), cjk(next)) {
+        (true, true) => true,
+        // 中西文交界：仅当西文侧是字母/数字（= 词的内容）才断。
+        // `中,` / `中%` 之类（西文侧是标点）不在此列 → 标点不会单独起行。
+        (true, false) => is_ascii_alnum(next),
+        (false, true) => is_ascii_alnum(prev),
+        (false, false) => false,
+    }
+}
+
+/// 节点承载的码位（非字符类节点返回 `None`）。
+fn charcode_of(node: &Node) -> Option<u32> {
+    match node {
+        Node::Char { charcode, .. } | Node::Ligature { charcode, .. } => Some(*charcode),
+        _ => None,
+    }
+}
+
+/// 汉字字间胶水（width=0 → 字距不变；带 stretch/shrink → 行盒可对齐）。
+fn cjk_glue() -> Node {
+    Node::Glue {
+        // name=None：`preprocess` 只把无名胶水认作断点（与空格胶水同路）
+        name: None,
+        width: 0,
+        stretch: CJK_GLUE_STRETCH,
+        shrink: CJK_GLUE_SHRINK,
+        stretch_order: 0,
+        shrink_order: 0,
+    }
+}
+
+/// 在可断的汉字字间插入零宽胶水，返回新列表（原列表不动）。
+///
+/// 为什么是胶水而不是 `\penalty`：全汉字行除字间胶水外**没有任何可伸量**，
+/// 用 penalty 做断点则每行 badness 恒 10000（无胶水可伸 → tex.web §7 的
+/// `s<=0` 分支），折行器只能在坏度全同的候选里瞎选，结果要么行宽离谱要么
+/// 退回单条巨行。胶水方案让"断点"与"对齐余量"落在同一个节点上——与 XeTeX
+/// 的 inter-character skip 同款。
+///
+/// 调用点在段落关闭时（`close_paragraph`），与断字 discretionary 插入同层：
+/// 此时水平列表已完整、尚未折行，胶水既进得了断点集，也进得了行盒。
+pub fn insert_cjk_glue(nodes: &[Node]) -> Vec<Node> {
+    let mut out: Vec<Node> = Vec::with_capacity(nodes.len() + nodes.len() / 2);
+    for (i, node) in nodes.iter().enumerate() {
+        if i > 0 {
+            if let (Some(prev), Some(next)) = (charcode_of(&nodes[i - 1]), charcode_of(node)) {
+                if cjk_breakable(prev, next) {
+                    out.push(cjk_glue());
+                }
+            }
+        }
+        out.push(node.clone());
+    }
+    out
+}
+
 /// 拟合类（tex.web §16099-16105）：very_loose=0, loose=1, decent=2, tight=3。
 type FitClass = u8;
 const VERY_LOOSE: FitClass = 0;
@@ -743,5 +937,155 @@ mod tests {
             vec![char_of(10), char_of(10), disc(5), char_of(10), char_of(10)];
         hlist.push(fil_glue());
         assert_eq!(knuth_plass(&hlist, 100, 200, 100, false).0, vec![(0, 6)]);
+    }
+
+    // ---------- M9 中文刀 5：汉字字间断点 ----------
+
+    /// 汉字节点（**码位即语义**，宽度另给）——与 `char_of(w)`（宽度即语义、
+    /// 码位恒 65）刻意区分：字间断点判的是码位，几何量的是宽度。
+    fn han(cp: u32, width: i64) -> Node {
+        Node::Char {
+            font: FontId(0),
+            charcode: cp,
+            width,
+            height: 0,
+            depth: 0,
+        }
+    }
+
+    #[test]
+    fn cjk_block_ranges() {
+        // 表意文字：基本区/扩展 A/兼容/假名/々〇/扩展 B
+        for cp in [
+            0x4E2D, 0x56FD, 0x3400, 0x4DBF, 0xF900, 0x3042, 0x30A2, 0x3005, 0x20000,
+        ] {
+            assert!(is_cjk_ideograph(cp), "U+{cp:04X} 应为表意文字/假名");
+        }
+        // 非表意文字：ASCII、全角字母、标点、空白
+        for cp in [0x41, 0x7A, 0xFF21, 0xFF0C, 0x3002, 0x20, 0x2003] {
+            assert!(!is_cjk_ideograph(cp), "U+{cp:04X} 不应判为表意文字");
+        }
+        // 标点区段
+        for cp in [
+            0x3001, 0x3002, 0x300C, 0xFF0C, 0xFF08, 0x2014, 0x2026, 0x201C,
+        ] {
+            assert!(is_cjk_punct(cp), "U+{cp:04X} 应为 CJK 标点");
+        }
+        assert!(!is_cjk_punct(0x4E2D), "汉字不是标点");
+        assert!(!is_cjk_punct(0x41), "ASCII 不是标点");
+    }
+
+    /// 字间断点判定：CJK↔CJK 与 CJK↔拉丁词交界可断，且开/闭标点禁则双向落地。
+    #[test]
+    fn cjk_breakable_truth_table() {
+        let 中 = 0x4E2D;
+        let 文 = 0x6587;
+        let comma = 0xFF0C; // ，
+        let period = 0x3002; // 。
+        let open = 0xFF08; // （
+        let close = 0xFF09; // ）
+        let span = 0x3001; // 、
+                           // 汉字 ↔ 汉字：可断
+        assert!(cjk_breakable(中, 文));
+        assert!(cjk_breakable(文, 中));
+        // 标点不得起行：`X，` 之间不可断（逗号/句号/顿号/右括号同类）
+        for c in [comma, period, span, close] {
+            assert!(!cjk_breakable(中, c), "标点 U+{c:04X} 不得起行");
+            // 但标点之后可以断（`，中` → 下一行从汉字开始）
+            assert!(cjk_breakable(c, 中), "标点 U+{c:04X} 之后应可断");
+        }
+        // 标点不得收行：`（X` 之间不可断，但 `X（` 可以断
+        assert!(!cjk_breakable(open, 中), "开括号不得收行");
+        assert!(cjk_breakable(中, open), "开括号前应可断");
+        // 中西文交界：拉丁词不拆，断点落在「汉字 ↔ 拉丁/数字词」的交界上
+        assert!(cjk_breakable(中, 0x41), "汉字后接拉丁词应可断");
+        assert!(cjk_breakable(0x41, 中), "拉丁词后接汉字应可断");
+        assert!(cjk_breakable(中, 0x31), "汉字后接数字应可断");
+        assert!(cjk_breakable(0x39, 中), "数字后接汉字应可断");
+        // 西文侧是标点/空白 → 不插（标点不单独起行；空白旁留 TeX 原有语义）
+        assert!(!cjk_breakable(中, 0x2C), "汉字后接 ASCII 逗号不插断点");
+        assert!(!cjk_breakable(0x2C, 中), "ASCII 逗号后不插断点");
+        assert!(!cjk_breakable(中, 0x25), "汉字后接 % 不插断点");
+        assert!(!cjk_breakable(0x20, 中), "空白旁不插断点");
+        // 两侧皆非 CJK → 不插（西文自身断点仍由空格胶水提供）
+        assert!(!cjk_breakable(0x41, 0x42), "ASCII 之间不插断点");
+        // SY（`/`）之后：接字母数字或 CJK 可断，`Python/Java` → `Python/` ¦ `Java`
+        assert!(cjk_breakable(0x2F, 0x41), "`/` 后接拉丁应可断");
+        assert!(cjk_breakable(0x2F, 中), "`/` 后接汉字应可断");
+        assert!(!cjk_breakable(0x2F, 0x2C), "`/` 后接 ASCII 标点不插");
+        assert!(!cjk_breakable(0x2F, 0x2F), "`//` 之间不插");
+        assert!(
+            !cjk_breakable(0x41, 0x2F),
+            "拉丁后接 `/` 不插（禁则：不得断在 SY 前）"
+        );
+    }
+
+    /// `insert_cjk_glue`：只在可断字间插胶水，字序与字宽不受影响。
+    #[test]
+    fn insert_cjk_glue_places_zero_width_glue_between_han() {
+        let nodes = vec![
+            han(0x4E2D, 10),
+            han(0x6587, 10),
+            han(0xFF0C, 10), // ，：不得起行 → 其前不插
+            han(0x4E2D, 10),
+            glue(3, 0, 0),   // 用户自己的胶水（非字符）→ 不参与判定
+            han(0x3002, 10), // 。：不得起行 → 其前不插
+        ];
+        let out = insert_cjk_glue(&nodes);
+        // 期望：[中][g][文][，][g][中][用户胶水][。]
+        let kinds: Vec<&str> = out
+            .iter()
+            .map(|n| match n {
+                Node::Glue {
+                    width: 0, stretch, ..
+                } if *stretch == CJK_GLUE_STRETCH => "cjk",
+                Node::Glue { .. } => "user",
+                Node::Char { .. } => "char",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            vec!["char", "cjk", "char", "char", "cjk", "char", "user", "char"],
+            "{out:?}"
+        );
+        // 字间胶水是零宽可拉伸的
+        let Node::Glue {
+            width,
+            stretch,
+            shrink,
+            name,
+            ..
+        } = &out[1]
+        else {
+            panic!("第二项应为胶水：{out:?}");
+        };
+        assert_eq!(
+            (*width, *stretch, *shrink),
+            (0, CJK_GLUE_STRETCH, CJK_GLUE_SHRINK)
+        );
+        assert!(name.is_none(), "字间胶水需为无名胶水（断点判据）：{out:?}");
+    }
+
+    /// 断点确实进了折行器：同一串汉字在窄行宽下由 glue 断点折成多行。
+    #[test]
+    fn cjk_glue_yields_breakpoints() {
+        // 量级必须真实（sp）：汉字宽 11pt = 720896sp，hsize = 4 个汉字宽。
+        // 若把宽度取成小整数（如 10），字间胶水的 0.5pt 拉伸量相对 hsize 会大得
+        // 离谱——超宽行靠 0.05pt×N 的收缩即可吸收，坏度近 0，"一行装下"反而
+        // 比折两行便宜，测试就测不到断点了。
+        const W: i64 = 720_896; // 11pt
+        let hsize = 4 * W;
+        // 插入后下标：字 0、胶水 1、字 2、胶水 3、字 4、胶水 5、字 6、胶水 7、
+        // 字 8、胶水 9、字 10，再接 fil（11）。
+        let hlist: Vec<Node> = (0..6).map(|i| han(0x4E2D + i, W)).collect();
+        let mut hlist = insert_cjk_glue(&hlist);
+        hlist.push(fil_glue());
+        assert_eq!(hlist.len(), 12, "字间胶水应插 5 处：{hlist:?}");
+        let lines = knuth_plass(&hlist, hsize, 200, 100, false).0;
+        // 首行到第 4 字后的胶水（下标 7，其前累计宽 4W = hsize，badness 0）；
+        // 取第 5 字会到 5W > hsize，而可收缩量只有 3×0.05pt 远不够 → 不可取。
+        // 次行从该胶水后的字 8 起，到末尾强制断点（fil 前）
+        assert_eq!(lines, vec![(0, 7), (8, 12)], "应折成两行：{lines:?}");
     }
 }

@@ -1,0 +1,74 @@
+% Plain TeX Resume (纯原生 Plain TeX，无宏包依赖，可直接 tex 编译)
+% 编译方式：终端执行 tex resume.tex 生成 dvi，可转 pdf
+\baselineskip=14pt
+\parskip=0pt
+\parindent=0pt
+\pagestyle=empty
+\hsize=6.5in
+\vsize=9in
+
+% 自定义命令：大标题、二级标题、条目间距
+\def\mytitle#1{{\bf\large #1}\vskip 6pt\hrule\vskip 8pt}
+\def\mysection#1{{\bf\large #1}\vskip 4pt}
+\def\myitem{\vskip 3pt\itemindent=18pt}
+\def\blankline{\vskip 4pt}
+
+% 开始正文
+\begin}
+
+% 个人信息头部（居中）
+{\bf\huge 张三}\par
+\centerline{手机：138-XXXX-XXXX \quad 邮箱：zhangsan@email.com}
+\centerline{所在地：XX省XX市 \quad 求职意向：后端开发/数据分析}
+\vskip 12pt
+\hrule
+\vskip 10pt
+
+% 教育经历
+\mytitle{教育经历}
+\mysection{XX大学 \quad | \quad 计算机科学与技术 \quad | \quad 本科}
+\myitem{2022.09 -- 2026.06 \quad 在校学生}
+\myitem{学业成绩：专业前15\%，主修课程：数据结构、操作系统、计算机网络、数据库原理、Python/Java开发}
+\myitem{荣誉奖项：校级二等奖学金、优秀学生干部、学科竞赛校级三等奖}
+\blankline
+
+% 专业技能
+\mytitle{专业技能}
+\myitem{编程语言：熟练掌握 Python、Java、C/C++，了解 Go、SQL}
+\myitem{技术框架：熟悉 SpringBoot、Django 开发框架，掌握 RESTful 接口设计}
+\myitem{数据库技术：熟练使用 MySQL、Redis，掌握索引优化、事务管理、基础分库分表思路}
+\myitem{工具与运维：熟练使用 Git、Linux 常用命令，了解 Docker 基础部署、Nginx 配置}
+\myitem{综合能力：具备良好的代码规范、文档撰写能力、团队协作与问题排查能力}
+\blankline
+
+% 项目经历
+\mytitle{项目经历}
+\mysection{校园图书管理系统开发 \quad | \quad 后端开发}
+\myitem{2024.03 -- 2024.06}
+\myitem{项目简介：基于 SpringBoot + MySQL 开发的校园图书借阅管理平台，支持图书录入、借阅归还、逾期提醒、用户权限管理等核心功能，服务校内师生日常借阅需求。}
+\myitem{负责内容：独立完成后端接口开发、数据库表结构设计，实现图书库存校验、借阅规则拦截、日志记录功能；优化数据库查询语句，提升系统响应速度。}
+\myitem{项目成果：系统运行稳定，解决传统人工登记效率低、易出错的问题，大幅提升图书管理工作效率。}
+\blankline
+
+\mysection{个人数据分析可视化项目 \quad | \quad 独立开发}
+\myitem{2023.10 -- 2023.12}
+\myitem{项目简介：基于 Python 对公开数据集进行清洗、分析与可视化，完成数据统计、异常值处理、趋势分析与图表展示。}
+\myitem{负责内容：使用 Pandas、NumPy 完成数据预处理，通过 Matplotlib 绘制统计图表，输出完整数据分析报告。}
+\myitem{项目成果：熟练掌握数据分析全流程，具备独立处理数据、挖掘数据价值的能力。}
+\blankline
+
+% 实习经历
+\mytitle{实习经历}
+\mysection{XX科技有限公司 \quad | \quad 后端开发实习生}
+\myitem{2025.07 -- 2025.09}
+\myitem{负责协助后端接口迭代、简单业务功能开发，参与代码评审与bug修复；配合前端完成接口联调，整理开发文档。}
+\myitem{熟悉企业开发流程，掌握团队协作开发规范，提升了问题排查与业务理解能力。}
+\blankline
+
+% 自我评价
+\mytitle{自我评价}
+\myitem{性格踏实严谨，学习能力强，热爱技术开发，持续跟进行业新技术；具备扎实的计算机基础知识和项目实战经验，能够快速适应工作节奏。}
+\myitem{拥有良好的沟通能力和团队协作意识，对待工作认真负责，注重代码质量和工作效率，愿意从基础岗位积累经验，稳步成长。}
+
+\end}
+\endcode使用说明：该简历为纯 Plain TeX 原生代码，无任何宏包依赖，兼容性极强，直接通过 tex 编译器 即可编译生成文档。可自行替换个人信息、经历、技能等内容，适配校招、实习、社招通用场景。

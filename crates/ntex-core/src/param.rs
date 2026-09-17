@@ -129,11 +129,29 @@ pub enum ParamValue {
 
 /// 内部整数参数总数（TeX/e-TeX 内部整数，ETRIP/TRIP 冲刺；仅存储/回读）。
 /// 下标与 [`crate::expand::int_param_index`] 的映射一致。
-pub const MISC_INTS: usize = 66;
+pub const MISC_INTS: usize = 67;
 
 /// `\utfinputmode` 在 [`Params::misc`] 中的下标（M9 中文刀 2）：
 /// 源文件输入编码开关，0 = bytes（默认）、非 0 = UTF-8 解码。
 pub const MISC_UTF_INPUT_MODE: usize = 65;
+
+/// `\cjkbreakmode` 在 [`Params::misc`] 中的下标（M9 中文刀 5）：
+/// 汉字字间断点开关，0 = 关（默认，TeX 原语义——汉字之间无胶水、无断点）、
+/// 非 0 = 开（段落关闭时于可断的汉字字间插入零宽可拉伸胶水，等价 XeTeX 的
+/// inter-character skip；`\hsize` 装不下的中文行因此能折行而非 Overfull）。
+pub const MISC_CJK_BREAK_MODE: usize = 66;
+
+/// `\lefthyphenmin` 在 [`Params::misc`] 中的下标（tex.web `left_hyphen_min_code`
+/// = int_base+51，本地内部整数序号 10）。
+///
+/// 语义（tex.web §924 `hyphenate` 的 `found:` 标签、§927 的 `norm_min`）：
+/// 断点 `j`（`j` = 断点**左侧**的字母数）只在 `l_hyf <= j <= hn - r_hyf` 时保留；
+/// 赋值时按 `norm_min` 钳到 `[1, 63]`，故 `j = 0`（词首断点）恒不可达。
+pub const MISC_LEFT_HYPHEN_MIN: usize = 10;
+
+/// `\righthyphenmin` 在 [`Params::misc`] 中的下标（tex.web `right_hyphen_min_code`
+/// = int_base+52，本地内部整数序号 11）。语义见 [`MISC_LEFT_HYPHEN_MIN`]。
+pub const MISC_RIGHT_HYPHEN_MIN: usize = 11;
 
 /// 系统时间 → (日, 月, 年, 自午夜分钟数)（tex.web `date_and_time`；\day/\month/\year/\time）。
 /// 公历转换用 Howard Hinnant 的 days-from-civil 逆算法（无外部依赖）。
@@ -241,6 +259,11 @@ pub fn default_misc() -> [i64; MISC_INTS] {
         // M9 中文刀 2：\utfinputmode（源文件输入编码开关；initex 默认 0 = bytes——
         // 8-bit 逐字节语义原样保留，TRIP/ETRIP 口径零影响；置 1 后源码按 UTF-8
         // 解码，多字节序列合并为单个 21-bit 字符 token，>255 码位默认 letter）
+        0,
+        // M9 中文刀 5：\cjkbreakmode（汉字字间断点开关；initex 默认 0 = 关——
+        // TeX 原语义：汉字之间既无胶水也无断点，长中文行只能 Overfull 出页；
+        // 置 1 后段落关闭时于可断字间插入零宽可拉伸胶水，行得以折行并按字间
+        // 距对齐。默认关保证 TRIP/ETRIP/expl3 的逐字节口径零影响）
         0,
     ]
 }

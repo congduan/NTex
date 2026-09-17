@@ -422,6 +422,86 @@ mod tests {
         );
     }
 
+    // ---------- M9 中文刀 5：汉字字间断点（\cjkbreakmode） ----------
+
+    /// `\cjkbreakmode` 决定汉字之间有没有断点。
+    ///
+    /// 同一段 8 个汉字、`\hsize` 只装得下 5 个（测试度量：宽 = 1000 + 码位，
+    /// 「中」= 0x4E2D → 21013sp、「文」= 0x6587 → 26991sp；5 字 117021sp
+    /// ≤ 2pt = 131072sp < 6 字 144012sp）：
+    /// - **关**（默认，TeX 原语义）——汉字之间既无胶水也无 penalty，断不开，
+    ///   整段挤成一行并报 Overfull；
+    /// - **开**——字间胶水给出断点，折成两行且不报 Overfull。
+    #[test]
+    fn cjk_break_mode_controls_han_breakpoints() {
+        let src = |mode: u8| {
+            format!(
+                "\\utfinputmode=1\\cjkbreakmode={mode}\\parindent=0pt\\hsize=2pt \
+                 中文中文中文中文\\par"
+            )
+        };
+
+        let mut ts = Typesetter::with_metrics(metrics);
+        let off = ts.typeset(&src(0)).unwrap();
+        let off_t = ts.take_transcript();
+        assert_eq!(off.len(), 1, "关时汉字断不开，只应有一个行盒：{off:?}");
+        assert!(
+            off_t.contains("Overfull"),
+            "关时装不下的中文行应报 Overfull：{off_t}"
+        );
+
+        let mut ts = Typesetter::with_metrics(metrics);
+        let on = ts.typeset(&src(1)).unwrap();
+        let on_t = ts.take_transcript();
+        // 两行 = [行盒, \interlinepenalty, 基线胶水, 行盒]
+        assert_eq!(on.len(), 4, "开时应折成两行：{on:?}");
+        assert!(matches!(on[0], Node::Box(_)), "首节点应为行盒：{on:?}");
+        assert!(matches!(on[3], Node::Box(_)), "末节点应为行盒：{on:?}");
+        assert!(
+            !on_t.contains("Overfull"),
+            "开后字间可断，不应再报 Overfull：{on_t}"
+        );
+        // 断点落在汉字之间（装得下的第 5 字后）：首行 5 个字形、次行 3 个。
+        // 断点处那处字间胶水被**丢弃**（Tex §845：断点自身胶水不入行宽），
+        // 行内其余胶水被拉伸到 hsize——首行胶水宽 3513sp ≈ 0.0536pt，
+        // 正是「自然宽 117021sp → hsize 131072sp」的余量摊到 4 处字间。
+        let counts: Vec<usize> = on
+            .iter()
+            .filter_map(|n| match n {
+                Node::Box(b) => Some(
+                    b.children
+                        .iter()
+                        .filter(|c| matches!(c, Node::Char { .. } | Node::Ligature { .. }))
+                        .count(),
+                ),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(counts, vec![5, 3], "断点应落在第 5 个汉字之后：{on:?}");
+        let Node::Box(first) = &on[0] else {
+            panic!("首节点应为行盒：{on:?}");
+        };
+        assert_eq!(first.width, 2 * SP_PER_PT, "行盒应被 hpack 到 \\hsize");
+        let stretched: Vec<(i64, i64)> = first
+            .children
+            .iter()
+            .filter_map(|c| match c {
+                Node::Glue { width, stretch, .. } => Some((*width, *stretch)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            stretched,
+            vec![
+                (3513, 32768),
+                (3513, 32768),
+                (3512, 32768),
+                (3513, 32768)
+            ],
+            "行内字间胶水应被拉伸（每处 stretch 0.5pt）：{on:?}"
+        );
+    }
+
     /// 收缩不足：自然宽超 \hsize 且超出量 > 可收缩量 → 报 overfull。
     #[test]
     fn overfull_reported_when_shrink_insufficient() {
@@ -1052,6 +1132,111 @@ mod tests {
     fn typeset_hyphen(src: &str) -> Result<Vec<Node>> {
         let mut ts = Typesetter::with_metrics(metrics).with_space(|_| Glue::new(3000, 100000, 500));
         ts.typeset(src)
+    }
+
+    /// `\lefthyphenmin`/`\righthyphenmin` 过滤（tex.web §924 `found:`）：
+    /// 断点 `j` 仅在 `l_hyf <= j <= hn - r_hyf` 时保留。
+    ///
+    /// 这一条是 pdfTeX 实测锚定的（`\showhyphens`）：
+    /// - `\lefthyphenmin=2 \righthyphenmin=3` + `Java`（hn=4）→ 无断点
+    ///   （模式表给 2，但 2 号断点右片段只有 2 个字母 < 3 → 被清）；
+    /// - `\lefthyphenmin=1 \righthyphenmin=1` + `Java` → `Ja-va`（2 号保留）。
+    #[test]
+    fn hyphenmin_filters_breaks_by_fragment_size() {
+        // 直接构造单词的字母节点（charcode = 小写字母），绕开折行器只看断点。
+        let word = |s: &[u8]| -> Vec<Node> {
+            s.iter()
+                .map(|&c| Node::Char {
+                    font: FontId(0),
+                    charcode: u32::from(c),
+                    width: 1000,
+                    height: 6000,
+                    depth: 1500,
+                })
+                .collect()
+        };
+        // 模式表 ab5c → 唯一断点 2（"ab-cdef"）
+        let build = |letters: &[u8], l: i64, r: i64| {
+            let mut b = NodeBuilder::new(Fonts::Fn {
+                metrics: |_, _| (1000, 6000, 1500),
+                space: |_| Glue::ZERO,
+            });
+            b.patterns(b"ab5c".to_vec()).unwrap();
+            b.params.misc[ntex_core::param::MISC_LEFT_HYPHEN_MIN] = l;
+            b.params.misc[ntex_core::param::MISC_RIGHT_HYPHEN_MIN] = r;
+            b.hyphenate_paragraph(word(letters))
+                .iter()
+                .filter(|n| matches!(n, Node::Discretionary { .. }))
+                .count()
+        };
+        // hn=6：2 号断点在 [l_hyf, 6-r_hyf] 内与否决定去留
+        assert_eq!(build(b"abcdef", 1, 1), 1, "l=1,r=1：2 在 [1,5] 内 → 保留");
+        assert_eq!(build(b"abcdef", 2, 3), 1, "l=2,r=3：2 在 [2,3] 内 → 保留");
+        assert_eq!(build(b"abcdef", 3, 1), 0, "l=3：左片段 2 < 3 → 清");
+        assert_eq!(build(b"abcdef", 1, 5), 0, "r=5：右片段 4 < 5（j<=1）→ 清");
+        // 词过短：hn=4 < l_hyf+r_hyf=5 → tex.web `if hn<l_hyf+r_hyf then goto done1`
+        assert_eq!(build(b"abcd", 2, 3), 0, "hn < l_hyf+r_hyf：整个词不尝试断字");
+    }
+
+    /// 异常词表同样受 `l_hyf`/`r_hyf` 限制（tex.web `found:` 是两条路径的公共
+    /// 汇合点，模式表与 `\hyphenation` 都要过同一个清理循环）。
+    ///
+    /// pdfTeX 实测（`\showhyphens`）：
+    /// - `\lefthyphenmin=1 \righthyphenmin=1` + `\hyphenation{-abcd-}` → `abcd`
+    ///   （词首 0 与词尾 4 都被清——`norm_min` 保证 `l_hyf >= 1`，词首断点恒不可达）
+    /// - 同参数 + `\hyphenation{a-b-c-d-e}` → `a-b-c-d-e`（1..4 全在 [1, 4] 内）
+    /// - `\lefthyphenmin=2 \righthyphenmin=3` + `\hyphenation{ab-cde}` → `ab-cde`
+    #[test]
+    fn hyphenmin_filters_exception_dictionary_breaks() {
+        let word = |s: &[u8]| -> Vec<Node> {
+            s.iter()
+                .map(|&c| Node::Char {
+                    font: FontId(0),
+                    charcode: u32::from(c),
+                    width: 1000,
+                    height: 6000,
+                    depth: 1500,
+                })
+                .collect()
+        };
+        let with_exception = |letters: &[u8], breaks: Vec<usize>, l: i64, r: i64| {
+            let mut b = NodeBuilder::new(Fonts::Fn {
+                metrics: |_, _| (1000, 6000, 1500),
+                space: |_| Glue::ZERO,
+            });
+            b.hyphenation(vec![(letters.to_vec(), breaks)]).unwrap();
+            b.params.misc[ntex_core::param::MISC_LEFT_HYPHEN_MIN] = l;
+            b.params.misc[ntex_core::param::MISC_RIGHT_HYPHEN_MIN] = r;
+            let out = b.hyphenate_paragraph(word(letters));
+            out.iter()
+                .enumerate()
+                .filter(|(_, n)| matches!(n, Node::Discretionary { .. }))
+                .map(|(i, _)| i)
+                .collect::<Vec<_>>()
+        };
+        // \hyphenation{-abcd-} → 断点 [0, 4]；l=r=1 时两者都在 [1, 3] 之外 → 全清
+        assert_eq!(
+            with_exception(b"abcd", vec![0, 4], 1, 1),
+            Vec::<usize>::new(),
+            "词首/词尾断点应被 l_hyf/r_hyf 清掉"
+        );
+        // \hyphenation{a-b-c-d-e} → 断点 [1,2,3,4]；l=r=1 → 全保留
+        // 输出 = [a,disc,b,disc,c,disc,d,disc,e]：断点 k 落在第 k 个字母之后，
+        // 即下标 2k-1（k=1..4）→ [1,3,5,7]
+        assert_eq!(
+            with_exception(b"abcde", vec![1, 2, 3, 4], 1, 1),
+            vec![1, 3, 5, 7],
+            "1..4 全在 [l_hyf, hn-r_hyf] 内，应全部保留"
+        );
+        // \hyphenation{ab-cde} → 断点 [2]；l=2,r=3 时 2 ∈ [2, 5-3] → 保留
+        assert_eq!(with_exception(b"abcde", vec![2], 2, 3), vec![2], "2 号断点应保留");
+
+        // 同词表但 r_hyf=4：右片段须 >= 4，2 号断点被清（hn=5 → j <= 1）
+        assert_eq!(
+            with_exception(b"abcde", vec![2], 2, 4),
+            Vec::<usize>::new(),
+            "r_hyf=4 时 2 号断点右片段 3 < 4，应被清"
+        );
     }
 
     #[test]

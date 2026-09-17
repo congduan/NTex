@@ -1,0 +1,61 @@
+%=====================================================================
+% resume1-driver.tex —— 「环境注入」驱动：不改 resume1-plain.tex 一个字，
+%                       只在其前面把运行环境补齐，再 \input 目标文件。
+%
+% 用法：
+%   cargo run -p ntex-dvi -- resume1-driver.tex resume1.dvi
+%   cargo run -p ntex-pdf -- resume1.dvi resume1.pdf
+%
+% 目标文件是「朴素 plain TeX」源（LLM 手写体）：自己不做字体设置，
+% 且夹带若干 LaTeX 习惯写法。本驱动只补运行环境（相当于给 TeX 一份
+% "预载格式"），目标文件内容零改动：
+%   1) \utfinputmode=1 —— UTF-8 直写。缺它中文按 8-bit 逐字节走 → 全部缺字；
+%   2) Fandol Song     —— 把 plain 的正文/粗体字体指向含 CJK 的 OpenType 字体
+%                         （~/.ntex-fonts/FandolSong-Regular.otf，ntex-font 的
+%                         find_otf 链自动定位）；
+%   3) \large/\huge    —— plain 无此二宏（LaTeX 尺寸宏），补上以免报错；
+%   4) \itemindent     —— 同上（TeX/plain 都没有它，是 LaTeX 的 dimen 寄存器，
+%                         由 latex.ltx 以 \newdimen 定义）；
+%   5) \pagestyle      —— 同上；目标文件写 `\pagestyle=empty`，按"吞掉本行"处理，
+%                         免得报错后把 `=empty` 当正文排进版面。
+% 其余 LaTeX 习惯写法（\begin} / \end} 等）交给引擎的错误恢复兜住。
+%=====================================================================
+
+% ---------- 1) UTF-8 输入 ----------
+\utfinputmode=1
+
+% ---------- 1b) 汉字字间断点 ----------
+% 缺它中文长行没有任何断点（TeX 原语义：汉字之间既无胶水也无 penalty），
+% 只能整段排成一行 Overfull 出页。打开后排版器在可断字间插零宽可拉伸胶水
+% （等价 XeTeX 的 inter-character skip），中文段落正常折行且字间距对齐。
+% 默认关是引擎侧口径——TRIP/ETRIP 的逐字节一致性要求断点不得凭空出现。
+\cjkbreakmode=1
+
+% ---------- 2) 中文字体：接管 plain 的正文/粗体 ----------
+% 11pt 与仓库里 resume-plain.tex 的中文口径一致；Fandol 无粗体件，
+% \bf 与正文同轮廓（与 resume-plain.tex 的已知简化相同）。
+\font\tenrm=FandolSong-Regular at 11pt
+\ifx\tenrm\nullfont \font\tenrm=cmr10 \fi
+\font\tenbf=FandolSong-Regular at 11pt
+\ifx\tenbf\nullfont \font\tenbf=cmbx10 \fi
+\font\tenlrg=FandolSong-Regular at 14.4pt
+\ifx\tenlrg\nullfont \font\tenlrg=cmr12 \fi
+\font\tenhuge=FandolSong-Regular at 20.74pt
+\ifx\tenhuge\nullfont \font\tenhuge=cmr17 \fi
+% 关键：真正**切换当前字体**。plain 预载结束时当前字体是 cmr10（文字/标点
+% 默认走它），只定义 \tenrm 标识符不够——目标文件正文没有 `\rm` 语句。
+\tenrm
+
+% ---------- 3) LaTeX 习惯写法的最小垫片 ----------
+% 尺寸宏（10pt 基数的 LaTeX 口径：\large=14.4pt、\huge=20.74pt）
+\def\large{\tenlrg}
+\def\huge{\tenhuge}
+% LaTeX 的 dimen 寄存器（TeX/plain 均无 \itemindent；此处按 latex.ltx 同款
+% \newdimen 定义，目标文件只对它赋值，没有读取方——纯为消解报错）
+\newdimen\itemindent
+% `\pagestyle=empty`：吃掉到行尾（行尾在 TeX 里就是 \par，故用 \par 当定界符；
+% 需 \long，否则"参数里的 \par"会报 Paragraph ended before ...）
+\long\def\pagestyle=#1\par{\relax}
+
+% ---------- 4) 交给目标文件 ----------
+\input resume1-plain.tex

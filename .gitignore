@@ -48,6 +48,9 @@ tmp_pngcmp.py
 /mu1*.pdf
 /revision-test.dvi
 
+# resume1 现场复现产物（源与 driver 入库，DVI/PDF 为派生件）
+/resume1.dvi
+
 # 备料字体暂存（环境只读主目录；正式入库字体经 make fixtures 流程）
 /.local-fonts/
 /demo-multi.*

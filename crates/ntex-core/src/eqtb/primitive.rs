@@ -677,4 +677,10 @@ define_primitives! {
     // >255 码位默认 letter（XeTeX 惯例）。门控只作用于字节→token 入口
     // （Source 帧 + \read），宏体 token 流不受影响。
     UtfInputMode,
+    // M9 中文刀 5：\cjkbreakmode（内部整数参数，misc 66）——汉字字间断点开关。
+    // 0 = 关（默认，TeX 原语义：汉字之间无胶水、无断点，长中文行只能 Overfull）；
+    // 非 0 = 开：段落关闭时在**可断**的汉字字间插入零宽可拉伸胶水（XeTeX 的
+    // inter-character skip 同款机制），折行器据此获得断点、行盒据此对齐。
+    // 断点与 glue 都只作用于排版节点流，token 层语义（含 \catcode/输入编码）不变。
+    CjkBreakMode,
 }

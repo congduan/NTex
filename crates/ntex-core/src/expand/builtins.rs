@@ -4,7 +4,7 @@
 /// TRIP 冲刺补充 13 个标准参数原语；LaTeX 兼容第八刀补 pdfTeX 引擎探测/兼容族
 /// 12 项；M9 中文刀 2 补 \utfinputmode），供 `register_builtins` 注册与
 /// `tests.rs` 的一致性测试共用。
-pub(crate) const BUILTINS: [(&str, Primitive); 415] = [
+pub(crate) const BUILTINS: [(&str, Primitive); 416] = [
     ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -539,6 +539,9 @@ pub(crate) const BUILTINS: [(&str, Primitive); 415] = [
             // M9 中文刀 2：源文件输入编码开关（0=bytes 默认，1=UTF-8 解码；
             // 只影响字节→token 入口，TRIP/ETRIP 的 8-bit 口径零影响）
             ("utfinputmode", Primitive::UtfInputMode),
+            // M9 中文刀 5：汉字字间断点开关（0=关 默认，非 0=开）。默认关是
+            // 硬口径——断点会改变折行结果，TRIP/ETRIP/expl3 必须零影响。
+            ("cjkbreakmode", Primitive::CjkBreakMode),
 ];
 
 /// `Primitive → 规范名`（`BUILTINS` 反查；tests.rs

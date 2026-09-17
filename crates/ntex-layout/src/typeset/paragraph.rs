@@ -14,6 +14,14 @@ impl NodeBuilder {
         if !self.patterns.is_empty() || !self.hyph_exceptions.is_empty() {
             children = self.hyphenate_paragraph(children);
         }
+        // M9 中文刀 5：汉字字间断点（`\cjkbreakmode`）
+        // 默认关——TeX 原语义里汉字之间既无胶水也无断点，长中文行只能
+        // Overfull 出页；打开后在**可断**字间插零宽胶水（含行首/行尾禁则），
+        // 折行器据此折行、行盒据其拉伸对齐。与断字同层：都在水平列表完整、
+        // 折行尚未开始的当口改列表。
+        if self.params.misc[ntex_core::param::MISC_CJK_BREAK_MODE] > 0 {
+            children = crate::linebreak::insert_cjk_glue(&children);
+        }
         // 段落末尾：裁剪尾部可丢弃节点 + 追加 `\parfillskip`（默认 0pt plus 1fil，
         // 末行无限拉伸；`\parfillskip=0pt` 时末行保持自然宽度）。
         let pf = self.params.parfillskip;
@@ -134,7 +142,19 @@ impl NodeBuilder {
     /// M4-6 断字：对连续字母 run（同字体、ASCII 字母）调用模式表计算断点，
     /// 在断点后插入 discretionary 节点（`pre` 为连字符，`post`/`replace` 为空——
     /// 字母留在主列表，未断时连字符不计宽，断点处行尾补连字符）。
+    ///
+    /// `\lefthyphenmin`/`\righthyphenmin` 过滤（tex.web §924 `hyphenate` 的
+    /// `found:` 标签）：断点 `j`（`j` = 断点左侧字母数）仅在
+    /// `l_hyf <= j <= hn - r_hyf` 时保留，异常词表与模式表**同受此限**——
+    /// tex.web 两条路径都汇到同一个 `found:`，先 `hyf[0..l_hyf-1]:=0`
+    /// 再 `hyf[hn-j]:=0 (j=0..r_hyf-1)`。故 `\hyphenation{-abcde-}` 标出的
+    /// 词首/词尾断点在 `l_hyf,r_hyf >= 1` 时一律被清掉（`l_hyf` 经 `norm_min`
+    /// 钳到 `>= 1`，词首断点恒不可达）；词长 `hn < l_hyf + r_hyf` 直接不断字。
     fn hyphenate_paragraph(&self, children: Vec<Node>) -> Vec<Node> {
+        // tex.web `norm_min`：`<=0` → 1、`>=63` → 63（见 §927）
+        let norm_min = |v: i64| -> usize { v.clamp(1, 63) as usize };
+        let l_hyf = norm_min(self.params.misc[ntex_core::param::MISC_LEFT_HYPHEN_MIN]);
+        let r_hyf = norm_min(self.params.misc[ntex_core::param::MISC_RIGHT_HYPHEN_MIN]);
         let mut out: Vec<Node> = Vec::with_capacity(children.len());
         let n = children.len();
         let mut i = 0;
@@ -162,17 +182,19 @@ impl NodeBuilder {
                             _ => unreachable!("run 内必为 Char"),
                         })
                         .collect();
+                    let hn = letters.len();
                     // 异常词优先（精确匹配小写字母）；否则走模式表
-                    let breaks = match self.exception_breaks(&letters) {
+                    let raw = match self.exception_breaks(&letters) {
                         Some(b) => b,
+                        None if hn < l_hyf + r_hyf => Vec::new(), // 词过短：tex.web `hn<l_hyf+r_hyf`
                         None => self.patterns.hyphenate(&letters),
                     };
+                    // tex.web `found:`：仅保留 `l_hyf <= j <= hn - r_hyf`
+                    let breaks: Vec<usize> = raw
+                        .into_iter()
+                        .filter(|&j| j >= l_hyf && j + r_hyf <= hn)
+                        .collect();
                     let mut bi = 0;
-                    // 异常词允许词首断点（`-q-` 的首 `-`）：首字母前插 discretionary
-                    if breaks.first() == Some(&0) {
-                        out.push(self.make_discretionary(run_font));
-                        bi = 1;
-                    }
                     for (k, node) in children[run_start..j].iter().enumerate() {
                         out.push(node.clone());
                         // 断点 = 第 k 个字母之后（位置 k+1）：插入 discretionary
@@ -191,7 +213,8 @@ impl NodeBuilder {
         out
     }
 
-    /// 异常词表查词：小写字母精确匹配 → 返回其允许断点（可含 0 = 词首、len = 词尾）。
+    /// 异常词表查词：小写字母精确匹配 → 返回其允许断点（可含 0 = 词首、len = 词尾，
+    /// 由调用方的 `l_hyf`/`r_hyf` 过滤，与 tex.web `found:` 同口径）。
     fn exception_breaks(&self, letters: &[u8]) -> Option<Vec<usize>> {
         self.hyph_exceptions
             .iter()

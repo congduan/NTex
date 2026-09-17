@@ -4,6 +4,14 @@
 > 进展随冲刺迭代更新。本文件是 ETRIP 原语状态的**唯一状态源**（plan.md §6 引用）。
 > **不符规范项待办全集**（ETRIP + TRIP 硬差距 + D 组简化点 + A5，按 P0/P1/P2 优先级）见
 > **plan.md §6 待办清单**（2026-08-26 盘点）。
+> 2026-09-17 备忘：新增 **NTex 扩展原语** `\cjkbreakmode`（misc 66，M9 中文刀 5）——
+> 汉字字间断点开关，**默认 0 = 关**。它不是 e-TeX/ETRIP 原语（etrip.tex 不涉及），
+> 故 A/B/C 组清单条目与进度统计**均不变**；登记于此只为照 §4 六步链留痕：
+> param.rs（MISC_CJK_BREAK_MODE + MISC_INTS 66→67）/ eqtb/primitive.rs（变体）/
+> expand/builtins.rs（注册，415→416）/ expand/free.rs（→ misc 下标）四处接入，
+> 语义在 `ntex-layout`（`linebreak.rs::insert_cjk_glue` + `typeset/paragraph.rs`
+> 的 `close_paragraph`）。判据：断点会改折行结果 → 默认关是 **TRIP/ETRIP 逐字节
+> 口径的硬要求**，参考对照前不得改为默认开。
 > 2026-09-09 备忘：scan 两刀——`scan_glue` 补 `RegKind::Dimen` 臂（226c177）+
 > `scan_int` 补 dimendef'd cs 数字上下文（04d2023）——只动寄存器别名扫描路径，
 > A/B/C 组原语清单条目不受影响，无组状态变更。
