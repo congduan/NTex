@@ -626,3 +626,17 @@ last_tok=\char_set_catcode:nn）。break 跨帧跳转（tex.web炸栈到 \prg_br
 ### 方法论
 - 字节码帧（Bytecode(pc=N)）内的死循环不经过主循环 watchdog 步数计数——
   「watchdog 停更 + 进程存活」= 卡在单步内部或子展开，两种护栏都要设。
+
+### 第十七刀补充取证（40218b0）
+
+- tests_break17 4 测全绿（793→797）：跨帧 cs 定界、3 层 break 炸弹 unwind、
+  不等名重发——**测试环境语义全部正确**（含 GT 内容流对拍修正两处错误期望：
+  未定界收集吞前导空格 → [XY]Z；#5 无条件输出 → XSKIPENDAFTER）。
+- 88.4% 挂死复现稳定（ltx23：422s、steps=11,180,000 停更、同栈指纹）。
+  栈 = Source(主帧 685828) + Bytecode(pc=122)+Bytecode(pc=98)+Bytecode(pc=0)，
+  **无实参帧** → 挂死在 bytecode 执行器的宏调用链内部（疑似 pc 恢复/返回地址
+  处理：子帧结束后上层 pc 未前进），非实参扫描、非跨帧定界。
+- 挂点在 latex.ltx l.20751 一带（\@ifnextchar [\@topnewpage\@floatplacement，
+  输出例程区）；last_tok 交替 \prg_map_break:Nn / \char_set_catcode:nn。
+- 下一步：bytecode 执行器「宏调用返回后上层 pc 前进」逻辑审查（Call 帧的
+  ret 语义），或用 NTEX_BREAK17 事件环抓 11.18M 步前最后 40 事件。
