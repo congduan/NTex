@@ -1160,16 +1160,28 @@ impl Expander {
     }
 
     /// TEMP DEBUG（第十七刀取证）：卡死前最近事件环。`NTEX_BREAK17` 开启时记录。
+    ///
+    /// 事件环挂在 [`WatchdogShared::trace`] 上，而看门狗整体 `not(wasm32)` 门控
+    /// （见该结构体注释）——故 WASM 侧本设施随之为空实现。调用点**不**做 cfg
+    /// 门控（macros.rs 取参数扫描 / mod.rs 组扫描等热路径就地埋点），换取的
+    /// 代价是此处在 wasm 上退化为一次函数调用，而非到处铺 cfg。
     fn diag_trace(&self, line: String) {
-        if std::env::var_os("NTEX_BREAK17").is_none() {
-            return;
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = line;
         }
-        if let Some(wd) = &self.watchdog {
-            let mut t = wd.trace.lock().unwrap_or_else(|p| p.into_inner());
-            if t.len() >= 256 {
-                t.remove(0);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if std::env::var_os("NTEX_BREAK17").is_none() {
+                return;
             }
-            t.push(line);
+            if let Some(wd) = &self.watchdog {
+                let mut t = wd.trace.lock().unwrap_or_else(|p| p.into_inner());
+                if t.len() >= 256 {
+                    t.remove(0);
+                }
+                t.push(line);
+            }
         }
     }
 
