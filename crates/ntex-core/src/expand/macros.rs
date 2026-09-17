@@ -154,6 +154,11 @@ impl Expander {
                 self.collect_delimited_arg(delim, def.params.long, &name)?
             };
             args.push(arg);
+            if self.arg_scan_recovered {
+                // Paragraph-ended/extra-} 恢复已插入终止材料；tex.web 不会
+                // 继续把它当作下一个参数的开头扫描。
+                return Ok(Vec::new());
+            }
         }
         Ok(args)
     }
@@ -176,6 +181,7 @@ impl Expander {
     /// TeX：non-long 宏参数扫描中遇 `\par` → "Paragraph ended before \<name>
     /// was complete." 恢复：报错 + 跳过本行剩余 + `\par` 放回（TRIP L357）。
     fn recover_par_in_argument(&mut self, name: &str, tok: Token) -> Result<()> {
+        self.arg_scan_recovered = true;
         let _ = self.sink.write16(format!(
             "! Paragraph ended before \\{name} was complete.\n\
              <to be read again>\n                   \\par\n"
@@ -185,6 +191,18 @@ impl Expander {
         self.skip_to_line_end_after_par()?;
         self.unread(tok);
         Ok(())
+    }
+
+    /// tex.web `macro_call` 的「额外右花括号」恢复：保留被拒的 `}` 供后续
+    /// 主输入处理，却必须在它**上方**插入真正的 `\par` 来终止当前 non-long
+    /// 实参扫描。此前复用了 [`Self::recover_par_in_argument`]，把同一枚 `}`
+    /// 回推后又当作恢复材料读取；定界实参的残流遂可从 `\edef` 扫描器重放，
+    /// 在 LaTeX NFSS `#1<#2>` 链形成 handler 内 fetch 自旋。
+    fn recover_extra_end_group_in_argument(&mut self, tok: Token) {
+        self.arg_scan_recovered = true;
+        self.unread(tok);
+        let par = Token::control_sequence(self.intern.intern("par"));
+        self.unread(par);
     }
 
     /// 逐 token 匹配输入与定界符序列（用于前导定界符 P_1）。
@@ -373,12 +391,12 @@ impl Expander {
                      argument that might be the root of the problem. But if\n\
                      your `}}' was spurious, just type `2' and it will go away.\n"
                 ));
-                self.unread(tok);
                 if long {
+                    self.unread(tok);
                     buf.push(Token::control_sequence(self.intern.intern("par")));
                     return Ok(Arc::from(buf));
                 }
-                self.recover_par_in_argument(name, tok)?;
+                self.recover_extra_end_group_in_argument(tok);
                 return Ok(Arc::from(buf));
             }
             // non-long 参数中 `\par`（非定界符位置）→ "Paragraph ended"（含组内）
@@ -567,7 +585,7 @@ impl Expander {
                     "! Argument of \\{name} has an extra }}.\n\
                      <to be read again>\n                   }}\n"
                 ));
-                self.unread(tok);
+                self.recover_extra_end_group_in_argument(tok);
                 Ok(Arc::from([]))
             }
             _ => {

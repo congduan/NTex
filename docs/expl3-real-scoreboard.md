@@ -716,3 +716,28 @@ INITEX 的花括号 catcode 必须显式设置，避免把探针定义扫描错�
 **验收结论：鞍具修正和 800 项门禁完成；引擎修复与越过 88.4% 尚未完成。**
 当前证据只排除了「本组条件尾递归证明耗尽帧泄漏」的归因，未确定真实主墙根因。
 后续应从真实挂点继续取证，不得删除未消费 token 或恢复已证伪的 Call/Ret 断言。
+
+### （四）l.20302 NFSS 错误恢复残流重放（2026-09-17）
+
+**现场定案**：`NTEX_HANDLER_TRACE=1` 在 bytecode 护栏触发时转储最近 32 次
+dispatcher 入口及 `read_floor`。尾项为 **`\edef(floor=0)`**，主帧
+`pos=703057 / 776142`；故自旋在 `\edef` 的展开扫描内，非 `expand_region`
+边界越界（也非 `collect_delimited_arg` 的定界匹配活锁）。
+
+**根因与修复**：non-long 宏实参遇额外 `}` 时，旧恢复先回推该 `}`，再复用
+Paragraph-ended 路径；后者会把同一枚 `}` 重读并作为所谓恢复材料再次回推。
+而 `collect_args` 又继续扫描下一个参数，于是 NFSS
+`\extract@rangefontinfo#1<#2>` / `\check@single#1>#2<#3` 的残流在 `\edef`
+handler 内循环重放。现改为：在被拒 `}` 上方压入真实 `\par`、标记本次实参扫描
+已恢复，并立即结束整次 macro_call（不扫描后续参数、不展开残缺宏体）；恢复材料交回
+外层输入。
+
+**回归与验收**：`tests_bytecode18` 新增最小 `#1<#2>` + `\edef` + 残流场景，
+字节码/解释器双轨均 16 步到达 `DONE`。`CARGO_BUILD_JOBS=1 make check` 为
+**801 passed / 0 failed / 5 ignored**。同一 200 秒、`NTEX_BC_GUARD=1000000`
+真实复现不再出现护栏，已越过 `pos=703057`；未得到 `[LATEX-LTX-DONE]`，最终仍因
+未执行 `\dump` 拒绝保存格式。
+
+**新墙指纹（下一刀）**：越墙后的首个稳定错误族为 lthooks 的
+`! Argument of \__hook_make_name:w has an extra }.`（伴随 nullfont 缺字符）；
+本轮只登记，不把它与 NFSS 恢复修复混刀。

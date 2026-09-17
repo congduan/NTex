@@ -542,6 +542,13 @@ fn bytecode_guard_limit() -> u64 {
     })
 }
 
+/// handler 进入轨迹开关。仅定位帧内自旋时开启：记录最近 32 个进入 dispatcher
+/// 的控制序列及其读取下限，待 bytecode 护栏触发时统一转储，避免正常运行刷屏。
+fn handler_trace_enabled() -> bool {
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    *CACHE.get_or_init(|| std::env::var_os("NTEX_HANDLER_TRACE").is_some())
+}
+
 #[cfg(test)]
 thread_local! {
     static MAX_STEPS_OVERRIDE: std::cell::Cell<Option<u64>> =
@@ -831,6 +838,9 @@ pub struct Expander {
     bc_guard_active: bool,
     /// 当前 dispatch 内经历的 fetch 循环次数（含 handler 的参数扫描）。
     bc_guard_dispatches: u64,
+    /// 第十八刀（四）handler 进入环：`NTEX_HANDLER_TRACE` 开启时记录，
+    /// `read_floor` 是判定子展开是否越界读取的必要现场。
+    handler_trace: Option<VecDeque<(u32, usize)>>,
     /// 主循环步数镜像（结构化 trace 的 `step` 字段用；不参与 .fmt 序列化）。
     /// 由 `run()` 每步同步——未开 trace 时仅一次整数赋值，无分配。
     steps: u64,
@@ -872,6 +882,9 @@ pub struct Expander {
     outer_pending: bool,
     /// `\long` 前缀：下一个 `\def` 等定义的宏允许参数中含 `\par`。
     long_pending: bool,
+    /// 当前 macro_call 的实参扫描是否已由「Paragraph ended」类恢复中止。
+    /// tex.web 此时不再继续扫描后续参数、更不展开该宏体；恢复材料交回外层输入。
+    arg_scan_recovered: bool,
     /// `\fontdimen` 覆盖表：(font_id, 参数号) → 值（sp）。TFM 度量在排版层，
     /// 此处仅存覆盖项；无覆盖读回 0（后续接入 TFM 时回退真实参数）。
     /// （第九刀：附每字体最大参数号缓存——越界判定 O(1)，见 fontdimens.rs。）
@@ -1010,6 +1023,7 @@ impl Expander {
             bc_guard_trace: VecDeque::with_capacity(BC_GUARD_TRACE_CAP),
             bc_guard_active: false,
             bc_guard_dispatches: 0,
+            handler_trace: handler_trace_enabled().then(|| VecDeque::with_capacity(32)),
             steps: 0,
             shown_trace_mode: None,
             trace_suppress: 0,
@@ -1023,6 +1037,7 @@ impl Expander {
             protected_pending: false,
             outer_pending: false,
             long_pending: false,
+            arg_scan_recovered: false,
             fontdimens: FontDimens::new(),
             hyphenchars: HashMap::new(),
             delcodes: HashMap::new(),
@@ -1931,6 +1946,16 @@ impl Expander {
                     Some(csid) => format!("\\{}", self.intern.name(csid)),
                     None => format!("{tok:?}"),
                 });
+                // 第十八刀（四）：控制序列真正进入 dispatcher 的现场。`fetch` 内的
+                // 实参/定义扫描会吞掉大量 token，却不会再次经过这里；故护栏转储的
+                // 尾项就是仍占着 handler、尚未向主循环交还 token 的原语/宏。
+                let read_floor = self.read_floor;
+                if let (Some(csid), Some(trace)) = (tok.csid(), self.handler_trace.as_mut()) {
+                    if trace.len() == BC_GUARD_TRACE_CAP {
+                        trace.pop_front();
+                    }
+                    trace.push_back((csid, read_floor));
+                }
                 if bytecode_guard_limit() != 0 {
                     if let Some(csid) = tok.csid() {
                         if self.bc_guard_trace.len() == BC_GUARD_TRACE_CAP {
@@ -2405,11 +2430,14 @@ impl Expander {
         // 的原因（外层 normal 未被 brief `get_token` 时期的恢复覆盖）。
         let save_status = self.scanner_status;
         let save_warning = self.warning_index;
+        let save_arg_recovery = self.arg_scan_recovered;
         self.warning_index = Some(csid);
         self.scanner_status = ScannerStatus::Matching;
+        self.arg_scan_recovered = false;
         let r = self.call_macro_inner(csid, def);
         self.scanner_status = save_status;
         self.warning_index = save_warning;
+        self.arg_scan_recovered = save_arg_recovery;
         r
     }
 
@@ -2450,6 +2478,12 @@ impl Expander {
         // 调用点须匹配并吞掉（tex.web macro_call `if info(r)<>end_match_token`）——
         // 见 collect_args n==0 臂注释。
         let args = self.collect_args(csid, &def)?;
+        if self.arg_scan_recovered {
+            // tex.web macro_call 的 `long_state=outer_call`/Paragraph-ended 恢复
+            // 直接跳到调用结束：宏体不能在残缺实参上继续展开，否则会再次读取
+            // 已回推的恢复材料而重放同一残流。
+            return Ok(());
+        }
         // M2 双轨：字节码优先（未编译则回退解释器轨道）
         if self.use_bytecode {
             if let Some(code) = &def.code {
@@ -2842,6 +2876,14 @@ impl Expander {
             .collect::<Vec<_>>()
             .join(" ");
         eprintln!("[bc-guard] recent-cs: {recent}");
+        if let Some(trace) = &self.handler_trace {
+            let recent = trace
+                .iter()
+                .map(|&(csid, floor)| format!("\\{}(floor={floor})", self.intern.name(csid)))
+                .collect::<Vec<_>>()
+                .join(" ");
+            eprintln!("[bc-guard] handler-trace: {recent}");
+        }
         eprintln!("[bc-guard] stack: {}", self.debug_stack_summary());
     }
 

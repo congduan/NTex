@@ -77,6 +77,25 @@ fn bytecode_single_break_bomb() {
     assert_eq!(bc, "XENDAFTER", "单轮 break 炸弹（第十七刀语义锁）");
 }
 
+/// 第十八刀（四）：non-long `#1<#2>` 扫描撞到额外 `}` 时，恢复 `\par`
+/// 必须压在被拒的 `}` 上方，使当前 handler 收场；若把 `}` 自身重放成恢复
+/// 材料，随后 `\edef` 展开会再次进入同一实参链而永不交还 token。
+#[test]
+fn bytecode_delimited_arg_extra_end_group_recovery_terminates() {
+    let src = concat!(
+        "\\def\\range#1<#2>{[R]}",
+        // `}` 后立刻换行：Paragraph-ended 恢复只能吃当前行，不能把断言
+        // 哨兵一并作为 run-away 残流吞掉。
+        "\\edef\\captured{\\range A}<B>}\n",
+        "\\captured DONE"
+    );
+    let bc = run_track18(src, true);
+    let ip = run_track18(src, false);
+    assert_eq!(bc, ip, "额外 }} 恢复不得令双轨分叉");
+    assert!(bc.contains("[R]"), "宏体应在恢复后完成：{bc:?}");
+    assert!(bc.contains("DONE"), "残流必须向前推进到哨兵：{bc:?}");
+}
+
 /// 双轨运行 + 输出收集（tests.rs 的 expand 双轨对拍取自同款）。
 fn run_track18(src: &str, use_bytecode: bool) -> String {
     let mut e = if use_bytecode {
