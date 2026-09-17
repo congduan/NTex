@@ -3,20 +3,22 @@
 > 依据：[idea.md](file:///Users/congduan/Desktop/code/_vibe_coding_/NTex/idea.md) 架构 + 性能决策（字节码预编译 / 深 .fmt / CJK 整形捷径 / 并行 / 增量）
 > 原则：**正确性优先、性能架构前置、基准先行**
 
-## 当前进度（2026-09-12）
+## 当前进度（2026-09-17）
 
-> **状态源**：LaTeX 兼容 → [docs/latex-feasibility.md](docs/latex-feasibility.md)（活文档）；
+> **状态源**：LaTeX/expl3 兼容战役 → [docs/expl3-real-scoreboard.md](docs/expl3-real-scoreboard.md)（**事实源**）；
+> lvt 官方跑分 → [docs/expl3-lvt-scoreboard.md](docs/expl3-lvt-scoreboard.md)；
+> LaTeX 兼容 → [docs/latex-feasibility.md](docs/latex-feasibility.md)（活文档）；
 > 格式预载 → [docs/plain-format-survey.md](docs/plain-format-survey.md)；
 > 输出例程 → [docs/output-routine-survey.md](docs/output-routine-survey.md)；
 > 技术债 → [docs/KNOWN-SIMPLIFICATIONS.md](docs/KNOWN-SIMPLIFICATIONS.md)。
 > 本节只放**一句话摘要**，细节一律去状态源。
 
-**当前焦点：LaTeX 渲染链路（唯一主线）**
+**当前焦点：LaTeX/expl3 兼容战役（唯一主线）**
 
 ```
 [✅] plain.tex 预载（G0–G3，1241 行全通；\newif 端到端与 pdfTeX 一致）
-[🟡] expl3 加载          ← 爆栈已修（5001→35 帧，2026-09-12）；新阻塞：iow_wrap 实参组未闭合（载入 ~90%）
-[⬜] latex.ltx 主体加载   ← 被 expl3 尾段（iow_wrap/fp 变体簇）阻塞
+[🟡] expl3 载入          ← 全文载入走通（[LOAD-DONE]+DVI 落盘，第七~九刀）；载入期错误 2492→4（残差 3，NTex 独有仅 1，不阻断）
+[🟡] latex.ltx 主体加载   ← 第十~十七刀推进 64.4%→88.4%（l.20700 输出例程区，make check 797 全绿）；当前阻塞 = bytecode 执行器 Call/ret 挂死（第十八刀进行中）
 [⬜] \documentclass/article.cls
 [⬜] 结构宏（\maketitle/\section）+ NFSS 字体
 ```
@@ -45,9 +47,11 @@
 | M5 增量计算 | 🟡 阶段一\~五完成（2026-09-03：0099b1f→7601d1d→c2a2418→b585864→55bcb09→14f7bc7）：段级增量重算（POC）→ 可回滚段快照 · edit 单路径化 → 端到端增量排版（连续编辑逐位一致）→ 排版层依赖判定（宏体编辑省重排）→ 复用判定开销削减（**增量墙钟翻正**：release 120 段文档改正文 4.3x / 改宏体 1.1x，增量 < 全量）；**仍存边界** + **阶段六待办**见 §7 |
 | 输出端           | 🟢 正式 PDF 后端可用（`ntex-pdf`：DVI → PDF 直出 + Type1 嵌入，替换临时 Helvetica 切片；demo 两页与 dvipdfmx 渲染一致；023ff2a 修 DVI 字体选择按字体号 k 归位——demo.dvi → PDF 不再报"未定义字体"）；**多字体嵌入 2026-09-04 验证**（CM 全家族 6 族 8 页 demo-multi 全链：cmr10/cmbx10/cmss12/cmtt10/cmmi10/cmsy10，`/FontFile` 逐字节等于 PFB、`/BaseFont` 取 PFB `/FontName`；每页 `/Resources /Font` 只列本页实际引用字体、跨页复用同一字典对象无冲突；PFB 查找链补 `NTEX_TYPE1_DIR` + 备料根兜底；`cargo test -p ntex-pdf` 11 用例全绿） |
 
-**下一步**：主线 = **LaTeX 渲染链路**（见顶部「当前进度」）——先解 expl3 加载期的
-输入栈无终止条件，再逐层推进 latex.ltx → article.cls → 结构宏 → 真 LaTeX 版面 PDF。
-并行线：M5 阶段六（§7）、TRIP/ETRIP 收尾（P0 剩 M1-13 错误恢复通用机制，
+**下一步**：主线 = **LaTeX/expl3 兼容战役**（见顶部「当前进度」，细节以
+docs/expl3-real-scoreboard.md 为准）——第十八刀先破 bytecode 执行器 Call/ret
+挂死（l.20751 输出例程区 `\@ifnextchar`），越过 88.4% 后剩 ltoutput 尾段/
+lttagging/ltfinal 至 `\dump`（约 11.6%）→ article.cls → 结构宏 → 真 LaTeX 版面 PDF。
+并行线：M5 阶段六（§7）、TRIP 语义 diff 收尾（P0 剩 M1-13 错误恢复通用机制，
 `back_input`/`\errhelp`）、格式预载 G4/G5。
 性能 backlog P1 消分配已落地（展开吞吐 +61%），`expand-throughput`（release）
 469ms / 42.6 万调用/s 已入库。

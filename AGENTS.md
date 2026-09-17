@@ -162,6 +162,9 @@ make tauri   # Tauri 桌面壳（wasm 渲染形态）：先构建 ntex-wasm→ui
 ## 8. 里程碑一览（当前焦点）
 
 M0 地基 ✅ → M1 展开内核 🟡（TRIP 未全绿）→ M2 字节码 🟡（吞吐 1.12x 未达 2x）→
-M3 排版核心 ✅（DVI 逐字节一致）→ M4 数学 + e-TeX ✅（**ETRIP 冲刺进行中**）→
+M3 排版核心 ✅（DVI 逐字节一致）→ M4 数学 + e-TeX ✅（ETRIP 收尾按 §6 降级口径）→
 输出端 🟢（ntex-pdf 正式后端）→ M5~M9 未开始。
-**当前唯一主线：ETRIP 冲刺**（A/B 组原语基本完成 → `etrip.log` 逐字节比对收尾）。
+**当前唯一主线：LaTeX/expl3 兼容战役**（第十～十七刀：expl3 全文载入走通、载入期
+错误 2492→4，latex.ltx 推进至 88.4% = l.20700 输出例程区；当前阻塞 = bytecode
+执行器 Call/ret 挂死，第十八刀进行中——状态源
+[docs/expl3-real-scoreboard.md](docs/expl3-real-scoreboard.md)）。
