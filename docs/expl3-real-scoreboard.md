@@ -640,3 +640,79 @@ last_tok=\char_set_catcode:nn）。break 跨帧跳转（tex.web炸栈到 \prg_br
   输出例程区）；last_tok 交替 \prg_map_break:Nn / \char_set_catcode:nn。
 - 下一步：bytecode 执行器「宏调用返回后上层 pc 前进」逻辑审查（Call 帧的
   ret 语义），或用 NTEX_BREAK17 事件环抓 11.18M 步前最后 40 事件。
+
+
+## 第十八刀：尾递归鞍具校准（2026-09-17）
+
+**本轮未修改引擎；不能把 3 项回归测试转绿记作 88.4% 主墙已修。**
+
+### 根因机理更正
+
+简报中的 O(n) 爆栈样例为 `\ifnum\count0<20000\expandafter\iter\fi`，
+上界数字与 `\expandafter` 之间没有空格。`scan_int` 的 `get_x_token` 在数字
+尚未结束时先展开 `\expandafter`，此时条件帧还是 Evaluating；`\fi` 走
+`insert_relax`，回压尚未消费的 `\relax/\fi`，递归宏却排在它们前面继续执行。
+所以 `TokenList(1tok,pos=0)` 是**活 token**，不是已耗尽的调用者帧。
+
+`exec_expandafter` 已通过 `push_frame → drain_depleted_frames` 在回压前
+回收耗尽纯帧。重复调用 drain 不改变结果，删除 pos=0 帧则会破坏 TeX 语义。
+字节码当前只有 Emit/EmitArg/End，没有独立 Call/Ret 指令；历史「Call/ret
+恢复错误」是待证假说，不能由本组尾递归样例推出。
+
+### pdfTeX 对照（TeX Live 2026，1.40.29，INITEX）
+
+```tex
+\catcode123=1 \catcode125=2
+\count0=0
+\def\iter{\advance\count0 by 1 \ifnum\count0<20000\expandafter\iter\fi}
+\iter\immediate\write16{DONE=\the\count0}\end
+```
+
+`pdftex -ini -interaction=nonstopmode` 实测：以上紧邻形式报
+`TeX capacity exceeded, sorry [input stack size=10000]`（退出 1）；
+仅在 `20000` 后加一个空格即输出 `DONE=20000`（退出 0）。
+对照文件与原始日志：`/tmp/d18-oracle/{tight,space}.{tex,stdout,log}`。
+INITEX 的花括号 catcode 必须显式设置，避免把探针定义扫描错误当引擎差异。
+
+### 修改点与长程实测
+
+- 保留 `tests_bytecode18` 三项正式测试，两个上界后补空格；调用点由
+  `concat!("\\iter", "DONE")` 改为 `concat!("\\iter ", "DONE")`，
+  避免控制词被拼成未定义的 `\iterDONE`。原测试未真正执行循环，不能作为
+  正式爆栈证据；临时 probe 的 `\iter|DONE` 才有合法调用边界。
+- 双轨均验证完整输出；每个主循环单步边界检查栈深 ≤64、总步数 ≤500 万，
+  最后检查条件栈闭合。单轮锚点也增加解释器对拍。
+- 删除临时 `probe18.rs` 及其模块注册；没有提高 MAX_INPUT_STACK 或添加绕过。
+
+| 用例 | 迭代数 | 字节码 / 解释器步数 | 主循环边界栈深峰值（双轨相同） |
+|---|---:|---:|---:|
+| 三层 break 炸弹循环 | 20000（每轮 3 次） | 820010 / 820010 | 6 |
+| 跨帧 cs 定界实参循环 | 20000 | 480010 / 480010 | 5 |
+| 单轮 break 炸弹锚点 | 1 | 25 / 25 | 3 |
+
+`cargo test -p ntex-core tests_bytecode18 -- --nocapture`：3/3 通过。
+栈深为主循环边界观测值，不冒充单步内部每次 push 的峰值。
+
+
+### 完整门禁与真实复现
+
+- `CARGO_BUILD_JOBS=1 make check`：**800 passed / 0 failed / 5 ignored**，
+  基线 797 + 本组三项，既有测试未删除（日志 `/tmp/d18-check.log`）。
+- 门禁结束后单独 `cargo build --release -p ntex-dvi`，成功后才启动复现；
+  build/test/ltxinit 三者未并行。测试均使用 dev profile。
+- 使用简报原命令（`NTEX_TFM_DIR=$HOME/.ntex-fonts`、两个 input-path、
+  `--no-plain --dump /tmp/fp11/latex6.fmt /tmp/fp11/ltxinit.tex`），
+  外包 `timeout 500`；原始日志 `/tmp/d18-ltxinit.log`。
+- **退出 124（超时）**，`time` 实测 real=503.65s / user=136.88s / sys=6.32s。
+  最后主帧仍为 **pos=685828 / 776142（88.4%，未推进）**，
+  steps=**11180000**。没有 `[LATEX-LTX-DONE]`，不能认定 `.fmt` 成功。
+- 最后 watchdog 指纹：last_tok=`\char_set_catcode:nn`，缓存状态中的
+  last_tok=`\prg_map_break:Nn`；主帧之后仍是
+  `Bytecode(pc=122) | Bytecode(pc=98) | Bytecode(pc=0)`。
+  本次没有越过旧墙，故**没有可登记的新墙**。
+- 运行中抽样 RSS=365472 KiB、loadavg≈1；超时结束后观测到
+  loadavg=46.30/31.32/14.09，超过红线后未再启动重型作业。
+
+**验收结论：鞍具修正和 800 项门禁完成；引擎修复与越过 88.4% 尚未完成。**
+当前证据只排除了「本组条件尾递归证明耗尽帧泄漏」的归因，未确定真实主墙根因。
+后续应从真实挂点继续取证，不得删除未消费 token 或恢复已证伪的 Call/Ret 断言。

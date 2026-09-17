@@ -165,6 +165,6 @@ M0 地基 ✅ → M1 展开内核 🟡（TRIP 未全绿）→ M2 字节码 🟡�
 M3 排版核心 ✅（DVI 逐字节一致）→ M4 数学 + e-TeX ✅（ETRIP 收尾按 §6 降级口径）→
 输出端 🟢（ntex-pdf 正式后端）→ M5~M9 未开始。
 **当前唯一主线：LaTeX/expl3 兼容战役**（第十～十七刀：expl3 全文载入走通、载入期
-错误 2492→4，latex.ltx 推进至 88.4% = l.20700 输出例程区；当前阻塞 = bytecode
-执行器 Call/ret 挂死，第十八刀进行中——状态源
+错误 2492→4，latex.ltx 仍停在实测 pos=685828（88.4%）；第十八刀校正尾递归
+鞍具，make check 800 全绿，真实主墙根因待定、尚未修复——状态源
 [docs/expl3-real-scoreboard.md](docs/expl3-real-scoreboard.md)）。
