@@ -155,6 +155,13 @@ demo1 六刀 + 输出例程刀 2/3/5 的修复登记；全部已提交，留作�
 
 ## 维护记录
 
+- 2026-09-17：第十八刀尾递归鞍具 ✅ 已修（d222043，已用 `git show --stat` 核对）：
+  `tests_bytecode18` 补数字终止空格及 `\iter` 调用边界，三项双轨回归使门禁
+  797→800。pdfTeX 对照证明无空格的 `20000\expandafter\iter\fi` 同样爆栈；
+  `TokenList(pos=0)` 是未消费 token，不能作为耗尽帧删除。本轮没有新增简化或
+  修改引擎。**真实 latex.ltx 主墙仍待修**：500 秒超时，pos=685828（88.4%）、
+  steps=11180000；细节见 [真实跑分 §第十八刀](expl3-real-scoreboard.md#第十八刀尾递归鞍具校准2026-09-17)。
+
 - 2026-09-02：建清单（58 处标记扫描归档）；数学内 `$$`、`\mkern/\mskip` mu 上下文已修（3a2cb63）
 - 2026-09-02：内部量 no-op 统一、`\right` 缺配对恢复、数学模式组结束 Missing $（9b0bc69）
 - 2026-09-02：fraction 原语族挂载 + Ambiguous 恢复式（721646c）；\tracingcommands2 可选 `=` 赋值开启追踪（6cc16f0）；mode_name internal vertical（483b640）；\if 求值 {true}/{false}（3a5ec1e）
