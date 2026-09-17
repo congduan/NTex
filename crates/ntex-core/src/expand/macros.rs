@@ -1147,10 +1147,20 @@ impl Expander {
             // process_one 递归不经过主循环步数检查，latex.ltx l.16900
             // \@preamble \\edef 曾在此无限循环 900s）。
             let mut region_steps: u64 = 0;
+            // 第十八刀（三）：区域展开的每轮都是完整 dispatch（fetch →
+            // process_token）。它会在 handler 内反复交还 token，因而不同于
+            // fetch 内自旋，必须在此另计；否则主循环 steps 停住而护栏失明。
+            let bc_guard_limit = bytecode_guard_limit();
             let depth_floor = depth + 8; // 正常 \\edef 嵌套极浅；+8 为嵌套 \\edef 余量
             while self.process_one()? {
                 region_steps += 1;
                 self.region_steps = self.region_steps.saturating_add(1);
+                if bc_guard_limit != 0 && region_steps > bc_guard_limit {
+                    self.dump_bytecode_guard(region_steps, bc_guard_limit);
+                    return Err(Error::invalid_input(format!(
+                        "字节码区域 dispatch 超限（{region_steps} 步；NTEX_BC_GUARD={bc_guard_limit}）"
+                    )));
+                }
                 if region_steps > max_steps() || self.stack.len() > depth_floor + 4096 {
                     return Err(Error::invalid_input(format!(
                         "区域展开步数/栈深超限（\\edef/\\write 内疑似死循环）；步 {} 栈深 {}（入口 {}）",

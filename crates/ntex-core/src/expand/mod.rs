@@ -74,6 +74,9 @@ const MAX_INPUT_STACK: usize = 10000;
 /// 取 64K 段 ≈ 256 KB，仅诊断开启时分配。
 const MACRO_TRACE_CAP: usize = 1 << 16;
 
+/// 字节码 dispatch 护栏的最近控制序列容量（第十八刀（三）现场取证）。
+const BC_GUARD_TRACE_CAP: usize = 32;
+
 /// `Params.misc` 下标（与 `free::int_param_index` 对齐）：`\deadcycles`、
 /// `\maxdeadcycles`、`\outputpenalty`（输出例程刀 1 的 fire_up 点火侧语义）。
 const DEAD_CYCLES_IDX: usize = 25;
@@ -525,6 +528,20 @@ pub(crate) fn max_steps() -> u64 {
     })
 }
 
+/// 字节码 dispatch 护栏。默认关闭，避免给正常展开热路径增加计数；显式设置
+/// `NTEX_BC_GUARD=N` 后，单次 [`Expander::fetch`] 内连续 N 次分发仍未交还 token
+/// 即中止并转储现场。这专门覆盖主循环步数无法观察的帧内自旋。
+fn bytecode_guard_limit() -> u64 {
+    static CACHE: OnceLock<u64> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        std::env::var("NTEX_BC_GUARD")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .filter(|&v| v > 0)
+            .unwrap_or(0)
+    })
+}
+
 #[cfg(test)]
 thread_local! {
     static MAX_STEPS_OVERRIDE: std::cell::Cell<Option<u64>> =
@@ -808,6 +825,12 @@ pub struct Expander {
     region_steps: u64,
     /// 最近一次处理的 token（watchdog/单步超时诊断用；不参与 .fmt 序列化）。
     last_tok: Option<String>,
+    /// 第十八刀（三）字节码护栏的最近控制序列环；仅开启护栏时写入。
+    bc_guard_trace: VecDeque<u32>,
+    /// 当前一个 process_one dispatch 是否仍在 handler 内；fetch 据此跨调用累计。
+    bc_guard_active: bool,
+    /// 当前 dispatch 内经历的 fetch 循环次数（含 handler 的参数扫描）。
+    bc_guard_dispatches: u64,
     /// 主循环步数镜像（结构化 trace 的 `step` 字段用；不参与 .fmt 序列化）。
     /// 由 `run()` 每步同步——未开 trace 时仅一次整数赋值，无分配。
     steps: u64,
@@ -984,6 +1007,9 @@ impl Expander {
             ended: false,
             region_steps: 0,
             last_tok: None,
+            bc_guard_trace: VecDeque::with_capacity(BC_GUARD_TRACE_CAP),
+            bc_guard_active: false,
+            bc_guard_dispatches: 0,
             steps: 0,
             shown_trace_mode: None,
             trace_suppress: 0,
@@ -1878,6 +1904,25 @@ impl Expander {
 
     /// 单步处理一个 token；返回 false 表示输入耗尽。
     fn process_one(&mut self) -> Result<bool> {
+        if bytecode_guard_limit() == 0 {
+            return self.process_one_inner();
+        }
+        // handler 可经 `expand_region` 嵌套调用 process_one；内层必须沿用外层
+        // dispatch 的计数，不能重置，否则恰好会漏掉 `\edef` 中的活锁。
+        let outer_dispatch = !self.bc_guard_active;
+        if outer_dispatch {
+            self.bc_guard_active = true;
+            self.bc_guard_dispatches = 0;
+        }
+        let result = self.process_one_inner();
+        if outer_dispatch {
+            self.bc_guard_active = false;
+        }
+        result
+    }
+
+    /// `process_one` 的实际 dispatcher；护栏 wrapper 使 handler 内的 fetch 也纳入同一计数。
+    fn process_one_inner(&mut self) -> Result<bool> {
         match self.fetch()? {
             None => Ok(false),
             Some((tok, noexpand)) => {
@@ -1886,6 +1931,14 @@ impl Expander {
                     Some(csid) => format!("\\{}", self.intern.name(csid)),
                     None => format!("{tok:?}"),
                 });
+                if bytecode_guard_limit() != 0 {
+                    if let Some(csid) = tok.csid() {
+                        if self.bc_guard_trace.len() == BC_GUARD_TRACE_CAP {
+                            self.bc_guard_trace.pop_front();
+                        }
+                        self.bc_guard_trace.push_back(csid);
+                    }
+                }
                 // M4-5 对齐状态机拦截（tex.web §749-823；详见 align.rs）：
                 // preamble 阶段分类收集模板 token；body raw 阶段拦 `&`/`\span`/
                 // `\cr`/`\crcr`（Insert v_j）与 `}` 平衡（对齐组闭括号）。
@@ -2748,6 +2801,50 @@ impl Expander {
         parts.join(" ")
     }
 
+    /// 字节码护栏转储：最多三个活动字节码帧，逐帧列出 pc 邻域反汇编与近期 cs 环。
+    fn dump_bytecode_guard(&self, dispatches: u64, limit: u64) {
+        eprintln!("[bc-guard] dispatch 超限：连续 {dispatches} 次未返回 token（limit={limit}）");
+        for (ordinal, (code, pc)) in self
+            .stack
+            .iter()
+            .rev()
+            .filter_map(|frame| match frame {
+                InputFrame::Bytecode { code, pc, .. } => Some((code, *pc)),
+                _ => None,
+            })
+            .take(3)
+            .enumerate()
+        {
+            let start = pc.saturating_sub(8);
+            let end = (pc + 9).min(code.len());
+            let disasm = (start..end)
+                .map(|at| {
+                    let marker = if at == pc { '>' } else { ' ' };
+                    let word = code.words()[at];
+                    let text = match Instruction::decode(word) {
+                        Instruction::Emit { token } => self.render_token(token),
+                        Instruction::EmitArg { n } => format!("#{n}"),
+                        Instruction::End => "end".to_owned(),
+                    };
+                    format!("{marker}{at:>4}: {text} [{word:#018x}]")
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            eprintln!(
+                "[bc-guard] frame#{ordinal} pc={pc}/{}: {disasm}",
+                code.len()
+            );
+        }
+        let recent = self
+            .bc_guard_trace
+            .iter()
+            .map(|&csid| format!("\\{}", self.intern.name(csid)))
+            .collect::<Vec<_>>()
+            .join(" ");
+        eprintln!("[bc-guard] recent-cs: {recent}");
+        eprintln!("[bc-guard] stack: {}", self.debug_stack_summary());
+    }
+
     /// 单个 token 的可读渲染（转储用）：`\name` / 可打印字符 / `#n`；
     /// 空白显示为 `␣`，其余控制字符显示为 `^XX`。
     fn render_token(&self, t: Token) -> String {
@@ -2779,7 +2876,22 @@ impl Expander {
 
     /// 取下一个 token；返回 `(token, noexpand)`。输入耗尽或越过读取下限返回 None。
     fn fetch(&mut self) -> Result<Option<(Token, bool)>> {
+        let guard_limit = bytecode_guard_limit();
+        let mut dispatches = 0u64;
         loop {
+            if guard_limit != 0 {
+                dispatches += 1;
+                if self.bc_guard_active {
+                    self.bc_guard_dispatches += 1;
+                    dispatches = self.bc_guard_dispatches;
+                }
+                if dispatches > guard_limit {
+                    self.dump_bytecode_guard(dispatches, guard_limit);
+                    return Err(Error::invalid_input(format!(
+                        "字节码 dispatch 超限（{dispatches} 次未返回 token；NTEX_BC_GUARD={guard_limit}）"
+                    )));
+                }
+            }
             // 输入栈深度兜底上限（tex.web `stack_size` 语义）：[`Self::call_macro`]
             // 只盖宏帧，TokenList/Source 等帧的循环注入同样能把栈撑爆——此处统一
             // 兜底（每次压帧后必经 fetch，故为全帧型的唯一收口点）。
