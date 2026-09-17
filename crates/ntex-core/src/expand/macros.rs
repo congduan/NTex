@@ -9,6 +9,11 @@ impl Expander {
     ///   否则为分隔参数，收集到 P_{k+1} 在输入中完整出现为止（定界符被消费）。
     fn collect_args(&mut self, csid: u32, def: &MacroDef) -> Result<Vec<TokenArray>> {
         let n = def.params.num_params as usize;
+        self.diag_trace(format!(
+            "ARGS \\{} n={n} floor={}",
+            self.intern.name(csid),
+            self.read_floor
+        ));
         if n == 0 {
             // tex.web macro_call（L7971）：`if info(r)<>end_match_token then
             // @<Scan the parameters...@>`——参数文本非空时**即使 0 参数**也须在
@@ -233,6 +238,11 @@ impl Expander {
         // TEMP DEBUG（挂死定位）
         let mut guard: u64 = 0;
         let dbg_on = std::env::var("NTEX_DELIM_DBG").is_ok();
+        self.diag_trace(format!(
+            "DELIM-BEGIN \\{name} dlen={} long={long} floor={}",
+            delim.len(),
+            self.read_floor
+        ));
         let entry_last = self.last_tok.clone();
         let entry_stack = if dbg_on {
             self.debug_stack_summary()
@@ -241,6 +251,13 @@ impl Expander {
         };
         loop {
             guard += 1;
+            if guard % 1_000_000 == 0 {
+                self.diag_trace(format!(
+                    "DELIM-PROG \\{name} guard={guard} buf={} depth={depth} floor={}",
+                    buf.len(),
+                    self.read_floor
+                ));
+            }
             if dbg_on && guard == 1_000_000 {
                 let show = |t: &Token| match t.csid() {
                     Some(id) => format!("\\{}", self.intern.name(id)),
@@ -401,6 +418,7 @@ impl Expander {
     }
 
     fn collect_undelimited_arg(&mut self, long: bool, name: &str) -> Result<TokenArray> {
+        self.diag_trace(format!("UNDELIM \\{name} long={long} floor={}", self.read_floor));
         // 跳过前导空格
         loop {
             let Some(tok) = self.fetch()?.map(|p| p.0) else {

@@ -468,6 +468,8 @@ struct WatchdogShared {
     last_tok: Mutex<String>,
     /// 状态快照（steps / 输入栈），每 5000 步刷新。
     state: Mutex<String>,
+    /// TEMP DEBUG（第十七刀取证）：卡死前最近事件环（NTEX_BREAK17 开启时记录）。
+    trace: Mutex<Vec<String>>,
 }
 
 /// 当前 UNIX 毫秒（线程看门狗心跳用）。
@@ -1157,6 +1159,20 @@ impl Expander {
         self.expand_only = false;
     }
 
+    /// TEMP DEBUG（第十七刀取证）：卡死前最近事件环。`NTEX_BREAK17` 开启时记录。
+    fn diag_trace(&self, line: String) {
+        if std::env::var_os("NTEX_BREAK17").is_none() {
+            return;
+        }
+        if let Some(wd) = &self.watchdog {
+            let mut t = wd.trace.lock().unwrap_or_else(|p| p.into_inner());
+            if t.len() >= 256 {
+                t.remove(0);
+            }
+            t.push(line);
+        }
+    }
+
     /// 追加一个源码输入（后续 `\input`/VFS 在 M3 接入）。
     pub fn feed_source(&mut self, text: impl Into<Vec<u8>>) {
         let bytes = Arc::from(text.into());
@@ -1223,6 +1239,11 @@ impl Expander {
                         "[watchdog] 疑似挂死：{}ms 无心跳。last_tok={last} {state}",
                         now.saturating_sub(hb)
                     );
+                    // TEMP DEBUG（第十七刀取证）：卡死前最近事件环
+                    let tr = wd.trace.lock().unwrap_or_else(|p| p.into_inner()).clone();
+                    for line in tr.iter().rev().take(40).rev() {
+                        eprintln!("[break17-trace] {line}");
+                    }
                     return; // one-shot：报一次即退，避免刷屏
                 }
             });
@@ -2337,6 +2358,11 @@ impl Expander {
             }
             t.push_back(csid);
         }
+        self.diag_trace(format!(
+            "CALL \\{} depth={}",
+            self.intern.name(csid),
+            self.stack.len()
+        ));
         // TeX 输入栈上限（tex.web `stack_size`；TeX Live 取 5000）：宏递归展开
         // 无终止条件时以此报错终止，而非耗尽内存。此前无此保护——latex.ltx 加载
         // 曾触发单步内无界递归（每层压一个 Bytecode 帧，主循环 10M 步上限够不到），

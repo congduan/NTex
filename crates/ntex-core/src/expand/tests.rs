@@ -1651,4 +1651,5 @@ I changed this one to zero.
     mod tests_io_write { include!("tests_io_write.rs"); }
     mod tests_insert_alloc { include!("tests_insert_alloc.rs"); }
     mod tests_diag { include!("tests_diag.rs"); }
+    mod tests_break17 { include!("tests_break17.rs"); }
 }
