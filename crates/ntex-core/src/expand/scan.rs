@@ -520,10 +520,11 @@ impl Expander {
                     let v = i64::from(self.sfcodes[byte as usize]);
                     return Ok(if neg { -v } else { v });
                 }
-                // ETRIP 冲刺：TeX/e-TeX 内部整数参数（\interactionmode/\language/\tracing* 等）。
-                // 值域两处合一：int_param_index 覆盖 misc 索引区；param_kind_of 的
-                // Number 值参数（\endlinechar/\newlinechar/\parindent 类之外的纯整数
-                // 参数）同臂——tex.web scan_something_internal 对 assign_int 区全认，
+                // ETRIP 冲刺：TeX/e-TeX 内部参数。
+                // 值域两处合一：int_param_index 覆盖 misc 索引区；param_kind_of 覆盖
+                // assign_int/assign_dimen/assign_glue 区。scan_int 读取 dimen 时取
+                // sp 值，读取 glue 时取 width 分量（register 臂同款），LaTeX
+                // `\divide\@tempdima\baselineskip` 依赖胶水参数降级为整数。
                 // G3 起读写两侧共用 param_kind_of 一张表，读侧不得自持索引表漏项
                 // （expl3 `\tex_endlinechar:D` 读臂缺此臂时落 Missing number，
                 // `\__cctab_gset:n` 的 `\fontdimen257<font> \tex_endlinechar:D
@@ -532,7 +533,7 @@ impl Expander {
                     if int_param_index(p).is_some()
                         || matches!(
                             param_kind_of(p).map(|k| self.params.get(k)),
-                            Some(ParamValue::Number(_))
+                            Some(ParamValue::Number(_) | ParamValue::Dimen(_) | ParamValue::Glue(_))
                         ) =>
                 {
                     self.fetch()?; // 消费原语
@@ -542,6 +543,8 @@ impl Expander {
                     }
                     let v = match param_kind_of(p).map(|k| self.params.get(k)) {
                         Some(ParamValue::Number(v)) => v,
+                        Some(ParamValue::Dimen(v)) => v,
+                        Some(ParamValue::Glue(g)) => g.width,
                         _ => 0,
                     };
                     return Ok(if neg { -v } else { v });
@@ -2189,6 +2192,20 @@ impl Expander {
                     let idx = self.scan_register_index()?;
                     Some(self.sink.box_dim(idx, dim))
                 }
+                // tex.web scan_dimen `<factor><internal dimen>`：内部参数也可作为
+                // 被乘的尺寸量。胶水参数在尺寸层取 width 分量；LaTeX
+                // `\baselineskip\f@linespread\baselineskip` 即 `1\baselineskip`。
+                EqSlot::Primitive(p) => match param_kind_of(p).map(|k| self.params.get(k)) {
+                    Some(ParamValue::Dimen(d)) => {
+                        self.fetch()?;
+                        Some(d)
+                    }
+                    Some(ParamValue::Glue(g)) => {
+                        self.fetch()?;
+                        Some(g.width)
+                    }
+                    _ => None,
+                },
                 _ => None,
             };
             if let Some(q) = quantity {
@@ -2504,6 +2521,24 @@ impl Expander {
                     let g = self.scan_glue_inner(false)?; // 输入：pt 上下文
                     if !mu {
                         self.report_incompatible_glue_units(); // 输出 mu
+                    }
+                    return Ok(if neg { g.negated() } else { g });
+                }
+                // tex.web scan_glue：assign_glue 区内部参数（\baselineskip/
+                // \abovedisplayskip/...）在胶水上下文应作为完整 glue 量读取，
+                // 不可退化成 scan_dimen 的 width 分量。LaTeX `\set@fontsize`
+                // 依赖 `\baselineskip\f@linespread\baselineskip` 与
+                // `\belowdisplayskip\abovedisplayskip` 这种参数自/互赋值。
+                EqSlot::Primitive(p)
+                    if matches!(param_kind_of(p).map(|k| self.params.get(k)), Some(ParamValue::Glue(_))) =>
+                {
+                    self.fetch()?;
+                    let Some(ParamValue::Glue(g)) = param_kind_of(p).map(|k| self.params.get(k))
+                    else {
+                        unreachable!("guarded by ParamValue::Glue match");
+                    };
+                    if mu {
+                        self.report_incompatible_glue_units();
                     }
                     return Ok(if neg { g.negated() } else { g });
                 }

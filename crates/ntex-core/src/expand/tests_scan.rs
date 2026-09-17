@@ -446,6 +446,81 @@ ab5c}").unwrap();
         );
     }
 
+    /// 第二十一刀：tex.web scan_glue 的 assign_glue 内部量分支。
+    /// `\baselineskip` 等胶水参数在胶水上下文须复制完整 glue（三分量），
+    /// 不能退化为 scan_dimen 的 width。LaTeX `\set@fontsize` 会执行
+    /// `\baselineskip\f@linespread\baselineskip`，size10.clo 随后又有
+    /// `\belowdisplayskip\abovedisplayskip`。
+    #[test]
+    fn glue_scan_accepts_internal_glue_params() {
+        let src = concat!(
+            "\\baselineskip=12pt plus 2pt minus 3pt ",
+            "\\skip0=\\baselineskip ",
+            "\\message{B=\\the\\skip0} ",
+            "\\abovedisplayskip=10pt plus 2pt minus 5pt ",
+            "\\belowdisplayskip\\abovedisplayskip ",
+            "\\message{D=\\the\\belowdisplayskip}"
+        );
+        let (r, transcript) = run_transcript(src);
+        r.unwrap();
+        assert!(
+            !transcript.contains("Missing number"),
+            "胶水参数作为内部胶水量不应报 Missing number：{transcript}"
+        );
+        assert!(
+            transcript.contains("B=12.0pt plus 2.0pt minus 3.0pt"),
+            "baselineskip 应完整复制到 skip 寄存器：{transcript}"
+        );
+        assert!(
+            transcript.contains("D=10.0pt plus 2.0pt minus 5.0pt"),
+            "胶水参数互赋值应保留 stretch/shrink：{transcript}"
+        );
+    }
+
+    /// 第二十一刀：scan_dimen 的 `<factor><internal dimen>` 分支也要认内部参数。
+    /// LaTeX `\set@fontsize` 会把 `\f@linespread=1` 乘到 `\baselineskip` 上，
+    /// 实际 token 形态是 `\baselineskip 1\baselineskip`。
+    #[test]
+    fn dimen_scan_multiplies_internal_glue_param_width() {
+        let src = concat!(
+            "\\baselineskip=12pt plus 2pt minus 3pt ",
+            "\\dimen0=1\\baselineskip ",
+            "\\message{D=\\the\\dimen0}"
+        );
+        let (r, transcript) = run_transcript(src);
+        r.unwrap();
+        assert!(
+            !transcript.contains("Missing number"),
+            "数量乘胶水参数 width 不应报 Missing number：{transcript}"
+        );
+        assert!(
+            transcript.contains("D=12.0pt"),
+            "1\\baselineskip 应取 width 分量：{transcript}"
+        );
+    }
+
+    /// 第二十一刀：scan_int 读取内部胶水参数时取 width 的 sp 整数。
+    /// `size10.clo` 用 `\divide\@tempdima\baselineskip` 把文本高度转成行数。
+    #[test]
+    fn number_scan_reads_internal_glue_param_width() {
+        let src = concat!(
+            "\\baselineskip=10pt ",
+            "\\dimen0=25pt ",
+            "\\divide\\dimen0\\baselineskip ",
+            "\\message{D=\\the\\dimen0}"
+        );
+        let (r, transcript) = run_transcript(src);
+        r.unwrap();
+        assert!(
+            !transcript.contains("Missing number"),
+            "胶水参数作为整数因子应取 width：{transcript}"
+        );
+        assert!(
+            transcript.contains("D=0.00003pt"),
+            "pdfTeX GT：10pt 在数字上下文为 655360，25pt/655360=0.00003pt：{transcript}"
+        );
+    }
+
     /// 刀29：mu 上下文遇内部 dimen → "Incompatible glue units"（按 1mu=1pt 继续，
     /// tex.web mu 分支同款），赋值成功不中断。
     #[test]
@@ -730,4 +805,3 @@ fn number_scan_hyphenchar_skewchar_font_integer() {
         "数字上下文缺 \\skewchar 臂：{transcript}"
     );
 }
-

@@ -931,9 +931,9 @@ NTEX_DELIM_DBG。本次四根因里 1/4 由 NTEX_ARG_EOF 现场点名、2/3 由
 
 ### 新墙清单（一刀一墙，只注册不修）
 
-1. **fmt 文档级**：article.cls/size10.clo 载入后 `\setbox` Missing
+1. ✅ **fmt 文档级**：article.cls/size10.clo 载入后 `\setbox` Missing
    number ×8，残流致「胶水上下文需要 \skip/\muskip 寄存器」fatal
-   （`/tmp/fp11/doc1.err`，fmt 加载 0.113s 即达）。
+   （`/tmp/fp11/doc1.err`，fmt 加载 0.113s 即达）——第二十一刀修复。
 2. **`\meaning`/print_cs 控制字尾空格缺失**：pdftex
    `macro:->\relax ABC`，NTex `macro:->\relaxABC`——tex.web §246 print_cs
    控制字后补一空格，属打印层通用偏差（`\show`/`\meaning`/`\detokenize`
@@ -946,3 +946,54 @@ NTEX_DELIM_DBG。本次四根因里 1/4 由 NTEX_ARG_EOF 现场点名、2/3 由
 Missing character 766→0、\dump 执行、fmt 快路径 0.1s 可用；`make check`
 fmt+clippy -D warnings+测试 41 套件 **808 passed / 0 failed**（803 基线
 只增不减）。第二十刀按验收收工。
+
+## 第二十一刀（2026-09-18）：fmt 快路径 `\documentclass{article}` 端到端
+
+### 现场判定
+
+题设命令未带 `--no-plain`，实测会在 fmt 载入后再次预载 plain，先污染格式身份：
+
+```bash
+NTEX_BC_GUARD=1000000 NTEX_DELIM_GUARD=3000000 NTEX_HOOK_TRACE=1 \
+./target/release/ntex-dvi --fmt /tmp/fp11/latex6-fixed.fmt ...
+```
+
+0.31s 内命中 BC guard，指纹为：
+
+- 首错：`! LaTeX Error: This file needs format ... but this is ...`；
+- guard：`\__prop_flatten:w` / hook `para/after` 区域，
+  `Bytecode(pc=1381)` + `MacroArg(420tok,pos=43)`；
+- 根因：**不是 article.cls 活锁**，而是 fmt 快路径漏 `--no-plain` 后叠 plain。
+
+真正 pass2 命令必须沿第二十刀口径：
+
+```bash
+./target/release/ntex-dvi --no-plain --fmt /tmp/fp11/latex6-fixed.fmt \
+  --input-path /tmp/fp11 --input-path ~/.TinyTeX/texmf-dist/tex/latex/base \
+  /tmp/fp11/doc1.tex
+```
+
+### 根因与修复
+
+`--no-plain` 后挂死消失，真实墙为 `size10.clo` 的 `\set@fontsize` 与页面尺寸计算：
+
+1. `\baselineskip\f@linespread\baselineskip`（实际 `1\baselineskip`）要求
+   `scan_dimen` 的 `<factor><internal dimen>` 分支把胶水参数降级为 width；
+2. `\belowdisplayskip\abovedisplayskip` 要求 `scan_glue` 读取 assign_glue
+   内部参数时复制完整 glue（三分量），不能退化成 width；
+3. `\divide\@tempdima\baselineskip` 要求 `scan_int` 读取胶水参数 width 的 sp 整数
+   （pdfTeX GT：`10pt` → `655360`，`25pt/655360=0.00003pt`）。
+
+修复统一走既有 `param_kind_of`/`ParamValue` 表，避免为胶水参数再维护第二张原语清单。
+新增回归：`glue_scan_accepts_internal_glue_params`、
+`dimen_scan_multiplies_internal_glue_param_width`、
+`number_scan_reads_internal_glue_param_width`。
+
+### 验收
+
+- doc1 成功：`/tmp/fp11/doc1.dvi`（383 字节，4 页，41 字体），墙钟 **0.23s**；
+- DVI 字节含 `Hello,` 与 `LaTeX` 字符序列，非空页假阳性；
+- 错误清零：`/tmp/doc1-after3.err` 中 `^!` 为 0；
+- PDF 链登记：`cargo run -p ntex-pdf -- /tmp/fp11/doc1.dvi /tmp/fp11/doc1.pdf`
+  成功，`/tmp/fp11/doc1.pdf` 75,538 字节、4 页，未开新战；
+- `make check` 全绿；ntex-core 扫描回归新增 3 条，workspace 总量只增不减。
