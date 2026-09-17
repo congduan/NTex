@@ -276,6 +276,18 @@ impl Expander {
                 let mut val: i64 = 0;
                 let mut any = false;
                 while let Some((t, _)) = self.fetch()? {
+                    // 条件机跳过区（tex.web pass_text）：假分支 token 丢弃不累计。
+                    // 优先序须在数位判定**之前**（与十进制数字循环同款）——
+                    // `\ifcase2 0\or 1\or 2\or 3\fi`（\hexnumber@ 展开体，cnt=2）
+                    // 选中分支 2，死分支的数位 0/1/3 若进累计会产出 0x123 而非
+                    // 0x2（pdfTeX 对拍 g14w：`\cnt="\hexnumber@{\cntA}\relax`
+                    // cntA=2 → 2；NTex 修复前 291）。
+                    if self.is_skipping() {
+                        if let Some(op) = self.cond_op(t) {
+                            self.step_conditional(op, t)?;
+                        }
+                        continue;
+                    }
                     match radix_digit_value(t, base) {
                         Some(d) => {
                             // 防溢出：达到上限后停止累加（TeX scan_int 钳制语义）
@@ -285,9 +297,54 @@ impl Expander {
                             any = true;
                         }
                         None => {
-                            // TRIP：条件原语在数字中先求值（`'\ifnum10=10 12="`）
-                            if self.maybe_eval_cond(t)? {
+                            if let Some(op) = self.cond_op(t) {
+                                // 游终结符（无帧可归属）放回，由外层条件机闭合
+                                // （TRIP L82 `\ifnum'\ifnum10=10 12="\fi`）；
+                                // 本扫描期间开启的帧就地步进——`\mathchar@type` 的
+                                // 展开体 `\ifx#1\mathord 0\else…\fi` 正是在本循环里
+                                // 求值，`\else`/`\fi` 须被条件机吃掉而非放回。
+                                if matches!(op, CondOp::Fi | CondOp::Else | CondOp::Or)
+                                    && self.cond_stack.is_empty()
+                                {
+                                    self.unread(t);
+                                    break;
+                                }
+                                self.step_conditional(op, t)?;
                                 continue;
+                            }
+                            // tex.web 基数常量循环的 get_x_token 语义（
+                            // @<Scan a hexadecimal or octal constant@>）：数位间的
+                            // 宏/可展开原语**就地展开**、产物继续累计，首个不可展开
+                            // 产物放回。pdfTeX 对拍：`\def\foo{A}\cnt="\foo 6`→166、
+                            // `\cnt="1\foo 6`→422（保护性宏同展开：`\protected\def
+                            // \pa{1}\cnt="\pa 2`→18——数值扫描不是列构建，无
+                            // protected 门，与符号循环/反引号循环同规）。
+                            // fontmath.ltx l.509 起 \DeclareMathSymbol 全族依赖此臂：
+                            // `\mathchardef\mathdollar"\mathchar@type\mathord
+                            // \hexnumber@…`（latex.ltx l.13720 \set@mathsymbol、
+                            // l.13716 \set@mathchar、l.13667 \set@mathaccent）中
+                            // `\mathchar@type` 展开成 0..7 位数、`\hexnumber@` 展开
+                            // 成 0..F 位数；缺此臂时 `" 后首 token 不展开 →
+                            // Missing number treated as zero（ltxinit 第十四刀墙，
+                            // fontmath.ltx l.509 起全族 254 条级联）。
+                            if let Some(csid) = t.csid() {
+                                let expandable =
+                                    match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
+                                        EqSlot::Macro(_) => true,
+                                        EqSlot::Primitive(p) if p.is_expandable() => true,
+                                        _ => false,
+                                    };
+                                if expandable {
+                                    let mut expansion = Vec::new();
+                                    self.expand_once((t, false), &mut expansion)?;
+                                    if !expansion.is_empty() {
+                                        self.push_frame(InputFrame::TokenList {
+                                            items: Arc::from(expansion),
+                                            pos: 0,
+                                        });
+                                    }
+                                    continue;
+                                }
                             }
                             self.unread(t);
                             break;
@@ -353,6 +410,19 @@ impl Expander {
                         return Err(Error::invalid_input("\\catcode 字符码越界"));
                     }
                     let v = i64::from(self.catcodes.get_codepoint(code as u32).as_u8());
+                    return Ok(if neg { -v } else { v });
+                }
+                // 内部整数：\mathcode<char> → 该字符的数学码（含 "8000 active
+                // 旗标，tex.web scan_something_internal 的 math_code_base 臂）。
+                // 未定义字符的缺省值 "8000（tex.web eqtb 初始化）。此前缺臂 →
+                // `\cnt=\mathcode`a` 落 Missing number（pdfTeX 对拍 g14mc：
+                // \mathcode`a="7161 读回 29025；"8000 读回 32768）。
+                EqSlot::Primitive(Primitive::MathCode) => {
+                    self.fetch()?; // 消费 \mathcode
+                    let code = self.scan_char_code()?;
+                    let byte = u32::try_from(code)
+                        .map_err(|_| Error::invalid_input("\\mathcode 字符码越界"))?;
+                    let v = i64::from(*self.mathcodes.get(&byte).unwrap_or(&0x8000));
                     return Ok(if neg { -v } else { v });
                 }
                 // 内部整数：\fontdimen<num><font> → 该字体参数值（sp）
@@ -437,6 +507,17 @@ impl Expander {
                     let byte =
                         u8::try_from(byte).map_err(|_| Error::invalid_input("\\lccode 字符码越界"))?;
                     let v = self.lccodes[byte as usize];
+                    return Ok(if neg { -v } else { v });
+                }
+                // 内部整数：\sfcode<char> → 该字符的空距因子（初值 1000，
+                // tex.web scan_something_internal 的 sf_code_base 臂；pdfTeX 对拍
+                // g14sd：`\sfcode`x=1000 \cnt=\sfcode`x` → 1000，未赋值 `q` → 1000）。
+                EqSlot::Primitive(Primitive::SfCode) => {
+                    self.fetch()?; // 消费 \sfcode
+                    let byte = self.scan_char_code()?;
+                    let byte =
+                        u8::try_from(byte).map_err(|_| Error::invalid_input("\\sfcode 字符码越界"))?;
+                    let v = i64::from(self.sfcodes[byte as usize]);
                     return Ok(if neg { -v } else { v });
                 }
                 // ETRIP 冲刺：TeX/e-TeX 内部整数参数（\interactionmode/\language/\tracing* 等）。
@@ -1811,12 +1892,52 @@ impl Expander {
                 let mut val: i64 = 0;
                 let mut any_radix = false;
                 while let Some((t, _)) = self.fetch()? {
+                    // 与 scan_int 的基数循环同规（tex.web 同一段代码服务两侧）：
+                    // 跳过区优先于数位判定 / fi_or_else 终结符归属 / 数位间宏就地
+                    // 展开。`\mathchar@type` 系展开体在 `\dimen`/`\skip` 基数常量
+                    // 里同样可能现身（`\dimen0="\mathchar@type\mathbin 4` 类
+                    // 惯用法），缺臂即 Missing number。
+                    if self.is_skipping() {
+                        if let Some(op) = self.cond_op(t) {
+                            self.step_conditional(op, t)?;
+                        }
+                        continue;
+                    }
                     match radix_digit_value(t, base) {
                         Some(d) => {
                             val = val * i64::from(base) + i64::from(d);
                             any_radix = true;
                         }
                         None => {
+                            if let Some(op) = self.cond_op(t) {
+                                if matches!(op, CondOp::Fi | CondOp::Else | CondOp::Or)
+                                    && self.cond_stack.is_empty()
+                                {
+                                    self.unread(t);
+                                    break;
+                                }
+                                self.step_conditional(op, t)?;
+                                continue;
+                            }
+                            if let Some(csid) = t.csid() {
+                                let expandable =
+                                    match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
+                                        EqSlot::Macro(_) => true,
+                                        EqSlot::Primitive(p) if p.is_expandable() => true,
+                                        _ => false,
+                                    };
+                                if expandable {
+                                    let mut expansion = Vec::new();
+                                    self.expand_once((t, false), &mut expansion)?;
+                                    if !expansion.is_empty() {
+                                        self.push_frame(InputFrame::TokenList {
+                                            items: Arc::from(expansion),
+                                            pos: 0,
+                                        });
+                                    }
+                                    continue;
+                                }
+                            }
                             self.unread(t);
                             break;
                         }

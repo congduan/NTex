@@ -489,3 +489,114 @@ latex.ltx l.98-102 自管同理）——br.tex 的 `\input{fonttext.ltx}` 文件
 - `make check` **792 全绿**（787 基线 + 新增 5 测：`the_toks_frozen_in_edef_deferred_execution`/`the_toks_gaddto_macro_body_stays_frozen`/`the_toks_frozen_in_message_context`/`the_toks_still_executes_in_main_loop`/`the_toks_frozen_group_chars_preserved`）。
 - 最小复现：DEF-DONE → R-EXEC → CALL-DONE ✓；`\g@addto@macro` 体保 cs ✓。
 - ltxinit 推进结果：见下节补记。
+
+## 第十三刀补记：ltxinit 推进结果
+
+`\mathchar@type` Missing number 墙本体在第十三刀收口后（l.12777 `\set@fontsize`
+区 Missing endcsname 级联消退）推进至 **fontmath.ltx l.509**（`\mathdollar`
+符号声明）→ Missing number 294 条 + `! Bad mathchar code` 致命。第十四刀入
+场时的墙即此。
+
+## 第十四刀（2026-09-17）：基数常量循环 get_x_token 语义 + 跳过区优先序——`\mathchar@type` Missing number 墙破（fontmath.ltx 全族通过、ltxinit 推进至 preload.ltx l.47）
+
+### 结论（两处点位、一个域修正、两个读臂）
+
+| 项 | 内容 |
+|---|------|
+| 任务命题 | `\DeclareMathSymbol{\mathdollar}{\mathord}{operators}{"24}` → `\mathchardef\mathdollar"\mathchar@type\mathord\hexnumber@{\count\z@}\hexnumber@{\count\tw@}\relax`（latex.ltx l.13720）在 `" 后首 token 是宏（`\mathchar@type`）→ `! Missing number, treated as zero.`，fontmath.ltx l.509 起 294 条级联 |
+| 根因 A（主墙） | `scan_number_inner`/`scan_dimen` 的十六进制 `"`/八进制 `'` 常量循环是**纯数位循环**——tex.web `@<Scan a hexadecimal or octal constant@>` 的循环尾 `get_x_token` 语义（数位间宏/可展开原语就地展开、产物继续累计、首个不可展开产物放回）缺臂。十进制循环第四刀已补（`l.660` 区），基数循环漏同款 |
+| 根因 B（修复 A 后第二层） | 基数循环把**数位判定排在跳过区判定之前**——`\ifcase2 0\or 1\or 2\or 3\fi`（`\hexnumber@` 展开体）死分支的数位 0/1/3 进累计 → 0x123 而非选中分支 2。十进制循环的臂序是 `is_skipping → 数位 → cond_op → 可展开 → 放回`（第二十四轮钉子），基数循环必须同序 |
+| 修复 | scan.rs 两处基数循环（l.276 scan_int / l.1892 scan_dimen）补齐四臂：跳过区优先、fi_or_else 归属（游终结符放回/本扫描帧就地步进）、宏+可展开原语 `expand_once` 就地展开、不可展开放回 |
+| `\mathcode` 域修正 | `exec_mathcode` 原 `& 0x0000_7FFF` 掩码把 `"8000`（active 旗标，fontmath l.159 `\mathcode`\ ="8000` 惯用法）静默抹零、超界值致致命错。改 tex.web assign_math_code 域 **0..=0x8000**，越界报 `! Invalid code (N), should be in the range 0..32768.` 恢复并跳过赋值（pdfTeX 对拍 g14mc：`"8000` 读回 32768、8001 报 Invalid code 后作业继续） |
+| 读臂补全 | `\mathcode<char>`（缺省 `"8000`；INITEX 初表由 `default_mathcodes()` 全量预载，字母=0x7100+码）与 `\sfcode<char>`（初值 1000）读臂补进 scan_number 内部量分派——此前 `\cnt=\mathcode`a` 落 Missing number，pdfTeX=29025 |
+
+### GT 新知（pdftex 1.40.29 实测；数字扫描「原子+可选空格」模型）
+
+探针先过 GT 的教训本轮再次兑现——**k14w2 模拟探针用 `\count0`（数字索引）替换
+真 LaTeX 的 `\count\z@`（cs 索引），GT 与真构造行为相反**。判定实验链（全部
+双引擎对拍）：
+
+| 探针 | pdfTeX | 判据 |
+|---|---|---|
+| `\count6=5 6\relax` | 5 | 空格 token 终结数位串，后随数位不吸收 |
+| `\count6=\cntA 6\relax`（countdef cs） | 2 | cs 型内部量后空格不吸数位 |
+| `\count6=\count9 6\relax`（数字索引寄存器） | 2 | 索引数位扫描的 done 路径吞掉可选空格 |
+| `\count5=\number\cntA 0\relax`（无空格 token：行尾 `@` 后被 tokenize 吃掉） | 20 | `\number` 产物 `2` 与 `0` 相邻 → 吸收 |
+| `\ifcase\number\cntA 0\or…`（宏体内 `#1` 后空格**存留**） | 操作数 2 → 分支 2 | 参数 token 后的空格是真实 spacer，终结操作数 |
+| `\ifcase\number\count9 0\or…`（宏体、数字索引） | 操作数 20 → 空分支 | 索引扫描吞空格 → 分支首 `0` 粘上操作数 |
+| `\hexnumber@{\count\tw@@}`（cs 索引，`\count2`=4） | 4 | **真 LaTeX 的通路**：操作数 4 → 分支 `4` |
+
+**`\hexnumber@#1{\ifcase\number#1 0\or…\or F\fi}` 能工作的机制全在「`#1` 替换
+后空格 token 存留 → 操作数在空格处终结 → 分支选择产出数位」**。基准锚：
+真 latex.fmt 下 `\showthe\mathdollar` → **36**（"0024）；NTex 修复后同探针
+（k14w9，INITEX 手搭 `\chardef\z@`/`\chardef\tw@` 环境）同样 36 ✓。
+
+修复前 NTex 对拍（同探针链）：`\cnt="\hexnumber@{\cntA}\relax` → 291（=0x123，
+死分支全吸收）；修复后 2 ✓。`\cnt="\ifcase2 2\or 5\fi\relax` → 37（修复前）→
+Missing number 0（修复后，GT 同）。
+
+### 证据链
+
+1. **主墙点位**：`\mathchardef\mathdollar"` 后首 token `\mathchar@type` 是宏 →
+   纯数位循环放回报 Missing number。展开臂补上后 k14y 探针暴露第二层：
+   `! Bad mathchar code (1311768430813402744)` = 0x1234567012345678——
+   两个 `\hexnumber@` 展开体的死分支数位全部进累计，跳过区优先序缺失。
+2. **判据定型**：k14z 五连探针（`\number\count9` / `\ifcase0` / `\ifcase2 2\or 5` /
+   `1\ifnum1=1 A\fi` / `\number\count9 0`）修复后全数与 pdfTeX 一致；
+   g14w4（`A:[2] B:[]` + Missing number 序）逐字符一致。
+3. **域修正对拍**：g14mc（mathcode/catcode/delcode/sfcode 读写 + `"8000` 往返）
+   NTex 与 pdfTeX 输出差仅剩 delcode 读臂（见遗留观察）。
+4. **既证伪假说（防重查）**：① `\ifx` 对两个 csname 未定义 cs 是否相等——
+   双引擎同判 DIFF，探针非判别性，勿再用作 csname 名构造判据；② `\csname
+   mathsf ␣\endcsname`（`\space` 已定义展开为空格）名构造——双引擎 `\show`
+   均落到同一 cs（`->HELLO`），NFSS 尾空格 csname 惯用法 NTex 本就正确；
+   INITEX 里 `\space` 未定义时的报错差异（pdfTeX=Undefined control sequence、
+   NTex=Missing endcsname）是探针伪命题，非偏差。
+
+### ltxinit 推进结果
+
+| 指标 | 第十四刀入场 | 收口 |
+|---|---|---|
+| 错误总数 | 294（`Missing number` 254 + 40 余项）| **22** |
+| 终止方式 | `! Bad mathchar code` + `\mathcode` 致命（dumped=false）| preload.ltx l.47 `\DeclarePreloadSizes{OT1}{cmr}{m}{n}{5,7,10}` → `! \font 后缺少字体名`（独立墙） |
+| fontmath.ltx | l.509 停 | **全文件通过**：`\symoperators…\symlargesymbols` 四 sym cs + bold 覆写（l.63-65）+ `\DeclareMathSymbol` 全族 + `\SetMathAlphabet` 前 2 条 |
+| latex.ltx | 64.4% 停 | 通过 l.22835 `\dump` 前的全部定义区与装载序 |
+
+剩余 22 条：20× `Argument of \__hook_make_name:w has an extra }`（lthooks 区，
+预存在）+ 2× `LaTeX Error: Command `' not defined as a math alphabet`
+（fontmath l.73/74 `\SetMathAlphabet\mathsf/\mathit{bold}…`，本轮归因现状见下）。
+
+### 新阻塞点（第十五刀入口，按执行序）
+
+1. **`\SetMathAlphabet\mathsf{bold}{OT1}{cmss}{bx}{n}`（fontmath l.73）**
+   `Command `' not defined as a math alphabet` ×2。判据链（latex.ltx l.13553
+   `\SetMathAlphabet@`）：`\in@#4{\alpha@list}`（`#4`=`\csname mathsf ␣\endcsname`）
+   → 假则 `\in@{\string\use@mathgroup}{\meaning#4}` → 假则报错。本轮已证伪：
+   `\in@` 本体（最小探针 YES/NO 序一致）、尾空格 csname 名构造（`\show` 同 cs）。
+   待查：`\alpha@list` 是否被 l.70 `\DeclareMathAlphabet{\mathsf}{OT1}{cmss}{m}{n}`
+   真实登记（`\new@mathalphabet` 的 `\xdef\alpha@list{\alpha@list\alpha@elt #4…}`
+   链）、`\version@list` 的 `\mv@bold` 登记、`\meaning#4` 文本含 `\use@mathgroup`
+   与否。报错里命令名空串（``Command `'``）本身是线索：`\string#5` 产物为空或
+   `\@latex@error` 的 edef 链在 NTex 走样。
+2. **`\__hook_make_name:w` extra `}` ×20**（lthooks 区，预存在，l.8912 之后的
+   独立族；本轮未动）。
+3. **preload.ltx l.47 `\DeclarePreloadSizes{OT1}{cmr}{m}{n}{5,7,10}`** →
+   `! \font 后缺少字体名`（NTex `\font` 原语的字体名扫描在 `\small@sizes` 系
+   展开体上的偏差；当前致命终止点）。
+4. **预存在**：latex.ltx l.8912 区 `Missing number … <to be read again> \let`
+   （`\GenericError`/`\errhelp` 区，1 条，本轮未动）。
+5. **`\delcode` 读臂缺**（pdfTeX 未赋值读回 -1、可赋值读回；NTex 落 Missing
+   number）。补臂前须先审负值存储（`delcodes: HashMap<u32,u32>` 存不下 -1，
+   `save.rs:687` 现用 `0x500000` 作恢复缺省——与 tex.web -1 是否同义未审），
+   非纯加臂。
+
+### 验收
+
+- `make check` **793 全绿**（793 基线零回退，含 TRIP 门禁）。
+- ltxinit：fontmath.ltx l.509 越过、`\DeclareMathSymbol` 全族通过 ✓；错误
+  294 → 22；推进至 preload.ltx l.47 新墙（`\font` 字体名扫描）。
+- 探针矩阵双引擎对拍：k14z/k14w9/g14w4/g14mc/g14sd/g14p/g14x/g14in/g14cs2
+  全数一致（除标注遗留项）。
+- 领地：仅 `crates/ntex-core/src/expand/{scan.rs,primitive_font.rs}`；无临时
+  插桩入库（诊断走既有 `write16`/`NTEX_COND_TRACE` 通道）。
+

@@ -29,15 +29,17 @@ robust 体首 token，`\IfFileExists`/`\InputIfFileExists`/`\typeout` 全中招�
 闭合后假。**br.tex 字面探针是伪命题**（INITEX `{`=cat12 系 tex.web 真语义，
 真 pdftex -ini 同报 `can't find file '{fonttext.ltx}'`）。
 
-**现阻塞（第十二刀入口，按执行序）**：
-① NFSS 定义群静默丢失（预存在）：preload.ltx（l.14350）消费 `\normalfont`/
-   `\IfFontSeriesContextTF`/`\em`/`\symbol` 等全 undefined——定义区 l.5000-10500；
-   另 21 条 `\__hook_make_name:w extra }`（lthooks 区）；
-② ot1enc.def 末行输入栈超限（现场标"定义 `\cdp@list` 时"；独立最小复现不炸，
-   疑为①的 knock-on）；
-③ `\read` 终端流语义（tex.web 未开流=终端读；NTex fatal）——`\@missingfileerror`
-   的 `\read\m@ne` 走此路；
-④ toks 参数 RHS 为宏时 NTex 走数字扫描（GT=「Missing { inserted」+组扫描恢复）。
+**现阻塞（第十五刀入口，按执行序；第十二/十三/十四刀详见 `expl3-real-scoreboard.md`）**：
+① preload.ltx l.47 `\DeclarePreloadSizes{OT1}{cmr}{m}{n}{5,7,10}` →
+   `! \font 后缺少字体名`（`\font` 原语字体名扫描在 `\small@sizes` 展开体上的
+   偏差；当前致命终止点，第十四刀收口位）；
+② `\SetMathAlphabet\mathsf/\mathit{bold}…`（fontmath l.73/74）→
+   `Command `' not defined as a math alphabet` ×2——`\in@` 本体与尾空格 csname
+   名构造均已证伪（第十四刀），待查 `\alpha@list`/`\version@list` 登记链与
+   `\meaning#4` 文本；
+③ 20 条 `\__hook_make_name:w extra }`（lthooks 区，预存在）；
+④ latex.ltx l.8912 区 `Missing number … \let` 1 条（`\GenericError` 区，预存在）；
+⑤ `\delcode` 读臂缺（补臂前须审负值存储，tex.web 缺省 -1）。
 
 **复现环境注意**：`/tmp/fp11` 需补 latex base 运行时件（`omlenc.def` 等 36 def +
 41 fd + language.dat，源 `~/.TinyTeX/texmf-dist/tex/latex/base/`），否则停在

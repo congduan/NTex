@@ -565,9 +565,22 @@ impl Expander {
         let byte = u8::try_from(byte).map_err(|_| Error::invalid_input("\\mathcode 字符码越界"))?;
         self.expect_equals()?;
         let value = self.scan_number()?;
-        let value = u32::try_from(value)
-            .map_err(|_| Error::invalid_input("\\mathcode 数学码越界（15 位）"))?
-            & 0x0000_7FFF;
+        // tex.web assign_math_code：合法域 0..="8000——"8000（32768）本身
+        // 合法且按原值存储（active 旗标，`\mathcode`\ ="8000` 是 fontmath.ltx
+        // l.159 起的活动字符惯用法）。越界按 pdfTeX 恢复语义报
+        // "! Invalid code (N), should be the range 0..32768." 并跳过赋值
+        // （pdfTeX 对拍 g14mc：\mathcode`"="8000 读回 32768；8001 报
+        // Invalid code 后作业继续）。此前 & 0x7FFF 掩码把 active 旗标
+        // 静默抹零、负值/超界值致致命错。
+        if !(0..=0x8000).contains(&value) {
+            let _ = self.sink.write16(format!(
+                "! Invalid code ({}), should be in the range 0..32768.\n\
+                 <to be read again> \nI didn't change it.\n",
+                value
+            ));
+            return Ok(());
+        }
+        let value = value as u32;
         let prev = self.mathcodes.get(&u32::from(byte)).copied();
         let global = self.is_global();
         if !global && self.group_level > 0 {
