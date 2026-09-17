@@ -94,121 +94,148 @@ impl Expander {
             }
         } else {
             self.unread(first);
-            while let Some((t, _)) = self.fetch()? {
-                // 条件原语在文件名扫描内**就地求值**（tex.web scan_file_name
-                // L10210 的循环逐 token 走 `get_x_token`：if_test/fi_or_else 的
-                // cur_cmd=105/106 落在 `>max_command` 且 `<call` 区间 → expand，
-                // 真支字符收进名字、假支就地跳过）。缺此臂时条件 token 落入
-                // catcode 匹配臂按"非字符"退栈 → 文件名收成空串（"缺少文件名"
-                // 致命）。真现场：expl3-code l.3347 `\__quark_if_empty_if:o`
-                // 展开成**不闭合的** `\if_meaning:w \q_nil … \q_nil` 留在流里；
-                // `\ior_open:Nn` → `\openin` 的名字流里 `\__file_quark_if_nil:nTF`
-                // （l.12628 起的引号机）即此形态，UnicodeData.txt/CaseFolding.txt
-                // 载入全部经由它。语义与 scan_csname 臂同款：step_conditional +
-                // drain_open_skip（展开位置，get_x_token 本身）。
-                if let Some(op) = self.cond_op(t) {
-                    let before = self.cond_stack.len();
-                    self.step_conditional(op, t)?;
-                    if !matches!(op, CondOp::Fi) {
-                        let depth = if matches!(op, CondOp::Else | CondOp::Or) {
-                            before.saturating_sub(1)
-                        } else {
-                            before
-                        };
-                        self.drain_open_skip(depth)?;
-                    }
-                    continue;
-                }
-                // `\jobname`：展开为作业名（TeX 文件名扫描展开 \jobname）
-                if let Some(csid) = t.csid() {
-                    if self.eqtb.slot(csid) == &EqSlot::Primitive(Primitive::JobName) {
-                        name.push_str("texput");
-                        continue;
-                    }
-                    // 可展开项（\romannumeral/\number/\the/宏）：TeX get_x_token
-                    // 语义——展开后重新收集（TRIP L94
-                    // `\openout10=tr\romannumeral1 \gobble\newcs pos` → 流名
-                    // "tripos"：\romannumeral1→"i"、\gobble 吞 \newcs、pos 收集）。
-                    let slot = self.eqtb.slot(csid).clone();
-                    let expandable = match &slot {
-                        EqSlot::Macro(_) => true,
-                        EqSlot::Primitive(p) => p.is_expandable(),
-                        _ => false,
-                    };
-                    if expandable {
-                        // 级别 2（\tracingcommands2）：tex.web expand() 开头
-                        // `if tracing_commands>1 then show_cur_cmd_chr`——展开入口
-                        // 也追踪。原语（\romannumeral 等）追踪；宏（\gobble 吞
-                        // 参数）参考不追踪（TRIP L94 无 {\gobble}）。
-                        if self.params.misc[3] >= 2 && !matches!(slot, EqSlot::Macro(_)) {
-                            self.trace_token_now(t);
-                        }
-                        self.trace_suppress += 1;
-                        let mut expansion = Vec::new();
-                        let r = self.expand_once((t, false), &mut expansion);
-                        let no_progress = expansion.len() == 1 && expansion[0].0 == t;
-                        let r = r.and_then(|_| {
-                            if no_progress {
-                                // expand_once 不识别（\romannumeral 等）：exec
-                                // 发射（压帧）后重新收集
-                                match slot {
-                                    EqSlot::Primitive(p) => self.exec_primitive(p),
-                                    _ => Ok(()),
-                                }
-                            } else {
-                                Ok(())
-                            }
-                        });
-                        self.trace_suppress -= 1;
-                        r?;
-                        if !expansion.is_empty() && !no_progress {
-                            let items: Vec<(Token, bool)> = expansion;
-                            self.push_frame(InputFrame::TokenList {
-                                items: Arc::from(items),
-                                pos: 0,
-                            });
-                        }
-                        continue; // 展开结果压帧，重新 fetch 收集
-                    }
-                }
-                match t.catcode() {
-                    Some(Catcode::Letter) | Some(Catcode::Other) => {
-                        let ch = t
-                            .charcode()
-                            .and_then(char::from_u32)
-                            .ok_or_else(|| Error::invalid_input("文件名含非法字符"))?;
-                        name.push(ch);
-                    }
-                    // tex.web `scan_file_name`（L10210）：判据是
-                    //   `if (cur_cmd>other_char)or(cur_chr>255) then back_input; goto done`
-                    // 即**只要不是「命令」就按字符值 `cur_chr` 收集**，catcode 不参与
-                    // 判定。`more_name`（L10023）只在**空格**处返回 false。
-                    // 故下标 `_`(cat 8)、上标 `^`(cat 7)、参数 `#`(cat 6) 等
-                    // **都算文件名字符**。
-                    //
-                    // ⚠ 实测缺此分支的后果：路径含 `_` 时文件名被截断（
-                    // `/tmp/lvt-u_u/x` → 只扫到 `/tmp/lvt-u`）→
-                    // `! 非法输入：找不到文件`。在 l3kernel 测试里表现为
-                    // **随机的假 CRASH**（tempfile.mkdtemp 随机生成含 `_` 的目录名，
-                    // 同一用例时通时不通），曾误导定位多轮（2026-09-11）。
-                    Some(c) if !matches!(c, Catcode::Space) => {
-                        let ch = t
-                            .charcode()
-                            .and_then(char::from_u32)
-                            .ok_or_else(|| Error::invalid_input("文件名含非法字符"))?;
-                        name.push(ch);
-                    }
-                    _ => {
-                        self.unread(t);
-                        break;
-                    }
-                }
-            }
+            while self.more_name(&mut name)? {}
         }
         if name.is_empty() {
             return Err(Error::invalid_input("缺少文件名"));
         }
         Ok(name)
+    }
+
+    /// 名字流主循环的一步（tex.web `more_name`：**文件名与 `\font` 字体名共用**
+    /// ——tex.web 两处扫描同走 get_x_token + more_name 循环，此处合并为一）。
+    ///
+    /// 每步取一个 token：
+    /// - 条件原语在名字扫描内**就地求值**（tex.web scan_file_name L10210 的循环
+    ///   逐 token 走 `get_x_token`：if_test/fi_or_else 的 cur_cmd=105/106 落在
+    ///   `>max_command` 且 `<call` 区间 → expand，真支字符收进名字、假支就地
+    ///   跳过）。缺此臂时条件 token 落入 catcode 匹配臂按"非字符"退栈 → 名字
+    ///   收成空串（"缺少文件名/字体名"致命）。真现场：expl3-code l.3347
+    ///   `\__quark_if_empty_if:o` 展开成**不闭合的** `\if_meaning:w \q_nil …
+    ///   \q_nil` 留在流里；`\ior_open:Nn` → `\openin` 的名字流里
+    ///   `\__file_quark_if_nil:nTF`（l.12628 起的引号机）即此形态，
+    ///   UnicodeData.txt/CaseFolding.txt 载入全部经由它。语义与 scan_csname 臂
+    ///   同款：step_conditional + drain_open_skip（展开位置，get_x_token 本身）。
+    /// - `\jobname`：展开为作业名（TeX 名字扫描展开 \jobname）。
+    /// - 可展开项（\romannumeral/\number/\the/宏）：TeX get_x_token 语义——
+    ///   展开后重新收集（TRIP L94 `\openout10=tr\romannumeral1 \gobble\newcs
+    ///   pos` → 流名 "tripos"：\romannumeral1→"i"、\gobble 吞 \newcs、pos 收集）。
+    /// - cat 11/12 → 收集；其他非空格 catcode 也按字符值收集：tex.web 判据是
+    //    `if (cur_cmd>other_char)or(cur_chr>255) then back_input; goto done`——
+    ///   即只有 cat 13..=15 才是「命令」，故下标 `_`(cat 8)、上标 `^`(cat 7)、
+    ///   参数 `#`(cat 6) 等**都算名字字符**。
+    //    ⚠ 实测缺此分支的后果：路径含 `_` 时文件名被截断（`/tmp/lvt-u_u/x` →
+    //    只扫到 `/tmp/lvt-u`）→ `! 非法输入：找不到文件`。在 l3kernel 测试里
+    //    表现为**随机的假 CRASH**（tempfile.mkdtemp 随机生成含 `_` 的目录名，
+    //    同一用例时通时不通），曾误导定位多轮（2026-09-11）。
+    /// - 空格（cat 10）→ 终止：token 放回、返回 false。pdfTeX GT（/tmp/fp11/
+    ///   gt15.tex）：宏展开产出的空格同样终止 `\font` 名字（P4 `cmr\blank 10`
+    ///   → 名字 "cmr"），`at`/`scaled` 关键字扫描自带跳空格（P5）。
+    ///
+    /// 返回 false = 名字终止（token 已放回，或输入耗尽）。
+    fn more_name(&mut self, name: &mut String) -> Result<bool> {
+        let Some((t, _)) = self.fetch()? else {
+            return Ok(false);
+        };
+        if let Some(op) = self.cond_op(t) {
+            // 条件终结符仅在**条件求值中**（栈顶帧 Evaluating/可归属）就地步进；
+            // 名字扫描的裸流（无帧）遇 \\ifx/\\fi 一律终止名字（token 放回）——
+            // tex.web scan_file_name 循环的 get_x_token 对 cur_cmd>max_command 的
+            // 条件走 expand()，其 insert_relax 门在无求值上下文时把 token 还给流。
+            // 若无此守卫，latex.ltx `\\font\\a=cmr10\\ifx\\a\\a…` 的名字会吞掉
+            // \\ifx 与真支文本（实测 name="cmr10yes"、\\ifx 永不执行）。
+            let top_evaluating = self
+                .cond_stack
+                .last()
+                .is_some_and(|f| f.state == CondState::Evaluating);
+            if matches!(op, CondOp::Fi | CondOp::Else | CondOp::Or) && !top_evaluating {
+                self.unread(t);
+                return Ok(false);
+            }
+            if matches!(op, CondOp::IfX | CondOp::IfNum) && self.cond_stack.is_empty() {
+                self.unread(t);
+                return Ok(false);
+            }
+            let before = self.cond_stack.len();
+            self.step_conditional(op, t)?;
+            if !matches!(op, CondOp::Fi) {
+                let depth = if matches!(op, CondOp::Else | CondOp::Or) {
+                    before.saturating_sub(1)
+                } else {
+                    before
+                };
+                self.drain_open_skip(depth)?;
+            }
+            return Ok(true);
+        }
+        if let Some(csid) = t.csid() {
+            if self.eqtb.slot(csid) == &EqSlot::Primitive(Primitive::JobName) {
+                name.push_str("texput");
+                return Ok(true);
+            }
+            let slot = self.eqtb.slot(csid).clone();
+            let expandable = match &slot {
+                EqSlot::Macro(_) => true,
+                EqSlot::Primitive(p) => p.is_expandable(),
+                _ => false,
+            };
+            if expandable {
+                // 级别 2（\tracingcommands2）：tex.web expand() 开头
+                // `if tracing_commands>1 then show_cur_cmd_chr`——展开入口也追踪。
+                // 原语（\romannumeral 等）追踪；宏（\gobble 吞参数）参考不追踪
+                //（TRIP L94 无 {\gobble}）。
+                if self.params.misc[3] >= 2 && !matches!(slot, EqSlot::Macro(_)) {
+                    self.trace_token_now(t);
+                }
+                self.trace_suppress += 1;
+                let mut expansion = Vec::new();
+                let r = self.expand_once((t, false), &mut expansion);
+                let no_progress = expansion.len() == 1 && expansion[0].0 == t;
+                let r = r.and_then(|_| {
+                    if no_progress {
+                        // expand_once 不识别（\romannumeral 等）：exec 发射
+                        //（压帧）后重新收集
+                        match slot {
+                            EqSlot::Primitive(p) => self.exec_primitive(p),
+                            _ => Ok(()),
+                        }
+                    } else {
+                        Ok(())
+                    }
+                });
+                self.trace_suppress -= 1;
+                r?;
+                if !expansion.is_empty() && !no_progress {
+                    let items: Vec<(Token, bool)> = expansion;
+                    self.push_frame(InputFrame::TokenList {
+                        items: Arc::from(items),
+                        pos: 0,
+                    });
+                }
+                return Ok(true); // 展开结果压帧，重新 fetch 收集
+            }
+        }
+        match t.catcode() {
+            Some(Catcode::Letter) | Some(Catcode::Other) => {
+                let ch = t
+                    .charcode()
+                    .and_then(char::from_u32)
+                    .ok_or_else(|| Error::invalid_input("名字含非法字符"))?;
+                name.push(ch);
+            }
+            Some(c) if !matches!(c, Catcode::Space) => {
+                let ch = t
+                    .charcode()
+                    .and_then(char::from_u32)
+                    .ok_or_else(|| Error::invalid_input("名字含非法字符"))?;
+                name.push(ch);
+            }
+            _ => {
+                self.unread(t);
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// 扫描流号（0..=max）；越界报 "! Bad number (n)." 并钳制（负数 → 0，

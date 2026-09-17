@@ -342,27 +342,23 @@ impl Expander {
         )
     }
 
-    /// 扫描外部字体名：连续 cat 11（字母）/ cat 12（其他）字符，遇空格/组/控制序列结束。
+    /// 扫描外部字体名：tex.web `new_font` 的名字扫描与文件名**共用 `more_name`
+    /// 循环**（get_x_token：可展开项展开、条件原语就地求值、空格终止）。
+    ///
+    /// GT（pdfTeX -ini /tmp/fp11/gt15.tex）：P1 宏作字体名 `=\extf\relax` →
+    /// `P1=cmr10`；P2 条件就地求值 → `cmr10`；P3 `\romannumeral` 展开进名字；
+    /// P4/P5 空格（含宏展开产出）终止名字。latex.ltx `\extract@font` 的
+    /// `\global\expandafter\font\font@name\external@font\relax` 中字体名是
+    /// **宏** `\external@font`——真 TeX 在 `\font` 名字扫描内展开它。
+    /// 此前只收 cat 11/12 字面字符，遇宏退栈 → 空名 →「\font 后缺少字体名」
+    /// 致命，`\DeclarePreloadSizes`（preload.ltx l.47 起）全段卡死。
     fn scan_font_name(&mut self) -> Result<String> {
         self.skip_spaces()?;
         let mut name = String::new();
-        while let Some((tok, _)) = self.fetch()? {
-            match tok.catcode() {
-                Some(Catcode::Letter) | Some(Catcode::Other) => {
-                    let ch = tok
-                        .charcode()
-                        .and_then(char::from_u32)
-                        .ok_or_else(|| Error::invalid_input("字体名含非法字符"))?;
-                    if !ch.is_ascii() {
-                        return Err(Error::invalid_input("字体名仅支持 ASCII（M3-4 范围）"));
-                    }
-                    name.push(ch);
-                }
-                _ => {
-                    self.unread(tok);
-                    break;
-                }
-            }
+        while self.more_name(&mut name)? {}
+        // M3-4 范围：字体名仅支持 ASCII（TFM 名不含多字节字符）
+        if !name.is_ascii() {
+            return Err(Error::invalid_input("字体名仅支持 ASCII（M3-4 范围）"));
         }
         if name.is_empty() {
             return Err(Error::invalid_input("\\font 后缺少字体名"));

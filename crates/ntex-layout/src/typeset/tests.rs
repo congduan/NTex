@@ -709,8 +709,16 @@ mod tests {
 
     #[test]
     fn tfm_missing_font_errors() {
+        // tex.web \\font 失败 = 报错恢复（绑定字体 0，作业继续），不向排版层传 Err。
+        // 断言转录含 "not loadable"（错误面在转录，不在 Result）。
         let mut ts = Typesetter::with_tfm();
-        assert!(ts.typeset(r"\font\x=definitely_not_a_font").is_err());
+        let r = ts.typeset(r"\font\x=definitely_not_a_font");
+        assert!(r.is_ok(), "\\font 加载失败应恢复而非致命：{:?}", r.err());
+        let transcript = ts.take_transcript();
+        assert!(
+            transcript.contains("not loadable"),
+            "转录应含 not loadable：{transcript}"
+        );
     }
 
     #[test]
