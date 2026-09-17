@@ -144,8 +144,9 @@ fn is_open_type_name(name: &str) -> bool {
 ///    缺字体路径有硬口径）。
 fn load_metrics(name: &str) -> Result<FontMetrics> {
     if let Some(bytes) = crate::registered_otf_bytes(name) {
-        return ntex_font::build_metrics(bytes, name)
-            .map_err(|e| Error::invalid_input(format!("解析字体 {name}: {e}")));
+        let fm = ntex_font::build_metrics(bytes, name)
+            .map_err(|e| Error::invalid_input(format!("解析字体 {name}: {e}")))?;
+        return Ok(register_otf_metrics(name, fm));
     }
     if is_open_type_name(name) {
         return load_otf_from_fs(name)?
@@ -199,7 +200,25 @@ fn load_otf_from_fs(name: &str) -> Result<Option<FontMetrics>> {
     let bytes = std::fs::read(&path).map_err(|e| Error::io("读取字体", path, e))?;
     let fm = ntex_font::build_metrics(bytes, name)
         .map_err(|e| Error::invalid_input(format!("解析字体 {name}: {e}")))?;
-    Ok(Some(fm))
+    Ok(Some(register_otf_metrics(name, fm)))
+}
+
+/// 排版器现场合成的 OpenType 度量**同步登记**到 `ntex-font` 进程级注册表，
+/// 并原样返回，供 `\font` 装载路径继续使用。
+///
+/// 为什么必须登记：`ntex-pdf`（PDF 写出）取度量只有「TFM 字节 → parse」与
+/// 进程级注册表两条路（`read_tfm` / `registered_metrics`），它**不**走本
+/// 模块的 OpenType 合成链。无 TFM 的中文字体（Fandol 等）只合成不登记，
+/// 则 native `ntex-dvi` → `ntex-pdf` 在写 PDF 时报
+/// `找不到 TFM：FandolSong-Regular`（2026-09-17 现场：resume1-plain.tex）。
+/// wasm 侧无此问题——`ntex-wasm` 的 `set_otf_font` 注入时已登记同一条缝
+/// （见 `ntex-wasm/src/lib.rs`）；本函数补齐 native 的对应动作。
+///
+/// 返回值语义是"写寄存器"：锁毒化只影响登记（PDF 侧回落报错），
+/// 不影响排版本身，故不作错误传播（与 `register_tfm_bytes` 同口径）。
+fn register_otf_metrics(name: &str, fm: FontMetrics) -> FontMetrics {
+    let _ = ntex_font::register_metrics(name, fm.clone());
+    fm
 }
 
 #[cfg(target_arch = "wasm32")]

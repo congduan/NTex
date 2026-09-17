@@ -622,6 +622,26 @@ fn build_document(
                     )
                     .as_bytes(),
                 );
+                // `/W`：同一字体名的**全部** DVI 字体号（多号数）用到的 CID 取并集。
+                //
+                // `used` 按 **DVI 字体号** 索引，而 `idx` 是**去重后 uniq 的下标**
+                // ——同一名字的不同号数（如 Fandol 11pt/14.4pt/20.74pt）共享一个
+                // PDF 字体对象，此前只取 `used.get(idx)`（首个号数的桶），其余号数
+                // 用到的 CID 全部落进 `/DW 1000` 兜底：CJK 恰好也是全宽 1000 所以
+                // 看不出来，ASCII 等非全宽字形则被按全角推进——查看器端表现为
+                // 「字距被拉宽」（2026-09-17 现场：resume1-plain.tex 的
+                // `138-XXXX-XXXX`、`Python`）。
+                let mut widths_of_name: BTreeMap<u16, i64> = BTreeMap::new();
+                for (font_id, &u) in forms.of_font.iter().enumerate() {
+                    if u != idx {
+                        continue;
+                    }
+                    if let Some(m) = used.get(font_id) {
+                        for (&c, &w) in m {
+                            widths_of_name.entry(c).or_insert(w);
+                        }
+                    }
+                }
                 obj(
                     &mut buf,
                     &mut offsets,
@@ -629,7 +649,7 @@ fn build_document(
                         "{cid_obj} 0 obj << /Type /Font /Subtype /CIDFontType0 /BaseFont \
                          /{base_name} /CIDSystemInfo << {info} >> /FontDescriptor {desc_obj} 0 R \
                          /DW 1000 /W {} >> endobj",
-                        width_array(used.get(idx))
+                        width_array(Some(&widths_of_name))
                     )
                     .as_bytes(),
                 );
@@ -1081,6 +1101,124 @@ mod tests {
             "裸 CFF 应原样嵌入"
         );
         assert_eq!(&cff[..2], &[0x01, 0x00], "CFF 头魔数");
+    }
+
+    /// 同一字体名的**多个号数**共用一组 PDF 对象时，`/W` 必须取全部号数用到
+    /// 的 CID 的并集（`used` 按 DVI 字体号索引、PDF 字体对象按**名字**去重，
+    /// 两者不同维）。
+    ///
+    /// 现场（2026-09-17，resume1-plain.tex）：Fandol 11pt/14.4pt/20.74pt 三个
+    /// 号数——`/W` 只列了首个号数（标题）用到的 CID，其余全落 `/DW 1000` 兜底。
+    /// CJK 恰好也是全宽 1000 所以看不出，ASCII（数字、`Python`）被按全角推进，
+    /// 查看器端表现为「字距被拉宽」。
+    ///
+    /// 顺带锁住 `/W` 的**字号无关性**：同一字形在 11pt 与 10pt 两个号数下的
+    /// 宽度值必须落在同一个数上（`width_1000` 以设计字号为分母）。
+    #[test]
+    fn width_array_unions_cids_of_all_sizes_sharing_one_font_name() {
+        let otf_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../ntex-tauri/ui/fonts/FandolSong-Regular.otf");
+        let Ok(otf) = std::fs::read(&otf_path) else {
+            eprintln!("未找到 {}，跳过", otf_path.display());
+            return;
+        };
+        let name = "FandolSong-MultiSizeProbe";
+        assert!(crate::otf::register_otf(name, &otf), "OTTO 魔数应注册成功");
+
+        // 夹具必须走引擎同款路径：`scaled_by` 会**连同字符宽度一起**缩放，并把
+        // 缩放比记进 `scale`（见 `ntex_font::FontMetrics::scaled_by`）。手写
+        // 「宽度仍是设计值、只把 scale 改成 1.1」的夹具不忠实——那等于宣称
+        // 「字号变大而字形没变大」，`width_1000`（宽度 / 缩放后字号）就会凭空
+        // 差 1/scale（1000 → 909）。
+        let mk = |unicode_chars: Vec<(u32, (i64, i64, i64))>| ntex_font::FontMetrics {
+            unicode_native: true,
+            unicode_chars,
+            design_size_sp: 655_360,
+            scale: 1 << 20,
+            checksum: 0,
+            name: name.to_owned(),
+            chars: vec![None; 128],
+            char_italic: vec![0; 128],
+            slant: 0,
+            space: 0,
+            space_stretch: 0,
+            space_shrink: 0,
+            x_height: 0,
+            quad: 655_360,
+            extra_space: 0,
+            lig_kern_steps: Vec::new(),
+            kern_values: Vec::new(),
+            lig_kern_index: Vec::new(),
+            next_larger: Vec::new(),
+            font_params: Vec::new(),
+        };
+        // 设计字号 10pt 下的宽度（sp）：汉字全角 1 em；'A' 取 3/8 em（375000sp）
+        // ——非全宽字形才看得出 /W 是否按字号归一化（见下方 572 的断言）。
+        let mut chars = vec![
+            (0x4E2Du32, (655_360i64, 0i64, 0i64)), // 「中」
+            (0x56FD, (655_360, 0, 0)),             // 「国」
+            (0x41, (375_000, 0, 0)),               // 'A'
+        ];
+        chars.sort_by_key(|e| e.0);
+        let base = mk(chars);
+        // 号数 0 = 11pt（10pt 设计字号 × 1.1，`\font..at 11pt` 的口径）
+        // 号数 1 = 10pt（未缩放）
+        let fm_11 = base.scaled_by(11 * 65_536, 655_360);
+        let fm_10 = base.clone();
+
+        // 号数 0 画 'A' 与「中」，号数 1 画「国」：三者都要进同一份 /W。
+        // y 各自不同 → 各自成为一个 run（run 以 (字体, 基线) 为界）。
+        let at = |font, code, v| DrawOp::Char {
+            font,
+            code,
+            h: 0,
+            v,
+        };
+        let dvi = Dvi {
+            pages: vec![Page {
+                ops: vec![
+                    at(0, 0x41, 0),
+                    at(0, 0x4E2D, 655_360),
+                    at(1, 0x56FD, 1_310_720),
+                ],
+            }],
+            fonts: vec![fm_11, fm_10],
+            font_names: vec![name.to_owned(), name.to_owned()],
+        };
+        let pdf = write_pdf(&dvi, &PdfOptions::default()).unwrap();
+        let s = String::from_utf8_lossy(&pdf);
+        assert_eq!(
+            s.matches("/Subtype /Type0").count(),
+            1,
+            "同名字体应只写一组 PDF 对象：{s}"
+        );
+
+        let map = crate::cid::build(&otf).expect("构建 CID 映射");
+        let cid_a = map.cid(u32::from(b'A')).expect("'A' 应在字体 cmap 内");
+        let cid_zhong = map.cid(0x4E2D).expect("「中」应在字体 cmap 内");
+        let cid_guo = map.cid(0x56FD).expect("「国」应在字体 cmap 内");
+        assert_eq!(cid_zhong, 0x11CF, "「中」的 CID 应为 GB1 4559");
+        assert_eq!(cid_guo, 0x0753, "「国」的 CID 应为 GB1 1875");
+
+        // 期望宽度（1/1000 em，按 CID 升序——`/W` 的写出顺序）：
+        // 「中」「国」全角 1000；'A' = 375000sp × 1000 / 655360sp = 572。
+        // 572 是**字号无关**的：11pt 号数下宽度与字号同乘 1.1，商不变;
+        // 若 /W 随字号漂移（错把缩放后字号当分母又没缩宽度），这里会是 520。
+        let mut want: Vec<(u16, i64)> = vec![(cid_a, 572), (cid_guo, 1000), (cid_zhong, 1000)];
+        want.sort_unstable();
+        want.dedup();
+        assert_eq!(want.len(), 3, "三个 CID 应互不相同：{want:?}");
+        let want = format!(
+            "/W [{}]",
+            want.iter()
+                .map(|(c, w)| format!("{c} [{w}]"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        assert!(
+            s.contains(&want),
+            "两个号数用到的 CID 都应进同一份 /W，且宽度按设计字号归一化（期望 {want}）：{s}"
+        );
     }
 
     /// Unicode 字体未注入 OTF：降级为 Type0+后代字典（无 FontFile3），

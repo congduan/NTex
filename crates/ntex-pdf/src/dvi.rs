@@ -117,13 +117,21 @@ struct Moves {
     z: i64,
 }
 
-/// 移动栈条目（push/pop 保存全部状态）。
+/// 移动栈条目（push/pop 保存的位置状态）。
+///
+/// **不含字体**：DVI 规范里 `push`/`pop` 只保存 `h,v,w,x,y,z`，当前字体是
+/// 整条指令流的全局状态（tex.web 的 `dvi_f` 同理，`dvi_pop` 不回滚它）。
+/// 此前这里把 `font` 一起存/取，于是「进盒子前 A 字体、盒内切到 B、出盒子」
+/// 之后**读方**以为仍是 A，而**写方**（`ntex-dvi::select_font` 的
+/// `self.font`）按规范按粘性推进不再重复发 `fnt_num`——两边错位，后续
+/// 字符被按错误的字体度量解释：字号错、推进量错、PDF `/W` 错。
+/// 现场：resume1-plain.tex 的居中行（`\centerline` = 盒内 push/pop）之后
+/// 正文全部被当成 `\huge` 字号排（2026-09-17）。
 #[derive(Debug, Clone, Copy)]
 struct StackEntry {
     h: i64,
     v: i64,
     moves: Moves,
-    font: u32,
 }
 
 struct Parser<'a> {
@@ -197,7 +205,7 @@ impl<'a> Parser<'a> {
             match op {
                 140 => break, // eop
                 138 => {}     // nop
-                141 => stack.push(StackEntry { h, v, moves, font }),
+                141 => stack.push(StackEntry { h, v, moves }),
                 142 => {
                     let e = stack
                         .pop()
@@ -205,7 +213,7 @@ impl<'a> Parser<'a> {
                     h = e.h;
                     v = e.v;
                     moves = e.moves;
-                    font = e.font;
+                    // font 不在栈里：字体是全局流状态（见 StackEntry 注释）
                 }
                 // set_char_0..127
                 0..=127 => {
@@ -384,21 +392,36 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// 加载 TFM 并按 DVI 的 (scale, design) 缩放到实际字号。
+/// 加载字体度量并按 DVI 的 (scale, design) 缩放到实际字号。
 ///
-/// 字节经 [`ntex_font::read_tfm`]：注册表优先（wasm 唯一来源，见
-/// `ntex-font` 注册表注释），native 回落 find_tfm + 文件读，行为不变。
+/// 三条来源，按序试用：
+/// 1. 进程级注册度量（宿主注入 OTF 时登记；wasm 唯一来源）；
+/// 2. TFM 字节经 [`ntex_font::read_tfm`]（注册表优先，native 回落
+///    find_tfm + 文件读，行为不变）；
+/// 3. **无 TFM 的 OpenType 字体**（中文 Fandol 等，native 文件链）：DVI 的
+///    `fnt_def` 记的是字体名，PDF 写出侧此前只认 TFM，于是 native
+///    `ntex-dvi` → `ntex-pdf` 对这类字体报 `找不到 TFM：FandolSong-Regular`
+///    （2026-09-17 现场：resume1-plain.tex）。这里补上 OpenType 兜底——与
+///    排版器的分派序（先 TFM、后 OpenType，见
+///    `ntex-layout::typeset::load_metrics`）同构；两者都落空时仍报原来的
+///    TFM 错误，错误消息与历史一致。
 fn load_tfm(name: &str, scale: i64, design: i64) -> io::Result<FontMetrics> {
     // 注册度量优先：无 TFM 对应物的字体（中文 Fandol 等 OTF 注入件）没有
     // TFM 字节可读，宿主在注入时把合成好的 FontMetrics 登记进来——直接取用。
     let mut fm = match ntex_font::registered_metrics(name) {
         Some(fm) => fm,
-        None => {
-            let bytes = ntex_font::read_tfm(name)?;
-            parse_tfm(&bytes).map_err(|e| {
+        None => match ntex_font::read_tfm(name) {
+            Ok(bytes) => parse_tfm(&bytes).map_err(|e| {
                 io::Error::new(ErrorKind::InvalidData, format!("解析 {name}.tfm：{e}"))
-            })?
-        }
+            })?,
+            // TFM 落空 → OpenType 兜底（字体文件链；仍无则保留 TFM 侧错误）
+            Err(tfm_err) => match crate::otf::load_otf(name) {
+                Ok(bytes) => ntex_font::build_metrics(bytes, name).map_err(|e| {
+                    io::Error::new(ErrorKind::InvalidData, format!("解析字体 {name}: {e}"))
+                })?,
+                Err(_) => return Err(tfm_err),
+            },
+        },
     };
     fm.name = name.to_owned();
     // scale = 实际字号 sp，design = 设计字号 sp：维度 × scale/design
@@ -712,5 +735,90 @@ mod tests {
             DrawOp::Char { h, .. } => assert_eq!(*h, 2000, "前两字符各推进一全角宽"),
             other => panic!("预期 Char，得到 {other:?}"),
         }
+    }
+
+    /// `push`/`pop` **不**回滚当前字体：字体是 DVI 指令流的全局状态
+    /// （tex.web 的 `dvi_f`；dvitype 的栈只存 `h,v,w,x,y,z`）。
+    ///
+    /// 写方 `ntex-dvi::select_font` 正是按粘性推进的（`self.font` 全局，
+    /// 与末次发出者相同就不再发 `fnt_num`），读方若把字体塞进 push/pop 栈，
+    /// 盒内换字体、出盒后双方即错位——后续字符按错误字体度量解释：字号错、
+    /// 推进量错、PDF `/W` 错。
+    ///
+    /// 现场（2026-09-17，resume1-plain.tex）：`\centerline`（盒内 push/pop）
+    /// 之后的正文全部被当成 `\huge` 字号排。
+    #[test]
+    fn font_is_global_across_push_pop() {
+        // 度量走注册表注入，不依赖宿主 TFM/Fandol
+        let probe = |name: &str| {
+            let mut fm = ntex_font::FontMetrics {
+                unicode_native: false,
+                unicode_chars: Vec::new(),
+                design_size_sp: 655_360,
+                scale: 1 << 20,
+                checksum: 0,
+                name: name.to_owned(),
+                chars: vec![None; 128],
+                char_italic: vec![0; 128],
+                slant: 0,
+                space: 0,
+                space_stretch: 0,
+                space_shrink: 0,
+                x_height: 0,
+                quad: 655_360,
+                extra_space: 0,
+                lig_kern_steps: Vec::new(),
+                kern_values: Vec::new(),
+                lig_kern_index: Vec::new(),
+                next_larger: Vec::new(),
+                font_params: Vec::new(),
+            };
+            for c in [b'a', b'b', b'c'] {
+                fm.chars[c as usize] = Some((655_360, 0, 0));
+            }
+            ntex_font::register_metrics(name, fm.clone());
+            fm
+        };
+        probe("pushpop-probe-A");
+        probe("pushpop-probe-B");
+
+        let mut body = Vec::new();
+        push_fnt_def(&mut body, 0, b"pushpop-probe-A");
+        push_fnt_def(&mut body, 5, b"pushpop-probe-B");
+        body.push(171); // fnt_num_0：选 A
+        body.push(b'a');
+        body.push(141); // push（盒）
+        body.push(176); // fnt_num_5：盒内选 B
+        body.push(b'b');
+        body.push(142); // pop（出盒）
+        body.push(b'c'); // 字体仍应是 B（全局），不是 A
+        let mut d = pre_header();
+        push_page(&mut d, &body);
+        d.push(248);
+        d.push(0);
+        let dvi = parse(&d).unwrap();
+        let font_of = |op: &DrawOp| match op {
+            DrawOp::Char { font, .. } => *font,
+            other => panic!("预期 Char，得到 {other:?}"),
+        };
+        let code_of = |op: &DrawOp| match op {
+            DrawOp::Char { code, .. } => *code,
+            other => panic!("预期 Char，得到 {other:?}"),
+        };
+        let ops = &dvi.pages[0].ops;
+        assert_eq!(ops.len(), 3, "{ops:?}");
+        assert_eq!(code_of(&ops[0]), u32::from(b'a'));
+        assert_eq!(code_of(&ops[1]), u32::from(b'b'));
+        assert_eq!(code_of(&ops[2]), u32::from(b'c'));
+        assert_ne!(
+            font_of(&ops[0]),
+            font_of(&ops[1]),
+            "盒内换字体应生效（两个字体号各自成一项）"
+        );
+        assert_eq!(
+            font_of(&ops[2]),
+            font_of(&ops[1]),
+            "出盒后字体应保持盒内所选（push/pop 不回滚字体）"
+        );
     }
 }
