@@ -1,0 +1,17 @@
+\catcode`\{=1
+\catcode`\}=2
+\catcode`\_=11
+\catcode`\:=11
+\catcode`\~=10
+\escapechar=-1
+\let\exp_after:wN\expandafter
+\let\token_to_str:N\string
+\let\cs:w\csname
+\let\cs_end:\endcsname
+\let\tl_to_str:n\detokenize
+\let\cs_new:Npn\def
+\def\exp_last_unbraced:NNNNo#1#2#3#4#5{\exp_after:wN#1\exp_after:wN#2\exp_after:wN#3\exp_after:wN#4#5}
+\cs_new:Npn\__hook_make_name:n#1{\exp_after:wN\exp_after:wN\exp_after:wN\__hook_make_name:w\exp_after:wN\token_to_str:N\cs:w __hook~#1\cs_end:}
+\exp_last_unbraced:NNNNo\cs_new:Npn\__hook_make_name:w#1\tl_to_str:n{__hook~}{}
+\message{HOOK=\__hook_make_name:n{begindocument/end}}
+\end

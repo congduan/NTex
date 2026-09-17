@@ -432,7 +432,12 @@ fn detokenize_token(tok: Token, intern: &InternTable, esc: i64, out: &mut Vec<To
                 out.push(Token::char(Catcode::Other, esc as u32));
             }
             for b in name.bytes() {
-                out.push(Token::char(Catcode::Other, u32::from(b)));
+                let cat = if b == b' ' {
+                    Catcode::Space
+                } else {
+                    Catcode::Other
+                };
+                out.push(Token::char(cat, u32::from(b)));
             }
             if name.bytes().next().is_some_and(|c| c.is_ascii_alphabetic()) {
                 out.push(Token::char(Catcode::Space, u32::from(b' ')));
@@ -497,7 +502,12 @@ fn string_token(tok: Token, intern: &InternTable, esc: i64, out: &mut Vec<Token>
                 out.push(Token::char(Catcode::Other, esc as u32));
             }
             for b in name.bytes() {
-                out.push(Token::char(Catcode::Other, u32::from(b)));
+                let cat = if b == b' ' {
+                    Catcode::Space
+                } else {
+                    Catcode::Other
+                };
+                out.push(Token::char(cat, u32::from(b)));
             }
         }
         TokenKind::MacroParam => {

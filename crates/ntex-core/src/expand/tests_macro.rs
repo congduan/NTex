@@ -881,6 +881,56 @@ use super::*;
     }
 
     #[test]
+    fn string_of_csname_internal_space_keeps_space_catcode() {
+        // tex.web print_char 对字符码 32 产出 space token。`\csname a b\endcsname`
+        // 经 `\string` 后，名字内部空格也必须是 cat 10；LaTeX lthooks 的
+        // `\__hook_make_name:w #1 \tl_to_str:n { __hook~ } { }` 定界符正依赖这一点。
+        let (r, t) = run_transcript(concat!(
+            "\\catcode`\\~=10 ",
+            "\\escapechar=-1 ",
+            "\\expandafter\\edef\\expandafter\\s\\expandafter",
+            "{\\expandafter\\string\\csname a b\\endcsname}",
+            "\\def\\test#1~#2X{\\message{SPACE}}",
+            "\\expandafter\\test\\s X"
+        ));
+        assert!(r.is_ok(), "转录：{t}");
+        assert!(t.contains("SPACE"), "csname 内部空格应保持 cat 10：{t}");
+        assert!(!t.contains("Runaway"), "csname 内部空格未匹配 space 定界符：{t}");
+    }
+
+    #[test]
+    fn latex_hook_make_name_strips_internal_prefix() {
+        // latex.ltx lthooks.dtx 2ekernel：`\token_to_str:N` 作用于
+        // `\csname __hook <name>\endcsname` 后，`\tl_to_str:n { __hook~ }`
+        // 作为分隔符剥掉内部前缀，留下真实 hook 名。修复前 `\string` 把 csname
+        // 内部空格吐成 cat 12，分隔符最后的 cat 10 空格匹配失败，50+ 个 hook
+        // 构造在右花括号处报 extra `}`。
+        assert_eq!(
+            expand(concat!(
+                "\\catcode`\\_=11 \\catcode`\\:=11 \\catcode`\\~=10 \\catcode32=9 ",
+                "\n",
+                "\\escapechar=-1 ",
+                "\\let\\exp_after:wN\\expandafter",
+                "\\let\\token_to_str:N\\string",
+                "\\let\\cs:w\\csname",
+                "\\let\\cs_end:\\endcsname",
+                "\\let\\tl_to_str:n\\detokenize",
+                "\\let\\cs_new:Npn\\def",
+                "\\def\\exp_last_unbraced:NNNNo#1#2#3#4#5",
+                "{\\exp_after:wN#1\\exp_after:wN#2\\exp_after:wN#3\\exp_after:wN#4#5}",
+                "\\cs_new:Npn\\__hook_make_name:n#1",
+                "{\\exp_after:wN\\exp_after:wN\\exp_after:wN\\__hook_make_name:w",
+                "\\exp_after:wN\\token_to_str:N\\cs:w __hook~ #1\\cs_end:}",
+                "\\exp_last_unbraced:NNNNo\\cs_new:Npn\\__hook_make_name:w",
+                "#1\\tl_to_str:n{__hook~}{}",
+                "\\__hook_make_name:n{begindocument/end}",
+            ))
+            .unwrap(),
+            "begindocument/end"
+        );
+    }
+
+    #[test]
     fn expanded_primitive_expands_like_edef() {
         // pdfTeX \expanded{...}：组内容按 \edef 语义全展开（第十二刀新增原语；
         // expl3 L196 引擎门闩与 l3names 别名表要求它存在）

@@ -741,3 +741,74 @@ handler 内循环重放。现改为：在被拒 `}` 上方压入真实 `\par`、
 **新墙指纹（下一刀）**：越墙后的首个稳定错误族为 lthooks 的
 `! Argument of \__hook_make_name:w has an extra }.`（伴随 nullfont 缺字符）；
 本轮只登记，不把它与 NFSS 恢复修复混刀。
+
+## 第十九刀：hook 名构造的 csname 内部空格 catcode（2026-09-17）
+
+### 探针更正
+
+上一轮手写 hook 探针缺少 INITEX 花括号 catcode 前置，导致 `\def` 参数文本未闭合等
+自伤错误；本轮所有可复跑探针首行显式设置 `{`=1、`}`=2。
+
+同时复核了主控提出的 INITEX 初表疑点：在本机 TeX Live 2026
+`pdftex -ini` 下，`\showthe\catcode`\{` 与 `\showthe\catcode`\}` 均为 **12**，
+裸 `\def\x{A}` 同样报 runaway definition / Missing `{`。因此 NTex INITEX 初表
+不漏 `{}`，本轮未改 INITEX catcode 预载表。
+
+探针入库：
+
+- `probes/hook-make-name-core.tex`：锁 `\string\csname a b\endcsname` 的名字内部空格。
+- `probes/hook-make-name-min.tex`：锁 lthooks `\__hook_make_name:n` 构造链。
+
+### 根因
+
+`lthooks.dtx` 的核心构造：
+
+```tex
+\cs_new:Npn \__hook_make_name:n #1
+  {
+    \exp_after:wN \exp_after:wN \exp_after:wN \__hook_make_name:w
+    \exp_after:wN \token_to_str:N \cs:w __hook~ #1 \cs_end:
+  }
+\exp_last_unbraced:NNNNo
+\cs_new:Npn \__hook_make_name:w #1 \tl_to_str:n { __hook~ } { }
+```
+
+`__hook~` 的 `~` 是 space token（cat 10）。真实 TeX 在 `\string` 一个由
+`\csname __hook <name>\endcsname` 生成的控制序列时，控制序列名内部的字符码 32
+也以 space token 输出。旧 NTex 对控制序列名逐字节一律吐 cat 12，导致
+`\__hook_make_name:w` 的定界符最后一枚 token（cat 10 空格）永远匹配不上，
+扫描到右花括号时报 `Argument of \__hook_make_name:w has an extra }`。
+
+诊断证据（`NTEX_DELIM_DBG=1`）：定界符尾 token 为
+`char ' ' / cat Space`，输入尾部对应 token 为 `char ' ' / cat Other`。
+
+### 落地
+
+- `free.rs`：`\string` 与 `\detokenize` 打印控制序列名时，名字内部字节 `0x20`
+  改为 `Catcode::Space`，其余字节仍为 `Other`。
+- 双轨回归：
+  - `string_of_csname_internal_space_keeps_space_catcode`
+  - `latex_hook_make_name_strips_internal_prefix`
+
+### 复测
+
+复现命令使用 `--no-plain`，输入路径为 `/tmp/fp11`、TinyTeX `latex/l3kernel` 与
+`latex/base`，输出 `/tmp/fp11/latex6-fixed.fmt`。
+
+| 指标 | 修复前 | 修复后 |
+|---|---:|---:|
+| 总错误数 | 55 | **5** |
+| `\__hook_make_name:w extra }` | 54 | **0** |
+| `SetMathAlphabet` | 2 | 2 |
+| `\reserved@a extra }` | 2 | 2 |
+| Undefined control sequence | 1 | 1 |
+| `.fmt` | 未落盘 | 未落盘 |
+| `[LATEX-LTX-DONE]` | 未到达 | 未到达 |
+
+修复后首错变为 fontmath 旧账：
+`LaTeX Error: Command \`' not defined as a math alphabet.`（fontmath l.73/74
+对应日志位置 l.529）。尾部新墙为 2 条 `\reserved@a extra }`；未执行 `\dump`，
+因此仍拒绝保存格式。
+
+**验收结论**：本刀清掉 lthooks 主墙，错误面 55→5；未达 `[LATEX-LTX-DONE]`，
+按“一刀一墙”记录新墙（fontmath / `\reserved@a` 残余）后收工。

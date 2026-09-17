@@ -1,0 +1,7 @@
+\catcode`\{=1
+\catcode`\}=2
+\escapechar=-1
+\expandafter\edef\expandafter\s\expandafter{\expandafter\string\csname a b\endcsname}
+\def\test#1 #2X{\message{SPACE}}
+\expandafter\test\s X
+\end
