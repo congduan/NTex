@@ -1,0 +1,21 @@
+% 第二十刀回归探针（pdftex 1.40.29 GT 同源 /tmp/k20/dimflush3.tex）：
+% latex.ltx l.8912 `\GenericError` 体（`\dimen@\ifx\@TeXversion\@undefined
+% 4\else\@TeXversion\fi\p@`）的扫描形态——数字因子路径（chardef 数量）之后、
+% 「数量乘内部量」探针（\p@）之前的条件必须就地求值/步进（tex.web 单位位
+% get_x_token §463）。旧实现 flush 循环只步进 \fi/\else/\or，`\ifx` 放回
+% 挡住探针 → `\p@` 泄漏主流被当赋值目标再扫数字 → Missing number 恢复残流。
+% B 行锁「条件在数字前」（符号循环 maybe_eval_cond 臂），
+% C 行锁「条件在 chardef 因子后」（数量探针前 flush 循环）。
+% 跑法：ntex-dvi --no-plain probes/k20-dimen-cond-before-quantity.tex
+% 期望输出（单行、无换行分隔——\message 不加换行，pdftex log 同款）：
+%   B=2.0ptC=2.0pt
+\catcode`\{=1 \catcode`\}=2 \catcode`\@=11
+\chardef\Z=2
+\dimendef\da=10
+\dimendef\p@=11
+\p@=1pt
+\da\ifx\qq\ww\Z\fi\p@
+\message{B=\the\da}%
+\da\Z\ifx\qq\ww\fi\p@
+\message{C=\the\da}%
+\end

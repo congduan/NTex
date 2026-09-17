@@ -9,6 +9,41 @@ impl Expander {
     ///   否则为分隔参数，收集到 P_{k+1} 在输入中完整出现为止（定界符被消费）。
     fn collect_args(&mut self, csid: u32, def: &MacroDef) -> Result<Vec<TokenArray>> {
         let n = def.params.num_params as usize;
+        // 第二十刀定位开关（NTEX_ARG_DUMP=1）：调用瞬间 dump 参数文本
+        //（cs/char/param 分类）。零成本门控，排查定界/非定界实参失配时开。
+        if std::env::var_os("NTEX_ARG_DUMP").is_some() {
+            let pt: Vec<String> = def
+                .params
+                .text
+                .iter()
+                .map(|t| {
+                    if let Some(csid) = t.csid() {
+                        format!("\\{}", self.intern.name(csid))
+                    } else if let Some(d) = t.param_number() {
+                        format!("#{d}")
+                    } else {
+                        format!(
+                            "{:?}/cc{:?}",
+                            t.charcode().and_then(char::from_u32),
+                            t.catcode()
+                        )
+                    }
+                })
+                .collect();
+            eprintln!(
+                "[arg-dump] \\{} n={n} text={pt:?} body0={:?}",
+                self.intern.name(csid),
+                def.body.first().map(|t| {
+                    if let Some(d) = t.param_number() {
+                        format!("#{d}")
+                    } else if let Some(csid) = t.csid() {
+                        format!("\\{}", self.intern.name(csid))
+                    } else {
+                        format!("{:?}", t.charcode().and_then(char::from_u32))
+                    }
+                })
+            );
+        }
         self.diag_trace(format!(
             "ARGS \\{} n={n} floor={}",
             self.intern.name(csid),
@@ -520,10 +555,63 @@ impl Expander {
                 let mut tokens = Vec::new();
                 let mut depth = 0usize;
                 loop {
-                    let t = self
-                        .fetch()?
-                        .ok_or_else(|| Error::invalid_input("实参组未闭合"))?
-                        .0;
+                    let t = match self.fetch()? {
+                        Some(p) => p.0,
+                        None => {
+                            // 第二十刀定位开关（NTEX_ARG_EOF=1）：点名实参组扫描
+                            // 逃逸到输入末尾的宏与当前行号。
+                            if std::env::var_os("NTEX_ARG_EOF").is_some() {
+                                let mut fs = Vec::new();
+                                for f in self.stack.iter().rev().take(5) {
+                                    use crate::expand::InputFrame;
+                                    fs.push(match f {
+                                        InputFrame::Source { pos, bytes, .. } => {
+                                            format!("Src({pos}/{})", bytes.len())
+                                        }
+                                        InputFrame::Macro { body, pos, .. } => {
+                                            format!("Mac({pos}/{})", body.len())
+                                        }
+                                        InputFrame::Bytecode { pc, .. } => {
+                                            format!("Bc({pc})")
+                                        }
+                                        InputFrame::TokenList { items, pos }
+                                        | InputFrame::OutputRoutine { items, pos } => {
+                                            format!("Tl({pos}/{})", items.len())
+                                        }
+                                        InputFrame::MacroArg { items, pos } => {
+                                            format!("Arg({pos}/{})", items.len())
+                                        }
+                                        InputFrame::One { .. } => "One".to_string(),
+                                        _ => "?".to_string(),
+                                    });
+                                }
+                                let got: Vec<String> = tokens
+                                    .iter()
+                                    .take(10)
+                                    .map(|t: &Token| {
+                                        if let Some(c) = t.csid() {
+                                            format!("\\{}", self.intern.name(c))
+                                        } else {
+                                            format!(
+                                                "{:?}/cc{:?}",
+                                                t.charcode().and_then(char::from_u32),
+                                                t.catcode()
+                                            )
+                                        }
+                                    })
+                                    .collect();
+                                eprintln!(
+                                    "[arg-eof] line={} macro=\\{name} depth={depth} \
+                                     floor={} stack=[{}] got={got:?} (+{})",
+                                    self.current_line_no(),
+                                    self.read_floor,
+                                    fs.join(" "),
+                                    tokens.len().saturating_sub(10)
+                                );
+                            }
+                            return Err(Error::invalid_input("实参组未闭合"));
+                        }
+                    };
                     // tex.web scan_toks 组贡献循环同样经 get_token 的
                     // check_outer_validity（pdfTeX 对拍 `\a{\x}` outer 组内
                     // → Forbidden + 作业继续）。
@@ -769,6 +857,30 @@ impl Expander {
                 self.current_line_no(),
                 cs_name,
                 body_dbg.join(",")
+            );
+        }
+        if std::env::var_os("NTEX_HOOK_TRACE").is_some() && cs_name == "__hook_make_name:w" {
+            let show = |t: &Token| {
+                if let Some(csid) = t.csid() {
+                    format!("\\{}", self.intern.name(csid))
+                } else if let Some(n) = t.param_number() {
+                    format!("#{n}")
+                } else if let Some(ch) = t.charcode().and_then(char::from_u32) {
+                    format!("{:?}/{:?}", ch, t.catcode())
+                } else {
+                    format!("{t:?}")
+                }
+            };
+            let params = def.params.text.iter().map(show).collect::<Vec<_>>().join(" ");
+            let body = def.body.iter().map(show).collect::<Vec<_>>().join(" ");
+            eprintln!(
+                "[hook-def] line={} params={} text=[{}] body=[{}] long={} protected={}",
+                self.current_line_no(),
+                def.params.num_params,
+                params,
+                body,
+                def.params.long,
+                def.protected
             );
         }
         // M2：编译期预编译字节码，解释器轨道不编译
@@ -1059,17 +1171,6 @@ impl Expander {
                 // 原语等价（equiv=end_group）计数，字符别名不计数（etrip.tex
                 // 29-34 行版本宏惯用 `\egroup` 于 \edef 体内即依赖此语义）→
                 // 落入 `_` 原样收集，不改深度。
-                EqSlot::Primitive(Primitive::BeginGroup) => {
-                    unbalance += 1;
-                    out.push(tok);
-                }
-                EqSlot::Primitive(Primitive::EndGroup) => {
-                    unbalance -= 1;
-                    if unbalance == 0 {
-                        break 'scan;
-                    }
-                    out.push(tok);
-                }
                 // protected 宏在展开抑制上下文（\edef/\write）不展开 → 原样收入
                 EqSlot::Macro(m) if m.value.protected && self.suppress_expansion > 0 => {
                     out.push(tok);
@@ -1112,6 +1213,20 @@ impl Expander {
                         pos: 0,
                     });
                 }
+                // 第二十刀（l.9114 hook 名泄露根因）：`\begingroup`/`\endgroup`
+                // 原语及其 `\cs_new_eq:NN` 别名（expl3 `\group_begin:`/`\group_end:`）
+                // 在宏体/`\expanded` 实参扫描中**原样存储，不参与 unbalance 配平、
+                // 不终止扫描**。tex.web scan_toks 的体终止符只有字符 `}`（cat 2）；
+                // pdftex 1.40.29 实测（/tmp/k20/e5.tex）：`\edef\a{\endgroup XXX}` →
+                // `macro:->\endgroup XXX`，`\let\ge\endgroup` 别名同存储。旧实现把
+                // Primitive(EndGroup) 计入配平并在 unbalance==0 时 break——`\use:e`
+                // (=`\expanded`) 实参在首个 `\group_end:` 处截断，lthooks 归一化链
+                // （`\__hook_normalize_hook_args_aux:Nn` 的
+                // `\group_begin: \use:e { \group_end: … }` 惯用法）交付为空，余
+                // token 落主循环：hook 名字符被排版（Missing character 洪水）+
+                // 实参扫描失衡（「实参组未闭合」fatal，latex.ltx l.9114 停点）。
+                // 字符别名 `\let\egroup=}`（etrip.tex 29-34）EqSlot 为 Char，本就
+                // 落此臂原样收集。
                 _ => out.push(tok),
             }
         }

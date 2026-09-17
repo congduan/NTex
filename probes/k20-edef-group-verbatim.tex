@@ -1,0 +1,31 @@
+% 第二十刀回归探针（pdftex 1.40.29 -ini GT 逐字对拍，2026-09-18）：
+% tex.web scan_toks 的宏体/实参终止符只有字符 `}`（cat 2）；`\begingroup`/
+% `\endgroup` 原语及其 `\let` 别名**原样存储**，不参与 unbalance 配平、
+% 不终止扫描。旧实现在 Primitive(EndGroup) 处截断，lthooks 归一化链
+% `\group_begin: \use:e { \group_end: … }` 在首个 `\group_end:` 交付空串，
+% 余 token 落排版流 → nullfont 766 条 Missing character。
+%
+% 注意两点 pdftex 语义（都已在 -ini 下实测）：
+% 1. `\message` 里的 `^^J`（char 10 <32）按 tex.web print_char 的 ^^X 转义
+%    **原样打出 `^^J` 四个字符**，不产生换行——本探针与 pdftex log 逐字一致。
+% 2. pdftex 的 `\meaning` 打控制字后**带一个尾空格**（tex.web print_cs §246）。
+%    NTex 当前 `\endgroupXXX`（缺尾空格）——这是下一刀的墙，见 scoreboard
+%    §第二十刀「新墙清单」；本探针锁的是存储行为，T1-T3 除该尾空格外须逐字一致。
+%
+% 跑法：ntex-dvi --no-plain probes/k20-edef-group-verbatim.tex
+% 期望（单行，与 pdftex log 一致）：
+%   ^^JT1:macro:->\endgroup XXX ^^JT2:macro:->\gb YYY ^^JT3:macro:->\begingroup ZZZ
+% （T4 的 \qf 在定义前被 \edef 引用，pdftex 与 NTex 同报 Undefined 后原样存储，
+%  报错文本不作断言。）
+\catcode`\{=1 \catcode`\}=2 \catcode`\#=6
+\let\gb\begingroup \let\ge\endgroup
+\edef\a{\endgroup XXX}
+\message{^^JT1:\meaning\a}
+\edef\b{\gb YYY}
+\message{^^JT2:\meaning\b}
+\edef\c{\begingroup ZZZ}
+\message{^^JT3:\meaning\c}
+\edef\d{\ge \qf { AAA }}
+\def\qf#1{Q#1Q}
+\message{^^JT4:\meaning\d}
+\end

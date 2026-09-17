@@ -931,6 +931,122 @@ use super::*;
     }
 
     #[test]
+    fn edef_stores_group_primitives_and_aliases_verbatim() {
+        // 第二十刀（pdftex 1.40.29 GT /tmp/k20/e5.tex T1-T4）：tex.web scan_toks
+        // 的体终止符只有字符 `}`（cat 2）；`\begingroup`/`\endgroup` 原语及其
+        // `\cs_new_eq:NN` 别名**原样存储**，不参与 unbalance 配平、不终止扫描。
+        // 旧实现把 Primitive(EndGroup) 计入配平并在 unbalance==0 时截断：
+        // `\use:e`（=`\expanded`）实参在首个 `\group_end:` 处交付为空，lthooks
+        // 归一化链（`\group_begin: \use:e { \group_end: … }` 惯用法）余 token
+        // 落主循环被排版 → nullfont 766 条 Missing character + 实参扫描失衡。
+        // 字符别名 `\let\egroup=}`（etrip.tex 29-34）EqSlot 为 Char，本就原样收集。
+        assert_eq!(
+            expand("\\let\\ge\\endgroup\\edef\\a{\\ge X}\\detokenize\\expandafter{\\a}").unwrap(),
+            "\\ge X"
+        );
+        assert_eq!(
+            expand("\\edef\\a{\\begingroup X\\endgroup}\\detokenize\\expandafter{\\a}").unwrap(),
+            "\\begingroup X\\endgroup "
+        );
+        // \expanded 同语义（`\use:e` 真路径）：`\group_end:` 存储不截断。
+        // 测试上下文初表 `:`/`_` 是 cat12——先设 cat11 才能构成单一 cs 名；
+        // 空格 cat9（house idiom，同 hook 测试）防主流程游离空格混进输出。
+        assert_eq!(
+            expand(
+                "\\catcode`\\_=11 \\catcode`\\:=11 \\catcode32=9 \
+                 \\let\\group_begin:\\begingroup \\let\\group_end:\\endgroup \
+                 \\def\\use:e#1{\\tex_expanded:D{#1}} \
+                 \\long\\gdef\\gfn#1{(#1)} \
+                 \\group_begin: \
+                 \\edef\\res{\\group_end: \\noexpand\\gfn { para/plain }} \
+                 \\detokenize\\expandafter{\\res}"
+            )
+            .unwrap(),
+            "\\group_end: \\gfn {para/plain}"
+        );
+    }
+
+    #[test]
+    fn dimen_number_loop_steps_conditional_machine_on_fi() {
+        // 第二十刀错误恢复轨（latex.ltx l.8912 \GenericError 体）：
+        // `\dimen@\ifx\@TeXversion\@undefined 4\else\@TeXversion\fi\p@` ——
+        // 数字循环遇条件终结符须步进条件机，否则 `\fi` 放回挡住「数量乘
+        // 内部量」探针，`\p@` 泄漏主流被当赋值目标再扫数字 → Missing number
+        // 恢复残流污染全链（766 条 Missing character、主帧停 71.7%）。
+        let (r, t) = run_transcript(
+            "\\dimen1=3pt\n\\dimen0=\\ifx\\a\\b 3\\else 9\\fi\\dimen1\n\\message{D=\\the\\dimen0}",
+        );
+        assert!(r.is_ok(), "{r:?}");
+        // \ifx 对两个未定义 cs 判等 → 真分支取 3，3 × 3pt（\dimen1 数量乘内部量）
+        assert!(t.contains("D=9.0pt"), "{t}");
+        assert!(!t.contains("Missing number"), "{t}");
+    }
+
+    #[test]
+    fn dimen_flushes_cond_frame_before_internal_quantity() {
+        // 第二十刀错误恢复轨（scan.rs 数量探针前的 flush 循环）：chardef 因子
+        // 路径数字循环不跑，本扫描开启的条件帧遗留到数量探针前——`\fi` 挡在
+        // `\dimen1` 前面使探针失配、寄存器名泄漏主流。仅步进本扫描可闭的帧，
+        // 游离终结符照旧放回。
+        let (r, t) = run_transcript(
+            "\\chardef\\Z=2\n\\dimen1=3pt\n\\dimen0=\\Z\\ifx\\a\\b\\fi\\dimen1\n\\message{D=\\the\\dimen0}",
+        );
+        assert!(r.is_ok(), "{r:?}");
+        assert!(t.contains("D=6.0pt"), "{t}");
+        assert!(!t.contains("Missing number"), "{t}");
+    }
+
+    #[test]
+    fn the_reads_uc_sf_code_tables() {
+        // 第二十刀（utf8.def l.148-154 `\uccode`\noexpand\~=\the\uccode`\~`）：
+        // `\the` 补 uc/sf code 读臂（tex.web scan_something_internal 的
+        // uc_code/sf_code 分支）。缺臂使 utf8.def 预载的
+        // `\edef\reserved@a{…\the\uccode`\~…}` 落兜底错误，格式引导止步
+        // latex.ltx l.22586 utf8 区。
+        assert_eq!(expand("\\uccode`\\~=100 \\edef\\x{\\the\\uccode`\\~}\\x").unwrap(), "100");
+        assert_eq!(expand("\\sfcode`\\A=999 \\edef\\x{\\the\\sfcode`\\A}\\x").unwrap(), "999");
+    }
+
+    #[test]
+    fn latex_hook_normalize_use_e_keeps_names_inside_arguments() {
+        // 第二十刀：真实 lthooks 不是直接把 `\__hook_make_name:n` 排到主流，
+        // 而是在 `\use:e { \exp_not:N #1 #2 }` 里归一化成目标宏的 braced
+        // 实参。旧实现让 `\__hook_make_name:w` 留下的 `para/before` 等返回值
+        // 逃出 `\expanded` 收集，落到排版流（nullfont 766 条 Missing character）。
+        assert_eq!(
+            expand(concat!(
+                "\\catcode`\\_=11 \\catcode`\\:=11 \\catcode`\\~=10 \\catcode32=9 ",
+                "\\escapechar=-1 ",
+                "\\let\\exp_after:wN\\expandafter",
+                "\\let\\token_to_str:N\\string",
+                "\\let\\cs:w\\csname",
+                "\\let\\cs_end:\\endcsname",
+                "\\let\\tl_to_str:n\\detokenize",
+                "\\let\\tex_expanded:D\\expanded",
+                "\\let\\exp_not:N\\noexpand",
+                "\\let\\group_begin:\\begingroup",
+                "\\let\\group_end:\\endgroup",
+                "\\def\\use:e#1{\\tex_expanded:D{#1}}",
+                "\\def\\cs_gset:Npn{\\long\\gdef}",
+                "\\def\\cs_new:Npn#1{\\cs_gset:Npn#1}",
+                "\\def\\exp_last_unbraced:NNNNo#1#2#3#4#5",
+                "{\\exp_after:wN#1\\exp_after:wN#2\\exp_after:wN#3\\exp_after:wN#4#5}",
+                "\\cs_new:Npn\\__hook_make_name:n#1",
+                "{\\exp_after:wN\\exp_after:wN\\exp_after:wN\\__hook_make_name:w",
+                "\\exp_after:wN\\token_to_str:N\\cs:w __hook~ #1\\cs_end:}",
+                "\\exp_last_unbraced:NNNNo\\cs_new:Npn\\__hook_make_name:w",
+                "#1\\tl_to_str:n{__hook~}{}",
+                "\\def\\target#1#2#3{(#1)(#2)(#3)}",
+                "\\def\\norm#1#2{\\group_begin:\\use:e{\\group_end:\\exp_not:N#1#2}}",
+                "\\norm\\target{{\\__hook_make_name:n{para/before}}",
+                "{\\__hook_make_name:n{para/after}}{0}}",
+            ))
+            .unwrap(),
+            "(para/before)(para/after)(0)"
+        );
+    }
+
+    #[test]
     fn expanded_primitive_expands_like_edef() {
         // pdfTeX \expanded{...}：组内容按 \edef 语义全展开（第十二刀新增原语；
         // expl3 L196 引擎门闩与 l3names 别名表要求它存在）

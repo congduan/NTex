@@ -1587,6 +1587,14 @@ impl Expander {
             let Some((tok, ne)) = self.fetch()? else {
                 break;
             };
+            // 真条件的假分支（scan_number 符号循环同款）：分支内 token 丢弃，
+            // 仅条件终结符走状态机推进（tex.web get_x_token→expand 内联跳过）。
+            if self.is_skipping() {
+                if let Some(op) = self.cond_op(tok) {
+                    self.step_conditional(op, tok)?;
+                }
+                continue;
+            }
             if tok.charcode() == Some(b'-' as u32) {
                 neg = !neg;
                 continue;
@@ -1622,6 +1630,19 @@ impl Expander {
                 }
                 // TRIP：条件原语在尺寸中先求值（TeX get_x_token 嵌套条件）
                 if self.maybe_eval_cond(tok)? {
+                    continue;
+                }
+                // 条件终结符（`\fi`/`\else`/`\or`）：与 scan_number 符号循环
+                // 同款——本扫描期间开启的条件帧在此闭合；无帧可闭的游离终结符
+                // 放回（外层状态机收口，语义不变）。
+                if let Some(op) = self.cond_op(tok) {
+                    if matches!(op, CondOp::Fi | CondOp::Else | CondOp::Or)
+                        && self.cond_stack.is_empty()
+                    {
+                        self.unread(tok);
+                        break;
+                    }
+                    self.step_conditional(op, tok)?;
                     continue;
                 }
                 // 可展开 cs（宏/可展开原语）：展开**当前** token（第一次 fetch 的），
@@ -2021,6 +2042,19 @@ impl Expander {
                 any = true;
             } else {
                 while let Some((tok, _)) = self.fetch()? {
+                    // 真条件的假分支 token 丢弃（scan_number 数字循环同款，仅
+                    // 条件终结符走状态机推进——tex.web get_x_token 语义）。
+                    if self.is_skipping() {
+                        if let Some(op) = self.cond_op(tok) {
+                            self.step_conditional(op, tok)?;
+                        }
+                        continue;
+                    }
+                    // 条件开始（\if*）就地求值：tex.web 数字循环 get_x_token 展开位
+                    // 同款（`\count0=2\ifx\qq\ww\fi3` → 23；符号循环已有同臂）。
+                    if self.maybe_eval_cond(tok)? {
+                        continue;
+                    }
                     // eTeX 表达式分组（{7pt+}{12pt/4} 的 {7pt+}）只属于 \dimexpr 因子层
                     // （expr.rs dimen_expr_term），scan_dimen 遇组字符 { 应报
                     // Missing number（tex.web scan_dimen 无分组分支）。
@@ -2044,6 +2078,24 @@ impl Expander {
                         saw_dot = true;
                         any = true;
                     } else {
+                        // 第二十刀根因：`\dimen@\ifx\@TeXversion\@undefined 4\else
+                        // \@TeXversion\fi\p@`（ltfinal.dtx l.8912 \GenericError 体）
+                        // ——数字循环遇条件终结符须步进条件机（scan_number 数字
+                        // 循环 round-24 同款），否则 `\fi` 放回使后续「数量乘内部
+                        // 量」探针（\p@）失配，\p@ 泄漏主流被当赋值目标再扫数字
+                        // → Missing number 恢复残流污染全链（762 条 Missing
+                        // character、主帧停 71.7%）。无帧可闭的游离终结符维持
+                        // 放回语义。
+                        if let Some(op) = self.cond_op(tok) {
+                            if matches!(op, CondOp::Fi | CondOp::Else | CondOp::Or)
+                                && self.cond_stack.is_empty()
+                            {
+                                self.unread(tok);
+                                break;
+                            }
+                            self.step_conditional(op, tok)?;
+                            continue;
+                        }
                         self.unread(tok);
                         break;
                     }
@@ -2054,6 +2106,39 @@ impl Expander {
             // TeX：尺寸数字缺失 → "Missing number" 恢复 0（\leftskip \parshape pt plus...）
             self.report_missing_number();
             return Ok((0, 0));
+        }
+        // 数量探针前的条件终结符消化（tex.web 单位位 get_x_token §463：展开/
+        // 条件先消费，再认内部量）。数字循环未跑的路径（number_cs 因子臂，
+        // 如 `\da\Z\ifx\qq\ww\fi\p@` 的 `\Z` chardef 因子）会把本扫描开启的
+        // 条件帧遗留到此处——`\ifx` 不求值则挡在 `\p@` 前面使数量探针失配，
+        // `\p@` 泄漏主流被当赋值目标再扫数字 → Missing number 恢复残流污染
+        // 全链（762 条 Missing character、主帧停 71.7%，第二十刀 dimflush3
+        // 探针、pdftex GT 干净 2.0pt）。条件开始（\if*）就地求值（maybe_eval_cond，
+        // 与符号循环同臂）、假分支 token 丢弃；无帧可闭的游离终结符照旧放回。
+        while let Some((tok, _)) = self.fetch()? {
+            if self.is_skipping() {
+                if let Some(op) = self.cond_op(tok) {
+                    self.step_conditional(op, tok)?;
+                }
+                continue;
+            }
+            if self.maybe_eval_cond(tok)? {
+                continue;
+            }
+            let closes = match self.cond_op(tok) {
+                Some(op @ (CondOp::Fi | CondOp::Else | CondOp::Or))
+                    if !self.cond_stack.is_empty() =>
+                {
+                    Some(op)
+                }
+                _ => None,
+            };
+            if let Some(op) = closes {
+                self.step_conditional(op, tok)?;
+                continue;
+            }
+            self.unread(tok);
+            break;
         }
         // <整数>[<小数>]<内部尺寸量>：`11\parshapedimen4` = 11 × 4pt、
         // `2\fontdimen6\font` 等（TeX scan_dimen 的数量乘内部量）。

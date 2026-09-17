@@ -812,3 +812,137 @@ handler 内循环重放。现改为：在被拒 `}` 上方压入真实 `\par`、
 
 **验收结论**：本刀清掉 lthooks 主墙，错误面 55→5；未达 `[LATEX-LTX-DONE]`，
 按“一刀一墙”记录新墙（fontmath / `\reserved@a` 残余）后收工。
+
+## 第二十刀（收尾，2026-09-18）：l.8912 错误恢复污染根治——`[LATEX-LTX-DONE]` 到达、latex.fmt 落盘
+
+### 战役背景
+
+第十九刀收工时错误面 55→5，主帧停在 pos=556,097/776,142（71.7%），报
+「源未执行 \dump」。首错锁在 latex.ltx l.8912 `\GenericError` 小写化块：
+`! Missing number, treated as zero.` + `<to be read again> \let`，随后
+766 条 `Missing character: There is no X in font nullfont!`（拼出的是
+lthooks hook 注册名）——即错误恢复残流被排版，而非真语法偏差。战斗中先
+后证伪四个假设：csname 含 `/`、INITEX `{}` catcode、尾递归/帧泄漏、
+`\__hook_make_name:w` 空格定界（该项已由第十九刀 6caec85 单独落地）。
+
+### 根因（四处，全部 tex.web/pdftex GT 逐字对拍）
+
+1. **`\edef` 体把组定界原语当终止符**（`macros.rs scan_edef_body`）。
+   tex.web scan_toks 的体终止符只有字符 `}`（cat 2）；`\begingroup`/
+   `\endgroup` 原语及其 `\let` 别名原样存储、不参与 unbalance 配平
+   （pdftex -ini GT `probes/k20-edef-group-verbatim.tex` T1-T3）。旧实现
+   在 `Primitive(EndGroup)` 处截断，lthooks 归一化链
+   `\group_begin: \use:e { \group_end: … }` 在首个 `\group_end:` 交付
+   空串，余 token 落排版流 → 766 条 nullfont Missing character + 实参
+   扫描失衡（实参组未闭合 fatal 的真源头）。
+
+2. **`\the` 缺 uc_code/sf_code 读臂**（`save.rs`）。utf8.def l.148-154
+   `\uccode`\noexpand\~=\the\uccode`\~`：tex.web scan_something_internal
+   里 uc_code/sf_code 是合法 `\the` 操作数。缺臂使 utf8 区落兜底错误——
+   且被 `--dump` 拒绝路径**先于**错误打印返回而表现为「静默止步」
+   （去掉 `--dump` 重跑才现形；`stale-binary-diagnosis-trap` 同族的
+   「现象被通道吞掉」教训）。
+
+3. **文件名引号剥离只看首 token**（`io.rs more_name`）。latex.ltx
+   l.9841 `\edef\@filef@und{"\@filef@und" }` 把找到的文件名存成
+   `"name" `，而消费点 l.22832 `\@@input\@filef@und` 经宏展开后引号才
+   出现在 more_name 循环**中段**。旧实现只剥首个 token 的引号 →
+   `找不到文件："latex2e-…ltx"`（引号进文件名）。修复 = more_name 挂
+   toggle 状态机（catcode 34 切换、引号态内空格入名），pdftex GT
+   /tmp/k20q/qprobe.tex 三案剥壳一致；`\font` 名路径同步改签名。
+
+4. **数字/尺寸扫描的条件机不步进 if 开始**（`scan.rs`）。l.8912 真形态
+   `\dimen@\ifx\@TeXversion\@undefined 4\else\@TeXversion\fi\p@`：符号
+   循环已有 maybe_eval_cond 臂（B 形态 `\ifx…\Z\fi\p@` 因此早已通过），
+   但 **chardef 因子路径整段绕过数字循环**，且数量探针前的 flush 循环
+   只步进 `\fi`/`\else`/`\or`——`\ifx` 放回挡住「数量乘内部量」探针，
+   `\p@` 泄漏主流被当赋值目标再扫数字 → Missing number 恢复残流污染
+   全链。修复 = flush 循环与数字循环补「if 开始就地求值 + 假分支丢弃」
+   臂（tex.web 单位位 get_x_token §463）。GT：pdftex 与 NTex 均为
+   `B=2.0ptC=2.0pt` 零报错（`probes/k20-dimen-cond-before-quantity.tex`，
+   修复前 C 行 Missing number + `\p@` 泄漏）。
+
+### 复测
+
+复现命令（cargo 串行、timeout 500s、`NTEX_TFM_DIR=~/.ntex-fonts`）：
+
+```bash
+./target/release/ntex-dvi --no-plain \
+  --input-path /tmp/fp11 --input-path ~/.TinyTeX/texmf-dist/tex/latex/base \
+  --dump /tmp/fp11/latex6-fixed.fmt /tmp/fp11/ltxdump21.tex   # 日志 /tmp/fp11/ltx30.err
+```
+
+哨兵说明：latex.ltx 在 l.22837 **自带 `\dump`**（tex.web \dump=存格式+
+final_end，作业终结、控制权不返回），包裹层「\input 后打标记」在任何引擎
+都结构性不可达——`ltxdump21.tex` 用 `\let\latexp@dump\dump` + 重定义
+`\dump` 把标记挂到真实 \dump 调用点，标记打出当且仅当 latex.ltx 全量载入
+走到它自己的 \dump；dumped 仍由原语置位，fmt 照常落盘。
+
+| 指标 | 修复前（第十九刀末） | 修复后 |
+|---|---:|---:|
+| `[LATEX-LTX-DONE]` | 未到达 | **到达**（ltx30.err l.1248） |
+| `.fmt` | 未落盘 | **6,527,620 字节** |
+| Missing character | 766 | **0** |
+| 可恢复错误 | 5（+残流污染） | 15（全是既有旧账，见下） |
+| `\dump` | 未执行 | **已执行** |
+
+验收条款 (a)（标记+fmt）与 (b)（Missing=0、pos=768,709>756,000、\dump
+已执行）**同时满足**。15 条错误构成：1× initex 引擎检查（基线既有）、
+2× SetMathAlphabet `Command ''`（第十四刀已知）、6× `\???` doesn't
+match + 6× hooks 'top-level' reserved（ltpara/socket 旧块，成对出现）。
+
+### fmt 快路径（pass2）
+
+```bash
+./target/release/ntex-dvi --no-plain --fmt /tmp/fp11/latex6-fixed.fmt \
+  --input-path /tmp/fp11 --input-path ~/.TinyTeX/texmf-dist/tex/latex/base <job>
+```
+
+- 空作业（`/tmp/fp11/pass2e.tex`）：**0.100s** 墙钟、`format=LaTeX2e
+  version=2026-06-01`、0 错误（`/tmp/fp11/pass2f.err`）。fmt 载入 +
+  catcode 往返 + everyjob 全部健康。
+- 刀中曾观测到 job 起步 everyjob 风暴（49,947 条 `Missing endcsname`），
+  原拟按新墙注册——根因修复 4 落地后**作为级联自然消失**，未及定版。
+- 文档级：`\documentclass{article}` 经 fmt 走通 article.cls + size10.clo
+  搜索路径载入，止步 `\setbox` Missing number（见新墙 1）。
+- 探针坑：`--fmt` 与 plain 预载互斥（main.rs 注释明言），漏 `--no-plain`
+  会叠 plain 状态，`\fmtname` 变 plain——pass2 计时必须用 `--no-plain`。
+
+### 回归测试（tests_macro.rs，4 条新增；全套 86 条绿）
+
+- `edef_stores_group_primitives_and_aliases_verbatim`：组原语/别名原样存储
+  （根因 1；测试上下文 `:`/`_` 是 cat12，须先设 cat11；游离空格用 house
+  idiom `\catcode32=9` 压掉——`expand()` 返回全部输出 token，主流程空格
+  token 会混进断言串）。
+- `dimen_number_loop_steps_conditional_machine_on_fi`：数字循环条件机
+  （根因 4 的数字循环臂；`\ifx` 对两未定义 cs 判等取真分支，期望 9.0pt
+  而非 18.0pt——首版期望值算错）。
+- `dimen_flushes_cond_frame_before_internal_quantity`：chardef 因子路径
+  条件帧先行消化（根因 4 主靶；修复前真实偏差，非期望值错）。
+- `the_reads_uc_sf_code_tables`：`\the\uccode`/`\the\sfcode` 读臂（根因 2）。
+
+### 定位开关留存（全部 env 门控、未设零成本）
+
+NTEX_HOOK_TRACE（`[hook-def]`/`[hook-char]`，上一 agent 落地）、
+NTEX_NUM_TRACE（Missing number 现场帧栈+token 转储）、NTEX_ARG_EOF
+（实参组未闭合现场）、NTEX_ARG_DUMP（实参参数文本转储）、NTEX_COND_TRACE、
+NTEX_DELIM_DBG。本次四根因里 1/4 由 NTEX_ARG_EOF 现场点名、2/3 由
+「去掉 --dump 看真错误」定性。
+
+### 新墙清单（一刀一墙，只注册不修）
+
+1. **fmt 文档级**：article.cls/size10.clo 载入后 `\setbox` Missing
+   number ×8，残流致「胶水上下文需要 \skip/\muskip 寄存器」fatal
+   （`/tmp/fp11/doc1.err`，fmt 加载 0.113s 即达）。
+2. **`\meaning`/print_cs 控制字尾空格缺失**：pdftex
+   `macro:->\relax ABC`，NTex `macro:->\relaxABC`——tex.web §246 print_cs
+   控制字后补一空格，属打印层通用偏差（`\show`/`\meaning`/`\detokenize`
+   共用面），GT `/tmp/k20p/mean.tex`、`probes/k20-edef-group-verbatim.tex`
+   注释已标。
+3. 既有旧账维持：SetMathAlphabet ×2、`\???` ×6、hooks top-level ×6、
+   initex 引擎检查 ×1。
+
+**验收结论**：`[LATEX-LTX-DONE]` 到达、latex.fmt 6,527,620 字节落盘、
+Missing character 766→0、\dump 执行、fmt 快路径 0.1s 可用；`make check`
+fmt+clippy -D warnings+测试 41 套件 **808 passed / 0 failed**（803 基线
+只增不减）。第二十刀按验收收工。

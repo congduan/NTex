@@ -74,27 +74,21 @@ impl Expander {
                     _ => return Err(Error::invalid_input("文件名含非法 token")),
                 }
             }
-        } else if first.charcode() == Some(34) {
-            // "file name"：web2c 对带引号文件名剥引号（kpathsea quote_name 语义，
-            // 引号内空格保留）。latex.ltx 的 \IfFileExists/\@partaux 即此形式：
-            // `\openin\@inputcheck"#1" `、`\immediate\openout\@partaux "#1.aux"`。
-            loop {
-                let t = self
-                    .fetch()?
-                    .ok_or_else(|| Error::invalid_input("文件名引号未闭合"))?
-                    .0;
-                if t.charcode() == Some(34) {
-                    break;
-                }
-                let ch = t
-                    .charcode()
-                    .and_then(char::from_u32)
-                    .ok_or_else(|| Error::invalid_input("文件名含非法字符"))?;
-                name.push(ch);
-            }
         } else {
             self.unread(first);
-            while self.more_name(&mut name)? {}
+            // 第二十刀（latex.ltx l.22832 `\@@input\@filef@und`）：引号剥离
+            // 必须活在 more_name 的 token 循环里，而不是只在首 token 判一次。
+            // LaTeX 内核把找到的文件名存成**带引号+尾空格**的 `"name" ` 形态
+            // （ltfiles.dtx `\edef\@filef@und{"\@filef@und" }`，web2c/pdftex
+            // 引号文件名扩展，`\openin\@inputcheck"#1" ` 同款）——首 token 是
+            // cs `\@filef@und`，引号在**展开之后**才进流。旧实现只在首 token
+            // 判 `"`，展开后出现的引号被 more_name 当 cat12 字符收进名字 →
+            // 「找不到文件：""latex2e-…ltx""」。pdftex GT（/tmp/k20q/qprobe.tex
+            // 三案）实证：`\input "q2" `、宏展开后 `"q2" `、带路径引号全部
+            // 剥壳。语义：`"`（cat11/12）在名字扫描里 toggle 引号态不入名；
+            // 引号态内空格收进名字，非引号态空格照旧终止。
+            let mut quoted = false;
+            while self.more_name(&mut name, &mut quoted)? {}
         }
         if name.is_empty() {
 
@@ -134,7 +128,10 @@ impl Expander {
     ///   → 名字 "cmr"），`at`/`scaled` 关键字扫描自带跳空格（P5）。
     ///
     /// 返回 false = 名字终止（token 已放回，或输入耗尽）。
-    fn more_name(&mut self, name: &mut String) -> Result<bool> {
+    ///
+    /// `quoted`：pdftex 引号文件名状态（跨 token 循环持有，见 scan_file_name
+    /// 第二十刀注）；字体名扫描无引号诉求，传 `&mut false` 即关闭。
+    fn more_name(&mut self, name: &mut String, quoted: &mut bool) -> Result<bool> {
         let Some((t, _)) = self.fetch()? else {
             return Ok(false);
         };
@@ -212,11 +209,22 @@ impl Expander {
         }
         match t.catcode() {
             Some(Catcode::Letter) | Some(Catcode::Other) => {
+                // pdftex 引号文件名：`"` toggle 引号态、自身不入名（texmfmp
+                // pdftex_scan_file_name；GT /tmp/k20q/qprobe.tex 三案剥壳）
+                if t.charcode() == Some(34) {
+                    *quoted = !*quoted;
+                    return Ok(true);
+                }
                 let ch = t
                     .charcode()
                     .and_then(char::from_u32)
                     .ok_or_else(|| Error::invalid_input("名字含非法字符"))?;
                 name.push(ch);
+            }
+            Some(Catcode::Space) if *quoted => {
+                // 引号态内空格入名（"a b.tex" 带空格名）；非引号态空格由
+                // 下方兜底臂终止名字（GT P4 宏展开空格终止字体名语义不变）
+                name.push(' ');
             }
             Some(c) if !matches!(c, Catcode::Space) => {
                 let ch = t

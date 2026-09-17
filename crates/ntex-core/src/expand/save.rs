@@ -703,6 +703,25 @@ impl Expander {
                         u8::try_from(byte).map_err(|_| Error::invalid_input("\\lccode 字符码越界"))?;
                     Ok(emit_count(self.lccodes[byte as usize]))
                 }
+                // 第二十刀（utf8.def l.148-154 `\uccode`\noexpand\~=\the\uccode`\~`）：
+                // `\the` 补 uc/sf code 读臂——tex.web scan_something_internal 的
+                // uc_code/sf_code 分支都是合法 `\the` 内部量（cat_code 臂已在
+                // 上方 ETRIP 冲刺批次）。此前缺臂使 utf8.def 预载的
+                // `\edef\reserved@a{…\the\uccode`\~…}` 落 `_ =>` 兜底错误，
+                // 格式引导止步 l.22586（latex.ltx utf8 区，残留 \reserved@a
+                // 半载 edef 现场）。
+                Primitive::Uccode => {
+                    let byte = self.scan_char_code()?;
+                    let byte =
+                        u8::try_from(byte).map_err(|_| Error::invalid_input("\\uccode 字符码越界"))?;
+                    Ok(emit_count(self.uccodes[byte as usize]))
+                }
+                Primitive::SfCode => {
+                    let byte = self.scan_char_code()?;
+                    let byte =
+                        u8::try_from(byte).map_err(|_| Error::invalid_input("\\sfcode 字符码越界"))?;
+                    Ok(emit_count(i64::from(self.sfcodes[byte as usize])))
+                }
                 // \the\font：当前字体选择器（expander 侧无排版状态——NTex 简化返回
                 // 空；trip.tex L30 `\showthe\font`，trip.log 参考为 preload 场景跳过）
                 Primitive::Font => Ok(Vec::new()),
