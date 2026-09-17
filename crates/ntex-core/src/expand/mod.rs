@@ -1727,6 +1727,68 @@ impl Expander {
     /// 参考 trip.log 各 Missing number 段逐字对齐——l.253/l.419 等格式差即源于
     /// 此前缺失这些行）。
     fn report_missing_number(&mut self) {
+        // 第二十刀定位开关：NTEX_NUM_TRACE——现场打出输入栈摘要 + 宏调用链 +
+        // 最近 token，用于锁定「数字扫描读到哪个 token、从哪条宏链进来」。
+        if std::env::var_os("NTEX_NUM_TRACE").is_some() {
+            fn show(intern: &crate::intern::InternTable, t: &Token) -> String {
+                if let Some(csid) = t.csid() {
+                    format!("\\{}", intern.name(csid))
+                } else if let Some(n) = t.param_number() {
+                    format!("#{n}")
+                } else if let Some(ch) = t.charcode().and_then(char::from_u32) {
+                    format!("{ch:?}/cc{:?}", t.catcode())
+                } else {
+                    format!("{t:?}")
+                }
+            }
+            let mut frames = Vec::new();
+            for f in self.stack.iter().rev().take(4) {
+                match f {
+                    InputFrame::TokenList { items, pos } => {
+                        let next = items[*pos..]
+                            .iter()
+                            .take(10)
+                            .map(|(t, _)| show(&self.intern, t))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        let done = items[..*pos]
+                            .iter()
+                            .rev()
+                            .take(4)
+                            .map(|(t, _)| show(&self.intern, t))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        frames.push(format!(
+                            "{}tok@{} next=[{next}] done=[{done}]",
+                            items.len(),
+                            pos
+                        ));
+                    }
+                    InputFrame::MacroArg { items, pos } => {
+                        let next = items[*pos..]
+                            .iter()
+                            .take(10)
+                            .map(|t| show(&self.intern, t))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        frames.push(format!("MacroArg {}tok@{} next=[{next}]", items.len(), pos));
+                    }
+                    InputFrame::Source { bytes, pos, .. } => {
+                        let off = (*pos).min(bytes.len());
+                        let ctx = String::from_utf8_lossy(&bytes[off..(off + 80).min(bytes.len())])
+                            .replace('\n', "⏎");
+                        frames.push(format!("source@{} [{ctx}]", pos));
+                    }
+                    other => frames.push(format!("{other:?}")),
+                }
+            }
+            eprintln!(
+                "[missing-number] line={} last_tok={:?}\n  frames(外→内): {}",
+                self.error_line_no(),
+                self.last_tok,
+                frames.join("\n  ")
+            );
+        }
         self.write_error("Missing number, treated as zero.");
         let _ = self.sink.write16(
             "A number should have been here; I inserted `0'.\n\
@@ -2336,6 +2398,32 @@ impl Expander {
                     let ch = tok.charcode().unwrap_or(0);
                     let code = self.mathcodes.get(&ch).copied().unwrap_or(0x8000);
                     return self.sink.math_char_full(code);
+                }
+                if std::env::var_os("NTEX_HOOK_TRACE").is_some() {
+                    if let Some(ch) = tok.charcode().and_then(char::from_u32) {
+                        if matches!(ch, 'p' | 'a' | 'r' | '/' | ',' | '0') {
+                            let calls = self
+                                .macro_trace
+                                .as_ref()
+                                .map(|tr| {
+                                    tr.iter()
+                                        .rev()
+                                        .take(24)
+                                        .rev()
+                                        .map(|id| format!("\\{}", self.intern.name(*id)))
+                                        .collect::<Vec<_>>()
+                                        .join(" ")
+                                })
+                                .unwrap_or_default();
+                            eprintln!(
+                                "[hook-char] ch={ch:?} line={} last={:?} stack={} calls={}",
+                                self.error_line_no(),
+                                self.last_tok,
+                                self.debug_stack_summary(),
+                                calls
+                            );
+                        }
+                    }
                 }
                 // 组定界符（cat 1/2）在主流层建立/结束组（M1-11）。
                 // 对齐上下文（`\halign`/`\valign`）的 `{`/`}` 平衡计数、
