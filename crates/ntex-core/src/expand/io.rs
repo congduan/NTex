@@ -97,6 +97,7 @@ impl Expander {
             while self.more_name(&mut name)? {}
         }
         if name.is_empty() {
+
             return Err(Error::invalid_input("缺少文件名"));
         }
         Ok(name)
@@ -138,21 +139,15 @@ impl Expander {
             return Ok(false);
         };
         if let Some(op) = self.cond_op(t) {
-            // 条件终结符仅在**条件求值中**（栈顶帧 Evaluating/可归属）就地步进；
-            // 名字扫描的裸流（无帧）遇 \\ifx/\\fi 一律终止名字（token 放回）——
-            // tex.web scan_file_name 循环的 get_x_token 对 cur_cmd>max_command 的
-            // 条件走 expand()，其 insert_relax 门在无求值上下文时把 token 还给流。
-            // 若无此守卫，latex.ltx `\\font\\a=cmr10\\ifx\\a\\a…` 的名字会吞掉
-            // \\ifx 与真支文本（实测 name="cmr10yes"、\\ifx 永不执行）。
-            let top_evaluating = self
-                .cond_stack
-                .last()
-                .is_some_and(|f| f.state == CondState::Evaluating);
-            if matches!(op, CondOp::Fi | CondOp::Else | CondOp::Or) && !top_evaluating {
-                self.unread(t);
-                return Ok(false);
-            }
-            if matches!(op, CondOp::IfX | CondOp::IfNum) && self.cond_stack.is_empty() {
+            // GT（pdfTeX -ini 实证）：名字扫描的 get_x_token 对条件原语**就地求值**——
+            // \\font\\a=cmr10\\ifx\\a\\a yes 的真支 "yes" 会收进名字（\\a=nullfont）。
+            // 条件机器在名字扫描上下文内正常工作（scan_file_name L10210）。
+            // 但 l3kernel quark 惯用法（\\__file_quark_if_nil:nTF 展开成不闭合
+            // \\if_meaning:w \\q_nil…\\q_nil 对）在名字流内每次展开都再入条件机、
+            // 参数里的嵌套 quark 再生条件——实测 cond_stack 无限加深直至 OOM。
+            // 深过 64 层即判定展开循环：终止名字（token 放回，错误恢复报
+            // 「缺少文件名」由上层兜住，作业继续）。
+            if self.cond_stack.len() > 64 {
                 self.unread(t);
                 return Ok(false);
             }

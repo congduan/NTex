@@ -453,11 +453,14 @@ use super::*;
 
     #[test]
     fn ifx_compares_font_meanings() {
-        // 同一 cs 与自身相等（Font(0) == Font(0)）
-        let out = font_run(r"\font\a=cmr10\ifx\a\a yes\else no\fi").unwrap().0;
+        // GT（pdfTeX -ini 实证）：\font 名字扫描遇 \ifx 会就地求值并把真支收进
+        // 名字（\a 变 nullfont）——测试若要比较字体含义，须用 \relax 终止名字
+        // （名字扫描对不可展开 CS unread+终止，tex.web scan_file_name done 臂）。
+        let out = font_run(r"\font\a=cmr10 \relax\ifx\a\a yes\else no\fi").unwrap().0;
         assert_eq!(out, "yes");
-        // 两次加载得到不同 FontId → 不等
-        let out = font_run(r"\font\a=cmr10\font\b=cmr10\ifx\a\b yes\else no\fi").unwrap().0;
+        let out = font_run(r"\font\a=cmr10 \relax\font\b=cmr10 \relax\ifx\a\b yes\else no\fi")
+            .unwrap()
+            .0;
         assert_eq!(out, "no");
     }
 

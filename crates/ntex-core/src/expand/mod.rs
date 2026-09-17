@@ -800,6 +800,10 @@ pub struct Expander {
     output_active: bool,
     /// 是否已执行显式 `\end`（finish 收尾对未闭合组/math 按 TeX 语义降级为警告）。
     ended: bool,
+    /// 子展开（expand_region）步数累计——护栏计数（主循环 steps 是局部变量，
+    /// 子展开内的 process_one 递归不受其约束，latex.ltx l.16900 \@preamble
+    /// \\edef 曾无限循环 900s 无护栏）。
+    region_steps: u64,
     /// 最近一次处理的 token（watchdog/单步超时诊断用；不参与 .fmt 序列化）。
     last_tok: Option<String>,
     /// 主循环步数镜像（结构化 trace 的 `step` 字段用；不参与 .fmt 序列化）。
@@ -976,6 +980,7 @@ impl Expander {
             trace_suppress_defer: false,
             error_anchor: None,
             ended: false,
+            region_steps: 0,
             last_tok: None,
             steps: 0,
             shown_trace_mode: None,

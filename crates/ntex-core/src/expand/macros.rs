@@ -1107,7 +1107,23 @@ impl Expander {
                 items: Arc::from(items),
                 pos: 0,
             });
-            while self.process_one()? {}
+            // 子展开护栏：与主循环 max_steps 同源（expand_only 区域内的
+            // process_one 递归不经过主循环步数检查，latex.ltx l.16900
+            // \@preamble \\edef 曾在此无限循环 900s）。
+            let mut region_steps: u64 = 0;
+            let depth_floor = depth + 8; // 正常 \\edef 嵌套极浅；+8 为嵌套 \\edef 余量
+            while self.process_one()? {
+                region_steps += 1;
+                self.region_steps = self.region_steps.saturating_add(1);
+                if region_steps > max_steps() || self.stack.len() > depth_floor + 4096 {
+                    return Err(Error::invalid_input(format!(
+                        "区域展开步数/栈深超限（\\edef/\\write 内疑似死循环）；步 {} 栈深 {}（入口 {}）",
+                        region_steps,
+                        self.stack.len(),
+                        depth
+                    )));
+                }
+            }
             // TeX 允许条件帧跨 \message/\write 参数边界（\ifx 在参数内求值、
             // \fi 在括号外闭合），故只对"过度闭合"（深度低于入口）报错；
             // 遗留的帧交由外层主循环正常闭合。
