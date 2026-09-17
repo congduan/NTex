@@ -237,6 +237,14 @@ impl Expander {
         let mut depth = 0usize; // 平衡组深度：`{…}` 组整组贡献，组内 token 不定界
         // TEMP DEBUG（挂死定位）
         let mut guard: u64 = 0;
+        // 第十八刀（二）诊断护栏：默认仍取历史 4000 万上限；仅显式设置
+        // NTEX_DELIM_GUARD 后才收紧，以便把单步活锁转成可定位的错误现场。
+        // 实验已证实 latex.ltx 88.4% 主墙不在此路径；保留作今后定界实参回归诊断。
+        let guard_limit = std::env::var("NTEX_DELIM_GUARD")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|&v| v > 0)
+            .unwrap_or(40_000_000);
         let dbg_on = std::env::var("NTEX_DELIM_DBG").is_ok();
         self.diag_trace(format!(
             "DELIM-BEGIN \\{name} dlen={} long={long} floor={}",
@@ -269,8 +277,18 @@ impl Expander {
                     blen = buf.len()
                 );
             }
-            if guard > 40_000_000 {
-                eprintln!("[delim-dbg] 超限退出 name={name} buf.len={}", buf.len());
+            if guard > guard_limit {
+                self.diag_trace(format!(
+                    "DELIM-ABORT \\{name} guard={guard} limit={guard_limit} buf={} depth={depth} floor={}",
+                    buf.len(),
+                    self.read_floor
+                ));
+                eprintln!(
+                    "[delim-guard] 超限退出 name={name} guard={guard} limit={guard_limit} buf.len={} depth={depth} floor={} stack={}",
+                    buf.len(),
+                    self.read_floor,
+                    self.debug_stack_summary()
+                );
                 return Err(Error::invalid_input(format!(
                     "定界实参收集无终止（\\{name}，{} token）",
                     buf.len()
