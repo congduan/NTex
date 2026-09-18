@@ -160,6 +160,57 @@ impl SearchPathVfs {
     }
 }
 
+/// `kpsewhich` 兜底层：读侧先问 inner，全落空后尝试调用 PATH 上的
+/// `kpsewhich <path>` 定位真实 TeX 树文件。
+///
+/// 这是发行版搜索链的最后一层，精简环境没有 `kpsewhich` 时静默落空，保持
+/// [`Vfs::read`] 的 `Ok(None)` 契约。写侧仍原样透传，不参与 kpathsea。
+#[derive(Debug)]
+pub struct KpsewhichVfs {
+    inner: Box<dyn Vfs>,
+}
+
+impl KpsewhichVfs {
+    /// 包住既有后端。
+    pub fn new(inner: Box<dyn Vfs>) -> Self {
+        Self { inner }
+    }
+}
+
+impl Vfs for KpsewhichVfs {
+    fn read(&mut self, path: &str) -> io::Result<Option<Vec<u8>>> {
+        if let Some(bytes) = self.inner.read(path)? {
+            return Ok(Some(bytes));
+        }
+        let out = match std::process::Command::new("kpsewhich").arg(path).output() {
+            Ok(out) if out.status.success() => out,
+            _ => return Ok(None),
+        };
+        let found = String::from_utf8_lossy(&out.stdout);
+        let p = found.trim();
+        if p.is_empty() {
+            return Ok(None);
+        }
+        match std::fs::read(p) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn write(&mut self, path: &str, bytes: &[u8]) -> io::Result<()> {
+        self.inner.write(path, bytes)
+    }
+
+    fn append(&mut self, path: &str, bytes: &[u8]) -> io::Result<()> {
+        self.inner.append(path, bytes)
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
 impl Vfs for SearchPathVfs {
     fn read(&mut self, path: &str) -> io::Result<Option<Vec<u8>>> {
         Ok(self.resolve(path)?.map(|(_, bytes)| bytes))
@@ -243,5 +294,13 @@ mod tests {
         let inner = v.inner.as_any_mut().downcast_ref::<MemVfs>().unwrap();
         assert!(inner.get("out.tex").is_some(), "应写在原样路径");
         assert!(inner.get("dir/out.tex").is_none(), "写侧不经搜索路径");
+    }
+
+    #[test]
+    fn kpsewhich_layer_preserves_inner_hit() {
+        let mut mem = MemVfs::new();
+        mem.insert("plain.tex", b"% inner");
+        let mut v = KpsewhichVfs::new(Box::new(mem));
+        assert_eq!(v.read("plain.tex").unwrap(), Some(b"% inner".to_vec()));
     }
 }

@@ -30,13 +30,18 @@ const MAGIC: &[u8; 8] = b"NTEXFMT1";
 /// v13：ETRIP——font_loads（pass2 恢复字体表）+ font_cs_names（showbox 字体 cs 名）；
 /// v14：ETRIP——current_font（pass2 恢复当前字体，防全 nullfont）；
 /// v15：M9 中文刀 4——catcode >255 码位覆盖表（\utfinputmode=1 的 \catcode`，=13）；
-/// v16：outer 双槽位（MacroDef::active_slot，expl3 L9320 Forbidden 根治的伴随序列化）。
-const VERSION: u8 = 16;
+/// v16：outer 双槽位（MacroDef::active_slot，expl3 L9320 Forbidden 根治的伴随序列化）；
+/// v17：文件头写入 NTex 引擎版本号，加载时强校验，防旧 fmt 静默腐蚀。
+pub const FORMAT_VERSION: u8 = 17;
+
+/// 当前引擎版本号：随 crate 版本进入 `.fmt` 文件头。
+pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// 编码一个 `.fmt` 快照。
 pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
     w.write_all(MAGIC)?;
-    w.write_all(&[VERSION])?;
+    w.write_all(&[FORMAT_VERSION])?;
+    write_engine_version(w)?;
 
     // intern 表
     w.write_all(&(state.intern_names.len() as u32).to_le_bytes())?;
@@ -211,9 +216,13 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
     }
     let mut version = [0u8; 1];
     r.read_exact(&mut version)?;
-    if version[0] != VERSION {
-        return Err(invalid("不支持的 .fmt 版本"));
+    if version[0] != FORMAT_VERSION {
+        return Err(invalid(&format!(
+            "不支持的 .fmt 版本：文件={}，当前={}；请用 --generate-fmt 重新 dump",
+            version[0], FORMAT_VERSION
+        )));
     }
+    read_and_check_engine_version(r)?;
 
     // intern 表
     let n_names = read_u32(r)? as usize;
@@ -434,6 +443,26 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
     })
 }
 
+fn write_engine_version(w: &mut impl Write) -> io::Result<()> {
+    let bytes = ENGINE_VERSION.as_bytes();
+    let len = u16::try_from(bytes.len()).map_err(|_| invalid("引擎版本号过长"))?;
+    w.write_all(&len.to_le_bytes())?;
+    w.write_all(bytes)
+}
+
+fn read_and_check_engine_version(r: &mut impl Read) -> io::Result<()> {
+    let len = read_u16(r)? as usize;
+    let mut bytes = vec![0u8; len];
+    r.read_exact(&mut bytes)?;
+    let file_version = String::from_utf8(bytes).map_err(|_| invalid(".fmt 引擎版本号非 UTF-8"))?;
+    if file_version != ENGINE_VERSION {
+        return Err(invalid(&format!(
+            ".fmt 引擎版本不匹配：文件={file_version}，当前={ENGINE_VERSION}；请用 --generate-fmt 重新 dump"
+        )));
+    }
+    Ok(())
+}
+
 // ---------- 编码原语（include! 嵌入） ----------
 include!("codec.rs");
 
@@ -518,6 +547,29 @@ mod tests {
         let mut bad = b"NOPEXXXX".to_vec();
         bad.extend_from_slice(&[1]);
         assert!(load(&mut bad.as_slice()).is_err());
+    }
+
+    #[test]
+    fn fmt_rejects_wrong_engine_version() {
+        let state = sample_state();
+        let mut buf = Vec::new();
+        save(&mut buf, &state).unwrap();
+        let version_pos = 8;
+        assert_eq!(buf[version_pos], FORMAT_VERSION);
+        let len_pos = 9;
+        let len = u16::from_le_bytes([buf[len_pos], buf[len_pos + 1]]) as usize;
+        let start = len_pos + 2;
+        assert_eq!(&buf[start..start + len], ENGINE_VERSION.as_bytes());
+        buf[start] = match buf[start] {
+            b'0' => b'1',
+            _ => b'0',
+        };
+        let err = load(&mut buf.as_slice()).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("引擎版本不匹配") && msg.contains("--generate-fmt"),
+            "错误消息应指明重 dump：{msg}"
+        );
     }
 
     #[test]

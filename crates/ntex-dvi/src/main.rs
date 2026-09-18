@@ -14,7 +14,24 @@
 //! 格式预载 G0）。默认开——静默是当前最大的测量陷阱（plain-format-survey §2.4）。
 
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+
+#[derive(Debug)]
+struct AssetTfmSource {
+    roots: Vec<PathBuf>,
+}
+
+impl ntex_layout::TfmSource for AssetTfmSource {
+    fn tfm_bytes(&mut self, name: &str) -> Option<Vec<u8>> {
+        let file = format!("{name}.tfm");
+        self.roots
+            .iter()
+            .map(|root| root.join(&file))
+            .find(|p| p.exists())
+            .and_then(|p| fs::read(p).ok())
+    }
+}
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -24,6 +41,7 @@ fn main() -> ExitCode {
     let mut no_plain = false;
     let mut dump_fmt: Option<String> = None;
     let mut load_fmt: Option<String> = None;
+    let mut generate_fmt: Option<String> = None;
     let mut it = args[1..].iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -33,6 +51,13 @@ fn main() -> ExitCode {
                 Some(p) => dump_fmt = Some(p.clone()),
                 None => {
                     eprintln!("--dump 需要一个 .fmt 输出路径参数");
+                    return ExitCode::from(2);
+                }
+            },
+            "--generate-fmt" => match it.next() {
+                Some(p) => generate_fmt = Some(p.clone()),
+                None => {
+                    eprintln!("--generate-fmt 需要一个 .fmt 输出路径参数");
                     return ExitCode::from(2);
                 }
             },
@@ -57,10 +82,19 @@ fn main() -> ExitCode {
             _ => positional.push(a),
         }
     }
-    if positional.is_empty() || positional.len() > 2 {
-        eprintln!(
-            "用法：ntex-dvi <input.tex> [output.dvi] [--input-path <dir>]... [--no-plain] [--quiet]"
+    if generate_fmt.is_some() {
+        if !positional.is_empty() {
+            eprintln!("--generate-fmt 不接受输入文件参数");
+            return ExitCode::from(2);
+        }
+        return generate_latex_fmt(
+            generate_fmt.as_deref().unwrap_or_default(),
+            &input_paths,
+            quiet,
         );
+    }
+    if positional.is_empty() || positional.len() > 2 {
+        eprintln!("{}", usage());
         return ExitCode::from(2);
     }
     let input = positional[0];
@@ -76,6 +110,7 @@ fn main() -> ExitCode {
         }
     };
     let mut ts = ntex_layout::typeset::Typesetter::with_tfm();
+    install_distribution_tfm_source();
     if no_plain {
         // `--no-plain` 语义 = 纯 iniTeX 起点（无预载格式）：catcode 表换用
         // tex.web §1273 INITEX 初表（`{`=12、NUL=9 …）。此前只跳过预载而
@@ -87,37 +122,37 @@ fn main() -> ExitCode {
     // 状态毫秒级恢复，载入不再每次 62s）。fmt 优先于 plain 预载——两者互斥
     // （fmt 已含目标格式全量状态，再叠 plain 会污染）。
     if let Some(fmt_path) = &load_fmt {
-        let data = match fs::read(fmt_path) {
+        let resolved = match resolve_format_path(fmt_path) {
+            Some(p) => p,
+            None => {
+                eprintln!("找不到格式文件 {fmt_path}（已查 cwd、可执行文件同目录和 assets/fmt）");
+                return ExitCode::FAILURE;
+            }
+        };
+        let data = match fs::read(&resolved) {
             Ok(d) => d,
             Err(e) => {
-                eprintln!("读取 {fmt_path} 失败：{e}");
+                eprintln!("读取 {} 失败：{e}", resolved.display());
                 return ExitCode::FAILURE;
             }
         };
         let state = match ntex_format::load(&mut &data[..]) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("解析 {fmt_path} 失败：{e}");
+                eprintln!("解析 {} 失败：{e}", resolved.display());
                 return ExitCode::FAILURE;
             }
         };
         ts.import_state(state);
     }
     {
-        // G1 搜索路径 + G2(a) 内嵌格式文件兜底：组合成 Local → 搜索前缀 → 内嵌
-        // 三层（内嵌只答 plain.tex/hyphen.tex，且仅在前两层全落空时命中）。
-        let mut base: Box<dyn ntex_io::Vfs> = Box::new(ntex_io::LocalVfs);
-        if !input_paths.is_empty() {
-            let mut vfs = ntex_io::SearchPathVfs::new(base);
-            for p in &input_paths {
-                vfs.push_path(p);
-            }
-            base = Box::new(vfs);
-        }
-        ts.set_vfs(base);
+        // 第二十四刀：发行版默认搜索链。显式 --input-path 仍排最前；
+        // 随后接便携 tex/、用户扩展、TEXINPUTS、入仓 tex-minimal、TinyTeX
+        // 探测路径，最后再由 ntex-io 的 kpsewhich 层兜底。
+        ts.set_vfs(default_vfs(&input_paths));
         ts.use_embedded_format();
     }
-    if !no_plain {
+    if !no_plain && load_fmt.is_none() {
         // G2(a)：启动预载（等价源首行 `\input plain`）。
         ts.set_preload_plain(true);
     }
@@ -177,6 +212,167 @@ fn main() -> ExitCode {
         }
         Err(e) => {
             eprintln!("写出失败：{e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn usage() -> &'static str {
+    "用法：ntex-dvi <input.tex> [output.dvi] [--fmt <latex.fmt>] [--input-path <dir>]... [--no-plain] [--quiet]\n\
+     或：ntex-dvi --generate-fmt <output.fmt> [--input-path <dir>]... [--quiet]"
+}
+
+fn default_vfs(input_paths: &[String]) -> Box<dyn ntex_io::Vfs> {
+    let mut vfs = ntex_io::SearchPathVfs::new(Box::new(ntex_io::LocalVfs));
+    let mut paths = Vec::new();
+    paths.extend(input_paths.iter().map(PathBuf::from));
+
+    if let Some(exe_dir) = executable_dir() {
+        add_tex_tree_paths(&mut paths, exe_dir.join("tex"));
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        add_tex_tree_paths(&mut paths, PathBuf::from(home).join(".ntex/tex"));
+    }
+    if let Ok(texinputs) = std::env::var("TEXINPUTS") {
+        for p in texinputs.split(':').filter(|p| !p.is_empty()) {
+            paths.push(PathBuf::from(p));
+        }
+    }
+    if let Some(root) = bundled_tex_root() {
+        add_tex_tree_paths(&mut paths, root);
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        let tiny = PathBuf::from(home).join(".TinyTeX/texmf-dist/tex");
+        add_tex_tree_paths(&mut paths, tiny);
+    }
+
+    for p in paths {
+        vfs.push_path(p.to_string_lossy().into_owned());
+    }
+    Box::new(ntex_io::KpsewhichVfs::new(Box::new(vfs)))
+}
+
+fn add_tex_tree_paths(out: &mut Vec<PathBuf>, root: PathBuf) {
+    out.push(root.clone());
+    out.push(root.join("latex/base"));
+    push_children(out, &root.join("latex"));
+    push_children(out, &root.join("generic"));
+}
+
+fn push_children(out: &mut Vec<PathBuf>, dir: &Path) {
+    let Ok(rd) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in rd.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            out.push(path);
+        }
+    }
+}
+
+fn executable_dir() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+}
+
+fn install_distribution_tfm_source() {
+    let mut roots = Vec::new();
+    if let Some(exe_dir) = executable_dir() {
+        roots.push(exe_dir.join("tfm"));
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        roots.push(PathBuf::from(home).join(".ntex/tfm"));
+    }
+    if let Some(root) = bundled_tfm_root() {
+        roots.push(root);
+    }
+    ntex_layout::set_tfm_source(Box::new(AssetTfmSource { roots }));
+}
+
+fn bundled_tex_root() -> Option<PathBuf> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/tex-minimal/tex");
+    root.exists().then_some(root)
+}
+
+fn bundled_tfm_root() -> Option<PathBuf> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/tfm");
+    root.exists().then_some(root)
+}
+
+fn bundled_fmt_dir() -> Option<PathBuf> {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/fmt");
+    dir.exists().then_some(dir)
+}
+
+fn resolve_format_path(name: &str) -> Option<PathBuf> {
+    let p = PathBuf::from(name);
+    if p.exists() {
+        return Some(p);
+    }
+    let mut dirs = Vec::new();
+    if let Some(exe_dir) = executable_dir() {
+        dirs.push(exe_dir.clone());
+        dirs.push(exe_dir.join("fmt"));
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        dirs.push(PathBuf::from(home).join(".ntex/fmt"));
+    }
+    if let Some(dir) = bundled_fmt_dir() {
+        dirs.push(dir);
+    }
+    dirs.into_iter().map(|d| d.join(name)).find(|p| p.exists())
+}
+
+fn generate_latex_fmt(output: &str, input_paths: &[String], quiet: bool) -> ExitCode {
+    let Some(init_path) = resolve_format_path("ltxinit.tex") else {
+        eprintln!("找不到 ltxinit.tex（已查 cwd、可执行文件同目录和 assets/fmt）");
+        return ExitCode::FAILURE;
+    };
+    let source = match fs::read_to_string(&init_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("读取 {} 失败：{e}", init_path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut ts = ntex_layout::typeset::Typesetter::with_tfm().initex();
+    install_distribution_tfm_source();
+    ts.set_vfs(default_vfs(input_paths));
+    ts.use_embedded_format();
+    let outcome = ts.typeset_dvi(&source);
+    let transcript = ts.take_transcript();
+    if !quiet && !transcript.is_empty() {
+        let mut t = transcript;
+        if !t.ends_with('\n') {
+            t.push('\n');
+        }
+        eprint!("{t}");
+    }
+    if let Err(e) = outcome {
+        if !ts.dumped() {
+            eprintln!("生成 fmt 失败：{e}");
+            return ExitCode::FAILURE;
+        }
+    }
+    if !ts.dumped() {
+        eprintln!("生成 fmt 失败：ltxinit.tex 未执行 \\dump");
+        return ExitCode::FAILURE;
+    }
+    let state = ts.export_state();
+    let mut buf = Vec::new();
+    if let Err(e) = ntex_format::save(&mut buf, &state) {
+        eprintln!("序列化 {output} 失败：{e}");
+        return ExitCode::FAILURE;
+    }
+    match fs::write(output, &buf) {
+        Ok(()) => {
+            println!("已写出 {output}（{} 字节，格式快照）", buf.len());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("写出 {output} 失败：{e}");
             ExitCode::FAILURE
         }
     }

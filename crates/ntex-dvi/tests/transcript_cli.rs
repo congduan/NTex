@@ -27,6 +27,21 @@ fn run(args: &[&OsStr]) -> (String, String, bool) {
     )
 }
 
+fn run_clean(args: &[&OsStr], cwd: &std::path::Path) -> (String, String, bool) {
+    let out = Command::new(env!("CARGO_BIN_EXE_ntex-dvi"))
+        .args(args)
+        .current_dir(cwd)
+        .env("PATH", "")
+        .env("HOME", cwd.join("home"))
+        .output()
+        .unwrap();
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        out.status.success(),
+    )
+}
+
 #[test]
 fn message_and_undefined_cs_reach_stderr() {
     let d = workdir("g0");
@@ -84,5 +99,36 @@ fn quiet_flag_suppresses_transcript() {
     assert!(
         !stderr.contains("SHOULD-NOT-APPEAR"),
         "--quiet 未静音：{stderr:?}"
+    );
+}
+
+#[test]
+#[ignore = "发行验收探针：LaTeX fmt 快路径较慢，手动或独立 CI target 跑"]
+fn clean_distribution_article_uses_bundled_fmt_and_tex_tree() {
+    let d = workdir("clean-dist");
+    std::fs::create_dir_all(d.join("home")).unwrap();
+    let src = d.join("doc1.tex");
+    std::fs::write(
+        &src,
+        "\\documentclass{article}\n\\begin{document}\nHello NTex.\n\\end{document}\n",
+    )
+    .unwrap();
+    let dvi = d.join("doc1.dvi");
+    let (stdout, stderr, ok) = run_clean(
+        &[
+            OsStr::new("--fmt"),
+            OsStr::new("latex.fmt"),
+            src.as_os_str(),
+            dvi.as_os_str(),
+        ],
+        &d,
+    );
+    assert!(ok, "stdout={stdout}\nstderr={stderr}");
+    assert!(dvi.exists(), "DVI 未产出；stdout={stdout}\nstderr={stderr}");
+    assert!(
+        !stderr.contains("I can't find file")
+            && !stderr.contains("File not found")
+            && !stderr.contains("找不到文件"),
+        "发行闭包仍有缺文件：{stderr}"
     );
 }

@@ -75,10 +75,22 @@ make bench      # 基准（stub 驱动验证管路）
 cargo run -p ntex-dvi -- demo.tex     # 排版（TFM / Knuth-Plass / 断页 / \shipout）→ demo.dvi
 cargo run -p ntex-pdf -- demo.dvi     # DVI → PDF（Type1 字体嵌入）→ demo.pdf
 
+# LaTeX 快路径：无需外部 TeX Live，默认从 assets/fmt 与 assets/tex-minimal 查找
+cargo run -p ntex-dvi -- --fmt latex.fmt doc.tex
+
+# 引擎语义变更后重新生成发行 fmt
+cargo run -p ntex-dvi -- --generate-fmt /tmp/latex.fmt
+
 # 接真实参考引擎
 cargo run -p ntex-diff -- --fixtures fixtures/diff --reference external=pdflatex --engine stub
 cargo run -p ntex-bench --release -- --driver external=pdflatex
 ```
+
+`ntex-dvi` 的 `\input` 默认搜索链为：cwd、显式 `--input-path`、可执行文件同目录
+`tex/`、`~/.ntex/tex/`、`TEXINPUTS`、仓库/发行包 `assets/tex-minimal/tex/`、
+检测到的 `~/.TinyTeX/texmf-dist/tex/`，最后回落 `kpsewhich`。发行包可直接携带
+`assets/fmt/latex.fmt`、`assets/tex-minimal/tex/` 与 `assets/tfm/`；完整资产说明见
+[assets/tex-minimal/README.md](assets/tex-minimal/README.md)。
 
 ## 设计文档
 
