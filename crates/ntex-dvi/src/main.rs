@@ -25,11 +25,27 @@ struct AssetTfmSource {
 impl ntex_layout::TfmSource for AssetTfmSource {
     fn tfm_bytes(&mut self, name: &str) -> Option<Vec<u8>> {
         let file = format!("{name}.tfm");
-        self.roots
-            .iter()
-            .map(|root| root.join(&file))
-            .find(|p| p.exists())
-            .and_then(|p| fs::read(p).ok())
+        // 直查各 root；未命中再扫一层子目录（assets/tfm/ec 等 T1 字体族目录）
+        for root in &self.roots {
+            let direct = root.join(&file);
+            if direct.exists() {
+                return fs::read(direct).ok();
+            }
+        }
+        for root in &self.roots {
+            let Ok(rd) = fs::read_dir(root) else {
+                continue;
+            };
+            for entry in rd.flatten() {
+                if entry.path().is_dir() {
+                    let p = entry.path().join(&file);
+                    if p.exists() {
+                        return fs::read(p).ok();
+                    }
+                }
+            }
+        }
+        None
     }
 }
 
