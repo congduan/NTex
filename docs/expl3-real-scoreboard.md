@@ -997,3 +997,42 @@ NTEX_BC_GUARD=1000000 NTEX_DELIM_GUARD=3000000 NTEX_HOOK_TRACE=1 \
 - PDF 链登记：`cargo run -p ntex-pdf -- /tmp/fp11/doc1.dvi /tmp/fp11/doc1.pdf`
   成功，`/tmp/fp11/doc1.pdf` 75,538 字节、4 页，未开新战；
 - `make check` 全绿；ntex-core 扫描回归新增 3 条，workspace 总量只增不减。
+
+## 第二十二刀（2026-09-18）：空页语义——`\clearpage` 不再凭空 ship 空白页
+
+### 现场判定
+
+最小对拍 `X \clearpage Y \end{document}`：GT pdflatex 为 2 页（p1=X、p2=Y），
+NTex 为 4 页（空、X、空、Y）。根因在页构建器空页判定偏离 tex.web
+`page_contents`：空页上的零尺寸空盒与 whatsit 被当成“页面非空”，finish 的
+eject 三元组随后把它们冲成空白页。
+
+### 修复
+
+- `PageBuilder::process` 在空页上丢弃零尺寸、无子节点的空盒；已有内容页上的空盒
+  仍按正常盒子处理，`eject_one_page` 自造的 `\hbox to \hsize{}` 因有宽度不受影响。
+- `PageBuilder::is_empty()` 改按 `has_box`（即 page_contents 是否已到 box_there）
+  判定，空页上的 `\write` whatsit/mark 不再让 finish 误以为有页可冲。
+- 新增回归：
+  `clearpage_tail_does_not_ship_blank_page`、
+  `zero_empty_box_on_empty_page_is_discarded`。
+
+### 验收
+
+- `doc1.tex`：`/tmp/ntex-doc1-after22.dvi` 245 字节、**1 页**、41 字体。
+- `X \clearpage Y`：`/tmp/ntex-clearpage-min.dvi` 220 字节、**2 页**；DVI 检查
+  p1 仅 `X`，p2 仅 `Y`。
+- `resume.tex`：p1 已非空白（含 `Zhang Wei...`），但仍为 4 个有内容页面；
+  剩余页数来自既有 LaTeX 列表/对齐/`\vadjust` 错误导致版面打散，本刀按“一刀一墙”
+  登记，不扩战。
+- `make check` 全绿；`cargo test --workspace -- --list | rg ' test$' | wc -l`
+  为 **818**（题设 811 只增不减）。
+- `make trip` 通过仓库默认 stub 冒烟（TRIP/ETRIP 均 skip）。额外真实
+  `ntex-trip --driver ntex --test both` 仍失败在既有 TRIP/ETRIP 对齐债
+  （align/math/group 恢复一带），不作为本刀新增回归判据。
+
+### 新墙（一刀一墙，只登记不修）
+
+`resume.tex` 仍触发 `\???`、hooks top-level、`Incompatible list can't be unboxed`、
+`\spacefactor`/`\vadjust` 扫描错误、`\halign` preamble 错误等既有 LaTeX 结构债，
+导致 2 页目标未达；这不是空页 shipout 语义回归，后续应另刀处理。

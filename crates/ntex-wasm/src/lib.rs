@@ -924,18 +924,13 @@ mod tests {
 
     /// 空作业不报错（`compile_pipeline` 返回 `Ok`）。
     ///
-    /// ⚠ G4 接线后语义变更：预载 plain 使空作业也产页（见上）。此处只断言
-    /// 「不报错」这一契约，页面数不作硬编码（与 native `ntex-dvi` 行为对齐：
-    /// `printf '' | ntex-dvi` 亦产 1 页）。
+    /// 第二十二刀后语义收紧：空页上的零尺寸空盒/whatsit 不再凭空 ship 空页。
+    /// 此处锁定「不报错且不产 DVI」，与 native `ntex-dvi` 空作业口径一致。
     #[test]
     fn empty_input_does_not_error() {
         let compiled = compile_pipeline("\\end").expect("空作业不应报错");
-        assert_eq!(
-            compiled.pages.len(),
-            1,
-            "预载 plain 后 `\\end` 触发输出例程产 1 页"
-        );
-        assert!(!compiled.dvi.is_empty(), "有页面即应出 DVI");
+        assert_eq!(compiled.pages.len(), 0, "空作业不应凭空产页");
+        assert!(compiled.dvi.is_empty(), "无页面不应出 DVI");
     }
 
     // ---------- 2026-09-11：Tauri 渲染 resume-plain.tex 报错的两条回归锁 ----------

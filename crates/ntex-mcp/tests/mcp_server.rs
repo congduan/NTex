@@ -156,7 +156,7 @@ fn tools_call_rejects_missing_font_without_panicking() {
                 "arguments",
                 Json::object(vec![(
                     "source",
-                    Json::String("\\font\\x=definitely_not_a_font\\end".into()),
+                    Json::String("\\font\\x=definitely_not_a_font\\hrule height 1pt\\end".into()),
                 )]),
             ),
         ]),

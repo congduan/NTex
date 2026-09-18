@@ -118,7 +118,7 @@ impl PageBuilder {
 
     /// 当前页是否为空（供收尾 eject 判断）。
     pub fn is_empty(&self) -> bool {
-        !self.has_box && self.page.is_empty()
+        !self.has_box
     }
 
     /// 页面是否含**可冲页内容**（tex.web `page_head<>null` 判据）。
@@ -184,6 +184,15 @@ impl PageBuilder {
         let node = contrib[0].clone();
         match node {
             Node::Box(b) => {
+                // LaTeX `\clearpage` 尾部在强制惩罚前放一个 `\vbox{}`。真 TeX
+                // 在空页上遇到这类零尺寸空盒时不会凭空 ship 空页；否则
+                // `X \clearpage Y` 会多出空白页。已有页面上的空盒仍按正常盒子
+                // 处理，`eject_one_page` 自造的 `\hbox to \hsize{}` 也因有宽度
+                // 保持可触发冲页，M5 防空页死循环不变量不变。
+                if !self.has_box && b.is_zero_empty() {
+                    contrib.remove(0);
+                    return Outcome::Continue;
+                }
                 if !self.has_box {
                     // 页面初始化 + 首盒前插入 \topskip 胶水（tex.web §509）。
                     // topskip 的断点尝试（p=0，t=0）只输出追踪行，不作为断点候选

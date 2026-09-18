@@ -861,6 +861,32 @@ mod tests {
         )
     }
 
+    #[test]
+    fn clearpage_tail_does_not_ship_blank_page() {
+        // LaTeX \clearpage 关键尾巴：\newpage 后空页上出现 \vbox{}\penalty-10001。
+        // 空页上的零尺寸空盒不应建立 page_contents，否则会多 ship 一张空白页。
+        let pages = paginated(r"X\par\vfil\penalty-10000 \vbox{}\penalty-10001 Y\end").unwrap();
+        assert_eq!(pages.len(), 2, "X\\clearpage Y 形态应只产出 X/Y 两页：{pages:?}");
+
+        let mut text = String::new();
+        for p in &pages {
+            collect_text(p, &mut text);
+        }
+        assert!(
+            text.contains('X') && text.contains('Y'),
+            "页面文本应保留 X 与 Y：{text:?}"
+        );
+    }
+
+    #[test]
+    fn zero_empty_box_on_empty_page_is_discarded() {
+        let pages = paginated(r"\vbox{}\penalty-10001\end").unwrap();
+        assert!(
+            pages.is_empty(),
+            "空页上的零尺寸空盒 + 强制惩罚不应凭空产页：{pages:?}"
+        );
+    }
+
     // ---------- M3 收尾（RFC-3）：VFS 集成 ----------
 
     fn ts_with_vfs() -> (Typesetter, ntex_io::MemVfs) {

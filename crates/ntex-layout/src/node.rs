@@ -131,6 +131,15 @@ impl BoxNode {
             depth: self.depth,
         }
     }
+
+    /// 零尺寸且无子节点的空盒。
+    ///
+    /// 页构建器用它区分 LaTeX `\clearpage` 在空页上留下的 `\vbox{}` 与真正
+    /// 建立 `page_contents` 的盒子；`\hbox to \hsize{}` 这类有宽度的 eject
+    /// 材料不属于此类。
+    pub fn is_zero_empty(&self) -> bool {
+        self.children.is_empty() && self.width == 0 && self.height == 0 && self.depth == 0
+    }
 }
 
 /// 排版节点（TeX 节点体系的 Rust 表达）。
