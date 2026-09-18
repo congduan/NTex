@@ -83,6 +83,21 @@ impl Default for RenderOptions {
     }
 }
 
+/// 单页像素总数上限（2²⁶ ≈ 6710 万像素，RGBA8 即 256 MiB）。
+///
+/// 这不是性能阈值，是**契约**要求（"输入可达路径不 panic"）。`Pixmap::new`
+/// 按 `width as usize * height as usize * 4` 分配，而 wasm32 的 `usize` 是
+/// 32 位：两个接近 `u32::MAX` 的维度相乘会**回绕**——`(2³²-1)² × 4 ≡ 4`，
+/// 于是 `data` 只分配 4 字节、`width/height` 却是 42 亿，随后 `fill_rect`
+/// 按真实 width 索引立刻越界 panic；`panic = abort`（release profile）把它
+/// 变成 `unreachable` 指令，浏览器只报一句
+/// `RuntimeError: Unreachable code should not be executed`，没有文件行号。
+///
+/// 取 2²⁶ 的取舍：A4 到约 800 dpi 仍可用（A4@600dpi ≈ 3500 万像素，
+/// 打印场景足够），又远低于 wasm 线性内存单次能给出的量，且
+/// `6710万 × 4 < u32::MAX`，乘法在 32 位下也不会回绕。
+pub const MAX_PAGE_PIXELS: u64 = 1 << 26;
+
 /// 校验配置（输入可达路径不 panic；非法配置一律报错）。
 pub fn validate_options(opts: &RenderOptions) -> Result<(), String> {
     if !opts.dpi.is_finite() || opts.dpi <= 0.0 {
@@ -94,6 +109,19 @@ pub fn validate_options(opts: &RenderOptions) -> Result<(), String> {
     }
     if !opts.margin_pt.is_finite() || opts.margin_pt < 0.0 {
         return Err(format!("非法页边距：{}", opts.margin_pt));
+    }
+    // 维度各自合法 ≠ 能分配：见 [`MAX_PAGE_PIXELS`]。这里必须挡住，
+    // 否则溢出回绕后越界 panic → wasm trap（无行号，现场全丢）。
+    let w_px = sp_to_px(pt_to_sp(w_pt), opts.dpi);
+    let h_px = sp_to_px(pt_to_sp(h_pt), opts.dpi);
+    let pixels = w_px * h_px;
+    if !pixels.is_finite() || pixels > MAX_PAGE_PIXELS as f64 {
+        return Err(format!(
+            "渲染尺寸过大：{w_px:.0}×{h_px:.0}px = {:.1} 百万像素，上限 {} 百万（dpi={}）",
+            pixels / 1e6,
+            MAX_PAGE_PIXELS / 1_000_000,
+            opts.dpi,
+        ));
     }
     Ok(())
 }
@@ -1160,6 +1188,26 @@ mod tests {
         assert!(validate_options(&bad(0.0, (100.0, 100.0), 72.0)).is_err());
         assert!(validate_options(&bad(72.0, (0.0, 100.0), 72.0)).is_err());
         assert!(validate_options(&bad(72.0, (100.0, 100.0), -1.0)).is_err());
+        // 超大像素量：维度各自合法（有限、>0）但乘法会回绕 → 必须在校验层挡住。
+        // 现场是 wasm 侧 `render_page(0, 1e9, false)`：分配回绕后越界 panic，
+        // 表现为无行号的 `RuntimeError: Unreachable code should not be executed`。
+        assert!(
+            validate_options(&bad(1e9, (595.276, 841.890), 72.0)).is_err(),
+            "超大 dpi 必须被拒（否则 wasm 里越界 trap）"
+        );
+        assert!(
+            validate_options(&bad(72.0, (1e9, 1e9), 72.0)).is_err(),
+            "超大页面尺寸必须被拒（同上）"
+        );
+        // 边界：A4 @600dpi ≈ 3500 万像素，仍在上限内（打印场景不能被误伤）。
+        assert!(validate_options(&bad(600.0, (595.276, 841.890), 72.0)).is_ok());
+    }
+
+    #[test]
+    fn max_page_pixels_cannot_wrap_u32() {
+        // 上限值 ×4 必须仍在 u32 内：`Pixmap::new` 的分配长度在 wasm32 上
+        // 是 32 位 usize，超了就会回绕。
+        assert!(MAX_PAGE_PIXELS * 4 < u32::MAX as u64);
     }
 
     #[test]

@@ -587,6 +587,16 @@ struct NodeBuilder {
     /// 当前字体（TFM 模式由 `font_selected` 事件更新；fn 指针模式恒为 FontId(0)）。
     current_font: FontId,
 
+    /// CJK 字体回落（workbench 档，宿主经 [`Typesetter::set_fallback_font`]
+    /// 下发；默认 None——native/TRIP 语义零影响）：`char_node` 里当前字体
+    /// 缺字形且码位 > 0xFF（utf8 输入才可能）时，自动改用该字体排这个字符
+    /// （XeTeX/办公排版 per-char fallback 惯例；源文件不写 `\font\zh` 也能排中文）。
+    fallback_font: Option<String>,
+
+    /// 回落字体装载缓存：(按当前字体有效字号算出的 at_sp, FontId)。同字号复用，
+    /// 字号变则按新字号重载（字体表按名字+缩放去重，\Large 混排只多一两份）。
+    fallback_loaded: Option<(i64, FontId)>,
+
     /// 断字模式表（M4-6）：`\patterns{...}` 解析后的 Liang trie。
     patterns: PatternTrie,
 
@@ -891,6 +901,8 @@ impl NodeBuilder {
             align_stack: Vec::new(),
             last_par_line: 0,
             current_font: FontId(0),
+            fallback_font: None,
+            fallback_loaded: None,
             fonts,
             patterns: PatternTrie::default(),
             hyph_exceptions: Vec::new(),
@@ -1477,9 +1489,31 @@ impl NodeBuilder {
     /// 字符 token → Char 节点；非字符（控制序列等）返回 None。
     /// 字体中未定义的字符：tex.web `new_character` 返回 null（不建节点）并调
     /// `char_warning` 发 "Missing character" 警告（`\tracinglostchars>0` 时）。
+    /// CJK 回落例外：码位 > 0xFF 且宿主注册了回落字体时自动改用回落字体
+    /// （见下方判据处说明），不发警告、照建节点。
     fn char_node(&mut self, tok: Token) -> Option<Node> {
         let charcode = tok.charcode()?;
         if !self.fonts.char_exists(self.current_font, charcode) {
+            // CJK 字体回落（utf8 档）：码位 > 0xFF 只可能来自 utf8 输入
+            // （8-bit/TRIP 路径字符上限 255，语义零影响）；当前 8-bit TFM
+            // 字体没有该字形、宿主又注册了回落字体（如 FandolSong）→ 该
+            // 字符改用回落字体排。源文件不写 `\font\zh=FandolSong-Regular`
+            // 也能排中文——Tauri 工作台「plain 简历中文全 Missing character」
+            // 现场的修复（2026-09-18）。回落字体也没有该字形 → 走原警告路径。
+            if charcode > 0xFF {
+                if let Some(fb) = self.ensure_fallback_font() {
+                    if self.fonts.char_exists(fb, charcode) {
+                        let (w, h, d) = self.fonts.metrics(fb, charcode);
+                        return Some(Node::Char {
+                            font: fb,
+                            charcode,
+                            width: w,
+                            height: h,
+                            depth: d,
+                        });
+                    }
+                }
+            }
             // 字体未加载（`ont` 失败后的悬空当前字体）：NTex 现状是不产生
             // 度量也不产生节点；tex.web 此时 font_name[f] 亦无定义，不发警告。
             if self.fonts.loaded(self.current_font) {
@@ -1495,6 +1529,38 @@ impl NodeBuilder {
             height: h,
             depth: d,
         })
+    }
+
+    /// 取回落字体的 FontId（懒装载 + 字号缓存）：按**当前字体的有效字号**
+    /// 装载（`at` = design_size×scale/2^20），`\Large` 上下文里的中文随西文
+    /// 一起放大。仅 TFM 表模式可用（fn 指针占位模式无表可挂）；装载失败
+    /// （回落字体名无效/字节坏）返回 None，char_node 走原 Missing 路径。
+    fn ensure_fallback_font(&mut self) -> Option<FontId> {
+        let name = self.fallback_font.clone()?;
+        let Fonts::Tfm(table) = &self.fonts else {
+            return None;
+        };
+        // 当前字体有效字号（sp）：design_size_sp × scale（2^20 定点）÷ 2^20。
+        // 当前字体未装载（悬空/字号 0）→ 按 10pt 设计字号装载。
+        let at_sp = table
+            .borrow()
+            .get(self.current_font.0 as usize)
+            .map(|fm| (fm.design_size_sp as i128 * fm.scale as i128 / (1 << 20)) as i64)
+            .filter(|&at| at > 0)
+            .unwrap_or(10 * SP_PER_PT);
+        if let Some((cached_at, id)) = self.fallback_loaded {
+            if cached_at == at_sp {
+                return Some(id);
+            }
+        }
+        let id = load_font_into_table(table, &name, Some(at_sp), None).ok()?;
+        self.fallback_loaded = Some((at_sp, FontId(id)));
+        Some(FontId(id))
+    }
+
+    /// [`Typesetter::set_fallback_font`] 的 builder 侧落点（install_builder 同步）。
+    pub(crate) fn set_fallback_font_name(&mut self, name: Option<String>) {
+        self.fallback_font = name;
     }
 
     /// tex.web char_warning：`\tracinglostchars>0` 时报告缺失字符。

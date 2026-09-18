@@ -7,6 +7,7 @@
     "frontendDist": "ui"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "NTex Studio — TeX 实时预览（wasm 渲染）",

@@ -123,11 +123,18 @@ impl Expander {
     //    只扫到 `/tmp/lvt-u`）→ `! 非法输入：找不到文件`。在 l3kernel 测试里
     //    表现为**随机的假 CRASH**（tempfile.mkdtemp 随机生成含 `_` 的目录名，
     //    同一用例时通时不通），曾误导定位多轮（2026-09-11）。
-    /// - 空格（cat 10）→ 终止：token 放回、返回 false。pdfTeX GT（/tmp/fp11/
-    ///   gt15.tex）：宏展开产出的空格同样终止 `\font` 名字（P4 `cmr\blank 10`
-    ///   → 名字 "cmr"），`at`/`scaled` 关键字扫描自带跳空格（P5）。
+    /// - 空格（**字符码 32**）→ 终止：token **消费不回退**、返回 false。判据取
+    ///   tex.web `more_name(c)` 的 `if c=" "`——**与 catcode 无关**（cat-10/11/12
+    ///   空格一律终止，见下方判据处的真现场说明）；循环顶 `get_x_token` 先于
+    ///   `more_name`（tex.web L10210-10214），`goto done` 无 back_input。终止后
+    ///   `scan_keyword` 直接看到下一个 token，`at`/`scaled` 照常识别（真 TeX 对
+    ///   拍：cat-12 空格现场 `at` 仍命中，但字号数字前若还有 cat-12 空格则
+    ///   scan_int 报零 → "Improper `at' size (0.0pt), replaced by 10pt"）。
+    ///   pdfTeX GT（/tmp/fp11/gt15.tex）：宏展开产出的空格同样终止 `\font` 名字
+    ///   （P4 `cmr\blank 10` → 名字 "cmr"）。引号态（pdftex `"a b.tex"`）内空格
+    ///   例外，仍入名。
     ///
-    /// 返回 false = 名字终止（token 已放回，或输入耗尽）。
+    /// 返回 false = 名字终止（终止 token 已消费，非字符 token 例外：back_input）。
     ///
     /// `quoted`：pdftex 引号文件名状态（跨 token 循环持有，见 scan_file_name
     /// 第二十刀注）；字体名扫描无引号诉求，传 `&mut false` 即关闭。
@@ -207,6 +214,27 @@ impl Expander {
                 return Ok(true); // 展开结果压帧，重新 fetch 收集
             }
         }
+        // tex.web 的空格判据是**字符码 32**（`more_name(c)` 里 `if c=" " then …`），
+        // **与 catcode 无关**：cat-10/11/12 空格一律终止名字。修前实测反例：
+        //   \catcode`\ =12 \font\a=cmr10 b\end → 名字 "cmr10 b"（吞掉空格与 b）
+        //   \catcode`\ =12 \input nosuchfile tex → 文件名 "nosuchfile tex"
+        // 真现场：NFSS 的 `\external@font` 是 `\edef …\mandatory@arg\space at\the\@tempdimb`
+        // （latex.ltx L13005）拼出来的，其空格进名字扫描时以 cat-12 出现 →
+        // 名字被污染成 "cmr12 at 14.39999pt" → 查 TFM 失败 → 回落 nullfont，
+        // 于是 LaTeX 的 `\large`/`\Large` 与 12pt 字号族整条路径排不出页。
+        // pdftex 三案对拍（2026-09-18 /tmp/ntex-repro/{at12,qt,qt2}.tex）定谳：
+        // ① cat-12 空格终止名字且**消费不回退**（循环顶 get_x_token 先于
+        //    more_name，tex.web L10213 `goto done` 无 back_input）——终止后
+        //    `at` 照常被 scan_keyword 识别（字号数字前的 cat-12 空格令
+        //    scan_int 报零 → "Improper `at' size (0.0pt), replaced by 10pt"）；
+        // ② cat-10 空格终止且**放回**（`\input"q t" A` 的 box 含 glue——终止
+        //    空格留在流里，见 tests_io_write::quoted_file_name_is_unquoted）；
+        // ③ 引号是纯开关，闭引号不终止（`\input"q"A` → 名字 "qA}"）。
+        // 故：非 cat-10 的字符 32 在此终止并消费；cat-10 空格落回下方 `_` 臂
+        // （放回，既有锁不变）；引号态内空格入名，以 `!*quoted` 豁免。
+        if !*quoted && t.charcode() == Some(32) && t.catcode() != Some(Catcode::Space) {
+            return Ok(false);
+        }
         match t.catcode() {
             Some(Catcode::Letter) | Some(Catcode::Other) => {
                 // pdftex 引号文件名：`"` toggle 引号态、自身不入名（texmfmp
@@ -222,8 +250,8 @@ impl Expander {
                 name.push(ch);
             }
             Some(Catcode::Space) if *quoted => {
-                // 引号态内空格入名（"a b.tex" 带空格名）；非引号态空格由
-                // 下方兜底臂终止名字（GT P4 宏展开空格终止字体名语义不变）
+                // 引号态内空格入名（"a b.tex" 带空格名）；非引号态的空格
+                // 已在上面按字符码拦截
                 name.push(' ');
             }
             Some(c) if !matches!(c, Catcode::Space) => {

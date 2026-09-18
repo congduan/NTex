@@ -1,16 +1,16 @@
-# ntex-wasm — NTex 引擎核心的 WASM 薄壳（M8-A 骨架 + B 档第一刀）
+# ntex-wasm — NTex 引擎核心的 WASM 薄壳（M8-A 骨架 + B 档 + C 档第一刀）
 
 在浏览器（或 Node）里跑 NTex：喂 `.tex` 字符串 + 内嵌 TFM 度量，引擎排版，
 回传 **DVI 字节 + 转录文本**，并可**逐页软光栅渲染到 canvas**（实时预览工作台）。
-plain 子集、无 LaTeX。
+plain 子集开箱即用；**LaTeX（`.fmt`）经宿主注入资产包后可用**（C 档，见下）。
 
 ## 三档路线
 
 | 档 | 内容 | 状态 |
 |---|---|---|
 | **A（本 crate）** | 引擎核心 WASM 化：`compile_tex()` 全链在 wasm 内完成，TFM 经 `ntex_layout::set_tfm_source` 注入（`fonts/` 内嵌 **48 个 CM TFM，共 196 KB** —— 覆盖内嵌 plain 预载字体块全集，2026-09-11 由 14 件补齐；见 `fonts/README.md`） | ✅ 已建（2026-09-06） |
-| **B** | 渲染。**第一刀已建（2026-09-06）**：`compile_document()` → `Document` 句柄（页盒树常驻）→ `render_page()` 走 ntex-backend **软光栅**（`prims` 事实源 + `Pixmap`，与桌面同代码；vello 经 feature 门控不进 wasm），RGBA 回传 JS `putImageData`；翻页/调 dpi/切 overlay 不重排版。**真字形与中文已通**（2026-09-11）：`set_glyph_font`（Latin/Modern，走 ntex-backend 轮廓注册表）+ `set_otf_font`（任意 OTF/TTF，**同时写排版度量与渲染轮廓两侧**）由宿主 fetch 后注入，`Document::set_glyphs(true)` 切轮廓渲染；`set_utf8_input(true)` 让源文件直写中文。后续：vello/wgpu web 后端、增量接口 | 🟡 第一刀 + 真字形/中文已建 |
-| **C** | LaTeX：`.fmt` 快照经 `MemVfs` 喂入 + `Typesetter::import_state`，在薄壳上加 `load_format(bytes)` | 等 `ntex-format` 快照完备（C 档依赖载入战） |
+| **B** | 渲染。**第一刀已建（2026-09-06）**：`compile_document()` → `Document` 句柄（页盒树常驻）→ `render_page()` 走 ntex-backend **软光栅**（`prims` 事实源 + `Pixmap`，与桌面同代码；vello 经 feature 门控不进 wasm），RGBA 回传 JS `putImageData`；翻页/调 dpi/切 overlay 不重排版。**真字形与中文已通**（2026-09-11）：`set_glyph_font`（Latin/Modern，走 ntex-backend 轮廓注册表）+ `set_otf_font`（任意 OTF/TTF，**同时写排版度量与渲染轮廓两侧**）由宿主 fetch 后注入，`Document::set_glyphs(true)` 切轮廓渲染；`set_utf8_input(true)` 让源文件直写中文。后续：vello/wgpu web 后端、增量接口 | ✅ 第一刀 + 真字形/中文已建 |
+| **C** | LaTeX。**第一刀已建（2026-09-18）**：宿主把发行资产打成一个**资产包**（`.fmt` 快照 + `.cls`/`.sty` 等 TeX 文件 + TFM 度量）经 [`set_bundle`] 一次注入 → `ntex_format::load` 还原 `FmtState` → `Typesetter::import_state`；`\documentclass{article}` 等真 LaTeX 宏可用（`set_latex_mode(true)` 开模式）。打包端在 `crates/ntex-tauri/src/main.rs::build_latex_bundle`，容器契约见 `src/lib.rs` 的 `BUNDLE_MAGIC` 文档。wasm 无文件系统，故 fmt/tex/tfm **三者都只能由宿主喂** | ✅ 第一刀已建 |
 
 B 档第一刀的实测（M2 MacBook，A4@144dpi）：demo 作业编译 ~3-11ms + 渲染 ~6-9ms，
 250ms 编辑防抖下即点即见；wasm 产物 832K（含 skrifa/peniko 软光栅链）。
@@ -67,7 +67,8 @@ JS API（wasm-bindgen 生成后）：
 
 ```js
 import init, { compile_document, compile_tex, engine_version, embedded_fonts, demo_tex,
-               set_glyph_font, set_otf_font, set_utf8_input, utf8_input }
+               set_glyph_font, set_otf_font, set_utf8_input, utf8_input, set_fallback_font,
+               set_bundle, set_latex_mode, latex_mode, bundle_summary }
     from './pkg/ntex_wasm.js';
 await init();
 
@@ -87,6 +88,12 @@ set_otf_font('FandolSong-Regular', new Uint8Array(fandol));   // true = 度量�
 set_utf8_input(true);                     // 源文件可直写中文（等价 \utfinputmode=1）
 console.log(utf8_input());                // true
 
+// —— CJK 字体回落（2026-09-18）——
+// 源文件不写 `\font\zh=FandolSong-Regular` 也能排中文：当前字体（cmr10 等
+// 8-bit TFM）缺字形且码位超过 0xFF 时，该字符自动改用回落字体排。
+// ASCII/latin-1 永不回落（TRIP "Missing character" 硬口径原样保留）。
+set_fallback_font('FandolSong-Regular');  // null = 关闭（默认）
+
 // —— B 档第一刀：编译 → 句柄 → 逐页软光栅渲染 ——
 const doc = compile_document(demo_tex());
 doc.page_count;                           // 2（\shipout 页数）
@@ -102,6 +109,19 @@ ctx.putImageData(new ImageData(new Uint8ClampedArray(img.rgba), img.width, img.h
 > 中文文档（plain + Fandol Song）完整可用样例见 `crates/ntex-tauri/ui/`：那里的
 > `index.html`/`main.js` 已按上面的顺序（fetch 字体 → 注入 → 开 UTF-8 → 编译）
 > 接好，配合 `resume-plain.tex` 可端到端验证。
+
+```js
+// —— C 档：LaTeX（2026-09-18）——
+// 资产包 = 宿主把 .fmt + .cls/.sty + TFM 打成一包（容器魔数 NTEXBND1），
+// wasm 无文件系统，三类文件都只能这样喂。Tauri 侧打包命令见 ntex-tauri。
+const bundle = await fetch('/latex.bundle').then(r => r.arrayBuffer());
+set_bundle(new Uint8Array(bundle));      // 解析失败抛错（坏魔数/截断/坏 fmt 整体拒绝）
+console.log(bundle_summary());           // "latex.fmt · 177 tex · 643 tfm"（实测 821 条 ≈11.7 MB）
+set_latex_mode(true);                    // 有 fmt → 用 fmt（不再预载 plain）；无 fmt → 回落 plain
+console.log(latex_mode());               // true
+
+const doc = compile_document(articleSrc); // \documentclass{article}... 真 LaTeX 宏
+```
 
 ```js
 // —— A 档原接口（一次性拿 DVI + 转录，不持句柄）——
@@ -148,7 +168,7 @@ native 路径不受影响）。
 
 ## 验证边界（重要）
 
-- `cargo test --workspace`（native）全绿，其中 `crates/ntex-wasm` 的 12 个单测在
+- `cargo test --workspace`（native）全绿，其中 `crates/ntex-wasm` 的 **21 个单测**在
   **native 上跑与 wasm 完全相同的管线**（`compile_pipeline`：内嵌 TFM 注册 →
   `MemVfs` → `typeset_dvi` → DVI；`render_page_core`：盒树 → `prims` → `Pixmap`
   软光栅）——因为 TFM 注入缝与渲染核心函数不分目标编译（见
@@ -161,6 +181,16 @@ native 路径不受影响）。
   （引擎参数开关不被源文件覆盖）、`otf_injection_enables_cjk_typesetting`
   （`set_otf_font` 后中文可排）、`resume_plain_compiles_clean_under_wasm_font_set`
   （真文档 `resume-plain.tex` 在 wasm 字体集下零错误编译）。
+  2026-09-18 新增 5 个 C 档锁（**测试直接从入库 `assets/` 现读 fmt/tex/tfm 组装
+  资产包**，即测的就是发行资产本体，不是测试夹具）：
+  `latex_bundle_typesets_article_class`（`\documentclass{article}` 零 Undefined、
+  零 not-found、出页，`cmbx12` 进 DVI 字体表）、
+  `bundle_parse_classifies_entries_and_rejects_corruption`（坏魔数/截断/非法
+  kind/坏 fmt 各自拒绝，**整体拒绝不半信半疑**）、
+  `latex_assets_without_format_fall_back_to_plain`（无 fmt 回落 plain，不炸）、
+  `missing_latex_package_error_carries_first_error_line`（缺宏包错误带转录
+  首现场 `!` 行）、`injected_tfm_keys_are_bare_font_names`（TFM 键必须是裸字体名
+  `cmbx12`——曾经用 `cmbx12.tfm` 导致 `Font cmbx12 not loadable`）。
 - wasm 目标验证：`cargo check/build --target wasm32-unknown-unknown` 通过；本刀
   （2026-09-06）已做**真实浏览器端到端**（Chromium + wasm-bindgen --target web）：
   demo 作业 canvas 1191×1684、墨迹 ~9×10⁴ px、编译 11ms + 渲染 9.4ms；翻页仅
@@ -173,8 +203,35 @@ native 路径不受影响）。
 - `\write` 到非 16 流 / `\openout` 产出的文件留在 `MemVfs` 内不回传：
   `ntex-io::MemVfs` 暂无枚举 API（只有 `read`/`write`/`append`/`get`），补枚举接口
   属 ntex-io 领地，需另开一刀。
-- 数学字体（cmmi/cmsy/cmex）已内嵌但 demo 未用数学——plain 格式的
-  `\textfont`/`\scriptfont` 装配属 C 档 `.fmt` 路线。
+- 数学字体（cmmi/cmsy/cmex）已内嵌；plain 路径下 `\textfont`/`\scriptfont` 装配
+  仍缺（**入包的只有 `latex.fmt`，没有 `plain.fmt`**）。C 档走 `.fmt` 时字体表按
+  `FmtState::font_loads` 重建（`Typesetter::import_state`），故 LaTeX 侧的数学
+  字号族定义能恢复；但**数学排版未纳入本次回归**（无对应锁，勿据此推断一致性）。
+- **NFSS 字号切换的字体名污染——已修（2026-09-18，ntex-core）**：此前正文写
+  `\Large` 会得到 `! Font cmr12 at 14.39999pt not loadable`（文字回落 nullfont、
+  0 页）。根因是 `more_name` 的空格判据只认 cat-10，而 NFSS `\external@font`
+  产出的空格以 cat-12 进入名字扫描。按 pdftex 三案对拍（`/tmp/ntex-repro/
+  {at12,qt,qt2}.tex`，TeX Live 2024）修 `ntex-core/expand/io.rs`：**字符码 32
+  一律终止名字**——cat-10 空格终止后放回（引号名后空格存活为 glue，既有锁
+  不变）、非 cat-10 空格终止后消费（`at`/`scaled` 照常被 `scan_keyword` 识别）。
+  修复后 `\Large`/12pt 全部零缺字体、出页（锁 `large_size_switch_loads_cmr12_
+  without_pollution`、ntex-core `cat12_space_terminates_names_like_tex_web`）。
+  残留小事：cat-12 空格的**来源**未追（NFSS 路径里为何不是 cat-10，`\edef`
+  复刻不触发）——后果仅是 `at` 字号被 "Missing number → Improper at size →
+  设计字号" 恢复链吃掉（与真 pdftex 同款行为），字号略偏、文本完好。
+- **C 档剩余 —— LaTeX `tabular` 对齐前言（下一刀）**：裸 `\halign{#\cr a\cr}`
+  正常（0 错），但 `\begin{tabular}{l}x\end{tabular}` 报
+  `! Missing { inserted` → `! Missing # inserted in alignment preamble.`
+  （最小复现：`/tmp/ntex-repro/run23.mjs`，`tabular_one`）。根因在 latex.ltx
+  `\@mkpream`/`\@arstrut` 前言构造路径与 ntex-core 对齐机制的某处交互——
+  `latex1.tex`（`\shortex` 即 tabular 树）当前因此 0 页；`\node`、
+  `\enumsentence`（仅 1 条 list 相关错）基本可用。
+- **宏包闭包**：`lingmacros`/`tree-dvips` 已入 `assets/tex-minimal/tex/latex/
+  misc/`（2026-09-18 取自 CTAN `/macros/latex209/contrib/trees/tree-dvips`，
+  阿里云镜像；CTAN 主站与清华镜像被网络策略拦截）。`\usepackage` 未覆盖时
+  仍会报错并带转录首现场（`首现场：! LaTeX Error: File 'xxx.sty' not found.`）。
+  tree-dvips 的 `\special{ps:...}`（dvips 画树线）引擎按 whatsit 节点吞掉——
+  树形连线不可视，文本结构完好。
 - 无增量接口（M5 的 `IncrementalTypesetter` 暴露给 JS 是 B 档「毫秒级刷新」的前置；
   当前每次编辑全量重排，demo 级文档毫秒级完成，大文档会线性变慢）。
 - 真字形未做（见偏差 4）；vello/wgpu web 后端未做（B 档后续，体积/宿主要求另评估）。

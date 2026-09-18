@@ -37,7 +37,8 @@
     <main>
       <section id="editor-pane">
         <div class="pane-title">
-          <span>plain TeX（内嵌 CM TFM 48 件 · 中文走 Fandol Song）</span>
+          <span><b id="mode-chip" class="mode plain" title="口径自动判定：源码含 \documentclass/\usepackage/\begin{document} 时走 LaTeX（需启动时 LaTeX 资产就绪）">plain</b>
+            <em class="hint">LaTeX 自动走 latex.fmt（\documentclass/article.cls/\section…）· 中文走 Fandol Song</em></span>
           <span class="hint">Cmd/Ctrl+S 立即重排 · 草稿自动保存</span>
         </div>
         <div class="editor-wrap">
@@ -45,7 +46,7 @@
           <div class="editor-stack">
             <pre id="hl" aria-hidden="true"><code id="hlcode"></code></pre>
             <textarea id="editor" spellcheck="false" wrap="off"
-              placeholder="输入 plain TeX 源码，右侧实时预览（中文需 UTF-8 开关 + 字体注入成功；失败回落方框）…"></textarea>
+              placeholder="输入 TeX 源码，右侧实时预览：plain 子集直接排；写 \documentclass{article}…\begin{document}…\end{document} 即按 LaTeX 排（中文需 UTF-8 开关 + 字体注入成功；失败回落方框）…"></textarea>
           </div>
         </div>
       </section>

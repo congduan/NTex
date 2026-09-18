@@ -1316,6 +1316,36 @@ I changed this one to zero.
     }
 
     #[test]
+    fn cat12_space_terminates_names_like_tex_web() {
+        // tex.web `more_name(c)`：`if c=" " then more_name:=false` —— 判据是
+        // **字符码 32**，与 catcode 无关。修前只认 cat-10，cat-12 空格被吞进
+        // 名字；真现场：NFSS `\external@font`（`\edef …\space at\the\@tempdimb`）
+        // 让 `\Large`/12pt 字号族名字变 "cmr12 at 14.39999pt" → TFM 查不到。
+        // pdftex 三案对拍（/tmp/ntex-repro/{at12,qt,qt2}.tex）：
+        // cat-12 空格终止且消费（`at` 照常识别）；cat-10 空格终止且放回；
+        // 引号是纯开关（`\input"q"A` → 名字 "qA}"）。
+        let (_, _, calls) = font_run("\\catcode`\\ =12 \\font\\a=cmr10 b\\a x").unwrap();
+        assert_eq!(
+            calls,
+            vec![("cmr10".to_owned(), None, None)],
+            "cat-12 空格必须终止字体名（字符码 32 判据），'b' 不入名"
+        );
+        // cat-10 空格判据不变（TRIP/GT 锁）：终止 + 放回，关键字扫描跳过它。
+        let (_, _, calls) = font_run("\\font\\a=cmr10 \\a x").unwrap();
+        assert_eq!(calls, vec![("cmr10".to_owned(), None, None)]);
+        // 文件名同口径（tex.web scan_file_name 走同一 more_name）：
+        // cat-12 空格把 "tex" 隔出文件名，报错现场恰为 nosuchfile.tex。
+        let mut e = Expander::new();
+        let r = e.run_source("\\catcode`\\ =12 \\input nosuchfile.tex tex\\relax");
+        assert!(r.is_err());
+        assert!(
+            e.transcript().contains("I can't find file `nosuchfile.tex'"),
+            "cat-12 空格后的 'tex' 不应混入文件名，转录：{}",
+            e.transcript()
+        );
+    }
+
+    #[test]
     fn font_without_loader_recovers() {
         // TRIP：字体加载失败 → 报 "! Font ... not loadable" 并恢复（绑定字体 0），不终止
         let mut e = Expander::new(); // 默认 NoFontLoader

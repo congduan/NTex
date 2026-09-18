@@ -13,8 +13,13 @@
 //!   `putImageData` 上 canvas；翻页/调 dpi 不重排版。vello/wgpu web 后端与
 //!   真字形（内嵌 Latin Modern OTF）属 B 档后续；增量接口（M5
 //!   `IncrementalTypesetter` 暴露给 JS）是「毫秒级刷新」的前置。
-//! - **C 档（待 `.fmt`）**：LaTeX。`.fmt` 快照经 `MemVfs` 喂入 + `import_state`，
-//!   等 `ntex-format` 快照完备度上来后在此薄壳上加 `load_format(bytes)`。
+//! - **C 档（第一刀已建，2026-09-18）**：LaTeX。**发行资产包**经 [`set_bundle`]
+//!   一次注入（`.fmt` 快照 [`LatexAssets::from_bundle`] 解码 → `Typesetter::import_state`；
+//!   `.cls`/`.sty` 等 TeX 文件灌进 `MemVfs`；内嵌 48 件之外的 TFM 度量补进
+//!   `TfmSource`），[`set_latex_mode`] 开模式后 `\documentclass{article}` 等
+//!   真 LaTeX 宏可用。wasm 无文件系统，所以 fmt/tex/tfm 三者都只能由宿主喂入
+//!   （打包端在 `crates/ntex-tauri/src/main.rs::build_latex_bundle`，容器格式见
+//!   [`BUNDLE_MAGIC`]）。
 //!
 //! WASM 侧与 native 的已知偏差（均带注释，见对应源码）：
 //! 1. `\day`/`\month`/`\year`/`\time` 固定为 1970-01-01 00:00（`ntex-core/src/param.rs`：
@@ -41,7 +46,7 @@
 //! `write`/`append`/`get`），补枚举接口属 ntex-io 领地，不在本刀范围。
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{LazyLock, Mutex, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 use wasm_bindgen::prelude::*;
 
@@ -151,6 +156,148 @@ type OtfMetricRegistry = LazyLock<Mutex<Vec<OtfMetricEntry>>>;
 /// 多线程并行跑同一 crate，全局表要能安全共享（与 ntex-backend 注册表同构）。
 static OTF_METRICS: OtfMetricRegistry = LazyLock::new(|| Mutex::new(Vec::new()));
 
+// ---------- C 档：LaTeX（`.fmt` 快照 + TeX 文件 + 额外 TFM 度量） ----------
+
+/// 发行资产包（bundle）魔数——`set_bundle` 的容器头。
+///
+/// 容器格式是**两端共用的契约**，另一端在 `crates/ntex-tauri/src/main.rs`
+/// 的 `build_latex_bundle`（Tauri 侧只读 `assets/` 目录后打包，经一次 IPC
+/// 原样字节送给前端，避免 600+ 文件逐个往返）：
+///
+/// ```text
+/// "NTEXBND1"            8 字节魔数
+/// u32 (LE) count        条目数
+/// 重复 count 次：
+///   u8  kind            0 = TeX 文件（\input/\usepackage 查找，键 = 文件主名）
+///                       1 = TFM 字体度量（\font 查找用）
+///                       2 = .fmt 格式快照（name 约定 "latex.fmt"）
+///   u32 name_len + name   UTF-8
+///   u32 data_len + data   原始字节
+/// ```
+const BUNDLE_MAGIC: &[u8] = b"NTEXBND1";
+
+/// bundle 顺序读游标：越界即 `Err`（不用 `unwrap`——引擎契约）。
+struct BundleReader<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> BundleReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, pos: 0 }
+    }
+
+    fn take(&mut self, n: usize) -> Result<&'a [u8], String> {
+        let end = self
+            .pos
+            .checked_add(n)
+            .ok_or_else(|| "资产包长度字段溢出".to_owned())?;
+        if end > self.bytes.len() {
+            return Err(format!(
+                "资产包截断：还需 {n} 字节，剩余 {}",
+                self.bytes.len() - self.pos
+            ));
+        }
+        let slice = &self.bytes[self.pos..end];
+        self.pos = end;
+        Ok(slice)
+    }
+
+    fn u8(&mut self) -> Result<u8, String> {
+        Ok(self.take(1)?[0])
+    }
+
+    fn u32(&mut self) -> Result<u32, String> {
+        let b = self.take(4)?;
+        Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    }
+
+    fn text(&mut self, n: usize) -> Result<String, String> {
+        String::from_utf8(self.take(n)?.to_vec())
+            .map_err(|_| "资产包条目名字不是合法 UTF-8".to_owned())
+    }
+}
+
+/// C 档注入资产：`.fmt` 快照 + TeX 源文件 + 额外 TFM 度量（wasm 无文件系统，
+/// 三者都只能由宿主喂进来）。
+#[derive(Debug, Default)]
+pub struct LatexAssets {
+    /// 解码后的格式状态（`Typesetter::import_state` 的输入）——
+    /// `\documentclass`/`\section` 等 LaTeX 宏全部来自这里。`None` = 包里没带 fmt。
+    format: Option<ntex_core::expand::FmtState>,
+    /// `\input`/`\usepackage` 可见的 TeX 文件（键 = 文件主名，如 `article.cls`）。
+    tex_files: Vec<(String, Vec<u8>)>,
+    /// 额外字体度量（键 = TFM 名，如 `cmbx12`）——补内嵌 48 件 CM 之外的
+    /// LaTeX 字体块（12pt 的 cmbx12/cmti12、`\Huge` 的 cmr17 等）。
+    tfm_bytes: Vec<(String, Vec<u8>)>,
+}
+
+impl LatexAssets {
+    /// 解析发行资产包（容器格式见 [`BUNDLE_MAGIC`]）。
+    ///
+    /// 出错即**整体拒绝**（不留半吊子资产）：坏魔数 / 截断 / 非法 UTF-8 名字 /
+    /// `.fmt` 解码失败都返回 `Err`，调用方原样转成 JS 异常或判定测试失败。
+    pub fn from_bundle(bytes: &[u8]) -> Result<Self, String> {
+        let mut r = BundleReader::new(bytes);
+        if r.take(BUNDLE_MAGIC.len())? != BUNDLE_MAGIC {
+            return Err("资产包魔数不匹配（期望 NTEXBND1）".to_owned());
+        }
+        let count = r.u32()?;
+        let mut out = LatexAssets::default();
+        for _ in 0..count {
+            let kind = r.u8()?;
+            let name_len = r.u32()? as usize;
+            let name = r.text(name_len)?;
+            let data_len = r.u32()? as usize;
+            let data = r.take(data_len)?.to_vec();
+            match kind {
+                0 => out.tex_files.push((name, data)),
+                1 => out.tfm_bytes.push((name, data)),
+                2 => {
+                    let state = ntex_format::load(&mut &data[..])
+                        .map_err(|e| format!("解析格式快照 {name} 失败：{e}"))?;
+                    out.format = Some(state);
+                }
+                other => return Err(format!("资产包条目类型非法：{other}")),
+            }
+        }
+        Ok(out)
+    }
+
+    /// 是否带 `.fmt` 快照（无 fmt 的包只能当 TeX 文件库用，排不了 LaTeX）。
+    pub fn has_format(&self) -> bool {
+        self.format.is_some()
+    }
+
+    /// TeX 文件条目数（诊断用）。
+    pub fn tex_file_count(&self) -> usize {
+        self.tex_files.len()
+    }
+
+    /// 额外 TFM 条目数（诊断用）。
+    pub fn tfm_count(&self) -> usize {
+        self.tfm_bytes.len()
+    }
+
+    /// 指定 TeX 文件是否已在包里（诊断/测试用）。
+    pub fn has_tex_file(&self, name: &str) -> bool {
+        self.tex_files.iter().any(|(n, _)| n == name)
+    }
+}
+
+/// 宿主注入的 C 档资产（进程级）。
+///
+/// 存 `Arc`：每次编译只挪一个引用计数，不重复拷贝 fmt/tex/tfm 的字节。
+/// 用 `Mutex` 而非 `thread_local` 的理由同 [`OTF_METRICS`]（native 单测并行）。
+static LATEX_ASSETS: LazyLock<Mutex<Option<Arc<LatexAssets>>>> = LazyLock::new(|| Mutex::new(None));
+
+/// LaTeX 模式开关（宿主经 [`set_latex_mode`] 设置；**默认关**）。
+///
+/// 开 = 编译时套用注入的 `.fmt`，且**不再预载 plain**——fmt 已含目标格式全量
+/// 状态，叠加 plain 会污染（与 native `ntex-dvi` 的 `--fmt` 同口径）。
+/// 关 = 维持既有 plain 子集行为（既有前端与单测的默认口径）。
+static LATEX_MODE: AtomicBool = AtomicBool::new(false);
+
 /// UTF-8 输入默认开关（宿主经 [`set_utf8_input`] 设置）：进程级，影响后续全部
 /// [`compile_tex`] / [`compile_document`] 调用。
 ///
@@ -158,16 +305,38 @@ static OTF_METRICS: OtfMetricRegistry = LazyLock::new(|| Mutex::new(Vec::new()))
 /// 编译的热路径上，省一次加锁。
 static UTF8_INPUT: AtomicBool = AtomicBool::new(false);
 
+/// CJK 回落字体名（宿主经 [`set_fallback_font`] 设置）：进程级，影响后续全部
+/// 编译。`None` = 关闭（默认，TRIP/ETRIP 口径零影响）。`char_node` 里当前
+/// 字体缺字形且码位 > 0xFF 时自动改用该字体排该字符——源文件不写
+/// `\font\zh=FandolSong-Regular` 也能排中文（resume1-plain 中文全丢现场的
+/// 修复，2026-09-18）。
+static FALLBACK_FONT: Mutex<Option<String>> = Mutex::new(None);
+
+/// [`FALLBACK_FONT`] 的读取快照（管线下发 [`ntex_layout::Typesetter::set_fallback_font`]）。
+fn fallback_font_name() -> Option<String> {
+    FALLBACK_FONT.lock().ok()?.clone()
+}
+
 /// 内嵌 TFM 源：[`ntex_layout::TfmSource`] 的 `include_bytes!` 实现。
 #[derive(Debug)]
-struct EmbeddedTfmSource;
+struct EmbeddedTfmSource {
+    /// C 档注入的额外度量（[`LatexAssets::tfm_bytes`]）。`None` = 只认内嵌 48 件。
+    /// 存 `Arc` 而非拷表：查找是只读的，每次编译不必复制 2 MB 字节。
+    latex: Option<Arc<LatexAssets>>,
+}
 
 impl ntex_layout::TfmSource for EmbeddedTfmSource {
     fn tfm_bytes(&mut self, name: &str) -> Option<Vec<u8>> {
-        EMBEDDED_TFMS
+        if let Some((_, bytes)) = EMBEDDED_TFMS.iter().find(|(n, _)| *n == name) {
+            return Some(bytes.to_vec());
+        }
+        // C 档：LaTeX 字体块（cmbx12 等）不在内嵌 48 件里，由宿主包补足。
+        self.latex
+            .as_ref()?
+            .tfm_bytes
             .iter()
-            .find(|(n, _)| *n == name)
-            .map(|(_, bytes)| bytes.to_vec())
+            .find(|(n, _)| n == name)
+            .map(|(_, bytes)| bytes.clone())
     }
 
     /// 宿主经 [`set_otf_font`] 注入的 OpenType 字体（CJK/任意 OTF/TTF）。
@@ -207,16 +376,39 @@ pub struct Compiled {
 /// `MemVfs`：`\input`/`\openin`/`\write` 全部封闭在内存（RFC-3；wasm 无文件系统）。
 /// 与 native `ntex-dvi` 驱动同一路径：TFM 模式 + `typeset_dvi`（自动分页）。
 fn compile_pipeline(tex: &str) -> ntex_core::error::Result<Compiled> {
-    compile_pipeline_with(tex, UTF8_INPUT.load(Ordering::Relaxed))
+    compile_pipeline_assets(tex, UTF8_INPUT.load(Ordering::Relaxed), latex_for_compile())
 }
 
-/// [`compile_pipeline`] 的可注入版本（`utf8_input` 显式给出，绕开进程级开关）。
+/// 不带 C 档资产的编译入口（native 单测的既有调用形态）。
+///
+/// 只给测试用：把「plain 口径」的调用点与「带资产」的调用点分开，测试才不必
+/// 每个用例都写一遍 `None`，也不会误踩进程级资产开关。
+#[cfg(test)]
+fn compile_pipeline_with(tex: &str, utf8_input: bool) -> ntex_core::error::Result<Compiled> {
+    compile_pipeline_assets(tex, utf8_input, None)
+}
+
+/// 本次编译该用的 C 档资产：未注入、或 LaTeX 模式没开 → `None`（走 plain 口径）。
+fn latex_for_compile() -> Option<Arc<LatexAssets>> {
+    if !LATEX_MODE.load(Ordering::Relaxed) {
+        return None;
+    }
+    LATEX_ASSETS.lock().ok()?.clone()
+}
+
+/// [`compile_pipeline`] 的可注入版本（`utf8_input` 与 C 档资产显式给出）。
 ///
 /// 拆分动机：进程级开关在 `cargo test` 的并行线程间是共享状态，测试要能
-/// 各自指定编码模式而不互相污染。
-fn compile_pipeline_with(tex: &str, utf8_input: bool) -> ntex_core::error::Result<Compiled> {
+/// 各自指定编码模式与格式资产而不互相污染。
+fn compile_pipeline_assets(
+    tex: &str,
+    utf8_input: bool,
+    latex: Option<Arc<LatexAssets>>,
+) -> ntex_core::error::Result<Compiled> {
     // TFM 源注册（幂等：每次编译前重挂，wasm 模块可反复编译无需额外初始化）。
-    ntex_layout::set_tfm_source(Box::new(EmbeddedTfmSource));
+    ntex_layout::set_tfm_source(Box::new(EmbeddedTfmSource {
+        latex: latex.clone(),
+    }));
     // PDF 写出（ntex-pdf）经 ntex_font::read_tfm 取度量——wasm 无文件系统，
     // 注册表是唯一来源。把内嵌全表灌进去（进程级一次性；native 单测同路径，
     // 保证「内嵌 TFM → 排版 → PDF」全链在无 TeX Live 环境也可回归）。
@@ -225,21 +417,76 @@ fn compile_pipeline_with(tex: &str, utf8_input: bool) -> ntex_core::error::Resul
             ntex_font::register_tfm_bytes(name, bytes);
         }
     }
+    // C 档的额外 TFM 也要进 `ntex-font` 注册表——**第三张表**：PDF 写出
+    // （`ntex_pdf::parse_dvi` → `ntex_font::read_tfm`）只认「TFM 解析 / 进程级
+    // 注册表」两条路，与排版侧的 `TfmSource` 是两回事。漏登记的表现是
+    // `Document::used_fonts()` 返回空表 + 导出报「找不到 TFM：cmbx12」
+    // （2026-09-18 实测踩过；与 OTF 的中文度量漏登记同型）。
+    // 无条件重灌（幂等，~0.8 MB 覆盖写；换来 bundle 可随时替换）。
+    if let Some(assets) = &latex {
+        for (name, bytes) in &assets.tfm_bytes {
+            ntex_font::register_tfm_bytes(name, bytes);
+        }
+    }
     let mut ts = ntex_layout::Typesetter::with_tfm();
-    ts.set_vfs(Box::new(ntex_io::MemVfs::new()));
+    let mut vfs = ntex_io::MemVfs::new();
+    // C 档：TeX 源文件灌进 MemVfs（wasm 无文件系统）——`\documentclass{article}`
+    // 会 `\input article.cls`，`\usepackage{graphicx}` 会找 `graphicx.sty`；
+    // 键用**文件主名**（与 TeX 的查找名一致），子目录只是打包时的来源路径。
+    if let Some(assets) = &latex {
+        for (name, bytes) in &assets.tex_files {
+            vfs.insert(name.clone(), bytes.clone());
+        }
+    }
+    ts.set_vfs(Box::new(vfs));
     // UTF-8 直写开关（M9 中文刀 3）：宿主在编译前设定，源文件即可直接写中文。
     // 走引擎参数注入口（而非在源码前拼 `\utfinputmode=1`）——后者会让 log 的
     // `l.N` 与编辑器行号错位一行（见 Typesetter::utf8_input_default 注释）。
     ts.set_utf8_input(utf8_input);
+    // CJK 字体回落（workbench 档）：宿主经 [`set_fallback_font`] 下发回落
+    // 字体名（前端在 `set_otf_font` 注入 Fandol 后设 `FandolSong-Regular`）。
+    // char_node 里当前字体缺字形且码位 > 0xFF 时自动改用它——源文件不写
+    // `\font\zh` 也能排中文（resume1-plain 中文全丢现场的修复，2026-09-18）。
+    ts.set_fallback_font(fallback_font_name());
     // 格式预载（G2(a)/G4）：与 native `ntex-dvi` 驱动同路径——内嵌 plain 兜底
     // + 启动预载（等价源首行 `\input plain`）。wasm 无文件系统，`\input plain`
     // 只能走内嵌资源；缺此则 plain 宏（`\hsize` 等）全缺，样例产空页。
     ts.use_embedded_format();
-    ts.set_preload_plain(true);
+    // C 档（LaTeX）优先：fmt 已含目标格式全量状态，**不再预载 plain**（叠加会
+    // 污染——native `ntex-dvi` 的 `--fmt` 同口径）。没有可用 fmt 时回落 plain，
+    // 至少让作业排出可读文本而不是空页。
+    let mut used_format = false;
+    if let Some(state) = latex.as_ref().and_then(|a| a.format.clone()) {
+        ts.import_state(state);
+        used_format = true;
+    }
+    if !used_format {
+        ts.set_preload_plain(true);
+    }
     // 出错也要收转录：TeX 语义是错误上下文行进 log，作业不止于 stderr。
     let result = ts.typeset_dvi(tex);
     let transcript = ts.take_transcript();
-    let (pages, fonts) = result?;
+    let (pages, fonts) = match result {
+        Ok(v) => v,
+        // 硬失败也要把 TeX「首现场」带出去：`\read 流未打开` 只是症状，真因
+        // （`File 'xxx.sty' not found.`）只在转录里。wasm 侧没有 native 驱动的
+        // G0 转录透传（stderr），宿主只看得到 `Err`，所以拼进错误消息——
+        // 否则 LaTeX 缺宏包在 Tauri 里表现为一句无从下手的 `InvalidInput`。
+        Err(e) => {
+            let first = transcript
+                .lines()
+                .find(|l| l.trim_start().starts_with('!'))
+                .map(str::trim);
+            return Err(match (e, first) {
+                (ntex_core::error::Error::InvalidInput { message }, Some(line)) => {
+                    ntex_core::error::Error::InvalidInput {
+                        message: format!("{message}（首现场：{line}）"),
+                    }
+                }
+                (e, _) => e,
+            });
+        }
+    };
     // 无页面不出 DVI（与 native `ntex-dvi` 驱动一致：空作业拒绝写 post 段）。
     let dvi = if pages.is_empty() {
         Vec::new()
@@ -280,6 +527,7 @@ fn pdf_from_dvi(dvi: &[u8], pages: u32) -> Result<Vec<u8>, String> {
 /// 引擎报错时抛 `JsError`，消息含 TeX 式错误（含 `l.N` 上下文行）。
 #[wasm_bindgen]
 pub fn compile_tex(tex: &str) -> Result<CompileResult, JsError> {
+    panic_trace::install();
     match compile_pipeline(tex) {
         Ok(compiled) => Ok(CompileResult {
             dvi: compiled.dvi,
@@ -459,6 +707,7 @@ impl Document {
     /// `/FontFile` 流——多数查看器会以替代字体渲染或干脆留白，所以前端应在
     /// 调用前把名字注册齐，并对缺字体给出可见提示（Tauri 工作台即如此）。
     pub fn pdf_bytes(&self) -> Result<Vec<u8>, JsError> {
+        panic_trace::install();
         pdf_from_dvi(&self.dvi, self.page_count()).map_err(|e| JsError::new(&e))
     }
 
@@ -471,6 +720,7 @@ impl Document {
     /// 断点标记，与 native `ntex-backend --debug` 同口径）；字形口径由
     /// [`Document::set_glyphs`] 控制（默认方框）。
     pub fn render_page(&self, index: u32, dpi: f64, debug: bool) -> Result<PageImage, JsError> {
+        panic_trace::install();
         render_page_core(
             &self.pages,
             &self.font_metrics,
@@ -517,11 +767,59 @@ impl PageImage {
     }
 }
 
+/// wasm 侧 panic 留痕（`panic = abort` 会把 panic 变成无位置信息的裸 trap）。
+///
+/// 引擎契约是「任意畸形输入不 panic」，但契约一旦被违反，wasm 的现场是**最差**的：
+/// `panic = abort`（`[profile.release]` 设定）让 panic 直接落成 `unreachable` 指令，
+/// 浏览器/WebView 只报一句
+/// `RuntimeError: Unreachable code should not be executed (evaluating 'wasm.compile_document(ptr0, len0)')`
+/// ——没有文件、没有行号、没有消息，等于现场全丢（历史上排查一个 trap 要反复二分输入）。
+///
+/// 这里装一个 panic hook：**先把位置经 `console.error` 打出来**，再让默认流程
+/// 继续 abort。trap 依旧发生（本模块不做 catch——workspace `unsafe_code = deny`，
+/// 且 `catch_unwind` 被禁），但控制台从此有一行
+/// `[NTex panic] panicked at crates/ntex-core/src/expand/foo.rs:123: ...`，
+/// 足以一次定位。这是「可诊断性 ≥ 容错」的取舍：宁可照旧崩，也要崩得有据可查。
+#[cfg(target_arch = "wasm32")]
+mod panic_trace {
+    use std::sync::Once;
+    use wasm_bindgen::prelude::*;
+
+    #[wasm_bindgen]
+    extern "C" {
+        #[wasm_bindgen(js_namespace = console, js_name = error)]
+        fn console_error(s: &str);
+    }
+
+    static INSTALL: Once = Once::new();
+
+    /// 幂等安装（各 wasm 入口都调；`Once` 保证只装一次）。
+    ///
+    /// 不用 `#[wasm_bindgen(start)]`：那要把 `start` 挂到实例化流程上，
+    /// 而本项目 native 测试也会编译本 crate（非 wasm 目标下 `start` 不适用），
+    /// 逐入口调用既显式又好审计。
+    pub fn install() {
+        INSTALL.call_once(|| {
+            std::panic::set_hook(Box::new(|info| {
+                console_error(&format!("[NTex panic] {info}"));
+            }));
+        });
+    }
+}
+
+/// native 上是空操作：panic 输出仍走标准 hook（`cargo test -- --nocapture` 可直接看）。
+#[cfg(not(target_arch = "wasm32"))]
+mod panic_trace {
+    #[inline]
+    pub fn install() {}
+}
+
 /// 编译 plain 子集 TeX 源码 → 渲染句柄（B 档入口；引擎报错抛 `JsError`，
 /// 消息含 TeX 式错误上下文）。可恢复的 TeX 错误（缺字体等）不抛——作业
 /// 继续、转录含错误行，页面按实际 `\shipout` 产出。
 #[wasm_bindgen]
 pub fn compile_document(tex: &str) -> Result<Document, JsError> {
+    panic_trace::install();
     match compile_pipeline(tex) {
         Ok(c) => Ok(Document {
             pages: c.pages,
@@ -642,6 +940,78 @@ pub fn set_utf8_input(on: bool) {
 #[wasm_bindgen]
 pub fn utf8_input() -> bool {
     UTF8_INPUT.load(Ordering::Relaxed)
+}
+
+/// 设置 CJK 字体回落（workbench 档；`name = null/undefined` 关闭，默认）。
+///
+/// 前端在 [`set_otf_font`]`('FandolSong-Regular', bytes)` 之后调
+/// `set_fallback_font('FandolSong-Regular')`。之后 [`compile_document`] 里，
+/// 当前字体（如 cmr10）缺字形且字符码位 > 0xFF（utf8 输入才可能）时，该字符
+/// 自动改用回落字体排版——用户源**逐字节不动**（resume1-plain 这类"plain
+/// 格式直写中文"的文档不再整段 Missing character）。
+///
+/// 8-bit 码位（ASCII/latin-1）永不回落：TRIP/ETRIP 的 "Missing character"
+/// 与 "Bad character code" 硬口径原样保留。
+#[wasm_bindgen]
+pub fn set_fallback_font(name: Option<String>) {
+    if let Ok(mut slot) = FALLBACK_FONT.lock() {
+        *slot = name.filter(|n| !n.is_empty());
+    }
+}
+
+/// 注入 C 档发行资产包（**一次调用装齐** fmt + TeX 文件 + 额外 TFM 度量）。
+///
+/// 容器格式见 [`BUNDLE_MAGIC`]；构建端是 `crates/ntex-tauri/src/main.rs` 的
+/// `build_latex_bundle`（Tauri 只读 `assets/` 后打包，经一次原样字节 IPC 送到
+/// 前端，避免 600+ 文件逐个往返）。wasm 无文件系统，这是 LaTeX 唯一的来源。
+///
+/// 语义：**幂等替换**（后一次调用整体替换前一次），解析失败即整体拒绝并抛
+/// `JsError`——不留下"fmt 装了但 tex 没装"的半吊子状态。
+///
+/// **不**自动打开 LaTeX 模式：模式由 [`set_latex_mode`] 显式控制，plain 作业
+/// 不受影响（前端按源特征切换即可）。
+#[wasm_bindgen]
+pub fn set_bundle(bytes: &[u8]) -> Result<(), JsError> {
+    panic_trace::install();
+    let assets = LatexAssets::from_bundle(bytes).map_err(|e| JsError::new(&e))?;
+    let mut slot = LATEX_ASSETS
+        .lock()
+        .map_err(|_| JsError::new("资产注册表锁失效（上次 panic 污染）"))?;
+    *slot = Some(Arc::new(assets));
+    Ok(())
+}
+
+/// 切换 LaTeX 模式（开 = 编译套用已注入的 `.fmt` 且不再预载 plain）。
+///
+/// 默认**关**（plain 子集口径，既有前端行为不变）。已注入资产但本开关关着时，
+/// 编译仍走 plain——这不是错误，是"资产就绪 ≠ 模式打开"的显式分层。
+#[wasm_bindgen]
+pub fn set_latex_mode(on: bool) {
+    LATEX_MODE.store(on, Ordering::Relaxed);
+}
+
+/// 当前 LaTeX 模式开关（前端回显 UI 状态用）。
+#[wasm_bindgen]
+pub fn latex_mode() -> bool {
+    LATEX_MODE.load(Ordering::Relaxed)
+}
+
+/// 已注入资产的概要（`None` = 还没 `set_bundle`）。前端状态条/诊断用：
+/// 例如 `latex.fmt · 1234 tex · 613 tfm`。
+#[wasm_bindgen]
+pub fn bundle_summary() -> Option<String> {
+    let guard = LATEX_ASSETS.lock().ok()?;
+    let assets = guard.as_ref()?;
+    let fmt = if assets.has_format() {
+        "latex.fmt"
+    } else {
+        "无 fmt"
+    };
+    Some(format!(
+        "{fmt} · {} tex · {} tfm",
+        assets.tex_file_count(),
+        assets.tfm_count()
+    ))
 }
 
 /// 引擎版本与能力描述（一行；JS 侧显示用）。
@@ -1083,6 +1453,49 @@ mod tests {
         );
     }
 
+    /// CJK 字体回落（2026-09-18）：源文件**不写** `\font\zh=FandolSong-Regular`
+    /// 直接裸写中文（resume1-plain.tex 的真实形态）——宿主经
+    /// [`set_fallback_font`] 下发回落字体后，中文字符在 `char_node` 里自动
+    /// 改用回落字体，不再整段 `Missing character`。
+    ///
+    /// 对照断言锁边界：回落关闭（默认）时维持 TeX 原语义（Missing 警告）；
+    /// ASCII 码位永不回落（TRIP 硬口径）。
+    #[test]
+    fn cjk_fallback_typesets_plain_source_without_explicit_font() {
+        assert!(set_otf_font("FandolSong-Regular", FANDOL_BYTES));
+        // 回落关闭（默认）：中文落 cmr10 → Missing character（TeX 原语义）。
+        *FALLBACK_FONT.lock().unwrap() = None;
+        let baseline = compile_pipeline_with("\\hsize=200pt\n中文排版\n\\end", true)
+            .expect("回落关闭时作业照常编译");
+        assert!(
+            baseline.transcript.contains("Missing character"),
+            "回落未开启时应维持 Missing character 原语义：\n{}",
+            baseline.transcript
+        );
+
+        // 回落开启：同一份源，零 Missing、Fandol 进字体表、出页。
+        *FALLBACK_FONT.lock().unwrap() = Some("FandolSong-Regular".to_owned());
+        let compiled = compile_pipeline_with("\\hsize=200pt\n中文排版 Mixed 中文\n\\end", true)
+            .expect("回落开启时作业应能编译");
+        *FALLBACK_FONT.lock().unwrap() = None; // 测试进程卫生：并行用例不共享回落态
+        assert!(
+            !compiled.transcript.contains("Missing character"),
+            "回落开启后中文字形应全部命中回落字体：\n{}",
+            compiled.transcript
+        );
+        assert!(
+            !compiled.transcript.contains("not loadable"),
+            "回落字体度量应经 otf_bytes 命中：\n{}",
+            compiled.transcript
+        );
+        assert!(
+            compiled.font_names.iter().any(|n| n.contains("FandolSong")),
+            "字体表应含回落字体：{:?}",
+            compiled.font_names
+        );
+        assert!(!compiled.pages.is_empty(), "应至少产出一页");
+    }
+
     // ---------- 2026-09-12：PDF 导出（DVI → PDF，字体只能经 set_pfb_font 注入） ----------
 
     /// 造一段最小可解析 PFB（ASCII 段带 `/FontName`，尾部二进制段）。
@@ -1235,5 +1648,313 @@ mod tests {
             .pdf_bytes()
             .unwrap_or_else(|_| panic!("Document 路径应能导出 PDF"));
         assert!(pdf.starts_with(b"%PDF-1.4"), "应以 PDF 头开始");
+    }
+
+    // ---------- C 档：LaTeX 资产包（`.fmt` + TeX 文件 + 额外 TFM） ----------
+
+    /// 单个 bundle 条目（与 [`BUNDLE_MAGIC`] 契约同构；生产端在 ntex-tauri）。
+    fn push_entry(out: &mut Vec<u8>, kind: u8, name: &str, data: &[u8]) {
+        out.push(kind);
+        out.extend_from_slice(&(name.len() as u32).to_le_bytes());
+        out.extend_from_slice(name.as_bytes());
+        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        out.extend_from_slice(data);
+    }
+
+    /// 递归收集目录下的文件。
+    ///
+    /// 键按 kind 分两种（与 `ntex-tauri::collect_assets` 同一契约，**这里是踩过的
+    /// 坑**）：tex 文件用带扩展名的主名（`article.cls`，`\input` 就是这么找的），
+    /// TFM 用**去扩展名的字干**（`cmbx12`，`TfmSource::tfm_bytes` 收到的是裸名）。
+    /// native 测试里 TFM 名字写错也"过"——因为 native 会回落到宿主 TeX 树
+    /// （`TfmLoader` 的文件系统分叉），所以这里刻意与生产端逐字对齐。
+    fn collect_files(
+        root: &std::path::Path,
+        kind: u8,
+        ext: Option<&str>,
+        out: &mut Vec<(u8, String, Vec<u8>)>,
+    ) {
+        let Ok(rd) = std::fs::read_dir(root) else {
+            return;
+        };
+        for entry in rd.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_files(&path, kind, ext, out);
+                continue;
+            }
+            if let Some(ext) = ext {
+                if path.extension().and_then(|s| s.to_str()) != Some(ext) {
+                    continue;
+                }
+            }
+            let key = match kind {
+                1 => path.file_stem().and_then(|s| s.to_str()),
+                _ => path.file_name().and_then(|s| s.to_str()),
+            };
+            let Some(name) = key else {
+                continue;
+            };
+            let Ok(bytes) = std::fs::read(&path) else {
+                continue;
+            };
+            out.push((kind, name.to_owned(), bytes));
+        }
+    }
+
+    /// 仓库发行资产（`assets/`）→ bundle 字节。
+    ///
+    /// **资产缺失即 panic**（不是跳过）：`assets/fmt/latex.fmt`、`assets/tex-minimal/tex`、
+    /// `assets/tfm` 三者都在库里，缺失说明装机不完整——静默跳过等于假绿
+    /// （`docs/tooling-trust.md` 的纪律：拿不到分母就别声称通过）。
+    fn repo_bundle() -> Vec<u8> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let fmt = std::fs::read(root.join("assets/fmt/latex.fmt"))
+            .expect("assets/fmt/latex.fmt 缺失（发行资产必须入库）");
+        let mut tex = Vec::new();
+        collect_files(&root.join("assets/tex-minimal/tex"), 0, None, &mut tex);
+        let mut tfm = Vec::new();
+        collect_files(&root.join("assets/tfm"), 1, Some("tfm"), &mut tfm);
+        assert!(!tex.is_empty(), "assets/tex-minimal/tex 为空");
+        assert!(!tfm.is_empty(), "assets/tfm 为空");
+
+        let mut out = BUNDLE_MAGIC.to_vec();
+        out.extend_from_slice(&((tex.len() + tfm.len() + 1) as u32).to_le_bytes());
+        for (kind, name, bytes) in tex.iter().chain(tfm.iter()) {
+            push_entry(&mut out, *kind, name, bytes);
+        }
+        push_entry(&mut out, 2, "latex.fmt", &fmt);
+        out
+    }
+
+    /// TFM 键契约：包里的 TFM 必须用**去扩展名的字干**做键（`cmbx12` 而非
+    /// `cmbx12.tfm`）。
+    ///
+    /// 这条得单独锁：native 里键写错也"过"——`TfmLoader` 在 native 上会回落到
+    /// 宿主 TeX 树取到同一个 TFM，把注入通路的失效掩盖掉（wasm 上没有这条回落，
+    /// 表现为 `Font cmbx12 not loadable`，2026-09-18 实测踩过一次）。
+    #[test]
+    fn injected_tfm_keys_are_bare_font_names() {
+        let assets = Arc::new(LatexAssets::from_bundle(&repo_bundle()).expect("资产包应能解析"));
+        assert!(
+            assets.tfm_count() > 100,
+            "TFM 表不该这么小：{}",
+            assets.tfm_count()
+        );
+        let mut src = EmbeddedTfmSource {
+            latex: Some(assets),
+        };
+        for name in ["cmbx12", "cmr17", "cmti12"] {
+            assert!(
+                ntex_layout::TfmSource::tfm_bytes(&mut src, name).is_some(),
+                "注入 TFM 应能按裸名命中 {name}"
+            );
+            let with_ext = format!("{name}.tfm");
+            assert!(
+                ntex_layout::TfmSource::tfm_bytes(&mut src, &with_ext).is_none(),
+                "{with_ext} 不该命中（键是字干，不是文件名）"
+            );
+        }
+        // 内嵌 48 件仍照常命中（两侧都有的名字不冲突）
+        assert!(ntex_layout::TfmSource::tfm_bytes(&mut src, "cmr10").is_some());
+    }
+
+    /// 资产包解析：条目分类正确、坏魔数/截断/非法类型/坏 fmt 各自报错（不 panic）。
+    #[test]
+    fn bundle_parse_classifies_entries_and_rejects_corruption() {
+        // 合法包（tex + tfm，不带 fmt）：两类条目各归各表。
+        let mut good = BUNDLE_MAGIC.to_vec();
+        good.extend_from_slice(&2u32.to_le_bytes());
+        push_entry(&mut good, 0, "article.cls", b"c");
+        push_entry(&mut good, 1, "cmr10", b"t");
+        let assets = LatexAssets::from_bundle(&good).expect("合法条目应解析成功");
+        assert!(!assets.has_format(), "没带 fmt 的包不应自称有格式");
+        assert!(assets.has_tex_file("article.cls"), "tex 条目应进 tex 表");
+        assert_eq!(assets.tfm_count(), 1, "tfm 条目应进度量表");
+
+        // 坏魔数
+        let mut bad_magic = good.clone();
+        bad_magic[0] = b'X';
+        assert!(LatexAssets::from_bundle(&bad_magic)
+            .expect_err("坏魔数应拒绝")
+            .contains("魔数"));
+
+        // 截断：砍掉最后一个条目的尾部字节
+        let truncated = &good[..good.len() - 1];
+        let e = LatexAssets::from_bundle(truncated).expect_err("截断应拒绝");
+        assert!(e.contains("截断"), "错误应指出截断：{e}");
+
+        // 非法条目类型（第 1 个条目的 kind 字节在魔数 8 + count 4 之后）
+        let mut bad_kind = good.clone();
+        bad_kind[12] = 9;
+        let e = LatexAssets::from_bundle(&bad_kind).expect_err("非法类型应拒绝");
+        assert!(e.contains("类型非法"), "错误应指出类型非法：{e}");
+
+        // fmt 快照解码失败：整体拒绝（不留"tex 装了、fmt 没装"的半吊子状态）
+        let mut fake_fmt = BUNDLE_MAGIC.to_vec();
+        fake_fmt.extend_from_slice(&1u32.to_le_bytes());
+        push_entry(&mut fake_fmt, 2, "latex.fmt", b"not-a-real-fmt");
+        let e = LatexAssets::from_bundle(&fake_fmt).expect_err("假 fmt 字节应拒绝");
+        assert!(e.contains("解析格式快照"), "错误应指出 fmt 解码失败：{e}");
+    }
+
+    /// C 档端到端：真发行资产包 → `\documentclass[12pt]{article}` → LaTeX 版面。
+    ///
+    /// 锁四件事（都是 Tauri 渲染"文本不对"的直接判据）：
+    /// 1. article 类真的载入（转录含 `Document Class: article`）；
+    /// 2. **零** `Undefined control sequence`（plain 口径下 `\documentclass`
+    ///    等全是 undefined，实参泄漏成正文——这正是故障现场）；
+    /// 3. 零缺文件/缺字体（`article.cls`/`size12.clo` 来自包里 tex 文件，
+    ///    `cmbx12` 来自包里 TFM——都不在内嵌 48 件 CM 里）；
+    /// 4. 确实出页，且 12pt 标题字体 cmbx12 进了 DVI 字体表。
+    #[test]
+    fn latex_bundle_typesets_article_class() {
+        let assets =
+            Arc::new(LatexAssets::from_bundle(&repo_bundle()).expect("发行资产包应能解析"));
+        assert!(assets.has_format(), "包里必须带 .fmt 快照");
+        let compiled = compile_pipeline_assets(
+            "\\documentclass[12pt]{article}\n\\begin{document}\n\
+             \\section*{Notes for My Paper}\n\
+             Hello \\emph{world}. This is a test of {\\bf bold} text.\n\
+             \\end{document}\n",
+            false,
+            Some(assets),
+        )
+        .expect("LaTeX 作业应能编译");
+
+        assert!(
+            compiled.transcript.contains("Document Class: article"),
+            "article.cls 未载入：{}",
+            compiled.transcript
+        );
+        assert!(
+            !compiled.transcript.contains("! Undefined control sequence"),
+            "LaTeX 宏仍 undefined（fmt 没生效）：{}",
+            compiled.transcript
+        );
+        assert!(
+            !compiled.transcript.contains("not loadable")
+                && !compiled.transcript.contains("File `article.cls' not found")
+                && !compiled.transcript.contains("not found"),
+            "仍有缺文件/缺字体：{}",
+            compiled.transcript
+        );
+        assert!(
+            !compiled.pages.is_empty(),
+            "应产出至少一页；转录：{}",
+            compiled.transcript
+        );
+        assert!(
+            compiled.font_names.iter().any(|n| n == "cmbx12"),
+            "12pt 标题应使用 cmbx12（只能来自注入的包里 TFM）：{:?}",
+            compiled.font_names
+        );
+        // 注入的 TFM 还必须落到 `ntex-font` 注册表（PDF 写出的唯一度量来源）：
+        // 漏了这条，`Document::used_fonts()` 会是空表、导出直接报
+        // 「找不到 TFM：cmbx12」（native 有宿主 TeX 树兜底，只有这条断言能锁住）。
+        assert!(
+            ntex_font::registered_tfm_bytes("cmbx12").is_some(),
+            "注入 TFM 未进 ntex-font 注册表：PDF 导出会找不到 cmbx12 度量"
+        );
+    }
+
+    /// NFSS 尺寸切换（`\Large` 等）的字体名污染——**已知引擎缺陷的现场锁**。
+    ///
+    /// 现场（2026-09-18，native 与 wasm 同病，与本 crate 的 C 档无关）：
+    /// `\documentclass{article}` 正文里写 `\Large` → 转录报
+    /// `! Font cmr12 at 14.39999pt not loadable: Metric (TFM) file not found.`
+    /// 临时 `eprintln` 探针（已撤）显示载入实参是
+    /// LaTeX 字号切换（`\Large`/12pt 字号族）的字体名回归锁。
+    ///
+    /// 历史（2026-09-18 修复前）：NFSS `\external@font`（`\edef …\space
+    /// at\the\@tempdimb`）拼出的字体名经 cat-12 空格进入 `more_name`，旧判据
+    /// 只认 cat-10 → 名字被污染成 `cmr12 at 14.39999pt` → TFM 查不到 →
+    /// nullfont → 0 页。修复按 pdftex 三案对拍（/tmp/ntex-repro/{at12,qt,qt2}.tex）：
+    /// 字符码 32 一律终止名字（cat-10 放回、非 cat-10 消费），见
+    /// ntex-core `expand/io.rs::more_name`。
+    ///
+    /// 本锁钉住修复后语义：12pt 正文与 `\Large` 均**零缺字体**，且 cmr12 真载入。
+    #[test]
+    fn large_size_switch_loads_cmr12_without_pollution() {
+        let assets =
+            Arc::new(LatexAssets::from_bundle(&repo_bundle()).expect("发行资产包应能解析"));
+        let body = compile_pipeline_assets(
+            "\\documentclass[12pt]{article}\n\\begin{document}\n\
+             \\section*{T} Hi\\par\n\\end{document}\n",
+            false,
+            Some(assets.clone()),
+        )
+        .expect("12pt 正文应能编译");
+        assert!(
+            !body.transcript.contains("not loadable"),
+            "12pt 正文（含 \\section，内部也走 \\Large）应零缺字体：{}",
+            body.transcript
+        );
+        assert!(
+            body.font_names.iter().any(|f| f.starts_with("cmr12")),
+            "12pt 正文应载入 cmr12：{:?}",
+            body.font_names
+        );
+
+        let large = compile_pipeline_assets(
+            "\\documentclass{article}\n\\begin{document}\n\\Large Big\\par\n\\end{document}\n",
+            false,
+            Some(assets),
+        )
+        .expect("\\Large 作业应能编译（错在转录、不在 Result）");
+        assert!(
+            !large.transcript.contains("not loadable"),
+            "\\Large 应零缺字体（字体名不再被 at 规格污染）：{}",
+            large.transcript
+        );
+        assert!(
+            large.font_names.iter().any(|f| f.starts_with("cmr12")),
+            "\\Large 应载入 cmr12：{:?}",
+            large.font_names
+        );
+        assert!(!large.pages.is_empty(), "\\Large 应出页（修复前 0 页）");
+    }
+
+    /// 缺宏包（`\usepackage{...}` 指向包里没有的 .sty）时：作业硬失败，但**错误
+    /// 消息必须带首现场**——否则前端只剩一句 `InvalidInput: \read 流未打开`，
+    /// 看不出是哪个文件没找到（`latex1.tex` 的 lingmacros/tree-dvips 即此形态）。
+    #[test]
+    fn missing_latex_package_error_carries_first_error_line() {
+        let assets =
+            Arc::new(LatexAssets::from_bundle(&repo_bundle()).expect("发行资产包应能解析"));
+        let err = compile_pipeline_assets(
+            "\\documentclass{article}\n\\usepackage{nosuchpkg}\n\
+             \\begin{document}\nhi\n\\end{document}\n",
+            false,
+            Some(assets),
+        )
+        .expect_err("缺宏包应硬失败（NTex 未实现交互式输入文件名回落）");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("首现场") && msg.contains("nosuchpkg"),
+            "错误消息应带 TeX 首现场与缺失文件名：{msg}"
+        );
+    }
+
+    /// C 档缺 fmt 时的回落：只有 tex/tfm、没有 `.fmt` → 仍按 plain 口径排
+    /// （不出 `Document Class`），**不 panic、不空页**——保证坏资产不致白屏。
+    #[test]
+    fn latex_assets_without_format_fall_back_to_plain() {
+        let mut bundle = BUNDLE_MAGIC.to_vec();
+        bundle.extend_from_slice(&1u32.to_le_bytes());
+        push_entry(&mut bundle, 0, "article.cls", b"% stub\n");
+        let assets = Arc::new(LatexAssets::from_bundle(&bundle).expect("解析应成功"));
+        let compiled = compile_pipeline_assets(
+            "\\font\\a=cmr10 \\hsize=200pt\n\\a fallback text\n\\end",
+            false,
+            Some(assets),
+        )
+        .expect("无 fmt 时应回落 plain 口径并成功");
+        assert!(!compiled.pages.is_empty(), "回落路径也应出页");
+        assert!(
+            !compiled.transcript.contains("Document Class"),
+            "无 fmt 不该出现 LaTeX 类载入：{}",
+            compiled.transcript
+        );
     }
 }

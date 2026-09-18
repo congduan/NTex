@@ -14,13 +14,33 @@ pub struct Pixmap {
 
 impl Pixmap {
     /// 新建全透明缓冲（维度下限 1×1，避免退化尺寸）。
+    ///
+    /// 字节数走 `u64` checked 计算：wasm32 的 `usize` 只有 32 位，两个接近
+    /// `u32::MAX` 的维度直接相乘会**回绕**（`(2³²-1)² × 4 ≡ 4`）——`data`
+    /// 只分到 4 字节、`width/height` 却仍是 42 亿，随后 `fill_rect` 一索引
+    /// 就 panic，在 `panic = abort` 下变成无行号的 wasm trap。
+    ///
+    /// 生产路径已由 [`crate::prims::validate_options`] 的
+    /// [`MAX_PAGE_PIXELS`](crate::prims::MAX_PAGE_PIXELS) 先挡；这里的兜底
+    /// 针对绕过校验的旁路调用——**宁可退化成 1×1 空图，不可 trap**。
     pub fn new(width: u32, height: u32) -> Self {
         let width = width.max(1);
         let height = height.max(1);
-        Self {
-            width,
-            height,
-            data: vec![0; width as usize * height as usize * 4],
+        let len = (width as u64)
+            .checked_mul(height as u64)
+            .and_then(|n| n.checked_mul(4))
+            .filter(|&n| n <= usize::MAX as u64);
+        match len {
+            Some(n) => Self {
+                width,
+                height,
+                data: vec![0; n as usize],
+            },
+            None => Self {
+                width: 1,
+                height: 1,
+                data: vec![0; 4],
+            },
         }
     }
 
@@ -250,6 +270,20 @@ mod tests {
         pm.fill_rect(-3.0, -3.0, 6.0, 6.0, (0, 0, 0));
         assert!(pm.pixel_nonwhite(0, 0));
         assert!(!pm.pixel_nonwhite(3, 0));
+    }
+
+    #[test]
+    fn pixmap_new_does_not_wrap_on_huge_dims() {
+        // 溢出兜底：u32::MAX × u32::MAX × 4 在 32 位 usize 上回绕成 4，
+        // 若不兜底就是"data 4 字节 / width 42 亿"→ 索引越界 panic → wasm trap。
+        let pm = Pixmap::new(u32::MAX, u32::MAX);
+        assert_eq!((pm.width(), pm.height()), (1, 1));
+        assert_eq!(pm.data().len(), 4);
+        // 退化尺寸下填充/索引仍然安全（不 panic）。
+        let mut pm = Pixmap::new(u32::MAX, u32::MAX);
+        pm.fill(255, 255, 255);
+        pm.fill_rect(0.0, 0.0, 10.0, 10.0, (0, 0, 0));
+        assert!(pm.pixel_nonwhite(0, 0));
     }
 
     #[test]

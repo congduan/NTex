@@ -383,6 +383,9 @@ pub struct IncrementalTypesetter {
     /// 缓存，或该段无可复用缓存——被编辑段/首次执行/合并段）。
     rejects: Vec<Option<&'static str>>,
     stats: IncrementalStats,
+    /// CJK 字体回落名（与 [`Typesetter::fallback_font`] 同语义；增量路径的
+    /// install_builder 也要同步到 NodeBuilder，否则增量段中文回落失效）。
+    fallback_font: Option<String>,
 }
 
 impl IncrementalTypesetter {
@@ -397,7 +400,14 @@ impl IncrementalTypesetter {
             output_routine: false,
             rejects: Vec::new(),
             stats: IncrementalStats::default(),
+            fallback_font: None,
         }
+    }
+
+    /// CJK 字体回落（与 [`Typesetter::set_fallback_font`] 同语义；增量路径
+    /// 的 install_builder 同步到 NodeBuilder）。
+    pub fn set_fallback_font(&mut self, name: Option<String>) {
+        self.fallback_font = name;
     }
 
     /// 注入 VFS 后端（`\input`/`\write` 等副作用原语的文件接口）。
@@ -602,6 +612,7 @@ impl IncrementalTypesetter {
         // \sfcode 默认（大写 999）与全量路径 install_builder 同源，否则增量
         // 段与全量段的大写-标点空格因子钳制不一致（见 init_sfcodes 文档）。
         init_sfcodes(&mut builder);
+        builder.set_fallback_font_name(self.fallback_font.clone());
         self.expander.set_sink(Box::new(builder));
     }
 

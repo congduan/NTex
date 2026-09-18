@@ -8,10 +8,21 @@ TinyTeX/TeX Live/kpsewhich 的情况下，仍能跑通常见 `\documentclass{art
 - TeX 树来源：TinyTeX TeX Live 2026，路径为 `~/.TinyTeX/texmf-dist/tex/`。
 - 基础闭包来源：`/tmp/ntex-minimal/tex/latex/base/`，由主控按
   `/tmp/clean-{a,c,d,f}.log` 的逐文件 not-found 链推导。
-- 字体度量：`assets/tfm/`，复用 `crates/ntex-wasm/fonts/` 的 48 个 CM TFM
-  （约 200KB），覆盖 plain/LaTeX 默认 Computer Modern 字体块。
-- 分发 fmt：`assets/fmt/latex.fmt`，由 `/tmp/fp11/latex6-v2.fmt` 转换为当前
-  `ntex-format` v17 文件头；`assets/fmt/ltxinit.tex` 是进阶用户重新 dump 的输入。
+- 字体度量：`assets/tfm/`，**2026-09-18 由 48 件补齐到 643 件（≈1.5MB，含 `ec/`
+  子目录）**——原来那 48 件只够 plain 默认字体块，`\documentclass{article}` 拉起的
+  `cmbx12`/`cmr17`/`cmti12` 等 LaTeX 字号族全部 not-found。48 件那批同时内嵌在
+  `crates/ntex-wasm/fonts/`（wasm 内嵌副本，见 `crates/ntex-wasm/README.md`）。
+- 分发 fmt：`assets/fmt/latex.fmt`（6,502,563 字节，2026-09-18 由
+  `cargo run -p ntex-dvi -- --generate-fmt` **真生成**）；
+  `assets/fmt/ltxinit.tex` 是进阶用户重新 dump 的输入。
+
+> **警告（2026-09-18 踩过）——fmt 只能真生成，不许"改文件头"。**
+> `ntex-format` 的 codec 版本号只是文件头里一个整数，改它能骗过读取时的版本检查，
+> 但体内的字节布局（InternTable / eqtb 槽 / TokenArray 偏移）已经变了，载入时
+> 必然 `failed to fill whole buffer`。仓库里曾有过一个这样"转换"来的 `latex.fmt`
+> （由 `/tmp/fp11/latex6-v2.fmt` 改头而来），后果是 Tauri 工作台 LaTeX 通道整体
+> 报废、只能回落 plain 子集，表现为"LaTeX 源码被当成正文排版"。引擎语义或
+> `ntex-format` codec 变更后，一律按文末「更新方法」重新生成。
 
 ## 内容
 
@@ -80,6 +91,7 @@ tex/latex/xcolor/
 tex/latex/url/
 tex/latex/geometry/
 tex/latex/l3kernel/
+tex/latex/misc/          ← 2026-09-18 新增：lingmacros.sty + tree-dvips.sty
 tex/generic/iftex/
 tex/generic/infwarerr/
 tex/generic/ltxcmds/
@@ -87,7 +99,18 @@ tex/generic/pdftexcmds/
 tex/generic/atbegshi/
 ```
 
-当前 TeX 文件体量约 5.3MB，TFM 度量约 200KB。完整文件清单可用：
+`tex/latex/misc/` 的两个宏包服务于语言学示例文档（如仓库 `latex1.tex` 的
+`\enumsentence`/`\shortex`/`\node`），取自 CTAN
+`/macros/latex209/contrib/trees/tree-dvips`（阿里云镜像；CTAN 主站与清华镜像
+被本机网络策略拦截时改走它）。tree-dvips 是 LaTeX209 风格、依赖 dvips
+`\special` 画树线——ntex 引擎把 `\special` 当 whatsit 节点吞掉，故树形连线
+不可视、文本结构完好。
+
+当前 TeX 文件体量约 5.1MB（182 个文件），TFM 度量 643 件约 1.5MB（`assets/tfm/`
+顶层 78 件 + `ec/` 子目录 565 件）。入包时按**主名去重**（`tex/latex/base/` 与
+`tex/latex/l3kernel/` 有同名副本如 `expl3-code.tex`，wasm 侧 `MemVfs` 按键覆盖），
+故 C 档资产包实测为 **823 条 ≈11.7 MB**（179 tex + 643 tfm + 1 fmt）。
+完整文件清单可用：
 
 ```bash
 find assets/tex-minimal -type f | sort

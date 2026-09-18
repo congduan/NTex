@@ -6,11 +6,17 @@ struct TfmLoader {
     table: Rc<RefCell<Vec<FontMetrics>>>,
 }
 
-impl FontLoader for TfmLoader {
-    fn load(&mut self, name: &str, at: Option<i64>, scaled: Option<i64>) -> Result<u32> {
-        if at.is_some() && scaled.is_some() {
-            return Err(Error::invalid_input("\\font 的 at 与 scaled 不能同时给出"));
-        }
+/// 按名字装载字体并追加进共享字体表（[`TfmLoader`] 与 char_node 的 CJK 字体
+/// 回落共用的装载缝；表内同名字+同缩放去重，幂等）。
+pub(super) fn load_font_into_table(
+    table: &Rc<RefCell<Vec<FontMetrics>>>,
+    name: &str,
+    at: Option<i64>,
+    scaled: Option<i64>,
+) -> Result<u32> {
+    if at.is_some() && scaled.is_some() {
+        return Err(Error::invalid_input("\\font 的 at 与 scaled 不能同时给出"));
+    }
         let mut fm = load_metrics(name)?;
         fm.name = name.to_owned(); // DVI fnt_def 的字体名
         // at：目标尺寸/设计字号；scaled：千分比
@@ -27,7 +33,7 @@ impl FontLoader for TfmLoader {
             (None, Some(s)) => fm.scaled_by(s, 1000),
             _ => fm,
         };
-        let mut table = self.table.borrow_mut();
+        let mut table = table.borrow_mut();
         // 表空时先放 nullfont 占位（**id 0 = nullfont**，tex.web 内建字体；
         // 此前第一个 \font 加载返回 id 0 与 nullfont 冲突，且 id=len+1 会与
         // 表索引错位——loaded(id) 查 table.get(id) 误判未加载）。用户字体 id
@@ -68,6 +74,11 @@ impl FontLoader for TfmLoader {
             .map_err(|_| Error::internal("字体表溢出（> 2^32 字体）"))?;
         table.push(fm);
         Ok(id)
+    }
+
+impl FontLoader for TfmLoader {
+    fn load(&mut self, name: &str, at: Option<i64>, scaled: Option<i64>) -> Result<u32> {
+        load_font_into_table(&self.table, name, at, scaled)
     }
 
     /// 字体字符度量查询（`\iffontchar`/`\fontchar*`）：字体表与排版器共享。
@@ -262,6 +273,10 @@ pub struct Typesetter {
     /// 默认关：bytes 是引擎既有语义，TRIP/ETRIP/expl3/latex-probe 口径零
     /// 影响（`ntex-wasm` 的 Tauri/浏览器前端显式打开）。
     utf8_input_default: bool,
+    /// CJK 字体回落名（workbench 档）：`char_node` 里当前字体缺字形且码位
+    /// 超过 0xFF 时自动改用它排该字符。默认 None——TRIP/ETRIP/native 语义零
+    /// 影响（`ntex-wasm` 的 Tauri 前端显式下发，如 `FandolSong-Regular`）。
+    fallback_font: Option<String>,
 }
 
 /// INITEX/plain 大写字母 `\sfcode=999`（tex.web §4852 `for k:="A" to "Z" ...
@@ -299,6 +314,7 @@ impl Typesetter {
             last_current_font: 0,
             preload_plain: false,
             utf8_input_default: false,
+            fallback_font: None,
             embedded_vfs_installed: false,
         }
     }
@@ -391,6 +407,18 @@ impl Typesetter {
         self.utf8_input_default
     }
 
+    /// CJK 字体回落（workbench 档）：`char_node` 里当前字体缺字形且码位
+    /// 超过 0xFF（utf8 输入才可能，TRIP/ETRIP 的 8-bit 路径零影响）时，自动
+    /// 改用该字体排这个字符——源文件不写 `\font\zh=FandolSong-Regular`
+    /// 也能排中文（Tauri 工作台「plain 简历中文全 Missing character」现场
+    /// 的修复，2026-09-18）。传 `None` 关闭（默认）。
+    ///
+    /// 名字经 `load_metrics` 解析：宿主注册的 OTF 字节（wasm `set_otf_font`）
+    /// 最优先。回落字符的度量/字形/PDF 嵌入走该字体自己的通路。
+    pub fn set_fallback_font(&mut self, name: Option<String>) {
+        self.fallback_font = name;
+    }
+
     /// 把 [`Self::utf8_input_default`] 落到 `\utfinputmode`（每次排版入口调用）。
     fn apply_utf8_input_default(&mut self) {
         let on = i64::from(self.utf8_input_default);
@@ -466,6 +494,7 @@ impl Typesetter {
             last_current_font: 0,
             preload_plain: false,
             utf8_input_default: false,
+            fallback_font: None,
             embedded_vfs_installed: false,
         }
     }
@@ -485,6 +514,7 @@ impl Typesetter {
             last_current_font: 0,
             preload_plain: false,
             utf8_input_default: false,
+            fallback_font: None,
             embedded_vfs_installed: false,
         }
     }
@@ -555,6 +585,7 @@ impl Typesetter {
         builder.math_state.muskip_params = self.expander.muskip_registers();
         builder.math_state.muskip_is_mu = [true; 3];
         init_sfcodes(&mut builder);
+        builder.set_fallback_font_name(self.fallback_font.clone());
         self.expander.set_sink(Box::new(builder));
         if let Some(b) = self
             .expander

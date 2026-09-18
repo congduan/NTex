@@ -3459,6 +3459,7 @@ dependencies = [
  "ntex-core",
  "ntex-dvi",
  "ntex-font",
+ "ntex-format",
  "ntex-io",
  "ntex-layout",
  "ntex-pdf",

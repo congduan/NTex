@@ -1,10 +1,11 @@
 // NTex Studio（Tauri 壳）前端逻辑：排版与渲染全部在 ntex-wasm 内完成——
 // compile_document() 产出页树句柄（Document），render_page() 走软光栅出
 // RGBA 纹理，putImageData 上 canvas；翻页/调 dpi/debug 不重排版（B 档第一刀）。
-// 引擎不进 Tauri Rust 进程：本文件是纯静态 ES module，无任何 IPC。
+// 引擎不进 Tauri Rust 进程：本文件是纯静态 ES module，唯一的 IPC 是启动时取
+// 一次只读资产包（C 档 LaTeX：.fmt + .cls/.sty + TFM，见 loadLatexAssets）。
 import init, {
   compile_document, demo_tex, engine_version, set_glyph_font, set_otf_font, set_utf8_input,
-  set_pfb_font,
+  set_fallback_font, set_pfb_font, set_bundle, set_latex_mode, latex_mode, bundle_summary,
 } from './pkg/ntex_wasm.js';
 
 const $ = (id) => document.getElementById(id);
@@ -20,6 +21,9 @@ const HIGHLIGHT_LIMIT = 200_000; // 超长文档跳过高亮（叠层全量重�
 const state = {
   doc: null, page: 0, dpi: 96, debug: false, glyphs: true, fontsReady: false,
   utf8: true, inflight: false, dirty: false, timer: 0,
+  // C 档：LaTeX 资产是否已灌进 wasm（set_bundle 成功），以及本次编译是否开了
+  // LaTeX 模式（按源码特征自动判定；两者都真才走 .fmt）。
+  latexAssets: false, latexOn: false,
   // 预览显示缩放：zoom 为「位图像素 → 屏幕 CSS 像素」倍率；autoFit 时
   // 每次重排/窗口变化都重算为适配窗口的倍率（手缩放后自动关闭）。
   zoom: 1, autoFit: true,
@@ -56,6 +60,16 @@ const GLYPH_FONTS = [
   ['cmsy7', 'fonts/latinmodern-math.otf'],
   ['cmsy5', 'fonts/latinmodern-math.otf'],
   ['cmex10', 'fonts/latinmodern-math.otf'],
+  // LaTeX 字号族（C 档）：`\documentclass[12pt]{article}` 会点名 cmbx12/cmr17 等
+  // ——它们不在 plain 预载集里，不注册就只有这几个字体回落方框（正文照排）。
+  // 名字映射与 `ntex-backend/src/glyphs.rs::lm_file_name` 同口径。
+  ['cmbx12', 'fonts/lmroman12-bold.otf'],
+  ['cmbx7', 'fonts/lmroman7-bold.otf'],
+  ['cmti12', 'fonts/lmroman12-italic.otf'],
+  ['cmr17', 'fonts/lmroman17-regular.otf'],
+  ['cmtt12', 'fonts/lmmono12-regular.otf'],
+  ['cmss10', 'fonts/lmsans10-regular.otf'],
+  ['cmss17', 'fonts/lmsans17-regular.otf'],
 ];
 
 // 中文：Fandol Song 子集（OpenType 原生字体，**没有 TFM**）——排版阶段就要
@@ -82,6 +96,10 @@ async function loadFonts() {
   ];
   const results = await Promise.all(jobs);
   state.fontsReady = results.some(Boolean);
+  // CJK 字体回落：源文件不写 `\font\zh=FandolSong-Regular` 也能排中文——
+  // 当前字体（cmr10 等 8-bit TFM）缺字形且码位 > 0xFF 时自动改用回落字体
+  // （resume1-plain 中文全丢现场的修复；ASCII 永不回落，TRIP 口径不变）。
+  if (otfReady.has('FandolSong-Regular')) set_fallback_font('FandolSong-Regular');
   if (!state.fontsReady) $('engine-info').textContent += ' · 字体加载失败（方框口径）';
 }
 
@@ -92,11 +110,62 @@ function applyUtf8() {
   set_utf8_input(state.utf8);
 }
 
+/* ---------- C 档：LaTeX 资产（.fmt + TeX 文件 + TFM 度量） ---------- */
+
+// LaTeX 源特征：`\documentclass` / `\usepackage` / `\begin{document}` 任一命中即
+// 按 LaTeX 口径编译（前提是资产已就绪）。plain 作业（`\font…\shipout…`）不受影响。
+const LATEX_SRC_RE = /\\(documentclass|usepackage)\b|\\begin\s*\{\s*document\s*\}/;
+
+// 资产来自 Tauri 侧的**只读**命令（crates/ntex-tauri/src/main.rs::
+// ntex_latex_bundle）：它把仓库 assets/ 下的 fmt 快照 + tex 闭包 + TFM 打成一个
+// 包原样返回（wasm 无文件系统，这是 LaTeX 唯一的来源）。浏览器 / `www/` 形态
+// 没有这条通道 → 静默保持 plain（引擎能力没变，只是没有资产可喂）。
+async function loadLatexAssets() {
+  const invoke = globalThis.__TAURI__?.core?.invoke;
+  if (!invoke) return;
+  const t0 = performance.now();
+  try {
+    const bytes = await invoke('ntex_latex_bundle');
+    set_bundle(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
+    state.latexAssets = true;
+    $('engine-info').textContent +=
+      ` · LaTeX ${bundle_summary() ?? '就绪'}（${(performance.now() - t0).toFixed(0)} ms）`;
+  } catch (e) {
+    state.latexAssets = false;
+    setStatus('err', 'LaTeX 资产不可用');
+    showErrorBar(`LaTeX 资产加载失败，已回落 plain 口径：${e}`);
+  }
+}
+
+// 按源码特征切换引擎模式。只在变化时调 wasm（跨边界调用省着用）。
+// 返回本次是否为 LaTeX 口径，供状态栏显示。
+function applyMode(src) {
+  const latex = state.latexAssets && LATEX_SRC_RE.test(src);
+  if (latex !== state.latexOn) {
+    set_latex_mode(latex);
+    state.latexOn = latex;
+  }
+  const chip = $('mode-chip');
+  if (chip) {
+    chip.textContent = latex ? 'LaTeX' : 'plain';
+    chip.className = `mode ${latex ? 'latex' : 'plain'}`;
+    chip.title = state.latexAssets
+      ? (latex
+        ? 'LaTeX 口径：套用注入的 latex.fmt（\\documentclass/\\section 可用）'
+        : 'plain 口径：未检测到 LaTeX 特征（\\documentclass 等触发切换）')
+      : 'LaTeX 资产未就绪（只能用 plain 子集）';
+  }
+  return latex;
+}
+
 async function boot() {
   await init();
   $('engine-info').textContent = `${engine_version()} · wasm 软光栅`;
   applyUtf8();               // UTF-8 输入开关：必须早于首次编译
   const fonts = loadFonts(); // 并行注入，不阻塞首屏（方框 → 字形就绪后重渲染）
+  // LaTeX 资产：本地 IPC（一次取齐 ~14 MB，几十毫秒），先于首编译——
+  // 否则首屏的 LaTeX 文档会先按 plain 排一遍（实参泄漏成正文）再重排。
+  await loadLatexAssets();
   editor.value = localStorage.getItem(DRAFT_KEY) ?? demo_tex();
   refreshOverlay();
   compileNow();
@@ -119,6 +188,7 @@ function compileNow() {
   setStatus('busy', '排版中…');
   const t0 = performance.now();
   try {
+    const mode = applyMode(editor.value);      // LaTeX/plain 由源码特征决定
     const doc = compile_document(editor.value); // 同步：release wasm 下 demo 量级 ~几十 ms
     if (!state.exporting) state.doc?.free?.(); // 导出正拿着旧 doc 解析 DVI，别动它
     state.doc = doc;
@@ -128,7 +198,10 @@ function compileNow() {
     state.page = Math.max(0, Math.min(state.page, doc.page_count - 1));
     errorBar.hidden = true;
     renderPage();
-    setStatus('ok', `${doc.page_count} 页 · ${(performance.now() - t0).toFixed(0)} ms`);
+    setStatus(
+      'ok',
+      `${doc.page_count} 页 · ${(performance.now() - t0).toFixed(0)} ms · ${mode ? 'LaTeX' : 'plain'}`,
+    );
     logEl.textContent = doc.transcript || '（转录为空）';
   } catch (e) {
     setStatus('err', '排版失败');
@@ -143,15 +216,24 @@ function compileNow() {
 
 function renderPage() {
   if (!state.doc || state.doc.page_count === 0) { pageLabel.textContent = '– / –'; return; }
-  state.doc.set_glyphs(state.glyphs && state.fontsReady); // 口径同步：所有渲染路径共用
-  const img = state.doc.render_page(state.page, state.dpi, state.debug);
-  canvas.width = img.width;
-  canvas.height = img.height;
-  ctx.putImageData(new ImageData(new Uint8ClampedArray(img.rgba), img.width, img.height), 0, 0);
-  applyZoom(); // 位图尺寸变了（dpi/页高），显示倍率需重新落到 style 上
-  pageLabel.textContent = `${state.page + 1} / ${state.doc.page_count}`;
-  $('prev-page').disabled = state.page === 0;
-  $('next-page').disabled = state.page >= state.doc.page_count - 1;
+  // 事件处理器（翻页/dpi/overlay/字形开关）直接调本函数，没有外层 catch——
+  // 渲染报错（如尺寸超限被后端拒）必须在这里兜住，否则是未捕获异常、
+  // 状态条还停在"上一次成功"，用户看不到原因。
+  try {
+    state.doc.set_glyphs(state.glyphs && state.fontsReady); // 口径同步：所有渲染路径共用
+    const img = state.doc.render_page(state.page, state.dpi, state.debug);
+    canvas.width = img.width;
+    canvas.height = img.height;
+    ctx.putImageData(new ImageData(new Uint8ClampedArray(img.rgba), img.width, img.height), 0, 0);
+    applyZoom(); // 位图尺寸变了（dpi/页高），显示倍率需重新落到 style 上
+    pageLabel.textContent = `${state.page + 1} / ${state.doc.page_count}`;
+    $('prev-page').disabled = state.page === 0;
+    $('next-page').disabled = state.page >= state.doc.page_count - 1;
+  } catch (e) {
+    setStatus('err', '渲染失败');
+    errorBar.textContent = String(e);
+    errorBar.hidden = false;
+  }
 }
 
 function setStatus(kind, text) {

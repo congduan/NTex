@@ -38,6 +38,10 @@ section { display: flex; flex-direction: column; min-width: 0; }
 .pane-title button { background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; width: 26px; height: 22px; cursor: pointer; font-size: 14px; line-height: 1; }
 .pane-title button:hover { border-color: var(--accent); }
 .pane-title .pane-actions { display: flex; align-items: center; gap: 8px; }
+/* 口径徽标：源码特征决定走 plain 还是 LaTeX（LaTeX 资产未就绪时恒为 plain） */
+#mode-chip.mode { display: inline-block; min-width: 42px; text-align: center; padding: 1px 6px; margin-right: 6px; border-radius: 4px; font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line); }
+#mode-chip.mode.plain { color: var(--dim); background: var(--bg2); }
+#mode-chip.mode.latex { color: var(--bg2); background: var(--accent); border-color: var(--accent); }
 .pane-title .vsep { width: 1px; height: 16px; background: var(--line); }
 /* 缩放控件：文字按钮（适配 / 1:1）要放开固定宽度 */
 .pane-title .zoom { align-items: center; }
