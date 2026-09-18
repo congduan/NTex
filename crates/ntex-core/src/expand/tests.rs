@@ -220,6 +220,17 @@ mod tests {
     }
 
     #[test]
+    fn mathchardef_cs_as_dimen_number_factor() {
+        // LaTeX 2025 定义 `\@M` 为 \mathchardef，NFSS 的
+        // `\ifdim \dimen@<\@M\p@` 依赖其在 scan_dimen 的数字因子位等同
+        // 内部整数；scan_int 早已支持，尺寸的 `<number><unit>` 路径也必须支持。
+        assert_eq!(
+            expand("\\mathchardef\\M=10000 \\ifdim 9999pt<\\M pt T\\else F\\fi").unwrap(),
+            "T"
+        );
+    }
+
+    #[test]
     fn advance_register_arithmetic() {
         // etrip.tex 91 行惯用法：\count20=0 \advance\count20 1
         assert_eq!(

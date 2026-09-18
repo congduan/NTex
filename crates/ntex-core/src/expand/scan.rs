@@ -2000,7 +2000,7 @@ impl Expander {
                 let slot = self.eqtb.slot(self.deref_alias_chain(csid)).clone();
                 number_cs = matches!(
                     &slot,
-                    EqSlot::Register(RegKind::Count, _) | EqSlot::Char { .. }
+                    EqSlot::Register(RegKind::Count, _) | EqSlot::Char { .. } | EqSlot::MathChar(_)
                 ) || matches!(
                     &slot,
                     EqSlot::Primitive(p)
