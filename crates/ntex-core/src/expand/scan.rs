@@ -886,6 +886,19 @@ impl Expander {
             TokenKind::Char => Ok(Some(t2.charcode().expect("Char 必有 charcode") as i64)),
             TokenKind::ControlSeq => {
                 let name = self.intern.name(t2.csid().expect("ControlSeq 必有 csid"));
+                // tex.web scan_int 反引号规则：字符 token 含 **active char**
+                // （`cur_tok<cs_token_flag+single_base` 覆盖 active 区）——取其
+                // 字符码，不属 cs 分支。本引擎 active char 编码为带标志 cs
+                // token、名字带 `\u{0}A` 前缀（input.rs Active 臂，槽隔离），
+                // 须先剥前缀判定，否则落入下方"多字符 cs"臂误报 Improper
+                // alphabetic（sample2e NFSS 尺寸串 379 处洪水，2026-09-18）。
+                if t2.is_active() {
+                    if let Some(rest) = name.strip_prefix("\u{0}A") {
+                        if let Some(c) = rest.chars().next() {
+                            return Ok(Some(c as u32 as i64));
+                        }
+                    }
+                }
                 if let Some(c) = single_char_cs(name) {
                     Ok(Some(c as u32 as i64))
                 } else {

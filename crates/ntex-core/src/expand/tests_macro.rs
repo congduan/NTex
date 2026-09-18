@@ -1135,10 +1135,15 @@ use super::*;
         //（2026-09-08 /tmp/ntex-r29/probe_a.tex：`\lccode126=35 \lowercase{~}`）
         // 产物报 `! Undefined control sequence. <recently read> #`——active char
         // 35，而非 cat 6 字符（那会报 "You can't use macro parameter character"）。
-        // 引擎断言：转成 active-a（csid 与 \a 同槽）后落主循环展开为 \a 的定义体。
-        assert_eq!(
-            expand("\\def\\a{YES}\\lccode126=97\\relax\\lowercase{~}").unwrap(),
-            "YES"
+        // 引擎断言（pdftex 定标 2026-09-18 /tmp/corpus/lc.tex，两引擎逐字
+        // 一致）：active 槽与同名 cs 槽**互不可见**（tex.web active 区独立于
+        // hash 区），active-a 未定义 → 主循环报 Undefined control sequence。
+        // 旧断言 `YES` 依赖共槽伪影（active-a 落进 \a 的 cs 槽）——正是
+        // latex.ltx `\gdef_{\_}` 覆盖 robust `\_` 自噬死循环的根因，已废。
+        let (_, t0) = run_transcript("\\def\\a{YES}\\lccode126=97\\relax\\lowercase{~}");
+        assert!(
+            t0.contains("! Undefined control sequence."),
+            "active-a 不得命中 cs \\a 槽（pdftex 同报）：{t0}"
         );
         // pdftex 对拍形态：转换产物 active-#（csid "#" 未定义）主循环报
         // Undefined control sequence——保持 cat 13，未降为 cat 6 字符。

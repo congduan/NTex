@@ -371,9 +371,22 @@ pub fn scan_token(
                         // （tex.web：active char 是 cs token，但位于 eqtb
                         // active 区、结构上与命名 cs 可分——\lowercase/
                         // \uppercase 的 change_case 语义依赖该区分）
+                        //
+                        // 槽隔离（\u{0}A 前缀，2026-09-18 latex.ltx L15916
+                        // `{\catcode`\_=\active \gdef_{\_}}` 自噬根因）：
+                        // active char 的 csid **不得**与同名 cs 共槽——真 TeX
+                        // 里 active char 住 eqtb active 区（hash 区之下），
+                        // 与命名 cs 槽互不可见。旧实现 intern(字符本身)，
+                        // `_` 的 active 槽与 cs `\_` 同槽：latex.ltx 用 gdef
+                        // 写 active `_` 时把 L10248 的 robust `\_` 覆盖成
+                        // 自引用体 → `\textunderscore` 展开撞回 active `_`
+                        // 每步自推（small2e 正文 `\_` 5300 万步死循环）。
+                        // 前缀 `\u{0}` 不可入 token 流，天然防碰撞（同
+                        // `"\u{0}inaccessible"` 先例）；名字显示/trace 取
+                        // 首字符后仍输出原字符。
                         *state = ScanState::MidLine;
-                        let csid =
-                            intern.intern(&char::from_u32(ch).unwrap_or('\u{FFFD}').to_string());
+                        let name = char::from_u32(ch).unwrap_or('\u{FFFD}').to_string();
+                        let csid = intern.intern(&format!("\u{0}A{name}"));
                         return Ok(Some(Token::active_sequence(csid)));
                     }
                     _ => {
@@ -871,7 +884,8 @@ mod tests {
         let (toks, intern) = scan_all_with(catcodes, "^^J\n");
         assert_eq!(toks.len(), 2, "tokens: {toks:?}");
         assert!(toks[0].is_active(), "解码 ^^J → active char：{toks:?}");
-        assert_eq!(intern.name(toks[0].csid().unwrap()), "\n");
+        // active 槽名带 `\u{0}A` 前缀（槽隔离，见 Active 臂注释），前缀后是原字符
+        assert_eq!(intern.name(toks[0].csid().unwrap()), "\u{0}A\n");
         assert_eq!(toks[1].catcode(), Some(Catcode::Space), "物理行尾 → 空格");
     }
 

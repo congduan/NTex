@@ -216,12 +216,21 @@ impl Expander {
             // parameter character"）。转换 = 新字符码 intern 为名 + active 标志。
             if tok.is_active() {
                 if let Some(csid) = tok.csid() {
-                    let code = self.intern.name(csid).chars().next().map(|c| c as u32);
-                    if let Some(code) = code.filter(|&c| c <= 0xff) {
+                    // active 槽名带 `\u{0}A` 前缀（见 input.rs Active 臂）——
+                    // 取前缀后的字符查 lccode/uccode 表；转换目标同样用
+                    // 前缀名 intern，保持 active 槽与同名 cs 槽隔离。
+                    let code = self
+                        .intern
+                        .name(csid)
+                        .strip_prefix("\u{0}A")
+                        .and_then(|s| s.chars().next())
+                        .map(|c| c as u32)
+                        .filter(|&cp| cp <= 0xff);
+                    if let Some(code) = code {
                         let nv = table[code as usize];
                         if nv != 0 && nv != code as i64 {
                             if let Some(nc) = char::from_u32(nv as u32) {
-                                let ncsid = self.intern.intern(&nc.to_string());
+                                let ncsid = self.intern.intern(&format!("\u{0}A{nc}"));
                                 out.push(Token::active_sequence(ncsid));
                                 continue;
                             }
