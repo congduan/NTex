@@ -493,7 +493,6 @@ impl Expander {
                 .filter_map(|t| t.charcode())
                 .filter_map(char::from_u32)
                 .collect();
-            self.sink.whatsit(text)?;
             if immediate {
                 // ETRIP 冲刺：记录最近 "Checking ..." 段标题（错误定位用）
                 let s = self.expand_to_string(&toks)?;
@@ -502,9 +501,12 @@ impl Expander {
                 }
                 self.sink.write16(s)?;
             } else if n < 0 {
+                self.sink.whatsit(text)?;
                 // 负流号（j=17，log-only）：延迟到 shipout/结束边界写 log——
                 // 既有路径（TRIP L441 `\write-100000` 的参考输出 `write->…` 已验证）
                 self.log_write_pending.push(toks);
+            } else {
+                self.sink.whatsit(text)?;
             }
             // 其余非 immediate（未打开的 0..15、流号 >15）：保持既有「无目标文件的
             // 延迟写忽略」简化。tex.web 在 shipout 的 write_out 会跳过 leaders 内的

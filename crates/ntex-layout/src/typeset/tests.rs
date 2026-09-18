@@ -1004,6 +1004,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn fmt_snapshot_reenables_output_routine_in_layout() {
+        // \output 已保存在 expander 的 .fmt 状态；导入后新建 NodeBuilder 也必须
+        // 知道输出例程已定义，否则页面会绕过 box255，LaTeX 页眉/页脚包装丢失。
+        let preamble = r"\font\cmr=cmr10 \cmr \output={\shipout\vbox{\hbox{H}\box255}}";
+        let doc = r"Body.";
+
+        let mut ts1 = Typesetter::with_tfm();
+        ts1.typeset_dvi(preamble).unwrap();
+        let state = ts1.export_state();
+
+        let mut ts2 = Typesetter::with_tfm();
+        ts2.import_state(state);
+        let (pages, _) = ts2.typeset_dvi(doc).unwrap();
+
+        let mut text = String::new();
+        for p in &pages {
+            collect_text(p, &mut text);
+        }
+        assert!(
+            text.starts_with('H'),
+            "fmt 导入后 \\output 应包住页面，实际文本流：{text:?}"
+        );
+    }
+
     // ---------- M4-1 数学模式 ----------
 
     // ---------- D1 数学斜体修正 kern（tex.web §759-762） ----------
@@ -1520,12 +1545,6 @@ mod tests {
             .collect()
     }
 
-    /// NTex vpack 的占位简化（node.rs vpack）：打包时剥前导 discardable 节点。
-    /// `\vbox{\unvbox255}` 的对照基准须先剥默认页的前导 glue 再比较。
-    fn strip_leading_discardables(children: &[Node]) -> &[Node] {
-        let n = children.iter().take_while(|c| c.is_discardable()).count();
-        &children[n..]
-    }
     // ── 按域拆分的测试子模块（R2 纯移动，helper 留主文件走 super::* 链） ──
     mod tests_box { include!("tests_box.rs"); }
     mod tests_page { include!("tests_page.rs"); }

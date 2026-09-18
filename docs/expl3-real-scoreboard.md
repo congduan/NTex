@@ -1036,3 +1036,77 @@ eject 三元组随后把它们冲成空白页。
 `resume.tex` 仍触发 `\???`、hooks top-level、`Incompatible list can't be unboxed`、
 `\spacefactor`/`\vadjust` 扫描错误、`\halign` preamble 错误等既有 LaTeX 结构债，
 导致 2 页目标未达；这不是空页 shipout 语义回归，后续应另刀处理。
+
+## 第二十三刀（2026-09-18）：页码+版心收尾——`\@outputpage` 页盒装配三偏差
+
+### 现场判定
+
+`doc1.tex`（article `Hello, \LaTeX!`）在二十二刀后仍 2 页无文本：`! Output
+loop---100 consecutive dead cycles` + `! Incompatible list can't be unboxed.`。
+真路径不是裸 `\output={\shipout\box255}`（真 pdflatex 下该写法本身
+"Ignoring void shipout box" 死路，早前探针伪命题），而是现代 LaTeX 的
+`\shipout` 宏包装（latex.ltx l.20210）：`\tex_afterassignment:D` +
+`\tex_setbox:D \l_shipout_box` 吃 RHS 盒 → 钩子机器 →
+`\tex_shipout:D \box_use:N \l_shipout_box`（`\box_use:N`≡`\copy`）。
+
+### 修复
+
+- **`copy_box` 补 shipout 臂**（sink.rs）：`\shipout\copy<n>` ship 副本、寄存器
+  保留。不认此臂则页永不 ship，shipout_next 泄漏毒化后续轮次——dead cycles
+  根治，doc1 变 1 页。
+- **`take_box_at`/void unbox 静默**（mod.rs/sink.rs）：tex.web unpackage
+  `if p=null then return`——void 盒 unbox 是**静默无操作**，不是错误（真
+  pdflatex 的 `\unvbox\@begindvibox` 恒 void 且不报错为证；TRIP L396 的
+  "Incompatible list" 实为 `\unhcopy3` 在 math 模式遇 vlist 的类型/模式
+  不匹配，早前把 voidness 归因为误读）。`take_or_clone_box` 随之删除。
+- **vpack 保留前导 discardable**（node.rs）：tex.web vpackage
+  `list_ptr(r):=p` 整表保留，不剥前导 glue。旧版剥离与 package_box 侧的
+  vbox_dimensions 全表度量相矛盾：glue 计入目标高、却被剥出 children——
+  高度被"幻影"烘焙（633=16+617 但树里无 glue）、`\vskip\topmargin` 16pt
+  从 DVI y 流消失，版心整体上移 16pt。真 GT ship 盒首子 `.\glue 16.0`
+  为证。修后 `Hello,` y=127.0、folio y=694.8 与 GT 完全一致。
+- **GroupCtx 认领 `to`/`spread` 规格与位移前缀**（mod.rs/sink.rs）：
+  `pending_box_spec`、`pending_shift`/`pending_hshift` 在 group_begin 认领到
+  紧邻盒子组——嵌套时内层 `\hb@xt@\textwidth` 不得覆写外层
+  `\vbox to\headheight`（否则页眉盒高塌 0、版面上移 12pt）；
+  `\moveright\@themargin` 的 62pt 若被内层盒窃取则版心整体左移。hshift
+  此前的"取走即清"TRIP 冲刺桩一并转正落 `shift_amount`。
+- **NodeBuilder 播种 `.fmt` 恢复的 `\output`**（typesetter.rs）：
+  `builder.page_state.output_defined = self.expander.output_defined()`——
+  否则 pass2 绕过 LaTeX 输出例程直通 ship。
+- **`\vsplit` 余量空盒写 void**（sink.rs）：`\vsplit<box> to\maxdimen` 取尽后
+  原盒须变 void，LaTeX mark 递归依赖 `\ifvoid` 终止。
+- **`\write` 流号路由**（io.rs）：负流号 log-only、其余延迟流在页边界发射
+  whatsit，immediate 不再双发。
+- **测试期望随 vpack 语义校准**（tests_box.rs）：`box255_unvbox_preserves_page_children`
+  原按旧剥离行为先 `strip_leading_discardables` 再比——前导 glue 保留后两侧
+  原始 children 直比（tex.web new_graf 段首必插 `\parskip`、vpackage 保留之，
+  直通页与 `\vbox{\unvbox255}` 回流页同含此 glue）；helper 随之删除。
+
+### Codex 中途态取舍
+
+工作树继承自 Codex 额度中断：上述 typesetter/io/main(ntex-dvi counts)/
+vsplit/write-路由 五处语义修改**保留**（与 doc1 通路直接相关）；
+NTEX_PAGE_TRACE 临时插桩（expand fire/exec 追踪、layout 各探针、
+`output_trace_left` 字段）全部移除。另：main.rs
+`write_dvi_with_counts` 使 DVI bop 计数字走页号链镜像。
+
+### 验收
+
+- `doc1.tex`：**1 页**、0 错误；pymupdf 双口径 `Hello,` bbox (148.7, 127.0)
+  / baseline (148.7, 134.8)，页码 `1` bbox (303.1, 694.8) / baseline
+  (303.1, 702.6)——与真 pdflatex GT（TinyTeX article，A4）**逐位一致**
+  （验收容差 ±2/±3）。
+- `X\clearpage Y`：**2 页**（p1=X/1、p2=Y/2），二十二刀语义不回退。
+- `make check` 全绿（fmt+lint+test）：41 套件 **815 passed / 0 failed**——
+  基线 813 + Codex 中途态两条新测试（fmt 重启例程、vsplit 抽空变 void）
+  = 815，只增不减；`cargo fmt --check`、`cargo clippy -D warnings` 干净。
+
+### 新墙（一刀一墙，只登记不修）
+
+- 页盒体 vbox 宽 538.05555（=版心 345+62 的装配体宽度）与真 GT 的分层
+  （外层 x407、内层 x345）不完全同构——不影响本刀坐标口径，`\hsize`/
+  `\textwidth` 装配链另刀。
+- `\@begindvi` 恒 void 之外，l3backend firstpage specials 的 write-hbox
+  装配路径（`\__shipout_add_background_box:n` 重建 l_shipout_box）在 NTex
+  的盒子重建语义仍待对齐。

@@ -543,6 +543,9 @@ impl Typesetter {
         // 页号链播种（输出例程刀 5）：.fmt 恢复的 \count0..9 不经 count_changed
         // 事件，镜像须取 fmt 初值（TRIP：pass1 dump 前 \count4 已到 11）
         builder.page_state.page_counts = self.fmt_page_counts;
+        // .fmt 恢复的 \output token 列表在 expander 侧，但新建 NodeBuilder
+        // 默认认为输出例程未定义；若不同步，LaTeX 的 \@outputpage 会被绕过。
+        builder.page_state.output_defined = self.expander.output_defined();
         // .fmt 导入的当前字体（防 pass2 字符全 nullfont + Missing 警告）
         builder.current_font = FontId(self.fmt_current_font);
         // pass2 NodeBuilder 重建：同步数学间距参数（\\thinmuskip 等 muskip 寄存器——

@@ -370,6 +370,16 @@ struct GroupCtx {
     entered_math: bool,
     /// 组深度（1-based；\tracinggroups 的 `(level N)`）。
     level: u32,
+    /// 本组的 `to`/`spread` 规格（group_begin 从 [`BoxState::pending_box_spec`]
+    /// 认领——tex.web 中规格随盒子扫描各自持有：嵌套时内层 `\hb@xt@\textwidth`
+    /// 的规格不得覆写外层 `\vbox to\headheight` 的，否则 LaTeX `\@outputpage`
+    /// 页眉盒高度塌成 0、版心整体上移）。
+    spec: Option<(Option<i64>, Option<i64>)>,
+    /// 本组的参考点位移（`\raise`/`\lower`/`\moveleft`/`\moveright`——tex.web：
+    /// 位移前缀绑定紧随其后的盒子；group_begin 认领到盒子组，防止内层嵌套盒
+    /// 的封装把位移抢走——`\@outputpage` 的 `\moveright\@themargin\vbox{...}`
+    /// 若被头部内层 `\hb@xt@\textwidth` 盒窃取，版心整体左移 62pt）。
+    shift: Option<i64>,
 }
 
 /// 字符度量函数：`(width, height, depth)`，单位 sp。
@@ -986,19 +996,6 @@ impl NodeBuilder {
         let _ = self.write16(msg);
     }
 
-    /// ETRIP 第二波：取盒子寄存器内容（`copy=false` 取出置 void；`copy=true` 复制保留）。
-    /// `\unhbox`/`\unvbox`/`\unhcopy`/`\unvcopy` 共用；void 盒子报错。
-    fn take_or_clone_box(&mut self, idx: usize, copy: bool) -> Result<BoxNode> {
-        if copy {
-            self.box_view(idx)
-                .cloned()
-                .ok_or_else(|| Error::invalid_input(format!("盒子 {idx} 为空（void）")))
-        } else {
-            self.take_box_at(idx)
-                .ok_or_else(|| Error::invalid_input(format!("盒子 {idx} 为空（void）")))
-        }
-    }
-
     fn append(&mut self, node: Node) {
         // 诊断：节点增长监控（TRIP L338 `\halign` 内挂死 = 列表无限增长 OOM；
         // 死循环在 layout 侧不经 process_one，VM 看门狗不计数）。
@@ -1277,6 +1274,7 @@ impl NodeBuilder {
         ship: bool,
         leaders: Option<LeadersKind>,
         setbox: Option<usize>,
+        shift: Option<i64>,
         boxmaxdepth: i64,
     ) {
         let children = self.lists.pop().expect("盒子列表");
@@ -1323,15 +1321,16 @@ impl NodeBuilder {
                 Node::Box(b)
             }
         };
-        // `\raise`/`\lower`：封装结果应用参考点位移（\raise 向上为正）
+        // 参考点位移（group_begin 认领的 `\raise`/`\lower`/`\moveleft`/
+        // `\moveright`）：同一 shift_amount 字段（tex.web：横列表=竖位移、
+        // 竖列表=水平位移，由使用现场解释）——LaTeX `\@outputpage` 的
+        // `\moveright\@themargin\vbox{...}`（版心定位 62pt）依赖此臂。
         let mut node = node;
-        if let Some(shift) = self.box_state.pending_shift.take() {
+        if let Some(shift) = shift {
             if let Node::Box(b) = &mut node {
                 b.shift = shift;
             }
         }
-        // `\moveleft`/`\moveright`：水平位移（TRIP 冲刺暂不落节点，取走即清）
-        let _hshift = self.box_state.pending_hshift.take();
         // ETRIP 冲刺：`\setbox<n>=<box>` —— 封装结果存入寄存器（不入当前列表）。
         // 仅最外层 RHS 盒子组（group_begin 认领进 GroupCtx）持有目标；内层嵌套盒
         // （`\setbox0=\vbox{\hbox{...}}` 的 \hbox）不消费。

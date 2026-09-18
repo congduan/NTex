@@ -1125,6 +1125,11 @@ impl Expander {
         &self.font_cs_names
     }
 
+    /// 当前是否定义了用户输出例程（`.fmt` 恢复后供排版层同步 box255 路由）。
+    pub fn output_defined(&self) -> bool {
+        self.output_toks.is_some()
+    }
+
     /// 加载展开引擎状态快照（`.fmt` v1）。
     ///
     /// 宏定义在字节码轨道下重建预编译字节码（`code` 不随快照序列化）。

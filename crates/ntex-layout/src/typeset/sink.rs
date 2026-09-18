@@ -133,12 +133,31 @@ impl CoreSink for NodeBuilder {
         } else {
             None
         };
+        // `to`/`spread` 规格：同 setbox 一样认领到紧邻盒子组（嵌套时内层盒的
+        // box_spec 调用不得覆写外层已认领的规格）。
+        let spec = if box_kind.is_some() {
+            self.box_state.pending_box_spec.take()
+        } else {
+            None
+        };
+        // 位移前缀（\raise/\lower/\moveleft/\moveright）：认领到紧邻盒子组
+        // （tex.web：位移只作用于紧随其后的那个盒子，不向内层嵌套盒泄漏）。
+        let shift = if box_kind.is_some() {
+            self.box_state
+                .pending_shift
+                .take()
+                .or_else(|| self.box_state.pending_hshift.take())
+        } else {
+            None
+        };
         self.groups.push(GroupCtx {
             kind: gkind,
             box_kind,
             shipout: ship,
             leaders,
             setbox,
+            spec,
+            shift,
             entered_line: line,
             // 组打开时是否数学模式：`\hbox{A}` 数学字段（box 原子）在数学模式
             // 打开、同模式关闭是合法流程；外层组（垂直打开）关闭时若仍处数学
@@ -392,7 +411,17 @@ impl CoreSink for NodeBuilder {
             GroupKind::HBox | GroupKind::AdjustedHBox | GroupKind::VBox | GroupKind::VTop => {
                 if let Some(kind) = ctx.box_kind {
                     let leaders = ctx.leaders;
-                    self.package_box(kind, ctx.shipout, leaders, ctx.setbox, inner_boxmaxdepth);
+                    // 归还本组认领的 to/spread 规格，供 package_box 取用
+                    // （内层嵌套盒的规格已各自消费，此处放回的是外层的）
+                    self.box_state.pending_box_spec = ctx.spec;
+                    self.package_box(
+                        kind,
+                        ctx.shipout,
+                        leaders,
+                        ctx.setbox,
+                        ctx.shift,
+                        inner_boxmaxdepth,
+                    );
                 }
             }
             _ => {}
@@ -1185,9 +1214,15 @@ impl BoxSink for NodeBuilder {
             _ => natural,
         };
         let (result, remainder) = split_vbox(b, target);
-        // 余量写回寄存器：tex.web `box(n):=vpack(q,natural)` 同层裸写（无组级
-        // 日志——例程内 `\vsplit\@cclv to\z@` 的余量在例程组结束时不回滚）
-        self.write_box(idx, Some(remainder));
+        // 余量写回寄存器：tex.web `box(n):=vpack(q,natural)`；若 q 为空则原盒
+        // 变 void。LaTeX mark 代码依赖 `\vsplit <box> to \maxdimen` 后
+        // `\ifvoid<box>` 为真来终止递归。
+        let remainder = if remainder.children.is_empty() {
+            None
+        } else {
+            Some(remainder)
+        };
+        self.write_box(idx, remainder);
         if let Some(t) = self.box_state.setbox_target.take() {
             self.store_box(t, Some(result));
         } else {
@@ -1288,15 +1323,29 @@ impl BoxSink for NodeBuilder {
             self.store_box(target, Some(b));
             return Ok(());
         }
+        // `\shipout\copy<n>`（tex.web scan_box 复制语义；现代 LaTeX shipout 包装
+        // `\tex_shipout:D \box_use:N \l_shipout_box`，`\box_use:N`≡`\copy`——
+        // ship 副本、寄存器保留给 shipout/after 钩子）。不认此臂则页永不 ship：
+        // shipout_next 泄漏毒化后续轮次 → "Output loop---100 consecutive dead cycles"。
+        if self.page_state.shipout_next {
+            self.page_state.shipout_next = false;
+            self.ship_page(b);
+            return Ok(());
+        }
         self.append(Node::Box(b));
         Ok(())
     }
     /// `\unhbox<n>`/`\unhcopy<n>`：hbox 拆开，子节点追加到当前列表。
-    /// TeX：void 盒或类型不符 → "! Incompatible list can't be unboxed."
-    /// 报错恢复（空操作继续；TRIP L396 `\unhbox234`——234 未设置）。
+    /// tex.web unpackage：`if p=null then return`——void 盒**静默无操作**（真
+    /// pdflatex 的 `\unvbox\@begindvibox`（恒 void）不报错为证）；类型/模式
+    /// 不符才报 "! Incompatible list can't be unboxed."（TRIP L396 实为
+    /// `\unhcopy3` 在 math 模式遇 vlist，非 voidness）。
     fn unhbox(&mut self, idx: usize, copy: bool) -> Result<()> {
-        let Ok(b) = self.take_or_clone_box(idx, copy) else {
-            self.unbox_error_continue();
+        let Some(b) = (if copy {
+            self.box_view(idx).cloned()
+        } else {
+            self.take_box_at(idx)
+        }) else {
             return Ok(());
         };
         match b.kind {
@@ -1314,8 +1363,11 @@ impl BoxSink for NodeBuilder {
     }
     /// `\unvbox<n>`/`\unvcopy<n>`：vbox 拆开，子节点追加到当前列表。
     fn unvbox(&mut self, idx: usize, copy: bool) -> Result<()> {
-        let Ok(b) = self.take_or_clone_box(idx, copy) else {
-            self.unbox_error_continue();
+        let Some(b) = (if copy {
+            self.box_view(idx).cloned()
+        } else {
+            self.take_box_at(idx)
+        }) else {
             return Ok(());
         };
         match b.kind {
@@ -1898,6 +1950,3 @@ fn align_tabskip_node(g: Option<&ntex_core::Glue>) -> Node {
         },
     }
 }
-
-
-

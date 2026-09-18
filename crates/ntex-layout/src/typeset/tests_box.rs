@@ -82,6 +82,28 @@ use super::*;
     }
 
     #[test]
+    fn vsplit_all_leaves_source_void() {
+        // LaTeX mark 提取用 `\vsplit<box> to \maxdimen` 抽空临时页盒后，
+        // 依赖原盒变 void 作为递归终止条件；空 vbox 不等价于 void。
+        let mut ts =
+            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+        ts.typeset_dvi(concat!(
+            r"\vsize 2000000sp\hsize 10000000sp ",
+            r"\output={\setbox0=\vsplit255 to 1073741823sp ",
+            r"\ifvoid255\count0=1\else\count0=0\fi\showthe\count0",
+            r"\shipout\box0\relax} ",
+            r"aa bb cc\par\end",
+        ))
+        .unwrap();
+        let t = ts.take_transcript();
+        assert_eq!(
+            showthe_values(&t, "count"),
+            vec!["1"],
+            r"\vsplit 抽空后源盒应为 void：{t:?}"
+        );
+    }
+
+    #[test]
     fn box255_unvbox_preserves_page_children() {
         // P2 对照（latex.ltx `\@specialoutput` 的 `\global\setbox\@holdpg
         // \vbox{\unvbox\@cclv}` 同形）：页内容经 \unvbox255 原样回流用户 vbox
@@ -96,11 +118,9 @@ use super::*;
         .unwrap();
         assert_eq!(with.len(), default.len(), "例程不改变页数");
         for (p, d) in with.iter().zip(&default) {
-            assert_eq!(
-                &p.children,
-                strip_leading_discardables(&d.children),
-                "\\unvbox255 应原样回流页内容"
-            );
+            // tex.web vpackage `list_ptr(r):=p` 整表保留（含段首 \parskip 前导
+            // glue，真 GT ship 盒首子 `.\glue 16.0` 同理）——两侧原始 children 直比。
+            assert_eq!(&p.children, &d.children, "\\unvbox255 应原样回流页内容");
         }
     }
 

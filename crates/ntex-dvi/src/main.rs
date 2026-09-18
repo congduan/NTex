@@ -164,7 +164,7 @@ fn main() -> ExitCode {
         eprintln!("未产出页面（源码缺少 \\shipout）");
         return ExitCode::FAILURE;
     }
-    let dvi = ntex_dvi::write_dvi(&pages, &fonts);
+    let dvi = ntex_dvi::write_dvi_with_counts(&pages, ts.shipped_page_counts(), &fonts);
     match fs::write(&output, &dvi) {
         Ok(()) => {
             println!(

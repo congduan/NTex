@@ -466,13 +466,11 @@ pub fn vbox_dimensions(children: &[Node]) -> BoxDimensions {
 /// `\vbox to10pt{\boxmaxdepth=-1pt\mark{vii}}` → (10.0+-1.0) 对齐参考））。
 /// 无差额时与 [`BoxNode::new_vbox`] 等价。
 pub fn vpack(children: Vec<Node>, height: i64, max_depth: i64) -> BoxNode {
-    // tex.web vpack：删除前导 discardable 节点（glue/penalty/kern/mark/insert 等）——
-    // 垂直列表开段的 \\parskip 前导 glue 在打包时被移除（参考 etrip vbox 无
-    // 前导 \\parskip；\\vbox{\\hsize=0pt a} 的第一个 child 是行盒而非 glue）。
-    let mut children = children;
-    while children.first().is_some_and(Node::is_discardable) {
-        children.remove(0);
-    }
+    // tex.web vpackage：`list_ptr(r):=p`——整表保留，**不剥前导 discardable**。
+    // 真 pdflatex `\@outputpage` 的 ship 盒首子 `.\glue 16.0`（\topmargin）为证。
+    // （旧版曾在此剥前导 glue，与 package_box 侧的 vbox_dimensions 全表度量
+    // 相矛盾：glue 计入目标高、却被剥出 children——高度被"幻影"烘焙、glue 节点
+    // 丢失，页盒 y 定位短 16pt。）
     let natural = vbox_dimensions(&children);
     let mut b = BoxNode::new_vbox(children);
     let diff = height - (natural.height + natural.depth);
