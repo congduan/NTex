@@ -351,25 +351,36 @@ impl Expander {
         let csid = tok
             .csid()
             .ok_or_else(|| Error::invalid_input("\\the 需要寄存器参数"))?;
-        // TeX：`\the` 位置可展开项先展开（`\the\csname fontcharwd\endcsname`、
-        // `\the\expandafter\...` 等），展开结果逐个继续求值。
-        if let EqSlot::Primitive(p) = self.eqtb.slot(csid).clone() {
-            if p.is_expandable() {
-                let mut expansion = Vec::new();
-                self.expand_once((tok, false), &mut expansion)?;
-                let mut out = Vec::new();
-                for (t, _) in expansion {
-                    // 展开结果若是 cs（如 `\the\csname fontcharwd\endcsname` 的
-                    // \fontcharwd）继续求值；若是字符（如 `\the\eTeXrevision` → ".6"）
-                    // 直接保留（TeX `\the` 不要求展开结果再求值）。
-                    if t.csid().is_some() {
-                        out.extend(self.the_tokens_after(t)?);
-                    } else {
-                        out.push(t);
-                    }
-                }
-                return Ok(out);
+        // TeX：`\the` 位置走 get_x_token；宏和可展开原语都先展开（LaTeX
+        // `\the\value{section}` 的 `\value` 即宏，展开为 `\c@section` 后才是
+        // 内部整数；此前只展开原语，`\section`/`\item`/`\label` 链会在
+        // `\the\value{...}` 报 "You can't use \the with this."）。
+        let expandable = match self.eqtb.slot(csid) {
+            EqSlot::Macro(_) => true,
+            EqSlot::Primitive(p) if p.is_expandable() => true,
+            _ => false,
+        };
+        if expandable {
+            let mut expansion = Vec::new();
+            self.expand_once((tok, false), &mut expansion)?;
+            let Some((first, _)) = expansion.first().copied() else {
+                return Ok(Vec::new());
+            };
+            // 展开结果若是普通字符文本（如 `\the\eTeXrevision` → ".6"），
+            // 保留整段文本。若首 token 是 cs，则必须把整段回灌输入流再取操作数：
+            // `\value{section}` 展开为 `\csname c@section\endcsname`，其中
+            // `\csname` 需要从同一展开结果继续读名字和 `\endcsname`。
+            if first.csid().is_none() {
+                return Ok(expansion.into_iter().map(|(t, _)| t).collect());
             }
+            self.push_frame(InputFrame::TokenList {
+                items: Arc::from(expansion),
+                pos: 0,
+            });
+            let Some((operand, _)) = self.fetch()? else {
+                return Ok(Vec::new());
+            };
+            return self.the_tokens_after(operand);
         }
         match self.eqtb.slot(csid) {
             EqSlot::Primitive(p) => match p {

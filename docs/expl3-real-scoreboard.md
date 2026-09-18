@@ -1110,3 +1110,60 @@ NTEX_PAGE_TRACE 临时插桩（expand fire/exec 追踪、layout 各探针、
 - `\@begindvi` 恒 void 之外，l3backend firstpage specials 的 write-hbox
   装配路径（`\__shipout_add_background_box:n` 重建 l_shipout_box）在 NTex
   的盒子重建语义仍待对齐。
+
+## 第二十五刀（2026-09-18）：`\the\value{counter}` 操作数宏展开——corpus `\the` 同源错误群清零
+
+### 现场判定
+
+`small2e`/`lppl` 的最大同源错误群并非 `\c@section` 寄存器本身不可读：
+`\refstepcounter{section}` 后裸 `\the\c@section` 与手工
+`\protected@edef\@svsec{...}` 均正常。真实 `\section` 链进入
+`\@seccntformat`/写 toc/aux 语境后，操作数形态是 LaTeX 的
+`\the\value{section}`：`\value` 是宏，展开后才生成 `\csname c@section\endcsname`
+并落到 countdef 寄存器。
+
+旧 `the_tokens_after` 只展开可展开原语，不展开宏操作数，于是直接把 `\value`
+当作不可用内部量，报 `! You can't use \the with this.`。进一步细查还发现：
+宏展开结果不能逐 token 独立递归，否则 `\csname ...\endcsname` 会失去后续名字
+token；必须把整段展开结果回灌输入栈，再按 TeX `get_x_token` 口径取真实操作数。
+
+### 修复
+
+- `the_tokens_after` 的操作数扫描补宏展开：宏或可展开原语都先 `expand_once`。
+- 展开结果若首 token 是控制序列，整段压回 `TokenList` 后重新 `fetch` 操作数，
+  使 `\csname c@#1\endcsname` 能从同一展开结果继续扫描名字；若首 token 是字符
+  文本（如 `\the\eTeXrevision`），保持原样返回整段文本。
+- 宏实参帧改为携带 `(Token, noexpand)`，保留同一 `\edef`/`\write` 展开区域内
+  `\noexpand` 的一次性冻结位，锁住相邻的 `\protect`/`\write` 形态；普通
+  `materialize` 路径仍剥成裸 token，不扩大长期 token 存储语义。
+
+### 回归
+
+新增 ntex-core 双轨回归：
+
+- `the_expands_value_macro_to_counter_register`：`\the\value{section}` →
+  countdef'd `\c@section` 值。
+- `noexpand_survives_argument_handoff_inside_edef`：`\expandafter` 先展开出
+  被 `\noexpand` 冻结的 token，再经宏实参转交，`\edef` 结果保持字面 cs。
+- `noexpanded_the_survives_write_argument_handoff`：被冻结的 `\the` 经宏实参转交到
+  `\write`，写出字面 `\the \count 0`，不误执行、不报 `\the` 错。
+
+### 验收
+
+- `sec1.tex`（`\documentclass{article}` + `\section{Test}`）：
+  `You can't use \the with this` **1→0**；仍剩 4 个 NFSS 字号墙错误
+  （`Missing number`×2 + `Font not found`×2）。
+- `small2e`（release + `/tmp/fp11/latex-v17.fmt`）：
+  `^!` **7→4**，`\the` 错 **3→0**；DVI 产出失败仍由 NFSS 字号墙阻断。
+- `lppl`：`^!` **60→31**，`\the` 错 **29→0**。
+- `sample2e`：`\the` 错 **0**，但 LR mode 仍 **23**，确认为不同墙。
+- `cargo test -p ntex-core` 全绿：**435 passed / 0 failed / 2 ignored**；
+  `cargo fmt --all -- --check` 干净。
+
+### 新墙（一刀一墙，只登记不修）
+
+`small2e`/`sec1` 剩余 `Missing number <to be read again> \@M` 不再来自
+`\the`：`NTEX_NUM_TRACE` 显示它发生在 `\ifdim` 的 NFSS size range 解析，
+`\@M` 只是下一个待读 token；裸 `\show\@M` 为 `\mathchar"2710`、
+`\number\@M` 为 `10000`。后续应另刀处理 NFSS 字号选择/`try@simples`
+区间解析墙。

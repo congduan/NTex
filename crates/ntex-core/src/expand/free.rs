@@ -64,12 +64,12 @@ fn default_uccodes() -> [i64; 256] {
 }
 
 /// 宏体实参替换：`#n` → 第 n 个实参（整段借用，零拷贝）。
-fn materialize(body: &[Token], args: &[TokenArray]) -> Vec<Token> {
+fn materialize(body: &[Token], args: &[ArgArray]) -> Vec<Token> {
     let mut out = Vec::with_capacity(body.len());
     for &t in body {
         if let Some(n) = t.param_number() {
             if let Some(arg) = args.get(n.saturating_sub(1) as usize) {
-                out.extend_from_slice(arg);
+                out.extend(arg.iter().map(|(tok, _)| *tok));
             }
         } else {
             out.push(t);

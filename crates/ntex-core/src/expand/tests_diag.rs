@@ -112,7 +112,7 @@ fn frame_kind_covers_every_variant() {
         ),
         (
             InputFrame::MacroArg {
-                items: body.clone(),
+                items: Arc::from(body.iter().map(|&t| (t, false)).collect::<Vec<_>>()),
                 pos: 0,
             },
             "MacroArg",
@@ -172,7 +172,7 @@ fn render_frame_head_shows_live_position() {
     let e = Expander::new();
     let a = Token::char(Catcode::Letter, 'a' as u32);
     let frame = InputFrame::MacroArg {
-        items: Arc::from(vec![a, a, a, a]),
+        items: Arc::from(vec![(a, false), (a, false), (a, false), (a, false)]),
         pos: 3,
     };
     let s = e.render_frame_head(&frame);

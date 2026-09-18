@@ -257,6 +257,56 @@ use super::*;
     }
 
     #[test]
+    fn noexpand_survives_argument_handoff_inside_edef() {
+        // pdfTeX GT（2026-09-18）：
+        // \def\a{A}\def\p{\noexpand\a}\def\y#1{#1}
+        // \edef\z{\expandafter\y\p} → \meaning\z = macro:->\a
+        //
+        // \expandafter 先把 \p 展开成带 noexpand 标记的 \a，再交给 \y 收作实参。
+        // 实参帧若丢掉这个一次性冻结位，\a 会在同一个 \edef 区域内误展开成 A。
+        let src = "\\def\\a{A}\\def\\p{\\noexpand\\a}\\def\\y#1{#1}\\edef\\z{\\expandafter\\y\\p}\\meaning\\z";
+        assert_eq!(expand(src).unwrap(), "macro:->\\a");
+    }
+
+    #[test]
+    fn noexpanded_the_survives_write_argument_handoff() {
+        fn run(src: &str, bytecode: bool) -> String {
+            let mut e = if bytecode {
+                Expander::new()
+            } else {
+                Expander::new_interpreter()
+            };
+            e.run_source(src).unwrap();
+            e.transcript().to_owned()
+        }
+
+        // 同上，但冻结对象换成 \the：LaTeX \protect 链会让 \the<counter>
+        // 经宏实参转交到 \write 展开区域。冻结位丢失时会误执行 \the 并在真实
+        // \section/\item/\label 链上报 "You can't use \the with this."。
+        let src = "\\count0=3\\def\\p{\\noexpand\\the\\count0}\\def\\y#1{#1}\\immediate\\write16{W=\\expandafter\\y\\p}";
+        let bytecode = run(src, true);
+        let interp = run(src, false);
+        assert_eq!(bytecode, interp);
+        assert!(bytecode.contains("W=\\the \\count 0"), "{bytecode}");
+        assert!(!bytecode.contains("You can't use \\the"), "{bytecode}");
+    }
+
+    #[test]
+    fn the_expands_value_macro_to_counter_register() {
+        // LaTeX 结构宏常用 `\the\value{section}`；`\value` 本身是宏，展开后
+        // 才得到 countdef'd `\c@section` 内部整数。`\the` 扫操作数必须走
+        // get_x_token 语义，不能只展开可展开原语。
+        let src = concat!(
+            "\\catcode`\\@=11 ",
+            "\\countdef\\c@section=0 ",
+            "\\count0=7 ",
+            "\\def\\value#1{\\csname c@#1\\endcsname}",
+            "\\the\\value{section}"
+        );
+        assert_eq!(expand(src).unwrap(), "7");
+    }
+
+    #[test]
     fn meaning_expands_to_meaning_text() {
         // 宏：macro:->body（无尾随句点）
         assert_eq!(expand("\\def\\x{a}\\meaning\\x").unwrap(), "macro:->a");

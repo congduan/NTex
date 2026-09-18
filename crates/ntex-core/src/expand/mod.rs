@@ -90,6 +90,8 @@ const INF_PENALTY: i64 = 10_000;
 ///
 /// `Clone`（M5 阶段二）：段级回滚还原 [`ControlState::stack`]，需要克隆悬挂
 /// 的输入帧（内容均为 `Arc`/`Copy`，克隆廉价）。
+pub(crate) type ArgArray = Arc<[(Token, bool)]>;
+
 #[derive(Debug, Clone)]
 pub(crate) enum InputFrame {
     /// 源码帧：字节流 + 扫描位置 + 行状态（空行 → `\par` 判定）。
@@ -109,13 +111,13 @@ pub(crate) enum InputFrame {
     Macro {
         body: TokenArray,
         pos: usize,
-        args: Vec<TokenArray>,
+        args: Vec<ArgArray>,
     },
     /// 字节码帧（M2）：预编译指令 + 实参（解释器轨道的替代）。
     Bytecode {
         code: Arc<Bytecode>,
         pc: usize,
-        args: Vec<TokenArray>,
+        args: Vec<ArgArray>,
     },
     /// token 列表帧：`(token, noexpand 标记)`。
     TokenList {
@@ -124,11 +126,10 @@ pub(crate) enum InputFrame {
     },
     /// 实参帧（P1 热路径消分配）：宏实参 token 列表。
     ///
-    /// `#n`/`EmitArg` 展开直接复用收集期的 `Arc<[Token]>`（引用计数 +1）——
-    /// 此前重包装为 `Vec<(Token, bool)>` 再 `Arc::from`，每次实参展开多一次
-    /// 堆分配 + 逐 token 拷贝。实参 token 无 noexpand 语义（TeX 宏替换后照常
-    /// 展开），故帧级不设标记；与 [`InputFrame::TokenList`] 的读取行为一致。
-    MacroArg { items: TokenArray, pos: usize },
+    /// `#n`/`EmitArg` 展开直接复用收集期的 `Arc<[(Token,bool)]>`（引用计数 +1）。
+    /// 这里必须保留 `\noexpand` 的一次性冻结位：LaTeX `\protect` 会在
+    /// `\edef`/`\write` 的同一展开区域内经宏实参转交可展开 token。
+    MacroArg { items: ArgArray, pos: usize },
     /// 单 token 回推槽（B1：`unread`/`$$` 探测/`\noexpand` 回推用，免 Arc 包装）。
     One { tok: Token, noexpand: bool },
     /// 输出例程帧（M3-5-3）：同 TokenList，但耗尽时复位输出例程激活标志。
@@ -1773,7 +1774,7 @@ impl Expander {
                         let next = items[*pos..]
                             .iter()
                             .take(10)
-                            .map(|t| show(&self.intern, t))
+                            .map(|(t, _)| show(&self.intern, t))
                             .collect::<Vec<_>>()
                             .join(" ");
                         frames.push(format!("MacroArg {}tok@{} next=[{next}]", items.len(), pos));
@@ -2785,7 +2786,7 @@ impl Expander {
             InputFrame::Macro { body, .. } => ("Macro", self.render_token_head(body, 8)),
             InputFrame::Bytecode { code, .. } => ("Bytecode", self.render_bytecode_head(code, 8)),
             InputFrame::TokenList { items, .. } => ("TokenList", self.render_pairs_head(items, 8)),
-            InputFrame::MacroArg { items, .. } => ("MacroArg", self.render_token_head(items, 8)),
+            InputFrame::MacroArg { items, .. } => ("MacroArg", self.render_pairs_head(items, 8)),
             InputFrame::One { tok, .. } => ("One", self.render_token(*tok)),
             InputFrame::OutputRoutine { items, .. } => {
                 ("OutputRoutine", self.render_pairs_head(items, 8))
@@ -2824,7 +2825,7 @@ impl Expander {
             InputFrame::TokenList { items, pos } => {
                 self.render_pair_frame("TokenList", items, *pos)
             }
-            InputFrame::MacroArg { items, pos } => self.render_seq_frame("MacroArg", items, *pos),
+            InputFrame::MacroArg { items, pos } => self.render_pair_frame("MacroArg", items, *pos),
             InputFrame::One { tok, .. } => format!("One[{}]", self.render_token(*tok)),
             InputFrame::OutputRoutine { items, pos } => {
                 self.render_pair_frame("OutputRoutine", items, *pos)
@@ -3183,9 +3184,9 @@ impl Expander {
                         self.stack.pop();
                         continue;
                     }
-                    let tok = items[*pos];
+                    let (tok, noexpand) = items[*pos];
                     *pos += 1;
-                    return Ok(Some((tok, false)));
+                    return Ok(Some((tok, noexpand)));
                 }
                 InputFrame::One { tok, noexpand } => {
                     // 先拷贝（结束字段借用）再弹帧（&mut stack）

@@ -7,7 +7,7 @@ impl Expander {
     /// - 先匹配前导定界符 P_1（须与输入开头逐 token 相同）；
     /// - 对每个 `#k`：若其后定界符 P_{k+1} 为空 → 无分隔参数（单个 token 或组）；
     ///   否则为分隔参数，收集到 P_{k+1} 在输入中完整出现为止（定界符被消费）。
-    fn collect_args(&mut self, csid: u32, def: &MacroDef) -> Result<Vec<TokenArray>> {
+    fn collect_args(&mut self, csid: u32, def: &MacroDef) -> Result<Vec<ArgArray>> {
         let n = def.params.num_params as usize;
         // 第二十刀定位开关（NTEX_ARG_DUMP=1）：调用瞬间 dump 参数文本
         //（cs/char/param 分类）。零成本门控，排查定界/非定界实参失配时开。
@@ -277,7 +277,7 @@ impl Expander {
         delim: &[Token],
         long: bool,
         name: &str,
-    ) -> Result<TokenArray> {
+    ) -> Result<ArgArray> {
         if diag_enabled("NTEX_COND_TRACE") {
             let d: String = delim
                 .iter()
@@ -286,7 +286,7 @@ impl Expander {
                 .collect();
             eprintln!("[trace-arg] 定界符 {:?} n={}", d, delim.len());
         }
-        let mut buf: Vec<Token> = Vec::new();
+        let mut buf: Vec<(Token, bool)> = Vec::new();
         let mut depth = 0usize; // 平衡组深度：`{…}` 组整组贡献，组内 token 不定界
         // TEMP DEBUG（挂死定位）
         let mut guard: u64 = 0;
@@ -324,7 +324,7 @@ impl Expander {
                     Some(id) => format!("\\{}", self.intern.name(id)),
                     None => format!("c{}", t.charcode().unwrap_or(9999)),
                 };
-                let head: Vec<String> = buf.iter().take(32).map(show).collect();
+                let head: Vec<String> = buf.iter().map(|(t, _)| t).take(32).map(show).collect();
                 eprintln!(
                     "[delim-dbg] 失控定界实参 name={name} 达到 1M：buf.len={blen} depth={depth}\n  入口 last_tok={entry_last:?}\n  入口栈={entry_stack}\n  头32=[{head:?}]",
                     blen = buf.len()
@@ -347,8 +347,8 @@ impl Expander {
                     buf.len()
                 )));
             }
-            let tok = match self.fetch()? {
-                Some(t) => t.0,
+            let (tok, noexpand) = match self.fetch()? {
+                Some(t) => t,
                 None => {
                     // TeX：定界参数扫描到输入末尾 → "Runaway argument?" +
                     // "! Paragraph ended before \<name> was complete." 恢复
@@ -384,7 +384,7 @@ impl Expander {
                     // depth==0 的输入 `{` 若构成完整定界符后缀 → 作定界符消费（不开
                     // 组），否则按 tex.web "Contribute an entire group" 整组贡献——
                     // 组内 token 只配对、不匹配定界符（l3prg w 尾参整组贡献依赖）。
-                    buf.push(tok);
+                    buf.push((tok, noexpand));
                     if depth == 0 && self.suffix_matches_delim(&buf, delim) {
                         buf.truncate(buf.len() - delim.len());
                         break;
@@ -394,7 +394,7 @@ impl Expander {
                 }
                 Some(Catcode::EndGroup) if depth > 0 => {
                     depth -= 1;
-                    buf.push(tok);
+                    buf.push((tok, noexpand));
                     continue;
                 }
                 _ => {}
@@ -402,7 +402,7 @@ impl Expander {
             // 至此 depth == 0 的 token（组内非定界符 token 也落此，但 depth>0，
             // 下面各检查对组内 token 只看 non-long `\par`——tex.web 整组贡献
             // 的循环同样禁止 non-long 参数内任意深度 `\par`）。
-            buf.push(tok);
+            buf.push((tok, noexpand));
             // 分隔符匹配优先：`\par` 作为定界符时合法（TRIP L354 `\a#1\par#2` 调
             // `\a\par!` → `#1` 空、`#2`=`!`；non-long 参数扫描的 Paragraph ended
             // 检查须在分隔符匹配之后，否则定界符 `\par` 被误报）。只在 depth==0
@@ -428,7 +428,7 @@ impl Expander {
                 ));
                 if long {
                     self.unread(tok);
-                    buf.push(Token::control_sequence(self.intern.intern("par")));
+                    buf.push((Token::control_sequence(self.intern.intern("par")), false));
                     return Ok(Arc::from(buf));
                 }
                 self.recover_extra_end_group_in_argument(tok);
@@ -441,11 +441,11 @@ impl Expander {
                 return Ok(Arc::from(buf));
             }
         }
-        Ok(Arc::from(strip_single_group(buf)))
+        Ok(Arc::from(strip_single_group_marked(buf)))
     }
 
     /// 检查 `buf` 尾部是否与定界符逐 token 相同。
-    fn suffix_matches_delim(&self, buf: &[Token], delim: &[Token]) -> bool {
+    fn suffix_matches_delim(&self, buf: &[(Token, bool)], delim: &[Token]) -> bool {
         if buf.len() < delim.len() {
             return false;
         }
@@ -453,7 +453,7 @@ impl Expander {
         buf[start..]
             .iter()
             .zip(delim)
-            .all(|(&a, &b)| self.delim_token_eq(a, b))
+            .all(|(&(a, _), &b)| self.delim_token_eq(a, b))
     }
 
     /// 收集一个无分隔实参：
@@ -481,18 +481,18 @@ impl Expander {
     /// 8 例 CRASH（m3fp-logic004/m3int001/m3int003/m3prg001/m3skip002/
     /// m3skip006/m3tl002/m3tlist002 —— harness 把 `~` 定义为
     /// `\def~#1{\accent"7E #1}`，凡 `~` 出现在 write/参数组末尾即触发）。
-    fn recover_runaway_arg(&mut self, name: &str) -> Result<TokenArray> {
+    fn recover_runaway_arg(&mut self, name: &str) -> Result<ArgArray> {
         let _ = self.sink.write16(format!(
             "Runaway argument?\n\\{name}\n! File ended while scanning use of \\{name}.\n"
         ));
         Ok(Arc::from([]))
     }
 
-    fn collect_undelimited_arg(&mut self, long: bool, name: &str) -> Result<TokenArray> {
+    fn collect_undelimited_arg(&mut self, long: bool, name: &str) -> Result<ArgArray> {
         self.diag_trace(format!("UNDELIM \\{name} long={long} floor={}", self.read_floor));
         // 跳过前导空格
         loop {
-            let Some(tok) = self.fetch()?.map(|p| p.0) else {
+            let Some((tok, _)) = self.fetch()? else {
                 return self.recover_runaway_arg(name);
             };
             if tok.catcode() != Some(Catcode::Space) {
@@ -506,7 +506,7 @@ impl Expander {
         // 仅 Matching（宏实参扫描）+ 首 token 触发；恢复 = 插入 \par + 空实参续跑。
         // ⚠ 不可放宽到续 token/组内（2026-09-12 实测：expl3 载入 +231 Undefined，
         // \newif 类真 outer 宏在实参续位合法出现）。
-        let Some(tok) = self.fetch()?.map(|p| p.0) else {
+        let Some((tok, noexpand)) = self.fetch()? else {
             return self.recover_runaway_arg(name);
         };
         if self.scanner_status == ScannerStatus::Matching {
@@ -552,11 +552,11 @@ impl Expander {
         // 不同：那些是展开位置）。
         match tok.catcode() {
             Some(Catcode::BeginGroup) => {
-                let mut tokens = Vec::new();
+                let mut tokens: Vec<(Token, bool)> = Vec::new();
                 let mut depth = 0usize;
                 loop {
-                    let t = match self.fetch()? {
-                        Some(p) => p.0,
+                    let (t, ne) = match self.fetch()? {
+                        Some(p) => p,
                         None => {
                             // 第二十刀定位开关（NTEX_ARG_EOF=1）：点名实参组扫描
                             // 逃逸到输入末尾的宏与当前行号。
@@ -588,7 +588,7 @@ impl Expander {
                                 let got: Vec<String> = tokens
                                     .iter()
                                     .take(10)
-                                    .map(|t: &Token| {
+                                    .map(|(t, _): &(Token, bool)| {
                                         if let Some(c) = t.csid() {
                                             format!("\\{}", self.intern.name(c))
                                         } else {
@@ -651,16 +651,16 @@ impl Expander {
                     match t.catcode() {
                         Some(Catcode::BeginGroup) => {
                             depth += 1;
-                            tokens.push(t);
+                            tokens.push((t, ne));
                         }
                         Some(Catcode::EndGroup) => {
                             if depth == 0 {
                                 break;
                             }
                             depth -= 1;
-                            tokens.push(t);
+                            tokens.push((t, ne));
                         }
-                        _ => tokens.push(t),
+                        _ => tokens.push((t, ne)),
                     }
                 }
                 Ok(Arc::from(tokens))
@@ -687,11 +687,11 @@ impl Expander {
                 // Forbidden——差异在「取到的是 active char 而非控制序列」。
                 if let Err(e) = self.check_not_outer(tok) {
                     if self.recover_forbidden_outer(&e) {
-                        return Ok(Arc::from([tok]));
+                        return Ok(Arc::from([(tok, noexpand)]));
                     }
                     return Err(e);
                 }
-                Ok(Arc::from([tok]))
+                Ok(Arc::from([(tok, noexpand)]))
             }
         }
     }
@@ -1516,13 +1516,13 @@ impl Expander {
 /// `\a{x}y!` 得 `{x}y`，`\a{{x}}!` 得 `{x}`（tex.web 只剥一层）。
 /// 仅正常 found 路径剥：runaway / extra-} / Paragraph ended 恢复路径在
 /// tex.web 里直接 `pstack[n]:=link(temp_head)`，保留原样。
-fn strip_single_group(buf: Vec<Token>) -> Vec<Token> {
-    if buf.len() < 2 || buf[0].catcode() != Some(Catcode::BeginGroup) {
+fn strip_single_group_marked(buf: Vec<(Token, bool)>) -> Vec<(Token, bool)> {
+    if buf.len() < 2 || buf[0].0.catcode() != Some(Catcode::BeginGroup) {
         return buf;
     }
     let mut depth = 0usize;
     let mut close = None;
-    for (i, t) in buf.iter().enumerate() {
+    for (i, (t, _)) in buf.iter().enumerate() {
         match t.catcode() {
             Some(Catcode::BeginGroup) => depth += 1,
             Some(Catcode::EndGroup) => {
