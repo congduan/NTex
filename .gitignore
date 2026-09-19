@@ -29,9 +29,10 @@ dviprint.py
 tmp_pngcmp.py
 
 # 引擎本地构建产物（站点素材在 site/public/ 内另行跟踪）
-/demo.dvi
-/demo.pdf
-/demo-*.png
+# 注：ntex-dvi / ntex-backend 的输出落在**输入文件旁**——示例样张已迁 samples/，
+# 故派生物随样本走（*.aux / *.log / *.out 已由上方全局规则覆盖）
+samples/*.dvi
+samples/*.png
 
 # TRIP/ETRIP 运行产物
 /tr
@@ -48,8 +49,7 @@ tmp_pngcmp.py
 /mu1*.pdf
 /revision-test.dvi
 
-# resume1 现场复现产物（源与 driver 入库，DVI/PDF 为派生件）
-/resume1.dvi
+# resume1 现场复现产物（源与 driver 入库 samples/，DVI/PDF 为派生件，随 samples/ 规则忽略）
 
 # 备料字体暂存（环境只读主目录；正式入库字体经 make fixtures 流程）
 /.local-fonts/
@@ -71,3 +71,7 @@ __pycache__/
 tests/semantic/work/
 tests/semantic/cases/*.dvi
 *.pdf
+
+# 复现对照证据 PDF —— 上方 *.pdf 全局忽略的例外（证据类产物入库，
+# 见 fixtures/repro/README.md「证据产物」节）
+!fixtures/repro/pdf/*.pdf

@@ -1064,8 +1064,8 @@ mod tests {
     /// 避免"测试用一份字体、前端用另一份"的漂移。
     const FANDOL_BYTES: &[u8] = include_bytes!("../../ntex-tauri/ui/fonts/FandolSong-Regular.otf");
 
-    /// 仓库根的简历示例（原故障现场：Tauri 渲染报 34 行缺字体 + 数百行缺字形）。
-    const RESUME_PLAIN: &str = include_str!("../../../resume-plain.tex");
+    /// 简历示例（`samples/resume-plain.tex`；原故障现场：Tauri 渲染报 34 行缺字体 + 数百行缺字形）。
+    const RESUME_PLAIN: &str = include_str!("../../../samples/resume-plain.tex");
 
     /// 内嵌示例 → DVI 非空、结构正确（pre=247 / 版本 2，post_post 尾随 4×223）、
     /// 含 cmr10 字体定义、页数 ≥ 1。
@@ -1094,7 +1094,7 @@ mod tests {
     /// 核心 penalty 定义。此回归覆盖 Tauri/WASM 所走的无预载编译管线。
     #[test]
     fn self_bootstrapped_plain_demo_compiles_without_undefined_eject() {
-        const SOURCE: &str = include_str!("../../../demo1-fixed.tex");
+        const SOURCE: &str = include_str!("../../../samples/demo1-fixed.tex");
         let compiled = compile_pipeline(SOURCE).expect("自举 plain 示例应能编译");
         assert!(!compiled.pages.is_empty(), "示例应至少产出一页");
         assert!(
@@ -1917,7 +1917,8 @@ mod tests {
 
     /// 缺宏包（`\usepackage{...}` 指向包里没有的 .sty）时：作业硬失败，但**错误
     /// 消息必须带首现场**——否则前端只剩一句 `InvalidInput: \read 流未打开`，
-    /// 看不出是哪个文件没找到（`latex1.tex` 的 lingmacros/tree-dvips 即此形态）。
+    /// 看不出是哪个文件没找到（`samples/latex-sample2e-slim.tex` 的
+    /// lingmacros/tree-dvips 即此形态）。
     #[test]
     fn missing_latex_package_error_carries_first_error_line() {
         let assets =

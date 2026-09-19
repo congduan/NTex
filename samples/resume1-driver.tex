@@ -3,8 +3,8 @@
 %                       只在其前面把运行环境补齐，再 \input 目标文件。
 %
 % 用法：
-%   cargo run -p ntex-dvi -- resume1-driver.tex resume1.dvi
-%   cargo run -p ntex-pdf -- resume1.dvi resume1.pdf
+%   cargo run -p ntex-dvi -- samples/resume1-driver.tex samples/resume1.dvi
+%   cargo run -p ntex-pdf -- samples/resume1.dvi samples/resume1.pdf
 %
 % 目标文件是「朴素 plain TeX」源（LLM 手写体）：自己不做字体设置，
 % 且夹带若干 LaTeX 习惯写法。本驱动只补运行环境（相当于给 TeX 一份
@@ -58,4 +58,5 @@
 \long\def\pagestyle=#1\par{\relax}
 
 % ---------- 4) 交给目标文件 ----------
-\input resume1-plain.tex
+% 路径相对**仓库根**（与上文用法一致：请在仓库根启动 ntex-dvi）
+\input samples/resume1-plain.tex

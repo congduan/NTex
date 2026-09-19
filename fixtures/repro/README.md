@@ -26,6 +26,22 @@
 | repro_expaf.tex | `$\expandafter$` 数学残留（参考 $\x 靠 \scriptfont 报错关闭） | 部分（3a2cb63 兜底；\scriptfont 检查未修） |
 | repro_everymath_radical.tex | `\everymath{\radical"3}` 的 mathord 报错（l.412；\radical 字段扫描上下文敏感） | 已修（隐含组修复连带，未提交） |
 
+## 证据产物（`pdf/`，2026-09-19 自仓库根目录迁入）
+
+复现/差异定位时产出的**对照 PDF** 集中在此，避免散落在仓库根目录。它们不是"可再生
+构建产物"——原输出环境（pdfTeX 版本、字体树）不可复现，故**入库留存**为来源证明；
+`.gitignore` 的 `*.pdf` 全局规则管不到已追踪文件，因此为该目录补了负例。
+
+| 文件 | 证据内容 | 首次入库 |
+|---|---|---|
+| `pdf/hb7.pdf` | `\def\usepkg#1#{OK-BODY}` 调用侧死循环的极简复现输出（`\usepackage` 缺包路径） | 211a54a |
+| `pdf/stop.pdf` | `write`/`show` 组字符字面输出——tex.web `token_show` 语义对照（矩阵 hash_brace 簇） | 211a54a |
+| `pdf/und.pdf` | `\ifx\<未定义>\@undefined` 在 harness 上下文判假（确凿引擎差异 A1.quindecies） | d712c35 |
+| `pdf/resume-plain.pdf` | `samples/resume-plain.tex` 端到端渲染产出（源在 `samples/`，被 `ntex-wasm` `include_str!` 消费） | a766aba |
+| `pdf/demo1-fixed.pdf` | `samples/demo1-fixed.tex` 端到端渲染产出（同上） | a766aba |
+
+> 与 `repro_*.tex` 的分工：`*.tex` 是**可复跑的输入**，`pdf/` 是**不可复跑的输出快照**。
+
 ## 注意
 
 - 复现文件可能含**故意未闭合**的组/数学（复现错误恢复链场景）——运行预期有报错输出，属正常

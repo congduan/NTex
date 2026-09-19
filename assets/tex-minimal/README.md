@@ -99,7 +99,7 @@ tex/generic/pdftexcmds/
 tex/generic/atbegshi/
 ```
 
-`tex/latex/misc/` 的两个宏包服务于语言学示例文档（如仓库 `latex1.tex` 的
+`tex/latex/misc/` 的两个宏包服务于语言学示例文档（如仓库 `samples/latex-sample2e-slim.tex` 的
 `\enumsentence`/`\shortex`/`\node`），取自 CTAN
 `/macros/latex209/contrib/trees/tree-dvips`（阿里云镜像；CTAN 主站与清华镜像
 被本机网络策略拦截时改走它）。tree-dvips 是 LaTeX209 风格、依赖 dvips

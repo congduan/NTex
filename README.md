@@ -71,9 +71,9 @@ make trip       # TRIP 一致性测试（stub 驱动验证管路）
 make diff       # 差分测试（示例 fixtures）
 make bench      # 基准（stub 驱动验证管路）
 
-# 端到端演示：demo.tex → DVI → PDF（正式后端）
-cargo run -p ntex-dvi -- demo.tex     # 排版（TFM / Knuth-Plass / 断页 / \shipout）→ demo.dvi
-cargo run -p ntex-pdf -- demo.dvi     # DVI → PDF（Type1 字体嵌入）→ demo.pdf
+# 端到端演示：samples/demo.tex → DVI → PDF（正式后端）
+cargo run -p ntex-dvi -- samples/demo.tex   # 排版（TFM / Knuth-Plass / 断页 / \shipout）→ samples/demo.dvi
+cargo run -p ntex-pdf -- samples/demo.dvi   # DVI → PDF（Type1 字体嵌入）→ samples/demo.pdf
 
 # LaTeX 快路径：无需外部 TeX Live，默认从 assets/fmt 与 assets/tex-minimal 查找
 cargo run -p ntex-dvi -- --fmt latex.fmt doc.tex

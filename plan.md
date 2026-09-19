@@ -829,7 +829,7 @@ vs 全量 diff 作 CI 常驻检查，闭环 §7 风险项）；`.aux`/`.toc` 增
   （同 dvipdfmx），词距用调整量表达——pdftotext 提取干净、渲染与 dvipdfmx 像素级一致
   （demo.tex 两页对比墨水比 1.02\~1.04，均为字体提示/抗锯齿差异）。
 - [ ] L2 字节兼容：简单文档对照 pdfTeX 逐字节 diff（关闭时间戳/元数据随机性）
-- [x] **渲染后端**（2026-09-05 选型由 Skia 改为 vello：纯 Rust/wgpu 栈、WASM 同构、免 C++ 绑定，见 §13）：`crates/ntex-backend` 落地 `Backend` trait + 双实现——软光栅（离线环境自研位图/PNG）+ **vello 0.10 GPU 路径**（wgpu 29 无头渲染 Rgba8Unorm 纹理回读，area 亚像素 AA）。两后端共享「盒树 → 矩形指令」prims 遍历，demo 差分：墨区面积差 0.15%、几何完全重合（差异仅亚像素边缘表现）；GPU 不可用报错回落软光栅。CLI：`cargo run -p ntex-backend -- demo.tex out 144 --vello`。字符暂为占位方框（TFM 无轮廓，M9 字形在同一 prims 层扩展曲线指令，两后端同步受益）
+- [x] **渲染后端**（2026-09-05 选型由 Skia 改为 vello：纯 Rust/wgpu 栈、WASM 同构、免 C++ 绑定，见 §13）：`crates/ntex-backend` 落地 `Backend` trait + 双实现——软光栅（离线环境自研位图/PNG）+ **vello 0.10 GPU 路径**（wgpu 29 无头渲染 Rgba8Unorm 纹理回读，area 亚像素 AA）。两后端共享「盒树 → 矩形指令」prims 遍历，demo 差分：墨区面积差 0.15%、几何完全重合（差异仅亚像素边缘表现）；GPU 不可用报错回落软光栅。CLI：`cargo run -p ntex-backend -- samples/demo.tex out 144 --vello`。字符暂为占位方框（TFM 无轮廓，M9 字形在同一 prims 层扩展曲线指令，两后端同步受益）
 - [x] **排版调试 overlay**（2026-09-05）：prims 层独立 `debug` 通道（`RenderOptions::debug` / CLI `--debug`）——版心+盒边界描边（HBox 蓝/VBox 紫红）、基线（青）、glue 自然宽带+stretch/shrink 指示线（fil 阶亮绿）、kern 橙线、penalty 断点标记（禁断深红粗线）；两后端在内容之后绘制，`rects` 通道与差分口径零变化（demo 实测 GPU/软光栅 debug 位图逐字节一致）
 - [x] **实时预览工作台**（2026-09-05，M8 §10 WASM 预览的桌面先行形态）：`crates/ntex-studio`——左侧 TeX 语法高亮编辑器（注释/控制序列/数学/组符分色）+ 右侧 vello GPU 表面渲染。egui-wgpu 0.35 三段式回调桥接（prepare 离屏 Rgba8Unorm 矢量光栅化 → paint 全屏 quad blit），缩放/平移只改 Scene 仿射、始终按显示分辨率重光栅化（放大不糊）；250ms 防抖同步重排，dpi/调试 overlay 开关、翻页、编译错误进状态栏不 panic。**依赖硬约束：eframe 0.35 ↔ vello 0.10 恰共用 wgpu 29**（eframe 0.36 已用 wgpu 30 会分裂，升级前必验）。`ntex-backend::build_scene` 抽为公共 Scene 构建（无头回读与 GUI 共用同一事实源）
 - [ ] WASM 前端：wasm-bindgen + Canvas2D/WebGL 实时预览（接 M5 增量，毫秒级刷新）
@@ -907,7 +907,7 @@ LaTeX 兼容战役（进行中）
   `\fontchar*`（scan/save/primitive 三份重复实现统一），回归锁
   `ntex-layout/tests/cjk_charcode.rs`（6 测试，含突变验证）；
 - **端到端样张** `demo-cjk.tex`：FandolSong 24pt，「中文排版 / 一二…十」PNG 渲染
-  字形正确（`cargo run -p ntex-backend -- demo-cjk.tex demo-cjk 150 --glyphs`）；
+  字形正确（`cargo run -p ntex-backend -- samples/demo-cjk.tex demo-cjk 150 --glyphs`）；
   `make check` 全绿；
 - **遗留**：输入层 UTF-8（刀 2，源文件直写中文前提）、HarfBuzz 整形、wasm 侧
   OTF 注入联调、CJK 断行/标点挤压（④）。
@@ -965,7 +965,7 @@ LaTeX 兼容战役（进行中）
   交互式编辑器下单个缺字就是方框，故取全档而非 l1 档（实测 sym 136 KB /
   l1 2.0 MB / full 3.58 MB）。
 - **验证**：`cargo test -p ntex-wasm` 12/12 绿（含新增 4 锁）；native 复现命令
-  `NTEX_OTF_DIR=/tmp/subonly cargo run -q -p ntex-dvi -- resume-plain.tex`
+  `NTEX_OTF_DIR=/tmp/subonly cargo run -q -p ntex-dvi -- samples/resume-plain.tex`
   零错误（把只有浏览器能复现的故障变成命令行可二分）；`make lint` 全绿。
 - **遗留**：中文只有 Regular 一款（无粗体/斜体，刀 4）、`\catcode` >255（A5）、
   CJK 断行/标点挤压（④）、`.fmt` 快照 misc 扩容版本兼容。

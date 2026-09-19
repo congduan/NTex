@@ -224,7 +224,7 @@ native 路径不受影响）。
   `! Missing { inserted` → `! Missing # inserted in alignment preamble.`
   （最小复现：`/tmp/ntex-repro/run23.mjs`，`tabular_one`）。根因在 latex.ltx
   `\@mkpream`/`\@arstrut` 前言构造路径与 ntex-core 对齐机制的某处交互——
-  `latex1.tex`（`\shortex` 即 tabular 树）当前因此 0 页；`\node`、
+  `samples/latex-sample2e-slim.tex`（`\shortex` 即 tabular 树）当前因此 0 页；`\node`、
   `\enumsentence`（仅 1 条 list 相关错）基本可用。
 - **宏包闭包**：`lingmacros`/`tree-dvips` 已入 `assets/tex-minimal/tex/latex/
   misc/`（2026-09-18 取自 CTAN `/macros/latex209/contrib/trees/tree-dvips`，

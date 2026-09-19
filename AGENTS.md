@@ -51,11 +51,11 @@ make lvt-run ARGS=--all         # expl3 官方测试跑分（分母！见 docs/e
 make recovery-check             # 错误恢复语义矩阵（OK/DIFF 地图，tooling-trust §2.6）
 make oracle-verify              # 上述矩阵的 oracle（pdfTeX 冻结判据）仪器自检
 
-# 端到端演示
-cargo run -p ntex-dvi -- demo.tex   # → demo.dvi
-cargo run -p ntex-pdf -- demo.dvi   # → demo.pdf
-cargo run -p ntex-backend -- demo.tex demo 144 --vello  # → demo-01.png…（vello GPU + 真字形；--no-glyphs 回落方框，去掉 --vello 走软光栅，同样支持 --glyphs）
-cargo run -p ntex-backend -- demo.tex demo 144 --debug  # → demo-01-debug.png…（排版调试 overlay：盒边界/glue/断点标记，独立通道不影响正常渲染）
+# 端到端演示（样张与派生物见 samples/README.md）
+cargo run -p ntex-dvi -- samples/demo.tex   # → samples/demo.dvi
+cargo run -p ntex-pdf -- samples/demo.dvi   # → samples/demo.pdf
+cargo run -p ntex-backend -- samples/demo.tex demo 144 --vello  # → samples/demo-01.png…（vello GPU + 真字形；--no-glyphs 回落方框，去掉 --vello 走软光栅，同样支持 --glyphs）
+cargo run -p ntex-backend -- samples/demo.tex demo 144 --debug  # → samples/demo-01-debug.png…（排版调试 overlay：盒边界/glue/断点标记，独立通道不影响正常渲染）
 
 # 实时预览工作台（左 TeX 编辑 / 右 vello GPU 渲染，250ms 防抖重排）
 cargo run -p ntex-studio [文件.tex]   # TFM 查找依赖运行目录，请在仓库根启动

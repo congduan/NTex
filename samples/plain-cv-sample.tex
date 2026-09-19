@@ -1,0 +1,57 @@
+% cv.tex -- Plain TeX Curriculum Vitae
+\baselineskip=13pt
+\parindent=0pt
+\parskip=0pt
+\hsize=6.2in
+\vsize=9in
+
+% define macros
+\def\sect#1{%
+  \vskip 10pt
+  {\bf\large #1}%
+  \vskip3pt
+  \hrule
+  \vskip6pt
+}
+
+\def\job#1#2{{\bf #1}\hfill #2\par\vskip2pt}
+\def\point#1{\hangindent=16pt #1\par\vskip1pt}
+
+% Header
+\centerline{{\bf\huge Alice Miller}}
+\centerline{alice.miller@email.com \quad | \quad +1 555-123-4567}
+\centerline{City, Country \quad | \quad linkedin.com/in/alice}
+\vskip 8pt
+\hrule
+\vskip 6pt
+
+\sect{Education}
+\job{University of Example, BSc Computer Science}{2021 -- 2025}
+\point{GPA: 3.7/4.0. Relevant courses: Algorithms, Operating Systems, Database, Web Development.}
+\point{Award: University Merit Scholarship, 2023, 2024.}
+
+\sect{Technical Skills}
+\point{Languages: Python, C++, JavaScript, SQL}
+\point{Tools \& Frameworks: Git, Linux, React, Docker, MySQL}
+\point{Soft skills: Team collaboration, technical documentation, debugging}
+
+\sect{Work Experience}
+\job{Software Engineering Intern, TechStart Inc.}{Summer 2024}
+\point{Helped implement backend APIs in Python for internal dashboard service.}
+\point{Wrote unit tests and fixed bugs in existing codebase.}
+\point{Collaborated with frontend team to integrate RESTful interfaces.}
+
+\job{Part-time Web Developer, Campus IT Office}{2022 -- 2024}
+\point{Maintained university department websites, updated HTML/CSS pages.}
+\point{Improved page load speed by optimizing static assets.}
+
+\sect{Projects}
+\job{Personal Task Management Web App}{2023}
+\point{Built full-stack web app using React and Flask to track daily tasks.}
+\point{Implemented user login and persistent data storage with SQLite.}
+\point{Deployed the application on a cloud virtual machine.}
+
+\sect{Interests}
+\point{Open-source contribution, competitive programming, hiking and reading.}
+
+\bye
