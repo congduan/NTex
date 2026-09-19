@@ -266,12 +266,16 @@ mmap 只读 + 页级 COW。**暂缓理由已消解**：M2 吞吐已量化（1.01
 | 5 | `\cjkbreakmode`（misc 66）CJK 字间断点 + 禁则；中西文交界断点 + `\lefthyphenmin`/`\righthyphenmin` | ✅（XeTeX 对照 oracle + `cmp` 逐字节零回归） |
 | 4 | 中文粗体/斜体（现仅 Fandol Regular） | ⬜ |
 
-**宏包管理（`ntex-pkg`，2026-09-19 新建）**：边界见 §6.2 第 8/9 条。已落地**解析层 + 契约层**——
-`tlpdb.rs`（TLPDB 状态机解析 + `by_basename`/`by_path` 反查 + TDS 优先级）、`resolve.rs`
+**宏包管理（`ntex-pkg`，2026-09-19 新建）**：边界见 §6.2 第 8/9 条。已落地**解析层 + 契约层 + 取料层 ①②**——
+`tlpdb.rs`（TLPDB 状态机解析 + `by_basename`/`by_path` 反查 + TDS 优先级 + `RELOC/` 归一）、`resolve.rs`
 （`\usepackage`/`\documentclass`→包解析 + 依赖闭包 BFS）、`lock.rs`（`ntex.lock` 确定性编解码 + 漂移 `diff`）、
-`cache.rs`（内容寻址缓存布局 + 名字安全）、`source.rs`（`PackageSource` trait + ① 本地 TeX Live 树源）、
-CLI `ntex-pkg`（`index`/`provide`/`resolve`/`lock`/`check`/`local`）。取料层 ② tlnet / ③ CTAN /
-④ 离线归档为**显式未实现插口**（不静默降级）。验收：真实 TLPDB + `kpsewhich` oracle 9/9。
+`cache.rs`（内容寻址缓存布局 + 名字安全 + **真实 SHA-512 字节哈希**）、
+`source.rs`（`PackageSource` trait + ① 本地 TeX Live 树源）、
+`tlnet.rs`（② tlnet 镜像：URL 由 `revision` 钉死 + 下载后 SHA-512 校验 + 容器按 `runfiles` 裁剪）、
+`vendor.rs`（闭包物化成 TDS 子树；四态逐字节比对，源缺失显式报错并阻塞收敛）、
+CLI `ntex-pkg`（`index`/`provide`/`resolve`/`lock`/`check`/`local`/**`vendor`**/**`fetch`**）。
+取料层 ③ CTAN / ④ 离线归档仍为**显式未实现插口**（不静默降级）。
+验收：解析层真实 TLPDB + `kpsewhich` oracle 9/9；② 协议层离线假边缘全覆盖 + 真实镜像端到端（见待办项）。
 
 剩余清单：
 
@@ -285,7 +289,21 @@ CLI `ntex-pkg`（`index`/`provide`/`resolve`/`lock`/`check`/`local`）。取料�
   （① 本地 TeX Live 树已实现）。**解析层验收**：真实 TLPDB（2024basic，346 记录）+
   `kpsewhich` 路径 oracle **9/9 一致**；73 单测 + `make check` 全绿。简化登记见
   [docs/KNOWN-SIMPLIFICATIONS.md §9](docs/KNOWN-SIMPLIFICATIONS.md)。
-- [ ] **宏包管理·取料与接线**：取料层 ② tlnet / ③ CTAN / ④ 离线归档 + 真实 sha512 字节哈希 +
+- [x] **宏包管理·取料层 ② + 资产物化**（2026-09-19，同日第二刀）：
+  `tlnet.rs`（② tlnet 镜像：`<仓库>/archive/<包>.r<rev>.tar.xz` 由 revision 钉死、按 TLPDB
+  `containerchecksum` 做**真实 SHA-512 字节校验**、容器条目按 `runfiles` 裁剪 + `RELOC/`→`texmf-dist/`
+  重定位）+ `vendor.rs`（闭包 → TDS 子树物化，四态 `Add`/`Differ`/`Identical`/`SourceMissing`
+  逐字节比对，源缺失**显式报告并阻塞收敛**）+ `Vfs::create_dir_all`（宿主侧建目录能力，默认
+  no-op 不破平坦后端）+ `tlpdb.rs::install_rel_path`（已安装树与缓存树共用一条路径映射）+
+  `tds_rank` 修为**先归一后判档** + CLI `vendor` / `fetch`。
+  **验收**：`make check` 全绿（ntex-pkg **92** 单测）；真实镜像端到端（阿里云 CTAN 镜像 + 真实
+  TL2026 TLPDB 20.7MB）：`fetch infwarerr` → 1 容器 1 文件 8.2KB（SHA-512 通过）；`fetch
+  --documentclass article` → `latex.r79618` 171 文件 2.7MB；`vendor --write --lock` → 目标树
+  171 文件、复跑**一致 171 / 新增 0**（幂等）；`resolve --documentclass article` 选定稳定版
+  `latex` 而非 `latex-base-dev`（`tds_rank` 修复在真实库生效）。刻意简化（宿主 `curl`/`tar`
+  当边缘、无 GPG 验签、无断点续传、缓存布局两套）见
+  [docs/KNOWN-SIMPLIFICATIONS.md §9](docs/KNOWN-SIMPLIFICATIONS.md)。
+- [ ] **宏包管理·取料与接线（余项）**：取料层 ③ CTAN / ④ 离线归档 + GPG detached 验签 +
   `\usepackage` 缺包即报（MiKTeX 式一条命令补）↔ 引擎接线，目标机零 TeX Live
 - [ ] 引擎身份模拟（`\pdftexversion` 等）
 - [ ] **MCP server / AI 工具链**（stdio JSON-RPC，复用 `Typesetter` 库接口 + `MemVfs`）：
@@ -448,6 +466,9 @@ CLI `ntex-pkg`（`index`/`provide`/`resolve`/`lock`/`check`/`local`）。取料�
    ④ 离线归档包（内网 opt-in）。**禁止**在 `\input`/`\usepackage` 失败时隐式自动联网
    （违反可复现性、安全与证据口径三条）。多镜像 + 离线回落是既有事实要求——本仓库已发生过
    「CTAN 主站与清华镜像被网络策略拦截」（见 assets/tex-minimal/README.md）。
+   **落地进度（2026-09-19）**：① 与 ② 已实现（② 的 GPG 验签**未做**，只做 SHA-512 容器校验；
+   且 `HostContainerIo` 把 HTTP/TLS/xz 交给宿主 `curl`/`tar`）→ 见 KNOWN-SIMPLIFICATIONS §9；
+   ③ ④ 仍为显式未实现插口。
 
 ### 6.3 风险与关卡
 

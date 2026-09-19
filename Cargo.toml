@@ -37,6 +37,7 @@ rust-version = "1.80"
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 regex = "1.10"
+sha2 = "0.10"
 similar = "2.5"
 tempfile = "3.10"
 ntex-core = { path = "crates/ntex-core", version = "0.1.0" }

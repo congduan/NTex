@@ -3414,6 +3414,7 @@ name = "ntex-pkg"
 version = "0.1.0"
 dependencies = [
  "ntex-io",
+ "sha2",
 ]
 
 [[package]]

@@ -20,6 +20,18 @@ pub trait Vfs: std::fmt::Debug + std::any::Any {
     fn write(&mut self, path: &str, bytes: &[u8]) -> io::Result<()>;
     /// 追加写。
     fn append(&mut self, path: &str, bytes: &[u8]) -> io::Result<()>;
+    /// 递归建目录（已存在即成功）。
+    ///
+    /// **默认 no-op**：平坦后端（[`MemVfs`] 的键是整串路径，没有目录概念）无需实现。
+    /// 只有真正落盘的后端（[`LocalVfs`]）才需要——调用方因此可以「先 ensure 目录再
+    /// [`Vfs::write`]」，不必知道后端是不是文件系统。
+    ///
+    /// 用途：资产物化（`ntex-pkg vendor` 把依赖闭包铺进 TDS 子树）与将来的
+    /// T2 下载缓存落盘。RFC-3 语义不变：这是**宿主侧**的 IO 能力，排版内核
+    /// 仍然只经由本 trait 读写，不直接碰 `std::fs`。
+    fn create_dir_all(&mut self, _path: &str) -> io::Result<()> {
+        Ok(())
+    }
     /// 类型擦除互转（测试断言写入内容用）。
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }
@@ -47,6 +59,10 @@ impl Vfs for LocalVfs {
             .append(true)
             .open(path)?;
         f.write_all(bytes)
+    }
+
+    fn create_dir_all(&mut self, path: &str) -> io::Result<()> {
+        std::fs::create_dir_all(path)
     }
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
@@ -224,6 +240,10 @@ impl Vfs for SearchPathVfs {
         self.inner.append(path, bytes)
     }
 
+    fn create_dir_all(&mut self, path: &str) -> io::Result<()> {
+        self.inner.create_dir_all(path)
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
@@ -255,6 +275,36 @@ mod tests {
         let mut v = LocalVfs;
         let r = v.read("/nonexistent/ntex-io-test-file.txt");
         assert!(matches!(r, Ok(None)), "{r:?}");
+    }
+
+    #[test]
+    fn local_vfs_create_dir_all_enables_nested_write() {
+        // 目录不存在时 `std::fs::write` 会失败——`create_dir_all` 是「先铺目录再写」
+        // 的前置能力（ntex-pkg vendor 物化 TDS 子树、T2 下载缓存落盘都依赖它）。
+        let mut v = LocalVfs;
+        let base = std::env::temp_dir().join(format!("ntex-io-dirtest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let nested = base.join("tex/latex/base");
+        let nested_str = nested.to_str().expect("临时路径应为合法 UTF-8");
+
+        // 先证明不建目录确实写不进去（否则本测试就是空转）。
+        let direct = nested.join("article.cls");
+        assert!(
+            v.write(direct.to_str().unwrap(), b"x").is_err(),
+            "父目录不存在时写入应当失败"
+        );
+
+        v.create_dir_all(nested_str).expect("建目录应成功");
+        v.write(direct.to_str().unwrap(), b"% article")
+            .expect("建目录后写入应成功");
+        assert_eq!(
+            v.read(direct.to_str().unwrap()).unwrap(),
+            Some(b"% article".to_vec())
+        );
+
+        // 幂等：重复调用不报错（调用方无需先判断存在性）。
+        v.create_dir_all(nested_str).expect("重复建目录应成功");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     // ---------- G1：搜索路径（\input plain → \input hyphen 的缺口） ----------

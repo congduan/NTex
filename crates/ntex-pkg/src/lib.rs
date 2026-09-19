@@ -37,7 +37,9 @@ pub mod resolve;
 pub mod source;
 #[cfg(test)]
 pub(crate) mod testdata;
+pub mod tlnet;
 pub mod tlpdb;
+pub mod vendor;
 
 /// ntex-pkg 错误模型。
 ///

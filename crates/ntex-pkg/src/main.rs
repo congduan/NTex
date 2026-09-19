@@ -8,11 +8,14 @@
 use std::process::ExitCode;
 
 use ntex_io::{LocalVfs, Vfs};
+use ntex_pkg::cache;
 use ntex_pkg::lock::{self, LockedPackage};
 use ntex_pkg::resolve::{self, Closure, RequireKind};
 use ntex_pkg::source::{LocalTexLiveSource, PackageSource, ResolveOutcome, SourceChain};
+use ntex_pkg::tlnet::{self, HostContainerIo, TlnetSource};
 use ntex_pkg::tlpdb::{host_arch, TlPdb};
-use ntex_pkg::{cache, Error};
+use ntex_pkg::vendor::{self, PlannedFile};
+use ntex_pkg::Error;
 
 /// `check` 发现锁漂移时的退出码。
 const EXIT_DRIFT: u8 = 3;
@@ -38,6 +41,16 @@ ntex-pkg — NTex 宏包解析与取料（M9 · plan.md §6.2 第 8/9 条）
 
   ntex-pkg local   <tlpdb> <TL 树根> <包名|文件名>...
       探测包在本地 TeX Live 树上的存在情况（① 源，零下载）。
+
+  ntex-pkg vendor  <tlpdb> <TL 树根> <目标目录> [--write] [--lock <路径>] [需求...]
+      把依赖闭包**物化**成目标目录下的一棵 TDS 子树（默认 dry-run，只报差异）。
+      `--write` 落盘；`--lock <路径>` 同时写出闭包的 ntex.lock（把资产集钉死）。
+      这是「内置名单 ≡ 闭包」的执行端：资产集由种子名单推导，不靠手抄目录。
+
+  ntex-pkg fetch   <tlpdb> <仓库 URL> <缓存根> [需求...]
+      从 tlnet 镜像把闭包取到本地，铺成一棵**可当 TL 树根用**的缓存树
+      （`<缓存根>/tlpkg/texlive.tlpdb` + `<缓存根>/texmf-dist/**`）。
+      每个容器都按 TLPDB 的 SHA-512 校验；随后可把 <缓存根> 当 <TL 树根> 喂给 vendor。
 ";
 
 /// CLI 错误：库错误 + 用法错误（用法问题不该污染库的错误模型）。
@@ -92,6 +105,8 @@ fn run(args: &[String]) -> Result<ExitCode, CliError> {
         "lock" => cmd_lock(rest),
         "check" => cmd_check(rest),
         "local" => cmd_local(rest),
+        "vendor" => cmd_vendor(rest),
+        "fetch" => cmd_fetch(rest),
         other => Err(usage(format!("未知子命令 `{other}`"))),
     }
 }
@@ -479,5 +494,226 @@ fn cmd_local(rest: &[String]) -> Result<ExitCode, CliError> {
             }
         }
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `vendor` 的选项。
+struct VendorArgs {
+    tlpdb: String,
+    root: String,
+    target: String,
+    write: bool,
+    lock_path: Option<String>,
+    requests: Vec<(String, RequireKind)>,
+}
+
+/// 解析 `vendor` 参数：**前三个自由参数固定为 `<tlpdb> <TL 根> <目标目录>`**，
+/// 其后的自由参数才是需求名（避免"包名与位置参数混在一起"的歧义）。
+fn parse_vendor_args(rest: &[String]) -> Result<VendorArgs, CliError> {
+    let mut free: Vec<String> = Vec::new();
+    let mut write = false;
+    let mut lock_path: Option<String> = None;
+    let mut req_tokens: Vec<String> = Vec::new();
+
+    let mut i = 0usize;
+    while i < rest.len() {
+        match rest[i].as_str() {
+            "--write" => {
+                write = true;
+                i += 1;
+            }
+            "--dry-run" => {
+                write = false;
+                i += 1;
+            }
+            "--lock" => {
+                let v = rest.get(i + 1).ok_or_else(|| usage("`--lock` 缺少取值"))?;
+                lock_path = Some(v.clone());
+                i += 2;
+            }
+            "--documentclass" | "--class" | "--input" => {
+                let v = rest
+                    .get(i + 1)
+                    .ok_or_else(|| usage(format!("`{}` 缺少取值", rest[i])))?;
+                req_tokens.push(rest[i].clone());
+                req_tokens.push(v.clone());
+                i += 2;
+            }
+            flag if flag.starts_with("--") => {
+                return Err(usage(format!("`vendor` 未知选项 `{flag}`")));
+            }
+            other => {
+                free.push(other.to_owned());
+                i += 1;
+            }
+        }
+    }
+
+    if free.len() < 3 {
+        return Err(usage(
+            "`vendor` 需要三个位置参数：<tlpdb> <TL 树根> <目标目录>",
+        ));
+    }
+    // 第 4 个起的自由参数是包名（需求）。
+    req_tokens.extend(free[3..].iter().cloned());
+    let requests = parse_requests(&req_tokens)?;
+    if requests.is_empty() {
+        return Err(usage(
+            "`vendor` 需要至少一个需求（包名，或 --documentclass / --input）",
+        ));
+    }
+    Ok(VendorArgs {
+        tlpdb: free[0].clone(),
+        root: free[1].clone(),
+        target: free[2].clone(),
+        write,
+        lock_path,
+        requests,
+    })
+}
+
+/// 列出待写/缺失条目（截断，避免刷屏）。
+fn print_file_list(title: &str, files: &[&PlannedFile], limit: usize) {
+    if files.is_empty() {
+        return;
+    }
+    println!("\n{title}（{}）：", files.len());
+    for f in files.iter().take(limit) {
+        println!("  {:<28} {}", f.package, f.rel_path);
+    }
+    if files.len() > limit {
+        println!("  …（另 {} 个）", files.len() - limit);
+    }
+}
+
+fn cmd_vendor(rest: &[String]) -> Result<ExitCode, CliError> {
+    let a = parse_vendor_args(rest)?;
+    let mut vfs = LocalVfs;
+    let db = load_pdb(&mut vfs, &a.tlpdb)?;
+    let closure = resolve::closure_for_requires(&db, &a.requests, host_arch())?;
+    let src = LocalTexLiveSource::new(a.root.clone());
+
+    let plan = vendor::plan(&db, &closure, &src, &a.target, &mut vfs)?;
+    print!("{}", plan.summary());
+
+    print_file_list("待写入", &plan.pending(), 40);
+    let missing = plan.source_missing();
+    if !missing.is_empty() {
+        println!(
+            "\n源树缺失（{}）——TLPDB 声明了这些运行面文件，但 `{}` 里读不到：",
+            missing.len(),
+            a.root
+        );
+        for f in missing.iter().take(40) {
+            println!("  {:<28} {}", f.package, f.rel_path);
+        }
+        if missing.len() > 40 {
+            println!("  …（另 {} 个）", missing.len() - 40);
+        }
+    }
+
+    if let Some(lock_path) = &a.lock_path {
+        let items = lock::from_closure(&db, &closure)?;
+        let text = lock::encode(&items)?;
+        vfs.write(lock_path, text.as_bytes())
+            .map_err(|e| Error::io("写出锁文件", e))?;
+        println!("\n锁文件已写出 {lock_path}（{} 个包）", items.len());
+    }
+
+    if a.write {
+        let report = vendor::apply(&plan, &a.target, &mut vfs)?;
+        println!(
+            "\n已写入 {}（新增 {} · 刷新 {}，{} 字节）· 跳过一致 {} · 跳过源缺失 {}",
+            report.written_files,
+            report.added,
+            report.refreshed,
+            human_bytes(report.written_bytes),
+            report.skipped_identical,
+            report.skipped_source_missing,
+        );
+        if !report.source_missing_after_plan.is_empty() {
+            println!(
+                "计划后消失的源文件（{}）：{}",
+                report.source_missing_after_plan.len(),
+                report.source_missing_after_plan.join(", ")
+            );
+        }
+    } else {
+        println!("\n（dry-run；加 `--write` 落盘）");
+    }
+
+    // 取料不完整必须非零退出——否则 CI 会把"半个资产集"当成功。
+    if !missing.is_empty() {
+        println!("\n结论：源树缺 {} 个文件，资产集不完整", missing.len());
+        return Ok(ExitCode::from(1));
+    }
+    println!(
+        "\n结论：{}",
+        if plan.is_settled() {
+            "目标树与闭包一致（无需动作）"
+        } else if a.write {
+            "已按闭包补齐目标树"
+        } else {
+            "目标树落后于闭包（上方「待写入」）"
+        }
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_fetch(rest: &[String]) -> Result<ExitCode, CliError> {
+    let (tlpdb_path, tail) = rest
+        .split_first()
+        .ok_or_else(|| usage("`fetch` 需要 <tlpdb> 路径"))?;
+    let (repo, tail) = tail
+        .split_first()
+        .ok_or_else(|| usage("`fetch` 需要 <仓库 URL>（tlnet 根，不含 archive/）"))?;
+    let (cache_root, tail) = tail
+        .split_first()
+        .ok_or_else(|| usage("`fetch` 需要 <缓存根>"))?;
+    let requests = parse_requests(tail)?;
+    if requests.is_empty() {
+        return Err(usage(
+            "`fetch` 需要至少一个需求（包名，或 --documentclass / --input）",
+        ));
+    }
+
+    let mut vfs = LocalVfs;
+    let text = read_text(&mut vfs, tlpdb_path, "读取 TLPDB")?;
+    let db = TlPdb::parse(&text)?;
+    let closure = resolve::closure_for_requires(&db, &requests, host_arch())?;
+
+    println!("TLPDB {tlpdb_path}\n仓库 {repo}\n缓存根 {cache_root}");
+    println!("闭包 {} 个包", closure.packages.len());
+
+    // 先打印全部待取 URL：失败要能归因到具体包，而不是"下到一半炸了"。
+    let mut src = TlnetSource::new(repo.clone(), Box::new(HostContainerIo::default()));
+    let mut planned = 0usize;
+    for name in &closure.packages {
+        let Some(pkg) = db.get(name) else { continue };
+        if pkg.run_files.is_empty() {
+            println!("  跳过 {name}（无运行面文件，仅 binfiles）");
+            continue;
+        }
+        println!("  {}", src.container_url(pkg)?);
+        planned += 1;
+    }
+    println!("\n开始取料（{planned} 个容器）…");
+
+    let report = tlnet::materialize(&mut src, &db, &closure, cache_root, &text, &mut vfs)?;
+    println!(
+        "\n已取到 {} 个容器 · 落地 {} 个文件（{}）",
+        report.containers,
+        report.files,
+        human_bytes(report.bytes)
+    );
+    if !report.text_free.is_empty() {
+        println!(
+            "无运行面文件（仅 binfiles，跳过）：{}",
+            report.text_free.join(", ")
+        );
+    }
+    println!(
+        "\n下一步（把缓存树当 TL 树根物化进资产）：\n  ntex-pkg vendor {tlpdb_path} {cache_root} <目标目录> [--write] …"
+    );
     Ok(ExitCode::SUCCESS)
 }

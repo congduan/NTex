@@ -49,7 +49,7 @@ TeX/LaTeX 源码 → 0.输入层(ntex-io VFS) → 1.TeX VM 求值(ntex-core) →
 | `ntex-pdf` | DVI → PDF 正式后端（PDF 1.4 写出 + Type1/PFB 字体嵌入） |
 | `ntex-format` | `.fmt` 序列化 / 反序列化（v1 内存快照；v2 mmap 零拷贝待做） |
 | `ntex-io` | VFS 抽象 + LocalVfs / MemVfs（RFC-3 副作用隔离的载体） |
-| `ntex-pkg` | **宏包管理**（M9 生态冲刺，plan.md §6.2 第 8/9 条）：`texlive.tlpdb` 解析（含 continuation 行状态机 / RIV 块计数 / `.ARCH` 展开）+ 文件反查索引 + `\usepackage`/`\documentclass`→包解析 + 依赖闭包 + `ntex.lock` 确定性契约（包名 + revision + sha512；身份字段校验、参考字段忽略）+ 内容寻址缓存布局 + 可插拔取料源链（① 本地已有 TeX Live 树已实现；tlnet / CTAN / 离线归档为**显式未实现插口，不静默降级**）。**解析层只认 tlpdb**（CTAN `FILES.byname` 无校验和/依赖图/版本号，只作回落源）。CLI `ntex-pkg`：`index` / `provide` / `resolve` / `lock` / `check` / `local`（漂移退出码 3） |
+| `ntex-pkg` | **宏包管理**（M9 生态冲刺，plan.md §6.2 第 8/9 条）：`texlive.tlpdb` 解析（含 continuation 行状态机 / RIV 块计数 / `.ARCH` 展开）+ 文件反查索引 + `\usepackage`/`\documentclass`→包解析 + 依赖闭包 + `ntex.lock` 确定性契约（包名 + revision + sha512；身份字段校验、参考字段忽略）+ 内容寻址缓存布局 + 可插拔取料源链；`tlnet.rs`（② tlnet 镜像：URL 由 revision 钉死 + SHA-512 容器校验 + 按 `runfiles` 裁剪与 `RELOC/` 重定位）/ `vendor.rs`（闭包 → TDS 子树物化，四态逐字节比对，源缺失显式报错；`fetch`/`vendor` 分别为"取料"与"物化"两半）；CTAN / 离线归档两源仍为**显式未实现插口，不静默降级**）。**解析层只认 tlpdb**（CTAN `FILES.byname` 无校验和/依赖图/版本号，只作回落源）。CLI `ntex-pkg`：`index` / `provide` / `resolve` / `lock` / `check` / `local`（漂移退出码 3）/ `vendor` / `fetch` |
 | `ntex-test-support` | 测试 / 差分 / 基准基础设施（`EngineDriver` 抽象） |
 | `ntex-trip` | TRIP / ETRIP 一致性测试框架（`--test trip\|etrip\|both`，in-process ntex 驱动） |
 | `ntex-diff` | 差分测试工具（参考引擎 vs 本引擎，diff DVI/log） |

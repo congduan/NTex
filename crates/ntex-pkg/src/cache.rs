@@ -9,15 +9,32 @@
 //! 3. **路径必须安全**：包名来自 TLPDB，但仍是外部输入——含 `/`、`..`、绝对路径
 //!    一律拒绝，否则缓存目录可以被写出工作区（下载源的路径逃逸防线）。
 //!
-//! **未实现**：SHA-512 **字节级**校验。本模块只做「128 位十六进制字面」的形状校验
-//! 与锁定值/实际值比对；真正对字节流算哈希需要新依赖，按仓库「不轻易加依赖」的
-//! 口径推迟，见 docs/KNOWN-SIMPLIFICATIONS.md。
+//! **已实现**：SHA-512 **字节级**校验（[`sha512_hex`]，2026-09-19 接入 `sha2`）。
+//! `sha2` 本来就在 workspace 的依赖图里（tauri/wgpu 一侧），加为直接依赖不引入
+//! 新第三方代码，故不再推迟。
+
+use sha2::{Digest, Sha512};
 
 use crate::Error;
 
 /// 默认缓存根目录（相对用户主目录的原始字符串；**不做 `~` 展开**——
 /// 展开是宿主的职责，WASM 下没有家目录概念）。
 pub const DEFAULT_CACHE_ROOT: &str = ".ntex/pkgs";
+
+/// 对字节流算 SHA-512，返回 **128 位小写十六进制**。
+///
+/// 这是取料层的可信根：tlnet 容器的 `containerchecksum` 就是它，
+/// 校验通过才允许解包落地（RFC-3 管不到"下载的包被篡改"，校验和才管得到）。
+pub fn sha512_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha512::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    let mut out = String::with_capacity(128);
+    for b in digest {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
+}
 
 /// SHA-512 字面是否合法：长度 128 且全部为十六进制字符。
 pub fn is_valid_sha512(s: &str) -> bool {
@@ -88,6 +105,31 @@ mod tests {
         assert!(!is_valid_sha512(&"a".repeat(129)), "长度超出必须拒绝");
         assert!(!is_valid_sha512(&"z".repeat(128)), "非十六进制必须拒绝");
         assert!(!is_valid_sha512(""), "空串必须拒绝");
+    }
+
+    #[test]
+    fn sha512_hex_matches_nist_vectors() {
+        // 空串与 "abc" 是 SHA-512 的标准测试向量（NIST FIPS 180-4 附录）。
+        assert_eq!(
+            sha512_hex(b""),
+            "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce\
+             47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e"
+        );
+        assert_eq!(
+            sha512_hex(b"abc"),
+            "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a\
+             2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"
+        );
+        assert!(is_valid_sha512(&sha512_hex(b"abc")));
+    }
+
+    #[test]
+    fn sha512_hex_output_is_lowercase_and_fixed_width() {
+        let h = sha512_hex(&[0u8; 7]);
+        assert_eq!(h.len(), 128);
+        assert!(h
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)));
     }
 
     #[test]

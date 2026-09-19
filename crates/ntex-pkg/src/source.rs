@@ -159,8 +159,12 @@ impl LocalTexLiveSource {
     }
 
     /// 运行面文件在本机的绝对路径（原始字符串形态，不做平台 Path 解析）。
+    ///
+    /// 入参是 **TLPDB 的运行面原串**，经 [`crate::tlpdb::install_rel_path`] 映射：
+    /// `RELOC/tex/a.sty`（tlnet 库写法）→ `<root>/texmf-dist/tex/a.sty`；
+    /// `texmf-dist/tex/a.sty`（已安装库写法）→ 原样。两种库因此共用同一条路径规则。
     pub fn file_path(&self, rel_path: &str) -> String {
-        crate::join_path(&self.root, rel_path)
+        crate::join_path(&self.root, &crate::tlpdb::install_rel_path(rel_path))
     }
 
     /// 探测某包运行面文件的本机存在情况。

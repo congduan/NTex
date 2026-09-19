@@ -136,6 +136,42 @@ find assets/tex-minimal -type f | sort
 
 ## 更新方法
 
+### 首选：由依赖闭包推导（`ntex-pkg vendor`，2026-09-19 起）
+
+上面那份「常用 article 文档补齐目录」是**手抄**维护的产物。手抄的失效模式不是抄错，
+而是**不知道漏了什么**——真实事故：`graphics-def`（`pdftex.def` 驱动）与 `graphics-cfg`
+（`graphics.cfg`/`color.cfg`）不在 `tex/latex/graphics/` 下，于是资产"看起来齐全"，
+实际 `\usepackage{graphicx}` 拿不到驱动文件。
+
+`ntex-pkg` 把「资产内容」定义成 **种子名单 → 依赖闭包 → 逐文件落地**，缺口**可见**
+（源树缺文件报 `SourceMissing`，不静默跳过）：
+
+```bash
+# ① 取料：真实镜像 → 一棵可当 TL 树根用的缓存树（每个容器按 TLPDB 的 SHA-512 校验）
+ntex-pkg fetch <tlpdb> https://mirrors.aliyun.com/CTAN/systems/texlive/tlnet \
+  /tmp/tl-cache --documentclass article
+
+# ② 物化：先看差异（dry-run，只读），确认后加 --write
+ntex-pkg vendor <tlpdb> /tmp/tl-cache assets/tex-minimal --documentclass article
+ntex-pkg vendor <tlpdb> /tmp/tl-cache assets/tex-minimal --documentclass article \
+  --write --lock ntex.lock
+
+# ③ 复跑应报「一致 N / 新增 0」（幂等）；非零即为版本漂移或漏项
+```
+
+`<tlpdb>` 用与镜像同代的 `tlpkg/texlive.tlpdb`（`fetch` 会把它一起写进缓存树）。
+若本机已装 TeX Live，可跳过 ① 直接把 `~/.TinyTeX` 当 `<TL 树根>` 喂给 `vendor`。
+**本机网络备注**：CTAN 主站与清华镜像被策略拦截（403），走阿里云镜像可用。
+
+> **已知缺口（2026-09-19 实测，未处理）**：以真实 `latex.r79618` 闭包为源对
+> `assets/tex-minimal` 做 dry-run，得 **一致 48 · 需刷新 7 · 新增 116（1.8MB）**。
+> 即本目录当前是闭包的**子集**（且已有 7 个文件版本落后）。是否补齐是**产品决策**
+> （见 plan.md §6.2 第 8 条的三层边界：T0 引导层有体积预算），故此处只记录差异，未擅自落盘。
+> 另：`tex/latex/misc/` 的 `lingmacros.sty`/`tree-dvips.sty` 取自 CTAN LaTeX209 目录，
+> **不在 TLPDB 闭包内**，`vendor` 无法推导，须手工保留。
+
+### 备用：手工 `cp`（`ntex-pkg` 不可用时的降级路径）
+
 ```bash
 rm -rf assets/tex-minimal/tex
 mkdir -p assets/tex-minimal/tex/latex assets/tex-minimal/tex/generic
@@ -146,6 +182,9 @@ cp -R ~/.TinyTeX/texmf-dist/tex/generic/{iftex,infwarerr,ltxcmds,pdftexcmds,atbe
   assets/tex-minimal/tex/generic/
 cp crates/ntex-wasm/fonts/*.tfm assets/tfm/
 ```
+
+> 注意 `~/.TinyTeX/texmf-dist/…` 这类路径只在**已安装树**上成立；tlnet 库的路径带
+> `RELOC/` 前缀，映射规则见 `crates/ntex-pkg/src/tlpdb.rs::install_rel_path`。
 
 引擎语义或 `ntex-format` codec 变更后，必须重新生成 fmt：
 

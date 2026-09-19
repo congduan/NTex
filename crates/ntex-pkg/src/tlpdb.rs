@@ -492,8 +492,12 @@ impl TlPdb {
 /// 固定的 TDS 层级序（`tex/latex` → `tex/generic` → `tex` → `fonts` → …）。
 /// 与真实 TeX 的差异仅出现在「同一 basename 有多个不同层级的提供者」时，
 /// 见 docs/KNOWN-SIMPLIFICATIONS.md。
+///
+/// **必须先 [`normalize_path`] 再判档**（踩过）：TL2026 的路径带 `RELOC/` 前缀，
+/// 若直接拿原串比较，所有 `RELOC/...` 都落到兜底档 5 → 平票 → 按插入序取到
+/// **`latex-base-dev`（预测试版）而非稳定版 `latex`**。
 fn tds_rank(path: &str) -> u8 {
-    let p = path.strip_prefix("texmf-dist/").unwrap_or(path);
+    let p = normalize_path(path);
     if p.starts_with("tex/latex/") {
         0
     } else if p.starts_with("tex/generic/") {
@@ -524,10 +528,40 @@ fn sort_providers(bucket: &mut [ProviderRef]) {
 }
 
 /// 规范化路径：去掉前缀 `./` 与 `texmf-dist/`，统一分隔符为 `/`。
+/// 归一化成 **TDS 相对路径**（`tex/latex/base/article.cls`）。
+///
+/// 剥掉三种前缀：
+/// - `./`（历史写法）；
+/// - `RELOC/`——**TL2026 起的可重定位标记**（`relocated 1`，4697 条记录）。
+///   tlnet 下载的容器解包后已是 TDS 根，`RELOC/` 只是"装到 `texmf-dist/`"的指示，
+///   不属于 TDS 路径本身；不剥会让资产/缓存里的路径凭空多一层。
+/// - `texmf-dist/`——已安装树的 TDS 根名字。
+///
+/// 反斜杠统一成 `/`（PDFTeX 早期平台遗留写法）。
 pub fn normalize_path(path: &str) -> String {
-    let p = path.strip_prefix("./").unwrap_or(path);
+    let p = path.replace('\\', "/");
+    let p = p.strip_prefix("./").unwrap_or(&p);
+    let p = p.strip_prefix("RELOC/").unwrap_or(p);
     let p = p.strip_prefix("texmf-dist/").unwrap_or(p);
-    p.replace('\\', "/")
+    p.to_owned()
+}
+
+/// TLPDB 运行面路径 → **相对 TL 树根**的路径（即文件在磁盘上的真实位置）。
+///
+/// 与 [`normalize_path`] 的区别在于**保留 TDS 根目录名**：
+/// - `RELOC/tex/a.sty` → `texmf-dist/tex/a.sty`（可重定位包装在 `texmf-dist/` 下）
+/// - `texmf-dist/tex/a.sty` → 原样（已安装树的写法）
+/// - `tex/a.sty` → 原样（少数无根前缀的记录）
+///
+/// 已安装树与 tlnet 缓存树都适用同一条映射——这正是「缓存树可直接当 TL 树根喂给
+/// [`crate::source::LocalTexLiveSource`]」的原因。
+pub fn install_rel_path(raw: &str) -> String {
+    let p = raw.replace('\\', "/");
+    let p = p.strip_prefix("./").unwrap_or(&p);
+    match p.strip_prefix("RELOC/") {
+        Some(rest) => format!("texmf-dist/{rest}"),
+        None => p.to_owned(),
+    }
 }
 
 fn strip_cr(line: &str) -> &str {
@@ -794,6 +828,58 @@ mod tests {
         assert_eq!(normalize_path("./texmf-dist/a/b.sty"), "a/b.sty");
         assert_eq!(normalize_path("texmf-dist/a/b.sty"), "a/b.sty");
         assert_eq!(normalize_path("a/b.sty"), "a/b.sty");
+    }
+
+    #[test]
+    fn normalize_path_strips_reloc_prefix() {
+        // TL2026 起的可重定位标记（`relocated 1`）；必须剥掉，否则资产/缓存路径多一层。
+        assert_eq!(
+            normalize_path("RELOC/tex/latex/base/article.cls"),
+            "tex/latex/base/article.cls"
+        );
+        assert_eq!(
+            normalize_path("RELOC/tex/latex/base/../base/a.sty"),
+            "tex/latex/base/../base/a.sty",
+            "不做语义化简——只剥前缀（路径归一不是本函数的职责）"
+        );
+    }
+
+    #[test]
+    fn install_rel_path_maps_reloc_under_texmf_dist() {
+        // 可重定位 → 包装进 texmf-dist/（已安装树与 tlnet 缓存树共用这条映射）。
+        assert_eq!(
+            install_rel_path("RELOC/tex/generic/infwarerr/infwarerr.sty"),
+            "texmf-dist/tex/generic/infwarerr/infwarerr.sty"
+        );
+        // 已安装库写法原样保留。
+        assert_eq!(
+            install_rel_path("texmf-dist/tex/latex/base/article.cls"),
+            "texmf-dist/tex/latex/base/article.cls"
+        );
+        // 无根前缀的记录原样保留。
+        assert_eq!(
+            install_rel_path("tex/plain/base/plain.tex"),
+            "tex/plain/base/plain.tex"
+        );
+        // 反斜杠统一（PDFTeX 早期平台写法）。
+        assert_eq!(
+            install_rel_path("RELOC\\tex\\a.sty"),
+            "texmf-dist/tex/a.sty"
+        );
+    }
+
+    #[test]
+    fn tds_rank_normalizes_before_ranking() {
+        // 真缺陷回归锁（TL2026 实测）：`RELOC/` 前缀曾让所有路径落到兜底档，
+        // 于是 `latex-base-dev`（预测试）与 `latex`（稳定）平票 → 按插入序取到 dev。
+        let stable = tds_rank("RELOC/tex/latex/base/article.cls");
+        let dev = tds_rank("RELOC/tex/latex-dev/base/article.cls");
+        assert!(
+            stable < dev,
+            "稳定版 `tex/latex/` 必须优先于 dev 版 `tex/latex-dev/`：{stable} vs {dev}"
+        );
+        assert_eq!(stable, 0, "剥掉 RELOC/ 后应命中 `tex/latex/` 档");
+        assert_eq!(dev, 2, "`tex/latex-dev/` 是 `tex/` 档，不该与稳定版同档");
     }
 
     #[test]
