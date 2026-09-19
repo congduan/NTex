@@ -285,11 +285,10 @@ fn emit_count(v: i64) -> Vec<Token> {
         .collect()
 }
 
-/// 文本 → 字符 token 序列（cat 12；pdfTeX 可展开字符串量的输出形式）。
+/// 文本 → 字符 token 序列（cat 12、空格 10；pdfTeX 可展开字符串量的输出形式，
+/// [`str_char_token`] 重扫描语义）。
 fn pdf_text_tokens(s: &str) -> Vec<Token> {
-    s.bytes()
-        .map(|b| Token::char(Catcode::Other, u32::from(b)))
-        .collect()
+    s.bytes().map(str_char_token).collect()
 }
 
 /// `\pdftexbanner`：pdfTeX 兼容层的 banner。
@@ -347,10 +346,11 @@ fn emit_dimen(v: i64) -> Vec<Token> {
 }
 
 /// 胶水 → `\the` token 序列（如 "1.0pt plus 2.0pt minus 0.5pt"）。
+/// 空格 cat 10（[`str_char_token`]：tex.web 重扫描语义）。
 fn emit_glue(g: Glue) -> Vec<Token> {
     format_glue(g)
         .bytes()
-        .map(|b| Token::char(Catcode::Other, u32::from(b)))
+        .map(str_char_token)
         .collect()
 }
 
@@ -423,6 +423,21 @@ fn compare(a: i64, b: i64, rel: Relation) -> bool {
         Relation::Lt => a < b,
         Relation::Eq => a == b,
         Relation::Gt => a > b,
+    }
+}
+
+/// 展开输出（`\meaning`/`\detokenize`/`\the⟨glue⟩` 等文本量）重扫描为 token 流的
+/// 字符映射：一律 catcode 12，**唯空格 catcode 10**（tex.web str_toks 同规）。
+/// 全 Other 时输出文本里的空格不参与宏定界符匹配——已两次致灾：
+/// `\readline`（expl3 codepoint 数据装载，primitive.rs readline 臂注释）与
+/// `\meaning`（scrbase `\Ifstrstart{\meaning #1}{…}` 全灭 → KOMA
+/// `\FamilySetCounter` 全 UnknownValue → scrartcl 每个节命令声明
+/// "unknown option value at"）。
+fn str_char_token(b: u8) -> Token {
+    if b == b' ' {
+        Token::char(Catcode::Space, u32::from(b))
+    } else {
+        Token::char(Catcode::Other, u32::from(b))
     }
 }
 

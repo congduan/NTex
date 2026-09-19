@@ -1348,6 +1348,23 @@ impl Expander {
                 self.unread(open);
                 break;
             }
+            // tex.web get_x_token → expand：条件原语在 general text 扫描位就地
+            // 求值（`\if…\fi` 在 \edef/\expanded/\pdfstrcmp 实参里被展开消解）。
+            // 条件开始（\if*）一律步进（栈空即从这里开新帧）；终结符有帧则
+            // 步进收口（\fi 落数据会永留开帧），无帧的游离终结符维持原路径。
+            // 假支数据 token 丢弃（条件机收口只认终结符）。
+            if let Some(op) = self.cond_op(open) {
+                if matches!(op, CondOp::Fi | CondOp::Else | CondOp::Or)
+                    && self.cond_stack.is_empty()
+                {
+                    // 游离终结符：落回原路径
+                } else {
+                    self.step_conditional(op, open)?;
+                    continue;
+                }
+            } else if self.is_skipping() {
+                continue;
+            }
             let Some(csid) = open.csid() else {
                 tokens.push(open);
                 continue;
@@ -1421,6 +1438,20 @@ impl Expander {
             if xpand && !noexpand {
                 // scan_toks 的 xpand 臂（L9378-9391）：每个 token 位先展开，
                 // 产物交回平衡计数（宏体里的 `{`/`}` 照常进出 unbalance）。
+                // token 位 = get_x_token → expand：条件原语就地求值（同上方
+                // pre-brace 臂；tex.web expand 的 if_test..fi_or_else 分派）。
+                if let Some(op) = self.cond_op(t) {
+                    if matches!(op, CondOp::Fi | CondOp::Else | CondOp::Or)
+                        && self.cond_stack.is_empty()
+                    {
+                        // 游离终结符：落回原路径
+                    } else {
+                        self.step_conditional(op, t)?;
+                        continue;
+                    }
+                } else if self.is_skipping() {
+                    continue;
+                }
                 if let Some(csid) = t.csid() {
                     let expandable = match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
                         EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
@@ -2204,6 +2235,29 @@ impl Expander {
                 EqSlot::Register(RegKind::Dimen, idx) => {
                     self.fetch()?; // 消费 \dimendef'd cs
                     Some(self.registers.dimen(idx))
+                }
+                // 胶水寄存器作数量乘子（tex.web `<Scan for u units that are internal
+                // dimensions>` 同走 `scan_something_internal(dimen_val)`：胶值→width
+                // 分量）。KOMA typearea `\advance\oddsidemargin by1.5\ta@hblk`
+                // （\ta@hblk=\newskip）即此臂——缺臂时数量探针失配、单位扫描把
+                // skipdef'd cs 当非法单位报错，物理布局全盘走 0。
+                EqSlot::Register(RegKind::Skip, idx) => {
+                    self.fetch()?; // 消费 skipdef'd cs
+                    Some(self.registers.skip(idx).width)
+                }
+                EqSlot::Register(RegKind::Muskip, idx) => {
+                    self.fetch()?; // 消费 muskipdef'd cs
+                    Some(self.registers.muskip(idx).width)
+                }
+                EqSlot::Primitive(Primitive::Skip | Primitive::Muskip) => {
+                    let is_mu = matches!(self.eqtb.slot(csid), EqSlot::Primitive(Primitive::Muskip));
+                    self.fetch()?; // 消费 \skip/\muskip
+                    let idx = self.scan_register_index()?;
+                    if is_mu {
+                        Some(self.registers.muskip(idx).width)
+                    } else {
+                        Some(self.registers.skip(idx).width)
+                    }
                 }
                 // TRIP：内部整数作数量乘子（TeX scan_dimen `<factor><internal integer>`：
                 // 值×65536sp 作 dimen；L160 `\ifdim.5\mag>0cc0` → .5×2000pt）

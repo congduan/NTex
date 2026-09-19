@@ -173,13 +173,17 @@ impl Expander {
             // TRIP 冲刺：页面 dimen 内部量（\pagetotal/\pagegoal/\predisplaysize
             // 只读——expander 无排版状态，单独出现无操作；\the 查询在 save.rs 返回 0）
             Primitive::PageTotal | Primitive::PageGoal | Primitive::PreDisplaySize => Ok(()),
-            // ETRIP 冲刺：\errmessage{...} 报错到转录（plain.tex \error 宏的底层原语）
+            // ETRIP 冲刺：\errmessage{...} 报错到转录（plain.tex \error 宏的底层原语）。
+            // tex.web issue_message（L23543）：message/errmessage 同支——
+            // scan_toks(false,true) 后 token_show 全展开构串。此处走与
+            // \message 相同的 expand_to_string（条件机在展开区步进、宏展开、
+            // 幸存不可展开 cs 按 detokenize 语义印名）：旧实现只取字符 token
+            // 丢 cs → 消息里的 \ifx…\else…\fi 整段失效，两个支文本同印
+            // （scrbase \scr@show@key@state@error 的 "missing option value at
+            // unknown option value at `{}'"）。
             Primitive::ErrMessage => {
                 let msg = self.scan_group_contents(None)?;
-                let text: String = msg
-                    .iter()
-                    .filter_map(|t| t.charcode().and_then(char::from_u32))
-                    .collect();
+                let text = self.expand_to_string(&msg)?;
                 self.report_error(&format!("{text}."));
                 Ok(())
             }

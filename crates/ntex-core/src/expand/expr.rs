@@ -232,15 +232,15 @@ impl Expander {
                     // 此前缺失：\meaning 在 is_expandable() 中但此处落入 `_` 分支被原样
                     // 保留，`\the\meaning\cs` 使 the_tokens_after 对 \meaning 无限递归
                     // → 输入栈溢出（fuzz 命中，畸形输入不 panic 契约违约）。
+                    // 空格 cat 10（str_char_token 重扫描语义）：edef 内
+                    // `\Ifstrstart{\meaning #1}{…}` 的定界匹配含空格
+                    // （scrbase `\Ifisinteger` 族）——全 Other 时 KOMA 节键全灭。
                     let t = self
                         .fetch()?
                         .ok_or_else(|| Error::invalid_input("\\meaning 后无 token"))?
                         .0;
                     let text = self.meaning_text(t);
-                    out.extend(
-                        text.bytes()
-                            .map(|b| (Token::char(Catcode::Other, u32::from(b)), false)),
-                    );
+                    out.extend(text.bytes().map(|b| (str_char_token(b), false)));
                 }
                 EqSlot::Primitive(Primitive::JobName) => {
                     // \jobname：作业名（与 exec 对齐：恒 "texput"）。

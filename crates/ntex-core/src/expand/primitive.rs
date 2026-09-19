@@ -446,11 +446,13 @@ impl Expander {
             .ok_or_else(|| Error::invalid_input("\\meaning 后缺少 token"))?
             .0;
         let text = self.meaning_text(tok);
-        self.emit_tokens(
-            text.bytes()
-                .map(|b| Token::char(Catcode::Other, u32::from(b)))
-                .collect(),
-        )
+        // e-TeX 展开输出重扫描语义：字符一律 catcode 12，**唯空格 catcode 10**
+        //（etex-manual 与 `\readline` 同规——上方 readline 臂注释、free.rs
+        // detokenize_token 同款）。全 Other 时 `\meaning 1`（"the character 1"）
+        // 的空格不参与宏定界符匹配——scrbase `\Ifstrstart{\meaning #1}{…}` 全灭
+        // → `\Ifisinteger{1}` 误判 F → KOMA `\FamilySetCounter` 全部
+        // UnknownValue，scrartcl 每个节命令声明报 "unknown option value at"。
+        self.emit_tokens(text.bytes().map(str_char_token).collect())
     }
 
     /// `\meaning` 的含义描述（字符 / 控制序列的 eqtb 槽含义；TeX `\meaning` 格式）。
