@@ -58,11 +58,21 @@ fn main() -> ExitCode {
     let mut dump_fmt: Option<String> = None;
     let mut load_fmt: Option<String> = None;
     let mut generate_fmt: Option<String> = None;
+    // CJK 字体回落名（如 FandolSong-Regular）：码位 >0xFF 的字符走它，
+    // 与 wasm 前端 set_fallback_font 同一引擎通路（182a113）。
+    let mut cjk_fallback: Option<String> = None;
     let mut it = args[1..].iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--quiet" => quiet = true,
             "--no-plain" => no_plain = true,
+            "--cjk-fallback" => match it.next() {
+                Some(p) => cjk_fallback = Some(p.clone()),
+                None => {
+                    eprintln!("--cjk-fallback 需要一个字体名参数（如 FandolSong-Regular）");
+                    return ExitCode::from(2);
+                }
+            },
             "--dump" => match it.next() {
                 Some(p) => dump_fmt = Some(p.clone()),
                 None => {
@@ -127,6 +137,9 @@ fn main() -> ExitCode {
     };
     let mut ts = ntex_layout::typeset::Typesetter::with_tfm();
     install_distribution_tfm_source();
+    if let Some(name) = &cjk_fallback {
+        ts.set_fallback_font(Some(name.clone()));
+    }
     if no_plain {
         // `--no-plain` 语义 = 纯 iniTeX 起点（无预载格式）：catcode 表换用
         // tex.web §1273 INITEX 初表（`{`=12、NUL=9 …）。此前只跳过预载而
@@ -234,7 +247,7 @@ fn main() -> ExitCode {
 }
 
 fn usage() -> &'static str {
-    "用法：ntex-dvi <input.tex> [output.dvi] [--fmt <latex.fmt>] [--input-path <dir>]... [--no-plain] [--quiet]\n\
+    "用法：ntex-dvi <input.tex> [output.dvi] [--fmt <latex.fmt>] [--input-path <dir>]... [--no-plain] [--cjk-fallback <字体名>] [--quiet]\n\
      或：ntex-dvi --generate-fmt <output.fmt> [--input-path <dir>]... [--quiet]"
 }
 

@@ -38,6 +38,11 @@ fn main() -> ExitCode {
     let mut no_glyphs = false;
     let mut glyphs_flag = false;
     let mut quiet = false;
+    // LaTeX 格式快照（--fmt x.fmt）：载入后不再预载 plain（两者互斥）。
+    let mut load_fmt: Option<String> = None;
+    // CJK 字体回落名（如 FandolSong-Regular）：码位 >0xFF 的字符走它，
+    // 与 wasm 前端 set_fallback_font 同一引擎通路（182a113）。
+    let mut cjk_fallback: Option<String> = None;
     let mut it = args[1..].iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -46,6 +51,20 @@ fn main() -> ExitCode {
             "--debug" => debug = true,
             "--no-glyphs" => no_glyphs = true,
             "--quiet" => quiet = true,
+            "--fmt" => match it.next() {
+                Some(p) => load_fmt = Some(p.clone()),
+                None => {
+                    eprintln!("--fmt 需要一个 .fmt 输入路径参数");
+                    return ExitCode::from(2);
+                }
+            },
+            "--cjk-fallback" => match it.next() {
+                Some(p) => cjk_fallback = Some(p.clone()),
+                None => {
+                    eprintln!("--cjk-fallback 需要一个字体名参数（如 FandolSong-Regular）");
+                    return ExitCode::from(2);
+                }
+            },
             "--input-path" => match it.next() {
                 Some(p) => input_paths.push(p.clone()),
                 None => {
@@ -86,17 +105,49 @@ fn main() -> ExitCode {
         }
     };
     let mut ts = Typesetter::with_tfm();
+    // CJK 字体回落（码位 >0xFF 的字符走它；须在排版前注入）。
+    if let Some(name) = &cjk_fallback {
+        ts.set_fallback_font(Some(name.clone()));
+    }
     // 格式预载（G2(a)/G4）：与 ntex-dvi 驱动同路径——内嵌 plain 兜底 +
     // 启动预载（等价源首行 `\input plain`）。缺此则 `\hsize`/`\baselineskip`
     // 等 plain 定义全缺，corpus 样例产出空页（survey §5.bis #6）。
     ts.use_embedded_format();
-    ts.set_preload_plain(true);
-    if !input_paths.is_empty() {
+    // --fmt x.fmt：载入 LaTeX 格式快照（fmt 优先于 plain 预载，两者互斥；
+    // 与 ntex-dvi 同口径）。
+    if let Some(fmt_path) = &load_fmt {
+        let data = match std::fs::read(fmt_path) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("读取 {fmt_path} 失败：{e}");
+                return ExitCode::from(2);
+            }
+        };
+        let state = match ntex_format::load(&mut &data[..]) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("解析 {fmt_path} 失败：{e}");
+                return ExitCode::from(2);
+            }
+        };
+        ts.import_state(state);
+    } else {
+        ts.set_preload_plain(true);
+    }
+    if !input_paths.is_empty() || load_fmt.is_some() {
+        // 发行版默认搜索链（与 ntex-dvi default_vfs 同口径）：显式 --input-path
+        // 排最前，随后入仓 tex-minimal。--fmt（LaTeX）时 latex.ltx 的
+        // \input/\usepackage 需要它能找到 article.cls 等资产文件。
         let mut vfs = ntex_io::SearchPathVfs::new(Box::new(ntex_io::LocalVfs));
         for p in &input_paths {
-            vfs.push_path(p);
+            vfs.push_path(p.clone());
         }
-        ts.set_vfs(Box::new(vfs));
+        let bundled = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/tex-minimal/tex");
+        if bundled.exists() {
+            vfs.push_path(bundled.to_string_lossy().into_owned());
+            vfs.push_path(bundled.join("latex/base").to_string_lossy().into_owned());
+        }
+        ts.set_vfs(Box::new(ntex_io::KpsewhichVfs::new(Box::new(vfs))));
         // set_vfs 会替换 VFS → 重新包一层内嵌兜底（幂等由 installed 标志保证）
         ts.use_embedded_format();
     }

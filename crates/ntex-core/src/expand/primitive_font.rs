@@ -47,7 +47,7 @@ impl Expander {
         let font = match self.eqtb.slot(csid).clone() {
             EqSlot::Font(f) => f,
             // TRIP：`\textfont1=\font`：`\font` 作当前字体选择器
-            EqSlot::Primitive(Primitive::Font) => self.sink.current_font(),
+            EqSlot::Primitive(Primitive::Font) => self.cur_font,
             EqSlot::Primitive(
                 Primitive::TextFont | Primitive::ScriptFont | Primitive::ScriptScriptFont,
             ) => {
@@ -430,7 +430,7 @@ impl Expander {
     /// 报错后用当前字体继续（TRIP L404 `\fontdimen 1000=20\varunit`——`=` 非字体）。
     fn missing_font_ident(&mut self) -> Result<u32> {
         self.report_error("Missing font identifier.");
-        Ok(self.sink.current_font())
+        Ok(self.cur_font)
     }
 
     /// 扫描字体标识符（TeX `scan_font_ident`）：`\font` 定义的 cs 或 `\nullfont`。
@@ -448,7 +448,7 @@ impl Expander {
         match self.eqtb.slot(csid).clone() {
             EqSlot::Font(f) => Ok(f),
             // TRIP：`\font`（无参数）作当前字体选择器（\textfont1=\font）
-            EqSlot::Primitive(Primitive::Font) => Ok(self.sink.current_font()),
+            EqSlot::Primitive(Primitive::Font) => Ok(self.cur_font),
             // TRIP 补全批次：\\nullfont（预定义空字体，id 0）
             EqSlot::Primitive(Primitive::NullFont) => Ok(0),
             // \textfont<n>/...：字体位置读取当前族字体（TeX find_font 语义）

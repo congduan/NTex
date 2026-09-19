@@ -758,6 +758,12 @@ pub struct Expander {
     /// `\sfcode` 表（M3-4 词间距 spacefactor；TeX 默认全 1000，plain 对
     /// .,?!=3000、:=2000、;=1500、,=1250，由排版器按 plain 默认初始化）。
     sfcodes: [u32; 256],
+    /// tex.web `cur_font`（引擎内部当前字体，FMF382）：字体选择 cs 执行时更新，
+    /// `\font`（Primitive::Font）作字体标识符时查询（`\fontdimen6\font`、
+    /// `\the\font` 等 scan_font_ident 路径）。此前查 `sink.current_font()`——
+    /// 查询 sink 的实时态不可靠（LaTeX NFSS 语境返回 0 → `\section` 前置
+    /// skip `-3.5ex` 读 ex 得 0pt → Missing number ×2 + `\Large` 14.4pt 残留）。
+    cur_font: u32,
     stack: Vec<InputFrame>,
     /// 宏调用环形轨迹（诊断开关；默认 `None` = 零开销）。
     /// 见 [`MACRO_TRACE_CAP`]：栈帧只回答「谁还在栈上」，轨迹才回答「谁调用了谁」。
@@ -1010,6 +1016,7 @@ impl Expander {
             font_names: Vec::new(),
             font_loads: Vec::new(),
             font_cs_names: Vec::new(),
+            cur_font: 0,
             #[cfg(not(target_arch = "wasm32"))]
             watchdog: None,
             output_toks: None,
@@ -1107,7 +1114,7 @@ impl Expander {
             font_names: self.font_names.clone(),
             font_loads: self.font_loads.clone(),
             font_cs_names: self.font_cs_names.clone(),
-            current_font: 0, // Typesetter::export_state 从 NodeBuilder 填充
+            current_font: self.cur_font, // 引擎镜像（FMF382）；Typesetter::export_state 曾从 NodeBuilder 填充
         }
     }
 
@@ -1181,6 +1188,9 @@ impl Expander {
         self.font_names = state.font_names;
         self.font_loads = state.font_loads;
         self.font_cs_names = state.font_cs_names;
+        // cur_font 镜像从 fmt 恢复（pass1 dump 时的当前字体；`.fmt` 载入后
+        // `\font` 查询与字体相关的内部单位解析以此为准）。
+        self.cur_font = state.current_font;
         // 运行时状态重置（新文档起点）
         self.stack.clear();
         self.read_floor = 0;
@@ -2334,7 +2344,13 @@ impl Expander {
                         }
                         self.call_macro(csid, def)
                     }
-                    SlotAction::Font(font) => self.sink.font_selected(font),
+                    SlotAction::Font(font) => {
+                        // tex.web：字体 cs 执行即 `cur_font:=f` + 推 sink
+                        // （排版器靠该事件切换当前字体）。expander 侧镜像
+                        // 同步维护，供 `\font` 作字体标识符时查询。
+                        self.cur_font = font;
+                        self.sink.font_selected(font)
+                    }
                     SlotAction::Primitive(p) => {
                         // 诊断（NTEX_TRACE_EXEC=1）：打印每个执行的原语，定位挂死点
                         if diag_enabled("NTEX_TRACE_EXEC") {

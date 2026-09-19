@@ -12,6 +12,7 @@ rust-version = "1.88"
 ntex-layout.workspace = true
 ntex-font.workspace = true
 ntex-io.workspace = true
+ntex-format.workspace = true
 # peniko 与 vello 0.10 内部同版（Cargo.lock 0.6.1；glyphs 的 FontData/Blob
 # 类型源）。peniko 是纯数据 crate（无 GPU 依赖），故非 optional——
 # `glyphs.rs`（skrifa cmap 解析）在 wasm 软光栅路径（ntex-wasm，

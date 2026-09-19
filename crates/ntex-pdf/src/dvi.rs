@@ -773,7 +773,7 @@ mod tests {
                 next_larger: Vec::new(),
                 font_params: Vec::new(),
             };
-            for c in [b'a', b'b', b'c'] {
+            for c in *b"abc" {
                 fm.chars[c as usize] = Some((655_360, 0, 0));
             }
             ntex_font::register_metrics(name, fm.clone());

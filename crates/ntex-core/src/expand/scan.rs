@@ -2398,7 +2398,10 @@ impl Expander {
             // TeX 内部单位（tex.web scan_dimen）：em = quad(cur_font)（fontdimen 6）、
             // ex = x_height(cur_font)（fontdimen 5）。字体参数缺失（nullfont/
             // 无加载器）按 0 计（tex.web nullfont quad/x_height = 0 同义）。
-            let font = self.sink.current_font();
+            // cur_font 读引擎镜像（FMF382，同 scan_font_ident 的 `\font` 分支）——
+            // sink.current_font() 在 LaTeX NFSS 语境返回 0，`-3.5ex` 类 skip
+            // 全部塌成 0pt 并报 Missing number（\section 残留 14.4pt 根因）。
+            let font = self.cur_font;
             let param = if unit == "em" { 6 } else { 5 };
             let unit_sp = i128::from(self.font_loader.font_param(font, param).unwrap_or(0));
             num_pt * unit_sp / i128::from(SP_PER_PT)

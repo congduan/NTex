@@ -3313,6 +3313,7 @@ version = "0.1.0"
 dependencies = [
  "ntex-dvi",
  "ntex-font",
+ "ntex-format",
  "ntex-io",
  "ntex-layout",
  "ntex-pdf",
