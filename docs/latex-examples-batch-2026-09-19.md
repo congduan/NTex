@@ -95,3 +95,13 @@ Hello
   `\define@key`）
 - 下一步：抓活锁循环的 cs 名（给 Let/Def 打点带 intern 名，env 门控），
   或对 `\newrobustcmd`/`\define@key` 写最小单测
+
+## 附录补完：92 个 timeout 全量复测结论（同日晚）
+
+- 复测判定：41 HANG / 8 COMPLETED（其余为路径含空格被 tsv 切碎的碎片，同属上述两类）
+- **41 个 HANG 全部指向 beamer.cls 载入活锁**（presentations 系 35 个 +
+  其他目录中引用 beamer 的文档；少数 COMPLETED 是被 \input 的无 preamble 子文件）
+- 最小复现 7 行（见上）；根因圈定 `\DeclareOptionBeamer`→`\newrobustcmd`/
+  `\@ifnextchar`/`\define@key` 链路展开不终止
+- 修复路径建议：给 Let/Def 执行打点带 intern 名（env 门控）抓循环 cs 名，
+  或对 `\newrobustcmd`/`\define@key` 做最小单测
