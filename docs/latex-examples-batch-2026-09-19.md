@@ -69,3 +69,29 @@ detok cs 尾空格）+ `\the\parfillskip` 补分支。
 - 判 PASS 唯一标准 = 输出"已写出 …dvi"；
 - 结果 tsv：/tmp/batch-results.tsv（临时，重启丢失）；
 - 批量脚本：/tmp/batch-probe.sh（同样临时，脚本本体已内联到本文档描述）。
+
+## 附录：timeout 排查进展（2026-09-19 深夜）
+
+92 个 timeout 抽验 16 个（rebuild 后复测）：
+- 4 个 COMPLETED（chap1 子文件等，原 timeout 判定有误——可能是并发构建慢）
+- 12+ 个 HANG，**全部是 beamer 系演示文稿**
+
+最小复现（7 行）：
+```
+\documentclass{beamer}
+\begin{document}
+\begin{frame}
+Hello
+\end{frame}
+\end{document}
+```
+- 症状：1040 万+ 步高速空转不终止；watchdog 栈浅
+  （`TokenList(1tok,pos=0) | Bytecode(pc=N)`），尾部执行 `\ifx`/`\let`/`\def`
+- 特征：Let/Def 各 11.8 万次持续增长（NTEX_TRACE_EXEC 统计）——
+  疑 beamer.cls 载入期某 \def 循环（`\DeclareOptionBeamer` ×
+  `\beamer@dokv` × keyval `\define@key` 链）展开不终止
+- bisect beamer.cls（截断法）：FIRST-BAD≈136 行，该区是
+  `\DeclareOptionBeamer` 密集区（依赖 `\newrobustcmd`+`\@ifnextchar`+
+  `\define@key`）
+- 下一步：抓活锁循环的 cs 名（给 Let/Def 打点带 intern 名，env 门控），
+  或对 `\newrobustcmd`/`\define@key` 写最小单测
