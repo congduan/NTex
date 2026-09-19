@@ -34,7 +34,7 @@
 > **2026-09-08 更新**：对齐状态机已由 `ntex-core/src/expand/align.rs`（M4-5）+
 > `ntex-layout/typeset/sink.rs` align_fin（两遍列宽定稿）承担，本节早期
 > "\cr/\span/\crcr/\omit 无操作"条目已被状态机取代（raw 拦截 + dispatcher
-> 误位报错）。剩余简化见 halign-survey.md §3.2（S1–S7）——其中 S1（everycr
+> 误位报错）。剩余简化见 archive/halign-survey.md §3.2（S1–S7）——其中 S1（everycr
 > 只存不注入）、S2/S7（to/spread 摊派）已于 2026-09-08 修复（4b912f9）。
 
 | 位置 | 现状 | 状态 |
@@ -115,22 +115,23 @@ demo1 六刀 + 输出例程刀 2/3/5 的修复登记；全部已提交，留作�
 | 同上（退出时长短 skip 裁决） | pre_display_size 长短 skip 裁决 | ✅ 已修（2fa7e4b） |
 | `ntex-dvi/lib.rs` | 页号链 count0 页标签（原 `[0.0.0.0.N]` 硬编码） | ✅ 已修（375b390） |
 | `typeset/mod.rs` / `sink.rs` | box255 寄存器化统一访问面（box_view/take_box_at/write_box 三访问面） | ✅ 已修（c5d02b9） |
-| `typeset/paging.rs` / `node.rs` | insert 结构化 token 体保留 | ⚠️ 部分已修（577ed3c）：体已保留，**体排版仍挂账**（脚注仍不可用，见 AGENTS.md §7） |
+| `typeset/paging.rs` / `node.rs` | insert 结构化 token 体保留 | ⚠️ 部分已修（577ed3c）：体已保留，**体排版仍挂账**（脚注仍不可用，见 plan.md §5 P1） |
 | `ntex-dvi` transcript 通道 + `--input-path` | 诊断转录（stderr 默认开）+ `\input` 搜索路径（SearchPathVfs）——补"undefined cs 静默跳过"盲区 | ✅ 已修（4ec6a84） |
 | `typeset/paging.rs` / `node.rs` | insert `\newinsert` 分配器 + `\count/\dimen/\skip` 三联寄存器（`\footins=\insert254` 与真 plain 一致） | ✅ 已修（3ef1f67，输出例程刀 4；体排版仍挂账，见上行） |
 
-### 7.bis 格式预载（G 线）登记（详见 plain-format-survey.md §5.bis.g）
+### 7.bis 格式预载（G 线）登记（详见 archive/plain-format-survey.md §5.bis.g）
 
-> ⚠ **文档改版（2026-09-11）**：`latex-feasibility.md` 已精简为活文档（41 节 →
-> §A–§F），历史 §8–§41 归档于 `docs/archive/latex-feasibility-full-2026-09-11.md`。
-> 本文件中对旧节号的引用（如「§36」「§15」）请去归档文件 grep。
+> ⚠ **文档改版（2026-09-19）**：`latex-feasibility.md` / `plain-format-survey.md`
+> 等勘察全文已归档到 `docs/archive/`（见 `docs/archive/README.md`），
+> 当前进度与剩余项一律看 `plan.md`。本文件中对旧节号的引用（如「§36」「§15」）
+> 请去 `docs/archive/` 下同名文件 grep。
 
 | 位置 | 现状 | 影响 | 状态 |
 |---|---|---|---|
 | `ntex-layout/typeset/plain_format.rs` `EmbeddedFormatVfs`/`set_preload_plain` | 各渲染端无 `\input plain` 契约 → plain 宏全缺、样例产空页 | ✅ **已修**（G4 接线：ntex-backend/ntex-wasm/ntex-mcp 三端统一 `use_embedded_format()` + `set_preload_plain(true)`，与 ntex-dvi 同路径）|
 | 预载路径 | 预载后空文档经 `\plainoutput` 收尾冲出一页空页 | corpus 内宏/格式文件（无 `\bye`）页数与真 TeX（0 页）不一致 | 待做（survey #1） |
 | `\lccode/\uccode` 初表 | 预载前初表全 0，未按 INITEX 初值（`a..z`/`A..Z` = 自身）播种 | 预载失败回落时 `\lowercase` 行为偏差 | 待做（survey #2） |
-| `expand/macros.rs` 实参扫描 | `\char`/`\number`/`\romannumeral` 在**实参位置**取不到数字时**不报** `! Missing number, treated as zero.`（pdfTeX 报）| 错误报告面缺失（排版结果不变，影响诊断保真与 TRIP 口径）| 待做（latex-feasibility §A1.octies；回归锁 `tests_scan.rs` `arg_scan_does_not_expand`）|
+| `expand/macros.rs` 实参扫描 | `\char`/`\number`/`\romannumeral` 在**实参位置**取不到数字时**不报** `! Missing number, treated as zero.`（pdfTeX 报）| 错误报告面缺失（排版结果不变，影响诊断保真与 TRIP 口径）| 待做（archive/latex-feasibility.md §A1.octies；回归锁 `tests_scan.rs` `arg_scan_does_not_expand`）|
 | `expand/primitive.rs` `meaning_text` / `save.rs` `slot_display` | 宏的 `\meaning` **只渲染 `#n` 而丢参数文本定界符**（pdfTeX `\meaning\if@` = `macro:if->`，NTex 误报 `macro:->`）——曾把 §38/§39 的根因误判为 `\uppercase` 语义问题 | `\meaning` 输出失真；误导诊断（非功能缺陷） | ✅ 已修（2026-09-11，改渲染 `params.text`，tex.web `print_meaning` 的 `token_show(参数文本)`；测试 `tests_scan.rs` `uppercase_param_text`） |
 | `expand/scan.rs` | `scan_glue` 胶水上下文不认 dimen 寄存器别名（`\skip_const:Nn \c_zero_skip{\c_zero_dim}` 致命） | latex.ltx l.13899 停点 | ✅ 已修（226c177，`RegKind::Dimen` 臂） |
 | `scripts/corpus-probe.py` | 产物路径按仓库根找（`REPO/<stem>.dvi`），但 ntex-dvi/ntex-pdf 默认输出**保留源文件目录**（`<输入去扩展名>.dvi/.pdf`）→ 全库误判 FAIL | KPI 假阴性（曾把实际成功的 `plain/*.tex` 全判 0/8） | ✅ 已修（2026-09-11，路径按 `tex.parent` 取 + 清理同步） |
@@ -160,14 +161,14 @@ demo1 六刀 + 输出例程刀 2/3/5 的修复登记；全部已提交，留作�
   797→800。pdfTeX 对照证明无空格的 `20000\expandafter\iter\fi` 同样爆栈；
   `TokenList(pos=0)` 是未消费 token，不能作为耗尽帧删除。本轮没有新增简化或
   修改引擎。**真实 latex.ltx 主墙仍待修**：500 秒超时，pos=685828（88.4%）、
-  steps=11180000；细节见 [真实跑分 §第十八刀](expl3-real-scoreboard.md#第十八刀尾递归鞍具校准2026-09-17)。
+  steps=11180000；细节见 [真实跑分 §第十八刀](archive/expl3-real-scoreboard.md#第十八刀尾递归鞍具校准2026-09-17)。
 
 - 2026-09-02：建清单（58 处标记扫描归档）；数学内 `$$`、`\mkern/\mskip` mu 上下文已修（3a2cb63）
 - 2026-09-02：内部量 no-op 统一、`\right` 缺配对恢复、数学模式组结束 Missing $（9b0bc69）
 - 2026-09-02：fraction 原语族挂载 + Ambiguous 恢复式（721646c）；\tracingcommands2 可选 `=` 赋值开启追踪（6cc16f0）；mode_name internal vertical（483b640）；\if 求值 {true}/{false}（3a5ec1e）
 - 2026-09-02：\eqno/\leqno 非数学报错 + math_style 报错（942346e）；\outer 展开上下文禁止（a4c2aeb，R3 补登 commit）
 - 2026-09-07：R3 账实同步——5 处"未提交"悬空项核实归位（eqno 多报 f75a638、radical l.412 报错 f75a638、math_mode_error 942346e、\outer a4c2aeb，位置列顺带刷新到分片后路径）；demo1 六刀 + 输出例程刀 2/3/5 战果登记（§7）；架构债小节新设（§8）
-- 2026-09-08：LaTeX 战役二十九刀——\expanded 实参 IPN ×256 清零（scan_edef_body 加 in_definition，78dd892）+ \lowercase 转换 active char（token 表示层 CS_ACTIVE_FLAG，78dd892），详见 latex-feasibility.md §36；\halign 战役刀 1/3——\everycr 两点注入 + align_peek 入口 align_state 复位 + to/spread 摊派真语义（4b912f9），§3 对齐组条目同步刷新
+- 2026-09-08：LaTeX 战役二十九刀——\expanded 实参 IPN ×256 清零（scan_edef_body 加 in_definition，78dd892）+ \lowercase 转换 active char（token 表示层 CS_ACTIVE_FLAG，78dd892），详见 archive/latex-feasibility.md §36；\halign 战役刀 1/3——\everycr 两点注入 + align_peek 入口 align_state 复位 + to/spread 摊派真语义（4b912f9），§3 对齐组条目同步刷新
 - 2026-09-09：格式预载/scan 线补登（§7.bis 新设）——scan_glue dimen 臂（226c177，latex.ltx l.13899 \skip_const 停点消除）+ scan_int dimendef 数字上下文（04d2023，\z@）+ G3 page 参数（3af87dd）；输出例程刀 4 \newinsert 分配器补登（3ef1f67，§7）；新增三项简化登记：EmbeddedFormatVfs 仅 ntex-dvi 接线、预载空页、\lccode/\uccode 初表全 0（510431b 系）
 - 2026-09-10：M9 中文刀 1 登记（§5 新增三行）——\char 上界按字体判定（`FontLoader::char_code_limit`，8-bit 255/Unicode 0x10FFFF，TRIP/ETRIP 口径不变已对照 HEAD 逐字节验证）+ OTF→FontMetrics 直映通道（`unicode_native`/`unicode_chars`，无 ic/kerning）+ 渲染 cmap 直查；遗留：输入层 UTF-8（A5，刀 2）为源文件直写中文前提
 - 2026-09-11：M9 中文刀 2 登记（§5 首行刷新）——`\utfinputmode`（misc 65）UTF-8 直写通路打通，默认 bytes 零改动；遗留改为：\catcode >255 赋值扩展（刀 3）、CJK 断行/标点挤压（④）

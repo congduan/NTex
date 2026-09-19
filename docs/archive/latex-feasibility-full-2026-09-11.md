@@ -1,7 +1,7 @@
 # LaTeX 兼容可行性勘察报告（全文归档，2026-09-11）
 
 > ⚠ **本文件是历史归档，不再更新。** 活的战役文档见
-> [../latex-feasibility.md](../latex-feasibility.md)（只保留当前有效信息）。
+> [latex-feasibility.md](latex-feasibility.md)（只保留当前有效信息）。
 >
 > 归档原因：41 节 / 3114 行中，§8–§37（30 节 expl3 逐刀记录）全部已修完，
 > 保留在此仅供**查具体某刀的根因链与 tex.web 锚点**。grep 定位示例：

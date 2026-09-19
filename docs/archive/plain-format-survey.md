@@ -372,7 +372,7 @@ python3 -c "print(b'MARKER-PO' in open('r.dvi','rb').read())"    # → True
 ## 5.bis.g 战役实测记录（G0–G3，✅ 全部完成）
 
 > 完整记录（含发现未修 6 项、靶向单测清单、成本实测）已归档：
-> [archive/plain-format-g2-record-2026-09-11.md](archive/plain-format-g2-record-2026-09-11.md)
+> [plain-format-g2-record-2026-09-11.md](plain-format-g2-record-2026-09-11.md)
 
 | 阶段 | 内容 | 提交 |
 |---|---|---|

@@ -3,7 +3,7 @@
 #
 # ## 为什么需要它
 #
-# 项目纪律（见 docs/latex-feasibility.md §F）：
+# 项目纪律（见 docs/archive/latex-feasibility.md §F）：
 #   **进度判定用「阻塞点位置单调前移」，不用「跑完/错误计数」**
 # —— 引擎的错误恢复会让「跑完」和错误计数全部失真。
 #
@@ -43,7 +43,7 @@ fi
 SRC="${1:-$SRC_DEFAULT}"
 if [[ ! -f "$SRC" ]]; then
     echo "❌ 找不到源：$SRC" >&2
-    echo "   备料树重建见 docs/latex-feasibility.md §E（/tmp/r27b 勿重下）" >&2
+    echo "   备料树重建见 docs/archive/latex-feasibility.md §E（/tmp/r27b 勿重下）" >&2
     exit 2
 fi
 

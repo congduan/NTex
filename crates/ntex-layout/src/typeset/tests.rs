@@ -1470,7 +1470,7 @@ mod tests {
     //
     // tex.web fire_up `@<Set the value of |output_penalty|@>`：最佳断点是惩罚
     // 节点 → \outputpenalty := 其惩罚；否则（胶水/kern 自然断页）→ inf_penalty
-    // (10000)。latex.ltx 罚分协议六档（docs/output-routine-survey.md §2.2bis）
+    // (10000)。latex.ltx 罚分协议六档（docs/archive/output-routine-survey.md §2.2bis）
     // 全靠它分派，档位差 ±1 就换路，不能模糊化。
     //
     // 探针用 \showthe（转录专用、不进节点流）。勘察报告刀 1 原规格的

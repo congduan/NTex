@@ -124,7 +124,7 @@ use super::*;
         // LaTeX 兼容第十刀：关系符位置 = tex.web `repeat get_x_token until
         // cur_cmd<>spacer`——可展开 filler（`\def\z{=}`）先展开再判 < = >。
         // 修复前 `\z` 不展开 → "Missing = inserted"、`=` 落到右操作数被当垃圾，
-        // `0 T` 泄漏为排版文本（docs/latex-feasibility.md §15.5 最小复现）。
+        // `0 T` 泄漏为排版文本（docs/archive/latex-feasibility.md §15.5 最小复现）。
         assert_eq!(expand("\\def\\z{=}\\ifnum0\\z 0 T\\else F\\fi").unwrap(), "T");
         assert_eq!(expand("\\def\\z{=}\\ifnum0\\z 1 T\\else F\\fi").unwrap(), "F");
         // < > 同族（filler 两向）

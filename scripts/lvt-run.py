@@ -209,7 +209,7 @@ def run_one(tf: Path, name: str, timeout: int = 30) -> tuple[str, str]:
         if (tf / f).exists():
             shutil.copy(tf / f, wd / f)
     # 驱动文件负责终止作业（shim 不再自带 \end —— 嵌套 input 上下文里执行 \end
-    # 会触发输入栈无限增长，见 docs/latex-feasibility.md §A1.undevicies）
+    # 会触发输入栈无限增长，见 docs/archive/latex-feasibility.md §A1.undevicies）
     # ⚠ `\lvtuseexplthree`：显式告知 shim 是否载入 expl3。不用
     # `\IfFileExists`/`\openin` 探测——两者在 NTex 上均不可靠（实测）。
     use_expl3 = all((wd / f).exists() for f in EXPL3_FILES)

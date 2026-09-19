@@ -77,7 +77,7 @@ diff <(ntotext fixtures/pdftex/expanded.log) fixtures/pdftex/expanded.txt
 ## 增量更新流程
 
 如需追加新库请编辑 `scripts/fetch-extras-fixtures.sh`；每行一个文件 + 一条 fallback URL 链。
-新增文件要在本 README 加一行、并在 `AGENTS.md §6` 状态表加一条标注。
+新增文件要在本 README 加一行、并在 `plan.md` 的对应里程碑条目加一条标注。
 
 ## 测试字体缓存（~/.ntex-fonts，环境约定）
 

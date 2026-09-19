@@ -27,7 +27,7 @@
 % ── LaTeX 最小符号 ──────────────────────────────────────────────
 % \documentclass[opts]{class}：吃可选参数 + 必选参数，无操作
 % （旧实现用 \@gobbleopt + \futurelet 链，疑似在 LVT 上下文残留状态
-%  污染后续 cs 解析 —— 见 docs/latex-feasibility.md §A1.sedecies。
+%  污染后续 cs 解析 —— 见 docs/archive/latex-feasibility.md §A1.sedecies。
 %  LVT 用例里没有可选参数，直接简化。）
 % \@ifnextchar 不存在于 plain，用 \futurelet 单层判 `[`。
 \def\documentclass{\futurelet\@let@token\@docclass}
@@ -46,7 +46,7 @@
 % `\end` 保持**原语**，不做任何包装。
 % （曾用 `\futurelet` 包装以吞 `{document}`，但 regression-test.tex 的
 %  `\END` 宏体末尾是裸 `\@@@end`（后面无 `{`），包装器毫无必要；
-%  过度设计反而引入状态问题——见 docs/latex-feasibility.md §A1.septendecies。）
+%  过度设计反而引入状态问题——见 docs/archive/latex-feasibility.md §A1.septendecies。）
 \let\@@ntex@end@prim\end
 
 \def\usepackage#1{}
@@ -99,7 +99,7 @@
 %
 % ⚠ 这两个宏**必须存在**，否则 `_`/`:` 保持 catcode 8/12，`\tl_new:N \l_A_tl`
 % 里的 `_` 被当数学下标 → `! 双重下标`（实测 46 例 CRASH 的真根因，
-% 见 docs/expl3-lvt-scoreboard.md）。plain 无此宏，须 shim 提供。
+% 见 docs/archive/expl3-lvt-scoreboard.md）。plain 无此宏，须 shim 提供。
 % ⚠ 变量名**不可含 `_`**：plain 下 `_` 是 catcode 8（下标），`\l__lvt@x` 会被
 % 切成 `\l` + 字面 `__lvt@x` —— 定义处与使用处解析成不同 cs，静默失效
 % （实测：`\ExplSyntaxOn` 被调用但不生效，`_` 仍为 cat 8，导致 187 例测试体
@@ -148,11 +148,11 @@
 % 曾在此处载入 → harness 被**载入两次**（shim 一次 + 用例一次）→ 重入后的
 % `\let\end\END`（regression-test.tex L87-91 的 BLOCK2 真分支）使 `\END` 宏
 % 体末尾的 `\@@@end` 指向 `\END` 自身 → **无限自我递归** → 输入栈爆
-% （187 例官方用例中 112 例 STACK-END，见 docs/expl3-lvt-scoreboard.md）。
+% （187 例官方用例中 112 例 STACK-END，见 docs/archive/expl3-lvt-scoreboard.md）。
 % 官方 l3build 的驱动只用 `\input{testsuite}` 一次，shim 须保持一致语义。
 
 % ── 载入 expl3 本体 ─────────────────────────────────────────────
-% ⚠⚠ 这是「真分数」的前提（2026-09-11 实测，见 docs/expl3-real-workload.md）：
+% ⚠⚠ 这是「真分数」的前提（2026-09-11 实测，见 docs/archive/expl3-real-workload.md）：
 % 官方 `.lvt` 用例**假定 expl3 已由 LaTeX 内核装载**，直接使用
 % `\cs_if_exist_use:N` 等函数。此前 shim 不载 expl3 → 用例里这些函数
 % **全部 undefined**（实测 77 个/例），却因错误恢复跑到 `END-TEST-LOG`

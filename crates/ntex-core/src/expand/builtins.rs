@@ -514,7 +514,7 @@ pub(crate) const BUILTINS: [(&str, Primitive); 416] = [
             // TRIP 冲刺：\noboundary（数学字符边界抑制；直通 sink）
             ("noboundary", Primitive::NoBoundary),
             // LaTeX 兼容第八刀：pdfTeX 引擎探测/兼容原语族（语义边界见
-            // eqtb/primitive.rs 该族注释与 docs/latex-feasibility.md §15）。
+            // eqtb/primitive.rs 该族注释与 docs/archive/latex-feasibility.md §15）。
             // 版本值对齐 pdfTeX 1.40.25（TeX Live 2024–2025 世代；
             // latex.ltx engine-check 只要求 v1.40，l3kernel 仅探测存在性）。
             ("pdftexversion", Primitive::PdfTeXVersion),

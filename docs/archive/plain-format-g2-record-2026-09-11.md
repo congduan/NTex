@@ -1,6 +1,6 @@
 # 格式预载 G2(a) 实测记录（归档）（2026-09-11 归档）
 
-> ⚠ **历史归档，不再更新。** 活文档见 [../plain-format-survey.md](../plain-format-survey.md)。
+> ⚠ **历史归档，不再更新。** 同批归档见 [plain-format-survey.md](plain-format-survey.md)（亦已归档）。
 > 保留原因：含详细改动面/tex.web 裁决/单测清单，供查证具体某刀。
 
 ---

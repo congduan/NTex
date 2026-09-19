@@ -810,7 +810,7 @@ impl Expander {
                     // 才展开」的窄子集（第十二轮权宜），是 expl3 fp 解析机首错
                     // （l.18141 `\\fp_const:Nn \\c_e_fp {2.718 2818 2845 9045}`）的根因。
                     // pdfTeX 决定性证据：`\\def\\zz{4} \\count11=2\\zz` → 24（吸收，
-                    // 非 2）。定性见 docs/expl3-lvt-scoreboard.md 第三刀节/附录 A。
+                    // 非 2）。定性见 docs/archive/expl3-lvt-scoreboard.md 第三刀节/附录 A。
                     if let Some(csid) = tok.csid() {
                         let expandable = match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
                             EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),

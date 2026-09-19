@@ -2569,7 +2569,7 @@ impl Expander {
         // TeX 输入栈上限（tex.web `stack_size`；TeX Live 取 5000）：宏递归展开
         // 无终止条件时以此报错终止，而非耗尽内存。此前无此保护——latex.ltx 加载
         // 曾触发单步内无界递归（每层压一个 Bytecode 帧，主循环 10M 步上限够不到），
-        // RSS 涨至 OOM（docs/latex-feasibility.md A4）。真实 TeX 同为
+        // RSS 涨至 OOM（docs/archive/latex-feasibility.md A4）。真实 TeX 同为
         // "TeX capacity exceeded, sorry [input stack size=N]" 致命错。
         if self.stack.len() >= MAX_INPUT_STACK {
             let name = self.intern.name(csid).to_owned();

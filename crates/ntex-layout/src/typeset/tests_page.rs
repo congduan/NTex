@@ -115,7 +115,7 @@ use super::*;
         let got = showthe_values(&ts.take_transcript(), "outputpenalty");
         assert!(got.len() >= 2, "应产出多页：{got:?}");
         // 首页断点读 0（待主线核：极小 \vsize 下首例程注入早于惩罚写定的疑似
-        // 时序差，见 docs/output-routine-survey.md §5.2 勘误附录）；第 2 页起
+        // 时序差，见 docs/archive/output-routine-survey.md §5.2 勘误附录）；第 2 页起
         // 与真 TeX 一致：胶水自然断页 = inf_penalty(10000)。
         for v in &got[1..] {
             assert_eq!(v, "10000", "胶水自然断页 \\outputpenalty 应为 10000：{got:?}");

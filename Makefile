@@ -45,7 +45,7 @@ logtrace:
 	python3 scripts/logtrace.py $(LOG) $(ARGS)
 
 # expl3 官方测试套件（l3kernel .lvt，187 例）：抓取 / 跑单例 / 全量跑分
-# 见 docs/expl3-lvt-scoreboard.md
+# 见 docs/archive/expl3-lvt-scoreboard.md
 lvt-fetch:
 	python3 scripts/lvt-run.py --fetch
 

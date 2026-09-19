@@ -526,7 +526,7 @@ latex.ltx 侧：`/tmp/latexsurvey/tex/latex/base/latex.ltx`（2026-06-01，22838
 ## 5.bis 逐刀实测记录（刀 1–5，✅ 全部完成）
 
 > 详细改动面/tex.web 裁决记录已归档：
-> [archive/output-routine-blades-2026-09-11.md](archive/output-routine-blades-2026-09-11.md)
+> [output-routine-blades-2026-09-11.md](output-routine-blades-2026-09-11.md)
 
 | 刀 | 内容 | 提交 | 要点 |
 |---|---|---|---|

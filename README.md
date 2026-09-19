@@ -12,104 +12,120 @@
 ```
 TeX/LaTeX 源码
     ▼
-0. 输入层（VFS / 文件抽象）
+0. 输入层（VFS / 文件抽象，ntex-io）
     ▼
-1. TeX 虚拟机（阶段 1：求值）
+1. TeX 虚拟机（阶段 1：求值，ntex-core）
    ┌────────────┐   ┌──────────────────────┐
    │ Token 流    │◄─►│ 不可变状态（catcode/  │
    │ (8B token) │   │ 宏字典/寄存器）快照    │
    └─────┬──────┘   └──────────────────────┘
-         ▼ 宏展开 + 执行循环
+         ▼ 宏展开 + 执行循环（字节码为默认路径）
    纯排版节点流（Node List）
     ▼
-2. 增量缓存层（Salsa 式求值图）
+2. 增量缓存层（段级快照 + 依赖追踪 + 失效传播）
     ▼
-3. 布局引擎（阶段 2：排版，并行）
+3. 布局引擎（阶段 2：排版，ntex-layout）
    段落折行 Knuth-Plass │ 断页 │ 数学排版 │ 断字 │ 字体
     ▼
 4. 盒子树 + 输出例程（\shipout）→ DVI
     ▼
-5. 渲染后端（阶段 3：渲染）ntex-pdf（DVI→PDF）/ Skia / WASM
+5. 渲染后端（阶段 3）ntex-pdf（DVI→PDF）/ ntex-backend（vello GPU / 软光栅）
 ```
 
-## 四大性能支柱
+**四大性能支柱**：
 
 1. **状态快照 + CoW**：不可变状态表，微秒级快照，为增量编译与撤销/重做铺路
-2. **预编译 `.fmt` 内存 Dump + mmap**：毫秒级完成 latex.ltx 初始化
-3. **Salsa 式记忆化增量求值**：改第 50 页的一个字，前 49 页 0 毫秒跳过
-4. **Arena 内存池**：token/节点连续分配，零 GC 暂停
+2. **预编译 `.fmt` 内存 Dump + mmap**：毫秒级完成 `latex.ltx` 初始化（v1 已可用，v2 待做）
+3. **段级记忆化增量求值**：改一段只重算受影响段（现状见 [plan.md](plan.md) §2 M5）
+4. **Arena 内存池**：token/节点连续分配，零 GC 暂停（待做）
 
-## 工作区结构
-
-```
-crates/
-  ntex-core        引擎基础类型 + TeX VM 数据模型 + 展开引擎 + 字节码 VM（RFC-1 / RFC-4）
-  ntex-layout      排版核心：主循环（模式状态机）/ 折行 / 断页 / 数学 / 输出例程（M3/M4）
-  ntex-font        TFM 解析与真实字体度量（M3-4；ttf/HarfBuzz 待 M9）
-  ntex-dvi         DVI 写出器，与真实 TeX 逐字节一致（M3-5）
-  ntex-pdf         DVI → PDF 正式后端：Type1 字体嵌入
-  ntex-io          VFS 抽象 + LocalVfs/MemVfs（RFC-3 副作用隔离）
-  ntex-format      .fmt v1 状态快照序列化 / 反序列化（v2 待 M7）
-  ntex-test-support 测试/差分/基准基础设施（EngineDriver 抽象）
-  ntex-trip        TRIP/ETRIP 一致性测试框架
-  ntex-diff        差分测试工具（参考引擎 vs 本引擎）
-  ntex-bench       基准框架
-  ntex-wasm        WASM 薄壳（M8 A 档骨架）：浏览器/Node 跑 plain 子集 → DVI + log
-fixtures/          测试 fixtures（diff 示例 / trip 获取脚本）
-scripts/           辅助脚本（如 fetch-trip-fixtures.sh）
-docs（RFC）        RFC-1 token 表示 / RFC-4 字节码指令集
-```
-
-后续里程碑按计划加入：`ntex-incremental`（增量计算，M5）、`ntex-backend`（Skia/WebGPU，M8）、`ntex-cli`（M9）、`ntex-wasm`（**骨架已建**，M8 A 档：浏览器/Node 内跑 plain 子集 → DVI + log；`crates/ntex-wasm/README.md`）。
+各 crate 的职责划分见 [AGENTS.md](AGENTS.md)；架构构想的完整论证见 [idea.md](idea.md)。
+当前进度与里程碑状态一律见 [plan.md](plan.md)。
 
 ## 快速开始
 
 ```bash
-make check      # 质量门禁：fmt + clippy(-D warnings) + 单元测试
-make fixtures   # 获取 TRIP 测试 fixtures
-make trip       # TRIP 一致性测试（stub 驱动验证管路）
-make diff       # 差分测试（示例 fixtures）
-make bench      # 基准（stub 驱动验证管路）
+# 质量门禁：fmt + clippy(-D warnings) + 单元测试（提交前必须全绿）
+make check
 
-# 端到端演示：samples/demo.tex → DVI → PDF（正式后端）
-cargo run -p ntex-dvi -- samples/demo.tex   # 排版（TFM / Knuth-Plass / 断页 / \shipout）→ samples/demo.dvi
-cargo run -p ntex-pdf -- samples/demo.dvi   # DVI → PDF（Type1 字体嵌入）→ samples/demo.pdf
+# 定位基础设施（开工定位前先读 docs/tooling-trust.md）
+make instrument-check                   # 仪器自检：诊断原语与 pdfTeX 逐字对拍
+make abcheck TEX=probe.tex ARGS=--trace # 双引擎差分对拍
+make logtrace LOG=x.transcript          # 转录/log 结构分析
+make blocker-track                      # 阻塞点单调性看板
+
+# 端到端演示：samples/demo.tex → DVI → PDF
+cargo run -p ntex-dvi -- samples/demo.tex                        # → samples/demo.dvi
+cargo run -p ntex-pdf -- samples/demo.dvi                        # → samples/demo.pdf
+cargo run -p ntex-backend -- samples/demo.tex demo 144 --vello   # → PNG（GPU + 真字形）
 
 # LaTeX 快路径：无需外部 TeX Live，默认从 assets/fmt 与 assets/tex-minimal 查找
 cargo run -p ntex-dvi -- --fmt latex.fmt doc.tex
+cargo run -p ntex-dvi -- --generate-fmt /tmp/latex.fmt    # 引擎语义变更后重生成发行 fmt
 
-# 引擎语义变更后重新生成发行 fmt
-cargo run -p ntex-dvi -- --generate-fmt /tmp/latex.fmt
+# 实时预览工作台（左 TeX 编辑 / 右 vello GPU 渲染，250ms 防抖重排）
+cargo run -p ntex-studio [文件.tex]
+make tauri                                                # Tauri 桌面壳（排版+渲染全在前端 WASM 内）
 
-# 接真实参考引擎
-cargo run -p ntex-diff -- --fixtures fixtures/diff --reference external=pdflatex --engine stub
-cargo run -p ntex-bench --release -- --driver external=pdflatex
+# 一致性 / 差分 / 基准管路
+make trip / make diff / make bench
+make fixtures / make fixture-extras        # 获取 TRIP·ETRIP / 补充对照 fixtures
+make lvt-fetch / make lvt-run ARGS=--all   # expl3 官方测试套件跑分
 ```
 
-`ntex-dvi` 的 `\input` 默认搜索链为：cwd、显式 `--input-path`、可执行文件同目录
-`tex/`、`~/.ntex/tex/`、`TEXINPUTS`、仓库/发行包 `assets/tex-minimal/tex/`、
-检测到的 `~/.TinyTeX/texmf-dist/tex/`，最后回落 `kpsewhich`。发行包可直接携带
-`assets/fmt/latex.fmt`、`assets/tex-minimal/tex/` 与 `assets/tfm/`；完整资产说明见
+`ntex-dvi` 的 `\input` 默认搜索链：cwd → 显式 `--input-path` → 可执行文件同目录 `tex/` →
+`~/.ntex/tex/` → `TEXINPUTS` → 仓库/发行包 `assets/tex-minimal/tex/` → 检测到的
+`~/.TinyTeX/texmf-dist/tex/` → 最后回落 `kpsewhich`。完整资产说明见
 [assets/tex-minimal/README.md](assets/tex-minimal/README.md)。
 
-## 设计文档
+## 开发约定
 
-- [idea.md](idea.md) — 总体架构构想（三阶段解耦 / 增量计算 / 并行布局）
-- [plan.md](plan.md) — 实施计划（M0~M9 里程碑与验收标准）
-- [RFC-1-token.md](RFC-1-token.md) — Token 表示与内存布局（8B tagged union）
-- [RFC-4-bytecode.md](RFC-4-bytecode.md) — 字节码指令集设计（宏展开 VM IR）
+### 编码规范
 
-## 里程碑状态
+- **工程级 lint**：workspace 统一 `unsafe_code = "deny"`，clippy 全开——严禁 `unsafe`，
+  禁止 `catch_unwind`；
+- **错误模型**：错误走 `Result`/`Error`，输入可达路径禁止 `unwrap`/`expect`/`panic`
+  （引擎契约：**任意畸形输入不 panic**）；错误类型不带 blanket `From<io::Error>`，
+  强制带操作意图上下文；
+- **注释/文档/提交信息用中文**；模块顶部文档引用里程碑 ID（如 `M1-4`）与 RFC 章节
+  （如 `RFC-1 §3`）；代码改动须同步更新对应注释；
+- **格式**：`rustfmt.toml` = edition 2021 / max_width 100 / use_field_init_shorthand；
+- 提交信息风格：中文，`feat:` 开头，冒号后空格
+  （例：`feat: ETRIP 冲刺迭代 —— 表达式 i128 中间量 + 胶水阶语义`）。
 
-| 里程碑 | 内容 | 状态 |
-|---|---|---|
-| M0 地基 | workspace / CI / 基准 / TRIP / 差分工具链 | ✅ 完成 |
-| M1 内核 | Token/InternTable/eqtb/catcode/扫描器/展开引擎 | 🟡 核心完成；**TRIP 冲刺推进中**（扫描/字体/数学错误恢复已落地，逐段攻剩余恢复点） |
-| M2 字节码 | 定长 u64 IR + 编译器 + 双轨等价 | 🟡 双轨 100 用例等价全绿；吞吐 1.12x 未达 2x，arena 未做 |
-| M3 排版 | 折行/TFM/断页/lig+kern/`\output`/shipout→DVI | ✅ 核心完成（DVI 逐字节对照一致）；VFS + `.fmt` v1 已落地 |
-| M4 数学 + e-TeX | 数学模式/e-TeX 原语/断字/错误模型 | ✅ 完成；**ETRIP 冲刺进行中**（A 组 41/42、B 组 36/36、C 组已接线） |
-| 输出端 | DVI→PDF 正式后端（Type1 嵌入） | ✅ 可用（dvipdfmx 渲染一致） |
-| M5+ | 增量 / 并行 / .fmt v2 / 渲染 / 生态 | ⏳ 待实施 |
+### 测试纪律
+
+- **提交前 `make check` 全绿**（fmt + clippy `-D warnings` + 单元测试）；
+- 测试金字塔：单元测试（语义锁消息 / 逐位对照）> 差分测试（同一 `.tex` 双引擎 diff）>
+  TRIP/ETRIP（一致性硬口径）；M2 双轨等价框架（解释器 vs 字节码）必须保持绿；
+- **`cargo test --release` 会失败**：`[profile.release]` 开了 `panic = "abort"` + `lto` +
+  `codegen-units = 1`——**测试一律用默认 dev profile**（CI 亦如此）；
+- 涉及排版一致性/折行结果，验证方式：`demo.tex → DVI` 与 dvipdfmx / 真实 TeX 对照；
+- 定位类改动先读 [docs/tooling-trust.md](docs/tooling-trust.md)（仪器失真史 + 判读纪律），
+  改诊断原语后必跑 `make instrument-check`。
+
+### 文档约定
+
+- **进度只写 [plan.md](plan.md)**（唯一进度源）；目录结构只写 [AGENTS.md](AGENTS.md)；
+- 长期参考文档（"是什么 / 怎么做"）放 `docs/`；历史战报与勘察全文放 `docs/archive/`；
+- 新增任何"简化 / no-op / 暂不"实现必须当天登记到
+  [docs/KNOWN-SIMPLIFICATIONS.md](docs/KNOWN-SIMPLIFICATIONS.md)（文件:行），修复后标 ✅ + commit。
+
+## 文档地图
+
+| 文档 | 定位 |
+|---|---|
+| [plan.md](plan.md) | **整体进度**：当前焦点 / 各线状态 / 里程碑明细 / 待办 / 风险 |
+| [AGENTS.md](AGENTS.md) | **目录结构**：crate 职责、源文件布局、docs 索引 |
+| [idea.md](idea.md) | 架构构想（三阶段解耦 / 增量计算 / 并行布局的完整论证） |
+| [RFC-1-token.md](RFC-1-token.md) | Token 表示与内存布局（8B tagged union） |
+| [RFC-3-side-effects.md](RFC-3-side-effects.md) | 副作用隔离（VFS + shipout 边界提交） |
+| [RFC-4-bytecode.md](RFC-4-bytecode.md) | 字节码指令集（宏展开 VM IR） |
+| [RFC-5-parallel.md](RFC-5-parallel.md) | 并行化设计 |
+| [docs/KNOWN-SIMPLIFICATIONS.md](docs/KNOWN-SIMPLIFICATIONS.md) | 技术债清单（改动前先查表） |
+| [docs/tooling-trust.md](docs/tooling-trust.md) | 定位基础设施与仪器可信度 |
+| [docs/MATH-STATE-MACHINE.md](docs/MATH-STATE-MACHINE.md) | 数学状态机语义规格 |
+| [docs/archive/](docs/archive/README.md) | 历史归档索引（逐刀战报、勘察全文） |
 
 ## License
 

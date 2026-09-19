@@ -131,7 +131,7 @@ impl PageBuilder {
     ///
     /// ⚠ 注意本判据**只在「冲页触发点」使用**：`\end` 的 `its_all_over` 路径
     /// 对纯胶水**仍然冲页**（pdfTeX 实测 `\vfill\end` → 1 页）。两条路径的
-    /// 差别见 `docs/latex-feasibility.md` 与 `scripts/page-eject-matrix.py`。
+    /// 差别见 `docs/archive/latex-feasibility.md` 与 `scripts/page-eject-matrix.py`。
     ///
     /// 判据（对齐 tex.web `append_to_vlist` 会建 `page_head` 的节点类型）：
     /// `Box` / `Rule` 算；`Glue` / `Kern`(垂直) / `Penalty` / `Mark` / `Insert` 不算。

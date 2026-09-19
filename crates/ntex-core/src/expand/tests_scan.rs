@@ -742,7 +742,7 @@ mod latex_ltx_l301_sniff {
 ///
 /// **NTex 已知差异**：不报 `Missing number`，静默产出 `\0` 并把 `65` 留作字面。
 /// 归类「错误报告面缺失」（不影响排版结果，影响诊断保真）。
-/// 见 docs/latex-feasibility.md §A1.octies。
+/// 见 docs/archive/latex-feasibility.md §A1.octies。
 #[cfg(test)]
 mod arg_scan_does_not_expand {
     use super::*;

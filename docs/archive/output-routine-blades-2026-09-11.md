@@ -1,6 +1,6 @@
 # 输出例程战刀 1–5 实测记录（归档）（2026-09-11 归档）
 
-> ⚠ **历史归档，不再更新。** 活文档见 [../output-routine-survey.md](../output-routine-survey.md)。
+> ⚠ **历史归档，不再更新。** 同批归档见 [output-routine-survey.md](output-routine-survey.md)（亦已归档）。
 > 保留原因：含详细改动面/tex.web 裁决/单测清单，供查证具体某刀。
 
 ---

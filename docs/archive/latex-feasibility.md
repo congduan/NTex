@@ -1,7 +1,7 @@
 # LaTeX 兼容战役（活文档）
 
 > **本文档只保留当前有效信息。** 已修完的历史逐刀记录（§8–§37 共 30 节、约 2900 行）
-> 归档于 [archive/latex-feasibility-full-2026-09-11.md](archive/latex-feasibility-full-2026-09-11.md)
+> 归档于 [latex-feasibility-full-2026-09-11.md](latex-feasibility-full-2026-09-11.md)
 > —— 需要查具体某刀的根因链/tex.web 锚点时去那里 grep。
 
 **目标**：`latex.ltx` 加载成功 → `latex.fmt` 构建 → `\documentclass{article}` → PDF。
