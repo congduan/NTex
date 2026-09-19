@@ -207,7 +207,7 @@ use super::*;
         // `\let\bgroup={\everyjob\bgroup y` 合法收 `y`，但 `\egroup` 不配平。
         assert_eq!(
             expand("\\let\\bg={\\def\\f#1{[#1]}\\edef\\x{\\f\\bg}\\meaning\\x}").unwrap(),
-            "macro:->[\\bg]"
+            "macro:->[\\bg ]"
         );
         // 对照：真 TeX 数字上下文 `\let` 别名不是内部量（char_given 才是）——
         // `\ifnum\bg=1` 报 Missing number（本测只锁 token 位数据性，数字位

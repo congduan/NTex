@@ -265,7 +265,7 @@ use super::*;
         // \expandafter 先把 \p 展开成带 noexpand 标记的 \a，再交给 \y 收作实参。
         // 实参帧若丢掉这个一次性冻结位，\a 会在同一个 \edef 区域内误展开成 A。
         let src = "\\def\\a{A}\\def\\p{\\noexpand\\a}\\def\\y#1{#1}\\edef\\z{\\expandafter\\y\\p}\\meaning\\z";
-        assert_eq!(expand(src).unwrap(), "macro:->\\a");
+        assert_eq!(expand(src).unwrap(), "macro:->\\a ");
     }
 
     #[test]
@@ -679,7 +679,9 @@ use super::*;
         // 本引擎 \meaning 无分隔空格——格式器遗留偏差，非吸收语义差异）。
         assert_eq!(
             expand("\\edef\\b{\\ifnum1=1\\expandafter\\chardef\\else\\relax\\fi}\\meaning\\b").unwrap(),
-            "macro:->\\chardef\\relax"
+            // pdfTeX GT：\meaning 在 cs 与后续 token 间补空格（show_token_list
+            // 规则），detok_tokens 补空格修复后本期望对齐 GT。
+            "macro:->\\chardef \\relax "
         );
         // 嵌套条件：内层 \else 在 \chardef 的目标扫描位被就地展开（fi_or_else
         // 急切处理）→ 内层条件闭合并跳过 \relax\fi，\chardef 落空报

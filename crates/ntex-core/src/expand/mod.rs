@@ -334,6 +334,15 @@ pub(crate) enum SavedValue {
         byte: u8,
         prev: i64,
     },
+    /// `\uccode`：大写码表项（M9 中文刀 6 修：此前 exec_uccode 复用 LcCode
+    /// 变体入栈、恢复侧写回 `self.lccodes`——字段错位双重 bug：uccode 组内
+    /// 赋值出组泄漏 + lccodes 同下标被无辜改写。amsmath `\uppercase{\gdef
+    /// \macro@#1#2#3#4\macro@{…}}` 靠 uccode 组作用域隔离参数数字转换，
+    /// 泄漏导致 `#4`→`#r` Illegal parameter number，载入即炸）。
+    UcCode {
+        byte: u8,
+        prev: i64,
+    },
     /// ETRIP 第二波：e-TeX 惩罚数组（\interlinepenalties 等；组内局部保存）。
     /// `kind`：0=interline/1=club/2=widow/3=displaywidow。
     PenaltyArray {

@@ -999,6 +999,7 @@ impl Expander {
                 }
             },
             SavedValue::LcCode { byte, prev } => self.lccodes[byte as usize] = prev,
+            SavedValue::UcCode { byte, prev } => self.uccodes[byte as usize] = prev,
             SavedValue::PenaltyArray { kind, prev } => {
                 if (kind as usize) < self.penalty_arrays.len() {
                     self.penalty_arrays[kind as usize] = prev;

@@ -377,7 +377,7 @@ fn reg_kind_name(k: RegKind) -> &'static str {
 /// 字符取字符、控制序列 → `\名字`、宏参数 → `#n`。
 fn detok_tokens(toks: &[Token], intern: &InternTable) -> String {
     let mut s = String::new();
-    for t in toks {
+    for (i, t) in toks.iter().enumerate() {
         match t.kind() {
             TokenKind::Char => {
                 if let Some(ch) = t.charcode().and_then(char::from_u32) {
@@ -387,6 +387,17 @@ fn detok_tokens(toks: &[Token], intern: &InternTable) -> String {
             TokenKind::ControlSeq => {
                 s.push('\\');
                 s.push_str(intern.name(t.csid().expect("ControlSeq 必有 csid")));
+                // tex.web show_token_list（L320 区）：cs 后若下一 token 非
+                // 空格则补一个空格（`macro:->\relax `）——\meaning/\show
+                // 共用。缺它则 NFSS/amsmath 的 \meaning 切分（\@tempb#1>#2#3
+                // <空格>#4）找不到空格定界符，吞到 \par 报
+                // "Paragraph ended before \@tempb was complete"。
+                let next_is_space = toks
+                    .get(i + 1)
+                    .is_some_and(|nt| nt.charcode() == Some(u32::from(b' ')));
+                if !next_is_space {
+                    s.push(' ');
+                }
             }
             TokenKind::MacroParam => {
                 s.push('#');

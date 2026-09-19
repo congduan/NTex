@@ -954,7 +954,16 @@ impl Expander {
                         hash_brace = Some(next);
                         break;
                     } else {
-                        return Err(Error::invalid_input("参数文本中 # 后必须跟数字或 #"));
+                        // tex.web scan_toks（L1608 区）第三分支：参数文本中
+                        // `#` 后跟「非数字、非 #、非 {」的 token → 该 `#` 是
+                        // **定界符的一部分**（字面入参数文本），next 放回由
+                        // 正常定界扫描消化。`\def\foo#1#2\bar{…}`（# 后 cs 定
+                        // 界）、amsmath `\gdef\macro@#1#2#3#4\macro@{…}`
+                        // （# 后 cs 定界）都属此类。此前误报「# 后必须跟
+                        // 数字或 #」，amsmath.sty l.2790 载入即炸（\Large/
+                        // \section 连锁）。
+                        text.push(tok);
+                        self.unread(next);
                     }
                 }
                 _ => text.push(tok),

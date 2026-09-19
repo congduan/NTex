@@ -428,7 +428,7 @@ impl Expander {
         if !global && self.group_level > 0 {
             self.save_stack.push((
                 self.group_level,
-                SavedValue::LcCode {
+                SavedValue::UcCode {
                     byte,
                     prev: self.uccodes[byte as usize],
                 },
