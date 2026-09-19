@@ -425,6 +425,8 @@ impl Expander {
             &mut self.intern,
             &mut state,
             self.params.misc[crate::param::MISC_UTF_INPUT_MODE] != 0,
+            // \read 行同样按 \endlinechar 动态分派行尾 token（与主输入一致）
+            self.params.endlinechar,
         )? {
             // TeX：\read 的 token 列表禁止 outer 宏（tex.web read_toks）
             self.check_not_outer(tok)?;

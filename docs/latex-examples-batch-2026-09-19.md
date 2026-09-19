@@ -147,3 +147,18 @@ beamer `beamerbasemodes.sty` l.50-91 的逐行消费器依赖：
 `\^^J=active` 场景：endlinechar=13 而 ^^J 是 char 10，二者不同码位，
 active 探针不应受影响，但必须实测）。修复后须重生成 latex.fmt 并
 全量跑 TRIP/ETRIP + corpus-probe。
+
+## 附录 3：endlinechar 修复落地 + beamer 残余问题分层（同日）
+
+- 修复已落地：`scan_token` 增 `endlinechar` 参数；行尾 token 字符码取
+  `\endlinechar` 值、catcode 按该码位查当前表（cat5 维持空格语义；
+  cat12 等产出数据字符可作 `#1^^M` 定界；<0 或 >0xFF 不追加）。
+  12 处调用点（含 `\read`、主输入、utf8 测试）全部传参。
+- 修复后 beamer.cls **活锁解除**（不再千万步空转，能跑到载入完成 +
+  文档处理），但最小 beamer 文档仍未产出页面——**第二层问题**：
+  beamer 消费器（`\beamer@startcomment`/`\beamer@processline`）启动/
+  终止逻辑在 NTex 上不收敛（`\let\next=\beamer@processline` 25 万次，
+  stop 判定串 `\beamer@stopdocument` 宏定义本身已验证正确）。
+  涉及 `\string`+`\escapechar=-1`+`\ifx` 宏比较链，需下一刀单独排查。
+- 回归验证：中文 article 论文（\section+\subsection+CJK 折行）✓、
+  plain 回归 ✓、ntex-core 438 全绿 ✓、clippy ✓。

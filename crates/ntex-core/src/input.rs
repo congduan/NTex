@@ -142,6 +142,7 @@ pub fn scan_token(
     intern: &mut InternTable,
     state: &mut ScanState,
     utf8_input: bool,
+    endlinechar: i64,
 ) -> Result<Option<Token>> {
     loop {
         let Some(&b) = bytes.get(*pos) else {
@@ -349,13 +350,40 @@ pub fn scan_token(
                         // 文本因此不含尾随空格；否则 #2 变"空格定界"实参、实参扫描
                         // 一路吞到首个 `}`（l.398/l.819 级联的第三根因，报告 §18）。
                         // cat 32 维持 Space(10) 时行为不变（plain/TRIP/LaTeX）。
-                        match catcodes.get(b' ') {
+                        //
+                        // M9 中文刀 7（beamer 活锁根因修复）：行尾插入字符的
+                        // **字符码取 `\endlinechar` 参数值**（tex.web
+                        // `buffer[limit]:=end_line_char`，L7578-7579），不再硬编码
+                        // 32。`\catcode`\^^M=12` 类用法（beamer 逐行消费器
+                        // `#1^^M` 定界、`\uppercase` 内活字符构造）要求行尾
+                        // token 的字符码 = endlinechar（13）且 catcode 按
+                        // **该码位查当前表**——cat 12 时产出数据字符可作宏
+                        // 参数定界符。endlinechar < 0（tex.web
+                        // end_line_char_inactive）→ 不产出任何 token。
+                        // 默认 endlinechar=13 且 cat 13=EndOfLine(5) 时维持
+                        // 现行"空格语义"（plain/TRIP/LaTeX 逐字节不变）。
+                        if !(0..=0xFF).contains(&endlinechar) {
+                            // 不追加：行尾不产 token（继续扫下一物理行）
+                            continue;
+                        }
+                        let elc = endlinechar as u8;
+                        match catcodes.get(elc) {
+                            Catcode::EndOfLine => {
+                                // 行尾字符自身是 cat 5 → 维持空格语义
+                                //（字符码仍用 32：定界空格匹配，历史口径）
+                                match catcodes.get(b' ') {
+                                    Catcode::Ignored => continue,
+                                    Catcode::Space => {
+                                        return Ok(Some(Token::char(Catcode::Space, b' ' as u32)))
+                                    }
+                                    other => return Ok(Some(Token::char(other, b' ' as u32))),
+                                }
+                            }
                             Catcode::Ignored => continue,
                             Catcode::Space => {
-                                return Ok(Some(Token::char(Catcode::Space, b' ' as u32)))
+                                return Ok(Some(Token::char(Catcode::Space, elc as u32)))
                             }
-                            // 罕见：cat 32 被设为其他 catcode → 按该 catcode 产出
-                            other => return Ok(Some(Token::char(other, b' ' as u32))),
+                            other => return Ok(Some(Token::char(other, elc as u32))),
                         }
                     }
                     Catcode::Space => {
@@ -417,6 +445,7 @@ mod tests {
             &mut intern,
             &mut state,
             false,
+            13,
         )
         .unwrap()
         {
@@ -505,6 +534,7 @@ mod tests {
             &mut intern,
             &mut state,
             false,
+            13,
         )
         .unwrap()
         {
@@ -652,6 +682,7 @@ mod tests {
             &mut intern,
             &mut state,
             false,
+            13,
         )
         .unwrap()
         .unwrap();
@@ -668,6 +699,7 @@ mod tests {
             &mut intern,
             &mut state,
             false,
+            13,
         )
         .unwrap()
         .unwrap();
@@ -682,6 +714,7 @@ mod tests {
             &mut intern,
             &mut state,
             false,
+            13,
         )
         .unwrap()
         .unwrap();
@@ -701,7 +734,16 @@ mod tests {
         let mut pos = 0usize;
         let mut state = ScanState::LineStart;
         let bytes = [0x7F];
-        assert!(scan_token(&bytes, &mut pos, &catcodes, &mut intern, &mut state, false).is_err());
+        assert!(scan_token(
+            &bytes,
+            &mut pos,
+            &catcodes,
+            &mut intern,
+            &mut state,
+            false,
+            13
+        )
+        .is_err());
     }
 
     // ---------- M9 中文刀 2：UTF-8 输入模式（\utfinputmode=1） ----------
@@ -720,6 +762,7 @@ mod tests {
             &mut intern,
             &mut state,
             utf8,
+            13,
         )
         .unwrap()
         {
@@ -779,6 +822,7 @@ mod tests {
             &mut intern,
             &mut state,
             true,
+            13,
         )
         .unwrap()
         {
@@ -846,6 +890,7 @@ mod tests {
             &mut intern,
             &mut state,
             false,
+            13,
         )
         .unwrap()
         {

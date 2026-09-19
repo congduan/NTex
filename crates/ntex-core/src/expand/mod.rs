@@ -3149,6 +3149,9 @@ impl Expander {
                         //（只作用于字节→token 入口；宏体/实参 token 流不受影响，
                         // TRIP/ETRIP 默认 bytes 模式零影响）
                         self.params.misc[crate::param::MISC_UTF_INPUT_MODE] != 0,
+                        // M9 中文刀 7：\endlinechar 动态传入（beamer 逐行消费器
+                        // 的 #1^^M 定界依赖行尾 token 字符码/猫码随参数变化）
+                        self.params.endlinechar,
                     ) {
                         Ok(Some(tok)) => return Ok(Some((tok, false))),
                         Ok(None) => {
