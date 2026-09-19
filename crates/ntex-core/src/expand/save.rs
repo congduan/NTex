@@ -406,27 +406,20 @@ impl Expander {
                 Primitive::ThickMuskip => Ok(emit_mu_glue(self.registers.muskip(2))),
                 Primitive::Toks => {
                     let idx = self.scan_register_index()?;
-                    let toks = self.registers.toks(idx).to_vec();
-                    // tex.web \the\toks：print_toks 打印 token 列表**文本**（字符
-                    // token 输出，不执行内容——TRIP L419 \the\tokens 的内容含
-                    // \long\gdef 等，参考 log 不执行它们）。cs → `\名`（字母 cs
-                    // 后补空格）；字符/组符统一转 catcode Other（文本 `{` 不建组）。
-                    let mut out = Vec::new();
-                    for t in toks {
-                        if let Some(csid) = t.csid() {
-                            let name = self.intern.name(csid);
-                            out.push(Token::char(Catcode::Other, b'\\' as u32));
-                            for &b in name.as_bytes() {
-                                out.push(Token::char(Catcode::Other, u32::from(b)));
-                            }
-                            if !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphabetic()) {
-                                out.push(Token::char(Catcode::Space, b' ' as u32));
-                            }
-                        } else if let Some(ch) = t.charcode() {
-                            out.push(Token::char(Catcode::Other, ch));
-                        }
-                    }
-                    Ok(out)
+                    // tex.web the_toks（L9395-9411）：`\the⟨toks⟩` 把寄存器内
+                    // token 列表**原样接进产物**（app_toks），不转文本。执行/
+                    // 冻结由调用方承担：xpand 收集语境（\edef/\message）带
+                    // freeze 标志（expr.rs `\the` 冻结位，TRIP L419 参考转录
+                    // "不执行"由此而来——冻结 token 经 token_show 串文本，与
+                    // 字母 cs 的旧串行化输出逐字一致）；主循环 ins_list 照常
+                    // 执行。旧实现把 cs 串行化为 `\`+名字 cat12 字符——对普通
+                    // 字母 cs 名重扫描等价、单测全绿，但名字含空格的 cs
+                    // （`\csname ...\space\endcsname` 惯用法，latex.ltx
+                    // `\SetMathAlphabet@` 的 install 键）重扫描后裂成
+                    // `cs(无空格名)+空格字符`，token 身份丢失 → `\in@` 的
+                    // 定界匹配永不命中 → amsfonts/amssymb 载入报
+                    // "Command `\mathfrak' not defined as a math alphabet."。
+                    Ok(self.registers.toks(idx).to_vec())
                 }
                 // TRIP：\the\textfont/\scriptfont/\scriptscriptfont<n> → 数学族字体
                 // （族号越界报 "! Bad number" 钳制 0；expander 侧无 font→cs 名映射，

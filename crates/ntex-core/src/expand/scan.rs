@@ -951,7 +951,7 @@ impl Expander {
     /// 2026-09-19）。
     fn skip_trailing_spaces(&mut self) -> Result<()> {
         match self.fetch()? {
-            None => return Ok(()),
+            None => Ok(()),
             Some((tok, _)) => {
                 // cs 别名到空格字符（`\let\exp_stop_f: ~`，l3expan.dtx:1093
                 // `\use:nn{\cs_new_eq:NN\exp_stop_f:}{~}`）→ **等价空格终结符**
@@ -975,7 +975,7 @@ impl Expander {
                     }
                 }
                 self.unread(tok);
-                return Ok(());
+                Ok(())
             }
         }
     }

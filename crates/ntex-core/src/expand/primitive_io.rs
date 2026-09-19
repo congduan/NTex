@@ -66,7 +66,7 @@ impl Expander {
             Primitive::Output => {
                 self.expect_equals()?;
                 let val = self.scan_toks_rhs()?;
-                self.assign_output(Arc::from(val));
+                self.assign_output(val);
                 Ok(())
             }
             // M3-5-3 盒子寄存器：\box<n> 交给 sink（shipout_next 时封装为页面）
