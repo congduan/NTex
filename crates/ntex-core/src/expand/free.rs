@@ -378,6 +378,14 @@ fn reg_kind_name(k: RegKind) -> &'static str {
 fn detok_tokens(toks: &[Token], intern: &InternTable) -> String {
     let mut s = String::new();
     for (i, t) in toks.iter().enumerate() {
+        // active 字符 token：tex.web show_token_list → print_cs →
+        // `print(p-active_base)`（L5609）= **裸字符**，无 `\` 前缀、无尾空格
+        // （GT pdfTeX 2026-09-19 /tmp/gt5：`\meaning` 体 `x|` = `x` + 裸 active
+        // `|`）。曾输出 `\ + \0A| 槽名`，把 NUL 泄进 `\show`/`\meaning` 文本。
+        if let Some(ch) = t.active_charcode(intern) {
+            s.push(ch);
+            continue;
+        }
         match t.kind() {
             TokenKind::Char => {
                 if let Some(ch) = t.charcode().and_then(char::from_u32) {
@@ -427,6 +435,20 @@ fn compare(a: i64, b: i64, rel: Relation) -> bool {
 /// `\expandafter\if@\string\iffoo` 依赖 `\escapechar=-1` 时 `\string` 不带前导 `\`
 /// （`\if@` 的 "if" 定界才匹配得上）。旧实现硬编码 `\` 使 -1 失效。
 fn detokenize_token(tok: Token, intern: &InternTable, esc: i64, out: &mut Vec<Token>) {
+    // active 字符：e-TeX detokenize 逐 token 走 conv_toks → sprint_cs →
+    // `print(p-active_base)`（tex.web L5624）= **裸字符**，无 escape 前缀、
+    // 无控制词尾空格。GT（pdfTeX 2026-09-19 /tmp/gt5）：`\gdef\tC{x|}`（| active）
+    // 后 `\detokenize\expandafter{\tC}` = `x|`。曾落 ControlSeq 臂输出
+    // `\ + 槽名（\0A| 前缀）`，把 NUL/前缀字节泄进 edef 体。
+    if let Some(ch) = tok.active_charcode(intern) {
+        let cat = if ch == ' ' {
+            Catcode::Space
+        } else {
+            Catcode::Other
+        };
+        out.push(Token::char(cat, ch as u32));
+        return;
+    }
     match tok.kind() {
         TokenKind::Char => {
             let ch = tok.charcode().expect("Char 必有 charcode");
@@ -498,8 +520,14 @@ fn string_token(tok: Token, intern: &InternTable, esc: i64, out: &mut Vec<Token>
             // 未定义 cs → 首现场 Undefined control sequence）。
             let is_active_char = tok.is_active();
             if is_active_char {
-                // active char 的字符码 = intern 名（本引擎以单字符为名）
-                if let Some(ch) = name.chars().next() {
+                // active char 的字符码 = intern 名原字符（`\u{0}A` 前缀后，见
+                // Token::active_charcode；直接取首字符曾拿到 NUL 前缀字节 →
+                // `\string|` 产出 NUL，`\beamer@masterdecode` 的
+                // `#1\string|stop\string:0\string|` 变 `#1\0stop\00\0`，
+                // decode 找不到 `|` 定界永不收敛 → beamer 消费器第二层活锁。
+                // GT（pdfTeX 2026-09-19 /tmp/gt5）：active `|` 下
+                // `\xdef\tB{\string|}` 体 = 裸字符 `|`（cat 12），无 `\` 前缀。
+                if let Some(ch) = tok.active_charcode(intern) {
                     let cat = if ch == ' ' {
                         Catcode::Space
                     } else {

@@ -20,6 +20,10 @@ use crate::intern::InternTable;
 /// charcode 上限（21 bit，覆盖 Unicode 全量）。
 pub const MAX_CHARCODE: u32 = (1 << 21) - 1;
 
+/// active 字符槽名前缀（input.rs Active 臂 intern 时加在原字符前，保证
+/// active 槽与同名普通 cs 槽隔离）。取回原字符一律经 [`Token::active_charcode`]。
+pub const ACTIVE_SLOT_PREFIX: &str = "\u{0}A";
+
 const TAG_SHIFT: u32 = 60;
 const CHAR_SHIFT: u32 = 21;
 const CHARCODE_MASK: u64 = MAX_CHARCODE as u64;
@@ -131,6 +135,23 @@ impl Token {
     /// 是否 active 字符 token（`ControlSeq` + active 标志；见 [`Self::active_sequence`]）。
     pub const fn is_active(self) -> bool {
         matches!(self.kind(), TokenKind::ControlSeq) && (self.0 & CS_ACTIVE_FLAG) != 0
+    }
+
+    /// active 字符 token 的原字符码。active 槽名带 `\u{0}A` 前缀（input.rs
+    /// Active 臂，槽隔离），原字符在前缀之后——所有「从 token 取回字符」的
+    /// 消费位（`\string`/`\detokenize`/`\show`/`\write` 构串）必须经此取码，
+    /// 直接取 `name.chars().next()` 会拿到 NUL（2026-09-19 beamer 消费器
+    /// 第二层活锁：`\xdef\beamer@masterdecode` 的 `\string|` 产出 NUL，
+    /// `all|stop:0|` 变 `all\0stop\00\0`，decode 永不命中 `|` 定界 →
+    /// `\beamer@doifnotinframe` 不被改写 → startcomment 逐行吞文件）。
+    pub fn active_charcode(&self, intern: &InternTable) -> Option<char> {
+        if !self.is_active() {
+            return None;
+        }
+        intern
+            .name(self.csid()?)
+            .strip_prefix(ACTIVE_SLOT_PREFIX)
+            .and_then(|s| s.chars().next())
     }
 
     /// 宏参数号（仅 `MacroParam`）。

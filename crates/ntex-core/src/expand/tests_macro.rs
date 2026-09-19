@@ -933,6 +933,36 @@ use super::*;
     }
 
     #[test]
+    fn string_active_char_yields_bare_char_not_slot_prefix() {
+        // active 字符的 `\string`/`\detokenize`/`\meaning` 输出 = **裸字符**
+        // （tex.web sprint_cs L5624 / print_cs L5609 的 `print(p-active_base)`
+        // 臂；GT pdfTeX 2026-09-19 /tmp/gt5：active `|` 下 `\xdef\t{\string|}`
+        // 体 = `|`，`\detokenize` 体含 active `|` 输出 `x|`）。
+        //
+        // 回归：active 槽名带 `\u{0}A` 前缀（input.rs 槽隔离，2026-09-18）后
+        // 取 `name.chars().next()` 拿到 NUL——`\beamer@masterdecode` 的
+        // `#1\string|stop\string:0\string|` 产出 `#1\0stop\00\0`，decode 的
+        // `|` 定界永不命中 → `\beamer@doifnotinframe` 不被改写成
+        // `\beamer@doifinframe` → startcomment 逐行吞文件（beamer 消费器
+        // 第二层活锁，修复前 361+ 轮 `\next=\beamer@processline`）。
+        assert_eq!(
+            expand(r"\catcode`\|=13 \edef\x{\string|}\x").unwrap(),
+            "|"
+        );
+        // `\gdef` 全局带出 active token（catcode 组闭合后 token 仍 active）
+        assert_eq!(
+            expand(r"\catcode`\|=13 {\gdef\y{x|}}\edef\x{\detokenize\expandafter{\y}}\x")
+                .unwrap(),
+            "x|"
+        );
+        // `\meaning` 显示面同规则：裸字符、无 `\`、无尾空格
+        assert_eq!(
+            expand(r"\catcode`\|=13 {\gdef\y{x|}}\meaning\y").unwrap(),
+            "macro:->x|"
+        );
+    }
+
+    #[test]
     fn string_of_csname_internal_space_keeps_space_catcode() {
         // tex.web print_char 对字符码 32 产出 space token。`\csname a b\endcsname`
         // 经 `\string` 后，名字内部空格也必须是 cat 10；LaTeX lthooks 的

@@ -669,7 +669,13 @@ impl Expander {
                 // 跳过该 token（输出面不含），本引擎展开层静默保留至构串（既有
                 // 偏差），丢弃即对齐 pdfTeX 恢复后的输出面。其余 token 维持丢弃
                 _ => {
-                    if t.kind() == TokenKind::ControlSeq {
+                    // active 字符：tex.web write 面走 show_token_list →
+                    // print_cs → `print(p-active_base)`（L5609）= 裸字符、无
+                    // 尾空格——与 `\show` 显示同一规则，不得按 cs 槽名打
+                    // （槽名带 `\0A` 前缀会把 NUL 泄进写流）。
+                    if let Some(ch) = t.active_charcode(&self.intern) {
+                        s.push(ch);
+                    } else if t.kind() == TokenKind::ControlSeq {
                         let csid = t.csid().expect("ControlSeq 必有 csid");
                         if self.eqtb.slot(csid) != &EqSlot::Undefined {
                             let name = self.intern.name(csid);
