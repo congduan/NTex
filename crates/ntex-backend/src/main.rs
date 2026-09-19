@@ -14,7 +14,7 @@
 //! `--quiet`：关掉 stderr 转录（`\message`/`\show`/`\write16`/错误恢复文本，
 //! 格式预载 G0）。默认开——静默是最大的测量陷阱。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 #[cfg(feature = "vello")]
@@ -114,24 +114,48 @@ fn main() -> ExitCode {
     // 等 plain 定义全缺，corpus 样例产出空页（survey §5.bis #6）。
     ts.use_embedded_format();
     // --fmt x.fmt：载入 LaTeX 格式快照（fmt 优先于 plain 预载，两者互斥；
-    // 与 ntex-dvi 同口径）。
+    // 与 ntex-dvi 同口径）。未显式给 --fmt 时按源特征自动检测：
+    // \documentclass / \usepackage / \begin{document} 任一命中 → LaTeX
+    // （resolve latex.fmt，与 ntex-dvi::looks_like_latex 同口径）。
+    let auto_latex = load_fmt.is_none() && looks_like_latex(&source);
+    if load_fmt.is_none() && auto_latex {
+        load_fmt = Some("latex.fmt".to_string());
+    }
     if let Some(fmt_path) = &load_fmt {
-        let data = match std::fs::read(fmt_path) {
+        let resolved = if Path::new(fmt_path).exists() {
+            Some(PathBuf::from(fmt_path))
+        } else {
+            let p = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../assets/fmt")
+                .join(fmt_path);
+            p.exists().then_some(p)
+        };
+        let Some(resolved) = resolved else {
+            eprintln!("找不到格式文件 {fmt_path}（已查 cwd 与 assets/fmt）");
+            return ExitCode::from(2);
+        };
+        if load_fmt.as_deref() == Some("latex.fmt") && auto_latex && !quiet {
+            eprintln!("[auto] 检测到 LaTeX 特征，载入 {}", resolved.display());
+        }
+        let data = match std::fs::read(&resolved) {
             Ok(d) => d,
             Err(e) => {
-                eprintln!("读取 {fmt_path} 失败：{e}");
+                eprintln!("读取 {} 失败：{e}", resolved.display());
                 return ExitCode::from(2);
             }
         };
         let state = match ntex_format::load(&mut &data[..]) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("解析 {fmt_path} 失败：{e}");
+                eprintln!("解析 {} 失败：{e}", resolved.display());
                 return ExitCode::from(2);
             }
         };
         ts.import_state(state);
     } else {
+        // 格式预载（G2(a)/G4）：内嵌 plain 兜底 + 启动预载（等价源首行
+        // `\input plain`）。缺此则 `\hsize`/`\baselineskip` 等 plain 定义
+        // 全缺，corpus 样例产出空页（survey §5.bis #6）。
         ts.set_preload_plain(true);
     }
     if !input_paths.is_empty() || load_fmt.is_some() {
@@ -222,4 +246,13 @@ fn main() -> ExitCode {
         return ExitCode::from(1);
     }
     ExitCode::SUCCESS
+}
+
+/// LaTeX 源特征检测（M9 中文刀 6）：源含 `\documentclass` / `\usepackage` /
+/// `\begin{document}` 任一即判 LaTeX，与 ntex-tauri ui/main.js::applyMode
+/// 及 ntex-dvi::looks_like_latex 同口径。
+fn looks_like_latex(src: &str) -> bool {
+    src.contains("\\documentclass")
+        || src.contains("\\usepackage")
+        || src.contains("\\begin{document}")
 }

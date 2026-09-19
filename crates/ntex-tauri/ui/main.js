@@ -114,7 +114,34 @@ function applyUtf8() {
 
 // LaTeX 源特征：`\documentclass` / `\usepackage` / `\begin{document}` 任一命中即
 // 按 LaTeX 口径编译（前提是资产已就绪）。plain 作业（`\font…\shipout…`）不受影响。
+//
+// 检测前先做**注释剥离**（M9 中文刀 6）：`%` 到行尾是 TeX 注释，注释里出现的
+// `\documentclass`（如注释掉的模板头）不应触发切换。`\%`（转义百分号）不开启
+// 注释；`\verb|…|` 与 verbatim 环境内的 `%` 同样不算注释——近似处理：只剥
+// 行注释，verbatin 内特征字符串误报概率极低且后果仅是模式徽标与编译口径。
 const LATEX_SRC_RE = /\\(documentclass|usepackage)\b|\\begin\s*\{\s*document\s*\}/;
+
+function looksLikeLatex(src) {
+  let commentOff = false;
+  for (const rawLine of src.split('\n')) {
+    let line = '';
+    for (let i = 0; i < rawLine.length; i++) {
+      const ch = rawLine[i];
+      if (commentOff) break;
+      if (ch === '\\' && i + 1 < rawLine.length) {
+        // 转义对（\%、\\ 等）原样保留两个字符，均不算注释起始
+        line += rawLine.slice(i, i + 2);
+        i++;
+        continue;
+      }
+      if (ch === '%') { commentOff = true; break; }
+      line += ch;
+    }
+    commentOff = false; // 行注释不跨行
+    if (LATEX_SRC_RE.test(line)) return true;
+  }
+  return false;
+}
 
 // 资产来自 Tauri 侧的**只读**命令（crates/ntex-tauri/src/main.rs::
 // ntex_latex_bundle）：它把仓库 assets/ 下的 fmt 快照 + tex 闭包 + TFM 打成一个
@@ -140,7 +167,7 @@ async function loadLatexAssets() {
 // 按源码特征切换引擎模式。只在变化时调 wasm（跨边界调用省着用）。
 // 返回本次是否为 LaTeX 口径，供状态栏显示。
 function applyMode(src) {
-  const latex = state.latexAssets && LATEX_SRC_RE.test(src);
+  const latex = state.latexAssets && looksLikeLatex(src);
   if (latex !== state.latexOn) {
     set_latex_mode(latex);
     state.latexOn = latex;

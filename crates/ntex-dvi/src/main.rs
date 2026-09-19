@@ -181,9 +181,43 @@ fn main() -> ExitCode {
         ts.set_vfs(default_vfs(&input_paths));
         ts.use_embedded_format();
     }
-    if !no_plain && load_fmt.is_none() {
-        // G2(a)：启动预载（等价源首行 `\input plain`）。
-        ts.set_preload_plain(true);
+    if no_plain && load_fmt.is_none() {
+        // --no-plain 且未显式给 fmt：纯 iniTeX 起点，不注入任何格式。
+    } else if load_fmt.is_none() {
+        // 格式自动检测（M9 中文刀 6，与 ntex-tauri ui/main.js::applyMode 同口径）：
+        // 源含 \documentclass / \usepackage / \begin{document} 任一特征 →
+        // LaTeX（载入 assets/fmt/latex.fmt）；否则 plain 预载（G2(a)，
+        // 等价源首行 `\input plain`）。显式 --fmt 始终优先；--no-plain
+        // 无特征时保持 plain 语义受控关闭。
+        if looks_like_latex(&text) {
+            if let Some(fmt_path) = resolve_format_path("latex.fmt") {
+                match fs::read(&fmt_path) {
+                    Ok(data) => match ntex_format::load(&mut &data[..]) {
+                        Ok(state) => {
+                            if !quiet {
+                                eprintln!("[auto] 检测到 LaTeX 特征，载入 {}", fmt_path.display());
+                            }
+                            ts.import_state(state);
+                        }
+                        Err(e) => {
+                            eprintln!("[auto] 解析 {} 失败：{e}（回退 plain）", fmt_path.display());
+                            ts.set_preload_plain(true);
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("[auto] 读取 {} 失败：{e}（回退 plain）", fmt_path.display());
+                        ts.set_preload_plain(true);
+                    }
+                }
+            } else {
+                if !quiet {
+                    eprintln!("[auto] 检测到 LaTeX 特征但找不到 latex.fmt（回退 plain）");
+                }
+                ts.set_preload_plain(true);
+            }
+        } else {
+            ts.set_preload_plain(true);
+        }
     }
     let outcome = ts.typeset_dvi(&text);
     // G0：转录透传。成功/失败两条路都取（失败时 finish 未走，转录仍在 sink）。
@@ -333,6 +367,40 @@ fn bundled_tfm_root() -> Option<PathBuf> {
 fn bundled_fmt_dir() -> Option<PathBuf> {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/fmt");
     dir.exists().then_some(dir)
+}
+
+/// LaTeX 源特征检测（M9 中文刀 6）：源含 `\documentclass` / `\usepackage` /
+/// `\begin{document}` 任一即判 LaTeX，与 ntex-tauri ui/main.js::applyMode
+/// 的 LATEX_SRC_RE 同口径。检测前剥行注释（`%` 到行尾；`\%` 转义对不算
+/// 注释起始）——注释里的特征（注释掉的模板头）不应触发格式切换。
+fn looks_like_latex(src: &str) -> bool {
+    // 注释剥离（与 ntex-tauri ui/main.js::looksLikeLatex 同口径）：`%` 到行尾
+    // 不参与检测，`\%` 转义对不算注释起始。注释里的 \documentclass（注释掉的
+    // 模板头）不应触发格式切换。
+    for raw in src.lines() {
+        let mut line = String::new();
+        let mut chars = raw.char_indices().peekable();
+        while let Some((i, ch)) = chars.next() {
+            if ch == '\\' {
+                // 转义对原样保留两个字符（\%、\\ 等均不算注释起始）
+                let byte_end = (i + ch.len_utf8() + 1).min(raw.len());
+                line.push_str(&raw[i..byte_end]);
+                chars.next();
+                continue;
+            }
+            if ch == '%' {
+                break;
+            }
+            line.push(ch);
+        }
+        if line.contains("\\documentclass")
+            || line.contains("\\usepackage")
+            || line.contains("\\begin{document}")
+        {
+            return true;
+        }
+    }
+    false
 }
 
 fn resolve_format_path(name: &str) -> Option<PathBuf> {
