@@ -100,7 +100,7 @@
 | M6 | 并行 | 段落级并行展开 / 布局 / 整形 | ⬜ 未开始 | 8 核加速比 ≥ 3x（300 页基准） |
 | M7 | `.fmt` v2 | 三层 fmt + 部分求值 + 项目级 fmt | ⬜ 未开始（v1 已可用） | `latex.ltx` 加载 <200ms；ctex 300 页冷编 <10s |
 | M8 | 渲染 / 输出 | PDF 后端 + GPU 渲染 + WASM 预览 | 🟢 主体可用 | 简单文档 L2 逐字节一致；WASM 增量预览流畅 |
-| M9 | 生态冲刺 | ctex/xeCJK/OpenType/CJK 捷径 | 🟡 中文刀 1–5 落地，其余未开始 | 目标宏包 CI 回归全绿 |
+| M9 | 生态冲刺 | ctex/xeCJK/OpenType/CJK 捷径 | 🟡 中文刀 1–5 落地；宏包管理解析/契约层落地（`ntex-pkg`） | 目标宏包 CI 回归全绿 |
 
 **依赖链**：M0 → M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8 → M9
 （M5 依赖 M2/M3；M7 依赖 M2/M5；M6 可与 M5 部分并行）。
@@ -266,13 +266,27 @@ mmap 只读 + 页级 COW。**暂缓理由已消解**：M2 吞吐已量化（1.01
 | 5 | `\cjkbreakmode`（misc 66）CJK 字间断点 + 禁则；中西文交界断点 + `\lefthyphenmin`/`\righthyphenmin` | ✅（XeTeX 对照 oracle + `cmp` 逐字节零回归） |
 | 4 | 中文粗体/斜体（现仅 Fandol Regular） | ⬜ |
 
+**宏包管理（`ntex-pkg`，2026-09-19 新建）**：边界见 §6.2 第 8/9 条。已落地**解析层 + 契约层**——
+`tlpdb.rs`（TLPDB 状态机解析 + `by_basename`/`by_path` 反查 + TDS 优先级）、`resolve.rs`
+（`\usepackage`/`\documentclass`→包解析 + 依赖闭包 BFS）、`lock.rs`（`ntex.lock` 确定性编解码 + 漂移 `diff`）、
+`cache.rs`（内容寻址缓存布局 + 名字安全）、`source.rs`（`PackageSource` trait + ① 本地 TeX Live 树源）、
+CLI `ntex-pkg`（`index`/`provide`/`resolve`/`lock`/`check`/`local`）。取料层 ② tlnet / ③ CTAN /
+④ 离线归档为**显式未实现插口**（不静默降级）。验收：真实 TLPDB + `kpsewhich` oracle 9/9。
+
 剩余清单：
 
 - [ ] 中文粗体/斜体（刀 4）；`\catcode` >255 赋值扩展（A5 全量收口）
 - [ ] CJK 标点挤压、HarfBuzz 整形与整形缓存、**CJK 整形捷径**（无复杂特性时跳过 HarfBuzz 直读 hmtx，目标 5~10x）
 - [ ] ctex/xeCJK 宏兼容（从 xeCJK 最小子集起步）；OpenType fontspec 路径
 - [ ] 宏包 CI 回归集：geometry / amsmath / hyperref / biblatex / tikz / ctex
-- [ ] **宏包管理**（go.mod 式：依赖声明 + 版本化仓库 + 校验和 + 本地缓存），目标机零 TeX Live
+- [x] **宏包管理·解析/契约层**（2026-09-19，`ntex-pkg` crate，§6.2 第 8/9 条落地）：
+  TLPDB 解析 + 文件反查索引 + `\usepackage`/`\documentclass`→包解析 + 依赖闭包 +
+  `ntex.lock` 确定性契约（包名 + revision + sha512）+ 内容寻址缓存 + 可插拔取料源链
+  （① 本地 TeX Live 树已实现）。**解析层验收**：真实 TLPDB（2024basic，346 记录）+
+  `kpsewhich` 路径 oracle **9/9 一致**；73 单测 + `make check` 全绿。简化登记见
+  [docs/KNOWN-SIMPLIFICATIONS.md §9](docs/KNOWN-SIMPLIFICATIONS.md)。
+- [ ] **宏包管理·取料与接线**：取料层 ② tlnet / ③ CTAN / ④ 离线归档 + 真实 sha512 字节哈希 +
+  `\usepackage` 缺包即报（MiKTeX 式一条命令补）↔ 引擎接线，目标机零 TeX Live
 - [ ] 引擎身份模拟（`\pdftexversion` 等）
 - [ ] **MCP server / AI 工具链**（stdio JSON-RPC，复用 `Typesetter` 库接口 + `MemVfs`）：
   ① tex→PDF（已可起步）② 宏展开/诊断（随错误模型收尾）③ 会话式增量编译（依赖 M5）；

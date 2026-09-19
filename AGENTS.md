@@ -49,6 +49,7 @@ TeX/LaTeX 源码 → 0.输入层(ntex-io VFS) → 1.TeX VM 求值(ntex-core) →
 | `ntex-pdf` | DVI → PDF 正式后端（PDF 1.4 写出 + Type1/PFB 字体嵌入） |
 | `ntex-format` | `.fmt` 序列化 / 反序列化（v1 内存快照；v2 mmap 零拷贝待做） |
 | `ntex-io` | VFS 抽象 + LocalVfs / MemVfs（RFC-3 副作用隔离的载体） |
+| `ntex-pkg` | **宏包管理**（M9 生态冲刺，plan.md §6.2 第 8/9 条）：`texlive.tlpdb` 解析（含 continuation 行状态机 / RIV 块计数 / `.ARCH` 展开）+ 文件反查索引 + `\usepackage`/`\documentclass`→包解析 + 依赖闭包 + `ntex.lock` 确定性契约（包名 + revision + sha512；身份字段校验、参考字段忽略）+ 内容寻址缓存布局 + 可插拔取料源链（① 本地已有 TeX Live 树已实现；tlnet / CTAN / 离线归档为**显式未实现插口，不静默降级**）。**解析层只认 tlpdb**（CTAN `FILES.byname` 无校验和/依赖图/版本号，只作回落源）。CLI `ntex-pkg`：`index` / `provide` / `resolve` / `lock` / `check` / `local`（漂移退出码 3） |
 | `ntex-test-support` | 测试 / 差分 / 基准基础设施（`EngineDriver` 抽象） |
 | `ntex-trip` | TRIP / ETRIP 一致性测试框架（`--test trip\|etrip\|both`，in-process ntex 驱动） |
 | `ntex-diff` | 差分测试工具（参考引擎 vs 本引擎，diff DVI/log） |
@@ -57,6 +58,7 @@ TeX/LaTeX 源码 → 0.输入层(ntex-io VFS) → 1.TeX VM 求值(ntex-core) →
 | `ntex-studio` | **实时预览工作台**（native）：eframe/egui-wgpu 0.35 + vello 表面渲染（离屏 Rgba8Unorm → blit 上屏）、TeX 高亮编辑器、250ms 防抖重排、缩放/平移/翻页、dpi / overlay / 真字形开关、LaTeX 模式自动切换与 Log 转录面板（`src/engine.rs` 承载 native 侧格式与资产装配）。**依赖硬约束：eframe 0.35 ↔ vello 0.10 恰共用 wgpu 29**（升 eframe 大版本前必验对齐） |
 | `ntex-wasm` | **WASM 薄壳**：浏览器/Node 内编译 + 软光栅渲染。`compile_tex`（plain 子集 → DVI + 转录）、`compile_document`/`render_page`（页盒树常驻 + 按需渲染）、`set_tfm_source`（内嵌 48 个 CM TFM）、`set_glyph_font`（LM OTF 轮廓，进程级轮廓注册表）、`set_otf_font`（任意 OTF/TTF，一次同写**排版度量 + 渲染轮廓**两侧）、`set_utf8_input`、`set_bundle`/`set_latex_mode`（`NTEXBND1` 资产包：TeX 文件 / TFM / `.fmt` 快照；打包端在 `ntex-tauri`，契约见 `src/lib.rs`）。wasm32 分叉仅三处（`param.rs` 时间固定 / `expand::run` 看门狗门控 / `TfmLoader` 字节源）；`www/` 为工作台前端 |
 | `ntex-tauri` | **Tauri 2 纯壳工作台**：桌面窗口 + 静态前端 `ui/`，排版与渲染全部在前端 WASM 内；Rust 侧仅两个非零 IPC——只读资产命令 `ntex_latex_bundle`（把 `assets/` 打成资产包）与下载落盘回调。`ui/pkg/` 为生成物不入库 |
+| `ntex-mcp` | **MCP server**（M9 形态①）：stdio JSON-RPC 2.0，TeX/LaTeX 源码 → 内存 DVI → PDF（base64 返回）。**不引外部 SDK**——`json.rs`（RFC 8259 最小实现）/ `base64.rs`（RFC 4648）/ `server.rs`（协议与安全基线，见模块文档）/ `stdio.rs`（传输）。安全基线 = RFC-3 副作用隔离 |
 
 **常用源文件布局**：
 
@@ -68,7 +70,12 @@ TeX/LaTeX 源码 → 0.输入层(ntex-io VFS) → 1.TeX VM 求值(ntex-core) →
 - `crates/ntex-core/src/incremental/`：段级增量（M5）；
 - `crates/ntex-layout/src/typeset/`：`typesetter.rs`（主循环）/ `paragraph.rs` / `paging.rs` /
   `math.rs` / `sink.rs` / `plain_format.rs` / `incremental.rs`；
-- `crates/ntex-layout/src/`：`page.rs`（断页）/ `linebreak.rs`（折行）/ `node.rs` / `font.rs`。
+- `crates/ntex-layout/src/`：`page.rs`（断页）/ `linebreak.rs`（折行）/ `node.rs` / `font.rs`；
+- `crates/ntex-pkg/src/`：`tlpdb.rs`（TLPDB 解析 + `by_basename`/`by_path` 反查索引 + TDS 优先级）/
+  `resolve.rs`（`RequireKind` 候选扩展名链 + 包解析 + 依赖闭包 BFS）/
+  `lock.rs`（`ntex.lock` 编解码 + 漂移 `diff`）/ `cache.rs`（内容寻址布局 + 名字安全 + sha512 形状校验）/
+  `source.rs`（`PackageSource` trait + `SourceChain` 优先级 + ① 本地 TL 树源）/
+  `testdata.rs`（共享 mini tlpdb fixture）/ `main.rs`（CLI）。
 
 **新增原语的完整链路**（六步，缺一不可）：
 

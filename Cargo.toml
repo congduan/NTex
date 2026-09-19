@@ -20,6 +20,7 @@ members = [
     "crates/ntex-diff",
     "crates/ntex-bench",
     "crates/ntex-mcp",
+    "crates/ntex-pkg",
     "crates/ntex-backend",
     "crates/ntex-studio",
     "crates/ntex-wasm",
@@ -43,6 +44,7 @@ ntex-layout = { path = "crates/ntex-layout", version = "0.1.0" }
 ntex-font = { path = "crates/ntex-font", version = "0.1.0" }
 ntex-dvi = { path = "crates/ntex-dvi", version = "0.1.0" }
 ntex-io = { path = "crates/ntex-io", version = "0.1.0" }
+ntex-pkg = { path = "crates/ntex-pkg", version = "0.1.0" }
 ntex-format = { path = "crates/ntex-format", version = "0.1.0" }
 ntex-test-support = { path = "crates/ntex-test-support", version = "0.1.0" }
 

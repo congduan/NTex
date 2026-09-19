@@ -154,6 +154,26 @@ demo1 六刀 + 输出例程刀 2/3/5 的修复登记；全部已提交，留作�
 
 ---
 
+## 9. ntex-pkg 宏包管理（M9，2026-09-19 新建）
+
+> 定位：`crates/ntex-pkg/src/`（plan.md §6.2 第 8/9 条落地）。
+> **解析层已对照真实 `texlive.tlpdb` 验收**（2024basic，346 记录），路径选择以 `kpsewhich` 为
+> oracle **9/9 一致**（article.cls / latex.ltx / expl3-code.tex / geometry.sty / amsmath.sty /
+> cmr10.tfm / plain.tex / size10.clo / ot1cmr.fd）。下表为**取料层/收敛层的刻意简化与未实现插口**。
+
+| 位置 | 现状 | 影响 | 状态 |
+|---|---|---|---|
+| `tlpdb.rs:143` | `relocated` 字段解析并保留，**relocation 语义未实现**（不重写前缀） | 带 `relocated` 的包（如 tlpkg 自举包）路径前缀不重定向 | 待做 |
+| `tlpdb.rs:62` `host_arch` | 只做四类平台映射（macOS 统一 `universal-darwin`、Linux aarch64/x86_64、Windows 统一 `windows`）；未知平台返回空串 | 未知平台的 `.ARCH` 依赖落入「未解析」并由调用方显式报告——**不静默猜测** | 设计如此 |
+| `tlpdb.rs:495` `tds_rank` | 固定 TDS 层级序（`tex/latex` → `tex/generic` → `tex` → `fonts` → …），非真实 kpathsea 的 `TEXINPUTS`/`texmf.cnf` 路径序 | **仅当同一 basename 有多个不同层级提供者**时才可能与真实 TeX 选路不一致 | 待做 |
+| `tlpdb.rs`（`bin_files` 臂） | `binfiles` 解析保留 basename，**未保留架构子路径** | bin 类资产定位不可靠（当前主线不使用） | 待做 |
+| `source.rs:244` `UnimplementedSource` | tlnet / CTAN / 离线归档三源 `fetch_container` 一律返回 `SourceNotImplemented`（**不静默降级**）；`is_available` 恒 false | 当前只有 ① 本地 TeX Live 树可取料；无网络/离线取料能力 | 待做（§6.2 第 9 条刻意的插口） |
+| `source.rs:167` `LocalTexLiveSource::probe` | `ntex-io::Vfs` **无 `exists`**，探针只能对每个文件 `read`（逐文件 O(文件数) 次读） | 大包 completeness 探针有读放大 | 待做（Vfs 补 `exists` 后收敛） |
+| `cache.rs:58` `check_sha512` | 只校验 sha512 **形状**（128 hex）+ 大小写不敏感比较，**未真正对字节做哈希** | 无法检测内容篡改；`ntex.lock` 目前是「契约」而非「验签」 | 待做（取料层落地时接入真实哈希） |
+| `cache.rs:38` `package_dir` | 缓存目录 `<root>/<name>@<revision>`（revision 必填）；`.ntex/pkgs` 默认根 | 布局确定，但尚无 GC/复用策略 | 待做 |
+
+---
+
 ## 维护记录
 
 - 2026-09-17：第十八刀尾递归鞍具 ✅ 已修（d222043，已用 `git show --stat` 核对）：
@@ -177,4 +197,5 @@ demo1 六刀 + 输出例程刀 2/3/5 的修复登记；全部已提交，留作�
 - 2026-09-12：`vbox_dimensions` 修复——垂直装盒漏算 **glue/kern 宽度**（tex.web L13196/L13209 的 `x += d + width; d := 0` 结转臂缺失，只对盒/规则求和）。后果：`\vtop` 内多行段落的行间 `\baselineskip` glue 不占高 → 盒总深低估 → 外层 `\line` 深度偏小 → 页构建把下一行压到换行第二行上（resume-plain.tex 换行条目行距消失，用户现场报告）。DVI 出货端 `vlist` 本就推进 glue，故盒内行距看似正常、行间蹊跷只在「换行行的下一行」暴露——定位时易误判。另：`height` 语义从「首盒高」改为 tex.web 的「自然高 x（不含末件挂起深度）」，depth = 末件深度。
 - 2026-09-17：M9 中文刀 5 登记（**CJK 汉字字间断点，④ 主项销账**）——`\cjkbreakmode`（misc 66，默认关）打开后 `close_paragraph` 在可断汉字字间插零宽可拉伸胶水（`0pt plus 0.5pt minus 0.05pt`，同 XeTeX inter-character skip），折行断点与两端对齐同时到位；禁则按 **gap** 判定（`charcode_of(前)`×`charcode_of(后)`，开括号不得收行、闭标点不得起行都落地——单字符 active 宏方案做不到行尾禁则）；与断字 discretionary 同层插入，走既有 `preprocess` 的 Glue 臂，`linebreak.rs`/`knuth_plass` 签名零改动。现场：`resume1-plain.tex`（LLM 手写朴素 plain 源，73 行）原报 7 处 Overfull（最甚 338pt 出页、内容被裁），开启后**零 Overfull**、中文段落正确折行两端对齐。同轮登记两项**新发现**（均未修，见 §5）：① `\catcode` >255 赋值的预读时序（`\catcode"XXXX=13` 紧跟 `\def<该字>` 会粘连，附规避写法）；② 断字未滤 `\lefthyphenmin`/`\righthyphenmin`（`Python/Java` 断成 `J-`/`ava`，会动 TRIP 口径故单独立题）。回归锁：`cjk_break_mode_controls_han_breakpoints`（排版 A/B 对照）+ `linebreak.rs` 三项单测（区段判定 / 禁则真值表 / 胶水插入与断点）。
 - 2026-09-18：刀 5 折行收尾（**中西文交界断点 + 断字最小宽，两项遗留销账**）——① 上文 2026-09-17 登记的「假名/汉字与西文交界不插断点」属**保守过度**：XeTeX `\XeTeXlinebreaklocale "zh"` 同样在交界给断点，缺它则 `…数据库原理、Python/Java开发` 一类的**唯一**断点距离可达数十 pt（实测该行 Overfull 20.6pt）。改为 `cjk_breakable` 三类判定：CJK↔CJK（守禁则）、CJK↔ASCII 字母数字（可断，拉丁词整体不拆）、其余不插。现场：resume1 **0 处 Overfull/Underfull**，`pdftotext -layout` 与 XeTeX 对照驱动**逐行一致**。② `\lefthyphenmin`/`\righthyphenmin` 按 tex.web §924/§927 落地（`norm_min` 钳制 + `l_hyf <= j <= hn-r_hyf` + `hn<l_hyf+r_hyf` 整词跳过；模式表与异常词表**统一过滤**）。**证据口径**：改动前先取 XeTeX 参考（`xetex` + FandolSong 同参数）作为折行 oracle，再以 `git worktree` 拉 HEAD 干净树跑 `ntex-trip --test both`，两份输出规范化临时路径后 **`cmp` 逐字节一致**（TRIP `组未闭合 […Align]`、ETRIP l.332 `group_end 无配对` 均为 §5 已登记的既有基线失败，形态未变）→ 零回归。回归锁：`cjk_breakable` 真值表扩中西文交界三例、`hyphen_minima_filter_pattern_breaks`、`hyphen_minima_filter_exception_breaks`（后两条均实测「去修复即失败」）。
+- 2026-09-19：M9 宏包管理 **ntex-pkg** 新建登记（§9 新设）——plan.md §6.2 第 8/9 条落地：TLPDB 解析（continuation 行状态机 / `runfiles size=N` 是 **RIV 块计数**非行数 / `.ARCH` 展开）+ 文件反查索引 + `\usepackage`/`\documentclass`→包解析 + 依赖闭包 BFS + `ntex.lock` 确定性契约（身份字段 name/revision/sha512 校验、参考字段忽略）+ 内容寻址缓存 + 可插拔取料源链（仅 ① 本地 TeX Live 树已实现）。**解析层以真实 TLPDB（2024basic，346 记录）+ `kpsewhich` 路径 oracle 9/9 验收**；73 项单测 + `make check` 全绿。刻意简化 8 项（relocated 未实现 / tlnet·CTAN·离线三源未实现 / sha512 只验形状 / tds_rank 简化 / VFS 无 exists 等）见 §9。
 - **收尾纪律提醒**：后续每轮修复后同步更新本清单（已修项标 ✅ + commit；维护记录追加）

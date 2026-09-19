@@ -1,0 +1,20 @@
+[package]
+name = "ntex-pkg"
+description = "NTex 宏包管理：TLPDB 解析 / 依赖闭包 / 契约锁定（M9，plan.md §6.2 第 8/9 条）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "ntex_pkg"
+
+[[bin]]
+name = "ntex-pkg"
+path = "src/main.rs"
+
+[dependencies]
+ntex-io = { workspace = true }
+
+[lints]
+workspace = true

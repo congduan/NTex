@@ -3410,6 +3410,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ntex-pkg"
+version = "0.1.0"
+dependencies = [
+ "ntex-io",
+]
+
+[[package]]
 name = "ntex-studio"
 version = "0.1.0"
 dependencies = [
