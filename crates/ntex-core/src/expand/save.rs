@@ -673,6 +673,9 @@ impl Expander {
                 // ETRIP 第二波：\the\leftskip/\the\rightskip：段落悬挂胶水
                 Primitive::LeftSkip => Ok(emit_glue(self.params.leftskip)),
                 Primitive::RightSkip => Ok(emit_glue(self.params.rightskip)),
+                // \the\parfillskip：段落末行填充胶水（KOMA setparsizes 的
+                // \edef\f@parfillskip{\the\parfillskip} 依赖；载 KOMA 类即触发）
+                Primitive::ParFillSkip => Ok(emit_glue(self.params.parfillskip)),
                 // ETRIP 第二波：\the\interlinepenalty/\the\clubpenalty/
                 // \the\widowpenalty/\the\displaywidowpenalty：行间/孤行/段首断页惩罚
                 Primitive::InterLinePenalty => Ok(emit_count(self.params.interlinepenalty)),
