@@ -550,6 +550,22 @@ fn handler_trace_enabled() -> bool {
     *CACHE.get_or_init(|| std::env::var_os("NTEX_HANDLER_TRACE").is_some())
 }
 
+/// 把字节偏移吸附到不超过它的最近字符边界（已在边界上则原样返回）。
+///
+/// 错误上下文输出（`write_error_impl`）要做**字符**口径的裁剪，而输入位置是
+/// **字节**偏移，两者必须显式换算。本函数是该换算的防御性底座：词法器理论上
+/// 只按字符推进（偏移恒为边界），但错误路径必须对任意输入成立
+/// （AGENTS.md 引擎契约「任意畸形输入不 panic」），故不假设该前提。
+fn snap_char_boundary(s: &str, mut at: usize) -> usize {
+    if at >= s.len() {
+        return s.len();
+    }
+    while at > 0 && !s.is_char_boundary(at) {
+        at -= 1;
+    }
+    at
+}
+
 #[cfg(test)]
 thread_local! {
     static MAX_STEPS_OVERRIDE: std::cell::Cell<Option<u64>> =
@@ -1690,20 +1706,35 @@ impl Expander {
             }
         }
         // l.N 行上下文（两行：位置前内容 + n 空格 + 位置后字符）
-        if let Some((n, line, pos)) = self.error_context_pos() {
+        if let Some((n, line, byte_pos)) = self.error_context_pos() {
+            // **口径陷阱（2026-09-19 现场）**：`error_context_pos` 给的是源内的
+            // **字节**偏移（源按字节读取），而 tex.web 的 trick_buf /
+            // half_error_line 全按**字符**计数。两套口径混用——旧代码把字节
+            // 偏移与描述字符数相加、再拿结果当字节下标切 `&str`——会在含多字节
+            // 字符（中文）的行上把裁剪点算进字符内部：`&before[start..]` 撞 UTF-8
+            // 边界直接 panic，而 wasm 的 `panic = "abort"` 把它退化成一句
+            // 无位置信息的 `RuntimeError: unreachable`（Tauri 工作台整窗报
+            // 「加载失败」，排查成本极高）。
+            // 故此处一律换算成**字符下标**再裁剪：ASCII 源两套口径恒等，
+            // TRIP/ETRIP 逐字对齐不受影响（口径只在多字节输入下才有分歧）。
+            let chars: Vec<char> = line.chars().collect();
+            let pos = line[..snap_char_boundary(&line, byte_pos)]
+                .chars()
+                .count()
+                .min(chars.len());
             // tex.web @<Show the context...@>：第一行超 half_error_line 时左侧
             // 裁剪（`...` + 尾部）。参考 TRIP log 反推 half_error_line=32
             // （l.253：l=6,k=58 → 显示尾部 23 字符；l.2：l=4,k=29 → 尾部 25）。
             let l_desc = format!("l.{n} ");
             let l_len = l_desc.chars().count();
-            let k = l_len + pos.min(line.len());
+            let k = l_len + pos;
             const HALF_ERROR_LINE: usize = 32;
-            let before = &line[..pos.min(line.len())];
+            let before: String = chars[..pos].iter().collect();
             let (prefix, before_shown) = if l_len + k > HALF_ERROR_LINE {
                 // tex.web：trick_buf[(l+k-h+3)..k-1]，trick_buf 前 l_len 字符是描述
                 // → before 起点 = k - h + 3（l.2 参考：k=33 → before[4..]="case..."）
-                let start = k.saturating_sub(HALF_ERROR_LINE - 3).min(before.len());
-                ("...", &before[start..])
+                let start = k.saturating_sub(HALF_ERROR_LINE - 3).min(pos);
+                ("...", chars[start..pos].iter().collect::<String>())
             } else {
                 ("", before)
             };
@@ -1713,12 +1744,8 @@ impl Expander {
             // 第二行上限：TeX trick_count = first_count+1+error_line-half_error_line
             //（TRIP 参考 L94：pos=11 → 42 字符）
             let max_after = pos + 1 + 79 - 48;
-            let after: String = line[pos.min(line.len())..]
-                .chars()
-                .take(max_after)
-                .collect();
-            let after_full: String = line[pos.min(line.len())..].chars().collect();
-            let suffix = if after_full.chars().count() > max_after {
+            let after: String = chars[pos..].iter().take(max_after).collect();
+            let suffix = if chars.len().saturating_sub(pos) > max_after {
                 "..."
             } else {
                 ""
