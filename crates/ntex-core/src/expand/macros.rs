@@ -1430,6 +1430,20 @@ impl Expander {
             _ => return Err(Error::invalid_input("\\let 仅支持控制序列或字符")),
         }
         self.eq_mark_level(csid, global);
+        // NTEX_LETDEF_TRACE：let 赋值打点（活锁诊断——beamer.cls 载入期
+        // Let/Def 各 11.8 万次增长，抓高频目标 cs 名定位循环体）
+        if diag_enabled("NTEX_LETDEF_TRACE") {
+            let n = |t: &Token| match t.csid() {
+                Some(id) => format!("\\{}", self.intern.name(id)),
+                None => format!("{t:?}"),
+            };
+            eprintln!(
+                "[let] line={} \\{} = {}",
+                self.current_line_no(),
+                self.intern.name(csid),
+                n(&rhs)
+            );
+        }
         // \tracingassigns：\let 赋值后打点（prev 在赋值前已存）
         if let Some(prev) = prev_trace {
             let new = self.eqtb.slot(csid).clone();

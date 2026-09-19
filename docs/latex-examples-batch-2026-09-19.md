@@ -105,3 +105,45 @@ Hello
   `\@ifnextchar`/`\define@key` 链路展开不终止
 - 修复路径建议：给 Let/Def 执行打点带 intern 名（env 门控）抓循环 cs 名，
   或对 `\newrobustcmd`/`\define@key` 做最小单测
+
+## 附录 2：beamer 活锁根因实锤（2026-09-19，input.rs 行尾语义）
+
+### 活锁链（最小 12 行复现）
+
+```tex
+\catcode`\^^M=12
+\long\def\eatone#1^^M{\message{GOT: [#1]}\eatnext}
+\def\eatnext{\message{EATNEXT}\eatone}
+\eatone
+第一行
+...
+```
+NTex：`#1^^M` 定界永不匹配 → \eatone 吞到文件尾递归 \eatnext → 死循环。
+pdfTeX GT：`GOT: [第一行]` 正常逐行消费。
+
+### 根因
+
+`input.rs` l.302：行尾字节（LF）**硬编码** `cat = Catcode::EndOfLine`——
+行尾 token 的 catcode 不查表。而 tex.web `@<Read next line…@>`（L7578-7579）
+的真语义是：`buffer[limit]:=end_line_char`（把 \endlinechar 的**值**写入行尾
+位置），token 化时按该字符的**当前 catcode** 分派。
+
+beamer `beamerbasemodes.sty` l.50-91 的逐行消费器依赖：
+`\endlinechar=13`（默认）+ `\catcode`^^M=12` → 行尾 token 变 **cat12 数据
+字符**，可作 `#1^^M` 的定界参数。NTex 永远分派为行尾语义 → 行尾 token
+不进宏参数流 → `#1^^M` 永不匹配 → `\let\next=\beamer@processline` 循环
+（实测 \next 被 let 148,524 次，line=0 即宏展开产物）。
+
+### 修复方案（下刀执行）
+
+行尾字节处理改为：
+1. 字符码取 `\endlinechar` 参数值（而非硬编码 LF=10）；
+2. catcode 按**该字符码查当前 catcode 表**（cat5 → 行尾空格语义；
+   其他 cat → 数据字符 token 进入宏参数流，可作定界符）；
+3. `-1` = 不追加（tex.web end_line_char_inactive）。
+
+**风险评估**：TRIP/ETRIP 逐字节一致性敏感区（latex.ltx L299 `\^^J=active`
+依赖"物理 LF≠endline_char 语义"的注释所描述的探针——修复后需重验
+`\^^J=active` 场景：endlinechar=13 而 ^^J 是 char 10，二者不同码位，
+active 探针不应受影响，但必须实测）。修复后须重生成 latex.fmt 并
+全量跑 TRIP/ETRIP + corpus-probe。
