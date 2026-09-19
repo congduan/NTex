@@ -337,7 +337,14 @@ impl Expander {
             .unwrap_or_default();
         self.emit_tokens(
             name.bytes()
-                .map(|b| Token::char(Catcode::Other, u32::from(b)))
+                .map(|b| {
+                    let cat = if b == b' ' {
+                        Catcode::Space
+                    } else {
+                        Catcode::Other
+                    };
+                    Token::char(cat, u32::from(b))
+                })
                 .collect(),
         )
     }

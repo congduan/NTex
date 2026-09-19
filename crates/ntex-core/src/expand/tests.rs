@@ -1310,6 +1310,22 @@ I changed this one to zero.
     }
 
     #[test]
+    fn fontname_result_can_be_reused_as_font_spec() {
+        // pdfTeX：`\fontname` 产生的 ` at <size>` 片段可经 `\edef` 后直接
+        // 重新喂给 `\font`。空格若按 cat-12 输出，`at` 后尺寸扫描会读到
+        // other-space 并报 Missing number；NFSS 的 `\Large` 正踩这条链路。
+        let src = r"\font\a=cmr10 at 12pt \edef\x{\fontname\a}\expandafter\font\expandafter\b\x\relax";
+        let (_, _, calls) = font_run(src).unwrap();
+        assert_eq!(
+            calls,
+            vec![
+                ("cmr10".to_owned(), Some(12 * SP_PER_PT), None),
+                ("cmr10".to_owned(), Some(12 * SP_PER_PT), None),
+            ]
+        );
+    }
+
+    #[test]
     fn font_equals_is_optional() {
         let (_, _, calls) = font_run("\\font\\foo cmr10").unwrap();
         assert_eq!(calls, vec![("cmr10".to_owned(), None, None)]);

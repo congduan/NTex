@@ -351,7 +351,14 @@ impl Expander {
                         .unwrap_or_default();
                     out.extend(
                         name.bytes()
-                            .map(|b| (Token::char(Catcode::Other, u32::from(b)), false)),
+                            .map(|b| {
+                                let cat = if b == b' ' {
+                                    Catcode::Space
+                                } else {
+                                    Catcode::Other
+                                };
+                                (Token::char(cat, u32::from(b)), false)
+                            }),
                     );
                 }
                 // LaTeX 兼容第八刀：pdfTeX 可展开族（is_expandable_prim 白名单成员，
