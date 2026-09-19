@@ -1,5 +1,6 @@
 //! Studio 应用状态与 UI（左编辑 / 右预览 / 底部状态栏）。
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -13,6 +14,7 @@ use ntex_layout::typeset::{CompileOutput, IncrementalTypesetter};
 use vello::Scene;
 
 use crate::editor;
+use crate::engine::Setup;
 use crate::render::{compose_display, GpuState, VelloPaint};
 
 /// 编辑停止后延迟重排的防抖窗口。
@@ -35,6 +37,11 @@ pub struct Studio {
     /// 应用退化为纯编辑器 + 提示）。
     render: Option<RenderState>,
 
+    /// 发行资产与字体（启动时安装一次；LaTeX 是否可用由它决定）。
+    setup: Setup,
+    /// `\input` 相对路径可见的目录（打开文件所在目录；无文件则空）。
+    input_dirs: Vec<PathBuf>,
+
     // —— 编辑侧 ——
     source: String,
     file_note: Option<String>,
@@ -44,8 +51,11 @@ pub struct Studio {
 
     // —— 排版侧 ——
     /// 常驻增量排版器：段级缓存跨防抖重排复用（含 `Rc` 非 Send，随 UI 线程
-    /// 同步编译，不可移后台线程）。
+    /// 同步编译，不可移后台线程）。**模式（LaTeX/plain）切换时整体重建**——
+    /// 两种格式的初始状态互斥（`.fmt` 导入 vs plain 预载），叠加会污染。
     inc: IncrementalTypesetter,
+    /// 当前增量器所处的口径（true = LaTeX）。源码特征变化时重建增量器。
+    inc_latex: bool,
     /// 最近一次成功编译对应的段列表（增量 diff 基准；失败置 None 强制全量）。
     seg_snapshot: Option<Vec<String>>,
     /// 最近一次成功排版的页面输出（源码未变、仅 dpi/调试/字形参数变更时
@@ -61,6 +71,9 @@ pub struct Studio {
     glyph_cache: ntex_backend::glyphs::GlyphCache,
     status: String,
     err: Option<String>,
+    /// 最近一次编译的转录（log 面板内容；失败时含「首现场」`!` 行）。
+    log: String,
+    log_open: bool,
 
     // —— 视图侧 ——
     zoom: f32,
@@ -79,6 +92,9 @@ impl Studio {
         // egui 内置字体不含 CJK 字形，先注册系统字体回落（状态栏/编辑器中文、
         // ◀/▶ 按钮符号都依赖它），GPU 有无两条路径均需生效。
         install_cjk_fonts(&cc.egui_ctx);
+        // 发行资产 + 字体（进程级注册表，必须在 UI 线程安装：TFM 字节源是
+        // thread_local，编译跑在哪个线程就要在哪个线程注册）。
+        let setup = Setup::install();
         // GPU 侧常驻资源注入 egui renderer 的回调资源仓（一次性）。
         // Mutex 包装：vello Renderer 内含 RefCell 非 Sync，而回调资源仓
         // 在 native 下要求 Send+Sync（渲染阶段单线程持锁，无争用）。
@@ -93,17 +109,24 @@ impl Studio {
                 }
                 Err(err) => {
                     eprintln!("ntex-studio：GPU 初始化失败：{err}（预览不可用）");
-                    return Self::without_gpu(source, file_note, err);
+                    return Self::without_gpu(source, file_note, setup, err);
                 }
             }
         }
+        let input_dirs = input_dirs_of(file_note.as_deref());
+        // 首排口径由源码特征决定（与后续每次编译的分派同一判据）。
+        let inc_latex = setup.latex_ready() && ntex_layout::typeset::looks_like_latex(&source);
+        let inc = setup.typesetter(inc_latex, &input_dirs);
         let mut app = Self {
             render,
+            setup,
+            input_dirs,
             source,
             file_note,
             dirty: true,
             last_edit: Instant::now() - DEBOUNCE, // 启动即先排一次
-            inc: IncrementalTypesetter::with_tfm_paginated(),
+            inc,
+            inc_latex,
             seg_snapshot: None,
             last_output: None,
             pages: Vec::new(),
@@ -114,6 +137,8 @@ impl Studio {
             glyph_cache: ntex_backend::glyphs::GlyphCache::new(),
             status: "Ready".to_owned(),
             err: None,
+            log: String::new(),
+            log_open: false,
             zoom: 1.0,
             pan: None,
             auto_fit: true,
@@ -122,14 +147,20 @@ impl Studio {
         app
     }
 
-    fn without_gpu(source: String, file_note: Option<String>, err: String) -> Self {
+    fn without_gpu(source: String, file_note: Option<String>, setup: Setup, err: String) -> Self {
+        let input_dirs = input_dirs_of(file_note.as_deref());
+        let inc_latex = setup.latex_ready() && ntex_layout::typeset::looks_like_latex(&source);
+        let inc = setup.typesetter(inc_latex, &input_dirs);
         Self {
             render: None,
+            setup,
+            input_dirs,
             source,
             file_note,
             dirty: false,
             last_edit: Instant::now(),
-            inc: IncrementalTypesetter::with_tfm_paginated(),
+            inc,
+            inc_latex,
             seg_snapshot: None,
             last_output: None,
             pages: Vec::new(),
@@ -140,6 +171,8 @@ impl Studio {
             glyph_cache: ntex_backend::glyphs::GlyphCache::new(),
             status: String::new(),
             err: Some(format!("GPU unavailable, preview disabled: {err}")),
+            log: String::new(),
+            log_open: false,
             zoom: 1.0,
             pan: None,
             auto_fit: true,
@@ -157,11 +190,36 @@ impl Studio {
     /// 一帧可接受，更大文档后续再考虑后台线程）。
     fn compile_now(&mut self) {
         let started = Instant::now();
+        // 模式分派（与 Tauri 前端 `main.js::applyMode` 同判据、同语义）：源码含
+        // LaTeX 特征且发行资产可用 → LaTeX 口径（`latex.fmt`）；否则 plain 子集
+        // （预载内嵌 plain.tex）。**口径变化必须重建增量器**——`.fmt` 导入与
+        // plain 预载是互斥的两种初始状态，且旧段缓存/边界检查点属于旧格式。
+        let want_latex =
+            self.setup.latex_ready() && ntex_layout::typeset::looks_like_latex(&self.source);
+        if want_latex != self.inc_latex {
+            self.inc = self.setup.typesetter(want_latex, &self.input_dirs);
+            self.inc_latex = want_latex;
+            self.seg_snapshot = None;
+            self.last_output = None;
+        }
         let new_segs = segmentize(&self.source);
-        let edited = match &self.seg_snapshot {
-            Some(old) => edited_segment(old, &new_segs),
-            None => None,
+        // LaTeX 口径**只用全量重编译**（对齐 Tauri 前端：每次
+        // `compile_document()` 都是新建文档句柄，没有增量接口）。这不是保守
+        // 起见，而是已定位的缺陷：fmt 状态下的增量 `edit` 重放会把 `\@filef@und`
+        // 的替换文本还原成含 NUL 前缀的坏值，随后 `\input` 以 `"\0article.cls"`
+        // 读文件失败（现场见 ntex-layout `incremental_tests` 的 `#[ignore]`
+        // 用例 `latex_fmt_import_and_incremental_edit`）。修复前 LaTeX 不启用
+        // 段级增量；plain 口径（既有逐位一致测试覆盖）不受影响。
+        let edited = if self.inc_latex {
+            None
+        } else {
+            match &self.seg_snapshot {
+                Some(old) => edited_segment(old, &new_segs),
+                None => None,
+            }
         };
+        // 「源码未变」→ 免引擎复用上次页面输出（仅渲染参数变化时走这条，
+        // 两种口径都保留：它不依赖段增量）。
         let attempted = if edited.is_none() && self.seg_snapshot.as_deref() == Some(&new_segs[..]) {
             Ok((
                 Recompile::Reuse,
@@ -176,6 +234,9 @@ impl Studio {
             }
             .map_err(|e| e.to_string())
         };
+        // 转录（log）：成功/失败都取——失败时它是唯一能定位「首现场」的地方
+        // （与 wasm 侧把 `!` 行拼进错误消息同口径）。
+        self.log = self.inc.transcript().to_owned();
         match attempted {
             Ok((plan, out)) => {
                 let stats = self.inc.stats();
@@ -193,7 +254,8 @@ impl Studio {
                     Recompile::Full => "full".to_owned(),
                 };
                 self.status = format!(
-                    "{} pages · {} · {} ms",
+                    "{} · {} pages · {} · {} ms",
+                    self.mode_label(),
                     self.pages.len(),
                     mode,
                     started.elapsed().as_millis()
@@ -215,10 +277,19 @@ impl Studio {
                 // 丢弃增量快照，下次必全量重建（正确性优先）。
                 self.seg_snapshot = None;
                 self.last_output = None;
-                self.err = Some(err);
+                self.err = Some(with_first_error_site(err, &self.log));
             }
         }
         self.dirty = false;
+    }
+
+    /// 当前口径标签（状态栏；对齐 Tauri 前端的 `#mode-chip`）。
+    fn mode_label(&self) -> &'static str {
+        if self.inc_latex {
+            "LaTeX"
+        } else {
+            "plain"
+        }
     }
 
     /// 页面节点 → collect_page + vello Scene（字形字体解析缓存跨重排借出/归还）。
@@ -280,6 +351,38 @@ impl eframe::App for Studio {
         // —— 底部状态栏（先于中央面板分配空间）——
         Panel::bottom("status").show(ui, |ui| {
             ui.horizontal(|ui| {
+                // 口径徽标（对齐 Tauri 前端的 #mode-chip）：LaTeX 资产不可用时
+                // 恒为 plain——鼠标悬停给出原因（资产/字体缺失提示）。
+                let (label, color, tip) = if self.inc_latex {
+                    (
+                        "LaTeX",
+                        egui::Color32::from_rgb(120, 180, 255),
+                        "LaTeX 口径：套用发行 latex.fmt（\\documentclass/\\section 可用）",
+                    )
+                } else if self.setup.latex_ready() {
+                    (
+                        "plain",
+                        egui::Color32::GRAY,
+                        "plain 口径：未检测到 LaTeX 特征（\\documentclass 等触发切换）",
+                    )
+                } else {
+                    (
+                        "plain",
+                        egui::Color32::from_rgb(220, 160, 90),
+                        "LaTeX 资产不可用，只能用 plain 子集",
+                    )
+                };
+                let mut tip = tip.to_owned();
+                if !self.setup.fonts.is_empty() {
+                    tip.push_str(&format!("\n已注入真字形字体 {} 个", self.setup.fonts.len()));
+                }
+                if !self.setup.note.is_empty() {
+                    tip.push('\n');
+                    tip.push_str(&self.setup.note);
+                }
+                ui.label(egui::RichText::new(label).strong().color(color))
+                    .on_hover_text(tip);
+                ui.separator();
                 ui.label(&self.status);
                 if let Some(file) = &self.file_note {
                     ui.separator();
@@ -329,8 +432,42 @@ impl eframe::App for Studio {
                     ui.separator();
                     ui.colored_label(egui::Color32::LIGHT_RED, egui::RichText::new(err).small());
                 }
+                // log 开关（对齐 Tauri 前端的 log 面板）：转录是 TeX 报错定位的
+                // 唯一现场（`!` 行 + 上下文），默认收起不占预览高度。
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .selectable_label(self.log_open, "Log")
+                        .on_hover_text("TeX 转录（\\message/\\show/错误上下文）")
+                        .clicked()
+                    {
+                        self.log_open = !self.log_open;
+                    }
+                });
             });
         });
+
+        // —— log 面板（可折叠；显示最近一次编译的转录）——
+        if self.log_open {
+            Panel::bottom("log")
+                .resizable(true)
+                .default_size(180.0)
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false; 2])
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| {
+                            let text = if self.log.is_empty() {
+                                "（转录为空）"
+                            } else {
+                                self.log.as_str()
+                            };
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(text).monospace().small())
+                                    .wrap(),
+                            );
+                        });
+                });
+        }
 
         // —— 左：源码编辑 ——
         Panel::left("editor")
@@ -505,6 +642,32 @@ fn install_cjk_fonts(ctx: &egui::Context) {
         fonts.families.entry(family).or_default().push("cjk".into());
     }
     ctx.set_fonts(fonts);
+}
+
+/// 打开文件所在目录（`\input` 相对路径可见；无文件 / 取不到父目录 → 空）。
+fn input_dirs_of(file_note: Option<&str>) -> Vec<PathBuf> {
+    file_note
+        .map(PathBuf::from)
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+        .filter(|p| !p.as_os_str().is_empty())
+        .into_iter()
+        .collect()
+}
+
+/// 把转录里的 TeX「首现场」（第一个 `!` 行）拼进错误消息。
+///
+/// 与 wasm 侧 `compile_pipeline_assets` 同口径：宿主只看得到一句
+/// `InvalidInput`，真因（`File 'xxx.sty' not found.`）只在转录里——不拼出来
+/// 用户无从下手。转录里没有 `!` 行时原样返回错误。
+fn with_first_error_site(err: String, transcript: &str) -> String {
+    match transcript
+        .lines()
+        .find(|l| l.trim_start().starts_with('!'))
+        .map(str::trim)
+    {
+        Some(line) if !err.contains(line) => format!("{err}（首现场：{line}）"),
+        _ => err,
+    }
 }
 
 /// 重排分派口径（状态栏展示）。

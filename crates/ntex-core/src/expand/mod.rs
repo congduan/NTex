@@ -1819,6 +1819,21 @@ impl Expander {
         self.ended
     }
 
+    /// 复位 `\end` 终结标志（宿主复用同一引擎实例编译**下一份文档**时调用）。
+    ///
+    /// 语义与边界：`\end` 是"本作业结束"的终结信号，`run` 主循环见到它立即停
+    /// （tex.web final_cleanup）；但 `\end` 之后的收尾清理（未闭合组/数学/待
+    /// shipout 的降级、冲页、输出例程交错）由排版侧 `finish_doc`/`finish`
+    /// 完成，**格式状态（eqtb 宏/寄存器/字体表）按 TeX 语义保留**——故复位该
+    /// 标志只是允许引擎继续处理新输入，不改变任何格式状态。
+    ///
+    /// 真现场（2026-09-19）：`IncrementalTypesetter` 长驻实例的第二次 `compile`
+    /// 恒 0 页——首份作业以 `\end` 收尾后标志残留，第二份文档全部段被跳过
+    /// （ntex-studio 每次编辑重编译走这条路；`ntex-dvi` 一次性进程不受影响）。
+    pub fn clear_ended(&mut self) {
+        self.ended = false;
+    }
+
     /// `\tracingcommands` 输出一行 `{模式: 描述}`（tex.web show_cur_cmd_chr：
     /// 模式只在变化时打印，shown_mode 记忆）。扫描器内部的可展开原语展开
     /// （tex.web expand() 开头 `if tracing_commands>1 then show_cur_cmd_chr`）

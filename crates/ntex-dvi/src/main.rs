@@ -369,38 +369,12 @@ fn bundled_fmt_dir() -> Option<PathBuf> {
     dir.exists().then_some(dir)
 }
 
-/// LaTeX 源特征检测（M9 中文刀 6）：源含 `\documentclass` / `\usepackage` /
-/// `\begin{document}` 任一即判 LaTeX，与 ntex-tauri ui/main.js::applyMode
-/// 的 LATEX_SRC_RE 同口径。检测前剥行注释（`%` 到行尾；`\%` 转义对不算
-/// 注释起始）——注释里的特征（注释掉的模板头）不应触发格式切换。
+/// LaTeX 源特征检测（M9 中文刀 6）：**实现已上移到
+/// `ntex_layout::typeset::looks_like_latex`**（与 ntex-studio 工作台共用同一
+/// 份实现，避免两处口径漂移——JS 侧 `ntex-tauri/ui/main.js::looksLikeLatex`
+/// 是容器边界外的同口径副本）。检测前剥行注释，与 `applyMode` 同规则。
 fn looks_like_latex(src: &str) -> bool {
-    // 注释剥离（与 ntex-tauri ui/main.js::looksLikeLatex 同口径）：`%` 到行尾
-    // 不参与检测，`\%` 转义对不算注释起始。注释里的 \documentclass（注释掉的
-    // 模板头）不应触发格式切换。
-    for raw in src.lines() {
-        let mut line = String::new();
-        let mut chars = raw.char_indices().peekable();
-        while let Some((i, ch)) = chars.next() {
-            if ch == '\\' {
-                // 转义对原样保留两个字符（\%、\\ 等均不算注释起始）
-                let byte_end = (i + ch.len_utf8() + 1).min(raw.len());
-                line.push_str(&raw[i..byte_end]);
-                chars.next();
-                continue;
-            }
-            if ch == '%' {
-                break;
-            }
-            line.push(ch);
-        }
-        if line.contains("\\documentclass")
-            || line.contains("\\usepackage")
-            || line.contains("\\begin{document}")
-        {
-            return true;
-        }
-    }
-    false
+    ntex_layout::typeset::looks_like_latex(src)
 }
 
 fn resolve_format_path(name: &str) -> Option<PathBuf> {

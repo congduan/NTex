@@ -34,6 +34,47 @@ enum CellEndKind {
     CrCr,
 }
 
+/// 命令层分类（tex.web `cur_cmd`/`cur_chr` 二元判据的引擎等价物）。
+///
+/// TeX 扫描器对齐相关的判据**全部落在命令层**（`cur_cmd=mac_param`、
+/// `cur_cmd=tab_mark`、`cur_cmd=left_brace`…）。而 `\let\cs=<字符>` 生成的
+/// cs token 在读取时 `cur_cmd:=eq_type(cur_cs)` 就等于那个字符的 catcode，
+/// 且 `get_x_token`/`get_token` 都**不会**把它展开成字符——所以
+/// "字符命令别名"必须与字符 token 同等识别，否则：
+///
+/// - `\let\bgroup={`（LaTeX `\@preamble` 的 `\ialign\bgroup`、`\@tabular`
+///   的 `\hbox\bgroup`、`\endtabular` 的 `\crcr\egroup…`）→ 误报
+///   "Missing { inserted"（2026-09-19 修）；
+/// - LaTeX `\@mkpream` 生成 preamble 时 `#` 写作 `\@sharp`
+///   （latex.ltx L16813 `\let\@sharp##`）→ 整列落进 u 段，误报
+///   "Missing # inserted in alignment preamble"（2026-09-19 修）；
+/// - `\let\next=&` 型别名同理。
+///
+/// **与字符形态的关键差异**（tex.web L7490-7493）：只有字符形态在读取时增减
+/// `align_state`（`case cur_cmd of left_brace: incr(align_state)`），cs 形态从
+/// token list 读出（走 `t>=cs_token_flag` 分支）**不动** align_state——对齐的
+/// 收尾因此靠 align_peek 的命令层判据（L15517 `else if cur_cmd=right_brace then
+/// fin_align`），而不是 align_state 变负。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CmdClass {
+    /// mac_param（`#`；tex.web L15464）。
+    Param,
+    /// tab_mark（`&`；tex.web L15466）。
+    Tab,
+    /// left_brace（`{` / `\bgroup`）。
+    BeginBrace,
+    /// right_brace（`}` / `\egroup`）。
+    EndBrace,
+    /// tab_mark + span_code（`\span`）。
+    Span,
+    /// car_ret + cr_code（`\cr`）。
+    Cr,
+    /// car_ret + cr_cr_code（`\crcr`）。
+    CrCr,
+    /// assign_glue + tab_skip_code（`\tabskip`，赋值由主循环执行）。
+    TabSkip,
+}
+
 /// 一列模板（tex.web alignrecord 的 u_part/v_part）。
 #[derive(Debug, Clone, Default)]
 struct AlignCol {
@@ -100,6 +141,38 @@ enum AlignPhase {
 
 impl Expander {
     // ---------- M4-5 对齐：帧生命周期 ----------
+
+    /// 命令层分类（tex.web 读 token 时 `cur_cmd:=eq_type`/catcode 的等价判定）。
+    /// 显式字符 token 与 `\let\cs=<字符>` 型 cs token 归入同一类，原语类
+    /// （`\span`/`\cr`/`\crcr`/`\tabskip`）按 `Primitive` 归位；其余返回 `None`
+    /// （= 普通 token，按内容存入模板 / 交给主循环）。详见 [`CmdClass`]。
+    fn cmd_class(&self, tok: Token) -> Option<CmdClass> {
+        let char_class = |c: &Catcode| match c {
+            Catcode::Parameter => Some(CmdClass::Param),
+            Catcode::AlignmentTab => Some(CmdClass::Tab),
+            Catcode::BeginGroup => Some(CmdClass::BeginBrace),
+            Catcode::EndGroup => Some(CmdClass::EndBrace),
+            _ => None,
+        };
+        match tok.kind() {
+            TokenKind::Char => char_class(&tok.catcode()?),
+            TokenKind::ControlSeq => {
+                let csid = tok.csid()?;
+                match self.eqtb.slot(csid) {
+                    EqSlot::Char { catcode, .. } => char_class(catcode),
+                    EqSlot::Primitive(p) => match p {
+                        Primitive::Span => Some(CmdClass::Span),
+                        Primitive::Cr => Some(CmdClass::Cr),
+                        Primitive::CrCr => Some(CmdClass::CrCr),
+                        Primitive::TabSkip => Some(CmdClass::TabSkip),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
 
     /// `\halign`/`\valign` 启动（`{` 已由 dispatcher 消费；tex.web init_align
     /// + push_alignment + Scan the preamble）。sink 侧 align_begin 已发。
@@ -274,95 +347,84 @@ impl Expander {
             }
             self.set_preamble_span_pending(false);
         }
-        match tok.kind() {
-            TokenKind::Char => match tok.catcode() {
-                // `#`：u→v 分界（tex.web mac_param；不存入模板）
-                Some(Catcode::Parameter) => {
+        // 命令层分类（tex.web cur_cmd 判据）：显式字符 token 取 catcode，
+        // `\let\cs=<字符>` 型 cs token 取槽内 catcode——LaTeX `\@mkpream`
+        // 生成的 preamble 里 `#` 写作 `\@sharp`（latex.ltx L16813
+        // `\let\@sharp##`），只按字符 token 判会整列落进 u 段并报
+        // "Missing # inserted in alignment preamble"。
+        match self.cmd_class(tok) {
+            // `#`：u→v 分界（tex.web mac_param L15464；不存入模板）
+            Some(CmdClass::Param) => {
+                if seen_hash {
+                    // tex.web 15484 段："Only one # is allowed per tab"
+                    let _ = self.sink.write16(
+                        "! Only one # is allowed per tab.\n\
+                         There should be exactly one # between &'s when an\n\
+                         \\halign or \\valign is being set up. In this case you\n\
+                         had more than one, so I kept the first.\n"
+                            .to_string(),
+                    );
+                } else {
+                    self.preamble_set_hash();
+                }
+                Ok(true)
+            }
+            // `&`：深度 0 结束当前列（u 段 → 进 v 段；v 段 → 列完成），
+            // 否则存
+            Some(CmdClass::Tab) => {
+                if depth == 0 {
                     if seen_hash {
-                        // tex.web 15484 段："Only one # is allowed per tab"
-                        let _ = self.sink.write16(
-                            "! Only one # is allowed per tab.\n\
-                             There should be exactly one # between &'s when an\n\
-                             \\halign or \\valign is being set up. In this case you\n\
-                             had more than one, so I kept the first.\n"
-                                .to_string(),
-                        );
+                        self.preamble_col_done(false)?;
                     } else {
-                        self.preamble_set_hash();
+                        self.preamble_u_ended(tok);
                     }
                     Ok(true)
-                }
-                // `&`：深度 0 结束当前列（u 段 → 进 v 段；v 段 → 列完成），
-                // 否则存
-                Some(Catcode::AlignmentTab) => {
-                    if depth == 0 {
-                        if seen_hash {
-                            self.preamble_col_done(false)?;
-                        } else {
-                            self.preamble_u_ended(tok);
-                        }
-                        Ok(true)
-                    } else {
-                        self.preamble_store(tok);
-                        Ok(true)
-                    }
-                }
-                Some(Catcode::BeginGroup) => {
-                    self.preamble_adjust_depth(1);
+                } else {
                     self.preamble_store(tok);
                     Ok(true)
-                }
-                Some(Catcode::EndGroup) => {
-                    self.preamble_adjust_depth(-1);
-                    self.preamble_store(tok);
-                    Ok(true)
-                }
-                // u 段开头空格丢弃（tex.web "Spaces are eliminated from the
-                // beginning of a template"）；其余存
-                Some(Catcode::Space) => {
-                    let u_empty = self.preamble_u_is_empty();
-                    if !seen_hash && u_empty {
-                        Ok(true)
-                    } else {
-                        self.preamble_store(tok);
-                        Ok(true)
-                    }
-                }
-                _ => {
-                    self.preamble_store(tok);
-                    Ok(true)
-                }
-            },
-            TokenKind::ControlSeq => {
-                let csid = tok.csid().expect("ControlSeq 必有 csid");
-                match self.eqtb.slot(csid) {
-                    EqSlot::Primitive(Primitive::Cr | Primitive::CrCr) => {
-                        if depth == 0 {
-                            if seen_hash {
-                                self.preamble_col_done(true)?;
-                            } else {
-                                self.preamble_u_ended(tok);
-                            }
-                        } else {
-                            self.preamble_store(tok);
-                        }
-                        Ok(true)
-                    }
-                    // \span：吸收，下一 token 展开一次（不存 \span 本身）
-                    EqSlot::Primitive(Primitive::Span) => {
-                        self.set_preamble_span_pending(true);
-                        Ok(true)
-                    }
-                    // \tabskip 赋值执行（tex.web assign_glue+tab_skip_code；
-                    // \global 前缀 token 存模板、\tabskip 本身执行）
-                    EqSlot::Primitive(Primitive::TabSkip) => Ok(false),
-                    _ => {
-                        self.preamble_store(tok);
-                        Ok(true)
-                    }
                 }
             }
-            _ => {
+            Some(CmdClass::BeginBrace) => {
+                self.preamble_adjust_depth(1);
+                self.preamble_store(tok);
+                Ok(true)
+            }
+            Some(CmdClass::EndBrace) => {
+                self.preamble_adjust_depth(-1);
+                self.preamble_store(tok);
+                Ok(true)
+            }
+            // \span：吸收，下一 token 展开一次（不存 \span 本身）
+            Some(CmdClass::Span) => {
+                self.set_preamble_span_pending(true);
+                Ok(true)
+            }
+            // \cr/\crcr（tex.web 15465 的 `cur_cmd<=car_ret` 段）
+            Some(CmdClass::Cr | CmdClass::CrCr) => {
+                if depth == 0 {
+                    if seen_hash {
+                        self.preamble_col_done(true)?;
+                    } else {
+                        self.preamble_u_ended(tok);
+                    }
+                } else {
+                    self.preamble_store(tok);
+                }
+                Ok(true)
+            }
+            // \tabskip 赋值执行（tex.web assign_glue+tab_skip_code；
+            // \global 前缀 token 存模板、\tabskip 本身执行）
+            Some(CmdClass::TabSkip) => Ok(false),
+            None => {
+                // u 段开头空格丢弃（tex.web "Spaces are eliminated from the
+                // beginning of a template"）；其余（含普通 cs）原样存
+                if tok.kind() == TokenKind::Char
+                    && tok.catcode() == Some(Catcode::Space)
+                    && !seen_hash
+                    && self.preamble_u_is_empty()
+                {
+                    return Ok(true);
+                }
                 self.preamble_store(tok);
                 Ok(true)
             }
@@ -579,6 +641,7 @@ impl Expander {
                 cur_u,
                 cur_v,
                 tabskips,
+                seen_hash,
                 ..
             } = phase
             else {
@@ -590,6 +653,13 @@ impl Expander {
             };
             cols.push(col);
             tabskips.push(tabskip);
+            // 新列的 u 段扫描从头开始（tex.web 每列的 u-scan 是独立 loop，
+            // `#` 判据按列重置）。不复位 → 第二列的 `#` 被视为"列内第二个 #"
+            // 误报 "Only one # is allowed per tab"，且该列 u 段空、整列落进
+            // v 段（LaTeX `\@sharp` 的两列 tabular 必踩）。
+            if !delim_is_cr {
+                *seen_hash = false;
+            }
             delim_is_cr
         };
         if !body_ready {
@@ -696,20 +766,22 @@ impl Expander {
             return Ok(());
         };
         match kind {
-            // 跨列单元中间段：不关 sink 单元，只推进列指针 + 新列模板
+            // 跨列单元中间段（tex.web fin_col 的 `extra_info=span_code` 分支：
+            // **跳过** `unsave; new_save_level(align_group)` 与 `init_span(p)`）
+            // ——不关 sink 单元、不开新组，只推进列指针 + 新列模板。
             CellEndKind::Span => {
-                self.align_advance_col();
+                self.align_advance_col(false);
                 let peeked = self.align_fetch_significant()?;
                 if let Some(t) = peeked {
-                    self.align_init_col(t)?;
+                    self.align_init_col(t, false)?;
                 }
             }
             CellEndKind::Tab => {
                 self.align_close_cell(AlignCellEnd::Tab)?;
-                self.align_advance_col();
+                self.align_advance_col(true);
                 let peeked = self.align_fetch_significant()?;
                 if let Some(t) = peeked {
-                    self.align_init_col(t)?;
+                    self.align_init_col(t, true)?;
                 }
             }
             CellEndKind::Cr | CellEndKind::CrCr => {
@@ -742,7 +814,12 @@ impl Expander {
     /// 列指针推进（cur_col+1）；越界时周期扩展（tex.web "Lengthen the
     /// preamble periodically"）或报 "Extra alignment tab has been changed
     /// to \cr"（当 \cr 处理由调用方回退——本实现改为钳在末列，结束符已定）。
-    fn align_advance_col(&mut self) {
+    ///
+    /// `new_unit`：是否开始新**单元**（非 `\span`）。跨列单元（`\span`）的
+    /// 起始列由 tex.web `cur_span` 记着，且 fin_col 的 span 分支**不**调
+    /// `init_span(p)`——故 span 续列不得重置 `span_start`，否则单元收尾时
+    /// `span_len = cur_col - span_start + 1` 恒为 1，跨列宽度/列数全丢。
+    fn align_advance_col(&mut self, new_unit: bool) {
         let Some(AlignFrame {
             phase: AlignPhase::Body { cols, tabskips, loop_col, cur_col, span_start, .. },
             ..
@@ -775,7 +852,9 @@ impl Expander {
             }
         }
         *cur_col = (*cur_col + 1).min(cols.len().saturating_sub(1));
-        *span_start = *cur_col;
+        if new_unit {
+            *span_start = *cur_col;
+        }
     }
 
     fn align_set_row_open(&mut self, v: bool) {
@@ -790,9 +869,17 @@ impl Expander {
 
     /// 新列启动（tex.web init_col）：sink 单元开始（init_span 的 push_nest
     /// 时机）+ 单元 eqtb 组 + \omit 判定 / U 模板帧注入。
-    fn align_init_col(&mut self, peeked: Token) -> Result<()> {
-        self.sink.align_cell_begin()?;
-        self.begin_silent_group();
+    ///
+    /// `new_unit`：`\span` 续列时为 false——tex.web fin_col 的 span 分支跳过
+    /// `unsave; new_save_level(align_group)` 与 `init_span(p)`，故既不 push_nest
+    /// 也不开新组；不照做会让每个 `\span` 泄漏一个 eqtb 组，
+    /// `\omit\span\omit`（LaTeX `\multispan`/`\multicolumn`）最终以
+    /// "(end occurred inside a group)" / "ended by \document" 收场。
+    fn align_init_col(&mut self, peeked: Token, new_unit: bool) -> Result<()> {
+        if new_unit {
+            self.sink.align_cell_begin()?;
+            self.begin_silent_group();
+        }
         let is_omit = peeked
             .csid()
             .is_some_and(|csid| matches!(self.eqtb.slot(csid), EqSlot::Primitive(Primitive::Omit)));
@@ -898,9 +985,12 @@ impl Expander {
                 }
                 return Ok(());
             }
-            // `}`：对齐组闭括号（align_state 保持 1000000，不减——
-            // tex.web fin_align 前 align_state 不动）
-            if tok.kind() == TokenKind::Char && tok.catcode() == Some(Catcode::EndGroup) {
+            // `}` / `\egroup`：对齐组闭括号（tex.web L15517 命令层判据
+            // `else if cur_cmd=right_brace then fin_align`——LaTeX
+            // `\endtabular` 的 `\crcr\egroup…` 走这条；cs 形态不动
+            // align_state，故不能靠平衡计数收尾）；align_state 保持 1000000
+            // 不减——tex.web fin_align 前 align_state 不动。
+            if self.cmd_class(tok) == Some(CmdClass::EndBrace) {
                 return self.align_finish();
             }
             // 冗余 \crcr：忽略（tex.web align_peek 的 cr_cr_code restart）
@@ -921,34 +1011,62 @@ impl Expander {
                 *span_start = 0;
                 *row_open = false;
             }
-            return self.align_init_col(tok);
+            return self.align_init_col(tok, true);
         }
     }
 
-    /// 消费对齐组起始 `{`（tex.web scan_left_brace：跳空白取 token，非 `{`
-    /// 报 "Missing { inserted" 并放回 token——组内容照常继续，相当于插入
-    /// 了隐含 `{`）。
+    /// 消费对齐组起始 `{`（tex.web scan_left_brace L8194-8206：
+    /// `<Get the next non-blank non-relax non-call token>` = get_x_token 展开
+    /// 宏/可展开原语，跳空白与 `\relax`，然后**命令层**判 `cur_cmd=left_brace`）。
+    /// 故 `\halign\bgroup`（LaTeX `\@preamble` 的 `\ialign\bgroup`）合法：
+    /// `\bgroup` 的 eq_type 就是 left_brace，get_x_token 不会把它展开成 `{`。
+    /// 非 `{` 报 "Missing { inserted" 并放回 token——组内容照常继续，相当于
+    /// 插入了隐含 `{`。
     fn align_scan_left_brace(&mut self) -> Result<()> {
         loop {
-            let Some((tok, _)) = self.fetch()? else {
+            let Some((tok, noexpand)) = self.fetch()? else {
                 return Ok(());
             };
-            match tok.kind() {
-                TokenKind::Char if tok.catcode() == Some(Catcode::Space) => continue,
-                TokenKind::Char if tok.catcode() == Some(Catcode::BeginGroup) => {
-                    return Ok(());
-                }
-                _ => {
-                    self.unread(tok);
-                    self.write_error_help(
-                        "Missing { inserted",
-                        "Where was the left brace? You said something like\n\
-                         `\\halign\\bye', which I'm going to interpret as\n\
-                         `\\halign{}\\bye'.\n",
-                    );
-                    return Ok(());
+            // get_x_token：可展开项就地展开一次（`\@halignto` 为空宏、
+            // `\let` 别名跟随目标；`\noexpand` 前缀抑制展开）。
+            if !noexpand {
+                if let Some(csid) = tok.csid() {
+                    match self.eqtb.slot(csid).clone() {
+                        EqSlot::Macro(m) => {
+                            self.call_macro(csid, m.value.clone())?;
+                            continue;
+                        }
+                        EqSlot::Alias(target) => {
+                            self.unread(Token::control_sequence(target));
+                            continue;
+                        }
+                        EqSlot::Primitive(p) if p.is_expandable() => {
+                            self.exec_primitive(p)?;
+                            continue;
+                        }
+                        // non-relax（tex.web L8208-8210 的 until 条件）
+                        EqSlot::Primitive(Primitive::Relax) => continue,
+                        _ => {}
+                    }
                 }
             }
+            if tok.kind() == TokenKind::Char && tok.catcode() == Some(Catcode::Space) {
+                continue;
+            }
+            if self.cmd_class(tok) == Some(CmdClass::BeginBrace) {
+                return Ok(());
+            }
+            self.unread(tok);
+            // tex.web L8199-8202 的 help4（此前误用了 scan_toks 的
+            // "Where was the left brace?" 文案，见 §9350）。
+            self.write_error_help(
+                "Missing { inserted",
+                "A left brace was mandatory here, so I've put one in.\n\
+                 You might want to delete and/or insert some corrections\n\
+                 so that I will find a matching right brace soon.\n\
+                 (If you're confused by all this, try typing `I}' now.)\n",
+            );
+            return Ok(());
         }
     }
 }

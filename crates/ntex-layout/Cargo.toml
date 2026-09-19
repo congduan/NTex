@@ -13,6 +13,8 @@ ntex-io.workspace = true
 
 [dev-dependencies]
 fastrand = "2"
+# C 档 LaTeX 用例：读仓库 `assets/fmt/latex.fmt` 解码成 FmtState（资产缺失即跳过）。
+ntex-format.workspace = true
 
 [lints]
 workspace = true

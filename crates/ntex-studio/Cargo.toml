@@ -15,6 +15,10 @@ eframe = { version = "0.35", features = ["wgpu"] }
 ntex-backend = { path = "../ntex-backend", version = "0.1.0" }
 # segmentize：studio 增量分派的段 diff 基准（与引擎 IncrementalTypesetter 同源）。
 ntex-core.workspace = true
+# C 档 LaTeX 资产：`.fmt` 解码（ntex-format）与 `\input` 搜索链（ntex-io），
+# 与 ntex-tauri(wasm) 前端的 set_bundle 同口径（见 src/engine.rs）。
+ntex-format.workspace = true
+ntex-io.workspace = true
 ntex-layout.workspace = true
 vello = "0.10"
 

@@ -1766,6 +1766,9 @@ include!("sink_showbox.rs");
 // M5 阶段三：端到端增量排版（段贡献缓存 + 页面装配重跑；layout 层段边界检查点）
 include!("incremental.rs");
 
+// LaTeX 源特征检测（格式自动检测；ntex-dvi / ntex-studio 共用同一实现）
+include!("latex_detect.rs");
+
 include!("incremental_tests.rs");
 
 include!("tests.rs");

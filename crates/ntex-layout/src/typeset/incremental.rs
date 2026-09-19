@@ -386,6 +386,24 @@ pub struct IncrementalTypesetter {
     /// CJK 字体回落名（与 [`Typesetter::fallback_font`] 同语义；增量路径的
     /// install_builder 也要同步到 NodeBuilder，否则增量段中文回落失效）。
     fallback_font: Option<String>,
+    /// `.fmt` 恢复的 `\count0..9`（install_builder 播种页号链镜像用；与
+    /// [`Typesetter::import_state`] 同口径——fmt 的寄存器不经 count_changed
+    /// 事件，install 边界是唯一可取点）。
+    fmt_page_counts: [i64; 10],
+    /// `.fmt` 恢复的当前字体（install_builder 播种，防首段字符全 nullfont）。
+    fmt_current_font: u32,
+    /// UTF-8 输入默认开关（与 [`Typesetter::utf8_input_default`] 同语义）：
+    /// `compile`/`edit` 入口把 `\utfinputmode` 置 1，源文件可直接写中文。
+    /// 默认关——既有调用方（单测/bench）行为零变化。
+    utf8_input: bool,
+    /// plain 格式预载开关（与 [`Typesetter::preload_plain`] 同语义）：`compile`
+    /// 在首段之前先跑内嵌 [`PLAIN_TEX`]。默认关。
+    preload_plain: bool,
+    /// plain 预载是否已跑过（幂等标记：长驻增量器只跑一次，见
+    /// [`Self::run_preload_plain`]）。
+    preload_done: bool,
+    /// 内嵌格式 VFS 兜底层是否已包（[`Self::use_embedded_format`] 幂等标记）。
+    embedded_vfs_installed: bool,
 }
 
 impl IncrementalTypesetter {
@@ -401,7 +419,112 @@ impl IncrementalTypesetter {
             rejects: Vec::new(),
             stats: IncrementalStats::default(),
             fallback_font: None,
+            fmt_page_counts: [0; 10],
+            fmt_current_font: 0,
+            utf8_input: false,
+            preload_plain: false,
+            preload_done: false,
+            embedded_vfs_installed: false,
         }
+    }
+
+    /// UTF-8 输入默认开关（M9 中文刀 3；与 [`Typesetter::set_utf8_input`] 同语义）。
+    ///
+    /// 与全量路径的差别：增量器的段边界检查点在 `compile` 里捕获，故这里只置
+    /// 默认值 + 立即落到活引擎（`\\utfinputmode`），后续 `compile`/`edit` 入口
+    /// 仍会重新 apply（用户源里显式的 `\\utfinputmode=0` 后写覆盖本默认）。
+    pub fn set_utf8_input(&mut self, on: bool) {
+        self.utf8_input = on;
+        self.apply_utf8_input();
+    }
+
+    /// UTF-8 输入默认是否已开（诊断/测试用）。
+    pub fn utf8_input_on(&self) -> bool {
+        self.utf8_input
+    }
+
+    /// 内嵌 plain 格式文件接入（[`Typesetter::use_embedded_format`] 同语义）：
+    /// `\input plain` 在宿主 VFS 落空时改读内嵌资源。幂等。
+    pub fn use_embedded_format(&mut self) {
+        if self.embedded_vfs_installed {
+            return;
+        }
+        let inner = self.expander.take_vfs();
+        self.expander
+            .set_vfs(Box::new(EmbeddedFormatVfs::new(inner)));
+        self.embedded_vfs_installed = true;
+    }
+
+    /// plain 格式预载开关（与 [`Typesetter::set_preload_plain`] 同语义）：
+    /// 打开的 `compile` 会在首段之前先跑内嵌 [`PLAIN_TEX`]（等价源首行
+    /// `\input plain`）。开时连同 [`Self::use_embedded_format`]。
+    ///
+    /// 只影响下一次 `compile`（全量重建）；`edit` 不重跑预载——它延续
+    /// `compile` 建立的引擎状态。
+    pub fn set_preload_plain(&mut self, on: bool) {
+        if on {
+            self.use_embedded_format();
+        }
+        self.preload_plain = on;
+    }
+
+    /// plain 格式预载是否已开（诊断/测试用）。
+    pub fn preload_plain(&self) -> bool {
+        self.preload_plain
+    }
+
+    /// 加载展开引擎状态快照（`.fmt` v1；与 [`Typesetter::import_state`] 同语义）。
+    ///
+    /// 必须在首次 `compile` **之前**调用：`compile` 会在段 0 之前捕获边界
+    /// 检查点，fmt 状态属于该检查点的一部分；先编译再 import 会让既有缓存
+    /// 与活状态错位。切换格式（plain ↔ LaTeX）请重建增量器实例——两条格式的
+    /// eqtb/字体表不可叠加（与 native `ntex-dvi --fmt` 互斥口径一致）。
+    pub fn import_state(&mut self, state: ntex_core::expand::FmtState) {
+        let font_loads = state.font_loads.clone();
+        self.fmt_current_font = state.current_font;
+        // 页号链初值（fmt 恢复的 \count0..9，install_builder 播种）
+        let mut fmt_page_counts = [0i64; 10];
+        for (i, c) in state.registers.counts.iter().take(10).enumerate() {
+            fmt_page_counts[i] = *c;
+        }
+        self.fmt_page_counts = fmt_page_counts;
+        self.expander.import_state(state);
+        // .fmt 不含字体表：按 font_loads 重新加载（与 Typesetter 同款；否则
+        // fmt 里已定义的 \font 在 pass2 悬空，字符全 nullfont）。
+        if let Fonts::Tfm(table) = &self.fonts {
+            let mut loader = TfmLoader {
+                table: table.clone(),
+            };
+            for (name, at, scaled) in font_loads.iter().flatten() {
+                let _ = loader.load(name, *at, *scaled);
+            }
+        }
+    }
+
+    /// 终端转录文本（`\message`/`\show`/`\write16` 累积；增量管线不摘 sink，
+    /// 转录随 `compile`/`edit` 单调累积）。
+    pub fn transcript(&self) -> &str {
+        self.expander.transcript()
+    }
+
+    /// 把 [`Self::utf8_input`] 落到 `\utfinputmode`（每次编译入口调用）。
+    fn apply_utf8_input(&mut self) {
+        let on = i64::from(self.utf8_input);
+        self.expander
+            .set_misc_int(ntex_core::param::MISC_UTF_INPUT_MODE, on);
+    }
+
+    /// plain 格式预载（与 [`Typesetter::run_plain_preload`] 同语义，但**只跑
+    /// 一次**：增量器是长驻引擎，eqtb/字体表/寄存器分配跨 `compile` 延续
+    /// （`edit` 依赖这一点），重复执行 plain.tex 只会重复分配与重定义；格式
+    /// 切换（plain ↔ LaTeX）走"重建增量器"而非复用实例）。
+    fn run_preload_plain(&mut self) -> Result<()> {
+        if !self.preload_plain || self.preload_done {
+            return Ok(());
+        }
+        self.expander.run_source(PLAIN_TEX)?;
+        self.preload_done = true;
+        Ok(())
     }
 
     /// CJK 字体回落（与 [`Typesetter::set_fallback_font`] 同语义；增量路径
@@ -437,6 +560,13 @@ impl IncrementalTypesetter {
     /// 全量编译（首次/重建缓存）：切段 → 逐段执行并记录边界检查点与贡献缓存
     /// → 收尾冲页 → 页面。
     pub fn compile(&mut self, source: &str) -> Result<CompileOutput> {
+        // 上一轮作业以 `\end` 收尾 → `ended` 标志会让主循环立即停（tex.web
+        // final_cleanup 的终结信号），本轮各段全部不执行 → **恒 0 页**。
+        // 长驻实例（studio 每次编辑重编译、`compile` 重建段缓存）必须复位；
+        // 收尾清理已由上一轮 `finish_doc` 完成，格式状态按 TeX 语义保留。
+        if self.expander.is_ended() {
+            self.expander.clear_ended();
+        }
         self.segments = segmentize(source);
         let n = self.segments.len();
         self.bounds = (0..=n).map(|_| None).collect();
@@ -444,7 +574,14 @@ impl IncrementalTypesetter {
         self.output_routine = false;
         self.rejects = vec![None; n];
         self.stats = IncrementalStats::default();
+        // 格式开关先落引擎（与 `Typesetter::typeset*` 同序）：UTF-8 输入要在
+        // 任何源文本之前生效；plain 预载要在段 0 之前跑完——两者都属于段 0 的
+        // 边界状态。**顺序不可换**：`install_builder` 同时挂字体加载器与 sink，
+        // 预载（plain.tex 通篇 `\font` 定义）必须先有加载器，否则全部字体落
+        // nullfont（页号打印报 "no 1 in font nullfont"，2026-09-19 踩过）。
+        self.apply_utf8_input();
         self.install_builder();
+        self.run_preload_plain()?;
         self.capture_boundary(0, true);
         for j in 0..n {
             if let Err(e) = self.execute_segment(j) {
@@ -494,6 +631,12 @@ impl IncrementalTypesetter {
             rp.exp.restore_to(&mut self.expander);
             rp.layout.restore_full(sink_builder(&mut self.expander));
         }
+        // UTF-8 输入默认与全量入口同口径（用户源里显式的 \utfinputmode=0 仍
+        // 后写覆盖）。**放在回滚之后**：回滚把 expander 整体还原成检查点时刻的
+        // 状态（含 \utfinputmode），入口的 apply 必须先于本次重放、后于还原。
+        // plain 预载**不**在 edit 重跑：它属于 compile 建立的初始状态，重跑会
+        // 把宏重复定义进已被检查点引用的状态。
+        self.apply_utf8_input();
         self.segments[index] = new_text.to_owned();
         // 2) 从 start 起重放。链偏差随重放推进（expand 层 SegmentEngine 同款，
         //    阶段五）：入口回滚后活状态即旧链上"段 start 前"的状态，先对
@@ -609,6 +752,13 @@ impl IncrementalTypesetter {
         builder.math_state.muskip_params = self.expander.muskip_registers();
         builder.math_state.muskip_is_mu = [true; 3];
         builder.sync_params(self.expander.params_ref());
+        // .fmt 恢复的镜像（与 [`Typesetter::install_builder`] 同款，缺一即错位）：
+        // - 页号链 \count0..9：不经 count_changed 事件，只能从 fmt 初值播种；
+        // - 当前字体：不播种则 pass2 首段字符落 nullfont；
+        // - \output 是否已定义：LaTeX 的 \@outputpage 会被绕过。
+        builder.page_state.page_counts = self.fmt_page_counts;
+        builder.current_font = FontId(self.fmt_current_font);
+        builder.page_state.output_defined = self.expander.output_defined();
         // \sfcode 默认（大写 999）与全量路径 install_builder 同源，否则增量
         // 段与全量段的大写-标点空格因子钳制不一致（见 init_sfcodes 文档）。
         init_sfcodes(&mut builder);

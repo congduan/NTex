@@ -1,27 +1,34 @@
 //! ntex-studio：实时预览工作台（左 TeX 编辑 / 右 vello GPU 渲染）。
 //!
 //! 架构（plan.md M8 渲染后端的 GUI 延伸，M5+ 实时预览器的先行形态）：
-//! - 引擎复用：`Typesetter::with_tfm().typeset_dvi(&str)` 同进程排版，
+//! - 引擎复用：`IncrementalTypesetter` 同进程排版，
 //!   `ntex_backend::prims::collect_page` + `build_scene` 把页面盒树编码为
 //!   vello Scene（与无头回读管路同一事实源）；
 //! - GPU 复用：eframe(wgpu) 共享 device/queue 上创建常驻 `vello::Renderer`，
 //!   经 `egui_wgpu` 回调三段式（prepare 渲离屏纹理 / paint blit 上屏）实现
 //!   表面直绘——缩放平移只改 Scene 仿射变换，矢量重光栅化，免重排版；
 //! - 编译防抖：文本变更 250ms 后同步重排（demo 级文档毫秒量级），
-//!   引擎契约不 panic，错误进状态栏。
+//!   引擎契约不 panic，错误进状态栏；
+//! - **C 档 LaTeX 对齐（2026-09-19）**：native 侧补齐 Tauri（wasm）前端的同名
+//!   能力——按源码特征自动切 LaTeX/plain（`looks_like_latex`）、载入发行
+//!   `assets/fmt/latex.fmt`、TeX 文件走发行 `tex-minimal` 搜索链、UTF-8 直写、
+//!   CJK 回落与真字形字体注入（见 [`engine`] 模块的对照表）。
 //!
-//! 运行：`cargo run -p ntex-studio [文件.tex]`（TFM 查找依赖运行目录，
-//! 请在仓库根或其他引擎可用的目录启动）。
+//! 运行：`cargo run -p ntex-studio [文件.tex]`（发行资产走 `<仓库>/assets`；
+//! 打包分发时可用 `NTEX_ASSETS` 指定资产根）。
 
 #![deny(unsafe_code)]
 
 mod app;
 mod editor;
+mod engine;
 mod render;
 
 use std::path::Path;
 
-/// 自带的默认文档（engine 可全量排版的英文示例；中文 TFM 字体 M9 前不可用）。
+/// 自带的默认文档（plain 口径的英文示例：不依赖发行资产，开箱可见页面）。
+/// 换成 LaTeX 文档（`\documentclass` …）会自动切到 LaTeX 口径——见
+/// [`engine::Setup::typesetter`] 的模式分派。
 const DEFAULT_TEX: &str = r"\tolerance 10000
 \parindent 20pt
 \parskip 6pt plus 2pt

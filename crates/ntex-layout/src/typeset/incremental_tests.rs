@@ -1004,4 +1004,184 @@ mod incremental_tests {
         assert_eq!(b.side_effects(), se);
     }
 
+    /// 长驻增量器连续 `compile` 两份作业：第二份不得因上一份 `\end` 残留的
+    /// `ended` 标志而空转——`run` 主循环见 `ended` 立即停（tex.web final_cleanup），
+    /// 第二份文档的段全部被跳过 → **恒 0 页**（2026-09-19 现场：ntex-studio 每次
+    /// 编辑重编译都会走 `compile`，预览会突然空白）。
+    ///
+    /// 注意本文件其它用例的文档**不带 `\end`**（靠输入耗尽收尾），故此前未覆盖
+    /// 这条路径；studio 的样张（`samples/demo.tex` 等）与真实 LaTeX 源码都以
+    /// `\end` 结尾。
+    #[test]
+    fn recompile_on_same_engine_after_end_is_not_empty() {
+        ensure_tfm_dir();
+        let src = format!(
+            "\\hsize 300pt\n\\vsize 200pt\n{}A paragraph long enough to occupy a line or two \
+             of the page.\n\\par\n\\end\n",
+            font_preamble()
+        );
+        let mut inc = IncrementalTypesetter::with_tfm_paginated();
+        let first = inc.compile(&src).expect("首次编译");
+        assert!(!first.pages.is_empty(), "首次编译应有页面");
+        let second = inc.compile(&src).expect("二次编译（同一实例）");
+        assert_eq!(
+            second.pages.len(),
+            first.pages.len(),
+            "二次编译页数应与首次一致（`\\end` 残留会让主循环空转 → 0 页）"
+        );
+        // 三次也稳（`ended` 复位是幂等的，且段缓存/边界重建不影响结果）。
+        let third = inc.compile(&src).expect("三次编译");
+        assert_eq!(third.pages.len(), first.pages.len(), "三次编译页数应稳定");
+    }
+
+    /// C 档 LaTeX（2026-09-19，ntex-studio 对齐 Tauri）：`import_state`
+    /// （发行 `assets/fmt/latex.fmt`）+ TeX 文件搜索链（发行 `tex-minimal` 树）
+    /// 让增量器按 LaTeX 口径排版——**0 页曾是接通前的现场**（`\documentclass`
+    /// 未定义、静默排空）。
+    ///
+    /// 资产缺失即跳过：本用例验证的是"增量器 × fmt 状态"的组合，不是资产分发
+    /// 本身（分发由 ntex-tauri 的资产包与 `ntex-dvi --fmt` 覆盖）。
+    #[test]
+    fn latex_fmt_compile_produces_pages() {
+        let Some((root, state)) = latex_assets() else {
+            return;
+        };
+        let src = "\\documentclass{article}\n\\begin{document}\n\\section{Hello}\n\
+                   A paragraph of body text.\n\\end{document}\n";
+        let mut inc = latex_inc(&root, state);
+        let out = inc.compile(src).expect("LaTeX 口径编译（fmt + TeX 树）");
+        assert!(
+            !out.pages.is_empty(),
+            "LaTeX 文档应产出页面（0 页 = 实际按 plain 子集排了：\\documentclass 未定义）"
+        );
+        // 字体表应含 LaTeX 字体块（cmr10 + 12pt 族的 cmbx12/cmr17 等之一）。
+        let names: Vec<&str> = out.fonts.iter().map(|f| f.name.as_str()).collect();
+        assert!(
+            names.iter().any(|n| n.starts_with("cmr") || n.starts_with("cmbx")),
+            "LaTeX 文档应装载 CM 家族字体，实际：{names:?}"
+        );
+    }
+
+    /// **已知缺陷（2026-09-19，未修）**：fmt 状态下的增量 `edit` 不可用。
+    ///
+    /// 现场：`import_state(latex.fmt)` 后 `compile` → `edit(k, ..)` 报
+    /// `InvalidInput { message: "VFS 读取 失败：\0article.cls（定义 \@filef@und
+    /// 的替换文本时）" }` —— 重放（回滚到段前检查点 + 重新执行）把 LaTeX 的
+    /// `\@filef@und` 替换文本还原成**含 NUL 前缀**的形态，随后 `\input` 拿它当
+    /// 文件名去读 VFS（首次全量路径同一字体/文件读的是裸名 `article.cls`，说明
+    /// 差异在重放后的活状态而非资产/VFS）。首查方向：`\0` 是引擎内部"字符串
+    /// token"编码，需查回滚（`StateSnapshot::restore_to`）后宏体 token 的展开
+    /// 分支是否走了"原始 token 数组"路径而未剥离该前缀。
+    ///
+    /// 影响面：`ntex-studio` 因此在 LaTeX 口径**只走全量重编译**（与 Tauri 前端
+    /// `compile_document` 同口径）；plain 口径的段级增量不受影响（既有逐位一致
+    /// 用例覆盖）。修复后删掉本注解与 `#[ignore]`，用例即变回归锁。
+    #[test]
+    #[ignore = "已知缺陷：fmt 状态下增量 edit 重放 `\\@filef@und` 坏值（\\0article.cls），见函数文档"]
+    fn latex_fmt_import_and_incremental_edit() {
+        let Some((root, state)) = latex_assets() else {
+            return;
+        };
+        let src = "\\documentclass{article}\n\\begin{document}\n\\section{Hello}\n\
+                   First paragraph here.\n\nSecond paragraph here.\n\\end{document}\n";
+        let mut inc = latex_inc(&root, state.clone());
+        let out = inc.compile(src).expect("LaTeX 口径编译（fmt + TeX 树）");
+        assert!(!out.pages.is_empty(), "LaTeX 文档应产出页面");
+
+        // 改一段正文 → 增量编辑须与全新实例的全量编译节点级一致。
+        let segs = inc.segments().to_vec();
+        let k = segs
+            .iter()
+            .position(|s| s.contains("Second paragraph here."))
+            .expect("段列表应含目标段");
+        let new_text = segs[k].replace(
+            "Second paragraph here.",
+            "Second paragraph edited into a longer sentence.",
+        );
+        let edited = replace_segment(src, &segs, k, &new_text);
+        let inv = inc.edit(k, &new_text).expect("增量编辑（fmt 状态）");
+
+        let mut fresh = latex_inc(&root, state);
+        let reference = fresh.compile(&edited).expect("参考全量编译");
+        let reference: Doc = (reference.pages, reference.fonts);
+        assert_doc_eq(&inv, &reference, "LaTeX fmt 增量 edit".to_owned());
+    }
+
+    /// **LaTeX `tabular`/`array` 端到端（2026-09-19 新增回归锁）**：
+    /// LaTeX 的表格全部建立在 `\ialign\bgroup`（`\@preamble`）与
+    /// `\endtabular` 的 `\crcr\egroup…` 之上，preamble 里的 `#` 又是
+    /// `\let\@sharp##` 的 cs 形态，跨列单元走 `\omit\span\omit`
+    /// （`\multispan`）。这三条都要求**命令层**判 `cur_cmd`（tex.web
+    /// `scan_left_brace`/`align_peek`/`get_preamble_token`），此前只认字符
+    /// 形态 → 任何 `tabular` 在首个 `\halign` 报 "Missing { inserted"、
+    /// 整篇 0 页（`samples/latex-sample2e-slim.tex` 的根因）。
+    ///
+    /// 资产缺失即跳过（与 fmt 用例同口径：验证的是引擎能力，不是资产分发）。
+    #[test]
+    fn latex_tabular_and_multicolumn_render_pages() {
+        let Some((root, state)) = latex_assets() else {
+            return;
+        };
+        let src = "\\documentclass{article}\n\\begin{document}\n\
+                   \\begin{tabular}{ll}\nA & B\\\\\n\\multicolumn{2}{l}{wide}\\\\\n\\end{tabular}\n\
+                   \\end{document}\n";
+        let mut inc = latex_inc(&root, state);
+        let out = inc.compile(src).expect("LaTeX tabular 编译");
+        assert!(
+            !out.pages.is_empty(),
+            "tabular + \\multicolumn 应产出页面（0 页 = \\halign\\bgroup / \\@sharp / \
+             \\omit\\span\\omit 某条命令层判据仍缺）"
+        );
+        // 转录不得留错误（此前是 "Missing { inserted" / "ended by \\document"）。
+        let log = inc.transcript().to_owned();
+        for bad in ["! Missing {", "! Missing #", "ended by", "end occurred inside a group"] {
+            assert!(
+                !log.contains(bad),
+                "LaTeX tabular 转录不应含 {bad:?}：\n{log}"
+            );
+        }
+    }
+
+    /// 载入发行 LaTeX 资产（`assets/fmt/latex.fmt` + `assets/tex-minimal/tex`）；
+    /// 缺失即打印跳过提示并返回 `None`。
+    fn latex_assets() -> Option<(std::path::PathBuf, ntex_core::expand::FmtState)> {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let fmt_path = root.join("fmt/latex.fmt");
+        if !fmt_path.is_file() || !root.join("tex-minimal/tex").is_dir() {
+            eprintln!("跳过：发行资产不在 {}", root.display());
+            return None;
+        }
+        let bytes = std::fs::read(&fmt_path).expect("读 latex.fmt");
+        let state = ntex_format::load(&mut &bytes[..]).expect("解码 latex.fmt");
+        Some((root, state))
+    }
+
+    /// LaTeX 口径的增量器：与 `ntex-studio::engine::Setup::typesetter(true, ..)`
+    /// 同配置的最小版（UTF-8 直写 + fmt 导入 + 发行 TeX 树搜索链）。
+    fn latex_inc(root: &std::path::Path, state: ntex_core::expand::FmtState) -> IncrementalTypesetter {
+        let mut ts = IncrementalTypesetter::with_tfm_paginated();
+        ts.set_utf8_input(true);
+        ts.set_vfs(latex_vfs(root));
+        ts.import_state(state);
+        ts
+    }
+
+    /// 发行 TeX 树 → VFS（与 `ntex-studio::engine` 的搜索链同口径的最小版）。
+    fn latex_vfs(root: &std::path::Path) -> Box<dyn ntex_io::Vfs> {
+        let tex = root.join("tex-minimal/tex");
+        let mut vfs = ntex_io::SearchPathVfs::new(Box::new(ntex_io::LocalVfs));
+        vfs.push_path(tex.to_string_lossy().into_owned());
+        vfs.push_path(tex.join("latex/base").to_string_lossy().into_owned());
+        for sub in ["latex", "generic"] {
+            let Ok(rd) = std::fs::read_dir(tex.join(sub)) else {
+                continue;
+            };
+            for entry in rd.flatten() {
+                if entry.path().is_dir() {
+                    vfs.push_path(entry.path().to_string_lossy().into_owned());
+                }
+            }
+        }
+        Box::new(vfs)
+    }
 }

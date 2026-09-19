@@ -604,6 +604,107 @@ pub fn register_font_bytes(tex_name: &str, bytes: &[u8]) -> bool {
     }
 }
 
+/// 批量认领一个字体目录（发行字体集）：**与 `ntex-tauri` 前端
+/// `ui/main.js::GLYPH_FONTS` 同一张名单的 Rust 侧等价物**。
+///
+/// 认领规则见 [`claim_font_dir`]；本函数读盘并逐条注册进进程级注册表，
+/// 返回成功注册的 TeX 字体名（诊断/状态栏提示；顺序 = 认领顺序）。
+/// 目录不存在/不可读 → 空表（native 环境查找链继续兜底，不是错误）。
+pub fn register_font_dir(dir: &std::path::Path) -> Vec<String> {
+    let mut out = Vec::new();
+    for (tex_name, path) in claim_font_dir(dir) {
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        if register_font_bytes(&tex_name, &bytes) {
+            out.push(tex_name);
+        }
+    }
+    out
+}
+
+/// 目录 → 认领表（`TeX 字体名 → 字体文件路径`），**不注册**（纯函数，测试用）。
+///
+/// 两类认领：
+/// 1. **LM 改名映射**：目录内文件名与 [`lm_file_name`] 的候选集
+///    （[`lm_tex_name_candidates`]）求交——`lmroman10-regular.otf` → `cmr10`、
+///    `latinmodern-math.otf` → cmmi/cmsy/cmex 全系；
+/// 2. **同名直取**：其余 OpenType 文件按**文件主名**认领为 TeX 字体名
+///    （`FandolSong-Regular.otf` → `FandolSong-Regular`，与引擎侧
+///    `find_otf` 的"TeX 名当文件名"口径一致）。
+///
+/// 顺序：先映射族（同一文件可能被多个 TeX 名认领，故按 TeX 名逐个入表），
+/// 再同名直取；已被认领过的 TeX 名/文件不再重复。
+fn claim_font_dir(dir: &std::path::Path) -> Vec<(String, std::path::PathBuf)> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    // 目录内 OpenType 文件：小写文件名 → 路径（大小写不敏感匹配，跨平台稳）。
+    let mut files: Vec<(String, std::path::PathBuf)> = Vec::new();
+    for e in entries.flatten() {
+        let path = e.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let lower = name.to_ascii_lowercase();
+        if lower.ends_with(".otf") || lower.ends_with(".ttf") || lower.ends_with(".ttc") {
+            files.push((lower, path));
+        }
+    }
+
+    let mut out: Vec<(String, std::path::PathBuf)> = Vec::new();
+    // 1) LM 改名映射（latinmodern-math 由多个 TeX 名指向 → 同一路径多次入表）。
+    for tex in lm_tex_name_candidates() {
+        let Some(file) = lm_file_name(&tex) else {
+            continue;
+        };
+        let file = file.to_ascii_lowercase();
+        let Some((_, path)) = files.iter().find(|(n, _)| *n == file) else {
+            continue;
+        };
+        out.push((tex, path.clone()));
+    }
+    // 2) 同名直取（中文字体等无 LM 映射的 OTF）：文件主名即 TeX 名。
+    //    已被映射族认领的**文件**跳过——否则 `lmroman10-regular.otf` 会额外
+    //    以 `lmroman10-regular` 之名入表（Tauri 名单里没有这种名字，多余）。
+    for (_, path) in &files {
+        if out.iter().any(|(_, p)| p == path) {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if out.iter().any(|(n, _)| n == stem) {
+            continue;
+        }
+        out.push((stem.to_owned(), path.clone()));
+    }
+    out
+}
+
+/// LM 认领的候选 TeX 名（族前缀 × 光学尺寸）：[`register_font_dir`] 用它反查
+/// [`lm_file_name`]，把目录里的 LM 文件还原成 TeX 名。
+///
+/// 与 `ntex-tauri` 前端 `GLYPH_FONTS` 名单同源（那份是手写清单，这里是等价
+/// 生成式；两侧只要 LM 文件名映射不变即等价）。
+fn lm_tex_name_candidates() -> Vec<String> {
+    const FAMILIES: &[&str] = &[
+        "cmr", "cmbx", "cmb", "cmti", "cmsl", "cmtt", "cmsltt", "cmss", "cmssbx", "cmssi", "cmmi",
+        "cmsy", "cmex",
+    ];
+    const SIZES: &[u32] = &[5, 6, 7, 8, 9, 10, 12, 17];
+    let mut out = Vec::new();
+    for f in FAMILIES {
+        for s in SIZES {
+            out.push(format!("{f}{s}"));
+        }
+    }
+    out
+}
+
 /// 跨页/跨渲染的字形字体缓存（TeX 字体名 → 解析结果；None = 环境无此字体，
 /// 后续同名不再重试）。
 #[derive(Default)]
@@ -807,5 +908,52 @@ mod tests {
             .count();
         assert!(ink > 200, "'A'@100px 墨迹应显著（实测 {ink} px）");
         assert!(!pm.pixel_nonwhite(200, 155), "基线下方应无墨");
+    }
+
+    /// 发行字体目录认领（`register_font_dir` 的纯函数半边）：LM 改名映射
+    /// （`lmroman10-regular.otf` → `cmr10`）与同名直取（中文 OTF）各一路。
+    ///
+    /// 用**临时目录**造场景：零全局注册表污染（并行测试互不干扰），且不依赖
+    /// 仓库里 `ui/fonts/` 的实际内容。
+    #[test]
+    fn claim_font_dir_maps_lm_and_takes_same_name() {
+        let dir = std::env::temp_dir().join(format!(
+            "ntex-claim-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        // 内容只是"合法 OpenType 字节"的占位：本测试不解析，只查认领表。
+        std::fs::write(dir.join("lmroman10-regular.otf"), LM_ROMAN).expect("写 LM 文件");
+        std::fs::write(dir.join("FandolSong-Regular.otf"), LM_ROMAN).expect("写中文占位");
+        // 非字体文件必须被忽略。
+        std::fs::write(dir.join("README.md"), b"not a font").expect("写说明");
+
+        let claimed = claim_font_dir(&dir);
+        let names: Vec<&str> = claimed.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"cmr10"), "LM 改名映射：{names:?}");
+        assert!(names.contains(&"FandolSong-Regular"), "同名直取：{names:?}");
+        assert!(
+            !names.contains(&"lmroman10-regular"),
+            "已被映射族认领的文件不应再按文件名入表：{names:?}"
+        );
+        assert!(
+            !names.contains(&"cmr12"),
+            "目录里没有 lmroman12-regular.otf：{names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| n.ends_with("README")),
+            "非 OpenType 文件不入表：{names:?}"
+        );
+        // 数学族共用 latinmodern-math.otf：本目录未放该文件 → 无 cmmi/cmsy/cmex。
+        assert!(
+            !names.contains(&"cmmi10"),
+            "无 math 文件则无数学族：{names:?}"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

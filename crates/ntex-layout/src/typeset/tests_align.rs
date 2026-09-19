@@ -78,3 +78,70 @@ fn halign_natural_keeps_own_width() {
         "无规格对齐盒应为自然宽"
     );
 }
+
+// ── 命令层组定界 / cs 形态 mac_param（2026-09-19：LaTeX tabular 全线打通）──
+// tex.web 的 `scan_left_brace`(L8196)、`align_peek`(L15517)、
+// `get_preamble_token`(L15464) 判据全在**命令层**（`cur_cmd=left_brace` /
+// `mac_param`），而 `\let\cs=<字符>` 型 cs token 读取时
+// `cur_cmd:=eq_type(cur_cs)` 即该字符的 catcode、且 `get_x_token` 不会把它
+// 展开成字符——故 cs 形态与字符形态等价。LaTeX 全依赖这条：
+// `\ialign\bgroup`（`\@preamble`）、`\let\@sharp##`（`\@mkpream` 生成的
+// preamble 里 `#` 写作 `\@sharp`）、`\endtabular` 的 `\crcr\egroup…`。
+// 此前只认字符形态 → 任何 `tabular`/`array` 都在首个 `\halign` 处报
+// "Missing { inserted" 并整篇排空（0 页）。
+
+#[test]
+fn halign_bgroup_egroup_alias_matches_char_form() {
+    // `\let\bgroup={` / `\let\egroup=}` → 与 `\halign{…}` 完全等价
+    // （LaTeX `\@preamble` = `\ialign \noexpand\@halignto \bgroup …`）。
+    let alias = typeset(concat!(
+        "\\let\\bgroup={\\let\\egroup=}",
+        "\\vbox{\\halign\\bgroup\\hfil#\\hfil\\cr a\\cr b\\cr\\egroup}",
+    ))
+    .unwrap();
+    let chars = typeset(concat!(
+        "\\let\\bgroup={\\let\\egroup=}",
+        "\\vbox{\\halign{\\hfil#\\hfil\\cr a\\cr b\\cr}}",
+    ))
+    .unwrap();
+    assert_eq!(
+        format!("{alias:?}"),
+        format!("{chars:?}"),
+        "\\bgroup/\\egroup 形态应与字符形态产出逐位一致"
+    );
+}
+
+#[test]
+fn halign_cs_mac_param_splits_template() {
+    // `\let\hs=#` → 命令层 mac_param 也须算 u→v 分界（LaTeX `\@sharp`）。
+    // 认不出会让整列落进 u 段并报 "Missing # inserted in alignment preamble"。
+    let nodes = typeset(concat!(
+        "\\let\\hs=#\\let\\bgroup={\\let\\egroup=}",
+        "\\vbox{\\halign\\bgroup\\hfil\\hs\\hfil\\cr a\\cr\\egroup}",
+    ))
+    .unwrap();
+    let vbox = as_box(&nodes[0]);
+    assert_eq!(vbox.children.len(), 1, "单行");
+    assert!(top_box_width(&nodes) > 0, "cs 形态 # 分出的 u/v 模板应产出宽度");
+}
+
+#[test]
+fn halign_multispan_keeps_group_balance() {
+    // `\omit\span\omit`（LaTeX `\multispan`/`\multicolumn` 内核）：tex.web
+    // fin_col 的 span 分支跳过 `unsave; new_save_level(align_group)` 与
+    // `init_span(p)`——续列既不新开单元组也不重置 cur_span。此前每列都开组
+    // → 每个 `\span` 泄漏一个组 → 外层 `\vbox` 的 `}` 被吞、整页为空。
+    let nodes = typeset(r"\vbox{\halign{#&#\cr a&b\cr \omit\span\omit c\cr}}").unwrap();
+    assert_eq!(nodes.len(), 1, "外层 \\vbox 应收口成盒（单元组未泄漏）");
+    let vbox = as_box(&nodes[0]);
+    assert_eq!(vbox.children.len(), 1, "vbox 内是单个对齐盒");
+    let align = as_box(&vbox.children[0]);
+    assert_eq!(align.children.len(), 2, "两行：`a&b` 与跨两列的 `c`");
+    // 跨列单元必须覆盖**两列**宽度（span_len=2），否则只占首列宽
+    let row1 = as_box(&align.children[0]);
+    let row2 = as_box(&align.children[1]);
+    assert_eq!(
+        row2.width, row1.width,
+        "跨列行应与两列行同宽（span_len 必须为 2，不能重置 cur_span）"
+    );
+}

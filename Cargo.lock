@@ -3387,6 +3387,7 @@ dependencies = [
  "fastrand",
  "ntex-core",
  "ntex-font",
+ "ntex-format",
  "ntex-io",
 ]
 
@@ -3415,6 +3416,8 @@ dependencies = [
  "eframe",
  "ntex-backend",
  "ntex-core",
+ "ntex-format",
+ "ntex-io",
  "ntex-layout",
  "vello",
 ]
