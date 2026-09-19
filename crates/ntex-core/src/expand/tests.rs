@@ -940,6 +940,63 @@ I changed this one to zero.
     }
 
     #[test]
+    fn output_as_toks_rhs_copies_content() {
+        // preview.sty l.375 `\pr@output\output`：`\output` 与 toks 寄存器同族
+        // （tex.web `toks_register,assign_toks` 共用分支），RHS 为 `\output` 时
+        // 内容复制。此前缺臂报 "RHS 需为 {token list} 或 toks 寄存器" 致命，
+        // preview 载入止步 l.375。反向 `\output<toks 寄存器>` 同族复制同锁。
+        // pdfTeX GT（plainx，/tmp/ex_faithful.tex）：`\po\output` → `{\plainoutput}`。
+        assert_eq!(
+            expand("\\output={XY}\\toksdef\\toksA=5\\toksA\\output\\the\\toksA").unwrap(),
+            "XY"
+        );
+        assert_eq!(
+            expand("\\toksdef\\toksB=6\\toksB={AB}\\output\\toksB\\the\\toksB").unwrap(),
+            "AB"
+        );
+    }
+
+    #[test]
+    fn optional_space_after_value_consumed_before_following_cs_lex() {
+        // tex.web 数字常量循环的取 token 节奏：数字后的 optional space 被消费后
+        // **不再多取 token**（`@<Scan an optional space@>` L8755：get_x_token +
+        // 非 spacer 才 back_input）。此前 skip_trailing_spaces 循环吞光连续空格
+        // 后又多取一个 token 放回——多出的那次取 token 在 `\catcode` 赋值执行前
+        // 完成，把陈旧 catcode 表烙进后继 cs：
+        //   `\catcode`\@=11 \q@=5` 中 `\q@` 被按 @=cat12 切成 `\q`+`@`。
+        // GT 对拍（pdfTeX plainx，2026-09-19）：
+        //   `\catcode`\@=11 \toks@{A}\message{T:\the\toks@}` → "T: A"（正常）；
+        //   无空格变体 `\catcode`\@=11\toks@{A}` → "Missing number"（两引擎一致，
+        //   数字循环终止 get_x_token 本就该在赋值执行前完成那次取 token）。
+        // INITEX 下 @ 非 letter，用 \csname+\expandafter 预置 cat12 时代的 cs 名
+        // （countdef 目标位 get_token 不展开，须先展开好再交接）。
+        assert_eq!(
+            expand(
+                "\\expandafter\\countdef\\csname q@\\endcsname=0 \\catcode`\\@=11 \\q@=5 \\the\\q@"
+            )
+            .unwrap(),
+            "5"
+        );
+    }
+
+    #[test]
+    fn preview_addto_front_idiom_matches_pdftex() {
+        // preview.sty l.37-39 的真实宏路径（toks RHS filler 循环内 \expandafter
+        // 跳过 `{` 展开 `\the`）；pdfTeX GT（plainx，/tmp/ex_faithful.tex）
+        // 同输出 "AX"。单行书写：行尾空格 token 会进排版流（GT 同样如此，
+        // 仅 \message 探针看不到）。
+        assert_eq!(
+            expand(concat!(
+                "\\catcode`\\@=11 \\toksdef\\toks@=0 ",
+                "\\long\\def\\pr@addto@front#1#2{\\toks@{#2}\\toks@\\expandafter{\\the\\expandafter\\toks@#1}\\xdef#1{\\the\\toks@}}",
+                "\\def\\foo{X}\\pr@addto@front\\foo{A}\\foo"
+            ))
+            .unwrap(),
+            "AX"
+        );
+    }
+
+    #[test]
     fn expandable_primitives_expand_in_scan_context() {
         // 回归（fuzz 挂死 2026-08-28）：\romannumeral/\char/\uppercase/\lowercase/
         // \endinput/\ignorespaces/\fontname 在 is_expandable() 白名单中但
@@ -1351,8 +1408,15 @@ I changed this one to zero.
         assert_eq!(calls, vec![("cmr10".to_owned(), None, None)]);
         // 文件名同口径（tex.web scan_file_name 走同一 more_name）：
         // cat-12 空格把 "tex" 隔出文件名，报错现场恰为 nosuchfile.tex。
+        // 注意 `\catcode`\ =12\input` 须**相邻**（无 optional space）：若带空格，
+        // 该空格被赋值的 optional space 消费后，`\input` 后继的空格已变 cat-12
+        // 数据字符（tex.web 控制字只跳过 cat-10 后继），名字扫描首 token 即
+        // 终止 → 空文件名（pdfTeX GT 实测同为 ".tex File ignored"，
+        // jobname=g25，2026-09-19）。相邻形式 `\input` 的控制字扫描在赋值
+        // 执行前完成、其后 cat-10 空格照常被吞，名字恰为 nosuchfile.tex
+        // （pdfTeX GT jobname=g23 同报 "I can't find file `nosuchfile.tex'"）。
         let mut e = Expander::new();
-        let r = e.run_source("\\catcode`\\ =12 \\input nosuchfile.tex tex\\relax");
+        let r = e.run_source("\\catcode`\\ =12\\input nosuchfile.tex tex\\relax");
         assert!(r.is_err());
         assert!(
             e.transcript().contains("I can't find file `nosuchfile.tex'"),

@@ -938,36 +938,44 @@ impl Expander {
         }
     }
 
-    /// 吞掉数字/尺寸后的尾随空格（输入耗尽时直接返回）。
+    /// 数字/尺寸后的 optional space（tex.web `@<Scan an optional space@>`
+    /// L8755：`get_x_token; if cur_cmd<>spacer then back_input`）——**至多**
+    /// 吞一个空格；非空格 token 取一次即放回，**不再向前多取**。
+    ///
+    /// 此前是"循环吞光全部连续空格、然后再取下一个 token 放回"——多出的那一次
+    /// 取 token 会把**赋值执行前的陈旧 catcode 表**烙进后继 token：token 在
+    /// 词法时点绑定 catcode（input.rs `scan_token`），`\catcode`\@=11 \toks@{A}`
+    /// 中 `\toks@` 被提前按 @=12 切成 `\toks`+`@` → "Missing number"（真 TeX
+    /// 同文档输出正常；无空格变体真 TeX 同报 Missing number——数字循环的
+    /// 终止 get_x_token 本就该在赋值执行前完成那次取 token，见 GT 对拍
+    /// 2026-09-19）。
     fn skip_trailing_spaces(&mut self) -> Result<()> {
-        loop {
-            match self.fetch()? {
-                None => return Ok(()),
-                Some((tok, _)) => {
-                    // cs 别名到空格字符（`\let\exp_stop_f: ~`，l3expan.dtx:1093
-                    // `\use:nn{\cs_new_eq:NN\exp_stop_f:}{~}`）→ **等价空格终结符**
-                    //（tex.web scan_int `.10`：get_token 返回 cmd=space 即消散；
-                    // cs 的 cmd 经 eqtb 查得）。expl3 `\exp_stop_f:` 贴数字尾
-                    // （fp 区 `\__fp_int_eval:w <n> \exp_stop_f: = ...` 万级出现）
-                    // 不解引用则落 `\ifnum` 关系符位 → "Missing = inserted"
-                    // 1500 次主簇（2026-09-12 定性）。
-                    if tok.catcode() == Some(Catcode::Space) {
-                        continue;
-                    }
-                    if let Some(csid) = tok.csid() {
-                        match self.resolve_slot(csid) {
-                            Some(EqSlot::Char {
-                                catcode: Catcode::Space,
-                                ..
-                            }) => continue,
-                            // \let\sp=\space 型原语别名（Primitive::ControlSpace）
-                            Some(EqSlot::Primitive(Primitive::ControlSpace)) => continue,
-                            _ => {}
-                        }
-                    }
-                    self.unread(tok);
+        match self.fetch()? {
+            None => return Ok(()),
+            Some((tok, _)) => {
+                // cs 别名到空格字符（`\let\exp_stop_f: ~`，l3expan.dtx:1093
+                // `\use:nn{\cs_new_eq:NN\exp_stop_f:}{~}`）→ **等价空格终结符**
+                //（tex.web scan_int `.10`：get_token 返回 cmd=space 即消散；
+                // cs 的 cmd 经 eqtb 查得）。expl3 `\exp_stop_f:` 贴数字尾
+                // （fp 区 `\__fp_int_eval:w <n> \exp_stop_f: = ...` 万级出现）
+                // 不解引用则落 `\ifnum` 关系符位 → "Missing = inserted"
+                // 1500 次主簇（2026-09-12 定性）。
+                if tok.catcode() == Some(Catcode::Space) {
                     return Ok(());
                 }
+                if let Some(csid) = tok.csid() {
+                    match self.resolve_slot(csid) {
+                        Some(EqSlot::Char {
+                            catcode: Catcode::Space,
+                            ..
+                        }) => return Ok(()),
+                        // \let\sp=\space 型原语别名（Primitive::ControlSpace）
+                        Some(EqSlot::Primitive(Primitive::ControlSpace)) => return Ok(()),
+                        _ => {}
+                    }
+                }
+                self.unread(tok);
+                return Ok(());
             }
         }
     }
@@ -1069,12 +1077,22 @@ impl Expander {
             let val = self.scan_group_contents(Some("tokens"))?;
             return Ok(Arc::from(val));
         }
+        // `\output` 作 RHS（tex.web：output_loc 与 toks 寄存器同族，走
+        // assign_toks 同一分支）：内容复制。preview.sty l.375 `\pr@output\output`
+        // 依赖此语义；此前缺臂报 "RHS 需为 {token list} 或 toks 寄存器" 致命，
+        // preview 载入止步。引擎侧输出例程 token 列表独立存储（非 toks 寄存器
+        // 槽，读臂见 save.rs `\the\output`）。
+        if let Some(csid) = tok.csid() {
+            if matches!(self.eqtb.slot(csid), EqSlot::Primitive(Primitive::Output)) {
+                return Ok(self.output_toks.clone().unwrap_or_default());
+            }
+        }
         // toks 寄存器内容复制
         if let Some(idx) = self.toks_rhs_index(tok)? {
             return Ok(self.registers.toks(idx));
         }
         Err(Error::invalid_input(
-            "\\toks 赋值 RHS 需为 {token list} 或 toks 寄存器",
+            "toks 系赋值 RHS 需为 {token list} 或 toks 寄存器",
         ))
     }
 

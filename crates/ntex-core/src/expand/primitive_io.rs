@@ -59,10 +59,13 @@ impl Expander {
                 self.output_trigger_line = self.current_line_no();
                 self.sink.primitive(prim)
             }
-            // M3-5-3 输出例程：\output=<general text> 存储 token 列表
+            // M3-5-3 输出例程：\output=<general text> 存储 token 列表。
+            // RHS 与 toks 寄存器同族（tex.web `toks_register,assign_toks` 共用
+            // 分支 L22945-22979）：`{token list}` 之外也接受另一 toks 寄存器/
+            // `\output`（内容复制，`\output\pr@output`）——统一走 scan_toks_rhs。
             Primitive::Output => {
                 self.expect_equals()?;
-                let val = self.scan_group_contents(Some("output"))?;
+                let val = self.scan_toks_rhs()?;
                 self.assign_output(Arc::from(val));
                 Ok(())
             }
