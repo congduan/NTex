@@ -376,10 +376,16 @@ impl CoreSink for NodeBuilder {
                     return Ok(());
                 }
                 None => {
-                    // 普通数学组：先收组内分式（`{a\over b}`），再并入外层
+                    // 普通数学组（tex.web math_group）：组内容存为 Ord noad 的
+                    // sub_mlist 核（`{` 开组时 tail 是新鲜 Ord noad，故类恒 Ord，
+                    // `{+}` 亦然）；mlist_to_hlist 对 sub_mlist 核 hpack(natural)
+                    // （L14848），`^{}` 挂组整体而非末原子。花括号消除特例：
+                    // 组恰为一个空脚本的 Ord noad 时核直接取代组（L22339）——
+                    // 单个 Ord 字符/嵌套 Ord 组解包，其余（Bin/Frac/Scripts…）
+                    // 保持装箱。
                     let mut lv = level;
                     Self::math_finish_fraction(&mut lv);
-                    lv.atoms
+                    vec![Self::plain_group_atom(lv.atoms)]
                 }
             };
             parent.atoms.extend(field_atoms);

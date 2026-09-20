@@ -1157,10 +1157,14 @@ mod tests {
     fn fraction_box(text: &str) -> (BoxNode, bool) {
         let children = math_line_children(text);
         assert_eq!(children.len(), 1, "分式应封装为单盒：{text:?}");
+        // make_fraction 壳盒 = hpack[null 定界符, 分式 vlist, null 定界符]；取中间 vlist
         let b = as_box(&children[0]);
-        assert_eq!(b.kind, BoxKind::VBox, "分式是垂直堆叠");
-        let has_rule = b.children.iter().any(|n| matches!(n, Node::Rule { .. }));
-        (b.clone(), has_rule)
+        assert_eq!(b.kind, BoxKind::HBox, "分式壳是水平盒（tex.web L14659 hpack）");
+        assert_eq!(b.children.len(), 3, "[定界符, vlist, 定界符]");
+        let v = as_box(&b.children[1]);
+        assert_eq!(v.kind, BoxKind::VBox, "分式是垂直堆叠");
+        let has_rule = v.children.iter().any(|n| matches!(n, Node::Rule { .. }));
+        (v.clone(), has_rule)
     }
 
     // ---------- M4-6 断字：\patterns ----------

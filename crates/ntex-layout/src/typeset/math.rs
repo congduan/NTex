@@ -340,6 +340,37 @@ impl NodeBuilder {
         }
     }
 
+    /// 普通数学组收口原子（tex.web L22330 math_group：核存 sub_mlist 后的花括号
+    /// 消除特例——组恰为一个**空脚本的 Ord noad** 时 `mem[saved(0)]:=mem[nucleus(p)]`
+    /// 核直接取代组）：单个 Ord 字符原样返回、单个 Ord Classed 解包取其内容，
+    /// 其余（含空组、Bin/Frac/Scripts 等非 Ord noad）装箱为 Ord Classed。
+    fn plain_group_atom(mut atoms: Vec<MathAtom>) -> MathAtom {
+        if atoms.len() == 1 {
+            match atoms.pop() {
+                Some(MathAtom::Char(mc)) if mc.class == MathClass::Ord => {
+                    return MathAtom::Char(mc);
+                }
+                Some(MathAtom::Classed {
+                    class: MathClass::Ord,
+                    content,
+                }) => {
+                    return MathAtom::Classed {
+                        class: MathClass::Ord,
+                        content,
+                    };
+                }
+                Some(other) => {
+                    atoms.push(other);
+                }
+                None => {}
+            }
+        }
+        MathAtom::Classed {
+            class: MathClass::Ord,
+            content: atoms,
+        }
+    }
+
     /// 脚本字段组结束（`x^{...}`/`x_{...}`）：字段挂到外层末尾原子。
     /// 无原子可挂（`x^{}` 前空）→ TeX "Missing { inserted" 语义：插入空原子恢复。
     fn math_attach_script(
@@ -399,10 +430,44 @@ impl NodeBuilder {
         }
     }
 
+    /// tex.web mlist_to_hlist 第一遍（L14323-14349）：不在二元语境的 Bin 转
+    /// Ord。r_type 初值 op_noad ⇒ 列表开头的 Bin 也转（前导负号不吃
+    /// medmuskip）；glue/kern/penalty/style 节点跳过不改语境；Rel/Close/Punct
+    /// （含右定界符）触发对其前一 noad 的追溯转换。左定界符（tex.web
+    /// left_noad）计入前向语境但不算追溯触发位。返回逐原子有效类。
+    fn effective_classes(atoms: &[MathAtom]) -> Vec<Option<MathClass>> {
+        let mut eff: Vec<Option<MathClass>> = atoms.iter().map(Self::math_class).collect();
+        let mut last_noad: Option<usize> = None;
+        for i in 0..eff.len() {
+            if eff[i].is_none() {
+                continue;
+            }
+            let ctx = last_noad.map_or(true, |j| {
+                matches!(
+                    eff[j],
+                    Some(MathClass::Bin | MathClass::Op | MathClass::Rel | MathClass::Open | MathClass::Punct)
+                )
+            });
+            if ctx && eff[i] == Some(MathClass::Bin) {
+                eff[i] = Some(MathClass::Ord);
+            }
+            if matches!(eff[i], Some(MathClass::Rel | MathClass::Close | MathClass::Punct)) {
+                if let Some(j) = last_noad {
+                    if eff[j] == Some(MathClass::Bin) {
+                        eff[j] = Some(MathClass::Ord);
+                    }
+                }
+            }
+            last_noad = Some(i);
+        }
+        eff
+    }
+
     /// 数学列表 → 水平节点（M4-1：spacing 胶水 + 字符 + 上下标盒）。
     fn math_to_hlist(&self, atoms: &[MathAtom], style: MathStyle) -> Vec<Node> {
         let mut out = Vec::new();
         let mut style = style;
+        let eff = Self::effective_classes(atoms);
         let mut prev: Option<MathClass> = None;
         for (idx, atom) in atoms.iter().enumerate() {
             // 样式切换原子就地生效（影响后续原子字阶与 spacing）
@@ -410,10 +475,16 @@ impl NodeBuilder {
                 style = *s;
                 continue;
             }
-            let cur = Self::math_class(atom);
+            let cur = eff[idx];
             if let (Some(p), Some(c)) = (prev, cur) {
-                match spacing_code(p, c, style) {
+                let code = spacing_code(p, c, style);
+                // 脚本系风格（tex.web L15077 spacing 解码）：仅 "2"（无条件
+                // thin）保留，条件系 "1"/"3"/"4"（thin/med/thick）一律归零
+                // ——GT `x_i^2` 的下标 `i=1` 在 script 风格零胶水
+                let suppress = style.size_kind() >= 1 && !matches!(code, SpacingCode::Thin);
+                match code {
                     SpacingCode::None | SpacingCode::Tight => {}
+                    _ if suppress => {}
                     code => {
                         // ETRIP P0 \muexpr 校准：muskip_params[i] 字段以 mu 数值存
                         // （默认 thin=3mu 在 cmr10 → 实际 sp ≈ 1.6667pt；etrip 在
@@ -482,40 +553,43 @@ impl NodeBuilder {
                 }]
             }
             MathAtom::Scripts { base, sub, sup } => {
-                // display 大算符带上下标：limits 堆叠（tex.web make_op subtype
-                // =limits 默认于 display；`\sum_{n=1}^{\infty}` 上下限居中于 Σ）
+                // 大算符带上下标：limits 堆叠（tex.web make_op subtype normal
+                // 且 cur_style<text_style（display 两态）→ limits；
+                // `\sum_{n=1}^{\infty}` 上下限居中于 Σ）
                 if let MathAtom::Char(mc) = base.as_ref() {
-                    if mc.class == MathClass::Op && style == MathStyle::Display {
+                    if mc.class == MathClass::Op && style.code() < 2 {
                         return self.op_nodes(mc, style, sub.as_deref(), sup.as_deref());
                     }
                 }
                 let mut out = self.math_atom_nodes(base, style);
-                // 斜体修正（tex.web §759-762）：核带**下标**时 delta 转
-                // make_scripts 偏移、不落 kern；仅上标（sup-only）仍追加。
-                // 脚本化核不参与 make_ord 转换，无 text 字体抑制分支。
+                // 斜体修正 delta（tex.web L14855-14866 核字符翻译）：delta :=
+                // char_italic；sub 为空时 delta≥0 转**核后 kern** 且 delta 清零
+                // （L14864），sub 在场时 kern 不落、delta 交 make_scripts 作
+                // 上标盒水平偏移（combo 臂）。Op 核的 delta 走 make_op（此处
+                // 仅 display 外落到此臂，保持 0）。
+                let mut delta = 0;
                 if let MathAtom::Char(mc) = base.as_ref() {
-                    if let Some(kern) = self.italic_kern_after(mc, style, sub.is_some(), None) {
+                    if sub.is_some() {
+                        let (font, num, den) = self.math_char_font(mc, style);
+                        let it = self.fonts.char_italic(font, mc.charcode);
+                        delta = if num == den { it } else { xn_over_d(it, num, den) };
+                    } else if let Some(kern) = self.italic_kern_after(mc, style, false, None) {
                         out.push(kern);
                     }
                 }
-                let s_style = style.next();
-                // 上标：内容打包为 hbox，shift 上移（hlist 内 Box.shift 为垂直位移）。
-                // tex.web make_scripts 对 sub/sup 盒都执行 width(x)+=script_space
-                // （盒宽加大但字形不移动）；分式规则宽 = max(分子,分母盒宽)，
-                // demo1 对照：官方 `{1\over n^2}` 规则宽 687373 vs 修前 654605，
-                // 差 32768 = \scriptspace(0.5pt)。
-                // 垂直位移按 make_scripts 公式（见 script_shifts）；
-                // sub+sup 同时出现的清空/合并盒（4×rule_thickness 判定 + vpack）
-                // 本引擎仍用两个独立盒表达，未覆盖。
+                // tex.web make_scripts L14884：脚本体清理盒 + 垂直清位；
+                // sub/sup 同时在场 → 单 vpack 合并盒（combo），不是并排两盒。
                 let (mut shift_up, mut shift_down) = self.script_base_shifts(&out, style);
-                if let Some(sup_atoms) = sup {
-                    let nodes = self.math_to_hlist(sup_atoms, s_style);
-                    let mut b = BoxNode::new_hbox(nodes);
+                let kind = style.size_kind();
+                let xh = self.mathsy_x_height(kind);
+                // 上标清理盒（@<Construct a superscript box |x|@>）
+                let sup_box = sup.as_ref().map(|sup_atoms| {
+                    let mut b = self.math_clean_box(sup_atoms, style.sup_style());
                     b.width += self.params.scriptspace;
-                    let kind = style.size_kind();
-                    // clr：display→sup1（mathsy 13），其余（本引擎无 cramped 样式）
-                    // →sup2（mathsy 14）；再与 depth(sup)+x_height/4 取大
-                    let clr = if style == MathStyle::Display {
+                    // clr：cramped→sup3、display→sup1、其余→sup2（tex.web L14929）
+                    let clr = if style.is_cramped() {
+                        self.mathsy_param(kind, 15)
+                    } else if style.code() < 2 {
                         self.mathsy_param(kind, 13)
                     } else {
                         self.mathsy_param(kind, 14)
@@ -523,29 +597,72 @@ impl NodeBuilder {
                     if shift_up < clr {
                         shift_up = clr;
                     }
-                    let clr2 = b.depth + self.mathsy_x_height(kind) / 4;
+                    let clr2 = b.depth + xh / 4;
                     if shift_up < clr2 {
                         shift_up = clr2;
                     }
-                    b.shift = -shift_up;
-                    out.push(Node::Box(b));
-                }
-                if let Some(sub_atoms) = sub {
-                    let nodes = self.math_to_hlist(sub_atoms, s_style);
-                    let mut b = BoxNode::new_hbox(nodes);
+                    b
+                });
+                // 下标清理盒（@<Construct a subscript box |x|@>）
+                let sub_box = sub.as_ref().map(|sub_atoms| {
+                    let mut b = self.math_clean_box(sub_atoms, style.sub_style());
                     b.width += self.params.scriptspace;
-                    let kind = style.size_kind();
-                    // 无上标时下限 sub1（mathsy 16），且不低于 height(sub)-4/5·x_height
-                    let sub1 = self.mathsy_param(kind, 16);
-                    if shift_down < sub1 {
-                        shift_down = sub1;
+                    b
+                });
+                match (sup_box, sub_box) {
+                    (Some(mut x), Some(y)) => {
+                        // combo 臂（@<Construct a sub/superscript combination box
+                        // |x|...@> L14940）：下限 sub2，4×rule_thickness 间隙不足
+                        // 时下标下移、必要时整体上移（4/5·x_height 上限），最终
+                        // vpack[sup(+delta 偏移), kern, sub]、盒 shift=shift_down。
+                        let sub2 = self.mathsy_param(kind, 17);
+                        if shift_down < sub2 {
+                            shift_down = sub2;
+                        }
+                        let rt = self.math_rule_thickness(kind);
+                        let mut clr =
+                            4 * rt - ((shift_up - x.depth) - (y.height - shift_down));
+                        if clr > 0 {
+                            shift_down += clr;
+                            clr = (xh * 4) / 5 - (shift_up - x.depth);
+                            if clr > 0 {
+                                shift_up += clr;
+                                shift_down -= clr;
+                            }
+                        }
+                        x.shift = delta; // vlist 内 Box.shift = 水平偏移
+                        let kern = (shift_up - x.depth) - (y.height - shift_down);
+                        let children = vec![
+                            Node::Box(x),
+                            Node::Kern { width: kern },
+                            Node::Box(y),
+                        ];
+                        // 自然装（tex.web `vpack(x,natural)`）：目标高传自然总高，
+                        // diff=0 保持自然 height/depth；参考点在末盒基线。
+                        let dims = vbox_dimensions(&children);
+                        let mut b = vpack(children, dims.height + dims.depth, i64::MAX);
+                        b.shift = shift_down;
+                        out.push(Node::Box(b));
                     }
-                    let clr = b.height - (self.mathsy_x_height(kind) * 4) / 5;
-                    if shift_down < clr {
-                        shift_down = clr;
+                    (Some(mut x), None) => {
+                        x.shift = -shift_up;
+                        out.push(Node::Box(x));
                     }
-                    b.shift = shift_down;
-                    out.push(Node::Box(b));
+                    (None, Some(mut y)) => {
+                        // 无上标：下限 sub1（mathsy 16），且不低于
+                        // height(sub)-4/5·x_height（下标盒构造末尾）
+                        let sub1 = self.mathsy_param(kind, 16);
+                        if shift_down < sub1 {
+                            shift_down = sub1;
+                        }
+                        let clr = y.height - (xh * 4) / 5;
+                        if shift_down < clr {
+                            shift_down = clr;
+                        }
+                        y.shift = shift_down;
+                        out.push(Node::Box(y));
+                    }
+                    (None, None) => {}
                 }
                 out
             }
@@ -555,9 +672,10 @@ impl NodeBuilder {
                 thickness,
             } => self.fraction_nodes(num, den, *thickness, style),
             MathAtom::Radical { base } => self.radical_nodes(base, style),
-            // \underline/\overline：M4-2 简化——内容直接输出（底线/顶线渲染 M4-3）
+            // \underline/\overline：M4-2 简化——内容直接输出（底线/顶线渲染
+            // M4-3）；核取 cramped_style（tex.web make_underline/make_overline）
             MathAtom::Underline { base } | MathAtom::Overline { base } => {
-                self.math_to_hlist(base, style)
+                self.math_to_hlist(base, style.cramped())
             }
             MathAtom::Delimited { left, body, right } => {
                 let mut inner = Vec::new();
@@ -583,7 +701,13 @@ impl NodeBuilder {
                     Vec::new()
                 }
             }
-            MathAtom::Classed { content, .. } => self.math_to_hlist(content, style),
+            // tex.web L14848：核 sub_mlist → 递归转换后 hpack(natural)——组是
+            // 一个盒，脚本 shift 取盒高（GT \box0：`.\hbox(6.94444+0.83333)`）。
+            MathAtom::Classed { content, .. } => {
+                let nodes = self.math_to_hlist(content, style);
+                let w = hbox_dimensions(&nodes).width;
+                vec![Node::Box(hpack(&nodes, w))]
+            }
             MathAtom::Accent { accent, nucleus } => self
                 .math_to_hlist(accent, style)
                 .into_iter()
@@ -596,7 +720,7 @@ impl NodeBuilder {
                 nonscript,
             } => {
                 if *nonscript
-                    && matches!(style, MathStyle::Script | MathStyle::ScriptScript)
+                    && style.size_kind() >= 1
                 {
                     Vec::new()
                 } else {
@@ -632,13 +756,10 @@ impl NodeBuilder {
         thickness: Option<i64>,
         style: MathStyle,
     ) -> Vec<Node> {
-        // 分子/分母字阶：display→text、其余降一级（tex.web num_style/denom_style）
-        let sub_style = match style {
-            MathStyle::Display => MathStyle::Text,
-            s => s.next(),
-        };
-        let mut num_b = BoxNode::new_hbox(self.math_to_hlist(num, sub_style));
-        let mut den_b = BoxNode::new_hbox(self.math_to_hlist(den, sub_style));
+        // 分子/分母样式（tex.web L13858-13859 num_style/denom_style）：降一级
+        // 字阶，分子保持压性、分母恒压
+        let mut num_b = BoxNode::new_hbox(self.math_to_hlist(num, style.numerator_style()));
+        let mut den_b = BoxNode::new_hbox(self.math_to_hlist(den, style.denominator_style()));
         // num1/num2/num3/denom1/denom2 = mathsy(8..12)（tex.web @d L13817-13821）
         let kind = style.size_kind();
         let fam2 = self
@@ -664,7 +785,7 @@ impl NodeBuilder {
         };
         let t = thickness.unwrap_or(default_t);
         let axis = self.axis_height(style);
-        let display = style == MathStyle::Display;
+        let display = style.is_display();
         // 初始 shift_up/shift_down（display 用 num1/denom1；否则 num2/num3/denom2）
         let (mut shift_up, mut shift_down) = if display {
             (fp(8), fp(11))
@@ -725,7 +846,24 @@ impl NodeBuilder {
         // 分式线中心恰好落在参考点上方 axis 处（vcenter 于数学轴）
         v.height = shift_up + num_h;
         v.depth = den_d + shift_down;
-        vec![Node::Box(v)]
+        // tex.web make_fraction 尾段（L14656-14660）：new_hlist = hpack[左定界符,
+        // v, 右定界符]。定界符域为空时 var_delimiter 走 null 分支（L14108-14112）：
+        // 空盒宽 \nulldelimiterspace，shift = −axis_height（GT 实证
+        // `.\hbox(0.0+0.0)x1.2, shifted -2.5`）
+        let null_delim = move || BoxNode {
+            kind: BoxKind::HBox,
+            width: self.params.nulldelimiterspace,
+            height: 0,
+            depth: 0,
+            shift: -axis,
+            children: Vec::new(),
+        };
+        let kids = vec![
+            Node::Box(null_delim()),
+            Node::Box(v),
+            Node::Box(null_delim()),
+        ];
+        vec![Node::Box(BoxNode::new_hbox(kids))]
     }
 
     /// 数学轴高度（tex.web `mathsy(22)`：fam 2 当前字阶字体 fontdimen 22；
@@ -799,7 +937,7 @@ impl NodeBuilder {
         let (font, num, den) = self.math_char_font(mc, style);
         let mut ch = mc.charcode;
         // display 变体放大（tex.web：cur_style < text_style 且 char_tag=list_tag）
-        if style == MathStyle::Display {
+        if style.is_display() {
             if let Some(larger) = self.fonts.next_larger(font, ch) {
                 if self.fonts.char_exists(font, larger) {
                     ch = larger;
@@ -825,13 +963,15 @@ impl NodeBuilder {
         // op 行盒：Σ 盒 shift 后的实际占位（引擎 hbox_dimensions 不计子盒 shift，手工设）
         let op_h = h - shift;
         let op_d = d + shift;
-        let s_style = style.next();
+        // 上下限字阶（tex.web sup_style/sub_style）：降一级、上标保持压性
+        let sup_style = style.sup_style();
+        let sub_style = style.sub_style();
         let mut sup_b = sup
             .filter(|a| !a.is_empty())
-            .map(|a| BoxNode::new_hbox(self.math_to_hlist(a, s_style)));
+            .map(|a| BoxNode::new_hbox(self.math_to_hlist(a, sup_style)));
         let mut sub_b = sub
             .filter(|a| !a.is_empty())
-            .map(|a| BoxNode::new_hbox(self.math_to_hlist(a, s_style)));
+            .map(|a| BoxNode::new_hbox(self.math_to_hlist(a, sub_style)));
         let width = [Some(w), sup_b.as_ref().map(|b| b.width), sub_b.as_ref().map(|b| b.width)]
             .into_iter()
             .flatten()
@@ -877,31 +1017,75 @@ impl NodeBuilder {
         vec![Node::Box(v)]
     }
 
-    /// 根式 → 节点（M4-2 简化：内容上方画分式线式横线；M4-3 换 cmex10 根号）。
+    /// 根式 → 节点（tex.web make_radical L14476）：x = clean_box(核,
+    /// cramped_style)；clr = display ? drt+x_height/4 : drt+drt/4；
+    /// y = var_delimiter(根号域, h(x)+d(x)+clr+drt)；y 深度过盈时
+    /// clr += half(delta)；y shift = −(h(x)+clr)；末盒 = hpack[y,
+    /// overbar(x, clr, height(y))]（GT `\sqrt b`：外盒 9.32217+1.07779 =
+    /// 根号盒 0.39998+9.6 @shift −8.52222 与竖排 [kern.39998, rule.39998,
+    /// kern1.57777, b 6.94444] 的 hpack 归并）。
     fn radical_nodes(&self, base: &[MathAtom], style: MathStyle) -> Vec<Node> {
-        let base_b = BoxNode::new_hbox(self.math_to_hlist(base, style));
-        let base_height = base_b.height;
-        let t = 2 * SP_PER_PT / 5; // 0.4pt
-        let gap = SP_PER_PT; // 内容上缘到线的间隙
+        let x = self.math_clean_box(base, style.cramped());
+        let kind = style.size_kind();
+        let drt = self.math_rule_thickness(kind);
+        let mut clr = if style.code() < 2 {
+            drt + self.mathsy_x_height(kind) / 4
+        } else {
+            drt + drt / 4
+        };
+        let mut y = self.radical_delimiter(kind, x.height + x.depth + clr + drt);
+        let delta = y.depth - (x.height + x.depth + clr);
+        if delta > 0 {
+            clr += half(delta);
+        }
+        y.shift = -(x.height + clr);
+        let over = self.overbar_box(x, clr, y.height);
+        let children = vec![Node::Box(y), Node::Box(over)];
+        let w = hbox_dimensions(&children).width;
+        vec![Node::Box(hpack(&children, w))]
+    }
+
+    /// tex.web overbar（L14560）：vpack[kern t, rule t(宽=内容宽), kern k, 盒]。
+    fn overbar_box(&self, b: BoxNode, k: i64, t: i64) -> BoxNode {
         let children = vec![
+            Node::Kern { width: t },
             Node::Rule {
-                width: base_b.width,
+                width: b.width,
                 height: t,
                 depth: 0,
             },
-            Node::Glue {
-            name: None,                width: 0,
-                stretch: 0,
-                shrink: 0,
-                stretch_order: 0,
-                shrink_order: 0,
-            },
-            Node::Box(base_b),
+            Node::Kern { width: k },
+            Node::Box(b),
         ];
-        let mut b = BoxNode::new_vbox(children);
-        // 参考点 = 内容基线：线在基线上方 base 高 + gap + t 处（shift 为负 = 上移）
-        b.shift = -(base_height + gap + t);
-        vec![Node::Box(b)]
+        let dims = vbox_dimensions(&children);
+        vpack(children, dims.height + dims.depth, i64::MAX)
+    }
+
+    /// tex.web var_delimiter 限根号域版：\sqrt 的定界域 small=(fam 2 字阶字体,
+    /// 112 'p')、large=(fam 3, 112)；取 h+d ≥ v 的最小变体，皆不足取 large
+    /// （extensible 拼接 M4-3 待做：cmex10 的根号段在此以整体字变体代替）。
+    fn radical_delimiter(&self, kind: usize, v: i64) -> BoxNode {
+        const RADICAL_CHAR: u32 = 112; // 'p'：cmsy/cmex 的根号位
+        for fam in [2usize, 3usize] {
+            if let Some(f) = self
+                .math_state
+                .math_fonts
+                .get(fam)
+                .and_then(|s| s.get(kind).copied().flatten())
+            {
+                let (w, h, d) = self.math_metrics(f, RADICAL_CHAR, 1, 1);
+                if h + d >= v || fam == 3 {
+                    return BoxNode::new_hbox(vec![Node::Char {
+                        font: f,
+                        charcode: RADICAL_CHAR,
+                        width: w,
+                        height: h,
+                        depth: d,
+                    }]);
+                }
+            }
+        }
+        BoxNode::new_hbox(Vec::new())
     }
 
     /// 定界符字符节点（当前字体 + 字阶缩放；M4-3 换 cmex10 变体伸缩）。
@@ -932,11 +1116,7 @@ impl NodeBuilder {
 
     /// 数学字符的字体（M4-3）：族+字阶查 `\textfont` 表；未分配回退当前字体+比例缩放。
     fn math_char_font(&self, mc: &MathChar, style: MathStyle) -> (FontId, i64, i64) {
-        let kind = match style {
-            MathStyle::Display | MathStyle::Text => 0,
-            MathStyle::Script => 1,
-            _ => 2,
-        };
+        let kind = style.size_kind();
         if let Some(Some(f)) = self.math_state.math_fonts.get(mc.fam as usize).map(|s| s[kind]) {
             (f, 1, 1) // 族字体已按字阶设计字号，不缩放
         } else {
@@ -986,6 +1166,32 @@ impl NodeBuilder {
         Some(Node::Kern { width: it })
     }
 
+    /// tex.web clean_box（L14173）：字段内容转 hlist 后 hpack(natural)，
+    /// 再过 @<Simplify a trivial box@>：单字符后跟**孤立 kern**（恰两节点）
+    /// 时删 kern——脚本字段的斜体修正已由核的 delta/kern 表达，盒内不重复
+    /// （GT 实证：`x_i^j` 上标盒 `.\seveni j` 后无 kern）。\ scriptspace 由
+    /// 调用方（make_scripts）追加，clean_box 本身不碰宽度。
+    fn math_clean_box(&self, atoms: &[MathAtom], style: MathStyle) -> BoxNode {
+        let mut nodes = self.math_to_hlist(atoms, style);
+        // tex.web clean_box "it's already clean"：结果恰为单个无移位盒时原样
+        // 复用（如 sup 字段含分式壳盒，不另套一层 hbox）。
+        if let [Node::Box(b)] = &nodes[..] {
+            if b.shift == 0 {
+                return b.clone();
+            }
+        }
+        // 否则 hpack 先按 [char, italic kern] 自然宽装盒，随后 "Simplify a
+        // trivial box" 才剥掉 kern——宽度已烙进盒里，不再重算。
+        let w = hbox_dimensions(&nodes).width;
+        if nodes.len() == 2
+            && matches!(nodes[0], Node::Char { .. })
+            && matches!(nodes[1], Node::Kern { .. })
+        {
+            nodes.truncate(1);
+        }
+        hpack(&nodes, w)
+    }
+
     /// 上标提升量（M4-3）：fontdimen sup1（参数 11，无上标时 sup2/3）；回退 x_height×字阶。
     /// family-2（math symbols）字体在指定字阶槽的 fontdimen（tex.web
     /// `mathsy(n)`；缺字体/缺参数回 0，与 TeX nullfont 参数为 0 同义）。
@@ -1006,6 +1212,16 @@ impl NodeBuilder {
             .unwrap_or(0)
     }
 
+    /// family-3（extension）字体该字阶的 fontdimen 8（tex.web
+    /// `rule_thickness(cur_size)`：根式横线、combo 脚本 4t 间隙、分式线默认厚）。
+    fn math_rule_thickness(&self, kind: usize) -> i64 {
+        self.math_state.math_fonts
+            .get(3)
+            .and_then(|s| s.get(kind).copied().flatten())
+            .map(|f| self.fonts.font_param(f, 8))
+            .unwrap_or_else(|| 2 * SP_PER_PT / 5)
+    }
+
     /// tex.web §14884 make_scripts 开头的 nucleus 基准位移：
     /// nucleus 是单字符节点 → (0,0)；否则 hpack(natural) 后
     /// `shift_up = height - sup_drop(t)`、`shift_down = depth + sub_drop(t)`，
@@ -1017,12 +1233,10 @@ impl NodeBuilder {
         }
         let w = hbox_dimensions(base_nodes).width;
         let packed = hpack(base_nodes, w);
-        // sup_drop/sub_drop 的字阶：display/text 用 script 槽，script 系用
-        // scriptscript 槽（tex.web `t:=script_size/script_script_size`）
-        let t_kind = match style {
-            MathStyle::Display | MathStyle::Text => 1,
-            MathStyle::Script | MathStyle::ScriptScript => 2,
-        };
+        // sup_drop/sub_drop 的字阶（tex.web `t:=script_size`，cur_style≥
+        // script_style 才取 script_script_size）：display/text 两态用 script
+        // 槽，script 系用 scriptscript 槽
+        let t_kind = style.size_kind().max(1);
         let sup_drop = self.mathsy_param(t_kind, 18);
         let sub_drop = self.mathsy_param(t_kind, 19);
         (packed.height - sup_drop, packed.depth + sub_drop)
@@ -1033,11 +1247,7 @@ impl NodeBuilder {
     /// 回退链：family 2 字体 → current_font fontdimen 6 → 10pt（em=10pt 默认值，
     /// 对照 plain TeX 隐含 cmr10 设计字号，与 etrip 期望 cmr10 × 小字体族差距可接受）。
     fn math_em(&self, style: MathStyle) -> i64 {
-        let kind = match style {
-            MathStyle::Display | MathStyle::Text => 0,
-            MathStyle::Script => 1,
-            _ => 2,
-        };
+        let kind = style.size_kind();
         let quad = if let Some(f) = self
             .math_state.math_fonts
             .get(2)

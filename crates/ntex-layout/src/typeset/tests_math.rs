@@ -61,11 +61,16 @@ use super::*;
 
     #[test]
     fn math_sub_and_superscript_both() {
+        // tex.web make_scripts：sub+sup 同挂一个 vpack 组合盒（sup 盒 + kern + sub 盒）
         let children = math_line_children(r"$x_1^2$");
-        assert_eq!(children.len(), 3, "x + 上标盒 + 下标盒");
+        assert_eq!(children.len(), 2, "x + 组合盒");
         assert_eq!(as_char(&children[0]), b'x' as u32);
-        assert_eq!(as_char(&as_box(&children[1]).children[0]), b'2' as u32);
-        assert_eq!(as_char(&as_box(&children[2]).children[0]), b'1' as u32);
+        let combo = as_box(&children[1]);
+        assert_eq!(combo.kind, BoxKind::VBox);
+        assert_eq!(combo.children.len(), 3, "sup 盒 + kern + sub 盒");
+        assert_eq!(as_char(&as_box(&combo.children[0]).children[0]), b'2' as u32);
+        assert!(matches!(combo.children[1], Node::Kern { .. }));
+        assert_eq!(as_char(&as_box(&combo.children[2]).children[0]), b'1' as u32);
     }
 
     #[test]
@@ -88,10 +93,18 @@ use super::*;
 
     #[test]
     fn math_group_splices_into_list() {
-        // {ab} 数学组直接并入外层（等价 ab）
+        // tex.web sub_mlist 核 → hpack 成单独 hbox（GT：{ab} 组盒宽 = ab）
         let a = math_line_children(r"${ab}$");
+        assert_eq!(a.len(), 1, "组收成单个 Ord 原子盒");
+        let g = as_box(&a[0]);
+        assert_eq!(g.kind, BoxKind::HBox);
+        assert_eq!(as_char(&g.children[0]), b'a' as u32);
+        assert_eq!(as_char(&g.children[1]), b'b' as u32);
+        // 裸 ab 不装箱
         let b = math_line_children(r"$ab$");
-        assert_eq!(a, b);
+        assert_eq!(b.len(), 2);
+        assert_eq!(as_char(&b[0]), b'a' as u32);
+        assert_eq!(as_char(&b[1]), b'b' as u32);
     }
 
     #[test]
@@ -426,9 +439,22 @@ use super::*;
 
     #[test]
     fn math_fraction_in_group() {
+        // 组 = sub_mlist 核：分式壳盒（null 定界符 + vlist）先并入组盒（hpack），
+        // 再进外层横列表
         let a = math_line_children(r"${a\over b}$");
+        assert_eq!(a.len(), 1);
+        let g = as_box(&a[0]);
+        assert_eq!(g.kind, BoxKind::HBox, "组内分式收进组盒");
+        assert_eq!(g.children.len(), 1);
+        let shell = as_box(&g.children[0]);
+        assert_eq!(shell.kind, BoxKind::HBox, "make_fraction 壳 = hpack[定界符, v, 定界符]");
         let b = math_line_children(r"$a\over b$");
-        assert_eq!(a, b, "组内分式应并入外层");
+        assert_eq!(b.len(), 1, "裸分式直接进外层");
+        let frac = as_box(&b[0]);
+        assert_eq!(frac.kind, BoxKind::HBox);
+        assert_eq!(frac.children.len(), 3, "null 定界符 + vlist + null 定界符");
+        let core_v = as_box(&shell.children[1]);
+        assert_eq!(core_v.children, as_box(&frac.children[1]).children, "两种写法分式体一致");
     }
 
     #[test]
@@ -437,22 +463,27 @@ use super::*;
         let children = math_line_children(r"$x^{a\over b}$");
         assert_eq!(children.len(), 2);
         let sup = as_box(&children[1]);
-        assert_eq!(sup.children.len(), 1, "上标字段 = 单个分式盒");
-        assert!(matches!(sup.children[0], Node::Box(_)), "上标内应为分式盒");
-        let frac = as_box(&sup.children[0]);
+        // 上标字段 = make_fraction 壳盒 [null 定界符, vlist, null 定界符]
+        assert_eq!(sup.children.len(), 3, "上标字段 = 壳盒三件");
+        assert!(matches!(sup.children[1], Node::Box(_)), "中间为分式 vlist");
+        let frac = as_box(&sup.children[1]);
         assert_eq!(frac.kind, BoxKind::VBox);
         assert!(frac.children.iter().any(|n| matches!(n, Node::Rule { .. })));
     }
 
     #[test]
     fn math_sqrt_radical_box() {
+        // tex.web make_radical：外层 hbox = [√ 字形盒(shifted), 覆盖线 vbox]
         let children = math_line_children(r"$\sqrt{x}$");
         assert_eq!(children.len(), 1);
         let b = as_box(&children[0]);
-        assert_eq!(b.kind, BoxKind::VBox);
-        // [横线 rule, glue, 内容盒]
-        assert!(matches!(b.children[0], Node::Rule { .. }));
-        let base = as_box(&b.children[2]);
+        assert_eq!(b.kind, BoxKind::HBox);
+        assert_eq!(b.children.len(), 2, "[√ 字形盒, 根号体 vbox]");
+        let over = as_box(&b.children[1]);
+        assert_eq!(over.kind, BoxKind::VBox);
+        // [kern, 横线 rule, kern, 内容盒]
+        assert!(matches!(over.children[1], Node::Rule { .. }));
+        let base = as_box(&over.children[3]);
         assert_eq!(as_char(&base.children[0]), b'x' as u32);
     }
 
@@ -460,7 +491,7 @@ use super::*;
     fn math_sqrt_single_atom() {
         let children = math_line_children(r"$\sqrt x$");
         assert_eq!(children.len(), 1);
-        assert_eq!(as_box(&children[0]).kind, BoxKind::VBox);
+        assert_eq!(as_box(&children[0]).kind, BoxKind::HBox);
     }
 
     #[test]

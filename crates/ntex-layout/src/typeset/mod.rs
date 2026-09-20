@@ -71,42 +71,110 @@ enum MathClass {
     Var,
 }
 
-/// 数学样式（决定字阶与 spacing 表；TeXbook p.140-141）。
+/// 数学样式（决定字阶与 spacing 表；TeXbook p.140-141）。编码随 tex.web
+/// L13568-13572：偶数 = 未压、奇数 = 压（+1）：display=0、text=2、script=4、
+/// scriptscript=6；下标迁移一律取压臂（sub_style/denom_style/radicand）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MathStyle {
     Display,
+    CrampedDisplay,
     Text,
+    CrampedText,
     Script,
+    CrampedScript,
     ScriptScript,
+    CrampedScriptScript,
 }
 
 impl MathStyle {
+    /// tex.web 风格码（`cramped=1` 加在未压码上）。
+    fn code(self) -> u8 {
+        match self {
+            MathStyle::Display => 0,
+            MathStyle::CrampedDisplay => 1,
+            MathStyle::Text => 2,
+            MathStyle::CrampedText => 3,
+            MathStyle::Script => 4,
+            MathStyle::CrampedScript => 5,
+            MathStyle::ScriptScript => 6,
+            MathStyle::CrampedScriptScript => 7,
+        }
+    }
+
+    fn from_code(code: u8) -> MathStyle {
+        match code {
+            0 => MathStyle::Display,
+            1 => MathStyle::CrampedDisplay,
+            2 => MathStyle::Text,
+            3 => MathStyle::CrampedText,
+            4 => MathStyle::Script,
+            5 => MathStyle::CrampedScript,
+            6 => MathStyle::ScriptScript,
+            _ => MathStyle::CrampedScriptScript,
+        }
+    }
+
+    fn is_display(self) -> bool {
+        self.code() < 2
+    }
+
+    fn is_cramped(self) -> bool {
+        self.code() & 1 == 1
+    }
+
     /// 字阶缩放（相对 textfont；TeX 数学三阶字体 text/script/scriptscript，
     /// 10pt 基字阶对应 7pt/5pt——ETRIP 前以比例近似，M4-3 用 fontdimen 精化）。
     fn scale(self) -> (i64, i64) {
-        match self {
-            MathStyle::Display | MathStyle::Text => (1, 1),
-            MathStyle::Script => (7, 10),
-            MathStyle::ScriptScript => (5, 10),
+        match self.size_kind() {
+            0 => (1, 1),
+            1 => (7, 10),
+            _ => (5, 10),
         }
     }
 
-    /// 下一级（脚本的字阶）：Text→Script、Script→ScriptScript、Display→Script。
-    fn next(self) -> MathStyle {
-        match self {
-            MathStyle::Display | MathStyle::Text => MathStyle::Script,
-            MathStyle::Script => MathStyle::ScriptScript,
-            MathStyle::ScriptScript => MathStyle::ScriptScript,
-        }
+    /// 上标字段风格（tex.web L13857 `sup_style(#)=2*(# div 4)+4+(# mod 2)`）：
+    /// 降一级、压性继承（display→script、script→scriptscript 封顶）。
+    fn sup_style(self) -> MathStyle {
+        let c = self.code();
+        MathStyle::from_code((c / 4) * 2 + 4 + (c % 2))
+    }
+
+    /// 下标字段风格（tex.web L13856 `sub_style(#)=2*(# div 4)+5`）：降一级、
+    /// 恒压。
+    fn sub_style(self) -> MathStyle {
+        let c = self.code();
+        MathStyle::from_code((c / 4) * 2 + 5)
+    }
+
+    /// 分子风格（tex.web L13858 `num_style(#)=#+2-2*(# div 6)`）：降一级、压性
+    /// 不变（display→text、text→script），scriptscript 封顶。
+    fn numerator_style(self) -> MathStyle {
+        let c = self.code();
+        MathStyle::from_code(c + 2 - 2 * (c / 6))
+    }
+
+    /// 分母风格（tex.web L13859 `denom_style(#)=2*(# div 2)+3-2*(# div 6)`）：
+    /// 降一级、恒压。
+    fn denominator_style(self) -> MathStyle {
+        let c = self.code();
+        MathStyle::from_code((c / 2) * 2 + 3 - 2 * (c / 6))
+    }
+
+    /// 压性迁移（tex.web L13855 `cramped_style(#)=2*(# div 2)+1`）：同级转压
+    /// （\sqrt radicand、\overline/\underline 核）。
+    fn cramped(self) -> MathStyle {
+        let c = self.code();
+        MathStyle::from_code((c / 2) * 2 + 1)
     }
 
     /// 对应数学字体字阶下标（`math_fonts[fam]` 的 text/script/scriptscript 槽：
-    /// tex.web cur_size，Display/Text 用 text 槽 0）。
+    /// tex.web cur_size，风格码 <4（display/text 两态）用 text 槽 0）。
     fn size_kind(self) -> usize {
-        match self {
-            MathStyle::Display | MathStyle::Text => 0,
-            MathStyle::Script => 1,
-            MathStyle::ScriptScript => 2,
+        let c = self.code();
+        if c < 4 {
+            0
+        } else {
+            (c as usize / 2) - 1
         }
     }
 }

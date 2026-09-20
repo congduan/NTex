@@ -394,9 +394,19 @@ pub fn hbox_dimensions(children: &[Node]) -> BoxDimensions {
     for c in children {
         let d = c.dimensions();
         dims.width += d.width;
-        if c.has_vertical_extent() {
-            dims.height = dims.height.max(d.height);
-            dims.depth = dims.depth.max(d.depth);
+        match c {
+            // tex.web `@<Incorporate box dimensions...@>`（L12976）：盒的
+            // shift 计入垂直占比——`h:=height-s`、`d:=depth+s`（s 仅盒有，
+            // 规则/字符恒 0）；初值 0、严格大于才更新，负占比不回压下界。
+            Node::Box(b) => {
+                dims.height = dims.height.max(b.height - b.shift);
+                dims.depth = dims.depth.max(b.depth + b.shift);
+            }
+            _ if c.has_vertical_extent() => {
+                dims.height = dims.height.max(d.height);
+                dims.depth = dims.depth.max(d.depth);
+            }
+            _ => {}
         }
     }
     dims
