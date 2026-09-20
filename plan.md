@@ -39,6 +39,19 @@
 - **第二十五刀** `\the\value{counter}` 操作数宏展开 → corpus `\the` 同源错误群清零
   （`small2e` `^!` 7→4、`lppl` 60→31、`sec1` `\the` 错 1→0）；`ntex-core` 435 passed。
 
+**fmt 快照重建刀**（2026-09-20）：真实论文（arXiv 1706.03762 standalone）`a\_b` 死循环根因 =
+**陈旧 fmt 快照**——`assets/fmt/latex.fmt` 建于 09-19 00:33，早于 `883b9b3` active 槽隔离；旧槽
+模型下 latex.ltx L15916 `\gdef_{\_}` 把 active `_` 定义写进同名单 cs `\_` 槽，robust 壳被覆盖成
+自引用体（`\meaning\_` = `macro:->\_`，3700 万步不收敛）。引擎侧 `exec_def` 的 `active_slot`
+臂已正确（plain 路径探针实证），重生成 fmt 即愈：最小复现文本/数学模式出 DVI，
+`\copyright`/`\sqrt`/`\textunderscore` 无回归；paper 推进到 l.342 `tabular`（`\if 缺 \fi`，
+下一堵墙，halign 域）。重建曾被宿主依赖卡住：`\InputIfFileExists{hyphen.cfg}` 命中宿主 TinyTeX
+babel 配置（引用宿主缺失的 dehypht-x-2024-02-28.tex）→ 断字配置已钉进发行树（`hyphen.cfg`
+垫片转投官方回退 `hyphen.ltx` + Knuth `hyphen.tex` 入库），默认 `--generate-fmt` 从此确定性。
+**流程教训：引擎语义提交后必须重生成发行 fmt**（README「引擎语义变更后重生成发行 fmt」本次漏执行）。
+新露头残差（登记未修）：auxiii `\ifx\reserved@a\reserved@b` 判 NE（pdfTeX GT 判 EQ），robust
+壳缺 `\x@protect ⟨cs⟩` 前缀（嫌疑 286eddc \meaning 语义变更）——\write 文本面偏差，非阻断。
+
 **新墙（只登记未修）**：`\ifdim` 的 NFSS size range 解析 ——
 `Missing number <to be read again> \@M`（裸 `\show\@M` = `\mathchar"2710`，`\number\@M` = 10000）。
 
