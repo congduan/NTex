@@ -6,6 +6,10 @@ use super::*;
 // tabskip 胶水（4 阶）。旧行为：to 差额均摊进列宽、spread 被丢弃。
 
 /// 提取页面顶层节点的盒子宽度（sp）。
+///
+/// tex.web fin_align「Insert the current list into its environment」(L15989)
+/// 后行盒**直接**进外层竖列表——没有对齐封装盒；单行对齐时顶层唯一节点
+/// 就是行盒本身。
 fn top_box_width(nodes: &[Node]) -> i64 {
     assert_eq!(nodes.len(), 1, "应产出单个对齐盒：{nodes:?}");
     as_box(&nodes[0]).width
@@ -21,16 +25,14 @@ fn halign_to_locks_row_width_tabskip_absorbs() {
         "\\vrule width 10pt & \\vrule width 10pt \\cr}",
     ))
     .unwrap();
-    assert_eq!(
-        top_box_width(&nodes),
-        200 * SP_PER_PT,
-        "对齐盒应锁到 to 目标宽"
-    );
-    // 行内胶水吸收差额
-    let vbox = as_box(&nodes[0]);
-    assert_eq!(vbox.children.len(), 1, "单行");
-    let row = as_box(vbox.children.first().unwrap());
+    // 结构（29adbbd 起，tex.web fin_align L15989）：行盒直接进外层竖列表，
+    // 不再 vpack 成单只对齐封装盒（真 TeX \showbox 同构：`\halign to` 的
+    // 每行是 unset box 设宽后逐行封装，`\vbox{\halign…}` 的 children 就是
+    // 行盒 + 行间胶水）。单行 → 顶层唯一节点即行盒。
+    assert_eq!(nodes.len(), 1, "单行对齐：顶层即行盒本身：{nodes:?}");
+    let row = as_box(&nodes[0]);
     assert_eq!(row.width, 200 * SP_PER_PT, "行宽锁定 200pt");
+    // 行内胶水吸收差额
     let mut glue_widths = Vec::new();
     for c in &row.children {
         if let Node::Glue { width, .. } = c {
@@ -134,12 +136,23 @@ fn halign_multispan_keeps_group_balance() {
     let nodes = typeset(r"\vbox{\halign{#&#\cr a&b\cr \omit\span\omit c\cr}}").unwrap();
     assert_eq!(nodes.len(), 1, "外层 \\vbox 应收口成盒（单元组未泄漏）");
     let vbox = as_box(&nodes[0]);
-    assert_eq!(vbox.children.len(), 1, "vbox 内是单个对齐盒");
-    let align = as_box(&vbox.children[0]);
-    assert_eq!(align.children.len(), 2, "两行：`a&b` 与跨两列的 `c`");
+    // 结构（29adbbd 起，tex.web fin_align L15989「Insert the current list
+    // into its environment」+ fin_row 的 append_to_vlist）：vbox 的 children
+    // 就是 [行盒, baselineskip 胶水, 行盒]——行间插 interline 胶水、首行前无。
+    assert_eq!(
+        vbox.children.len(),
+        3,
+        "vbox 内是两行盒 + 一段行间胶水：{:?}",
+        vbox.children
+    );
     // 跨列单元必须覆盖**两列**宽度（span_len=2），否则只占首列宽
-    let row1 = as_box(&align.children[0]);
-    let row2 = as_box(&align.children[1]);
+    let row1 = as_box(&vbox.children[0]);
+    assert!(
+        matches!(vbox.children[1], Node::Glue { .. }),
+        "行间应是 baselineskip interline 胶水：{:?}",
+        vbox.children[1]
+    );
+    let row2 = as_box(&vbox.children[2]);
     assert_eq!(
         row2.width, row1.width,
         "跨列行应与两列行同宽（span_len 必须为 2，不能重置 cur_span）"

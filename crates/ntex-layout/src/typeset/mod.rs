@@ -1353,13 +1353,15 @@ impl NodeBuilder {
         old
     }
 
+    #[allow(clippy::type_complexity)]
     fn package_box(
         &mut self,
         kind: PendingBox,
         ship: bool,
         leaders: Option<LeadersKind>,
-        setbox: Option<usize>,
-        setbox_global: bool,
+        // `\setbox` 认领对：目标寄存器 + 本赋值的 `\global` 旗标（tex.web
+        // box_context：旗标随赋值走，二者一体认领）。
+        setbox: Option<(usize, bool)>,
         shift: Option<i64>,
         boxmaxdepth: i64,
     ) {
@@ -1420,7 +1422,7 @@ impl NodeBuilder {
         // ETRIP 冲刺：`\setbox<n>=<box>` —— 封装结果存入寄存器（不入当前列表）。
         // 仅最外层 RHS 盒子组（group_begin 认领进 GroupCtx）持有目标；内层嵌套盒
         // （`\setbox0=\vbox{\hbox{...}}` 的 \hbox）不消费。
-        if let Some(idx) = setbox {
+        if let Some((idx, setbox_global)) = setbox {
             // 本赋值的 \global 旗标随组认领（见 GroupCtx::setbox_global）——
             // 封装时写回单槽，防止嵌套赋值（amsmath `\measure@` 内层
             // `\setboxz@h`）覆写后外层赋值按错误作用域入寄存器。

@@ -690,10 +690,12 @@ impl Typesetter {
                 }
             }
             if !builder.groups.is_empty() {
-                if ended || !builder.math_state.math.is_empty() {
+                if ended {
                     // TeX：\end 时组未闭合 → 警告不中断（trip.log L7293）。
-                    // 错误恢复可能留下数学列表并清掉 ended 标志，仍按收尾处理，
-                    // 避免丢弃已构建页面；普通 `\hbox{a` EOF 仍报错。
+                    // 仅显式 \end 豁免：tex.web final_cleanup 收尾。纯 EOF 时
+                    // 残留本身就是要报告的错误（M4-7），不能反过来当豁免条件
+                    // ——58665be 曾用「数学列表非空」放宽此处，使未闭合数学
+                    // 静默吞掉（math_unclosed/left_without_right 回归）。
                     let _ = builder.write16(format!(
                         "(end occurred inside a group at level {})\n",
                         builder.groups.len()
@@ -716,8 +718,9 @@ impl Typesetter {
                 }
             }
             if !builder.math_state.math.is_empty() {
-                if ended || builder.groups.is_empty() {
-                    // TeX：final cleanup 时数学列表未闭合 → 同样警告不中断。
+                if ended {
+                    // TeX：\end 时数学列表未闭合 → 同样警告不中断。纯 EOF 的
+                    // 残留按 M4-7 报错（下方 else），不得因「组已清空」豁免。
                     let _ = builder.write16("(end occurred inside a math list)\n".to_string());
                     builder.math_state.math.clear();
                 } else {

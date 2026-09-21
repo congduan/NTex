@@ -414,8 +414,7 @@ impl CoreSink for NodeBuilder {
                         kind,
                         ctx.shipout,
                         leaders,
-                        ctx.setbox,
-                        ctx.setbox_global,
+                        ctx.setbox.map(|idx| (idx, ctx.setbox_global)),
                         ctx.shift,
                         inner_boxmaxdepth,
                     );
