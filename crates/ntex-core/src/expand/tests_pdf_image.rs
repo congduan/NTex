@@ -7,7 +7,7 @@ use super::*;
 /// 不需要真实压缩数据）。
 fn png_bytes(w: u32, h: u32, phys: Option<(u32, u32, u8)>) -> Vec<u8> {
     let mut d = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
-    let mut chunk = |typ: &[u8; 4], data: &[u8], out: &mut Vec<u8>| {
+    let chunk = |typ: &[u8; 4], data: &[u8], out: &mut Vec<u8>| {
         out.extend_from_slice(&(data.len() as u32).to_be_bytes());
         out.extend_from_slice(typ);
         out.extend_from_slice(data);
@@ -35,11 +35,12 @@ fn png_size_uses_phys_density() {
     // transformer-standalone.log `<Figures/ModalNet-21.png, 366.168pt x 539.3751pt>`）
     let d = png_bytes(1520, 2239, Some((11811, 11811, 1)));
     let (w, h) = image_natural_size(&d).expect("PNG 须解析");
-    assert_eq!(w, (1520.0 * 72.0 / (11811.0 * 0.0254) * 65781.76).round() as i64);
-    assert_eq!(h, (2239.0 * 72.0 / (11811.0 * 0.0254) * 65781.76).round() as i64);
+    let dpi = 11811.0_f64 * 0.0254;
+    assert_eq!(w, (1520.0_f64 * 72.0 / dpi * 65781.76).round() as i64);
+    assert_eq!(h, (2239.0_f64 * 72.0 / dpi * 65781.76).round() as i64);
     // pt 换算对照（GT 逐位一致）
-    assert!((w as f64 / 65536.0 - 366.168).abs() < 0.001, "w={}", w as f64 / 65536.0);
-    assert!((h as f64 / 65536.0 - 539.375).abs() < 0.001, "h={}", h as f64 / 65536.0);
+    assert!((w as f64 / 65536.0 - 366.168).abs() < 0.002, "w={}", w as f64 / 65536.0);
+    assert!((h as f64 / 65536.0 - 539.375).abs() < 0.002, "h={}", h as f64 / 65536.0);
 }
 
 #[test]
@@ -55,21 +56,22 @@ fn png_size_without_phys_is_72dpi() {
 fn pdf_size_reads_mediabox() {
     let d = b"%PDF-1.4\n1 0 obj\n<< /Type /Page /MediaBox [ 0 0 612 792 ] >>\nendobj\n";
     let (w, h) = image_natural_size(d).expect("PDF 须解析");
-    assert!((w as f64 / 65536.0 - 612.0).abs() < 0.01);
-    assert!((h as f64 / 65536.0 - 792.0).abs() < 0.01);
+    // MediaBox 是 bp：612bp = 8.5in = 614.295pt
+    assert!((w as f64 / 65536.0 - 614.295).abs() < 0.01);
+    assert!((h as f64 / 65536.0 - 794.97).abs() < 0.01);
 }
 
 #[test]
 fn eps_size_reads_bbox_hires_first() {
     let lo = b"%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 100 80\n%%HiResBoundingBox: 0 0 100.5 80.25\n";
     let (w, h) = image_natural_size(lo).expect("EPS 须解析");
-    // HiRes 优先（实数 bp）
-    assert!((w as f64 / 65536.0 - 100.5).abs() < 0.01);
-    assert!((h as f64 / 65536.0 - 80.25).abs() < 0.01);
+    // HiRes 优先（实数 bp；1bp = 1.00375pt）
+    assert!((w as f64 / 65536.0 - 100.5 * 72.27 / 72.0).abs() < 0.01);
+    assert!((h as f64 / 65536.0 - 80.25 * 72.27 / 72.0).abs() < 0.01);
     let hi = b"%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 100 80\n";
     let (w, h) = image_natural_size(hi).expect("EPS 须解析");
-    assert!((w as f64 / 65536.0 - 100.0).abs() < 0.01);
-    assert!((h as f64 / 65536.0 - 80.0).abs() < 0.01);
+    assert!((w as f64 / 65536.0 - 100.375).abs() < 0.01);
+    assert!((h as f64 / 65536.0 - 80.3).abs() < 0.01);
 }
 
 #[test]

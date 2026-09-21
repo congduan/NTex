@@ -75,10 +75,13 @@ impl Expander {
     /// sink 的盒生命周期）。尺寸以整数 `sp` 合成：无浮点圆整损失。
     fn exec_pdf_ref_ximage(&mut self) -> Result<()> {
         let id = self.scan_number()?;
-        let Some(&(w, h, _)) = (id >= 1)
-            .then(|| self.pdf_xobjects.get((id - 1) as usize))
-            .unwrap_or(None)
-        else {
+        // id 从 1 起（0 = 无图，pdfTeX 同口径）；越界/0 → pdfTeX 同文报错
+        let dims = if id >= 1 {
+            self.pdf_xobjects.get((id - 1) as usize)
+        } else {
+            None
+        };
+        let Some(&(w, h, _)) = dims else {
             return Err(Error::invalid_input(format!(
                 "\\pdfrefximage: invalid image id `{id}'"
             )));
@@ -232,8 +235,7 @@ fn bbox_line<'a>(data: &'a [u8], key: &[u8]) -> Option<&'a [u8]> {
 /// 行内空白分隔的实数序列（容错：跳过非数字字符——EPS 行尾可能有 \r）。
 fn numbers(buf: &[u8]) -> Vec<f64> {
     let mut out = Vec::new();
-    let mut it = buf.split(|&b| b.is_ascii_whitespace()).filter(|s| !s.is_empty());
-    while let Some(tok) = it.next() {
+    for tok in buf.split(|&b| b.is_ascii_whitespace()).filter(|s| !s.is_empty()) {
         if let Ok(v) = std::str::from_utf8(tok).unwrap_or("").parse::<f64>() {
             out.push(v);
         }

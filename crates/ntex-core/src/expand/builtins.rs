@@ -575,5 +575,16 @@ impl Expander {
         // \nullfont：内建空字体（TeX 的 null font，无字符；固定字体槽 0）
         let nullfont = self.intern.intern("nullfont");
         self.eqtb.set_font(nullfont, 0);
+        // 图片管线 Step A 配套：\pdfpagewidth/\pdfpageheight——pdfTeX 内部
+        // dimen，PDF 模式下 latex.ltx \begin{document} 以 \paperwidth/
+        // \paperheight 写入。NTex 输出 DVI（页尺寸由 DVI 驱动决定），这里只
+        // 提供"可写可读"的存储：绑到寄存器表尾部两个实际分配永不触及的槽，
+        // 赋值/数字读取/\the 全走既有寄存器机器，不新增 ParamKind（那会波及
+        // 排版器参数面与 param_changed 镜像）。
+        for (name, idx) in [("pdfpagewidth", 32767usize), ("pdfpageheight", 32766)] {
+            let csid = self.intern.intern(name);
+            self.eqtb
+                .set_register(csid, crate::register::RegKind::Dimen, idx);
+        }
     }
 }

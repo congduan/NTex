@@ -119,6 +119,11 @@ impl Eqtb {
         *self.slot_mut(csid) = EqSlot::Font(font);
     }
 
+    /// cs 绑定寄存器槽（引擎初始化期的 `\dimendef` 等价；全局层，无保存栈）。
+    pub fn set_register(&mut self, csid: u32, kind: crate::register::RegKind, idx: usize) {
+        *self.slot_mut(csid) = EqSlot::Register(kind, idx);
+    }
+
     /// 槽版本（供 M5 依赖追踪；Undefined 返回 None）。
     pub fn version_of(&self, csid: u32) -> Option<Version> {
         match self.slot(csid) {
