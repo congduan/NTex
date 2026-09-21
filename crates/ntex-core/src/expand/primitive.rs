@@ -228,6 +228,10 @@ impl Expander {
                 self.params.misc[PDF_RANDOM_SEED_IDX] = v;
                 Ok(())
             }
+            // 图片管线 Step A：pdfTeX 图片三原语（\pdflastximage 走 misc 参数
+            // 通用读/赋值面；这里只需两个行为原语的入口）
+            Primitive::PdfXImage => self.exec_pdf_ximage(),
+            Primitive::PdfRefXImage => self.exec_pdf_ref_ximage(),
             // M4-6 断字
             Primitive::Patterns => self.exec_patterns(),
             Primitive::Hyphenation => self.exec_hyphenation(),

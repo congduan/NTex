@@ -166,6 +166,9 @@ fn int_param_index(p: Primitive) -> Option<usize> {
         // （\pdfrandomseed 用 misc 64 但**不**入此表：pdfTeX 中它只读，
         //  写入走 \pdfsetrandomseed。）
         Primitive::PdfOutput => 63,
+        // 图片管线 Step A：\pdflastximage（misc 67，最近一次 \pdfximage 的 id；
+        // 只读语义与 pdfTeX 相同，misc 面允许赋值但不影响任何行为）
+        Primitive::PdfLastXImage => crate::param::MISC_PDF_LAST_XIMAGE,
         // M9 中文刀 2：\utfinputmode（misc 65；源文件输入编码开关，0=bytes 1=utf8）
         Primitive::UtfInputMode => crate::param::MISC_UTF_INPUT_MODE,
         // M9 中文刀 5：\cjkbreakmode（misc 66；汉字字间断点开关，0=关 非 0=开）

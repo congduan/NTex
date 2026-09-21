@@ -2,9 +2,9 @@
 ///
 /// 413 项（`\muexpr` 为 `Glueexpr` 的别名，故比 `Primitive::ALL` 多一项；
 /// TRIP 冲刺补充 13 个标准参数原语；LaTeX 兼容第八刀补 pdfTeX 引擎探测/兼容族
-/// 12 项；M9 中文刀 2 补 \utfinputmode），供 `register_builtins` 注册与
-/// `tests.rs` 的一致性测试共用。
-pub(crate) const BUILTINS: [(&str, Primitive); 416] = [
+/// 12 项；M9 中文刀 2 补 \utfinputmode；图片管线 Step A 补 pdfTeX 图片族 3 项），
+/// 供 `register_builtins` 注册与 `tests.rs` 的一致性测试共用。
+pub(crate) const BUILTINS: [(&str, Primitive); 419] = [
     ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -542,6 +542,11 @@ pub(crate) const BUILTINS: [(&str, Primitive); 416] = [
             // M9 中文刀 5：汉字字间断点开关（0=关 默认，非 0=开）。默认关是
             // 硬口径——断点会改变折行结果，TRIP/ETRIP/expl3 必须零影响。
             ("cjkbreakmode", Primitive::CjkBreakMode),
+            // \includegraphics 图片管线 Step A：pdfTeX 图片三原语（pdftex.def
+            // 的 \Gread@png/\Gread@pdf 唯一尺寸来源；语义见 eqtb/primitive.rs）
+            ("pdfximage", Primitive::PdfXImage),
+            ("pdflastximage", Primitive::PdfLastXImage),
+            ("pdfrefximage", Primitive::PdfRefXImage),
 ];
 
 /// `Primitive → 规范名`（`BUILTINS` 反查；tests.rs

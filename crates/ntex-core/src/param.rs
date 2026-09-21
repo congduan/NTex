@@ -129,7 +129,7 @@ pub enum ParamValue {
 
 /// 内部整数参数总数（TeX/e-TeX 内部整数，ETRIP/TRIP 冲刺；仅存储/回读）。
 /// 下标与 [`crate::expand::int_param_index`] 的映射一致。
-pub const MISC_INTS: usize = 67;
+pub const MISC_INTS: usize = 68;
 
 /// `\utfinputmode` 在 [`Params::misc`] 中的下标（M9 中文刀 2）：
 /// 源文件输入编码开关，0 = bytes（默认）、非 0 = UTF-8 解码。
@@ -140,6 +140,10 @@ pub const MISC_UTF_INPUT_MODE: usize = 65;
 /// 非 0 = 开（段落关闭时于可断的汉字字间插入零宽可拉伸胶水，等价 XeTeX 的
 /// inter-character skip；`\hsize` 装不下的中文行因此能折行而非 Overfull）。
 pub const MISC_CJK_BREAK_MODE: usize = 66;
+
+/// `\pdflastximage` 在 [`Params::misc`] 中的下标（图片管线 Step A）：
+/// 最近一次 `\pdfximage` 的 xobject id，0 = 尚无图（pdfTeX 同口径）。
+pub const MISC_PDF_LAST_XIMAGE: usize = 67;
 
 /// `\lefthyphenmin` 在 [`Params::misc`] 中的下标（tex.web `left_hyphen_min_code`
 /// = int_base+51，本地内部整数序号 10）。
@@ -264,6 +268,9 @@ pub fn default_misc() -> [i64; MISC_INTS] {
         // TeX 原语义：汉字之间既无胶水也无断点，长中文行只能 Overfull 出页；
         // 置 1 后段落关闭时于可断字间插入零宽可拉伸胶水，行得以折行并按字间
         // 距对齐。默认关保证 TRIP/ETRIP/expl3 的逐字节口径零影响）
+        0,
+        // 图片管线 Step A：\pdflastximage（最近一次 \pdfximage 的 xobject id；
+        // initex 默认 0 = 无图。运行时状态，不入 .fmt 语义）
         0,
     ]
 }

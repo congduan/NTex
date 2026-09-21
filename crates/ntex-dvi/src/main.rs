@@ -200,10 +200,20 @@ fn main() -> ExitCode {
             if let Some(fmt_path) = resolve_format_path("latex.fmt") {
                 match fs::read(&fmt_path) {
                     Ok(data) => match ntex_format::load(&mut &data[..]) {
-                        Ok(state) => {
+                        Ok(mut state) => {
                             if !quiet {
                                 eprintln!("[auto] 检测到 LaTeX 特征，载入 {}", fmt_path.display());
                             }
+                            // pdflatex 语义（图片管线 Step A）：pdflatex 在 fmt 生成期
+                            // 已置 \pdfoutput=1（misc 63，下标见 ntex-core
+                            // free::int_param_index），graphics.cfg 据此选 pdftex.def，
+                            // 图的自然尺寸走 `\pdfximage` 引擎通路。NTex 的 fmt 由
+                            // latex.ltx 生成、无法在其 \dump 前注入（expl3 backend
+                            // 会跟着翻成 pdftex 而 NTex 无 l3backend-pdftex.def），
+                            // 故在 fmt 载入后、用户源前补种子。plain/iniTeX 作业
+                            // 不经过此分支，\pdfoutput 默认 0 的 pdfTeX 原义不变。
+                            // NTex 实际仍输出 DVI：该参数只作驱动选择信号。
+                            state.params.misc[63] = 1;
                             ts.import_state(state);
                         }
                         Err(e) => {

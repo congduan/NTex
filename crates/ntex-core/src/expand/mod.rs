@@ -1022,6 +1022,10 @@ pub struct Expander {
     skewchars: HashMap<u32, i64>,
     /// TRIP 冲刺：当前是否处于数学模式（`$`/`$$` 切换；决定 everymath 注入时机）。
     in_math: bool,
+    /// 图片管线 Step A：pdfTeX xobject 表（`\pdfximage` 登记；下标 = id-1，
+    /// 元素 = (宽 sp, 高 sp, 文件名)。**只追加、不可变**——回滚/检查点无需
+    /// 覆盖（同一 id 永远指向同一尺寸），故不进 checkpoint/FmtState。
+    pdf_xobjects: Vec<(i64, i64, String)>,
 }
 
 impl Expander {
@@ -1146,6 +1150,7 @@ impl Expander {
             everyeof_toks: Vec::new(),
             skewchars: HashMap::new(),
             in_math: false,
+            pdf_xobjects: Vec::new(),
         };
         e.register_builtins();
         e
@@ -3926,6 +3931,9 @@ include!("primitive_align.rs");
 include!("align.rs");
 include!("primitive_toks_state.rs");
 include!("primitive_io.rs");
+
+// ---------- 方法分片：primitive_pdf_image.rs（pdfTeX 图片三原语：从 primitive.rs 拆出） ----------
+include!("primitive_pdf_image.rs");
 
 // ---------- 方法分片：primitive_font.rs（字体家族：从 primitive.rs 拆出） ----------
 include!("primitive_font.rs");

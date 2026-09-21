@@ -1549,6 +1549,8 @@ fn misc_int_name(idx: usize) -> &'static str {
         // LaTeX 兼容第八刀：pdfTeX 原语状态（misc 63/64）
         63 => "pdfoutput",
         64 => "pdfrandomseed",
+        // 图片管线 Step A：\pdflastximage（misc 67）
+        67 => "pdflastximage",
         _ => "?",
     }
 }

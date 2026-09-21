@@ -34,7 +34,10 @@ const MAGIC: &[u8; 8] = b"NTEXFMT1";
 /// v17：文件头写入 NTex 引擎版本号，加载时强校验，防旧 fmt 静默腐蚀。
 /// v18：every* token 列表族（`\everypar` 段首触发链 / LaTeX 段落钩子机器）——
 ///      此前快照不携带，恢复后 `\everypar` 恒空，list 机制（`\@newlist` 清位）失效。
-pub const FORMAT_VERSION: u8 = 18;
+/// v19：misc 数组增位（67→68，`\pdflastximage` 槽；图片管线 Step A）——
+///      misc 定长序列化，长度变而版本不变时旧快照在数组读取处报
+///      "failed to fill whole buffer"（无声错配），故布局变必须同步 bump。
+pub const FORMAT_VERSION: u8 = 19;
 
 /// 当前引擎版本号：随 crate 版本进入 `.fmt` 文件头。
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");

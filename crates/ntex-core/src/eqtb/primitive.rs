@@ -683,4 +683,18 @@ define_primitives! {
     // inter-character skip 同款机制），折行器据此获得断点、行盒据此对齐。
     // 断点与 glue 都只作用于排版节点流，token 层语义（含 \catcode/输入编码）不变。
     CjkBreakMode,
+    // ── \includegraphics 图片管线 Step A：pdfTeX 图片三原语 ──────────────
+    // pdftex.def 的 \Gread@png/\Gread@pdf 以 `\pdfximage{文件}` + `\pdfrefximage`
+    // 取图的自然尺寸（`\setbox\@tempboxa=\hbox{\pdfrefximage\pdflastximage}` 后读
+    // \wd/\ht）——不实现这三者，graphicx 在 PDF 模式驱动下拿不到任何图尺寸。
+    // 变体**追加在尾部**：`as_u16` 序数进 .fmt 快照，中插会使既有格式快照错位。
+    //   \pdfximage⟨attr{..}⟩⟨page n⟩⟨pagebox 词⟩{文件}——读文件定自然尺寸、
+    //     登记 xobject（id 从 1 起）、置 \pdflastximage；
+    //   \pdflastximage（misc 67，最近一次 \pdfximage 的 id，初始 0 = 无图）；
+    //   \pdfrefximage⟨id⟩——把该图的**零墨占位盒**拼进当前列表（DVI 无位图
+    //     通路：宽=图宽、高=图高、深=0，版面占位与 pdfTeX 一致，视觉留白待
+    //     Step B 位图真嵌入替换）。
+    PdfXImage,
+    PdfLastXImage,
+    PdfRefXImage,
 }
