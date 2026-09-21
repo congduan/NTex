@@ -176,7 +176,14 @@ impl Expander {
         }
         if let Some(csid) = t.csid() {
             if self.eqtb.slot(csid) == &EqSlot::Primitive(Primitive::JobName) {
-                name.push_str("texput");
+                // 名字扫描里的 `\jobname` 必须用当前作业名（tex.web scan_file_name
+                // 循环顶 get_x_token 会展开 `\jobname`，与普通展开上下文同值）。
+                // 旧实现硬编码 "texput"：LaTeX `\begin{document}` 的
+                // `\immediate\openout\@mainaux\jobname.aux` 由此开成 texput.aux，
+                // 而 aux **读**侧（`\InputIfFileExists{\jobname.aux}` 经普通展开）
+                // 拿的是真名 → 写读两路文件名错位，`\newlabel` 永远读不回，
+                // 正文 `\ref` 全数落 `??`（transformer-standalone 16 处 Figure/Table 引用）。
+                name.push_str(&self.job_name);
                 return Ok(true);
             }
             let slot = self.eqtb.slot(csid).clone();

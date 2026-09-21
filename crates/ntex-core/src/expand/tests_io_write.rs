@@ -164,6 +164,42 @@ use super::*;
     }
 
     #[test]
+    fn openout_jobname_uses_host_job_name() {
+        // latex.ltx L9652 `\immediate\openout\@mainaux\jobname.aux`：名字扫描里的
+        // `\jobname` 必须展开成当前作业名，否则 aux **写**路落 texput.aux，而
+        // **读**路（`\InputIfFileExists{\jobname.aux}` 走普通展开）拿真名——
+        // 两路文件名错位 ⇒ `\newlabel` 永远读不回 ⇒ 正文 `\ref` 全数 `??`。
+        let mut e = Expander::new();
+        e.set_job_name("paper-main");
+        e.set_vfs(Box::new(MemVfs::new()));
+        e.run_source(
+            "\\immediate\\openout7=\\jobname.aux\\relax\
+             \\immediate\\write7{\\string\\newlabel{x}{{1}{1}}}\
+             \\immediate\\closeout7",
+        )
+        .unwrap();
+        let mut vfs = e.take_vfs();
+        let vfs = vfs.as_any_mut().downcast_mut::<MemVfs>().unwrap();
+        assert_eq!(
+            vfs.get("paper-main.aux"),
+            Some(b"\\newlabel{x}{{1}{1}}\n".as_slice())
+        );
+    }
+
+    #[test]
+    fn openout_relax_terminator_keeps_name_and_token() {
+        // tex.web scan_file_name：非名字字符终止收集并 back_input——名字保留已收集
+        // 部分，`\relax` 留在流里照常执行（TRIP L94 同款恢复语义）。
+        let vfs = MemVfs::new();
+        let (_, vfs) = expand_vfs(
+            "\\newwrite\\f\\openout\\f=r.aux\\relax\\write\\f{v}\\closeout\\f \\end",
+            vfs,
+        )
+        .unwrap();
+        assert_eq!(vfs.get("r.aux"), Some(b"v\n".as_slice()));
+    }
+
+    #[test]
     fn quoted_file_name_is_unquoted() {
         // web2c：带引号文件名剥引号（latex.ltx `\openin\@inputcheck"#1" `）
         let mut vfs = MemVfs::new();
