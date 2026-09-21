@@ -1427,6 +1427,23 @@ use super::*;
     }
 
     #[test]
+    fn csname_undefined_control_sequence_is_ignored_after_error() {
+        // pdfTeX GT: `\csname a\undef b\endcsname` reports Undefined control
+        // sequence, drops `\undef` from the constructed name, and keeps scanning
+        // through the real `\endcsname`. It must not recover by inserting an
+        // early `\endcsname`, which would leak the rest of the name into input.
+        let (r, t) =
+            run_transcript(r"\edef\x{\expandafter\string\csname a\undef b\endcsname}\show\x");
+        assert!(r.is_ok(), "{r:?}");
+        assert!(t.contains("! Undefined control sequence."), "转录：{t}");
+        assert!(
+            !t.contains("Missing endcsname"),
+            "未定义 cs 不应触发 Missing endcsname 恢复：{t}"
+        );
+        assert!(t.contains("> \\x=macro:->\\ab."), "转录：{t}");
+    }
+
+    #[test]
     fn detokenize_converts_to_character_tokens() {
         assert_eq!(expand(r"\detokenize{abc}").unwrap(), "abc");
         // 控制序列 → \名字 文本

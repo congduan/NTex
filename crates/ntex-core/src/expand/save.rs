@@ -779,6 +779,8 @@ impl Expander {
                     let font = self.scan_font_ident()?;
                     Ok(emit_count(self.skewchars.get(&font).copied().unwrap_or(-1)))
                 }
+                // TRIP 补全批次：\\the\\everymath / \\the\\everydisplay：数学注入 token 列表
+                Primitive::EveryMath => Ok(self.everymath.clone()),
                 // TRIP 补全批次：\\the\\everydisplay：显示数学注入 token 列表
                 Primitive::EveryDisplay => Ok(self.everydisplay_toks.clone()),
                 // \the\everyjob：toks 参数读回（latex.ltx L727

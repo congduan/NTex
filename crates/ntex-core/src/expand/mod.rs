@@ -2461,17 +2461,32 @@ impl Expander {
                     };
                     let display = self.next_is_math_shift(consume_for_display)?;
                     self.in_math = !self.in_math;
-                    // TRIP 冲刺：进入数学模式时注入 `\everymath`（TeX `$` 处理语义）
-                    if entering && !self.everymath.is_empty() {
-                        let items = self
+                    // TRIP 冲刺：进入数学模式时注入 `\everymath`（TeX `$` 处理语义）。
+                    //
+                    // LaTeX fmt 兼容：发行快照可能来自修复前引擎，`\let\frozen@everymath
+                    // \everymath` 没有保住 primitive toks 参数，导致 LaTeX 写入 primitive
+                    // `\everymath` 的 `\check@mathfonts` 钩子为空。若当前快照已有
+                    // LaTeX 的 `\check@mathfonts` 且 primitive everymath 为空，补注入该
+                    // 钩子，避免 NFSS 数学尺寸宏 `\tf@size/\sf@size/\ssf@size` 未初始化。
+                    if entering {
+                        let mut items = self
                             .everymath
                             .iter()
                             .map(|t| (*t, false))
                             .collect::<Vec<_>>();
-                        self.push_frame(InputFrame::TokenList {
-                            items: Arc::from(items),
-                            pos: 0,
-                        });
+                        if items.is_empty() {
+                            if let Some(csid) = self.intern.lookup("check@mathfonts") {
+                                if !matches!(self.eqtb.slot(csid), EqSlot::Undefined) {
+                                    items.push((Token::control_sequence(csid), false));
+                                }
+                            }
+                        }
+                        if !items.is_empty() {
+                            self.push_frame(InputFrame::TokenList {
+                                items: Arc::from(items),
+                                pos: 0,
+                            });
+                        }
                     }
                     return self.sink.math_shift(display);
                 }

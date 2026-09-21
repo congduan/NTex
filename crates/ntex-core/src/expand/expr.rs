@@ -1200,6 +1200,13 @@ impl Expander {
                     continue;
                 }
                 match self.eqtb.slot(csid).clone() {
+                    EqSlot::Undefined => {
+                        let csname = self.intern.name(csid);
+                        let _ = self.sink.write16(format!(
+                            "! Undefined control sequence.\n\\{csname}\n"
+                        ));
+                        continue;
+                    }
                     EqSlot::Macro(m) => {
                         // 0 参数宏同样须匹配纯定界串参数文本（tex.web macro_call
                         // `if info(r)<>end_match_token`）——\csname 名字扫描里展开
