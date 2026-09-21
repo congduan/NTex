@@ -591,7 +591,14 @@ impl Expander {
             _ => return,
         };
         if u_empty && loop_is_none && is_tab {
-            // 周期 preamble 起始列 = 即将 push 的当前列 idx
+            // 周期 preamble 起始列 = 即将 push 的当前列 idx。
+            // tex.web 15469-15471：**吸收**该 `&`（cur_loop:=cur_align 后 u 扫描
+            // 继续，token 丢弃、不建列、不切 v 段）——amsmath `\align@preamble`
+            // 以 `&` 开头（`\halign{\span\align@preamble\crcr}`），若在此建列会
+            // 凭空多出第 0 列（u=v=空），全体单元格右移一格：首格脱离
+            // `$\displaystyle{…}` 模板（\mathrm 报 "allowed only in math
+            // mode"）、行尾 `\add@amps` 读到的 `\column@` 偏大（少吐 `&` 填充，
+            // `\math@cr@@@align` 的 `\omit` 落在格内 = Misplaced \omit）。
             let cols_len = match &self.align_frames.last() {
                 Some(AlignFrame {
                     phase: AlignPhase::Preamble { cols, .. },
@@ -606,6 +613,7 @@ impl Expander {
             {
                 *loop_col = Some(cols_len);
             }
+            return;
         } else if !seen_hash {
             let _ = self.sink.write16(
                 "! Missing # inserted in alignment preamble.\n\
