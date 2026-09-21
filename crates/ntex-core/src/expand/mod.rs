@@ -948,6 +948,8 @@ pub struct Expander {
     /// `\edef`/`\xdef`/`\write` 展开上下文（TeX `expand()`）：只展开可展开项，
     /// 不可展开原语/未定义 cs/字符/组定界原样保留在输出（不执行、不建组）。
     expand_only: bool,
+    /// 当前作业名（`\jobname`）。默认 `texput`，CLI/宿主可按输入文件名覆盖。
+    job_name: String,
     /// 临时调试：expand_region 的调用来源（"edef"/"write"）。
     debug_expand_caller: &'static str,
     /// 数学字体族已赋值表：[字体样式 0=text/1=script/2=scriptscript][族号] → FontId
@@ -1091,6 +1093,7 @@ impl Expander {
             cur_if_branch: 0,
             suppress_expansion: 0,
             expand_only: false,
+            job_name: "texput".to_string(),
             debug_expand_caller: "",
             math_fonts: [[0; 16]; 3],
             section_label: String::new(),
@@ -1114,6 +1117,16 @@ impl Expander {
     /// 注入 VFS 后端（RFC-3；默认本地文件系统）。
     pub fn set_vfs(&mut self, vfs: Box<dyn Vfs>) {
         self.vfs = vfs;
+    }
+
+    /// 设置 `\jobname`。空名退回 TeX 默认的 `texput`。
+    pub fn set_job_name(&mut self, name: impl Into<String>) {
+        let name = name.into();
+        self.job_name = if name.is_empty() {
+            "texput".to_string()
+        } else {
+            name
+        };
     }
 
     /// 取回 VFS（测试断言写入内容用）。

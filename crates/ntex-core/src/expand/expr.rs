@@ -242,10 +242,10 @@ impl Expander {
                     out.extend(text.bytes().map(|b| (str_char_token(b), false)));
                 }
                 EqSlot::Primitive(Primitive::JobName) => {
-                    // \jobname：作业名（与 exec 对齐：恒 "texput"）。
+                    // \jobname：作业名（与 exec 对齐；默认 texput）。
                     // 此前缺失：同 \meaning，`\the\jobname` 会无限递归。
                     out.extend(
-                        "texput"
+                        self.job_name
                             .bytes()
                             .map(|b| (Token::char(Catcode::Other, u32::from(b)), false)),
                     );

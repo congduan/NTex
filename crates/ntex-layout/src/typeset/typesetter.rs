@@ -340,6 +340,11 @@ impl Typesetter {
         self.expander.set_vfs(vfs);
     }
 
+    /// 设置 TeX 作业名（`\jobname`），用于 aux/toc 等派生文件路径。
+    pub fn set_job_name(&mut self, name: impl Into<String>) {
+        self.expander.set_job_name(name);
+    }
+
     /// 取回 VFS（测试断言写入内容用）。
     pub fn take_vfs(&mut self) -> Box<dyn ntex_io::Vfs> {
         self.expander.take_vfs()

@@ -240,9 +240,9 @@ impl Expander {
             }
             // ETRIP 第二波：\lastpenalty 单独出现：no-op（数字上下文由 scan_number 读取）
             Primitive::LastPenalty => Ok(()),
-            // ETRIP 冲刺：\jobname：作业名（当前无名字来源，恒 "texput"）
+            // ETRIP 冲刺：\jobname：作业名（宿主未设置时为 texput）。
             Primitive::JobName => self.emit_tokens(
-                "texput"
+                self.job_name
                     .bytes()
                     .map(|b| Token::char(Catcode::Other, u32::from(b)))
                     .collect(),

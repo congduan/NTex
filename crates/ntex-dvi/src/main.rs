@@ -136,6 +136,13 @@ fn main() -> ExitCode {
         }
     };
     let mut ts = ntex_layout::typeset::Typesetter::with_tfm();
+    let job_name = PathBuf::from(input)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("texput")
+        .to_string();
+    ts.set_job_name(job_name);
     install_distribution_tfm_source();
     if let Some(name) = &cjk_fallback {
         ts.set_fallback_font(Some(name.clone()));

@@ -547,6 +547,19 @@ use super::*;
     }
 
     #[test]
+    fn jobname_uses_host_supplied_name() {
+        let mut e = Expander::new();
+        e.set_job_name("paper-main");
+        e.run_source("\\the\\jobname").unwrap();
+        let out: String = e
+            .output()
+            .iter()
+            .filter_map(|t| t.charcode().and_then(char::from_u32))
+            .collect();
+        assert_eq!(out, "paper-main");
+    }
+
+    #[test]
     fn romannumeral_expands_to_roman_digits() {
         assert_eq!(expand("\\romannumeral 14").unwrap(), "xiv");
         assert_eq!(expand("\\romannumeral 0").unwrap(), "");
