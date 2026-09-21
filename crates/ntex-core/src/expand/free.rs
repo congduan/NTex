@@ -63,16 +63,16 @@ fn default_uccodes() -> [i64; 256] {
     t
 }
 
-/// 宏体实参替换：`#n` → 第 n 个实参（整段借用，零拷贝）。
-fn materialize(body: &[Token], args: &[ArgArray]) -> Vec<Token> {
+/// 宏体实参替换，保留实参 token 的 `\noexpand` 一次性冻结位。
+fn materialize_pairs(body: &[Token], args: &[ArgArray]) -> Vec<(Token, bool)> {
     let mut out = Vec::with_capacity(body.len());
     for &t in body {
         if let Some(n) = t.param_number() {
             if let Some(arg) = args.get(n.saturating_sub(1) as usize) {
-                out.extend(arg.iter().map(|(tok, _)| *tok));
+                out.extend(arg.iter().copied());
             }
         } else {
-            out.push(t);
+            out.push((t, false));
         }
     }
     out

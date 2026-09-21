@@ -32,6 +32,20 @@ use super::*;
     }
 
     #[test]
+    fn ifx_noexpand_survives_macro_argument_in_expansion() {
+        // LaTeX robust/protect 壳会在 \edef/\write 展开区域里经宏实参转交
+        // \noexpand 冻结 token；#1 替换时若丢掉冻结位，后续 \ifx 会把宏误判
+        // 为自身含义相等，条件分支随之失衡。
+        let src = concat!(
+            "\\def\\a{XX}",
+            "\\def\\wrap#1{\\ifx#1\\a T\\else F\\fi}",
+            "\\edef\\x{\\expandafter\\wrap\\expandafter{\\noexpand\\a}}",
+            "\\x"
+        );
+        assert_eq!(expand(src).unwrap(), "F");
+    }
+
+    #[test]
     fn if_mode_conditions() {
         // 纯展开轨道 sink 恒为垂直模式：\ifvmode 真、\ifhmode/\ifmmode 假
         assert_eq!(expand("\\ifvmode yes\\else no\\fi").unwrap(), "yes");

@@ -123,8 +123,7 @@ impl Expander {
                     // 再来一次即 "! Extra \fi."（expl3-code l.7934 起 \str_const:Ne
                     // 区级联，\str_case 全线 extra-} 失衡即源于此）。
                     let args = self.collect_args(csid, &def)?;
-                    let materialized = materialize(&def.body, &args);
-                    out.extend(materialized.into_iter().map(|t| (t, false)));
+                    out.extend(materialize_pairs(&def.body, &args));
                 }
                 EqSlot::Primitive(Primitive::Expandafter) => {
                     let a = self
@@ -1208,11 +1207,8 @@ impl Expander {
                         // `\fi: \use_none:n`）泄进名字文本 → "Missing endcsname
                         // inserted" 级联。
                         let args = self.collect_args(csid, &m.value)?;
-                        let body = materialize(&m.value.body, &args);
-                        let seq: Vec<(Token, bool)> =
-                            body.into_iter().map(|t| (t, false)).collect();
                         self.push_frame(InputFrame::TokenList {
-                            items: Arc::from(seq),
+                            items: Arc::from(materialize_pairs(&m.value.body, &args)),
                             pos: 0,
                         });
                         continue;
