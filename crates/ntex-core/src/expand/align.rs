@@ -236,13 +236,6 @@ impl Expander {
     /// （S1/G1，halign-survey §3.2）。
     fn align_inject_everycr(&mut self) -> Result<()> {
         let toks = self.everycr_toks.clone();
-        if std::env::var("NTEX_TOKS_TRACE").is_ok() {
-            eprintln!(
-                "[toks-trace] align 注入 everycr n={} @l.{}",
-                toks.len(),
-                self.current_line_no()
-            );
-        }
         if toks.is_empty() {
             return Ok(());
         }
