@@ -77,6 +77,40 @@ fn int_param_bare_stay_noop_for_non_value_token() {
     assert!(t.contains("E:92"), "默认 92 不变（no-op）：{t}");
 }
 
+// ── 2026-09-21：字面常量作内部整数参数的**值**（反引号字母常量/十六进制/八进制） ──
+//
+// scan_int 的值起点不止数字与 <internal integer>：tex.web 的字面常量（`` `\
+// 字母常量、"A 十六进制、'17 八进制）同样合法。预扫描环不认这一族时，整条赋值
+// 被判"单独出现 no-op"：值不落 eqtb、反引号回流主循环被当字符排版。
+//
+// 现场：amsgen.sty \@saveprimitive 的 `\begingroup\escapechar`\\`——amsmath
+// 载入 7 次调用各落一个孤立 '`'（OT1 0x60=quoteleft），Transformer 论文
+// 首页 7 个竖排 ' + 标题/作者/摘要整体后移（2026-09-21）。
+
+/// 反引号字母常量作值：值生效、且回流字符不得进入输出流。
+#[test]
+fn int_param_value_may_be_backquote_alphabetic_constant() {
+    let src = "\\escapechar`\\\\ \\message{E:\\the\\escapechar}\n";
+    let (r, t) = run_transcript(src);
+    assert!(r.is_ok(), "{t}");
+    assert!(t.contains("E:92"), "`\\\\ 须作反斜杠字符码 92：{t}");
+    assert_eq!(
+        expand("\\escapechar`\\\\").unwrap(),
+        "",
+        "反引号不得回流成排版字符（LaTeX 首页孤立 ' 的根源）"
+    );
+}
+
+/// 十六进制 / 八进制前缀同属字面常量起点。
+#[test]
+fn int_param_value_may_be_hex_or_octal_constant() {
+    let src = "\\escapechar\"A \\message{H:\\the\\escapechar}\\escapechar'17 \\message{O:\\the\\escapechar}\n";
+    let (r, t) = run_transcript(src);
+    assert!(r.is_ok(), "{t}");
+    assert!(t.contains("H:10"), "\"A 须作 16#A=10：{t}");
+    assert!(t.contains("O:15"), "'17 须作 8#17=15：{t}");
+}
+
 /// `\newinsert` 分配的号与 `\insert<n>`/`\ifvoid` 打通（盒寄存器面）。
 #[test]
 fn allocated_number_reaches_insert_and_void_test() {

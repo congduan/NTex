@@ -165,6 +165,22 @@ impl Expander {
                         self.unread(tok);
                         break;
                     }
+                    // tex.web scan_int 的字面常量起点同样是值的合法开头：
+                    // 反引号字母常量（`\escapechar`A`=65；amsgen.sty
+                    // \@saveprimitive 的 `\begingroup\escapechar`\\`——amsmath
+                    // 载入 7 次调用各落一个孤立 '`'，2026-09-21）与十六进制/
+                    // 八进制前缀（`\escapechar"A`、`\escapechar'7`）。缺此臂
+                    // 则整条赋值被判"单独出现 no-op"：值不落 eqtb、反引号回流
+                    // 主循环被当字符排版（LaTeX 首页 7 个孤立 '）。
+                    let is_literal_const = matches!(tok.catcode(), Some(Catcode::Other))
+                        && matches!(
+                            tok.charcode(),
+                            Some(c) if c == b'`' as u32 || c == b'"' as u32 || c == b'\'' as u32
+                        );
+                    if is_literal_const {
+                        self.unread(tok);
+                        break;
+                    }
                     // cs：可展开（宏/展开原语）→ 展开压栈后重判（TeX get_x_token）
                     if let Some(csid) = tok.csid() {
                         let slot = self.eqtb.slot(csid).clone();
