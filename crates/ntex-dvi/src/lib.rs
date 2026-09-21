@@ -101,6 +101,8 @@ struct Writer<'a> {
     /// 横向/纵向移动栈（w/x 与 y/z 命中优化）。
     h_moves: Vec<MoveEntry>,
     v_moves: Vec<MoveEntry>,
+    /// PDF 变换域的对角缩放栈（`ntex-ctm` 标记驱动；栈底恒 (1,1)）。
+    ctm: Vec<(f64, f64)>,
 }
 
 impl<'a> Writer<'a> {
@@ -118,6 +120,7 @@ impl<'a> Writer<'a> {
             max_stack: 0,
             h_moves: Vec::new(),
             v_moves: Vec::new(),
+            ctm: vec![(1.0, 1.0)],
         }
     }
 
@@ -279,6 +282,18 @@ impl<'a> Writer<'a> {
                     }
                     self.cur_h += width;
                 }
+                // `\special` whatsit：当前点落 xxx 载荷（tex.web `ship_out` 的
+                // dvi_special；零宽，不推进 cur_h）。延迟 `\write` whatsit 不进
+                // DVI（tex.web write_out 走写流）。
+                Node::Whatsit {
+                    text,
+                    special: true,
+                } => {
+                    self.synch_h();
+                    self.synch_v();
+                    let payload = text.as_bytes();
+                    self.special(payload);
+                }
                 Node::Penalty { .. }
                 | Node::Leaders { .. }
                 | Node::Discretionary { .. }
@@ -341,6 +356,16 @@ impl<'a> Writer<'a> {
                         self.synch_v();
                         self.put_rule(*height + *depth, w);
                     }
+                }
+                // 垂直列表里的 `\special`：当前点（下一盒参考点将落处）发 xxx。
+                Node::Whatsit {
+                    text,
+                    special: true,
+                } => {
+                    self.synch_h();
+                    self.synch_v();
+                    let payload = text.as_bytes();
+                    self.special(payload);
                 }
                 Node::Penalty { .. }
                 | Node::Leaders { .. }
@@ -422,6 +447,82 @@ impl<'a> Writer<'a> {
     }
 
     /// 字体选择（tex.web §383-391）：首次使用时惰性 `fnt_def`。
+    /// `xxx4`（tex.web `dvi_special`）+ NTex 图片传输协议：
+    ///
+    /// - `ntex-ctm push|matrix a b c d|pop`：`\pdfsave/\pdfsetmatrix/
+    ///   \pdfrestore` 落下的变换标记——在此（**重放侧**）维护对角缩放栈，
+    ///   不落 DVI（graphicx 的 \Gscale@box 内容盒先排、矩阵域后开，引擎侧
+    ///   \pdfrefximage 取不到缩放，只能在盒节点重放时结算）；
+    /// - `ntex-image <w> <h> <名长> <名>`：图片引用——尺寸就地乘当前缩放
+    ///   （scale=0.6 → 0.6×自然尺寸），写成 xxx 载荷给 ntex-pdf；
+    /// - 其余载荷：原样透传为 xxx（\special 原义）。
+    fn special(&mut self, payload: &[u8]) {
+        let text = std::str::from_utf8(payload).ok();
+        let mut words = text
+            .unwrap_or("")
+            .split_whitespace()
+            .map(|s| s.to_owned());
+        match words.next().as_deref() {
+            Some("ntex-ctm") => {
+                let (sx, sy) = *self.ctm.last().unwrap_or(&(1.0, 1.0));
+                match words.next().as_deref() {
+                    Some("push") => self.ctm.push((sx, sy)),
+                    Some("matrix") => {
+                        // 只取对角分量（a→sx、d→sy）；旋转矩阵退化为 cos 缩放
+                        let m: Vec<f64> = words
+                            .by_ref()
+                            .take(4)
+                            .filter_map(|s| s.parse().ok())
+                            .collect();
+                        let top = self.ctm.last_mut().expect("缩放栈底恒在");
+                        top.0 *= m.first().copied().unwrap_or(1.0);
+                        top.1 *= m.get(3).copied().unwrap_or(1.0);
+                    }
+                    Some("pop") => {
+                        if self.ctm.len() > 1 {
+                            self.ctm.pop();
+                        } else {
+                            self.ctm[0] = (1.0, 1.0); // 失衡 \pdfrestore 保底
+                        }
+                    }
+                    _ => {}
+                }
+                return; // 标记只作用于写出器状态，不落 DVI
+            }
+            Some("ntex-image") => {
+                // `ntex-image <w_sp> <h_sp> <名长> <名>`：前两个数乘缩放
+                let vals: Vec<i64> = words
+                    .by_ref()
+                    .take(2)
+                    .filter_map(|s| s.parse().ok())
+                    .collect();
+                let rest: Vec<String> = words.collect();
+                if vals.len() == 2 && rest.len() >= 2 {
+                    let (sx, sy) = *self.ctm.last().unwrap_or(&(1.0, 1.0));
+                    let out = format!(
+                        "ntex-image {} {} {} {}",
+                        (vals[0] as f64 * sx).round() as i64,
+                        (vals[1] as f64 * sy).round() as i64,
+                        rest[0],
+                        rest[1..].join(" ")
+                    );
+                    self.xxx4(out.as_bytes());
+                    return;
+                }
+            }
+            _ => {}
+        }
+        self.xxx4(payload);
+    }
+
+    /// xxx4 原样发出（4 字节长度域；真实 TeX 按长度分档 1..4，此处非目标）。
+    fn xxx4(&mut self, payload: &[u8]) {
+        self.out.push(242); // xxx4
+        self.out
+            .extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        self.out.extend_from_slice(payload);
+    }
+
     fn select_font(&mut self, f: u32) {
         if self.font == Some(f) {
             return;

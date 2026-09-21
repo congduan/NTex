@@ -8,6 +8,8 @@ rust-version.workspace = true
 
 [dependencies]
 ntex-font.workspace = true
+# 图片管线 Step B：PNG IDAT inflate + Image XObject 流 deflate（zlib 兼容）
+flate2.workspace = true
 
 [lints]
 workspace = true

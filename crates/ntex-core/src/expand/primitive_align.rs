@@ -72,7 +72,9 @@ impl Expander {
                 }
                 Ok(())
             }
-            // ETRIP 冲刺：\special{<general text>}：whatsit 节点（内容只收集不排版）
+            // ETRIP 冲刺：\special{<general text>}：whatsit 节点（内容只收集不排版）。
+            // 走 `special()` 通道与延迟 \write 的 whatsit 分型：前者 shipout 经
+            // DVI xxx 落后端，后者写流不进 DVI（tex.web 两套出口）。
             Primitive::Special => {
                 let toks = self.scan_group_contents(None)?;
                 let text: String = toks
@@ -80,7 +82,7 @@ impl Expander {
                     .filter_map(|t| t.charcode())
                     .filter_map(char::from_u32)
                     .collect();
-                self.sink.whatsit(text)
+                self.sink.special(text)
             }
             // ETRIP 冲刺：\discretionary{pre}{post}{replace}（断字节点）
             Primitive::Discretionary => {

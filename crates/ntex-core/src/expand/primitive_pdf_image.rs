@@ -1,23 +1,66 @@
-// pdfTeX 图片三原语（\includegraphics 图片管线 Step A）。
+// pdfTeX 图片三原语（\includegraphics 图片管线 Step A）+ PDF 变换栈
+// （\includegraphics 图片管线 Step B）。
 //
 // 主题：\pdfximage（读图定自然尺寸 + 登记 xobject + 置 \pdflastximage）、
-// \pdflastximage（misc 67）、\pdfrefximage（零墨占位盒拼进当前列表）。
+// \pdflastximage（misc 67）、\pdfrefximage（零墨占位盒 + 图片 special 拼进
+// 当前列表）、\pdfsave/\pdfsetmatrix/\pdfrestore（PDF 变换栈，只取对角缩放）。
 //
-// 为什么是这三者：graphicx 在 PDF 模式驱动（pdftex.def）下，图的自然尺寸
+// 为什么是这几者：graphicx 在 PDF 模式驱动（pdftex.def）下，图的自然尺寸
 // **只**来自引擎——`\Gread@@pdftex` 执行 `\pdfximage{文件}` 后
 // `\setbox\@tempboxa=\hbox{\pdfrefximage\pdflastximage}` 再读 \wd/\ht
 // （pdftex.def L296-301）。不实现它们，`\includegraphics` 拿不到任何尺寸。
 //
-// Step A 口径：DVI 无位图通路，占位盒**零墨**——`\hbox{\kern W \vrule
-// width 0pt height H depth 0pt}`：宽=图宽（kern 贡献，不引胶水故无
-// Underfull）、高=图高（零宽 rule 的竖直贡献，DVI 不落墨）、深=0。
-// 版面占位与 pdfTeX 一致；视觉留白待 Step B 位图（XObject）真嵌入替换。
+// Step B 口径（位图真嵌入）：
+// - 占位盒仍**零墨**且保持**自然尺寸**——`\hbox{\kern W \vrule width 0pt
+//   height H depth 0pt}`。保持自然尺寸是硬要求：pdftex.def 的实际包含结构
+//   是 `\hbox{\Gscale@box{sx}[sy]{\pdfrefximage..}}`，\Gscale@box 以
+//   `\hb@xt@ sx\wd\z@` 定外盒宽——\wd\z@ 必须是自然宽，缩放比才对。
+// - 视觉由图片 special 携带：`\pdfrefximage` 在占位盒 token 之前向 sink 发
+//   一个 `ntex-image` whatsit（DVI 侧落 xxx 载荷、ntex-pdf 侧读它写 Image
+//   XObject）。载荷带**自然尺寸**；锚点 = whatsit 的 DVI 当前点 = 盒参考点
+//   = 图左下角（DVI y 向下，图在基线上方）。
+// - 缩放（scale=/width=/height= 走 \Gscale@box → \pdfsave\pdfsetmatrix..
+//   \pdfrestore）**不能**在 \pdfrefximage 时刻取——\Gscale@box 先排内容盒
+//   后开矩阵域，CTM 生效在 `\copy` 重放时。所以三原语只发 `ntex-ctm` 标记
+//   whatsit，缩放由 DVI 写出器在标记处维护、对 `ntex-image` 载荷就地乘出
+//   显示尺寸（见 ntex-dvi `Writer::special`）。
 //
 // 维护约定（与 expand/mod.rs 既有 include! 链一致）：
 // - 仅 `impl Expander { ... }` 块 + 文件级自由函数，无 use / 无模块声明；
 // - 入口由 `primitive.rs` 主 match 委托。
 
 impl Expander {
+    /// `\pdfsave`：变换域开括号。以 `ntex-ctm` 标记 whatsit 落进当前列表——
+    /// **不是**引擎侧状态：graphicx 的 \Gscale@box 先排内容盒（`\pdfrefximage`
+    /// 在此执行、CTM 尚未生效）后开矩阵域再 `\copy` 重放，所以缩放语义只能
+    /// 在**重放侧**（DVI 写出器走到这些标记时）生效，见 ntex-dvi `Writer::special`。
+    fn exec_pdf_save(&mut self) -> Result<()> {
+        self.sink.special("ntex-ctm push".to_owned())
+    }
+
+    /// `\pdfsetmatrix{a b c d}`：矩阵乘入当前变换域（矩阵项是小数字面量，
+    /// ⟨general text⟩ 展开后取串解析）。DVI 无矩阵，只保留对角缩放分量
+    /// （a→sx、d→sy；pdftex.def 实际只发 `{sx 0 0 sy}`；angle= 的旋转矩阵
+    /// 退化为 cos 缩放是已记录的限制）。
+    fn exec_pdf_setmatrix(&mut self) -> Result<()> {
+        let toks = self.scan_group_contents(None)?;
+        let text = self.expand_to_string(&toks)?;
+        let nums: Vec<&str> = text.split_whitespace().take(4).collect();
+        let mut m = [1.0f64; 4];
+        for (i, tok) in nums.iter().enumerate() {
+            if let Ok(v) = tok.parse::<f64>() {
+                m[i] = v;
+            }
+        }
+        self.sink
+            .special(format!("ntex-ctm matrix {} {} {} {}", m[0], m[1], m[2], m[3]))
+    }
+
+    /// `\pdfrestore`：变换域闭括号（失衡保底由 DVI 写出器负责）。
+    fn exec_pdf_restore(&mut self) -> Result<()> {
+        self.sink.special("ntex-ctm pop".to_owned())
+    }
+
     /// `\pdfximage⟨attr{..}⟩⟨page n⟩⟨页面盒词⟩{文件}`（pdfTeX §图片包含）。
     ///
     /// 前缀关键字按 pdfTeX 1.40 语法扫描（pdftex.def 实际只发
@@ -68,11 +111,18 @@ impl Expander {
         Ok(())
     }
 
-    /// `\pdfrefximage⟨id⟩`：把 xobject `id` 的占位盒拼进当前列表。
+    /// `\pdfrefximage⟨id⟩`：把 xobject `id` 的占位盒 + 图片 special 拼进当前列表。
     ///
-    /// 合成 `\hbox{\kern Wsp \vrule width 0pt height Hsp depth 0pt}` 回灌输入
-    /// 执行——与手写 `\hbox{..}` 走完全相同的分组/规则/打包路径（不绕过
-    /// sink 的盒生命周期）。尺寸以整数 `sp` 合成：无浮点圆整损失。
+    /// 两个产物，顺序敏感：
+    /// 1. `ntex-image` whatsit（Step B 载荷）：先发——它进当前列表时 DVI 当前点
+    ///    恰是后续占位盒的参考点（= 图左下角）。载荷
+    ///    `ntex-image <自然宽 sp> <自然高 sp> <名字节数> <名>`；**显示尺寸**
+    ///    （scale= 等缩放后）由 DVI 写出器乘上当前变换域（`ntex-ctm` 标记，
+    ///    见 exec_pdf_save 注释与 ntex-dvi `Writer::special`）。
+    /// 2. `\hbox{\kern Wsp \vrule width 0pt height Hsp depth 0pt}` 占位盒
+    ///    回灌输入执行——**自然尺寸**（\Gscale@box 以 sx\wd\z@ 定外盒宽，
+    ///    \wd\z@ 必须自然宽）。宽=图宽（kern 贡献，不引胶水故无 Underfull）、
+    ///    高=图高（零宽 rule 的竖直贡献）、深=0。
     fn exec_pdf_ref_ximage(&mut self) -> Result<()> {
         let id = self.scan_number()?;
         // id 从 1 起（0 = 无图，pdfTeX 同口径）；越界/0 → pdfTeX 同文报错
@@ -86,6 +136,13 @@ impl Expander {
                 "\\pdfrefximage: invalid image id `{id}'"
             )));
         };
+        let name = dims
+            .map(|(_, _, n)| n.clone())
+            .unwrap_or_default();
+        // Step B 载荷：先于占位盒进列表（当前点 = 图锚点）。名字长度前缀
+        // 防文件名含空格断词。
+        self.sink
+            .special(format!("ntex-image {w} {h} {} {name}", name.len()))?;
         let mut toks: Vec<(Token, bool)> = Vec::with_capacity(24);
         let mut cs = |name: &str| (Token::control_sequence(self.intern.intern(name)), false);
         let word = |s: &str, out: &mut Vec<(Token, bool)>| {

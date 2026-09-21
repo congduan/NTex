@@ -3406,6 +3406,7 @@ dependencies = [
 name = "ntex-pdf"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "ntex-font",
 ]
 

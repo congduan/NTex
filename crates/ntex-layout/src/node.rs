@@ -247,9 +247,14 @@ pub enum Node {
     Adjust {
         text: String,
     },
-    /// whatsit 节点（`\\write<n>{...}` 等；无维度）。
+    /// whatsit 节点（`\write<n>{...}` 与 `\special{...}`；无维度）。
+    /// tex.web 里两者同型（write_node/special_node 都归 whatsit），但 shipout
+    /// 出口不同：`\write` 写流（不进 DVI），`\special` 经 DVI xxx 落后端——
+    /// `special: true` 标后者（DVI 写出器据此发 xxx，见 ntex-dvi hlist/vlist）。
     Whatsit {
         text: String,
+        /// `\special` 通道（shipout → DVI xxx）；false = 延迟 `\write`。
+        special: bool,
     },
     /// 行内数学边界标记（tex.web math_node）：`$` 进入/退出时插入；
     /// 无维度。`surrounded` = 当时的 `\\mathsurround`（showbox 显示

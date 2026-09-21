@@ -40,14 +40,94 @@ const ORIGIN_PT: f64 = 72.0;
 pub struct PdfOptions {
     /// 页面尺寸（pt）：宽、高。
     pub page_size: (f64, f64),
+    /// 图片搜索路径（图片管线 Step B）：`\includegraphics` 的图源按文件名
+    /// 在这些目录下找回（与 ntex-dvi 的 `--input-path` 同口径；空名 = cwd）。
+    pub input_paths: Vec<String>,
 }
 
 impl Default for PdfOptions {
     fn default() -> Self {
         Self {
             page_size: (595.276, 841.890), // A4
+            input_paths: Vec::new(),
         }
     }
+}
+
+/// `ntex-image` special 解析出的图片引用（DVI 载荷 → 嵌入素材）。
+struct ImageSpec {
+    /// 显示宽/高（sp；核心侧已乘 scale= 等缩放）。
+    w_sp: i64,
+    h_sp: i64,
+    /// 图源文件名（`\pdfximage` 登记名，随载荷长度前缀携带）。
+    name: String,
+}
+
+/// 已解码图片的全局登记（同文件多页复用同一 XObject 对象）。
+struct ImageEntry {
+    /// 像素宽/高（PDF Image XObject 的 /Width /Height）。
+    width: u32,
+    height: u32,
+    /// DeviceRGB 样本流（已 FlateDecode 压缩，见 [`crate::image`]）。
+    rgb: Vec<u8>,
+    /// DeviceGray 软掩码流（已压缩）。None = 不透明，无需 /SMask。
+    smask: Option<Vec<u8>>,
+}
+
+/// 解析 `ntex-image <w_sp> <h_sp> <名长> <名>` 载荷；非本协议载荷 → None
+/// （普通 \special 透传忽略，与既有口径一致）。
+fn parse_image_special(payload: &[u8]) -> Option<ImageSpec> {
+    let text = std::str::from_utf8(payload).ok()?;
+    let rest = text.strip_prefix("ntex-image ")?;
+    let mut it = rest.splitn(3, ' ');
+    let w_sp = it.next()?.parse().ok()?;
+    let h_sp = it.next()?.parse().ok()?;
+    // 名长前缀：名字可含空格，按前缀给出的字节数截取
+    let tail = it.next()?;
+    let (len_s, name) = tail.split_once(' ')?;
+    let len: usize = len_s.parse().ok()?;
+    let name = name.get(..len)?;
+    Some(ImageSpec {
+        w_sp,
+        h_sp,
+        name: name.to_owned(),
+    })
+}
+
+/// 按名取回并解码图片（全局去重：同文件只解码一次）。找不到/不支持 → Err
+/// （调用方降级跳图 + 警告，不 panic）。
+fn ensure_image(
+    spec: &ImageSpec,
+    input_paths: &[String],
+    images: &mut Vec<ImageEntry>,
+    index: &mut BTreeMap<String, usize>,
+) -> Result<usize, String> {
+    if let Some(&i) = index.get(&spec.name) {
+        return Ok(i);
+    }
+    let path = if std::path::Path::new(&spec.name).is_absolute() {
+        Some(std::path::PathBuf::from(&spec.name))
+    } else {
+        input_paths
+            .iter()
+            .map(|d| std::path::Path::new(d).join(&spec.name))
+            .find(|p| p.exists())
+    };
+    let Some(path) = path else {
+        return Err(format!("文件未找到（搜索路径 {input_paths:?}）"));
+    };
+    let data = std::fs::read(&path).map_err(|e| format!("读取 {}：{e}", path.display()))?;
+    let decoded =
+        crate::image::decode_png(&data).map_err(|e| format!("{}：{e}", path.display()))?;
+    let idx = images.len();
+    images.push(ImageEntry {
+        width: decoded.width,
+        height: decoded.height,
+        rgb: decoded.rgb,
+        smask: decoded.smask,
+    });
+    index.insert(spec.name.clone(), idx);
+    Ok(idx)
 }
 
 /// 把解析出的 DVI 写成 PDF 字节。
@@ -60,7 +140,12 @@ pub fn write_pdf(dvi: &Dvi, opts: &PdfOptions) -> io::Result<Vec<u8>> {
     // BTreeMap 而非 HashMap：写出顺序确定，PDF 可复现 diff。
     let mut used: Vec<BTreeMap<u16, i64>> = vec![BTreeMap::new(); dvi.fonts.len()];
     let mut contents: Vec<Vec<u8>> = Vec::with_capacity(dvi.pages.len());
-    for page in &dvi.pages {
+    // 图片管线 Step B：跨页全局图登记（同文件复用同一 XObject）+ 每页首次
+    // 引用序（资源字典按页列、内容流按 /Im<序> 引用）。
+    let mut images: Vec<ImageEntry> = Vec::new();
+    let mut image_index: BTreeMap<String, usize> = BTreeMap::new();
+    let mut page_images: Vec<Vec<usize>> = vec![Vec::new(); dvi.pages.len()];
+    for (page_i, page) in dvi.pages.iter().enumerate() {
         let mut c = Vec::new();
         // 当前行 run：连续、同字体、同基线的字符（(font, code, x_pt, y_pt)；
         // code 全宽 u32，Unicode 字体的码位可达 0x10FFFF）
@@ -96,13 +181,58 @@ pub fn write_pdf(dvi: &Dvi, opts: &PdfOptions) -> io::Result<Vec<u8>> {
                         writeln!(c, "{:.4} {:.4} {:.4} {:.4} re f", x, y, w, hgt)?;
                     }
                 }
+                DrawOp::Special { h, v, payload } => {
+                    emit_line(&mut c, dvi, &run, &forms, &mut used)?;
+                    run.clear();
+                    let Some(spec) = parse_image_special(payload) else {
+                        continue; // 非图片载荷：透传忽略（xxx 原口径）
+                    };
+                    match ensure_image(&spec, &opts.input_paths, &mut images, &mut image_index) {
+                        Ok(gi) => {
+                            // 页内首次引用序 = /Im 名（1 起）
+                            let local = match page_images[page_i].iter().position(|&x| x == gi) {
+                                Some(p) => p + 1,
+                                None => {
+                                    page_images[page_i].push(gi);
+                                    page_images[page_i].len()
+                                }
+                            };
+                            // whatsit 的 DVI 当前点 = 图左下角（核心侧 \pdfrefximage
+                            // 在占位盒参考点发 special）；图自锚点向右上铺显示宽高
+                            let x = ORIGIN_PT + *h as f64 / SP_PER_PT;
+                            let y = h_pt - ORIGIN_PT - *v as f64 / SP_PER_PT;
+                            let wp = spec.w_sp as f64 / SP_PER_PT;
+                            let hp = spec.h_sp as f64 / SP_PER_PT;
+                            if wp > 0.0 && hp > 0.0 {
+                                writeln!(
+                                    c,
+                                    "q {wp:.4} 0 0 {hp:.4} {x:.4} {y:.4} cm /Im{local} Do Q"
+                                )?;
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "[ntex-pdf] 警告：图片 `{}' 未嵌入（{e}）——版面占位保留、图区空白",
+                                spec.name
+                            );
+                        }
+                    }
+                }
             }
         }
         emit_line(&mut c, dvi, &run, &forms, &mut used)?;
         contents.push(c);
     }
 
-    build_document(dvi, &contents, &forms, &used, opts)
+    build_document(
+        dvi,
+        &contents,
+        &forms,
+        &used,
+        opts,
+        &images,
+        &page_images,
+    )
 }
 
 /// 写一行字符（一个 `TJ` 数组）。
@@ -457,8 +587,11 @@ fn build_document(
     forms: &FontForms,
     used: &[BTreeMap<u16, i64>],
     opts: &PdfOptions,
+    images: &[ImageEntry],
+    page_images: &[Vec<usize>],
 ) -> io::Result<Vec<u8>> {
-    // 每族字体字典的对象号（去重表下标 → 对象号）+ DVI 字体号 → 对象号
+    // 每族字体字典的对象号（去重表下标 → 对象号）+ DVI 字体号 → 对象号；
+    // 图片对象排在全部字体之后（图片管线 Step B；对象号只需唯一，段序无关）。
     let n_pages = contents.len();
     let (nums, font_obj): (Vec<u32>, Vec<u32>) = {
         let mut nums = Vec::with_capacity(forms.uniq.len());
@@ -474,6 +607,16 @@ fn build_document(
             .collect();
         (nums, font_obj)
     };
+    // 图片对象号：每个 Image 一个对象，含软掩码再加一个（/SMask 引用对象）。
+    let mut img_obj: Vec<u32> = Vec::with_capacity(images.len());
+    {
+        let font_total: u32 = forms.uniq.iter().map(|e| e.form.object_count()).sum();
+        let mut cursor = (3 + 2 * n_pages) as u32 + font_total;
+        for im in images {
+            img_obj.push(cursor);
+            cursor += 1 + u32::from(im.smask.is_some());
+        }
+    }
 
     let (w_pt, h_pt) = opts.page_size;
     let mut buf = Vec::new();
@@ -516,13 +659,23 @@ fn build_document(
         for f in used {
             res.push_str(&format!("/F{} {} 0 R ", f + 1, font_obj[f as usize]));
         }
+        // /XObject：本页引用的图（资源按页列，与 /Font 同口径）
+        let mut xobjs = String::new();
+        for (p, &gi) in page_images[i].iter().enumerate() {
+            xobjs.push_str(&format!("/Im{} {} 0 R ", p + 1, img_obj[gi]));
+        }
+        let xobj_dict = if xobjs.is_empty() {
+            String::new()
+        } else {
+            format!("/XObject << {xobjs}>> ")
+        };
         obj(
             &mut buf,
             &mut offsets,
             format!(
                 "{page_obj} 0 obj << /Type /Page /Parent 2 0 R \
                  /MediaBox [0 0 {w_pt:.4} {h_pt:.4}] \
-                 /Resources << /Font << {res}>> >> /Contents {content_obj} 0 R >> endobj"
+                 /Resources << /Font << {res}>> {xobj_dict}>> /Contents {content_obj} 0 R >> endobj"
             )
             .as_bytes(),
         );
@@ -712,6 +865,41 @@ fn build_document(
         }
     }
 
+    // 图片 XObject（图片管线 Step B）：FlateDecode 的 DeviceRGB 样本流
+    // （解码期已完成 PNG unfilter 与白底合成，无需 PDF 预测器参数）；
+    // 含 alpha 的源另挂 DeviceGray 软掩码（透明度语义保留给查看器）。
+    for (gi, im) in images.iter().enumerate() {
+        let obj_num = img_obj[gi];
+        let mut head = format!(
+            "{obj_num} 0 obj << /Type /XObject /Subtype /Image /Width {} /Height {} \
+             /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode",
+            im.width, im.height
+        );
+        if im.smask.is_some() {
+            head.push_str(&format!(" /SMask {} 0 R", obj_num + 1));
+        }
+        head.push_str(&format!(" /Length {} >>\nstream\n", im.rgb.len()));
+        let mut body = head.into_bytes();
+        body.extend_from_slice(&im.rgb);
+        body.extend_from_slice(b"\nendstream\nendobj");
+        obj(&mut buf, &mut offsets, &body);
+        if let Some(sm) = &im.smask {
+            let mut sb = format!(
+                "{} 0 obj << /Type /XObject /Subtype /Image /Width {} /Height {} \
+                 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode \
+                 /Length {} >>\nstream\n",
+                obj_num + 1,
+                im.width,
+                im.height,
+                sm.len()
+            )
+            .into_bytes();
+            sb.extend_from_slice(sm);
+            sb.extend_from_slice(b"\nendstream\nendobj");
+            obj(&mut buf, &mut offsets, &sb);
+        }
+    }
+
     // xref / trailer
     let xref_pos = buf.len();
     buf.extend_from_slice(format!("xref\n0 {}\n", offsets.len() + 1).as_bytes());
@@ -736,7 +924,7 @@ fn page_fonts(page: usize, dvi: &Dvi) -> Vec<u32> {
         .iter()
         .filter_map(|op| match op {
             DrawOp::Char { font, .. } => Some(*font),
-            DrawOp::Rule { .. } => None,
+            DrawOp::Rule { .. } | DrawOp::Special { .. } => None,
         })
         .collect()
 }
@@ -835,6 +1023,7 @@ mod tests {
             &dvi,
             &PdfOptions {
                 page_size: (100.0, 20.0),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -868,6 +1057,7 @@ mod tests {
             &dvi,
             &PdfOptions {
                 page_size: (612.0, 792.0),
+                ..Default::default()
             },
         )
         .unwrap();

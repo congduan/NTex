@@ -1,10 +1,11 @@
 /// 内建原语注册表：`名字 → Primitive` 的单一事实源。
 ///
-/// 413 项（`\muexpr` 为 `Glueexpr` 的别名，故比 `Primitive::ALL` 多一项；
+/// 422 项（`\muexpr` 为 `Glueexpr` 的别名，故比 `Primitive::ALL` 多一项；
 /// TRIP 冲刺补充 13 个标准参数原语；LaTeX 兼容第八刀补 pdfTeX 引擎探测/兼容族
-/// 12 项；M9 中文刀 2 补 \utfinputmode；图片管线 Step A 补 pdfTeX 图片族 3 项），
+/// 12 项；M9 中文刀 2 补 \utfinputmode；图片管线 Step A 补 pdfTeX 图片族 3 项，
+/// Step B 补 PDF 变换栈 \pdfsave/\pdfsetmatrix/\pdfrestore 3 项），
 /// 供 `register_builtins` 注册与 `tests.rs` 的一致性测试共用。
-pub(crate) const BUILTINS: [(&str, Primitive); 419] = [
+pub(crate) const BUILTINS: [(&str, Primitive); 422] = [
     ("def", Primitive::Def),
             ("edef", Primitive::Edef),
             ("gdef", Primitive::Gdef),
@@ -547,6 +548,11 @@ pub(crate) const BUILTINS: [(&str, Primitive); 419] = [
             ("pdfximage", Primitive::PdfXImage),
             ("pdflastximage", Primitive::PdfLastXImage),
             ("pdfrefximage", Primitive::PdfRefXImage),
+            // 图片管线 Step B：PDF 变换栈（pdftex.def \Gscale@start/\Gscale@end
+            // 的底层原语；语义见 eqtb/primitive.rs PdfSave 注释块）
+            ("pdfsave", Primitive::PdfSave),
+            ("pdfsetmatrix", Primitive::PdfSetMatrix),
+            ("pdfrestore", Primitive::PdfRestore),
 ];
 
 /// `Primitive → 规范名`（`BUILTINS` 反查；tests.rs

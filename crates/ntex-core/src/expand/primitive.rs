@@ -232,6 +232,10 @@ impl Expander {
             // 通用读/赋值面；这里只需两个行为原语的入口）
             Primitive::PdfXImage => self.exec_pdf_ximage(),
             Primitive::PdfRefXImage => self.exec_pdf_ref_ximage(),
+            // 图片管线 Step B：PDF 变换栈（\pdfsave/\pdfsetmatrix/\pdfrestore）
+            Primitive::PdfSave => self.exec_pdf_save(),
+            Primitive::PdfSetMatrix => self.exec_pdf_setmatrix(),
+            Primitive::PdfRestore => self.exec_pdf_restore(),
             // M4-6 断字
             Primitive::Patterns => self.exec_patterns(),
             Primitive::Hyphenation => self.exec_hyphenation(),

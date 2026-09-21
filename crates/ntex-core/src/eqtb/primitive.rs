@@ -697,4 +697,14 @@ define_primitives! {
     PdfXImage,
     PdfLastXImage,
     PdfRefXImage,
+    // ---- 图片管线 Step B：pdfTeX PDF 变换栈三原语（变体仍追加在尾部） ----
+    //   pdftex.def 的 \Gscale@start/\Grot@start 用 `\pdfsave\pdfsetmatrix{a b c d}`
+    //   包裹图形内容，\Gscale@end/\Grot@end 用 `\pdfrestore` 收口（pdftex.def
+    //   L537-558；scale=/angle= 都走这条矩阵路）。NTex 的 DVI 无矩阵——三原语
+    //   只发 `ntex-ctm` 标记 whatsit 落进列表，缩放在 DVI 写出器走标记时生效
+    //   （内容盒先排、矩阵域后开的 \Gscale@box 时序使引擎侧取不到缩放，见
+    //   primitive_pdf_image.rs 头注）。
+    PdfSave,
+    PdfSetMatrix,
+    PdfRestore,
 }

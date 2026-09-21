@@ -23,6 +23,7 @@
 
 pub mod cid;
 pub mod dvi;
+pub mod image;
 pub mod otf;
 pub mod pdf;
 pub mod type1;

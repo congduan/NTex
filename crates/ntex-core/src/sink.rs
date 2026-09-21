@@ -574,6 +574,13 @@ pub trait IoSink {
     fn whatsit(&mut self, _text: String) -> Result<()> {
         Ok(())
     }
+    /// `\special{...}`（图片管线 Step B 起也与 `\pdfrefximage` 载荷共用）：
+    /// whatsit 节点，shipout 时经 DVI xxx 指令落墨到后端（tex.web `ship_out`
+    /// 的 `dvi_special`）；与延迟 `\write` 的 whatsit（shipout 写流、不进
+    /// DVI）在节点上分型，见 [`crate::sink::IoSink::whatsit`]。
+    fn special(&mut self, _text: String) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// VM 排版事件消费者（组合 trait）：按域拆分的七个子 trait 的聚合视图。

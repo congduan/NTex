@@ -36,6 +36,9 @@ rust-version = "1.80"
 [workspace.dependencies]
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
+# 图片管线 Step B（ntex-pdf）：PNG IDAT inflate + PDF 流 deflate。
+# Cargo.lock 已有（vello/skrifa 传递依赖），锁内版本 1.1.10。
+flate2 = "1"
 regex = "1.10"
 sha2 = "0.10"
 similar = "2.5"

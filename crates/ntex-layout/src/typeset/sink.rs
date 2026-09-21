@@ -1796,7 +1796,19 @@ impl IoSink for NodeBuilder {
     }
     /// `\write<n>{...}`（非 \immediate）：whatsit 节点追加到当前列表（无维度）。
     fn whatsit(&mut self, text: String) -> Result<()> {
-        self.append(Node::Whatsit { text });
+        self.append(Node::Whatsit {
+            text,
+            special: false,
+        });
+        Ok(())
+    }
+    /// `\special{...}`：whatsit 节点（`special: true`——shipout 经 DVI xxx
+    /// 落后端；`\pdfrefximage` 的图片载荷同走此通道）。
+    fn special(&mut self, text: String) -> Result<()> {
+        self.append(Node::Whatsit {
+            text,
+            special: true,
+        });
         Ok(())
     }
 }

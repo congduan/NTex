@@ -32,6 +32,15 @@ pub enum DrawOp {
         width: i64,
         height: i64,
     },
+    /// xxx1..4（`\special`/图片载荷）：当前点 (h, v) 处的一段透明字节。
+    /// 图片管线 Step B：`ntex-image` 前缀的载荷由 PDF 写出器取回登记
+    /// Image XObject，其余载荷忽略（与既有"xxx 跳过"口径一致，只是不再
+    /// 丢位置信息）。
+    Special {
+        h: i64,
+        v: i64,
+        payload: Vec<u8>,
+    },
 }
 
 /// 一页的绘制内容。
@@ -319,11 +328,21 @@ impl<'a> Parser<'a> {
                     let k = read_uint(self.b, &mut self.i, n)?;
                     font = self.font_id(k)?;
                 }
-                // xxx1..4：跳过
+                // xxx1..4：载荷带当前点保留（图片 special 要落墨；其余载荷
+                // PDF 写出器忽略）
                 239..=242 => {
                     let n = (op - 238) as usize;
                     let len = read_uint(self.b, &mut self.i, n)? as usize;
-                    self.i += len;
+                    let end = self.i + len;
+                    if end > self.b.len() {
+                        return Err(io::Error::new(ErrorKind::InvalidData, "DVI 截断"));
+                    }
+                    ops.push(DrawOp::Special {
+                        h,
+                        v,
+                        payload: self.b[self.i..end].to_vec(),
+                    });
+                    self.i = end;
                 }
                 // fnt_def1..4
                 243..=246 => {

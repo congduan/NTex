@@ -269,7 +269,11 @@ fn showbox_format_node(
             }
         }
         Node::Adjust { text } => out.push_str(&format!("{p}\\vadjust {text}\n")),
-        Node::Whatsit { text } => out.push_str(&format!("{p}\\write {text}\n")),
+        // whatsit 分型显示（tex.web short_display：\write / \special 两个名字）
+        Node::Whatsit { text, special } => out.push_str(&format!(
+            "{p}\\{} {text}\n",
+            if *special { "special" } else { "write" }
+        )),
         // 数学边界标记（tex.web math_node）：`.\\mathon`；`\\mathsurround` 非 0
         // 时 mathon 补 `, surrounded X`（tex.web 只在 mathon 显示——参考
         // trip.log `\\mathon, surrounded 143.0` + `\\mathoff` 无 surrounded）

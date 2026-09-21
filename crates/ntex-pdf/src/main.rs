@@ -33,6 +33,16 @@ fn main() -> ExitCode {
                 }
                 i += 2;
             }
+            // 图片搜索路径（可重复给；与 ntex-dvi 的 --input-path 同口径）：
+            // DVI xxx 载荷只带图源文件名，位图按此找回
+            "--input-path" => {
+                let Some(dir) = args.get(i + 1) else {
+                    eprintln!("--input-path 后缺少目录");
+                    return ExitCode::FAILURE;
+                };
+                opts.input_paths.push(dir.clone());
+                i += 2;
+            }
             // 非选项参数：输出文件名（跳过 -p 的值）
             other if !other.starts_with('-') => {
                 output = other.to_owned();
