@@ -56,22 +56,16 @@ impl Expander {
             .0;
         let mut name = String::new();
         if first.catcode() == Some(Catcode::BeginGroup) {
-            // {file}：组内字符原样收集（含空格）
+            // {file}：组内**与 more_name 同语义**——tex.web scan_file_name 的
+            // 循环顶就是 get_x_token（L10210），宏在名字里展开；旧实现裸收
+            // token，`\IfFileExists{\Gin@base#1}`（graphics.sty \Gin@getbase）
+            // 的 `\Gin@base` 以 cs 身份撞进收集臂 → 「文件名含非法 token」。
+            // 空格照旧入名（组内名允许带空格）；引号态关闭（fresh `false`）。
+            let mut quoted = false;
             loop {
-                let t = self
-                    .fetch()?
-                    .ok_or_else(|| Error::invalid_input("文件名组未闭合"))?
-                    .0;
-                match t.catcode() {
-                    Some(Catcode::EndGroup) => break,
-                    Some(Catcode::Letter) | Some(Catcode::Other) | Some(Catcode::Space) => {
-                        let ch = t
-                            .charcode()
-                            .and_then(char::from_u32)
-                            .ok_or_else(|| Error::invalid_input("文件名含非法字符"))?;
-                        name.push(ch);
-                    }
-                    _ => return Err(Error::invalid_input("文件名含非法 token")),
+                if !self.more_name(&mut name, &mut quoted, true)? {
+                    // } 终止（正常出口）或 EOF（组未闭合，视为名字到头）
+                    break;
                 }
             }
         } else {
@@ -88,7 +82,7 @@ impl Expander {
             // 剥壳。语义：`"`（cat11/12）在名字扫描里 toggle 引号态不入名；
             // 引号态内空格收进名字，非引号态空格照旧终止。
             let mut quoted = false;
-            while self.more_name(&mut name, &mut quoted)? {}
+            while self.more_name(&mut name, &mut quoted, false)? {}
         }
         if name.is_empty() {
 
@@ -138,10 +132,23 @@ impl Expander {
     ///
     /// `quoted`：pdftex 引号文件名状态（跨 token 循环持有，见 scan_file_name
     /// 第二十刀注）；字体名扫描无引号诉求，传 `&mut false` 即关闭。
-    fn more_name(&mut self, name: &mut String, quoted: &mut bool) -> Result<bool> {
+    ///
+    /// `in_group`：花括号包名的组内模式——`} ` 终止并消费、空格照旧入名
+    ///（LaTeX 宏层剥花括号后 TeX 原语其实见不到组；NTex 里 `\IfFileExists
+    /// {\Gin@base#1}` 一族的参数 token 会直达 `\openin`，组内同样走
+    /// get_x_token 展开，`\Gin@base` 这类宏必须在名字里展开成字符）。
+    fn more_name(
+        &mut self,
+        name: &mut String,
+        quoted: &mut bool,
+        in_group: bool,
+    ) -> Result<bool> {
         let Some((t, _)) = self.fetch()? else {
             return Ok(false);
         };
+        if in_group && t.catcode() == Some(Catcode::EndGroup) {
+            return Ok(false); // }：终止且消费
+        }
         if let Some(op) = self.cond_op(t) {
             // GT（pdfTeX -ini 实证）：名字扫描的 get_x_token 对条件原语**就地求值**——
             // \\font\\a=cmr10\\ifx\\a\\a yes 的真支 "yes" 会收进名字（\\a=nullfont）。
@@ -232,7 +239,11 @@ impl Expander {
         // ③ 引号是纯开关，闭引号不终止（`\input"q"A` → 名字 "qA}"）。
         // 故：非 cat-10 的字符 32 在此终止并消费；cat-10 空格落回下方 `_` 臂
         // （放回，既有锁不变）；引号态内空格入名，以 `!*quoted` 豁免。
-        if !*quoted && t.charcode() == Some(32) && t.catcode() != Some(Catcode::Space) {
+        if !*quoted
+            && !in_group
+            && t.charcode() == Some(32)
+            && t.catcode() != Some(Catcode::Space)
+        {
             return Ok(false);
         }
         match t.catcode() {
@@ -249,7 +260,7 @@ impl Expander {
                     .ok_or_else(|| Error::invalid_input("名字含非法字符"))?;
                 name.push(ch);
             }
-            Some(Catcode::Space) if *quoted => {
+            Some(Catcode::Space) if *quoted || in_group => {
                 // 引号态内空格入名（"a b.tex" 带空格名）；非引号态的空格
                 // 已在上面按字符码拦截
                 name.push(' ');

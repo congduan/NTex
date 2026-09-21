@@ -185,6 +185,20 @@ use super::*;
     }
 
     #[test]
+    fn braced_file_name_expands_macros() {
+        // tex.web scan_file_name 的循环顶是 get_x_token（L10210）：花括号组名
+        // 里的宏**在名字扫描内展开**。真现场 graphics.sty `\Gin@getbase` →
+        // `\IfFileExists{\Gin@base#1}` —— 组内 `\Gin@base` 是 cs；旧实现裸收
+        // token，报「文件名含非法 token：cs \Gin@base」致命（\includegraphics
+        // 全线不可用）。组内空格照旧入名（与旧 braced 分支一致）。
+        let mut vfs = MemVfs::new();
+        vfs.insert("Figures/fig.txt", "X");
+        let (out, _) = expand_vfs("\\def\\Gin@base{Figures/fig}\\input{\\Gin@base.txt}", vfs)
+            .unwrap();
+        assert_eq!(out, "X");
+    }
+
+    #[test]
     fn input_missing_file_reports_tex_error() {
         // tex.web prompt_file_name：`! I can't find file \`x'.` + 交互式替换文件名
         // 询问 + batchmode 致命（引擎无交互层 → 终止）

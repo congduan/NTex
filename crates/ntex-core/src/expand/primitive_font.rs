@@ -363,7 +363,7 @@ impl Expander {
         self.skip_spaces()?;
         let mut name = String::new();
         let mut quoted = false;
-        while self.more_name(&mut name, &mut quoted)? {}
+        while self.more_name(&mut name, &mut quoted, false)? {}
         // M3-4 范围：字体名仅支持 ASCII（TFM 名不含多字节字符）
         if !name.is_ascii() {
             return Err(Error::invalid_input("字体名仅支持 ASCII（M3-4 范围）"));
