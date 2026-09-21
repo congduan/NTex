@@ -74,6 +74,12 @@ pub struct PageBuilder {
     prev_depth: i64,
     /// `\tracingpages>0`：本次 feed 的断页追踪（tex.web `Display the page break cost`）。
     tracing: bool,
+    /// 空页零尺寸空盒持有槽（裁决未定）：真 TeX 会把 `\vbox{}` 入页使页非空，
+    /// 其后的强制惩罚照常点火；NTex 为压 `\clearpage` 空白页而暂扣该盒，
+    /// 待下一贡献裁决去向。见 [`Self::process`] Box 臂注释。
+    held_zero_empty: Option<Node>,
+    /// 持有盒放行旗标：裁决为 -10003 二击标记时置位，Box 臂消费后清除。
+    keep_zero_empty: bool,
     /// 追踪输出缓冲（feed_one 后由调用方取走写转录）。
     trace_buf: String,
 }
@@ -112,6 +118,8 @@ impl PageBuilder {
             last_is_box: false,
             prev_depth: IGNORE_DEPTH,
             tracing: false,
+            held_zero_empty: None,
+            keep_zero_empty: false,
             trace_buf: String::new(),
         }
     }
@@ -164,6 +172,31 @@ impl PageBuilder {
             eprintln!("[tracingpages] feed_one: tracing={}", self.tracing);
         }
         loop {
+            // 持有盒裁决：NTex 的贡献列表在每次入页后即被抽干，tex.web 的
+            // 「空盒入页 → 惩罚照常点火」次序在此不可见，只能扣住空盒等下一个
+            // 贡献揭晓身份。`\end@float` 的 -\@Miii(-10003) 是「页已断、
+            // `\@holdpg` 待回流」二击标记 → 放回空盒让惩罚在非空页点火；
+            // 其余（`\clearpage` 尾 -\@Mi、`\@emptycol` -\@M）→ 按第二十二刀
+            // 语义丢弃持有盒，防空空白页不变量不变。
+            if !contrib.is_empty() {
+                if let Some(held) = self.held_zero_empty.take() {
+                    if std::env::var("NTEX_DEBUG_PB_HOLD").is_ok() {
+                        eprintln!(
+                            "[pb-hold] adjudicate next={:?}",
+                            contrib.first().map(|n| std::mem::discriminant(n))
+                        );
+                    }
+                    match contrib.first() {
+                        Some(Node::Penalty {
+                            penalty: -10003,
+                        }) => {
+                            self.keep_zero_empty = true;
+                            contrib.insert(0, held);
+                        }
+                        _ => {}
+                    }
+                }
+            }
             if contrib.is_empty() {
                 return None;
             }
@@ -184,12 +217,27 @@ impl PageBuilder {
         let node = contrib[0].clone();
         match node {
             Node::Box(b) => {
-                // LaTeX `\clearpage` 尾部在强制惩罚前放一个 `\vbox{}`。真 TeX
-                // 在空页上遇到这类零尺寸空盒时不会凭空 ship 空页；否则
-                // `X \clearpage Y` 会多出空白页。已有页面上的空盒仍按正常盒子
-                // 处理，`eject_one_page` 自造的 `\hbox to \hsize{}` 也因有宽度
-                // 保持可触发冲页，M5 防空页死循环不变量不变。
-                if !self.has_box && b.is_zero_empty() {
+                // LaTeX `\clearpage` 尾部在强制惩罚前放一个 `\vbox{}`；`\end@float`
+                // 尾部放 `\vbox{}\penalty-\@Miii(-10003)`。真 TeX 不区分两者：空盒
+                // 入页使页非空（tex.web 盒分支无条件 `page_contents:=box_there`），
+                // 其后的强制惩罚照常点火——`\clearpage` 由 `\@doclearpage` 例程吞页
+                // 防空白，`\end@float` 靠这记二次点火做 `\unvbox\@holdpg` 回流。
+                //
+                // NTex 无例程语境下第二十二刀（675b50a）把空页零盒丢弃以压
+                // `\clearpage` 空白页。但若空盒被丢，-10003 落在空页被 tex.web
+                // L19502 丢惩罚规则吞掉 → 二击永不发生 → `\@specialoutput` 存入
+                // `\@holdpg` 的整页内容永久滞留 = 浮体之前的已排版段落整段蒸发
+                // （transformer-standalone Figure 1 起丢半篇、少 ~8000 字形）。
+                // 故这里**持有待裁决**：扣住空盒，feed_one 下一贡献揭晓身份——
+                // -10003 → 放行入页（二击成立）；其余 → 丢弃（原语义）。
+                // `eject_one_page` 自造的 `\hbox to \hsize{}` 有宽度，不走此臂，
+                // M5 防空页死循环不变量不变。
+                if !self.has_box && b.is_zero_empty() && !std::mem::take(&mut self.keep_zero_empty)
+                {
+                    if std::env::var("NTEX_DEBUG_PB_HOLD").is_ok() {
+                        eprintln!("[pb-hold] hold zero-empty box on empty page");
+                    }
+                    self.held_zero_empty = Some(Node::Box(b));
                     contrib.remove(0);
                     return Outcome::Continue;
                 }
@@ -323,6 +371,9 @@ impl PageBuilder {
             }
             Node::Penalty { penalty } => {
                 if !self.has_box {
+                    if std::env::var("NTEX_DEBUG_PB_HOLD").is_ok() {
+                        eprintln!("[pb-hold] penalty {} dropped on empty page", penalty);
+                    }
                     contrib.remove(0);
                     return Outcome::Continue;
                 }
