@@ -685,8 +685,10 @@ impl Typesetter {
                 }
             }
             if !builder.groups.is_empty() {
-                if ended {
-                    // TeX：\end 时组未闭合 → 警告不中断（trip.log L7293）
+                if ended || !builder.math_state.math.is_empty() {
+                    // TeX：\end 时组未闭合 → 警告不中断（trip.log L7293）。
+                    // 错误恢复可能留下数学列表并清掉 ended 标志，仍按收尾处理，
+                    // 避免丢弃已构建页面；普通 `\hbox{a` EOF 仍报错。
                     let _ = builder.write16(format!(
                         "(end occurred inside a group at level {})\n",
                         builder.groups.len()
@@ -709,8 +711,8 @@ impl Typesetter {
                 }
             }
             if !builder.math_state.math.is_empty() {
-                if ended {
-                    // TeX：\end 时数学列表未闭合 → 同样警告不中断
+                if ended || builder.groups.is_empty() {
+                    // TeX：final cleanup 时数学列表未闭合 → 同样警告不中断。
                     let _ = builder.write16("(end occurred inside a math list)\n".to_string());
                     builder.math_state.math.clear();
                 } else {

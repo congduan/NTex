@@ -617,6 +617,14 @@ impl Expander {
                 }
                 // \inputlineno：当前输入行号（e-TeX；宏展开中为调用处行号——
                 // etrip.tex \3 宏的 \typeout{...(l.\number\inputlineno)...} 需要）
+                // 内部整数：\spacefactor → 当前空距因子。LaTeX 的 \@bsphack
+                // 保存/恢复该值；数字扫描漏掉它会把 0 写回，造成
+                // Bad space factor 并扰乱后续条件/环境恢复。
+                EqSlot::Primitive(Primitive::SpaceFactor) => {
+                    self.fetch()?; // 消费 \spacefactor
+                    let v = self.sink.space_factor();
+                    return Ok(if neg { -v } else { v });
+                }
                 EqSlot::Primitive(Primitive::InputLineNo) => {
                     self.fetch()?; // 消费 \inputlineno
                     return Ok(if neg {

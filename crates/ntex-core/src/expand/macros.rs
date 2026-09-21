@@ -609,7 +609,7 @@ impl Expander {
                                     tokens.len().saturating_sub(10)
                                 );
                             }
-                            return Err(Error::invalid_input("实参组未闭合"));
+                            return self.recover_runaway_arg(name);
                         }
                     };
                     // tex.web scan_toks 组贡献循环同样经 get_token 的

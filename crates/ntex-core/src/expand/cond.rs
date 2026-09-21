@@ -358,12 +358,20 @@ saved_if_type: saved_type,
     fn skip_ahead(&mut self, target: usize, saved_type: i32, saved_branch: i32) -> Result<()> {
         loop {
             let Some((tok, _ne)) = self.fetch()? else {
-                // 输入耗尽：连本帧在内的所有嵌套帧弹出（tex.web 由
-                // final_cleanup 收口，帧语义上未闭合的 \else/\fi 永远不会到来）
-                while self.cond_stack.len() >= target {
-                    self.cond_stack.pop();
+                // 输入耗尽：tex.web final_cleanup 走可恢复的 Incomplete \if 报告，
+                // 不把跳过假支时的 EOF 升级为 fatal。这里只收口本次条件及其
+                // 嵌套帧，保留进入展开区域前已经存在的外层条件。
+                for f in self.cond_stack[target - 1..].iter().rev() {
+                    let _ = self.sink.write16(format!(
+                        "! Incomplete {}; all text was ignored after line {}.\n",
+                        Self::if_type_name(f.if_type),
+                        f.line
+                    ));
                 }
-                return Err(Error::invalid_input("\\if 缺少 \\fi"));
+                self.cond_stack.truncate(target - 1);
+                self.cur_if_type = saved_type;
+                self.cur_if_branch = saved_branch;
+                return Ok(());
             };
             let Some(op) = self.cond_op(tok) else {
                 // TeX：跳过 text 中出现 outer 宏 → "Incomplete \if...; all text
