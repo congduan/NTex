@@ -162,3 +162,18 @@ active 探针不应受影响，但必须实测）。修复后须重生成 latex.
   涉及 `\string`+`\escapechar=-1`+`\ifx` 宏比较链，需下一刀单独排查。
 - 回归验证：中文 article 论文（\section+\subsection+CJK 折行）✓、
   plain 回归 ✓、ntex-core 438 全绿 ✓、clippy ✓。
+
+## 附录 4：list 机制缺口勘察（09-21，未修复）
+
+- 症状：itemize/quotation/abstract 全报 "perhaps a missing \item"
+  （itemize 单环境即炸；quotation 双环境报 2 次）
+- 机制链：\list 尾 \global\@newlisttrue → \item 的 \@item[...] 走
+  addpenalty 分支 → **\everypar{\@newlistfalse ...}**（latex.ltx L16181
+  区）在段首清标志
+- NTex 缺口：\everypar token 列表有存储/赋值/读取（primitive_toks_state.rs
+  /save.rs），但**引擎从不触发执行**（三处 new_graf 开段点 sink.rs l.49-79/
+  l.484/l.493 均无注入；无跨 crate 回调机制）
+- 修复需要架构变更：NodeBuilder（ntex-layout）开段点 → 通知 Expander
+  （ntex-core）展开 everypar_toks。方案：TokenSink trait 加
+  take_par_begin() 查询方法，Expander 输出 token 前轮询
+- 报错时刻的 {\u0000A} 组痕迹 = active 字符处理组（与根因无关的观察）
