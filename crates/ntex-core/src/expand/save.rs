@@ -998,6 +998,17 @@ impl Expander {
             },
             SavedValue::LcCode { byte, prev } => self.lccodes[byte as usize] = prev,
             SavedValue::UcCode { byte, prev } => self.uccodes[byte as usize] = prev,
+            SavedValue::EveryToks { kind, prev } => {
+                *match kind {
+                    0 => &mut self.everypar_toks,
+                    1 => &mut self.everyhbox_toks,
+                    2 => &mut self.everyvbox_toks,
+                    3 => &mut self.everycr_toks,
+                    4 => &mut self.errhelp_toks,
+                    5 => &mut self.everydisplay_toks,
+                    _ => &mut self.everymath,
+                } = prev;
+            }
             SavedValue::PenaltyArray { kind, prev } => {
                 if (kind as usize) < self.penalty_arrays.len() {
                     self.penalty_arrays[kind as usize] = prev;

@@ -88,14 +88,17 @@ impl Expander {
                     .ok_or_else(|| Error::invalid_input("everydisplay 缺少 RHS"))?;
                 if tok.catcode() == Some(Catcode::BeginGroup) {
                     self.unread(tok);
-                    self.everydisplay_toks = self.scan_group_contents(None)?;
+                    let t = self.scan_group_contents(None)?;
+                    self.set_every_scoped(5, t);
                 } else if let Some(csid) = tok.csid() {
                     match self.eqtb.slot(csid).clone() {
                         EqSlot::Primitive(_) => {
-                            self.everydisplay_toks = self.the_tokens_after(tok)?
+                            let t = self.the_tokens_after(tok)?;
+                            self.set_every_scoped(5, t);
                         }
                         EqSlot::Register(RegKind::Toks, idx) => {
-                            self.everydisplay_toks = self.registers.toks(idx).to_vec()
+                            let t = self.registers.toks(idx).to_vec();
+                            self.set_every_scoped(5, t);
                         }
                         _ => {}
                     }
@@ -112,7 +115,7 @@ impl Expander {
             Primitive::EveryMath => {
                 self.expect_equals()?;
                 let toks = self.scan_group_contents(Some("everymath"))?;
-                self.everymath = toks;
+                self.set_every_scoped(6, toks);
                 Ok(())
             }
             // TRIP 冲刺：toks 参数（\everypar/\everyhbox/\everyvbox/\everycr/\errhelp）
@@ -141,11 +144,11 @@ impl Expander {
                     Vec::new()
                 };
                 match prim {
-                    Primitive::EveryPar => self.everypar_toks = toks,
-                    Primitive::EveryHBox => self.everyhbox_toks = toks,
-                    Primitive::EveryVBox => self.everyvbox_toks = toks,
-                    Primitive::EveryCr => self.everycr_toks = toks,
-                    _ => self.errhelp_toks = toks,
+                    Primitive::EveryPar => self.set_every_scoped(0, toks),
+                    Primitive::EveryHBox => self.set_every_scoped(1, toks),
+                    Primitive::EveryVBox => self.set_every_scoped(2, toks),
+                    Primitive::EveryCr => self.set_every_scoped(3, toks),
+                    _ => self.set_every_scoped(4, toks),
                 }
                 self.finish_assignment();
                 Ok(())
@@ -249,5 +252,48 @@ impl Expander {
                 "未接入 dispatch_toks_state 的原语 {other:?}"
             ))),
         }
+    }
+}
+
+impl Expander {
+    /// `\every*` 族字段访问（kind：0=everypar 1=everyhbox 2=everyvbox
+    /// 3=everycr 4=errhelp 5=everydisplay 6=everymath）。
+    pub(crate) fn every_field(&self, kind: u8) -> &Vec<Token> {
+        match kind {
+            0 => &self.everypar_toks,
+            1 => &self.everyhbox_toks,
+            2 => &self.everyvbox_toks,
+            3 => &self.everycr_toks,
+            4 => &self.errhelp_toks,
+            5 => &self.everydisplay_toks,
+            _ => &self.everymath,
+        }
+    }
+
+    fn set_every_field(&mut self, kind: u8, v: Vec<Token>) {
+        *match kind {
+            0 => &mut self.everypar_toks,
+            1 => &mut self.everyhbox_toks,
+            2 => &mut self.everyvbox_toks,
+            3 => &mut self.everycr_toks,
+            4 => &mut self.errhelp_toks,
+            5 => &mut self.everydisplay_toks,
+            _ => &mut self.everymath,
+        } = v;
+    }
+
+    /// `\every*` 族赋值的组作用域（tex.web：这些是 eqtb toks 槽
+    /// `local_base+8` 起，非 `\global` 赋值随组结束恢复）。
+    ///
+    /// LaTeX 内核 `\@lign`（`\tabskip\z@skip\everycr{}`，注释即
+    /// "restore inside \displ@y"）在每个对齐单元组内清空 `\everycr`，
+    /// 依赖组结束恢复 `\displ@y` 的值；此前裸字段赋值永久生效。
+    fn set_every_scoped(&mut self, kind: u8, v: Vec<Token>) {
+        if !self.is_global() {
+            let prev = self.every_field(kind).clone();
+            self.save_stack
+                .push((self.group_level, SavedValue::EveryToks { kind, prev }));
+        }
+        self.set_every_field(kind, v);
     }
 }

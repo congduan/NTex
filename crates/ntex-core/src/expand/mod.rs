@@ -343,6 +343,17 @@ pub(crate) enum SavedValue {
         byte: u8,
         prev: i64,
     },
+    /// `\every*` 族（everypar/everyhbox/everyvbox/everycr/everydisplay/errhelp，
+    /// kind 0..=5）：组作用域保存（tex.web local_base+8 起的 eqtb toks 槽）。
+    ///
+    /// 此前是 Expander 裸字段、赋值即永久生效——LaTeX 内核 `\@lign`（"restore
+    /// inside \displ@y"）在每个对齐单元里 `\everycr{}`，靠组结束恢复 `\displ@y`
+    /// 设的值；裸字段让该清空泄漏到整个对齐 → 每行 `\noalign{\global\column@\z@}`
+    /// 不再执行 → `\add@amps` 少吐 `&` → `\math@cr@@@align` 的 `\omit` 落格内。
+    EveryToks {
+        kind: u8,
+        prev: Vec<Token>,
+    },
     /// ETRIP 第二波：e-TeX 惩罚数组（\interlinepenalties 等；组内局部保存）。
     /// `kind`：0=interline/1=club/2=widow/3=displaywidow。
     PenaltyArray {
