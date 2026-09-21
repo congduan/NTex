@@ -115,11 +115,13 @@ impl CoreSink for NodeBuilder {
         // `\setbox<n>=<box>` 目标寄存器：认领到**最外层**盒子组（tex.web scan_box
         // box_end 语义）。内层嵌套盒（`\setbox0=\vbox{\hbox{...}}` 的 \hbox）不消费，
         // 否则 target 被第一个内层盒抢走、RHS 的 vbox 无法入寄存器。
+        // `\global` 旗标同批认领（tex.web：随赋值入 box_context，嵌套赋值不覆写）。
         let setbox = if box_kind.is_some() {
             self.box_state.setbox_target.take()
         } else {
             None
         };
+        let setbox_global = setbox.is_some() && self.box_state.setbox_global;
         // `to`/`spread` 规格：同 setbox 一样认领到紧邻盒子组（嵌套时内层盒的
         // box_spec 调用不得覆写外层已认领的规格）。
         let spec = if box_kind.is_some() {
@@ -143,6 +145,7 @@ impl CoreSink for NodeBuilder {
             shipout: ship,
             leaders,
             setbox,
+            setbox_global,
             spec,
             shift,
             entered_line: line,
@@ -391,7 +394,7 @@ impl CoreSink for NodeBuilder {
             // M4-5 对齐组（tex.web fin_align）：两遍法统一列宽 + 封装
             GroupKind::Align => {
                 let nodes = match self.align_stack.pop() {
-                    Some((dir, ctx)) => align_fin(self.params.boxmaxdepth, dir, ctx),
+                    Some((dir, ctx)) => align_fin(self.params, dir, ctx),
                     None => Vec::new(),
                 };
                 // 对齐组列表（group_begin 的 VBox 路径）弹出——行/材料已走 ctx 流
@@ -412,6 +415,7 @@ impl CoreSink for NodeBuilder {
                         ctx.shipout,
                         leaders,
                         ctx.setbox,
+                        ctx.setbox_global,
                         ctx.shift,
                         inner_boxmaxdepth,
                     );
@@ -1419,10 +1423,13 @@ impl BoxSink for NodeBuilder {
         }
         // `\setbox0=\lastbox`：摘下的盒子存入目标寄存器（tex.web last_box →
         // cur_box → set_box 赋值语义）；裸 \lastbox 留给后续 \box 消费。
+        // 无盒可摘 → cur_box=null → `\setbox` 目标**清空**（tex.web
+        // `\setbox\thr@@\lastbox` 置 box3 void）——amsmath `\measure@` 的
+        // 列宽循环 `\ifhbox\thr@@ ... \repeat` 依赖此终止；旧实现保持
+        // box3 旧值 → 恒真死循环。
         if let Some(t) = self.box_state.setbox_target.take() {
-            if let Some(b) = self.box_state.lastbox_hold.take() {
-                self.store_box(t, Some(b));
-            }
+            let b = self.box_state.lastbox_hold.take();
+            self.store_box(t, b);
         }
         Ok(())
     }
@@ -1809,8 +1816,8 @@ impl TokenSink for NodeBuilder {}
 ///    不做行高数学——valign 用例罕见，后续校准）。
 ///
 /// 自由函数（非 TokenSink 事件）：由 `group_end` 的 Align 分支在对齐组
-/// 结束时调用，`bmd` = \boxmaxdepth。
-fn align_fin(bmd: i64, dir: AlignDir, mut ctx: AlignCtx) -> Vec<Node> {
+/// 结束时调用，行间 interline 胶水按 `params` 的 \baselineskip 族计算。
+fn align_fin(params: ntex_core::param::Params, dir: AlignDir, mut ctx: AlignCtx) -> Vec<Node> {
     // 尾行未 \cr（对齐组 `}` 前隐含收行）
     if !ctx.cur_cells.is_empty() {
         let cells = std::mem::take(&mut ctx.cur_cells);
@@ -1832,7 +1839,7 @@ fn align_fin(bmd: i64, dir: AlignDir, mut ctx: AlignCtx) -> Vec<Node> {
                             col.push(Node::Box(crate::node::vpack(
                                 c.nodes,
                                 nat.height + nat.depth,
-                                bmd,
+                                params.boxmaxdepth,
                             )));
                         }
                         let nat = crate::node::hbox_dimensions(&col).width;
@@ -1920,7 +1927,14 @@ fn align_fin(bmd: i64, dir: AlignDir, mut ctx: AlignCtx) -> Vec<Node> {
                 }
                 (None, None) => None,
             };
-            // 行封装（第二遍）
+            // 行封装（第二遍）。tex.web：行宽 = Σ列宽 + Σtabskip 自然宽——
+            // **所有行等宽**（unset box 设列宽后逐行封装；GT
+            // `\vbox{\halign{#\cr a\cr b\cr}}` 两行均 5.55557 宽）。旧实现
+            // 无规格时各行保持自然宽，amsmath `\measure@` 的 `\wd\@ne`
+            // （末行宽 = 全对齐宽）随之塌掉。to/spread 规格优先。
+            let total = target.unwrap_or_else(|| {
+                w.iter().sum::<i64>() + (0..=n).map(glue_w).sum::<i64>()
+            });
             let mut rows: Vec<Node> = Vec::new();
             for item in ctx.stream {
                 match item {
@@ -1934,19 +1948,49 @@ fn align_fin(bmd: i64, dir: AlignDir, mut ctx: AlignCtx) -> Vec<Node> {
                             nodes.push(Node::Box(crate::node::hpack(&c.nodes, span_w)));
                             nodes.push(align_tabskip_node(ctx.tabskips.get(end)));
                         }
-                        let nat = crate::node::hbox_dimensions(&nodes).width;
-                        // to/spread 模式：所有行锁到同一目标宽，差额按行内
-                        // tabskip 胶水的 stretch/shrink 摊派（hpack 4 阶语义）
-                        rows.push(Node::Box(crate::node::hpack(
-                            &nodes,
-                            target.unwrap_or(nat),
-                        )));
+                        // 差额按行内 tabskip 胶水的 stretch/shrink 摊派
+                        // （hpack 4 阶语义）
+                        rows.push(Node::Box(crate::node::hpack(&nodes, total)));
                     }
                     AlignItem::Material(ns) => rows.extend(ns),
                 }
             }
-            let nat = crate::node::vbox_dimensions(&rows);
-            vec![Node::Box(crate::node::vpack(rows, nat.height + nat.depth, bmd))]
+            // tex.web fin_align「Insert the current list into its environment」
+            // （L15989）：行盒**直接拼进外层竖列表**，不打成单个 vbox——
+            // `\vbox{\halign{...}}` 的内容就是各行行盒（GT showbox：vbox 直接
+            // 下挂 hbox），amsmath `\measure@` 的
+            // `\setbox\z@\vbox{\unvbox\z@ \unpenalty \global\setbox\@ne\lastbox}`
+            // 依赖 `\lastbox` 取到**末行行盒**；行盒若被 vpack 包成单盒，
+            // 后续 `\unhbox\@ne` 即报 Incompatible list 且列宽量测全失。
+            // 行间 interline 胶水 = fin_row 的 append_to_vlist（行进对齐自己
+            // 的竖列表，prev_depth 从 null 起，行间不穿透外层列表的胶水）。
+            let mut out: Vec<Node> = Vec::with_capacity(rows.len());
+            let mut prev_depth: Option<i64> = None;
+            for node in rows {
+                if let Node::Box(b) = &node {
+                    if let Some(pd) = prev_depth {
+                        let d = params.baselineskip.width - (pd + b.height);
+                        let g = if d < params.lineskiplimit {
+                            params.lineskip
+                        } else {
+                            let mut g = params.baselineskip;
+                            g.width = d;
+                            g
+                        };
+                        out.push(Node::Glue {
+                            name: None,
+                            width: g.width,
+                            stretch: g.stretch,
+                            shrink: g.shrink,
+                            stretch_order: g.stretch_order,
+                            shrink_order: g.shrink_order,
+                        });
+                    }
+                    prev_depth = Some(b.depth);
+                }
+                out.push(node);
+            }
+            out
         }
     }
 }

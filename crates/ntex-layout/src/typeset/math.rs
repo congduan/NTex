@@ -88,7 +88,12 @@ impl NodeBuilder {
             .ok_or_else(|| Error::internal("close_math 无数学层"))?;
         let style = self.math_state.math_style;
         let was_display = self.list_modes.pop() == Some(Mode::DisplayMath);
-        self.lists.pop();
+        // display 内的对齐材料（amsmath align*/`\eqalignno` 的行盒）：
+        // tex.web fin_align「Finish an alignment in a display」（L22622）把
+        // 行盒直接拼进外层竖列表。NTex 的 DisplayMath 模式列表即此容器——
+        // `$$` 关闭时拼进主竖列表，否则整段对齐内容随 pop 丢弃（align*
+        // 单元格 DVI 为空的根因）。
+        let display_material = self.lists.pop().unwrap_or_default();
         // 公式末尾收尾：未闭合 \left 报错恢复（TeX "Extra } or forgotten \right."，
         // 自动闭合；TRIP L298 `\left(\over\left(...`）；待定分式收尾（TeX 允许空分母）
         if level.left.is_some() {
@@ -132,28 +137,39 @@ impl NodeBuilder {
                 penalty: self.params.predisplaypenalty,
             });
             self.append_param_glue(above);
-            // 公式盒 = `\hbox to \hsize`（两侧 \hfil 居中；displaywidth≈\hsize）
-            let mut line: Vec<Node> = Vec::with_capacity(nodes.len() + 2);
-            line.push(Node::Glue {
-            name: None,                width: 0,
-                stretch: 1,
-                shrink: 0,
-                stretch_order: GLUE_ORDER_FIL,
-                shrink_order: 0,
-            });
-            line.extend(nodes);
-            line.push(Node::Glue {
-            name: None,                width: 0,
-                stretch: 1,
-                shrink: 0,
-                stretch_order: GLUE_ORDER_FIL,
-                shrink_order: 0,
-            });
-            // tex.web finish_display 用 append_to_vlist(b) 落公式盒：先按
-            // prev_depth 插行间 glue（baselineskip/lineskip），再落盒——
-            // 公式前后的 12pt 行距由此而来。走 `append` 会漏掉这段 glue
-            // （P5：display 前垂直跳缺 interline glue）。
-            self.push_box(Node::Box(hpack(&line, self.params.hsize)));
+            // 公式盒 = `\hbox to \hsize`（两侧 \hfil 居中；displaywidth≈\hsize）。
+            // 公式为空但 display 内有对齐材料（amsmath align*：公式内容全在
+            // 对齐行里）时跳过空盒——tex.web 对齐显示无公式盒，空 `\hbox to
+            // \hsize` 只会多出一段空白行距；TRIP 的空显示（无对齐材料）仍照常
+            // 产盒（行为不变）。
+            if !nodes.is_empty() || display_material.is_empty() {
+                let mut line: Vec<Node> = Vec::with_capacity(nodes.len() + 2);
+                line.push(Node::Glue {
+                name: None,                width: 0,
+                    stretch: 1,
+                    shrink: 0,
+                    stretch_order: GLUE_ORDER_FIL,
+                    shrink_order: 0,
+                });
+                line.extend(nodes);
+                line.push(Node::Glue {
+                name: None,                width: 0,
+                    stretch: 1,
+                    shrink: 0,
+                    stretch_order: GLUE_ORDER_FIL,
+                    shrink_order: 0,
+                });
+                // tex.web finish_display 用 append_to_vlist(b) 落公式盒：先按
+                // prev_depth 插行间 glue（baselineskip/lineskip），再落盒——
+                // 公式前后的 12pt 行距由此而来。走 `append` 会漏掉这段 glue
+                // （P5：display 前垂直跳缺 interline glue）。
+                self.push_box(Node::Box(hpack(&line, self.params.hsize)));
+            }
+            // 对齐行盒拼接（tex.web L22622 `link(tail):=p`；行间 interline
+            // 胶水已由 align_fin 按 append_to_vlist 语义生成，此处原样拼接）。
+            for n in display_material {
+                self.append(n);
+            }
             self.append(Node::Penalty {
                 penalty: self.params.postdisplaypenalty,
             });

@@ -431,6 +431,11 @@ struct GroupCtx {
     /// （tex.web scan_box box_end 语义），内层嵌套 \hbox 组不得消费
     /// （否则 `\setbox0=\vbox{\hbox{...}}` 的 target 被内层盒抢走）。
     setbox: Option<usize>,
+    /// 该 `\setbox` 赋值的 `\global` 旗标（tex.web：global 旗标随赋值走
+    /// box_context——每个盒子组各自持有。[`BoxState::setbox_global`] 是
+    /// 单槽：`\global\setbox0\vbox{...\setbox\z@\hbox{..}...}` 的内层非
+    /// global 赋值会覆写它，封装时外层赋值被误当局部（amsmath `\measure@`）。
+    setbox_global: bool,
     /// 进入行号（etrip.tex 行；\tracinggroups 的 `entered at line L`）。
     entered_line: u32,
     /// 组打开时是否数学模式（`\hbox{A}` 数学字段关闭是合法流程；外层组
@@ -1354,6 +1359,7 @@ impl NodeBuilder {
         ship: bool,
         leaders: Option<LeadersKind>,
         setbox: Option<usize>,
+        setbox_global: bool,
         shift: Option<i64>,
         boxmaxdepth: i64,
     ) {
@@ -1415,6 +1421,10 @@ impl NodeBuilder {
         // 仅最外层 RHS 盒子组（group_begin 认领进 GroupCtx）持有目标；内层嵌套盒
         // （`\setbox0=\vbox{\hbox{...}}` 的 \hbox）不消费。
         if let Some(idx) = setbox {
+            // 本赋值的 \global 旗标随组认领（见 GroupCtx::setbox_global）——
+            // 封装时写回单槽，防止嵌套赋值（amsmath `\measure@` 内层
+            // `\setboxz@h`）覆写后外层赋值按错误作用域入寄存器。
+            self.box_state.setbox_global = setbox_global;
             if let Node::Box(b) = node {
                 self.store_box(idx, Some(b));
             }
