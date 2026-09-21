@@ -381,7 +381,17 @@ pub fn scan_token(
                             }
                             Catcode::Ignored => continue,
                             Catcode::Space => {
-                                return Ok(Some(Token::char(Catcode::Space, elc as u32)))
+                                // tex.web：cat 10（spacer）一律产出**规范空格
+                                // token**（`cur_chr:=" "`，与字符码无关）——
+                                // `@<Finish line, emit a space@>` 与
+                                // `mid_line+spacer` 两臂都是 `cur_chr:=" "`。
+                                // 此前用 endlinechar 码位（13），`\@sptoken`
+                                // （cat10/char32）的 `\ifx` 判等失配：
+                                // `\ProvidesFile` 的 `\@ifnextchar[` 拿不到
+                                // `[`、多行可选实参泄漏成正文（l.45 级联）。
+                                // 非 mid_line（skip_blanks/new_line+spacer）
+                                // 不产 token（tex.web 同名臂忽略）。
+                                return Ok(Some(Token::char(Catcode::Space, b' ' as u32)));
                             }
                             other => return Ok(Some(Token::char(other, elc as u32))),
                         }
