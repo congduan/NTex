@@ -121,6 +121,25 @@ pub trait CoreSink {
     fn mode_code(&self) -> i64 {
         1
     }
+    /// 段落即将开始（tex.web `new_graf` 前置查询）：当前处于垂直模式、且下一个
+    /// 水平材料 token 会开段。显示公式续排（`after_display`）不算——该路径无
+    /// parskip/缩进、tex.web 也不触发 `\everypar`。
+    ///
+    /// list 机制刀：Expander 在派发水平材料 token 前查询；true 时先
+    /// [`CoreSink::par_begin`] 开段、注入 `\everypar` token 列表，再把触发
+    /// token 压回输入（tex.web `back_input; new_graf(true)` 的顺序）。
+    /// `\everypar` 必须先于触发 token 展开：LaTeX 段落钩子机器
+    /// （`\g__para_standard_everypar_tl`）用 `\box_gset_to_last` 取走缩进盒，
+    /// 此刻水平列表里必须只有缩进盒。
+    fn par_begin_imminent(&self) -> bool {
+        false
+    }
+    /// 开段（tex.web `new_graf`）：`\parskip`、模式切水平、spacefactor 复位、
+    /// 缩进盒（`indented=false` 即 `\noindent` 语义，不落缩进盒）。触发 token
+    /// 由 Expander 决定消费或压回输入。
+    fn par_begin(&mut self, _indented: bool) -> Result<()> {
+        Ok(())
+    }
     /// e-TeX `\currentgrouptype`：当前组类型码（bottom=0 ... math_left=16）。
     fn current_group_type(&self) -> i64 {
         0

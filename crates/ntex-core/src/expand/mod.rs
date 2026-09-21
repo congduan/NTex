@@ -429,6 +429,30 @@ pub(crate) struct WriteStream {
     pending: Vec<TokenArray>,
 }
 
+/// `\every*` token 列表族（list 机制刀起入 `.fmt` 快照）。
+///
+/// LaTeX 段落钩子机器在格式装载期执行
+/// `\tex_everypar:D{\g__para_standard_everypar_tl}`（latex.ltx l.9137）——
+/// 该赋值必须跨快照存活，否则恢复后 `\everypar` 恒空、list 机制
+/// （`\@newlist` 清位）失效。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct EveryToks {
+    /// `\everypar`（段首触发；list 机制根因所在）。
+    pub everypar: Vec<Token>,
+    /// `\everymath`。
+    pub everymath: Vec<Token>,
+    /// `\everyhbox`。
+    pub everyhbox: Vec<Token>,
+    /// `\everyvbox`。
+    pub everyvbox: Vec<Token>,
+    /// `\everycr`。
+    pub everycr: Vec<Token>,
+    /// `\everydisplay`。
+    pub everydisplay: Vec<Token>,
+    /// `\errhelp`。
+    pub errhelp: Vec<Token>,
+}
+
 /// 展开引擎状态快照（`.fmt` v1，M3 收尾）：可序列化的全部展开状态。
 ///
 /// 数据由 `ntex-format` crate 编码/解码；本结构只承载数据。
@@ -449,6 +473,8 @@ pub struct FmtState {
     pub params: Params,
     /// `\output` 例程 token 列表。
     pub output_toks: Option<TokenArray>,
+    /// `\every*` token 列表族（`\everypar` 段首触发链）。
+    pub every_toks: EveryToks,
     /// FontId → 外部字体名（`\fontname` 查询用；加载后需重新 `\font`）。
     pub font_names: Vec<Option<String>>,
     /// FontId → (外部名, at, scaled)（pass2 恢复字体表用；.fmt 不含字体表，
@@ -1150,6 +1176,15 @@ impl Expander {
             registers: self.registers.export(),
             params: self.params,
             output_toks: self.output_toks.clone(),
+            every_toks: EveryToks {
+                everypar: self.everypar_toks.clone(),
+                everymath: self.everymath.clone(),
+                everyhbox: self.everyhbox_toks.clone(),
+                everyvbox: self.everyvbox_toks.clone(),
+                everycr: self.everycr_toks.clone(),
+                everydisplay: self.everydisplay_toks.clone(),
+                errhelp: self.errhelp_toks.clone(),
+            },
             font_names: self.font_names.clone(),
             font_loads: self.font_loads.clone(),
             font_cs_names: self.font_cs_names.clone(),
@@ -1224,6 +1259,14 @@ impl Expander {
         self.registers = Registers::import(state.registers);
         self.params = state.params;
         self.output_toks = state.output_toks;
+        // `\every*` 族：`\everypar` 段首触发链依赖快照恢复（LaTeX 段落钩子机器）
+        self.everypar_toks = state.every_toks.everypar;
+        self.everymath = state.every_toks.everymath;
+        self.everyhbox_toks = state.every_toks.everyhbox;
+        self.everyvbox_toks = state.every_toks.everyvbox;
+        self.everycr_toks = state.every_toks.everycr;
+        self.everydisplay_toks = state.every_toks.everydisplay;
+        self.errhelp_toks = state.every_toks.errhelp;
         self.font_names = state.font_names;
         self.font_loads = state.font_loads;
         self.font_cs_names = state.font_cs_names;
@@ -2198,6 +2241,34 @@ impl Expander {
                     }
                     return Ok(true);
                 }
+                // list 机制刀：`\everypar` 触发链（tex.web `new_graf`）。
+                // LaTeX 的 `\list`→`\item` 依赖段首触发 `\everypar` 清 `\@newlist`；
+                // 引擎此前从不触发，`\@trivlist` 逐条报 "missing \item"。
+                // tex.web 顺序（`vmode+letter…` 臂）：`back_input; new_graf(true)`
+                // ——先开段、注入 `\everypar`、再回放触发 token。不可回放触发
+                // token 的 `\indent`/`\noindent`（`start_par` 臂直接消费）。
+                // 门禁 `\everypar` 非空：plain/TRIP 从不设它 → 行为逐字节不变。
+                if !self.everypar_toks.is_empty() && self.sink.par_begin_imminent() {
+                    if let Some((indented, back_input)) = self.par_trigger_kind(tok) {
+                        self.sink.par_begin(indented)?;
+                        if back_input {
+                            self.unread(tok);
+                        }
+                        // 后压 = 先展开：`\everypar` 在触发 token 之前落列表
+                        // （LaTeX 段落钩子机器 `\box_gset_to_last` 取缩进盒时，
+                        // 水平列表里必须只有缩进盒）。
+                        let items: Vec<(Token, bool)> = self
+                            .everypar_toks
+                            .iter()
+                            .map(|t| (*t, false))
+                            .collect();
+                        self.push_frame(InputFrame::TokenList {
+                            items: Arc::from(items),
+                            pos: 0,
+                        });
+                        return Ok(true);
+                    }
+                }
                 self.process_token(tok)?;
                 // 非组盒子原语（\copy 等）作为 \moveleft 参数：执行完恢复追踪
                 if self.trace_suppress_defer {
@@ -2206,6 +2277,29 @@ impl Expander {
                 }
                 Ok(true)
             }
+        }
+    }
+
+    /// 当前 token 是否会开段（tex.web `vmode` 水平材料触发集的子集）：
+    /// 返回 `(indented, back_input)`——字母/其他字符开段并把触发 token 压回
+    /// 输入（`back_input` 臂）；`\indent`/`\noindent`（`start_par` 臂）开段并
+    /// **直接消费**，不回放（否则水平模式 `\indent` 再落一个缩进盒）。
+    /// `\let` 别名经 eqtb 槽判定，同样命中。
+    fn par_trigger_kind(&self, tok: Token) -> Option<(bool, bool)> {
+        match tok.kind() {
+            TokenKind::Char => match tok.catcode() {
+                Some(Catcode::Letter) | Some(Catcode::Other) => Some((true, true)),
+                _ => None,
+            },
+            TokenKind::ControlSeq => {
+                let csid = tok.csid()?;
+                match self.eqtb.slot(csid) {
+                    EqSlot::Primitive(Primitive::Indent) => Some((true, false)),
+                    EqSlot::Primitive(Primitive::NoIndent) => Some((false, false)),
+                    _ => None,
+                }
+            }
+            _ => None,
         }
     }
 

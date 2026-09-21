@@ -56,20 +56,7 @@ impl CoreSink for NodeBuilder {
                     self.append_char(node);
                 } else {
                     // M3-5-2：段落起始追加上下段间距 \parskip（空页上被页面构建器丢弃）
-                    if self.page_state.pagination {
-                        let ps = self.params.parskip;
-                        self.append(Node::Glue {
-            name: None,                            width: ps.width,
-                            stretch: ps.stretch,
-                            shrink: ps.shrink,
-                            stretch_order: 0,
-                            shrink_order: 0,
-                        });
-                    }
-                    self.lists.push(Vec::new());
-                    self.list_modes.push(Mode::Horizontal);
-                    self.space_factor = 1000; // new_graf：段落开始重置 spacefactor
-                    self.insert_indent();
+                    self.par_begin(true)?;
                     self.append_char(node);
                 }
             }
@@ -739,6 +726,36 @@ impl CoreSink for NodeBuilder {
             Mode::Math => 3,
             Mode::DisplayMath => 6,
         }
+    }
+    /// 段落即将开始（tex.web `new_graf` 前置查询）：垂直模式且非显示公式续排。
+    /// Expander 据此先开段、注入 `\everypar`，再回放触发 token。
+    fn par_begin_imminent(&self) -> bool {
+        self.mode() == Mode::Vertical && !self.math_state.after_display
+    }
+    /// 开段（tex.web `new_graf`）：`\parskip`（空页上被页面构建器丢弃）→
+    /// 新水平列表 → spacefactor 复位 → 缩进盒。
+    fn par_begin(&mut self, indented: bool) -> Result<()> {
+        if self.page_state.pagination {
+            let ps = self.params.parskip;
+            self.append(Node::Glue {
+            name: None,                            width: ps.width,
+                            stretch: ps.stretch,
+                            shrink: ps.shrink,
+                            stretch_order: 0,
+                            shrink_order: 0,
+            });
+        }
+        self.lists.push(Vec::new());
+        self.list_modes.push(Mode::Horizontal);
+        self.space_factor = 1000; // new_graf：段落开始重置 spacefactor
+        if indented {
+            self.insert_indent();
+        } else {
+            // `\noindent` 语义：Expander 拦截路径不经过 NoIndent 原语臂，
+            // 在此消费陈旧的 noindent 标志（不落缩进盒）。
+            self.noindent_next = false;
+        }
+        Ok(())
     }
     /// e-TeX `\currentgrouptype`：当前组类型码。
     /// 数学模式：顶组为数学组 → 9，`\left`/`\middle` 组 → 16（math left group），

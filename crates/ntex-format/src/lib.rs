@@ -32,7 +32,9 @@ const MAGIC: &[u8; 8] = b"NTEXFMT1";
 /// v15：M9 中文刀 4——catcode >255 码位覆盖表（\utfinputmode=1 的 \catcode`，=13）；
 /// v16：outer 双槽位（MacroDef::active_slot，expl3 L9320 Forbidden 根治的伴随序列化）；
 /// v17：文件头写入 NTex 引擎版本号，加载时强校验，防旧 fmt 静默腐蚀。
-pub const FORMAT_VERSION: u8 = 17;
+/// v18：every* token 列表族（`\everypar` 段首触发链 / LaTeX 段落钩子机器）——
+///      此前快照不携带，恢复后 `\everypar` 恒空，list 机制（`\@newlist` 清位）失效。
+pub const FORMAT_VERSION: u8 = 18;
 
 /// 当前引擎版本号：随 crate 版本进入 `.fmt` 文件头。
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -175,6 +177,15 @@ pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
 
     // output_toks
     write_opt_tokens(w, state.output_toks.as_deref())?;
+
+    // every* token 列表族（v18：`\everypar` 段首触发链 / LaTeX 段落钩子机器）
+    write_tokens(w, &state.every_toks.everypar)?;
+    write_tokens(w, &state.every_toks.everymath)?;
+    write_tokens(w, &state.every_toks.everyhbox)?;
+    write_tokens(w, &state.every_toks.everyvbox)?;
+    write_tokens(w, &state.every_toks.everycr)?;
+    write_tokens(w, &state.every_toks.everydisplay)?;
+    write_tokens(w, &state.every_toks.errhelp)?;
 
     // font_loads（v13：pass2 恢复字体表用；FontId → (外部名, at, scaled)）
     w.write_all(&(state.font_loads.len() as u32).to_le_bytes())?;
@@ -388,6 +399,17 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
     // output_toks
     let output_toks = read_opt_tokens(r)?.map(ntex_core::macrodef::TokenArray::from);
 
+    // every* token 列表族（v18；顺序与 save 严格一致）
+    let every_toks = ntex_core::expand::EveryToks {
+        everypar: read_tokens(r)?,
+        everymath: read_tokens(r)?,
+        everyhbox: read_tokens(r)?,
+        everyvbox: read_tokens(r)?,
+        everycr: read_tokens(r)?,
+        everydisplay: read_tokens(r)?,
+        errhelp: read_tokens(r)?,
+    };
+
     // font_loads（v13：pass2 恢复字体表；FontId → (外部名, at, scaled)）
     let n_loads = read_u32(r)? as usize;
     let mut font_loads = Vec::with_capacity(n_loads);
@@ -435,6 +457,7 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
         registers,
         params,
         output_toks,
+        every_toks,
         // .fmt v1 不含字体表（加载后需重新 \font）：font_names 一并置空
         font_names: Vec::new(),
         font_loads,
