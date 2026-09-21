@@ -540,9 +540,12 @@ pub fn hpack(children: &[Node], width: i64) -> BoxNode {
     let natural = hbox_dimensions(children);
     let mut total_stretch = [0i64; 4];
     let mut total_shrink = [0i64; 4];
+    // 计入**全部** glue：`name` 只是 showbox 转录标签（`\glue(\leftskip)`），
+    // 不参与 glue set 语义。此前按 `name: None` 过滤，行首/行尾 `\leftskip`、
+    // `\rightskip`（带名）被排除在拉伸之外——`\centering` 的
+    // `\leftskip=\@flushglue`（0pt plus 1fil）永不拉伸，居中/flushleft 全失效。
     for c in children {
         if let Node::Glue {
-            name: None,
             stretch,
             shrink,
             stretch_order,
@@ -588,7 +591,7 @@ pub fn hpack(children: &[Node], width: i64) -> BoxNode {
     for c in children {
         match c {
             Node::Glue {
-                name: None,
+                name,
                 width: w,
                 stretch,
                 shrink,
@@ -612,7 +615,7 @@ pub fn hpack(children: &[Node], width: i64) -> BoxNode {
                     _ => {}
                 }
                 out.push(Node::Glue {
-                    name: None,
+                    name: name.clone(),
                     width: w,
                     stretch: *stretch,
                     shrink: *shrink,

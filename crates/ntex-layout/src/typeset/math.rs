@@ -529,8 +529,8 @@ impl NodeBuilder {
                             width: w,
                             stretch: st,
                             shrink: sh,
-                            stretch_order: 0,
-                            shrink_order: 0,
+                            stretch_order: g.stretch_order,
+                            shrink_order: g.shrink_order,
                         });
                     }
                 }

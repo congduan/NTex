@@ -140,6 +140,11 @@ pub trait CoreSink {
     fn par_begin(&mut self, _indented: bool) -> Result<()> {
         Ok(())
     }
+    /// `\parshape` 表镜像推送（`[(indent, width)]`，sp；空表 = 无形状）。
+    /// 排版器折行/行盒装配按 tex.web §16742/§17425 取逐行宽与左缩进——
+    /// LaTeX `\list` 的 `\parshape \@ne \@totalleftmargin \linewidth` 是
+    /// quotation/abstract 等 list 环境两侧缩进的唯一机制。
+    fn set_parshape(&mut self, _shape: &[(i64, i64)]) {}
     /// e-TeX `\currentgrouptype`：当前组类型码（bottom=0 ... math_left=16）。
     fn current_group_type(&self) -> i64 {
         0

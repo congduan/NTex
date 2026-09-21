@@ -658,6 +658,7 @@ impl Expander {
         let n = self.scan_number()?; // 可选 `=`
         if n <= 0 {
             self.parshape = Vec::new();
+            self.sink.set_parshape(&self.parshape);
             return Ok(());
         }
         let mut shape = Vec::with_capacity(n as usize);
@@ -667,6 +668,7 @@ impl Expander {
             shape.push((indent, width));
         }
         self.parshape = shape;
+        self.sink.set_parshape(&self.parshape);
         Ok(())
     }
 

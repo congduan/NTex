@@ -492,6 +492,7 @@ fn best_path(
     threshold: i64,
     pass: Pass,
     tracing: bool,
+    shape: &[(i64, i64)],
 ) -> Option<(Vec<usize>, i64, String)> {
     let n = breaks.len();
     // best[i][fc]：断点 i 结束、末行拟合类 fc 的最小总 demerits。
@@ -523,7 +524,15 @@ fn best_path(
         let mut champion: [Option<(i64, usize, FitClass)>; 4] = [None; 4];
         let mut survivors: Vec<usize> = Vec::new();
         for &a in &active {
-            let (bad, kind) = line_badness_kind(&bi, &breaks[a], hsize);
+            // 行宽按行号取（tex.web `line_width` §16742）：行号 = 到达起点 a
+            // 的行数 + 1；`\parshape` 空表时恒为 `\hsize`（行为不变）。
+            let lw = if shape.is_empty() {
+                hsize
+            } else {
+                let ln = best_lines[a].iter().copied().min().unwrap_or(0) as usize + 1;
+                parshape_line_width(shape, hsize, ln)
+            };
+            let (bad, kind) = line_badness_kind(&bi, &breaks[a], lw);
             let forced_drop = bi.is_forced && bad as i64 > threshold;
             if bad > INF_BAD || forced_drop {
                 if is_final && champion.iter().all(|c| c.is_none()) && active.len() == 1 {
@@ -634,12 +643,18 @@ fn best_path(
 /// active 集空、内容断不开）；失败且 `pretolerance >= 0` 时第二遍用
 /// `tolerance`（tex.web `\pretolerance=-1` 跳过第一遍直接第二遍）。
 /// `tracing` 时返回 `\tracingparagraphs` 追踪文本（第二返回值）。
+///
+/// `shape` = `\parshape` 表 `[(indent, width); n]`（空表 = 无形状，逐行 `\hsize`）。
+/// tex.web §16706：行号 n ≤ n-1 取第 n 项，超出取**末项**（LaTeX `\list` 的
+/// `\parshape \@ne \@totalleftmargin \linewidth` 赖此让全部行都缩进收窄——
+/// quotation/abstract 正文缩进的唯一机制）。
 pub fn knuth_plass(
     hlist: &[Node],
     hsize: i64,
     tolerance: i64,
     pretolerance: i64,
     tracing: bool,
+    shape: &[(i64, i64)],
 ) -> (Vec<(usize, usize)>, String) {
     if hlist.is_empty() {
         return (Vec::new(), String::new());
@@ -648,7 +663,7 @@ pub fn knuth_plass(
     let mut trace = String::new();
     // 第一遍：\pretolerance（>=0 时）。成功即用；失败走第二遍 \tolerance。
     if pretolerance >= 0 {
-        match best_path(&breaks, hsize, pretolerance, Pass::First, tracing) {
+        match best_path(&breaks, hsize, pretolerance, Pass::First, tracing, shape) {
             Some((path, _total, t)) => {
                 trace.push_str(&t);
                 return (path_to_lines(&breaks, &path), trace);
@@ -662,10 +677,32 @@ pub fn knuth_plass(
         }
     }
     // 第二遍：\tolerance（tex.web second_pass；\pretolerance=-1 时唯一一遍）
-    let (path, _total, t) =
-        best_path(&breaks, hsize, tolerance, Pass::Second, tracing).expect("第二遍必有路径");
+    let (path, _total, t) = best_path(&breaks, hsize, tolerance, Pass::Second, tracing, shape)
+        .expect("第二遍必有路径");
     trace.push_str(&t);
     (path_to_lines(&breaks, &path), trace)
+}
+
+/// 第 `line_no` 行（1 基）的目标宽度（tex.web `line_width`，§16742-16747）。
+pub fn parshape_line_width(shape: &[(i64, i64)], hsize: i64, line_no: usize) -> i64 {
+    if shape.is_empty() {
+        hsize
+    } else if line_no > shape.len() {
+        shape[shape.len() - 1].1
+    } else {
+        shape[line_no - 1].1
+    }
+}
+
+/// 第 `line_no` 行（1 基）的左缩进（tex.web `cur_indent`，§17425-17436）。
+pub fn parshape_line_indent(shape: &[(i64, i64)], line_no: usize) -> i64 {
+    if shape.is_empty() {
+        0
+    } else if line_no > shape.len() {
+        shape[shape.len() - 1].0
+    } else {
+        shape[line_no - 1].0
+    }
 }
 
 fn path_to_lines(breaks: &[BreakSpec], path: &[usize]) -> Vec<(usize, usize)> {
@@ -826,7 +863,7 @@ mod tests {
     #[test]
     fn knuth_plass_single_line_when_fits() {
         let hlist = words(&[10, 10, 10]);
-        assert_eq!(knuth_plass(&hlist, 100, 200, 100, false).0, vec![(0, 5)]);
+        assert_eq!(knuth_plass(&hlist, 100, 200, 100, false, &[]).0, vec![(0, 5)]);
     }
 
     #[test]
@@ -834,7 +871,7 @@ mod tests {
         // 三词 a b c：hsize 25 下 "a b" | "c" 为最优（断点胶水不入行——
         // 行 "a" 无内部胶水、badness 10000，故两词行更优）
         let hlist = words(&[10, 10, 10]);
-        let lines = knuth_plass(&hlist, 25, 200, 100, false).0;
+        let lines = knuth_plass(&hlist, 25, 200, 100, false, &[]).0;
         assert_eq!(lines, vec![(0, 3), (4, 5)]);
     }
 
@@ -848,21 +885,21 @@ mod tests {
             glue(3, 0, 0),
             char_of(30),
         ];
-        let lines = knuth_plass(&hlist, 10_000, 200, 100, false).0;
+        let lines = knuth_plass(&hlist, 10_000, 200, 100, false, &[]).0;
         // 强制断点（index 2）之前定案：第一行 [0, 2)；之后继续
         assert_eq!(lines, vec![(0, 2), (3, 6)]);
     }
 
     #[test]
     fn knuth_plass_empty_input() {
-        assert!(knuth_plass(&[], 100, 200, 100, false).0.is_empty());
+        assert!(knuth_plass(&[], 100, 200, 100, false, &[]).0.is_empty());
     }
 
     #[test]
     fn knuth_plass_artificial_overfull_chain() {
         // 全部断点处行超宽（shrink 不足，b=inf_bad+1）：按 tex.web artificial
         // demerits 逐断点成行——不再退化为"恢复末起点"的单条巨行。
-        let lines = knuth_plass(&words(&[10, 10, 10, 10]), 12, 200, 100, false).0;
+        let lines = knuth_plass(&words(&[10, 10, 10, 10]), 12, 200, 100, false, &[]).0;
         // 可行处照常成行（[0,2] 收缩可容纳），不可行处 artificial 兜底推进——
         // 只断言不再退化为单条巨行（旧行为 = 1 行）且词序保持。
         assert_eq!(lines.len(), 3);
@@ -872,7 +909,7 @@ mod tests {
     #[test]
     fn knuth_plass_no_breaks_single_word() {
         assert_eq!(
-            knuth_plass(&[char_of(10), char_of(10)], 5, 200, 100, false).0,
+            knuth_plass(&[char_of(10), char_of(10)], 5, 200, 100, false, &[]).0,
             vec![(0, 2)]
         );
     }
@@ -882,7 +919,7 @@ mod tests {
         // 预处理不裁剪尾部（裁剪在排版器 close_paragraph）
         let mut hlist = words(&[10, 10]);
         hlist.push(glue(3, 0, 0));
-        let lines = knuth_plass(&hlist, 100, 200, 100, false).0;
+        let lines = knuth_plass(&hlist, 100, 200, 100, false, &[]).0;
         assert_eq!(lines, vec![(0, 4)]);
     }
 
@@ -893,7 +930,7 @@ mod tests {
         // vs 2 行（各 0 badness → demerits 100+100=200）→ 1 行胜（TeX 精确 demerits）
         let mut hlist = words(&[10, 10]);
         hlist.push(fil_glue());
-        let lines = knuth_plass(&hlist, 22, 200, 100, false).0;
+        let lines = knuth_plass(&hlist, 22, 200, 100, false, &[]).0;
         assert_eq!(lines, vec![(0, 4)]);
     }
 
@@ -901,7 +938,7 @@ mod tests {
     fn fil_glue_single_line_when_fits() {
         let mut hlist = words(&[10, 10]);
         hlist.push(fil_glue());
-        assert_eq!(knuth_plass(&hlist, 100, 200, 100, false).0, vec![(0, 4)]);
+        assert_eq!(knuth_plass(&hlist, 100, 200, 100, false, &[]).0, vec![(0, 4)]);
     }
 
     // ---------- M4-6 断字：discretionary 断点 ----------
@@ -925,7 +962,7 @@ mod tests {
         hlist.push(glue(3, 1000, 14)); // 词间
         hlist.push(char_of(10)); // n
         hlist.push(fil_glue());
-        let lines = knuth_plass(&hlist, 60, 200, 100, false).0;
+        let lines = knuth_plass(&hlist, 60, 200, 100, false, &[]).0;
         // 行1 = [0..4]（m 空格 a b）+ discretionary pre；行2 = [5..14]（c..h 空格 n fil）
         assert_eq!(lines, vec![(0, 4), (5, 14)]);
     }
@@ -936,7 +973,7 @@ mod tests {
         let mut hlist: Vec<Node> =
             vec![char_of(10), char_of(10), disc(5), char_of(10), char_of(10)];
         hlist.push(fil_glue());
-        assert_eq!(knuth_plass(&hlist, 100, 200, 100, false).0, vec![(0, 6)]);
+        assert_eq!(knuth_plass(&hlist, 100, 200, 100, false, &[]).0, vec![(0, 6)]);
     }
 
     // ---------- M9 中文刀 5：汉字字间断点 ----------
@@ -1082,7 +1119,7 @@ mod tests {
         let mut hlist = insert_cjk_glue(&hlist);
         hlist.push(fil_glue());
         assert_eq!(hlist.len(), 12, "字间胶水应插 5 处：{hlist:?}");
-        let lines = knuth_plass(&hlist, hsize, 200, 100, false).0;
+        let lines = knuth_plass(&hlist, hsize, 200, 100, false, &[]).0;
         // 首行到第 4 字后的胶水（下标 7，其前累计宽 4W = hsize，badness 0）；
         // 取第 5 字会到 5W > hsize，而可收缩量只有 3×0.05pt 远不够 → 不可取。
         // 次行从该胶水后的字 8 起，到末尾强制断点（fil 前）

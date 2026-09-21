@@ -2301,6 +2301,11 @@ impl Expander {
     /// 输入（`back_input` 臂）；`\indent`/`\noindent`（`start_par` 臂）开段并
     /// **直接消费**，不回放（否则水平模式 `\indent` 再落一个缩进盒）。
     /// `\let` 别名经 eqtb 槽判定，同样命中。
+    ///
+    /// `vmode+un_hbox` 臂（tex.web L21104-21111 `back_input; new_graf(true)`）：
+    /// `\leavevmode`（=`\unhbox\voidb@x`）赖此进入水平模式——LaTeX `\@tabular`
+    /// 的 `\leavevmode\hbox\bgroup`、`\@maketitle` 作者块的 tabular 居中都踩
+    /// 这里；此前垂直模式 `\unhbox` 直接拆包，盒落进竖列表 → 永不居中。
     fn par_trigger_kind(&self, tok: Token) -> Option<(bool, bool)> {
         match tok.kind() {
             TokenKind::Char => match tok.catcode() {
@@ -2312,6 +2317,9 @@ impl Expander {
                 match self.eqtb.slot(csid) {
                     EqSlot::Primitive(Primitive::Indent) => Some((true, false)),
                     EqSlot::Primitive(Primitive::NoIndent) => Some((false, false)),
+                    EqSlot::Primitive(Primitive::UnHBox) | EqSlot::Primitive(Primitive::UnHCopy) => {
+                        Some((true, true))
+                    }
                     _ => None,
                 }
             }

@@ -26,11 +26,12 @@ impl NodeBuilder {
         // 末行无限拉伸；`\parfillskip=0pt` 时末行保持自然宽度）。
         let pf = self.params.parfillskip;
         children.push(Node::Glue {
-            name: None,            width: pf.width,
+            name: None,
+            width: pf.width,
             stretch: pf.stretch,
             shrink: pf.shrink,
-            stretch_order: if pf.stretch != 0 { GLUE_ORDER_FIL } else { 0 },
-            shrink_order: 0,
+            stretch_order: pf.stretch_order,
+            shrink_order: pf.shrink_order,
         });
         // \tracingparagraphs（misc 29）：折行追踪输出到转录（tex.web @firstpass 等）
         let tracing = self.params.misc[29] > 0;
@@ -40,6 +41,7 @@ impl NodeBuilder {
             self.params.tolerance,
             self.params.misc[13], // \pretolerance（-1 时跳过第一遍）
             tracing,
+            &self.parshape,
         );
         if tracing && !trace.is_empty() {
             let _ = self.write16(trace);
@@ -63,7 +65,9 @@ impl NodeBuilder {
             // discretionary 物化：行首补前一断点的 post、行内用 replace、行尾断点补 pre
             let mut line: Vec<Node> = Vec::new();
             // 行首 `\leftskip`（tex.web：每行行首 leftskip glue——参考行结构
-            // `.\glue(\leftskip) 3.0 ...`；此前行盒只有内容缺左右 skip）
+            // `.\glue(\leftskip) 3.0 ...`；此前行盒只有内容缺左右 skip）。
+            // 无穷阶必须照抄参数（`\centering` 的 `\leftskip=\@flushglue`
+            // = 0pt plus 1fil：阶被压成普通阶会让 fil 拉伸失效）。
             let ls = self.params.leftskip;
             if ls.width != 0 || ls.stretch != 0 || ls.shrink != 0 {
                 line.push(Node::Glue {
@@ -71,8 +75,8 @@ impl NodeBuilder {
                     width: ls.width,
                     stretch: ls.stretch,
                     shrink: ls.shrink,
-                    stretch_order: 0,
-                    shrink_order: 0,
+                    stretch_order: ls.stretch_order,
+                    shrink_order: ls.shrink_order,
                 });
             }
             if s > 0 {
@@ -98,19 +102,23 @@ impl NodeBuilder {
                     width: rs.width,
                     stretch: rs.stretch,
                     shrink: rs.shrink,
-                    stretch_order: 0,
-                    shrink_order: 0,
+                    stretch_order: rs.stretch_order,
+                    shrink_order: rs.shrink_order,
                 });
             }
+            // 行宽/左缩进按行号取（tex.web §17425-17436：`\parshape` 第 n 项，
+            // 超出取末项；无形状 = `\hsize`/0）。缩进烘焙进行盒 `shift_amount`。
+            let cur_width = parshape_line_width(&self.parshape, self.params.hsize, line_no + 1);
+            let cur_indent = parshape_line_indent(&self.parshape, line_no + 1);
             last_natural = Some(hbox_dimensions(&line).width);
-            // 折行警告（tex.web §922-930）：行自然宽超 \hsize 且**收缩不足**才 Overfull
+            // 折行警告（tex.web §922-930）：行自然宽超行宽且**收缩不足**才 Overfull
             // ——tex.web 的 overfull 判定是行 badness 达 inf_bad（收缩/拉伸无法容纳），
-            // 而非"自然宽 > \hsize"：glue 收缩能把超宽压回 \hsize 时（badness 有限）
+            // 而非"自然宽 > 行宽"：glue 收缩能把超宽压回行宽时（badness 有限）
             // 不算 overfull。故此处需比较超宽量与该行 glue 总可收缩量。
             // `(<超宽> too wide) in paragraph at lines <a>--<b>`（\par 行号；
             // 段落开始行暂用 \par 行——单行段落精确，跨行段落待 D 组行号追踪）。
             let natural = hbox_dimensions(&line).width;
-            if natural > self.params.hsize {
+            if natural > cur_width {
                 // 行总可收缩量（普通阶 shrink_order==0；高阶 shrink 不参与有限行）
                 let mut shrinkable = 0i64;
                 for node in &line {
@@ -123,7 +131,7 @@ impl NodeBuilder {
                         shrinkable += *shrink;
                     }
                 }
-                let over = natural - self.params.hsize;
+                let over = natural - cur_width;
                 if over > shrinkable {
                     let _ = self.write16(format!(
                         "Overfull \\hbox ({} too wide) in paragraph at lines {}--{}\n",
@@ -133,8 +141,10 @@ impl NodeBuilder {
                     ));
                 }
             }
-            // 行盒 = `\hbox to \hsize`（tex.web line_break：恰好 hsize 宽，胶水拉伸/收缩）
-            self.push_box(Node::Box(hpack(&line, self.params.hsize)));
+            // 行盒 = `\hbox to <行宽>`（tex.web line_break：恰好行宽，胶水拉伸/收缩）
+            let mut lb = hpack(&line, cur_width);
+            lb.shift = cur_indent;
+            self.push_box(Node::Box(lb));
         }
         last_natural
     }

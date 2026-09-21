@@ -32,7 +32,7 @@ use ntex_core::{
 use ntex_font::{FontMetrics, LigKern};
 
 use crate::hyphen::PatternTrie;
-use crate::linebreak::knuth_plass;
+use crate::linebreak::{knuth_plass, parshape_line_indent, parshape_line_width};
 use crate::node::{
     hbox_dimensions, hpack, split_vbox, vbox_dimensions, vpack, BoxKind, BoxNode, FontId,
     LeadersKind, Node, GLUE_ORDER_FIL, GLUE_ORDER_FILL,
@@ -624,6 +624,13 @@ struct NodeBuilder {
     /// interline/club/widow/displaywidow）。折行时行间惩罚按索引取值，超出用末值。
     penalty_arrays: [Vec<i64>; 4],
 
+    /// `\parshape` 镜像（随 `set_parshape` 推送；`[(indent, width)]`，sp）。
+    /// 折行按行号取宽、行盒 `shift` 取缩进（tex.web §16742/§17425）；
+    /// LaTeX `\list` 的两侧缩进赖此。组作用域随 `parshape_stack` 恢复。
+    parshape: Vec<(i64, i64)>,
+    /// 组开始时的 `\parshape` 快照（group_end 恢复；`\parshape` 是组局部量）。
+    parshape_stack: Vec<Vec<(i64, i64)>>,
+
     /// 组开始时的参数快照（group_end 恢复）。
     param_stack: Vec<Params>,
 
@@ -965,6 +972,8 @@ impl NodeBuilder {
             groups: Vec::new(),
             params: Params::default(),
             penalty_arrays: Default::default(),
+            parshape: Vec::new(),
+            parshape_stack: Vec::new(),
             param_stack: Vec::new(),
             sfcodes,
             font_stack: Vec::new(),

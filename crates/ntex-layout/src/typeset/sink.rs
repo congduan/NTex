@@ -164,6 +164,9 @@ impl CoreSink for NodeBuilder {
             ));
         }
         self.param_stack.push(self.params);
+        // `\parshape` 组作用域（tex.web：par_shape_ptr 属组局部量）——LaTeX
+        // `\list` 在环境组内设形状，`\end{quotation}` 后必须还原，否则缩进泄漏
+        self.parshape_stack.push(self.parshape.clone());
         // 字体选择组作用域：组开始保存当前字体，组结束恢复
         self.font_stack.push(self.current_font);
         if let Some(k) = box_kind {
@@ -263,6 +266,10 @@ impl CoreSink for NodeBuilder {
         // 先恢复参数镜像（与 VM 的 save_stack 恢复对齐），随后的缩进/interline 用外层值
         if let Some(prev) = self.param_stack.pop() {
             self.params = prev;
+        }
+        // `\parshape` 随组恢复（组开始时快照；与参数镜像同序）
+        if let Some(p) = self.parshape_stack.pop() {
+            self.parshape = p;
         }
         // 字体选择组作用域：组结束恢复进入时的字体（tex.web：cur_font 随组保存）
         if let Some(f) = self.font_stack.pop() {
@@ -734,6 +741,10 @@ impl CoreSink for NodeBuilder {
     /// Expander 据此先开段、注入 `\everypar`，再回放触发 token。
     fn par_begin_imminent(&self) -> bool {
         self.mode() == Mode::Vertical && !self.math_state.after_display
+    }
+    /// `\parshape` 镜像推送（`\list`/quotation 两侧缩进的唯一机制）。
+    fn set_parshape(&mut self, shape: &[(i64, i64)]) {
+        self.parshape = shape.to_vec();
     }
     /// 开段（tex.web `new_graf`）：`\parskip`（空页上被页面构建器丢弃）→
     /// 新水平列表 → spacefactor 复位 → 缩进盒。
