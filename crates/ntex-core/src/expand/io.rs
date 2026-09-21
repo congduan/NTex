@@ -593,6 +593,19 @@ impl Expander {
     }
 
     /// 扫描 `<general text>`：到 `\relax`（无条件）或外层组结束（吸收 `}`）为止。
+    /// token 是否可展开（tex.web `get_x_token` 的 `cur_cmd>=call → expand` 判据）：
+    /// 宏、可展开原语、active 字符（其槽值通常是宏）。与 `more_name` 展开臂同口径。
+    fn is_expandable_token(&self, t: &Token) -> bool {
+        let Some(csid) = t.csid() else {
+            return false;
+        };
+        match self.eqtb.slot(csid) {
+            EqSlot::Macro(_) => true,
+            EqSlot::Primitive(p) => p.is_expandable(),
+            _ => false,
+        }
+    }
+
     fn scan_general_text(&mut self) -> Result<Vec<Token>> {
         self.skip_spaces()?;
         let mut toks = Vec::new();
@@ -638,6 +651,29 @@ impl Expander {
                         })
                     {
                         break;
+                    }
+                    // tex.web scan_left_brace（§1284）循环顶是 **get_x_token**：
+                    // 必选 `{` 之前的 `<filler>` 里可展开项就地展开、不进文本。
+                    // 缺此臂时 `\uppercase\expandafter{\utfviii@tmp}` 把
+                    // `\expandafter` 当文本收下 → `\UTFviii@tmp` 在施表**之后**
+                    // 才展开 → `\protected\edef~{…}` 定的是**未移码的** `~`
+                    // 槽，utf8.def 逐字节循环全军覆没、最后一轮
+                    // `\UTFviii@invalid@err` 涂在 `~` 上 ⇒ LaTeX 正文 `A~B`
+                    // 排出字面 `~` 字形（transformer-standalone 14 处；pdfTeX
+                    // GT 同页 0 处）。depth==1（平衡组内）一律数据，不动。
+                    if depth == 0 && self.is_expandable_token(&t) {
+                        self.trace_suppress += 1;
+                        let mut expansion = Vec::new();
+                        let r = self.expand_once((t, false), &mut expansion);
+                        self.trace_suppress -= 1;
+                        r?;
+                        if !expansion.is_empty() {
+                            self.push_frame(InputFrame::TokenList {
+                                items: Arc::from(expansion),
+                                pos: 0,
+                            });
+                        }
+                        continue;
                     }
                     toks.push(t);
                 }
