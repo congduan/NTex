@@ -615,7 +615,7 @@ pub fn hpack(children: &[Node], width: i64) -> BoxNode {
                     _ => {}
                 }
                 out.push(Node::Glue {
-                    name: name.clone(),
+                    name: *name,
                     width: w,
                     stretch: *stretch,
                     shrink: *shrink,

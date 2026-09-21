@@ -180,11 +180,24 @@ impl PageBuilder {
             // 语义丢弃持有盒，防空空白页不变量不变。
             if !contrib.is_empty() {
                 if let Some(held) = self.held_zero_empty.take() {
-                    if let Some(Node::Penalty {
-                        penalty: -10003,
-                    }) = contrib.first()
-                    {
-                        self.keep_zero_empty = true;
+                    let keep = match contrib.first() {
+                        Some(Node::Penalty { penalty: -10003 }) => {
+                            self.keep_zero_empty = true;
+                            true
+                        }
+                        // tex.web 空盒入页使页非空：后续**非惩罚**材料（如
+                        // `\@maketitle` 的 `\null\vskip 2em` 顶部留空）在真 TeX
+                        // 里胶水照常保留——盒不空则页顶胶水不丢。此处放行入页，
+                        // 让顶部 `\vskip` 落在盒后（GT：标题基线低 22pt+topskip）。
+                        // 其余惩罚（`\clearpage` 尾 -\@Mi、`\@emptycol` -\@M）
+                        // 仍按第二十二刀语义丢弃持有盒，防空空白页不变量不变。
+                        Some(n) if !matches!(n, Node::Penalty { .. }) => {
+                            self.keep_zero_empty = true;
+                            true
+                        }
+                        _ => false,
+                    };
+                    if keep {
                         contrib.insert(0, held);
                     }
                 }

@@ -24,13 +24,21 @@ impl NodeBuilder {
         }
         // 段落末尾：裁剪尾部可丢弃节点 + 追加 `\parfillskip`（默认 0pt plus 1fil，
         // 末行无限拉伸；`\parfillskip=0pt` 时末行保持自然宽度）。
+        // 注意 Params 快照的默认值是 `Glue::new(0,1,0)`——**fil 阶隐含在布局侧**
+        // （param.rs:412「布局侧隐含 fil 阶」契约）：stretch≠0 且未显式带高阶时
+        // 按 fil 算，显式解析出的高阶（`\parfillskip=0pt plus 2fill`）照抄。
         let pf = self.params.parfillskip;
+        let pf_stretch_order = if pf.stretch != 0 && pf.stretch_order == 0 {
+            GLUE_ORDER_FIL
+        } else {
+            pf.stretch_order
+        };
         children.push(Node::Glue {
             name: None,
             width: pf.width,
             stretch: pf.stretch,
             shrink: pf.shrink,
-            stretch_order: pf.stretch_order,
+            stretch_order: pf_stretch_order,
             shrink_order: pf.shrink_order,
         });
         // \tracingparagraphs（misc 29）：折行追踪输出到转录（tex.web @firstpass 等）

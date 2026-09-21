@@ -825,7 +825,8 @@ mod tests {
 
     fn dp_min(hlist: &[Node], hsize: i64, tolerance: i64) -> i64 {
         let breaks = preprocess(hlist);
-        let (_, total, _) = best_path(&breaks, hsize, tolerance, Pass::Second, false).unwrap();
+        let (_, total, _) =
+            best_path(&breaks, hsize, tolerance, Pass::Second, false, &[]).unwrap();
         total
     }
 
@@ -1124,5 +1125,30 @@ mod tests {
         // 取第 5 字会到 5W > hsize，而可收缩量只有 3×0.05pt 远不够 → 不可取。
         // 次行从该胶水后的字 8 起，到末尾强制断点（fil 前）
         assert_eq!(lines, vec![(0, 7), (8, 12)], "应折成两行：{lines:?}");
+    }
+
+    /// `\parshape`（tex.web line_break §16742-16747）：行宽/左缩进按行号取形状项，
+    /// 超出形状行数用**末项**（LaTeX `\list` 的两侧缩进靠它，非首行缩进）。
+    #[test]
+    fn parshape_width_and_indent_by_line() {
+        const W: i64 = 720_896; // 11pt 汉字宽
+        let hsize = 4 * W;
+        // 4 个汉字 + 字间胶水 + fil：无形状时 4W 一行装下
+        let hlist: Vec<Node> = (0..4).map(|i| han(0x4E2D + i, W)).collect();
+        let mut hlist = insert_cjk_glue(&hlist);
+        hlist.push(fil_glue());
+        let no_shape = knuth_plass(&hlist, hsize, 200, 100, false, &[]).0;
+        assert_eq!(no_shape, vec![(0, hlist.len())], "无形状一行装下：{no_shape:?}");
+        // 形状一行 = 2W：4 字折成两行，每行 2 字
+        let shape = [(W, 2 * W)];
+        let lines = knuth_plass(&hlist, hsize, 200, 100, false, &shape).0;
+        assert_eq!(lines, vec![(0, 3), (4, hlist.len())], "形状收窄行宽：{lines:?}");
+        // 行宽/缩进按行号取形状项；超出形状行数用末项；无形状回落 hsize/0
+        assert_eq!(parshape_line_width(&shape, hsize, 1), 2 * W);
+        assert_eq!(parshape_line_width(&shape, hsize, 9), 2 * W, "超出用末项");
+        assert_eq!(parshape_line_width(&[], hsize, 3), hsize, "无形状 = hsize");
+        assert_eq!(parshape_line_indent(&shape, 1), W);
+        assert_eq!(parshape_line_indent(&shape, 9), W, "超出用末项缩进");
+        assert_eq!(parshape_line_indent(&[], 1), 0);
     }
 }
