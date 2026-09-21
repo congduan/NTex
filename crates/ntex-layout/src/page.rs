@@ -180,20 +180,12 @@ impl PageBuilder {
             // 语义丢弃持有盒，防空空白页不变量不变。
             if !contrib.is_empty() {
                 if let Some(held) = self.held_zero_empty.take() {
-                    if std::env::var("NTEX_DEBUG_PB_HOLD").is_ok() {
-                        eprintln!(
-                            "[pb-hold] adjudicate next={:?}",
-                            contrib.first().map(|n| std::mem::discriminant(n))
-                        );
-                    }
-                    match contrib.first() {
-                        Some(Node::Penalty {
-                            penalty: -10003,
-                        }) => {
-                            self.keep_zero_empty = true;
-                            contrib.insert(0, held);
-                        }
-                        _ => {}
+                    if let Some(Node::Penalty {
+                        penalty: -10003,
+                    }) = contrib.first()
+                    {
+                        self.keep_zero_empty = true;
+                        contrib.insert(0, held);
                     }
                 }
             }
@@ -234,9 +226,6 @@ impl PageBuilder {
                 // M5 防空页死循环不变量不变。
                 if !self.has_box && b.is_zero_empty() && !std::mem::take(&mut self.keep_zero_empty)
                 {
-                    if std::env::var("NTEX_DEBUG_PB_HOLD").is_ok() {
-                        eprintln!("[pb-hold] hold zero-empty box on empty page");
-                    }
                     self.held_zero_empty = Some(Node::Box(b));
                     contrib.remove(0);
                     return Outcome::Continue;
@@ -371,9 +360,6 @@ impl PageBuilder {
             }
             Node::Penalty { penalty } => {
                 if !self.has_box {
-                    if std::env::var("NTEX_DEBUG_PB_HOLD").is_ok() {
-                        eprintln!("[pb-hold] penalty {} dropped on empty page", penalty);
-                    }
                     contrib.remove(0);
                     return Outcome::Continue;
                 }
