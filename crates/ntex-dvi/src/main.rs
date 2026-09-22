@@ -222,6 +222,16 @@ fn main() -> ExitCode {
                             // 与上面的 \pdfoutput 种子同理在 fmt 载入后补：排版入口
                             // 在用户源前先跑内嵌 hyphen.tex（US patterns + 例外词表）。
                             ts.set_preload_hyphen(true);
+                            // 表格宏包层（booktabs/multirow 最小语义）暂不接通：
+                            // pC1 探针显示 \toprule/\midrule/\specialrule/\multirow
+                            // 的 \noalign 同构版能进，但「表格最后一行 \\ 之后的
+                            // 行界」上 \bottomrule 的 \noalign 前缀仍把行界 \cr
+                            // 判定带偏（Misplaced \noalign / Misplaced \crcr），
+                            // 空操作版又在 \specialrule 后一行触发 Too many }'s
+                            // ——对齐「行界处先展开后判 noalign」的时序还差一站，
+                            // 属 align 状态机活，见 resources/booktabs-compat.tex
+                            // 头注释。接通前先不预载，避免带病改版面。
+                            // ts.set_preload_compat(true);
                         }
                         Err(e) => {
                             eprintln!("[auto] 解析 {} 失败：{e}（回退 plain）", fmt_path.display());

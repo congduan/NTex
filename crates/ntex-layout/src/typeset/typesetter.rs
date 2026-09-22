@@ -271,6 +271,13 @@ pub struct Typesetter {
     /// 默认关：INITEX/TRIP 语义零影响（真 TRIP 断字表为空，自动补表会改
     /// 断行）。与 [`Self::preload_plain`] 互斥使用（双开会把表登记两遍）。
     preload_hyphen: bool,
+    /// 表格宏包层预载开关（LaTeX 路径）：排版入口在用户源前先跑内嵌
+    /// [`plain_format::BOOKTABS_COMPAT_TEX`]（booktabs/multirow 最小语义）。
+    /// 给**不 \usepackage 却使用 \toprule/\multirow 等宏名的源**一个符合源码
+    /// 意图的版面（真 pdflatex 对这类源同样报 Undefined control sequence，
+    /// 表线缺失、宏名参数漏成文字）。\providecommand 定义，真宏包载入仍以
+    /// 包版为准；plain/INITEX/TRIP 路径不受影响（默认关）。
+    preload_compat: bool,
     /// 内嵌格式 VFS 兜底层是否已包（[`Self::use_embedded_format`] 幂等标记）。
     embedded_vfs_installed: bool,
     /// UTF-8 输入默认开关（M9 中文刀 3）：开则排版入口在用户源之前把
@@ -326,6 +333,7 @@ impl Typesetter {
             last_current_font: 0,
             preload_plain: false,
             preload_hyphen: false,
+            preload_compat: false,
             utf8_input_default: false,
             fallback_font: None,
             embedded_vfs_installed: false,
@@ -410,6 +418,14 @@ impl Typesetter {
             self.use_embedded_format();
         }
         self.preload_hyphen = on;
+    }
+
+    /// 表格宏包层预载开关（LaTeX 路径）：见字段 [`Self::preload_compat`]。
+    pub fn set_preload_compat(&mut self, on: bool) {
+        if on {
+            self.use_embedded_format();
+        }
+        self.preload_compat = on;
     }
 
     /// UTF-8 输入默认开关（M9 中文刀 3）：开则每次排版在用户源之前把
@@ -521,6 +537,7 @@ impl Typesetter {
             last_current_font: 0,
             preload_plain: false,
             preload_hyphen: false,
+            preload_compat: false,
             utf8_input_default: false,
             fallback_font: None,
             embedded_vfs_installed: false,
@@ -542,6 +559,7 @@ impl Typesetter {
             last_current_font: 0,
             preload_plain: false,
             preload_hyphen: false,
+            preload_compat: false,
             utf8_input_default: false,
             fallback_font: None,
             embedded_vfs_installed: false,
@@ -555,6 +573,7 @@ impl Typesetter {
         self.apply_utf8_input_default();
         self.run_plain_preload()?;
         self.run_hyphen_preload()?;
+        self.run_compat_preload()?;
         self.expander.run_source(text)?;
         self.finish().map(|out| {
             self.shipped = out.shipped;
@@ -569,6 +588,7 @@ impl Typesetter {
         self.apply_utf8_input_default();
         self.run_plain_preload()?;
         self.run_hyphen_preload()?;
+        self.run_compat_preload()?;
         self.expander.feed_source(bytes);
         self.expander.run()?;
         self.finish().map(|out| {
@@ -596,6 +616,14 @@ impl Typesetter {
             return Ok(());
         }
         self.expander.run_source(plain_format::HYPHEN_TEX)
+    }
+
+    /// 表格宏包层预载（[`Self::set_preload_compat`]）：开关开着才跑。
+    fn run_compat_preload(&mut self) -> Result<()> {
+        if !self.preload_compat {
+            return Ok(());
+        }
+        self.expander.run_source(plain_format::BOOKTABS_COMPAT_TEX)
     }
 
     /// 安装 NodeBuilder 并同步参数镜像（`.fmt` 加载的 \\\\vsize/\\\\tracingpages 等
@@ -662,6 +690,7 @@ impl Typesetter {
         self.apply_utf8_input_default();
         self.run_plain_preload()?;
         self.run_hyphen_preload()?;
+        self.run_compat_preload()?;
         self.expander.run_source(text)?;
         let out = self.finish()?;
         self.shipped = out.shipped.clone();

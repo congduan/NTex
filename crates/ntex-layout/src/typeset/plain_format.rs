@@ -28,10 +28,13 @@ pub const PLAIN_TEX: &str = include_str!("../../resources/plain.tex");
 /// 默认断字模式表 + 例外词表（plain.tex:1222 `\input hyphen`）。
 pub const HYPHEN_TEX: &str = include_str!("../../resources/hyphen.tex");
 
+/// booktabs + multirow 兼容层（最小语义；资源头注释有逐条语义与动机）。
+pub const BOOKTABS_COMPAT_TEX: &str = include_str!("../../resources/booktabs-compat.tex");
+
 /// 内嵌表：`\input` 搜索的最后一层兜底（键 = 带 `.tex` 后缀的规范名；
 /// 引擎 `\input plain` 先试裸名再补 `.tex`（`expand/io.rs` exec_input），
 /// 故只需登记 `.tex` 形）。
-const BUNDLED: &[(&str, &str)] = &[("plain.tex", PLAIN_TEX), ("hyphen.tex", HYPHEN_TEX)];
+const BUNDLED: &[(&str, &str)] = &[("plain.tex", PLAIN_TEX), ("hyphen.tex", HYPHEN_TEX), ("booktabs-compat.tex", BOOKTABS_COMPAT_TEX)];
 
 /// 内嵌格式文件 VFS 兜底层：读侧先问 inner（本地文件/宿主 VFS 命中优先，
 /// 与 G1 搜索路径「原样优先」同口径），全落空再查内嵌表。

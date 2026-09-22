@@ -1,0 +1,66 @@
+%% booktabs + multirow 兼容层（最小语义）。
+%%
+%% 动机：transformer 论文等源在**不载入** booktabs/multirow 的情况下使用
+%% \toprule/\midrule/\bottomrule/\cmidrule/\specialrule/\multirow（真
+%% pdflatex 与本引擎同样报 Undefined control sequence），表格线全部缺失、
+%% 宏名后的参数以文字形态漏进版面（GT 参考件 Table 1 的「2*Model」
+%% 「1pt-1pt0pt」即该恢复路径的产物）。此处在格式预载层给出一组**最小
+%% 语义**定义，让这类源得到其源码意图的版面。
+%%
+%% 语义对齐 booktabs.sty（~/.TinyTeX/texmf-dist/tex/latex/booktabs）：
+%%   \toprule    = 上方 \abovetopsep + 0.08em 重线 + 下方 \belowrulesep
+%%   \midrule    = \aboverulesep + 0.05em 细线 + \belowrulesep
+%%   \bottomrule = \aboverulesep + 0.08em 重线 + \belowbottomsep(0pt)
+%%   \specialrule{w}{a}{b} = \vskip a + 高 w 的线 + \vskip b
+%%   \cmidrule{n-m} = 只取上下 sep（局部横线本体需 \multispan+\leaders\hrule
+%%     跨列放线，本引擎对齐 raw 扫描位还不吃宏展开出的 \omit/\span，见
+%%     \BT@cmidruleb 处注释；[宽度]/(kern) 参数按 booktabs 语法吃掉）
+%%   \multirow{n}{w}{text} = 行跨盒：把 text 升到 n 行跨度的竖直中点
+%%     （宽度参数 `*`/自然宽与 w 均按自然宽处理）
+%% 全部 \providecommand：真 booktabs.sty / multirow.sty 载入时以包版为准。
+%% 行间竖料结构与内核 \hline（\noalign{\ifnum0=`}\fi\hrule ...）同构。
+
+\makeatletter
+\newdimen\heavyrulewidth \heavyrulewidth=.08em
+\newdimen\lightrulewidth \lightrulewidth=.05em
+\newdimen\cmidrulewidth  \cmidrulewidth=.03em
+\newdimen\belowrulesep   \belowrulesep=.65ex
+\newdimen\belowbottomsep \belowbottomsep=0pt
+\newdimen\aboverulesep   \aboverulesep=.4ex
+\newdimen\abovetopsep    \abovetopsep=0pt
+\newdimen\defaultaddspace \defaultaddspace=.5em
+
+\providecommand{\toprule}{\noalign{\ifnum0=`}\fi
+  \vskip\abovetopsep\hrule height\heavyrulewidth\vskip\belowrulesep}
+\providecommand{\midrule}{\noalign{\ifnum0=`}\fi
+  \vskip\aboverulesep\hrule height\lightrulewidth\vskip\belowrulesep}
+%% \bottomrule 同构版在「表格最后一行 \\ 之后的行界」会让行界 \cr 判定错位
+%% （Misplaced \noalign / Misplaced \crcr，对齐收尾链与 \noalign 前缀的时序
+%% 尚差一站），先退成参数吃掉的空操作；GT 参考件此处同样无底线。
+%% \bottomrule 同构版（\noalign 前缀 + 上下 sep）在「表格最后一行 \\ 之后的
+%% 行界」会让行界 \cr 判定错位（Misplaced \noalign / Misplaced \crcr，对齐
+%% 收尾链与 \noalign 前缀的时序还差一站）；带 [宽度] 可选参数的空操作版又在
+%% \specialrule 后一行的行界触发 Too many }'s。先退成裸空操作（不碰行界），
+%% 版面与 GT 参考件（\bottomrule 同样 undefined、无底线）一致，宏名不再报错。
+\providecommand{\bottomrule}{\relax}
+\providecommand{\specialrule}[3]{\noalign{\ifnum0=`}\fi
+  \vskip#2\hrule height#1\vskip#3}
+\providecommand{\addlinespace}[1][.5em]{\noalign{\ifnum0=`}\fi\vskip#1}
+
+\providecommand{\cmidrule}{\@ifnextchar[{\BT@cmidrule}{\BT@cmidrule[\cmidrulewidth]}}
+\def\BT@cmidrule[#1]{\@ifnextchar({\BT@cmidrulea[#1]}{\BT@cmidrulea[#1]()}}
+%% 参数吃掉后空操作：行跨规则本体（\multispan+\leaders\hrule，见下）本引擎
+%% 还放不进对齐行边界——\multispan 展开出的 \omit/\span 不在对齐 raw 扫描位
+%% （Misplaced \omit / Misplaced \span），带 \noalign 的竖料版又会让
+%% \@tabularcr 的行界 \cr 判定错位（Misplaced \cr）。先吃参数保列结构，
+%% 版面与 GT 参考件（\cmidrule 同样 undefined、无线）一致，宏名不再报错。
+\def\BT@cmidrulea[#1](#2)#3{\relax}
+
+
+\providecommand{\multirow}[3]{\BT@multirow{#1}{#3}}
+\def\BT@multirow#1#2{%
+  \dimen@=#1\baselineskip\relax
+  \divide\dimen@ \tw@
+  \advance\dimen@ -.5\baselineskip\relax
+  \raisebox{\dimen@}{#2}}
+\makeatother
