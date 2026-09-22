@@ -10,10 +10,11 @@ impl CoreSink for NodeBuilder {
             self.report_leaders_misplaced();
         }
         // 空格（cat 10）：垂直/数学模式忽略；水平模式一律转词间空白胶水。
-        // tex.web big_switch：`hmode+spacer` 无条件走 `append_normal_space`（sf=1000）
-        // 或 `app_space`（sf≠1000），`hmode+ex_space`（`\ `，core 层已转空格 token）
-        // 同样无条件——胶水/惩罚节点之后、`\leavevmode` 后的空格在真 TeX 都出胶水
-        // （`~`=\leavevmode\nobreak\ 与 \@citex 的 `,\penalty\@m\ ` 全靠这一语义）。
+        // tex.web big_switch：`hmode+spacer` 按 spacefactor 分流——sf=1000 →
+        // `append_normal_space`，否则 `app_space`——胶水/惩罚节点之后、
+        // `\leavevmode` 后的空格在真 TeX 都出胶水（`~`=\leavevmode\nobreak\ 与
+        // \@citex 的 `,\penalty\@m\ ` 全靠这一语义）。\␣（ex_space）是独立命令码，
+        // 不在此路径（见 primitive() 的 ControlSpace 臂）。
         // 行首/行中连续空格的吞并在扫描器侧完成（input.rs LineStart + 空格折叠），
         // 排版层不再按"上一节点"二次吞并。
         if tok.catcode() == Some(ntex_core::Catcode::Space) {
@@ -481,6 +482,29 @@ impl CoreSink for NodeBuilder {
                 }
                 Mode::Horizontal | Mode::RestrictedHorizontal => self.insert_indent(),
                 Mode::Math | Mode::DisplayMath => {}
+            },
+            // \␣（ex_space）：tex.web 独立命令码，与 spacer 分路径。
+            // hmode/mmode+ex_space → 无条件 append_normal_space（L20054）；
+            // vmode+ex_space → back_input + new_graf(true) 起段后重执行（L21107）。
+            Primitive::ControlSpace => match self.mode() {
+                Mode::Vertical => {
+                    self.par_begin(true)?;
+                    self.append_normal_space();
+                }
+                Mode::Horizontal | Mode::RestrictedHorizontal => self.append_normal_space(),
+                Mode::Math | Mode::DisplayMath => {
+                    // 数学表的胶水是普通（pt）胶水：mlist_to_hlist 只换算
+                    // mu_glue（tex.web L14400），原样落 hlist
+                    // （GT `\hbox{$A\ B$}` → `.\glue 3.33333 plus …`）。
+                    // `\spaceskip` 名标签随 MathAtom::MSkip 无名字段丢弃（宽度不丢）。
+                    let (w, s, k, _) = self.normal_space_glue();
+                    self.math_push_atom(MathAtom::MSkip {
+                        width: w,
+                        stretch: s,
+                        shrink: k,
+                        nonscript: false,
+                    })?;
+                }
             },
             Primitive::NoIndent => {
                 // 垂直模式 \noindent 立即开段（TeX new_graf(0)，缩进 0）——

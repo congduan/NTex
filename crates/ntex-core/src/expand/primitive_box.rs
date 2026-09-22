@@ -69,10 +69,12 @@ impl Expander {
             }
             // 段落缩进：直通 sink 由排版器解释
             Primitive::Indent | Primitive::NoIndent => self.sink.primitive(prim),
-            // ETRIP 冲刺：\␣（control space）：输出空格 token（TeX control_space）
-            Primitive::ControlSpace => self
-                .sink
-                .token(Token::char(Catcode::Space, u32::from(b' '))),
+            // \␣（ex_space）：tex.web 独立命令码（cmd=ex_space≠spacer），不产空格
+            // token——此前发 cat10 字符 token 后与真 spacer 在扫描层（数字尾可选
+            // 空格站）不可区分，排版层也只能按 spacefactor 折算。直通原语事件，
+            // 由排版器按 tex.web 分模式处理（hmode/mmode→append_normal_space、
+            // vmode→new_graf 起段）。
+            Primitive::ControlSpace => self.sink.primitive(prim),
             // ETRIP 冲刺：无限阶胶水（\hfil/\hfill/\hss/\vfil/\vfill/\vss）
             Primitive::HFil => self.sink.fill_glue(0),
             Primitive::HFill => self.sink.fill_glue(1),

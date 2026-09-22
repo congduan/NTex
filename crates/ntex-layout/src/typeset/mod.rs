@@ -1717,6 +1717,38 @@ impl NodeBuilder {
         });
     }
 
+    /// `\␣` 的词间空白（tex.web `append_normal_space`，L20332）：`\spaceskip`
+    /// 非 zero_glue → 参数胶水；否则当前字体 font_glue 原样。
+    /// 与 [`Self::append_space_glue`] 的关键差异：**无 spacefactor 分支**——
+    /// `hmode+ex_space` 是 `goto append_normal_space`（L20054），绕过
+    /// `app_space` 的 sf 调整，`\xspaceskip` 也不参与（GT：`\sfcode`A=2000
+    /// 后 `A\ B` 仍是 `glue 3.33333 plus 1.66666 minus 1.11111`，而 `A B`
+    /// 是 `plus 1.66498 minus 1.11221`）。
+    fn append_normal_space(&mut self) {
+        let (w, s, k, name) = self.normal_space_glue();
+        self.append(Node::Glue {
+            name,
+            width: w,
+            stretch: s,
+            shrink: k,
+            stretch_order: 0,
+            shrink_order: 0,
+        });
+    }
+
+    /// [`Self::append_normal_space`] 的胶水值 + showbox 来源名：水平列表直落
+    /// [`Node::Glue`]（tex.web `new_param_glue` 带 `\spaceskip` 名），数学表包成
+    /// `MSkip` 原子（无名字段，落 hlist 时同为 pt 胶水）。
+    fn normal_space_glue(&self) -> (i64, i64, i64, Option<&'static str>) {
+        let sk = self.params.spaceskip;
+        if sk != ntex_core::Glue::ZERO {
+            (sk.width, sk.stretch, sk.shrink, Some("spaceskip"))
+        } else {
+            let g = self.fonts.space(self.current_font);
+            (g.width, g.stretch, g.shrink, None)
+        }
+    }
+
     /// 水平模式追加字符（tex.web main_loop 子集）：
     /// 1. 更新 spacefactor（adjust_space_factor，对被连字消费的字符也执行）；
     /// 2. 与列表尾同字体字符查 lig/kern 程序——kern 在其前插入 kern 节点；

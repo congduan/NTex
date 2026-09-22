@@ -648,6 +648,131 @@ mod tests {
         assert!(matches!(children[1], Node::Kern { .. }));
     }
 
+    // ---------- \␣（ex_space）：与 spacer 分路径的 tex.web 语义 ----------
+
+    #[test]
+    fn control_space_ignores_spacefactor() {
+        // tex.web L20054 `hmode+ex_space: goto append_normal_space`——绕过
+        // `app_space` 的 spacefactor 折算。GT（tex `\showbox0`）：
+        // `\sfcode`A=2000` 后 `A\ B` → `.\glue 3.33333 plus 1.66666 minus 1.11111`
+        // （字体胶水原样），而 `A B` → `plus 3.33333 minus 1.66666`（stretch ×2）。
+        // 此前 `\ ` 发 cat10 空 token 走 spacer 路径，stretch/shrink 被错折成 1.66499/1.11222。
+        let children = spaced_box_children(r"\hbox{\sfcode`a=2000 a\ b}");
+        assert_eq!(children.len(), 3); // a + glue + b
+        match &children[1] {
+            Node::Glue {
+                width,
+                stretch,
+                shrink,
+                ..
+            } => {
+                assert_eq!(*width, 10 * SP_PER_PT, "\\ 宽度不受 spacefactor 影响");
+                assert_eq!(*stretch, 5 * SP_PER_PT, "\\ stretch 原样");
+                assert_eq!(*shrink, 3 * SP_PER_PT, "\\ shrink 原样");
+            }
+            other => panic!("预期词间 Glue，得到 {other:?}"),
+        }
+        // 对照组：真 spacer 走 app_space（sf≥2000 stretch ×= sf/1000、shrink ÷ sf/1000）
+        let children = spaced_box_children(r"\hbox{\sfcode`a=2000 a b}");
+        match &children[1] {
+            Node::Glue {
+                stretch,
+                shrink,
+                ..
+            } => {
+                assert_eq!(*stretch, 10 * SP_PER_PT, "spacer stretch ×= sf/1000");
+                assert_eq!(*shrink, 3 * SP_PER_PT / 2, "spacer shrink ×= 1000/sf");
+            }
+            other => panic!("预期词间 Glue，得到 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn control_space_uses_spaceskip_param() {
+        // tex.web append_normal_space（L20332）：`\spaceskip` 非 zero_glue →
+        // 参数胶水（GT：`.\glue(\spaceskip) 5.0`），`\xspaceskip` 不参与
+        // （GT `\xspaceskip=9pt\sfcode`A=3000` 后 `A\ B` 仍是 `glue(\spaceskip) 5.0`）。
+        let children = spaced_box_children(r"\hbox{\spaceskip=5pt a\ b}");
+        assert_eq!(children.len(), 3);
+        match &children[1] {
+            Node::Glue {
+                name,
+                width,
+                stretch,
+                shrink,
+                ..
+            } => {
+                assert_eq!(*name, Some("spaceskip"), "参数胶水带 showbox 来源名");
+                assert_eq!(*width, 5 * SP_PER_PT);
+                assert_eq!(*stretch, 0);
+                assert_eq!(*shrink, 0);
+            }
+            other => panic!("预期 \\spaceskip Glue，得到 {other:?}"),
+        }
+        // 对照组：`\spaceskip=0` 落当前字体 font_glue（10/5/3pt）
+        let children = spaced_box_children(r"\hbox{a\ b}");
+        match &children[1] {
+            Node::Glue { name, width, .. } => {
+                assert_eq!(*name, None);
+                assert_eq!(*width, 10 * SP_PER_PT);
+            }
+            other => panic!("预期词间 Glue，得到 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn control_space_after_digit_and_adjacent_spaces() {
+        // 数字扫描尾的可选空格站不得吞 `\ `（GT `\hbox{2\ 3}` → 2 .\glue 3.33 3）；
+        // 显式空格与 `\ ` 相邻各出一个胶水（GT `\hbox{A \ B}` 5 节点）。
+        let children = spaced_box_children(r"\hbox{2\ 3}");
+        assert_eq!(children.len(), 3);
+        assert!(matches!(children[1], Node::Glue { .. }));
+        let children = spaced_box_children(r"\hbox{a \ b}");
+        assert_eq!(children.len(), 4, "显式空格 + \\ 各出一胶水：{children:?}");
+        assert!(matches!(children[1], Node::Glue { .. }));
+        assert!(matches!(children[2], Node::Glue { .. }));
+    }
+
+    #[test]
+    fn control_space_in_vertical_mode_starts_indented_paragraph() {
+        // tex.web L21107 `vmode+ex_space → back_input; new_graf(true)`：起段
+        // （带缩进）后 `\ ` 的胶水落段首。GT（`\parindent=10pt`，空行后 `\ x`）：
+        // 行盒 = 缩进盒 10pt + `.\glue 3.33333 plus …` + `.\tenrm x`。
+        // 此前 core 层 `\ ` 发空格 token、排版层垂直模式直接丢弃（无段落、无胶水）。
+        let main = typeset_spaced(r"\parindent 65536sp \hsize 30000000sp \ x").unwrap();
+        assert_eq!(main.len(), 1, "应起一段");
+        let children = as_box(&main[0]).children.clone();
+        assert_eq!(
+            children.len(),
+            4,
+            "缩进盒 + \\ 胶水 + x + \\parfillskip：{children:?}"
+        );
+        assert!(matches!(children[0], Node::Box(_)), "new_graf(true) 落缩进盒");
+        assert_eq!(
+            as_glue_width(&children[1]),
+            10 * SP_PER_PT,
+            "\\ 胶水落段首"
+        );
+        assert_eq!(as_char(&children[2]), b'x' as u32);
+    }
+
+    #[test]
+    fn control_space_in_math_mode_appends_glue() {
+        // tex.web L20054 `mmode+ex_space: goto append_normal_space`：数学模式
+        // `\ ` 出普通 pt 胶水（GT `\hbox{$A\ B$}` → `.\teni A .\glue 3.33333 …
+        // .\teni B`）；spacer 在数学模式被忽略，`\ ` 不得跟随。
+        let main = typeset_spaced(r"$a\ b$").unwrap();
+        let children = as_box(&main[0]).children.clone();
+        // a + \ 胶水 + b（行尾 \parfillskip 不计）
+        let content: Vec<&Node> = children
+            .iter()
+            .filter(|n| !matches!(n, Node::Glue { stretch_order: 1, .. }))
+            .collect();
+        assert_eq!(content.len(), 5, "mathon + a + 胶水 + b + mathoff：{children:?}");
+        assert_eq!(as_glue_width(content[2]), 10 * SP_PER_PT, "\\ 出普通 pt 胶水");
+        assert_eq!(as_char(content[3]), b'b' as u32);
+    }
+
     // ---------- M3-3 Knuth-Plass 段落折行 ----------
 
     #[test]
