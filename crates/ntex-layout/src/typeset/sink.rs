@@ -607,12 +607,16 @@ impl CoreSink for NodeBuilder {
             })?;
             return Ok(());
         }
+        // 胶水阶必须透传：`skip 0pt plus .0001fil`（LaTeX \@textbottom）丢阶后
+        // 变 0.0001pt 有限拉伸，页盒 `\vbox to\@colht` 的胶水设置把拉伸全摊到
+        // `\parskip` 等有限拉伸胶上（tex.web scan_glue：plus/minus 各带 glue_ord）。
         self.append(Node::Glue {
-            name: None,            width: g.width,
+            name: None,
+            width: g.width,
             stretch: g.stretch,
             shrink: g.shrink,
-            stretch_order: 0,
-            shrink_order: 0,
+            stretch_order: g.stretch_order,
+            shrink_order: g.shrink_order,
         });
         Ok(())
     }
@@ -775,8 +779,8 @@ impl CoreSink for NodeBuilder {
             name: None,                            width: ps.width,
                             stretch: ps.stretch,
                             shrink: ps.shrink,
-                            stretch_order: 0,
-                            shrink_order: 0,
+                            stretch_order: ps.stretch_order,
+                            shrink_order: ps.shrink_order,
             });
         }
         self.lists.push(Vec::new());
@@ -933,8 +937,8 @@ impl MathSink for NodeBuilder {
             name: None,                            width: ps.width,
                             stretch: ps.stretch,
                             shrink: ps.shrink,
-                            stretch_order: 0,
-                            shrink_order: 0,
+                            stretch_order: ps.stretch_order,
+                            shrink_order: ps.shrink_order,
                         });
                     }
                     // tex.web：段首 `$$` 走 head=tail 臂（`\noindent$$`），w := -max_dimen
@@ -949,8 +953,8 @@ impl MathSink for NodeBuilder {
             name: None,                            width: ps.width,
                             stretch: ps.stretch,
                             shrink: ps.shrink,
-                            stretch_order: 0,
-                            shrink_order: 0,
+                            stretch_order: ps.stretch_order,
+                            shrink_order: ps.shrink_order,
                         });
                     }
                     self.lists.push(Vec::new());
