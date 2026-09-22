@@ -8,7 +8,8 @@
 //!   成本 `c`，维护最佳断点（`<=` 平局取后者）；`c=awful` 或 `\penalty≤-10000`
 //!   立即 `fire_up`；
 //! - `fire_up` 按最佳断点把页面切为 vbox（`vpackage` 以 `best_size`=页目标高打包，
-//!   glue_set 按 TeX 累积舍入烘焙进胶水宽度），余下节点退回贡献列表前端；
+//!   子节点宽度保持自然值——tex.web 把 glue_set 存在盒上而 NTex 无此字段，烘焙会
+//!   经 `\unvbox\@cclv` 残留进输出例程的重打包），余下节点退回贡献列表前端；
 //!   触发节点（eject 的 penalty 等）留待对（新）空页重处理并被丢弃——
 //!   这正是 `\end` 不产生多余空页的机制。
 //!
@@ -560,55 +561,40 @@ impl PageBuilder {
     }
 
     /// `vpackage(link(page_head), best_size, exactly, max_depth)`（tex.web §161-184）：
-    /// 计算自然高度与胶水总量，按 best_size 确定 glue_set（stretching/shrinking），
-    /// 并把调整量按累积舍入（vlist_out 的 `cur_g`）烘焙进胶水宽度。
+    /// tex.web 把 glue_set（sign/order/ratio）**存在盒上**、节点宽度一律保持自然值
+    /// ——烘焙会使比值经 `\unvbox\@cclv` 残留：LaTeX `\@makecol` 把 box255 拆进
+    /// `\vbox to\@colht` 重打包时，parskip 等有限拉伸胶已被页构建器预胀（段间距
+    /// 按页放大的真根因），而真 TeX 的重打包从自然宽度重新结算（`\@textbottom`
+    /// 的 .0001fil 吃掉全部余量）。NTex 盒上无 glue_set 字段，竖直列表渲染从顶
+    /// 累加自然宽度、`(height−自然高)` 落在页尾——正是真 TeX 例程重打包后尾 fil
+    /// 吸收余量的几何（\raggedbottom），故这里只定高度/深度/宽度，不动子节点。
     fn package(&mut self, cut: usize) -> BoxNode {
         let children = &self.page[0..cut];
-        // 自然高度 / 深度 / 各阶拉伸收缩 / 宽度
-        let mut x = 0i64;
+        // 页深（\boxmaxdepth 钳制）与宽度
         let mut d = 0i64;
-        let mut stretch = [0i64; 4];
-        let mut shrink = [0i64; 4];
         let mut width = 0i64;
         for c in children {
             match c {
                 Node::Box(b) => {
-                    x += d + b.height;
                     d = b.depth;
                     width = width.max(b.width + b.shift);
                 }
                 Node::Rule {
                     width: w,
-                    height,
                     depth,
+                    ..
                 } => {
-                    x += d + height;
                     d = *depth;
                     width = width.max(*w);
                 }
-                Node::Glue {
-                    name: _,
-                    width: w,
-                    stretch: s,
-                    shrink: sh,
-                    stretch_order,
-                    shrink_order,
-                } => {
-                    x += d + w;
+                Node::Glue { width: w, .. } | Node::Kern { width: w } => {
                     d = 0;
-                    stretch[*stretch_order as usize] += s;
-                    shrink[*shrink_order as usize] += sh;
                     width = width.max(*w);
-                }
-                Node::Kern { width: w } => {
-                    x += d + w;
-                    d = 0;
                 }
                 Node::Leaders {
                     width: w, inner, ..
                 } => {
                     let dims = inner.dimensions();
-                    x += d + dims.height + dims.depth;
                     d = dims.depth;
                     width = width.max(*w);
                 }
@@ -626,90 +612,15 @@ impl PageBuilder {
             }
         }
         if d > self.max_depth {
-            x += d - self.max_depth;
             d = self.max_depth;
-        }
-        let height = self.best_size;
-        let excess = height - x;
-        // glue_set（tex.web §236-293）
-        enum Sign {
-            Normal,
-            Stretch,
-            Shrink,
-        }
-        let (sign, order, gs) = if excess == 0 {
-            (Sign::Normal, 0, 0.0)
-        } else if excess > 0 {
-            let o = (0..4).rev().find(|&o| stretch[o] != 0);
-            match o {
-                Some(o) => (Sign::Stretch, o, excess as f64 / stretch[o] as f64),
-                None => (Sign::Normal, 0, 0.0),
-            }
-        } else {
-            let o = (0..4).rev().find(|&o| shrink[o] != 0);
-            match o {
-                Some(o) => {
-                    let gs = (-excess) as f64 / shrink[o] as f64;
-                    // 普通阶收缩不足时钳到最大收缩（tex.web §283-288）
-                    let gs = if o == 0 && shrink[o] < -excess {
-                        1.0
-                    } else {
-                        gs
-                    };
-                    (Sign::Shrink, o, gs)
-                }
-                None => (Sign::Normal, 0, 0.0),
-            }
-        };
-        // 烘焙胶水宽度（tex.web vlist_out §607-624 的累积舍入）
-        let mut out: Vec<Node> = Vec::with_capacity(cut);
-        let mut cum = 0f64;
-        let mut prev_g = 0f64;
-        for c in children {
-            match c {
-                Node::Glue {
-                    name: _,
-                    width: w,
-                    stretch: s,
-                    shrink: sh,
-                    stretch_order,
-                    shrink_order,
-                } => {
-                    let mut w = *w;
-                    match sign {
-                        Sign::Stretch if *stretch_order as usize == order => {
-                            cum += *s as f64;
-                            let g = (gs * cum).round();
-                            w += g as i64 - prev_g as i64;
-                            prev_g = g;
-                        }
-                        Sign::Shrink if *shrink_order as usize == order => {
-                            cum -= *sh as f64;
-                            let g = (gs * cum).round();
-                            w += g as i64 - prev_g as i64;
-                            prev_g = g;
-                        }
-                        _ => {}
-                    }
-                    out.push(Node::Glue {
-                        name: None,
-                        width: w,
-                        stretch: *s,
-                        shrink: *sh,
-                        stretch_order: *stretch_order,
-                        shrink_order: *shrink_order,
-                    });
-                }
-                other => out.push(other.clone()),
-            }
         }
         BoxNode {
             kind: BoxKind::VBox,
             width,
-            height,
+            height: self.best_size,
             depth: d,
             shift: 0,
-            children: out,
+            children: children.to_vec(),
         }
     }
 
