@@ -946,9 +946,23 @@ impl MathSink for NodeBuilder {
                             shrink_order: ps.shrink_order,
                         });
                     }
-                    // tex.web：段首 `$$` 走 head=tail 臂（`\noindent$$`），w := -max_dimen
-                    // → close_math 裁决取长 skip。
-                    self.math_state.predisplay_size = -ntex_core::register::MAX_DIMEN;
+                    // tex.web：垂直模式 `$$` 不是直接进显示——`vmode+math_shift` 先
+                    // `back_input; new_graf(true)`（parskip + 缩进盒开段），init_math
+                    // 才在水平模式见到非空 hlist → line_break 对「只含缩进盒的段落」
+                    // 折行：垂直列表落一个高 0 深 0 的空行盒（与上一行之间按
+                    // \baselineskip-\prevdepth 插行间 glue），w = 缩进盒宽 + 2em
+                    // （`\noindent$$` 无缩进盒 → head=tail 臂 → -max_dimen）。
+                    // 段末公式与上文之间 ~\baselineskip 的空隙 + \predisplaysize
+                    // 语义都由此而来；直接 -max_dimen 会让公式顶到上一行上。
+                    self.lists.push(Vec::new());
+                    self.list_modes.push(Mode::Horizontal);
+                    self.space_factor = 1000; // new_graf：段落开始重置 spacefactor
+                    self.insert_indent();
+                    let last_natural = self.close_paragraph();
+                    self.math_state.predisplay_size = match last_natural {
+                        Some(w) => w + 2 * self.fonts.font_param(self.current_font, 6),
+                        None => -ntex_core::register::MAX_DIMEN,
+                    };
                     self.enter_display_math()
                 } else {
                     // 行内数学：开段（TeX new_graf）
