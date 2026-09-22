@@ -215,6 +215,13 @@ fn main() -> ExitCode {
                             // NTex 实际仍输出 DVI：该参数只作驱动选择信号。
                             state.params.misc[63] = 1;
                             ts.import_state(state);
+                            // 真 latex.fmt 在格式生成期载入断字表（lthyphen.dtx）；
+                            // NTex 的 .fmt 只序列化 core 侧状态，断字表（PatternTrie）
+                            // 住排版器跨不进快照 → fmt 恢复后 \language=0 无表、
+                            // 全文档不断词（窄版心一行溢出 35pt、Overfull 26 处）。
+                            // 与上面的 \pdfoutput 种子同理在 fmt 载入后补：排版入口
+                            // 在用户源前先跑内嵌 hyphen.tex（US patterns + 例外词表）。
+                            ts.set_preload_hyphen(true);
                         }
                         Err(e) => {
                             eprintln!("[auto] 解析 {} 失败：{e}（回退 plain）", fmt_path.display());

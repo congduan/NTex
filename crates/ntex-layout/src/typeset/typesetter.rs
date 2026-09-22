@@ -259,6 +259,18 @@ pub struct Typesetter {
     /// [`plain_format::PLAIN_TEX`]。默认关——TRIP/latex probe/corpus math 等
     /// INITEX 语义调用方不受影响；`ntex-dvi` 等面向 plain 文档的入口显式打开。
     preload_plain: bool,
+    /// 断字模式预载开关：排版入口在用户源前先跑内嵌 [`plain_format::HYPHEN_TEX`]
+    /// （US patterns + 例外词表，落 `\language=0`）。给 **LaTeX fmt 路径**用的——
+    /// 真 latex.fmt 在格式生成期载入断字表（lthyphen.dtx），而 NTex 的 `.fmt`
+    /// 只序列化 core 侧状态（`ntex-core::expand::FmtState`），断字表住在
+    /// 排版器（`PatternTrie`）跨不进快照，于是 fmt 恢复后 `\language=0` 无表，
+    /// 全文档不断词：窄版心（quotation/abstract，`\parshape` 收窄到
+    /// hsize−2×leftmargin）一行溢出 35pt、全篇 Overfull 26 处（GT 0 处）。
+    /// plain 预载不需要它——plain.tex:1222 自己 `\input hyphen`。
+    ///
+    /// 默认关：INITEX/TRIP 语义零影响（真 TRIP 断字表为空，自动补表会改
+    /// 断行）。与 [`Self::preload_plain`] 互斥使用（双开会把表登记两遍）。
+    preload_hyphen: bool,
     /// 内嵌格式 VFS 兜底层是否已包（[`Self::use_embedded_format`] 幂等标记）。
     embedded_vfs_installed: bool,
     /// UTF-8 输入默认开关（M9 中文刀 3）：开则排版入口在用户源之前把
@@ -313,6 +325,7 @@ impl Typesetter {
             fmt_current_font: 0,
             last_current_font: 0,
             preload_plain: false,
+            preload_hyphen: false,
             utf8_input_default: false,
             fallback_font: None,
             embedded_vfs_installed: false,
@@ -388,6 +401,15 @@ impl Typesetter {
     /// plain 格式预载是否已开（诊断/测试用）。
     pub fn preload_plain(&self) -> bool {
         self.preload_plain
+    }
+
+    /// 断字模式预载开关（LaTeX fmt 路径）：排版入口在用户源前先跑内嵌
+    /// [`plain_format::HYPHEN_TEX`]。动机与互斥约束见字段 [`Self::preload_hyphen`]。
+    pub fn set_preload_hyphen(&mut self, on: bool) {
+        if on {
+            self.use_embedded_format();
+        }
+        self.preload_hyphen = on;
     }
 
     /// UTF-8 输入默认开关（M9 中文刀 3）：开则每次排版在用户源之前把
@@ -498,6 +520,7 @@ impl Typesetter {
             fmt_current_font: 0,
             last_current_font: 0,
             preload_plain: false,
+            preload_hyphen: false,
             utf8_input_default: false,
             fallback_font: None,
             embedded_vfs_installed: false,
@@ -518,6 +541,7 @@ impl Typesetter {
             fmt_current_font: 0,
             last_current_font: 0,
             preload_plain: false,
+            preload_hyphen: false,
             utf8_input_default: false,
             fallback_font: None,
             embedded_vfs_installed: false,
@@ -530,6 +554,7 @@ impl Typesetter {
         self.install_builder(NodeBuilder::new(self.fonts.clone()));
         self.apply_utf8_input_default();
         self.run_plain_preload()?;
+        self.run_hyphen_preload()?;
         self.expander.run_source(text)?;
         self.finish().map(|out| {
             self.shipped = out.shipped;
@@ -543,6 +568,7 @@ impl Typesetter {
         self.install_builder(NodeBuilder::new(self.fonts.clone()));
         self.apply_utf8_input_default();
         self.run_plain_preload()?;
+        self.run_hyphen_preload()?;
         self.expander.feed_source(bytes);
         self.expander.run()?;
         self.finish().map(|out| {
@@ -559,6 +585,17 @@ impl Typesetter {
             return Ok(());
         }
         self.expander.run_source(plain_format::PLAIN_TEX)
+    }
+
+    /// 断字模式预载（[`Self::set_preload_hyphen`]）：开关开着才跑。出错即失败
+    /// ——与 [`Self::run_plain_preload`] 同纪律，断字表缺失不该静默带病排版
+    /// （plain-format-survey §3.2：跳过 patterns = 「plain 预载了但断词表缺失」
+    /// 的新静默偏差）。
+    fn run_hyphen_preload(&mut self) -> Result<()> {
+        if !self.preload_hyphen {
+            return Ok(());
+        }
+        self.expander.run_source(plain_format::HYPHEN_TEX)
     }
 
     /// 安装 NodeBuilder 并同步参数镜像（`.fmt` 加载的 \\\\vsize/\\\\tracingpages 等
@@ -624,6 +661,7 @@ impl Typesetter {
         self.install_builder(NodeBuilder::with_pagination(self.fonts.clone(), true));
         self.apply_utf8_input_default();
         self.run_plain_preload()?;
+        self.run_hyphen_preload()?;
         self.expander.run_source(text)?;
         let out = self.finish()?;
         self.shipped = out.shipped.clone();

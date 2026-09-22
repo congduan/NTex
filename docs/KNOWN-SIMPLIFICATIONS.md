@@ -80,7 +80,8 @@
 | `scripts/make-cjk-subset.py` | 子集化档位 `sym`/`l1`/`full` 目前只按 GB2312 表 + `EXTRA_PUNCT` 取字符；非 GB2312 汉字（生僻字/异体字）仍缺字形→渲染方框 | 待做（按需并入 `full` 档的 `EXTRA` 码位表，或改走 `--text-file` 按实际文稿取字） |
 | `expand/primitive.rs:893` | `\varunit` 字体单位 no-op | ✅ 无单独场景（TRIP 仅 dimen 上下文 `20\varunit`） |
 | `expand/save.rs:656` | `\the\font` 简化（expander 无排版状态） | 待做 |
-| `hyphen.rs:10,47` | 词界限制 `.` 暂不参与断点过滤 | 待做 |
+| `hyphen.rs:10,47` | 词界限制 `.` 暂不参与断点过滤（真实表里 `.ach4`/`5hand.` 这类词首/词尾受限模式被当任意位置模式，断点全集偏大——论文轮实测 `complex` 断成 `comp-lex`、`co-mplex`，真 TeX 只给 `com-plex`） | 待做 |
+| `typeset/typesetter.rs` `preload_hyphen` | **LaTeX 断字表只在 `ntex-dvi` CLI 补种**：`.fmt` 只序列化 core 侧状态（`ntex-core::expand::FmtState`），断字表（`PatternTrie`）住排版器跨不进快照 → `ntex-studio`（`engine.rs` 直读 `latex.fmt`）与 `ntex-wasm`（`set_latex_mode`）恢复 fmt 后 `\language=0` 仍无表、LaTeX 作业不断词。CLI 侧已修（`set_preload_hyphen`，排版入口在用户源前跑内嵌 `hyphen.tex`；真 latex.fmt 由 lthyphen.dtx 在格式生成期载表，NTex 的 ltxinit.tex 只有 `\input latex.ltx`） | 待做（studio/wasm 两条 LaTeX 通路接同一开关；根治 = fmt 快照携带 PatternTrie，跨 crate 边界，另立题） |
 | `typeset/paragraph.rs:153` | **`\lefthyphenmin`/`\righthyphenmin` 已接入断点过滤**（2026-09-17 修）：按 tex.web §927 `norm_min`（`<=0`→1、`>=63`→63）钳制 `misc[MISC_LEFT_HYPHEN_MIN]`/`MISC_RIGHT_HYPHEN_MIN`，再按 §924 `found:` 只保留 `l_hyf <= j <= hn - r_hyf` 的断点；`hn < l_hyf + r_hyf` 时整词不尝试（tex.web `goto done1`）。**两条路统一过滤**：模式表与 `\hyphenation` 异常词表都过同一道筛（词首/词尾断点随之被清）。现场：resume 正文 `Python/Java` 原断成 `J-`/`ava`，现不再断 | ✅ 已修（回归锁见下行） |
 | `typeset/tests.rs` | 断字最小宽回归锁：`hyphen_minima_filter_pattern_breaks`（l/r 三档 A/B 对照，含 `hn < l+r` 整词跳过）+ `hyphen_minima_filter_exception_breaks`（`\hyphenation{a-b-c-d-e}` / `ab-cde` 逐位断言）；两条均在「去掉过滤」时失败（已实测），是**真锁**而非顺带通过 | ✅ 已锁 |
 | `expand/primitive.rs:1492` | 断字表单语言全局（sink 不分语言；无 lccode 二次比较） | 待做 |

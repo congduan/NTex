@@ -87,6 +87,45 @@ fn embedded_hyphen_patterns_reach_builder_via_event() {
 }
 
 #[test]
+fn preload_hyphen_loads_patterns_without_plain() {
+    // LaTeX fmt 路径的断字表补种（`set_preload_hyphen`）：不开 plain 预载也能
+    // 把内嵌 hyphen.tex 落进模式表——`.fmt` 只序列化 core 侧状态，断字表住在
+    // 排版器，fmt 恢复后 `\language=0` 无表 = 全文档不断词（2026-09-22 论文
+    // 轮：窄版心 quotation 一行溢出 35pt、Overfull 26 处，GT 0 处）。
+    let mut ts = Typesetter::with_tfm();
+    ts.set_preload_hyphen(true);
+    let fonts = ts.fonts.clone();
+    ts.install_font_loader();
+    ts.install_builder(NodeBuilder::new(fonts));
+    ts.run_hyphen_preload().unwrap();
+    let count = ts
+        .expander
+        .sink_mut()
+        .as_any_mut()
+        .downcast_mut::<NodeBuilder>()
+        .expect("sink 应为 NodeBuilder")
+        .patterns
+        .count;
+    assert!(count > 4000, "hyphen.tex 模式应已入 trie：{count}");
+
+    // 默认关：INITEX/TRIP 语义零影响（真 TRIP 断字表为空，自动补表会改断行）。
+    let mut ts = Typesetter::with_tfm();
+    let fonts = ts.fonts.clone();
+    ts.install_font_loader();
+    ts.install_builder(NodeBuilder::new(fonts));
+    ts.run_hyphen_preload().unwrap();
+    let count = ts
+        .expander
+        .sink_mut()
+        .as_any_mut()
+        .downcast_mut::<NodeBuilder>()
+        .expect("sink 应为 NodeBuilder")
+        .patterns
+        .count;
+    assert_eq!(count, 0, "默认不补种断字表");
+}
+
+#[test]
 fn embedded_hyphen_tex_parses_into_pattern_trie() {
     // 内嵌 hyphen.tex 的模式表能被断词机解析（`\patterns` 事件上游的真源）。
     // 注意喂给 trie 的是 `\patterns{...}` 的**实参**（引擎 sink 事件收到的就是
