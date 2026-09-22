@@ -602,8 +602,13 @@ mod tests {
 
     #[test]
     fn space_after_glue_or_penalty_ignored() {
+        // 空格吞并在扫描层（数值后单站可选空格 + 连续空格折叠），排版层不动。
+        // GT（pdftex/tex `\showbox0`）：`a\hskip 5pt␣␣b` → `.\tenrm a .\glue 5.0
+        // .\tenrm b`（3 节点）；`a\penalty -10␣␣b` → a .\penalty -10 .\tenrm b。
+        // 而真空格 token 抵达排版层（`~`=\leavevmode\nobreak\ 、\@citex 的
+        // `,\penalty\@m\ `）必须出胶水：GT `a~b` → a .\penalty 10000 .\glue 3.33。
         let children = spaced_box_children(r"\hbox{a\hskip 5pt  b}");
-        assert_eq!(children.len(), 3); // a + glue(5pt) + b（空格被忽略）
+        assert_eq!(children.len(), 3); // a + glue(5pt) + b
         match &children[1] {
             Node::Glue { width, .. } => assert_eq!(*width, 5 * SP_PER_PT),
             other => panic!("预期 5pt Glue，得到 {other:?}"),
@@ -614,10 +619,25 @@ mod tests {
     }
 
     #[test]
-    fn space_at_hbox_start_ignored() {
+    fn space_at_hbox_start_appends_glue() {
+        // GT（pdftex/tex `\showbox0`）：`\hbox{ a}` → `.\glue 3.33333 plus …` +
+        // `.\tenrm a`——`{` 后扫描器 state=mid_line，空格是 spacer token，
+        // tex.web `hmode+spacer` 无条件追加（旧实现按"空列表"吞并，连
+        // `\nobreakspace`/`\@citea` 的 `\ ` 一起吞掉 → `~` 零宽、多 key 引用无逗号空格）。
         let children = spaced_box_children(r"\hbox{ a}");
-        assert_eq!(children.len(), 1);
-        assert_eq!(as_char(&children[0]), b'a' as u32);
+        assert_eq!(children.len(), 2); // glue + a
+        assert!(matches!(children[0], Node::Glue { .. }));
+        assert_eq!(as_char(&children[1]), b'a' as u32);
+    }
+
+    #[test]
+    fn tilde_and_citea_space_survive_penalty() {
+        // 引用通路依赖：penalty 之后的空格 token 必须出词间胶水（GT `a~b` 4 节点）。
+        let children = spaced_box_children(r"\hbox{a\penalty10000\ b}");
+        assert_eq!(children.len(), 4); // a + penalty + glue + b
+        assert!(matches!(children[1], Node::Penalty { .. }));
+        assert!(matches!(children[2], Node::Glue { .. }));
+        assert_eq!(as_char(&children[3]), b'b' as u32);
     }
 
     #[test]

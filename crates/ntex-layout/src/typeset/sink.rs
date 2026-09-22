@@ -9,21 +9,17 @@ impl CoreSink for NodeBuilder {
             }
             self.report_leaders_misplaced();
         }
-        // 空格（cat 10）：垂直/数学模式忽略；水平模式转词间空白胶水
-        // （行首或胶水/惩罚之后忽略，TeX spacer 语义）。
+        // 空格（cat 10）：垂直/数学模式忽略；水平模式一律转词间空白胶水。
+        // tex.web big_switch：`hmode+spacer` 无条件走 `append_normal_space`（sf=1000）
+        // 或 `app_space`（sf≠1000），`hmode+ex_space`（`\ `，core 层已转空格 token）
+        // 同样无条件——胶水/惩罚节点之后、`\leavevmode` 后的空格在真 TeX 都出胶水
+        // （`~`=\leavevmode\nobreak\ 与 \@citex 的 `,\penalty\@m\ ` 全靠这一语义）。
+        // 行首/行中连续空格的吞并在扫描器侧完成（input.rs LineStart + 空格折叠），
+        // 排版层不再按"上一节点"二次吞并。
         if tok.catcode() == Some(ntex_core::Catcode::Space) {
             match self.mode() {
                 Mode::Vertical | Mode::Math | Mode::DisplayMath => {}
-                Mode::Horizontal | Mode::RestrictedHorizontal => {
-                    let ignorable = match self.lists.last().and_then(|l| l.last()) {
-                        None => true,
-                        Some(Node::Glue { .. } | Node::Penalty { .. }) => true,
-                        Some(_) => false,
-                    };
-                    if !ignorable {
-                        self.append_space_glue();
-                    }
-                }
+                Mode::Horizontal | Mode::RestrictedHorizontal => self.append_space_glue(),
             }
             return Ok(());
         }

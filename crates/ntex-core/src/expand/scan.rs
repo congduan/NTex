@@ -972,14 +972,12 @@ impl Expander {
                     return Ok(());
                 }
                 if let Some(csid) = tok.csid() {
-                    match self.resolve_slot(csid) {
-                        Some(EqSlot::Char {
-                            catcode: Catcode::Space,
-                            ..
-                        }) => return Ok(()),
-                        // \let\sp=\space 型原语别名（Primitive::ControlSpace）
-                        Some(EqSlot::Primitive(Primitive::ControlSpace)) => return Ok(()),
-                        _ => {}
+                    if let Some(EqSlot::Char {
+                        catcode: Catcode::Space,
+                        ..
+                    }) = self.resolve_slot(csid)
+                    {
+                        return Ok(());
                     }
                 }
                 self.unread(tok);
@@ -1591,15 +1589,19 @@ impl Expander {
                 self.unread(tok);
                 return Ok(());
             }
-            // cs 别名到空格字符/`\space` 原语 ≡ spacer（tex.web \let 复制 cmd，
-            // cur_cmd=spacer 即消费；expl3 `\exp_stop_f:` 贴数字尾依赖此语义）
+            // cs 别名到空格字符 ≡ spacer（tex.web \let 复制 cmd，cur_cmd=spacer 即消费；
+            // expl3 `\exp_stop_f:` 贴数字尾依赖此语义）。注意 `\ `（ex_space）**不在**此列：
+            // tex.web `primitive(" ",ex_space,0)`，`scan_optional_space` 判 `cur_cmd<>spacer`
+            // 即 back_input，随后 `hmode+ex_space → append_normal_space` 出胶水
+            // （GT：`a\penalty10000\ b` → a + penalty + glue + b；`\nobreakspace`/
+            // `\@citex` 的 `,\penalty\@m\ ` 依赖此语义）。
             if let Some(slot) = self.resolve_slot(csid) {
                 if matches!(
                     slot,
                     EqSlot::Char {
                         catcode: Catcode::Space,
                         ..
-                    } | EqSlot::Primitive(Primitive::ControlSpace)
+                    }
                 ) {
                     return Ok(());
                 }
