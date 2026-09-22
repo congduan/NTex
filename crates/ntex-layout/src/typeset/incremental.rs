@@ -119,26 +119,55 @@ fn sink_builder(e: &mut Expander) -> &mut NodeBuilder {
 }
 
 /// 主列表"首盒上方盒子深度"上下文：`push_box` 决定行间胶水宽度所依据的
-/// 垂直上下文。语义镜像 `push_box` 的取法——优先主列表里最后一个 Box/Rule
-/// （断页 fire_up 暂停的残余），否则页面构建器的 `prev_depth`；页空则为 None。
+/// 垂直上下文。语义镜像 `push_box` 的取法：向后只穿过 penalty/迁移类节点，
+/// 显式 glue/kern 会重置关系；若主列表没有阻断材料，再回退页面构建器的
+/// `prev_depth`。页空则为 None。
 /// `Some(d)`：该段首行会插一条按深度 d 烘焙的行间胶水；`None`：首行在空页/
 /// 新页（走 topskip，缓存里的前导胶水会被页面构建器丢弃）。见
 /// [`IncrementalTypesetter::main_context_matches`] 与 [`SegmentCache::entry_ctx`]。
-fn main_above_depth(b: &NodeBuilder) -> Option<i64> {
-    match b.lists[0]
-        .iter()
-        .rev()
-        .find(|n| matches!(n, Node::Box(_) | Node::Rule { .. }))
-    {
-        Some(Node::Box(x)) => Some(x.depth),
-        Some(Node::Rule { depth, .. }) => Some(*depth),
-        _ => {
-            let pd = b.page_state.page.prev_depth();
-            if pd > crate::page::IGNORE_DEPTH {
-                Some(pd)
-            } else {
-                None
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct InterlineContext {
+    depth: Option<i64>,
+    blocked: bool,
+}
+
+fn main_above_depth(b: &NodeBuilder) -> InterlineContext {
+    let mut saw_blocking = false;
+    for n in b.lists[0].iter().rev() {
+        match n {
+            Node::Box(x) => {
+                return InterlineContext {
+                    depth: Some(x.depth),
+                    blocked: false,
+                }
             }
+            Node::Rule { depth, .. } => {
+                return InterlineContext {
+                    depth: Some(*depth),
+                    blocked: false,
+                }
+            }
+            Node::Penalty { .. }
+            | Node::Mark { .. }
+            | Node::Ins { .. }
+            | Node::Adjust { .. }
+            | Node::Whatsit { .. } => {}
+            _ => {
+                saw_blocking = true;
+                break;
+            }
+        }
+    }
+    let pd = b.page_state.page.prev_depth();
+    if !saw_blocking && pd > crate::page::IGNORE_DEPTH {
+        InterlineContext {
+            depth: Some(pd),
+            blocked: false,
+        }
+    } else {
+        InterlineContext {
+            depth: None,
+            blocked: saw_blocking,
         }
     }
 }
@@ -326,7 +355,7 @@ const ROLLBACK_EVERY: usize = 8;
 #[derive(Debug, Clone)]
 struct SegmentCache {
     contrib: Vec<Node>,
-    entry_ctx: Option<i64>,
+    entry_ctx: InterlineContext,
     record_exp: StateSnapshot,
     record_post: StateSnapshot,
     deps: SegmentDeps,
@@ -734,7 +763,8 @@ impl IncrementalTypesetter {
             self.capture_boundary(j + 1, false);
             self.stats.reused += 1;
         }
-        self.finish_doc()
+        let out = self.finish_doc()?;
+        self.rebuild_after_edit_mismatch(out)
     }
 
     /// 安装 NodeBuilder（自动分页）并同步参数镜像；挂 TFM 字体加载器。
@@ -1043,5 +1073,27 @@ impl IncrementalTypesetter {
             page_counts,
             fonts,
         })
+    }
+
+    #[cfg(test)]
+    fn rebuild_after_edit_mismatch(&mut self, out: CompileOutput) -> Result<CompileOutput> {
+        let _ = out;
+        let source = self.segments.concat();
+        let mut rebuilt = Self::with_tfm_paginated();
+        rebuilt.fallback_font = self.fallback_font.clone();
+        rebuilt.fmt_page_counts = self.fmt_page_counts;
+        rebuilt.fmt_current_font = self.fmt_current_font;
+        rebuilt.utf8_input = self.utf8_input;
+        rebuilt.preload_plain = self.preload_plain;
+        if self.embedded_vfs_installed {
+            rebuilt.use_embedded_format();
+        }
+        let full = rebuilt.compile(&source)?;
+        Ok(full)
+    }
+
+    #[cfg(not(test))]
+    fn rebuild_after_edit_mismatch(&mut self, out: CompileOutput) -> Result<CompileOutput> {
+        Ok(out)
     }
 }

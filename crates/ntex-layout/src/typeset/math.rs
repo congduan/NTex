@@ -163,7 +163,7 @@ impl NodeBuilder {
                 // prev_depth 插行间 glue（baselineskip/lineskip），再落盒——
                 // 公式前后的 12pt 行距由此而来。走 `append` 会漏掉这段 glue
                 // （P5：display 前垂直跳缺 interline glue）。
-                self.push_box(Node::Box(hpack(&line, self.params.hsize)));
+                self.push_box_crossing_glue(Node::Box(hpack(&line, self.params.hsize)));
             }
             // 对齐行盒拼接（tex.web L22622 `link(tail):=p`；行间 interline
             // 胶水已由 align_fin 按 append_to_vlist 语义生成，此处原样拼接）。

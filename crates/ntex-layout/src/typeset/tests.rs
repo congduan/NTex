@@ -141,19 +141,14 @@ mod tests {
         assert_eq!(main.len(), 1);
         let v = as_box(&main[0]);
         assert_eq!(v.kind, BoxKind::VBox);
-        // tex.web：\vskip 不改写 prev_depth，故 \hbox{b} 落盒仍按前驱盒插行间
-        // glue（d = baselineskip 12pt - depth 1500 - height 6000 = 778932）
-        assert_eq!(v.children.len(), 4, "盒+\\vskip+行间glue+盒：{v:?}");
+        // 显式 \vskip 重置行间关系，后续盒子不再额外插 baselineskip。
+        assert_eq!(v.children.len(), 3, "盒+\\vskip+盒：{v:?}");
         assert!(matches!(v.children[0], Node::Box(_)));
         match &v.children[1] {
             Node::Glue { width, .. } => assert_eq!(*width, 10 * SP_PER_PT),
             other => panic!("预期 Glue，得到 {other:?}"),
         }
-        match &v.children[2] {
-            Node::Glue { width, .. } => assert_eq!(*width, 12 * SP_PER_PT - 1500 - 6000, "行间 glue"),
-            other => panic!("预期行间 Glue，得到 {other:?}"),
-        }
-        assert!(matches!(v.children[3], Node::Box(_)));
+        assert!(matches!(v.children[2], Node::Box(_)));
     }
 
     #[test]
@@ -213,19 +208,14 @@ mod tests {
     #[test]
     fn vskip_in_paragraph_ends_it_implicitly() {
         let main = typeset(r"a\vskip 6pt b").unwrap();
-        // tex.web：\vskip 不改写 prev_depth → 末段落盒落盒仍插行间 glue
-        // （baselineskip 12pt - depth 1500 - height 6000 = 778932）
-        assert_eq!(main.len(), 4, "隐式 \\par 后应为 段落盒+glue+行间glue+段落盒");
+        // 显式 \vskip 重置行间关系，末段落盒不再额外插 baselineskip。
+        assert_eq!(main.len(), 3, "隐式 \\par 后应为 段落盒+glue+段落盒");
         assert!(matches!(main[0], Node::Box(_)), "首项应为断行后的段落盒");
         match &main[1] {
             Node::Glue { width, .. } => assert_eq!(*width, 6 * SP_PER_PT),
             other => panic!("预期 Glue，得到 {other:?}"),
         }
-        match &main[2] {
-            Node::Glue { width, .. } => assert_eq!(*width, 12 * SP_PER_PT - 1500 - 6000, "行间 glue"),
-            other => panic!("预期行间 Glue，得到 {other:?}"),
-        }
-        assert!(matches!(main[3], Node::Box(_)), "末项应为新起的段落盒");
+        assert!(matches!(main[2], Node::Box(_)), "末项应为新起的段落盒");
     }
 
     /// tex.web L21160/L21162（head_for_vmode）：`\hrule` 只在垂直模式直接落
@@ -259,16 +249,11 @@ mod tests {
     #[test]
     fn vfil_in_paragraph_ends_it_implicitly() {
         let main = typeset(r"a\vfil b").unwrap();
-        // 行间 glue（tex.web append_to_vlist）：baselineskip 12pt - depth 1500
-        // - height 6000 = 778932（\vfil 不改写 prev_depth）
-        assert_eq!(main.len(), 4, "\\vfil 后应为 段落盒+glue+行间glue+段落盒");
+        // 显式 \vfil 重置行间关系，末段落盒不再额外插 baselineskip。
+        assert_eq!(main.len(), 3, "\\vfil 后应为 段落盒+glue+段落盒");
         assert!(matches!(main[0], Node::Box(_)));
         assert!(matches!(main[1], Node::Glue { .. }));
-        match &main[2] {
-            Node::Glue { width, .. } => assert_eq!(*width, 12 * SP_PER_PT - 1500 - 6000),
-            other => panic!("预期行间 Glue，得到 {other:?}"),
-        }
-        assert!(matches!(main[3], Node::Box(_)));
+        assert!(matches!(main[2], Node::Box(_)));
     }
 
     #[test]

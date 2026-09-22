@@ -487,15 +487,17 @@ pub fn vpack(children: Vec<Node>, height: i64, max_depth: i64) -> BoxNode {
     // 相矛盾：glue 计入目标高、却被剥出 children——高度被"幻影"烘焙、glue 节点
     // 丢失，页盒 y 定位短 16pt。）
     let natural = vbox_dimensions(&children);
-    let mut b = BoxNode::new_vbox(children);
     let diff = height - (natural.height + natural.depth);
-    if diff >= 0 {
-        b.height += diff; // 拉伸：全部加在高度上
+    let adjusted = vpack_adjust_glue(&children, diff);
+    let adjusted_dims = vbox_dimensions(&adjusted);
+    let mut b = BoxNode::new_vbox(adjusted);
+    let residual = height - (adjusted_dims.height + adjusted_dims.depth);
+    if residual >= 0 {
+        b.height += residual;
     } else {
-        // 收缩：先缩高度（≥0），剩余缩深度
-        let dh = b.height.min(-diff);
+        let dh = b.height.min(-residual);
         b.height -= dh;
-        let dd = (-diff - dh).min(b.depth);
+        let dd = (-residual - dh).min(b.depth);
         b.depth -= dd;
     }
     // tex.web vpackage：自然深度超 max_depth 限制 → 深度钳到限制（超出部分
@@ -504,6 +506,93 @@ pub fn vpack(children: Vec<Node>, height: i64, max_depth: i64) -> BoxNode {
         b.depth = max_depth;
     }
     b
+}
+
+fn vpack_adjust_glue(children: &[Node], diff: i64) -> Vec<Node> {
+    let mut total_stretch = [0i64; 4];
+    let mut total_shrink = [0i64; 4];
+    for c in children {
+        if let Node::Glue {
+            stretch,
+            shrink,
+            stretch_order,
+            shrink_order,
+            ..
+        } = c
+        {
+            total_stretch[*stretch_order as usize] += stretch;
+            total_shrink[*shrink_order as usize] += shrink;
+        }
+    }
+    #[derive(Clone, Copy)]
+    enum Sign {
+        Normal,
+        Stretch,
+        Shrink,
+    }
+    let (sign, order, gs) = if diff == 0 {
+        (Sign::Normal, 0, 0.0)
+    } else if diff > 0 {
+        match (0..4).rev().find(|&o| total_stretch[o] != 0) {
+            Some(o) => (Sign::Stretch, o, diff as f64 / total_stretch[o] as f64),
+            None => (Sign::Normal, 0, 0.0),
+        }
+    } else {
+        match (0..4).rev().find(|&o| total_shrink[o] != 0) {
+            Some(o) => {
+                let gs = (-diff) as f64 / total_shrink[o] as f64;
+                let gs = if o == 0 && total_shrink[o] < -diff {
+                    1.0
+                } else {
+                    gs
+                };
+                (Sign::Shrink, o, gs)
+            }
+            None => (Sign::Normal, 0, 0.0),
+        }
+    };
+    let mut out = Vec::with_capacity(children.len());
+    let mut cum = 0f64;
+    let mut prev_g = 0f64;
+    for c in children {
+        match c {
+            Node::Glue {
+                name,
+                width,
+                stretch,
+                shrink,
+                stretch_order,
+                shrink_order,
+            } => {
+                let mut width = *width;
+                match sign {
+                    Sign::Stretch if *stretch_order as usize == order => {
+                        cum += *stretch as f64;
+                        let g = (gs * cum).round();
+                        width += g as i64 - prev_g as i64;
+                        prev_g = g;
+                    }
+                    Sign::Shrink if *shrink_order as usize == order => {
+                        cum -= *shrink as f64;
+                        let g = (gs * cum).round();
+                        width += g as i64 - prev_g as i64;
+                        prev_g = g;
+                    }
+                    _ => {}
+                }
+                out.push(Node::Glue {
+                    name: *name,
+                    width,
+                    stretch: *stretch,
+                    shrink: *shrink,
+                    stretch_order: *stretch_order,
+                    shrink_order: *shrink_order,
+                });
+            }
+            other => out.push(other.clone()),
+        }
+    }
+    out
 }
 
 /// `vsplit`（tex.web §1168）：把 vbox 从顶部切出高为 `height` 的部分。

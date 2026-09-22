@@ -1486,48 +1486,59 @@ impl NodeBuilder {
         }
     }
 
-    /// 垂直列表中不阻断行间胶水的节点（tex.web `prev_depth` 语义：该状态量
-    /// 仅由 `append_to_vlist` 落盒时更新，penalty/glue/kern 等可丢弃材料与
-    /// 迁移材料（mark/insert/adjust/whatsit）都不改写它）。
-    fn push_box_discardable(n: &Node) -> bool {
-        !matches!(n, Node::Box(_) | Node::Rule { .. })
+    /// 垂直列表中不阻断行间胶水的节点。显式 glue/kern 会重置 TeX 的
+    /// `prev_depth` 关系；否则 section afterskip、float textfloatsep 等显式
+    /// 间距后还会再补一段 baselineskip。
+    fn push_box_transparent(n: &Node) -> bool {
+        matches!(
+            n,
+            Node::Penalty { .. }
+                | Node::Mark { .. }
+                | Node::Ins { .. }
+                | Node::Adjust { .. }
+                | Node::Whatsit { .. }
+        )
+    }
+
+    fn previous_interline_depth(&self, cross_glue: bool) -> Option<i64> {
+        let list = self.lists.last()?;
+        let mut saw_blocking = false;
+        for n in list.iter().rev() {
+            match n {
+                Node::Box(prev) => return Some(prev.depth),
+                Node::Rule { depth, .. } => return Some(*depth),
+                _ if cross_glue && !matches!(n, Node::Box(_) | Node::Rule { .. }) => {}
+                _ if Self::push_box_transparent(n) => {}
+                _ => {
+                    saw_blocking = true;
+                    break;
+                }
+            }
+        }
+        if !saw_blocking
+            && self.page_state.pagination
+            && self.lists.len() == 1
+            && self.page_state.page.prev_depth() > crate::page::IGNORE_DEPTH
+        {
+            Some(self.page_state.page.prev_depth())
+        } else {
+            None
+        }
     }
 
     fn push_box(&mut self, node: Node) {
+        self.push_box_inner(node, false);
+    }
+
+    fn push_box_crossing_glue(&mut self, node: Node) {
+        self.push_box_inner(node, true);
+    }
+
+    fn push_box_inner(&mut self, node: Node, cross_glue: bool) {
         if self.mode() == Mode::Vertical {
-            // 分页模式下顶层前驱盒子的深度/类型：页面构建器里的盒子，或
-            // 断页后仍在贡献列表中的残余盒子（未入页，interline glue 的依据）。
-            let (prev_is_box, prev_depth) = if self.page_state.pagination && self.lists.len() == 1 {
-                match self.lists[0]
-                    .iter()
-                    .rev()
-                    .find(|n| matches!(n, Node::Box(_) | Node::Rule { .. }))
-                {
-                    Some(Node::Box(prev)) => (true, prev.depth),
-                    Some(Node::Rule { depth, .. }) => (true, *depth),
-                    _ => (
-                        self.page_state.page.prev_depth() > crate::page::IGNORE_DEPTH,
-                        self.page_state.page.prev_depth(),
-                    ),
-                }
-            } else {
-                // tex.web prev_depth 是状态量：只有盒子经 append_to_vlist 才更新，
-                // 其间夹的可丢弃材料（interline penalty、\vskip/\parskip 胶、kern）
-                // 都不改写它——Box → Penalty/Glue → Box 仍按"前驱是 Box"插
-                // baselineskip glue。显示公式的盒前正是
-                // `\predisplaypenalty + \abovedisplayskip`，必须穿透才算得出
-                // 上一行深度（P5：display 垂直结构对齐 tex.web）。
-                match self
-                    .lists
-                    .last()
-                    .and_then(|l| l.iter().rev().find(|n| !Self::push_box_discardable(n)))
-                {
-                    Some(Node::Box(prev)) => (true, prev.depth),
-                    Some(Node::Rule { depth, .. }) => (true, *depth),
-                    _ => (false, 0),
-                }
-            };
-            if prev_is_box {
+            let display_followup = self.math_state.after_display;
+            if let Some(prev_depth) = self.previous_interline_depth(cross_glue || display_followup)
+            {
                 let height = match &node {
                     Node::Box(b) => b.height,
                     _ => 0,
@@ -1548,6 +1559,9 @@ impl NodeBuilder {
                     stretch_order: 0,
                     shrink_order: 0,
                 });
+            }
+            if display_followup {
+                self.math_state.after_display = false;
             }
         }
         self.append(node);

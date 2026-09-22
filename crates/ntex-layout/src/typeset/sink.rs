@@ -46,7 +46,6 @@ impl CoreSink for NodeBuilder {
                 // 垂直模式字符触发段落（TeX new_graf）
                 if self.math_state.after_display {
                     // M4-4：显示公式后续文字仍在段内——无 parskip、无缩进（续排）
-                    self.math_state.after_display = false;
                     self.lists.push(Vec::new());
                     self.list_modes.push(Mode::Horizontal);
                     self.space_factor = 1000;
