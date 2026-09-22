@@ -157,6 +157,7 @@ pub fn render_tokens(toks: &[Token], intern: &InternTable) -> String {
                 }
             }
             TokenKind::EndGroup => s.push('}'),
+            TokenKind::EndTemplate => {}
         }
     }
     s

@@ -3208,6 +3208,7 @@ impl Expander {
                 None => "#?".to_owned(),
             },
             TokenKind::EndGroup => "}".to_owned(),
+            TokenKind::EndTemplate => String::new(),
             TokenKind::Char => match t.charcode() {
                 Some(c) => {
                     let ch = char::from_u32(c).unwrap_or('\u{FFFD}');

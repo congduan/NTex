@@ -1180,6 +1180,7 @@ impl Expander {
                     }
                 }
                 TokenKind::EndGroup => {}
+                TokenKind::EndTemplate => {}
             }
         }
         s

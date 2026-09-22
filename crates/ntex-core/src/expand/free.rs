@@ -414,7 +414,7 @@ fn detok_tokens(toks: &[Token], intern: &InternTable) -> String {
                 s.push('#');
                 s.push_str(&t.param_number().expect("MacroParam 必有参数号").to_string());
             }
-            TokenKind::EndGroup => {}
+            TokenKind::EndGroup | TokenKind::EndTemplate => {}
         }
     }
     s
@@ -500,6 +500,7 @@ fn detokenize_token(tok: Token, intern: &InternTable, esc: i64, out: &mut Vec<To
             out.push(Token::char(Catcode::Other, u32::from(b'0' + n)));
         }
         TokenKind::EndGroup => out.push(Token::char(Catcode::Other, u32::from(b'}'))),
+        TokenKind::EndTemplate => {}
     }
 }
 
@@ -573,6 +574,7 @@ fn string_token(tok: Token, intern: &InternTable, esc: i64, out: &mut Vec<Token>
             out.push(Token::char(Catcode::Other, u32::from(b'0' + n)));
         }
         TokenKind::EndGroup => out.push(Token::char(Catcode::Other, u32::from(b'}'))),
+        TokenKind::EndTemplate => {}
     }
 }
 /// 主题分类：原语是否属于"排版"主题（dispatch_box）。

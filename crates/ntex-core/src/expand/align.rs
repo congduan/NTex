@@ -287,6 +287,12 @@ impl Expander {
     /// preamble 阶段分类收集；body raw 阶段拦 `&`/`\span`/`\cr`/`\crcr`
     ///（Insert v_j）与 `}` 平衡（对齐组闭括号判定）。
     fn align_on_token(&mut self, tok: Token) -> Result<bool> {
+        // v 模板尾哨兵抵达主循环 ≙ tex.web expand L7785 的
+        // `end_template → frozen_endv` 换形：此刻才收列（fin_col）。
+        if tok.is_end_template() {
+            self.align_fin_col()?;
+            return Ok(true);
+        }
         let Some(frame) = self.align_frames.last_mut() else {
             return Ok(false);
         };
@@ -744,6 +750,11 @@ impl Expander {
             _ => return,
         };
         let _ = omit;
+        // tex.web L15497：扫描到的 v_j 模板以显式 `\endtemplate` 收尾；哨兵
+        // 让 plus/minus 等关键字前瞻读到可退回的 token，收列只在哨兵真正
+        // 抵达主循环（align_on_token）时发生。
+        let mut v = v;
+        v.push(Token::end_template());
         self.push_frame(InputFrame::AlignV {
             items: TokenArray::from(v),
             pos: 0,
@@ -949,6 +960,16 @@ impl Expander {
                     }
                     EqSlot::Alias(target) => {
                         self.unread(Token::control_sequence(target));
+                        continue;
+                    }
+                    // tex.web get_x_token：可展开原语就地展开（`\romannumeral`/
+                    // `\csname`/`\the`…）。LaTeX `\end{tabular}` 的展开链
+                    // `\end → \romannumeral\ifx…\z@\end<space> → \csname
+                    // endtabular\endcsname → \crcr` 全程可展开，peek 必须能穿过，
+                    // 否则 `\crcr\egroup`（\endtabular 的对齐收尾）读不到，
+                    // `\romannumeral` 本身被当成新行首列 → 凭空多一行。
+                    EqSlot::Primitive(p) if p.is_expandable() => {
+                        self.exec_primitive(p)?;
                         continue;
                     }
                     _ => {}

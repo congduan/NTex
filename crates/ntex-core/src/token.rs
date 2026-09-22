@@ -48,6 +48,10 @@ pub enum TokenKind {
     ControlSeq = 1,
     MacroParam = 2,
     EndGroup = 3,
+    /// 对齐 v 模板尾哨兵（tex.web `end_template_token`，L15497：扫描到的 v_j
+    /// 模板以显式 `\endtemplate` 收尾）。只在 `InputFrame::AlignV` 帧内出现，
+    /// 永不出自用户输入。
+    EndTemplate = 4,
 }
 
 /// 8 字节 token。
@@ -88,6 +92,22 @@ impl Token {
         Self((TokenKind::EndGroup as u64) << TAG_SHIFT)
     }
 
+    /// 对齐 v 模板尾哨兵（tex.web `end_template_token`）。
+    ///
+    /// v_j 模板末尾放一枚哨兵，使 `\hskip\tabcolsep` 之后的 plus/minus 关键字
+    /// 前瞻（scan_glue 内部 `scan_keyword`）读到的是**可退回的 token**——否则
+    /// 帧耗尽在探针里就触发 fin_col，尾段胶水落进下一单元（tex.web 用
+    /// expand L7785 的 `end_template→frozen_endv` 换形达成同一效果：endv 只在
+    /// 真正到达主循环时收列）。
+    pub const fn end_template() -> Self {
+        Self((TokenKind::EndTemplate as u64) << TAG_SHIFT)
+    }
+
+    /// 是否 v 模板尾哨兵。
+    pub const fn is_end_template(self) -> bool {
+        matches!(self.kind(), TokenKind::EndTemplate)
+    }
+
     /// 由原始 u64 构造（供测试与序列化）。
     pub const fn from_raw(raw: u64) -> Self {
         Self(raw)
@@ -104,6 +124,7 @@ impl Token {
             0 => TokenKind::Char,
             1 => TokenKind::ControlSeq,
             2 => TokenKind::MacroParam,
+            4 => TokenKind::EndTemplate,
             _ => TokenKind::EndGroup,
         }
     }
@@ -175,6 +196,7 @@ impl fmt::Debug for Token {
             TokenKind::ControlSeq => write!(f, "CS({})", self.csid().unwrap()),
             TokenKind::MacroParam => write!(f, "Param({})", self.param_number().unwrap()),
             TokenKind::EndGroup => write!(f, "EndGroup"),
+            TokenKind::EndTemplate => write!(f, "EndTemplate"),
         }
     }
 }
@@ -202,6 +224,7 @@ pub fn meaning(tok: Token, intern: &InternTable) -> String {
         TokenKind::ControlSeq => format!("\\{}", intern.name(tok.csid().unwrap())),
         TokenKind::MacroParam => format!("#{}", tok.param_number().unwrap()),
         TokenKind::EndGroup => "end-group character }".to_owned(),
+        TokenKind::EndTemplate => "end-template".to_owned(),
     }
 }
 
