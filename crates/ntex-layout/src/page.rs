@@ -83,6 +83,14 @@ pub struct PageBuilder {
     keep_zero_empty: bool,
     /// 追踪输出缓冲（feed_one 后由调用方取走写转录）。
     trace_buf: String,
+    /// `\vsize` 的**事件面**最新值（[`Primitive::VSize`] 赋值经 `param_changed`
+    /// 送达；与 `params.vsize` 镜像并行的第二通道）。输出例程在组内执行，组尾
+    /// 的参数回滚会不经 `param_changed` 直接改写镜像，LaTeX 输出例程尾
+    /// `\global\vsize\@colroom` 的目标收紧因此到不了 freeze——浮体页按整页
+    /// 目标断出后再叠上浮体高度，正文冲出版心（transformer p6/p9 实测）。
+    /// 事件面值只在显式赋值时更新，恰好承载 LaTeX「每次例程尾都重设 \vsize」
+    /// 的契约；None 时退回镜像。
+    vsize_live: Option<i64>,
 }
 
 /// `process` 单节点处理结果。
@@ -122,7 +130,18 @@ impl PageBuilder {
             held_zero_empty: None,
             keep_zero_empty: false,
             trace_buf: String::new(),
+            vsize_live: None,
         }
+    }
+
+    /// `\vsize` 事件面更新（[NodeBuilder::param_changed] 调用）。
+    pub fn note_vsize(&mut self, v: i64) {
+        self.vsize_live = Some(v);
+    }
+
+    /// 本轮 feed 生效的断页目标（事件面优先，镜像兜底）。
+    fn live_vsize(&self, params: &Params) -> i64 {
+        self.vsize_live.unwrap_or(params.vsize)
     }
 
     /// 当前页是否为空（供收尾 eject 判断）。
@@ -173,6 +192,21 @@ impl PageBuilder {
             eprintln!("[tracingpages] feed_one: tracing={}", self.tracing);
         }
         loop {
+            // LaTeX 浮体契约的页构建器侧落点：`\@addtocurcol` 把浮体放上**当前**
+            // 页时经 `\@flupdates` 缩小 `\@colroom`，输出例程尾的 `\global\vsize
+            // \@colroom` 随之收紧断页目标。真 TeX 靠 `\end@float` 的 -\@Miii(-10003)
+            // 强制惩罚触发 `\@specialoutput` 把半成品页 `\unvbox\@holdpg` 退回贡献
+            // 列表重建，新目标因此生效；NTex 的 -10003 走既有强制断页臂（页已
+            // 成形再退回会在例程里丢材料），故这里在页构建器入口补同一效果：
+            // **目标在页中途被收紧 → 半成品页整表退回贡献、按新目标重冻**。
+            // 只认收紧（`\vsize\maxdimen` 的「本页不再断」臂与 `\enlargethispage`
+            // 的放宽不触发），且只认已冻页（has_box）——页空时下一次 freeze 自然
+            // 取到新值。每轮收紧至多触发一次（退回后 has_box=false）。
+            let vsize = self.live_vsize(params);
+            if self.has_box && self.goal > vsize {
+                contrib.splice(0..0, self.page.drain(..));
+                self.start_new_page();
+            }
             // 持有盒裁决：NTex 的贡献列表在每次入页后即被抽干，tex.web 的
             // 「空盒入页 → 惩罚照常点火」次序在此不可见，只能扣住空盒等下一个
             // 贡献揭晓身份。`\end@float` 的 -\@Miii(-10003) 是「页已断、
@@ -627,7 +661,7 @@ impl PageBuilder {
     /// `freeze_page_specs(box_there)`（tex.web §519）：首盒到达时定格页规格。
     fn freeze(&mut self, params: &Params) {
         self.has_box = true;
-        self.goal = params.vsize;
+        self.goal = self.live_vsize(params);
         self.max_depth = params.maxdepth;
         self.depth = 0;
         self.total = 0;

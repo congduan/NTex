@@ -668,6 +668,12 @@ impl CoreSink for NodeBuilder {
     }
     fn param_changed(&mut self, kind: ParamKind, value: ParamValue) -> Result<()> {
         self.params.set(kind, value);
+        if kind == ParamKind::VSize {
+            if let ParamValue::Dimen(v) = value {
+                // 事件面第二通道：组尾回滚只改镜像，见 PageBuilder::vsize_live
+                self.page_state.page.note_vsize(v);
+            }
+        }
         Ok(())
     }
     fn penalty_array_changed(&mut self, kind: u8, values: &[i64]) -> Result<()> {
