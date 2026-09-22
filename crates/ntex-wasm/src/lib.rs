@@ -508,8 +508,9 @@ fn compile_pipeline_assets(
 
 /// DVI 字节 → PDF 字节（两个导出面共用；`pages` 仅作 0 页守卫）。
 ///
-/// 页尺寸取 [`ntex_pdf::PdfOptions::default`] = A4，与预览
-/// （`ntex_backend::RenderOptions::default`）同口径，导出件与屏幕上看到的一致。
+/// 页尺寸取 [`ntex_pdf::PdfOptions::default`] = US letter（612×792，TeX 世界
+/// 缺省纸）；预览画布（`ntex_backend::RenderOptions::default`）仍是 A4——
+/// 画布是屏幕视口约定，PDF 页面是纸张语义，两者从 2026-09-22 起不同径。
 ///
 /// 错误类型取 `String` 而非 `JsError`：本函数是**目标无关的纯 Rust 核心**，
 /// native 单测可直接断言文案；`JsError` 只在两个 wasm 导出面各映射一次。

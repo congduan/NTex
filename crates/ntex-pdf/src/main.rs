@@ -1,7 +1,8 @@
 //! `ntex-pdf <input.dvi> [output.pdf] [-p <W>x<H>]`：DVI → PDF 转换（正式后端）。
 //!
-//! 页面尺寸以 pt 给出（如 `-p 595.28x841.89`），缺省 A4。DVI 本身不含页面
-//! 尺寸信息，需显式指定（与 dvipdfmx 的 `-p` 同理）。
+//! 页面尺寸以 pt 给出（如 `-p 612x792`），缺省 US letter（612×792，TeX 世界
+//! 缺省纸：pdftexconfig.tex / dvips / article.cls letterpaper）。DVI 本身不含
+//! 页面尺寸信息，需显式指定（与 dvipdfmx 的 `-p` 同理）。
 
 use std::fs;
 use std::process::ExitCode;

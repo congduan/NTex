@@ -48,7 +48,12 @@ pub struct PdfOptions {
 impl Default for PdfOptions {
     fn default() -> Self {
         Self {
-            page_size: (595.276, 841.890), // A4
+            // 纸张缺省 US letter（8.5×11in = 612×792bp）：TeX 世界的缺省纸
+            // （pdftexconfig.tex 的 \pdfpagewidth 8.5in、dvips `-t letter` 缺省、
+            // article.cls `\ExecuteOptions{letterpaper,...}`）。LaTeX 文档不带
+            // paper 选项时 pdfTeX 落 letter（GT 实测 612×792）；DVI 本身无纸张
+            // 信息，驱动缺省即文档纸面。
+            page_size: (612.0, 792.0), // US letter
             input_paths: Vec::new(),
         }
     }
