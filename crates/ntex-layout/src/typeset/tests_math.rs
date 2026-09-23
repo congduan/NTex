@@ -828,6 +828,32 @@ use super::*;
     }
 
     #[test]
+    fn math_penalty_inline_between_chars() {
+        // 债务表项 1 的验收探针：`$a\penalty100 b$`——penalty 落在 a/b 之间
+        // （tex.web math list 的 penalty 节点，公式内断行候选）
+        let children = math_line_children(r"$a\penalty100 b$");
+        let kinds: Vec<&str> = children
+            .iter()
+            .map(|n| match n {
+                Node::Char { .. } => "char",
+                Node::Penalty { .. } => "penalty",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            vec!["char", "penalty", "char"],
+            "penalty 应在 a/b 之间：{children:?}"
+        );
+        let pd = children[1].dimensions();
+        assert_eq!((pd.width, pd.height, pd.depth), (0, 0, 0));
+        match &children[1] {
+            Node::Penalty { penalty } => assert_eq!(*penalty, 100),
+            other => panic!("预期 penalty 节点：{other:?}"),
+        }
+    }
+
+    #[test]
     fn math_vrule_kept_in_formula() {
         // tex.web：数学模式 \vrule 是规则原子（M4-1；此前忽略）
         let main = typeset(r"\hbox{$\vrule width 5pt x$}").unwrap();
