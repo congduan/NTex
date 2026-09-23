@@ -28,7 +28,6 @@
 //! 胶水/字距/惩罚不参与 height/depth：水平列表里它们有 width，垂直列表里无维度。
 
 use ntex_core::register::Glue;
-use ntex_core::token::Token;
 
 /// 字体标识：由字体表（M3-4 TFM 解析）分配；`FontId(0)` 为默认字体。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -224,18 +223,18 @@ pub enum Node {
         class: Option<i64>,
         text: String,
     },
-    /// insert 节点（`\insert<num>{<general text>}`；无维度）：class 为插入寄存器号。
+    /// insert 节点（`\insert<num>{...}`；无维度）：class 为插入寄存器号。
     ///
-    /// tex.web `begin_insert_or_adjust` 把组体在内部垂直模式排版、`vpack(natural)`
-    /// 后挂在 `ins_ptr`，并在 insert_group 收口时读 `\splittopskip`/`\splitmaxdepth`/
-    /// `\floatingpenalty` 存入 `split_top_ptr`/`depth`/`float_cost`。NTex 现阶段组体
-    /// **不在扫描位执行**（体排版需要主循环，见 survey §5.bis.4 发现未修），
-    /// 故体以 token 串**无损保留**（此前 `text: String` 把 cs 全部丢掉）——
-    /// `\insert150{\hbox{FN}}` 的 `\hbox` 结构还在，`natural size` 以 0 占位。
+    /// tex.web `begin_insert_or_adjust`：类号扫入后 `new_save_level(insert_group)`、
+    /// `push_nest; mode:=-vmode`——组体在**内部垂直模式**由主循环照常排版，
+    /// `}` 处（insert_group）`end_graf; vpack(natural)` 后挂上 `ins_node`，
+    /// `\splittopskip`/`\splitmaxdepth`/`\floatingpenalty` 同站读入。
+    /// NTex 同构：组体经 [`crate::typeset::GroupKind::Insert`] 组在主循环执行，
+    /// 此处 `body` 即排版后的 vlist（脚注文本由此真正可回流到页底）。
     Ins {
         class: usize,
-        /// 组体 token 串（无损；`\ifvoid<insert号>`/`\unvbox<insert号>` 的回流内容）
-        body: Vec<Token>,
+        /// 组体排版后的垂直列表（tex.web `ins_ptr`；`\ifvoid`/`\unvbox` 的回流内容）
+        body: BoxNode,
         /// `\splittopskip`（tex.web `split_top_ptr`）
         split_top_skip: Glue,
         /// `\splitmaxdepth`（tex.web `depth`）

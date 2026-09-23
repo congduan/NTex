@@ -91,11 +91,13 @@ impl Expander {
                 let replace = self.scan_group_contents(None)?;
                 self.sink.discretionary(pre, post, replace)
             }
-            // ETRIP 冲刺：\insert<regnum>{<general text>}（insert 节点；内容只收集不排版）
+            // \insert<regnum>{...}（tex.web begin_insert_or_adjust）：类号扫入
+            // saved(0)，开 insert_group 后**组体由主循环在内部垂直模式排版**——
+            // 此前体按 general text 收集不执行，脚注文本永远进不了字体排版管线
+            // （广度测试 P0 #2）。`{` 由主循环读、begin_group 消费 pending_kind。
             Primitive::Insert => {
                 let class = self.scan_register_index()?;
-                let toks = self.scan_group_contents(None)?;
-                self.sink.insert_node(class, toks)
+                self.sink.insert_begin(class)
             }
             // ETRIP 冲刺：\vadjust{<vertical material>}（adjust 节点；内容只收集不排版）
             Primitive::VAdjust => {

@@ -348,6 +348,9 @@ enum GroupKind {
     /// `\left`/`\middle` 打开的数学定界组（tex.web group_code=math_left_group=16；
     /// `\right` 时闭合。ETRIP L356-358 `\left.\1 16` 检查）。
     MathLeft,
+    /// `\insert<num>{...}`（tex.web group_code=insert_group=11）：组体在内部
+    /// 垂直模式排版，`}` 处 vpack(natural) 后挂 ins_node 到外层列表。
+    Insert,
 }
 
 /// 对齐组方向（tex.web alignment：\halign 行堆叠 / \valign 列并排）。
@@ -409,6 +412,7 @@ impl GroupKind {
             GroupKind::Output => 8,
             GroupKind::Math => 9,
             GroupKind::MathLeft => 16,
+            GroupKind::Insert => 11,
         }
     }
 
@@ -426,6 +430,7 @@ impl GroupKind {
             GroupKind::Output => "output group",
             GroupKind::Math => "math group",
             GroupKind::MathLeft => "math left group",
+            GroupKind::Insert => "insert group",
         }
     }
 }
@@ -469,6 +474,8 @@ struct GroupCtx {
     /// 的封装把位移抢走——`\@outputpage` 的 `\moveright\@themargin\vbox{...}`
     /// 若被头部内层 `\hb@xt@\textwidth` 盒窃取，版心整体左移 62pt）。
     shift: Option<i64>,
+    /// `\insert` 组的插入寄存器号（tex.web `saved(0)`；仅 [`GroupKind::Insert`]）。
+    insert_class: usize,
 }
 
 /// 字符度量函数：`(width, height, depth)`，单位 sp。
@@ -727,8 +734,13 @@ struct BoxState {
     /// 等待下一个组的盒子种类。
     pending_box: Option<PendingBox>,
 
-    /// 等待下一个组的显式种类（`\begingroup`/`\valign`/`\noalign`；优先于 pending_box）。
+    /// 等待下一个组的显式种类（`\begingroup`/`\valign`/`\noalign`/`\insert`；
+    /// 优先于 pending_box）。
     pending_kind: Option<GroupKind>,
+
+    /// `\insert` 组的插入寄存器号（tex.web `saved(0)`；insert_begin 置、
+    /// group_begin 认领进 [`GroupCtx::insert_class`]）。
+    pending_insert_class: usize,
 
     /// `\\raise`/`\\lower`：下一个封装盒子的参考点位移（sp）。
     pending_shift: Option<i64>,
@@ -1015,6 +1027,7 @@ impl NodeBuilder {
             box_state: BoxState {
                 pending_box: None,
                 pending_kind: None,
+                pending_insert_class: 0,
                 pending_shift: None,
                 pending_hshift: None,
                 pending_leaders: None,

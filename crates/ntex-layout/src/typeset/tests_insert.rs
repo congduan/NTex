@@ -6,11 +6,12 @@ use super::*;
     /// 等体在扫描位执行才生效，见 survey §5.bis.4 发现未修 1）：
     /// `\splittopskip=10pt plus2fil \splitmaxdepth=1pt \floatingpenalty=200
     /// \setbox0=\vbox{\insert150{\hbox{FN}}}\showbox0` 的 ins 节点行。
-    /// 真 TeX 同探针：`\insert150, natural size 6.83331; split(10.0 plus 2.0fil,1.0);
-    /// float cost 200` + `.\hbox(...)` 体子树；NTex 体未排版 → natural size 0.0
-    /// 占位、体以 token 串显示（三参数与脚注文本都在）。
+    /// 体按 tex.web `begin_insert_or_adjust` 语义在体内垂直模式**排版**（P0 脚注
+    /// 刀）：ins 节点带排好版的 vlist（tex.web `ins_ptr`），showbox 递归出体子树，
+    /// natural size = 体自然尺寸（真 TeX 同探针形态：`\insert150, natural size
+    /// 6.83331; …` + `.\hbox(...)` 子树；此处 dummy 字体小一个量级）。
     #[test]
-    fn insert_body_tokens_and_split_params_preserved() {
+    fn insert_body_typeset_and_split_params_preserved() {
         let mut ts = Typesetter::with_metrics(metrics);
         let _ = ts.typeset_dvi(
             r"\splittopskip=10pt plus2fil \splitmaxdepth=1pt \floatingpenalty=200 \setbox0=\vbox{\insert150{\hbox{FN}}}\showbox0\end",
@@ -18,15 +19,16 @@ use super::*;
         let t = ts.take_transcript();
         assert!(
             t.contains(
-                r"\insert150, natural size 0.0; split(10.0 plus 2.0fil,1.0); float cost 200"
+                r"\insert150, natural size 0.11444; split(10.0 plus 2.0fil,1.0); float cost 200"
             ),
-            "ins 节点行应按 tex.web show_node 格式带三参数：{t:?}"
+            "ins 节点行应按 tex.web show_node 格式带三参数与体自然尺寸：{t:?}"
         );
-        assert!(t.contains("FN"), "体 token 应读得出脚注文本：{t:?}");
-        // 此前 toks_to_text 把 cs 全丢——`\hbox` 的组结构现在仍在体 token 串里
+        // 体是排版结果（行盒 + 字符子树），不再是 token 串
+        assert!(t.contains("\\ F"), "体字符 F 应以排版节点出现：{t:?}");
+        assert!(t.contains("\\ N"), "体字符 N 应以排版节点出现：{t:?}");
         assert!(
-            t.contains("\\cs"),
-            "体 token 串应保留 cs（\\cs<下标> 占位显示）：{t:?}"
+            !t.contains("\\cs"),
+            "体不再是 token 串（旧实现以 \\cs 占位显示）：{t:?}"
         );
     }
 
@@ -46,8 +48,26 @@ use super::*;
         assert!(!t.contains("VOID"), "不应走 void 臂：{t:?}");
     }
 
-    /// `\unvbox150` 取走累积盒（ins 节点回流），`\ifvoid150` 复归 void——
-    /// 真 TeX 探针 2 的 `\setbox3=\vbox{\unvbox150}\showbox3`：box3 非空、150 void。
+    /// 段中 `\insert`（LaTeX `\footnote` 的真形态）：体在段内排版后，ins 节点
+    /// 不进行盒——tex.web line_break 以 adjust_tail 把 ins/mark/adjust 摘出行盒、
+    /// 接到行盒之后的竖列表（L12901），fire_up 才投得进 box(class)。
+    /// 体留在行盒里时 box150 恒 void（= P0「脚注文本整段消失」）。
+    #[test]
+    fn insert_inside_paragraph_reaches_register() {
+        let mut ts = Typesetter::with_metrics(metrics);
+        let _ = ts.typeset_dvi(
+            r"text\insert150{\hbox{A}}tail\par\vfill\penalty-10000 \ifvoid150\message{VOID}\else\message{FULL}\fi\end",
+        );
+        let t = ts.take_transcript();
+        assert!(
+            t.contains("FULL"),
+            "段内 \\insert 的体应经断页投进 box150：{t:?}"
+        );
+    }
+
+    /// `\unvbox150` 取走累积盒，`\ifvoid150` 复归 void——真 TeX 探针 2 的
+    /// `\setbox3=\vbox{\unvbox150}\showbox3`：box3 装的是体 vlist 本身
+    /// （fire_up 的 `vpackage(ins_ptr(p))`，卸盒即体内容、无 ins 节点）、150 void。
     #[test]
     fn insert_unvbox_roundtrip_empties_register() {
         let mut ts = Typesetter::with_metrics(metrics);
@@ -56,8 +76,12 @@ use super::*;
         );
         let t = ts.take_transcript();
         assert!(
-            t.contains("\\insert150"),
-            "回流内容应带着 ins 节点进 box3 的盒树：{t:?}"
+            t.contains("\\ A"),
+            "回流内容应是体 vlist（tex.web vpackage(ins_ptr)）进 box3 的盒树：{t:?}"
+        );
+        assert!(
+            !t.contains("\\insert150"),
+            "卸盒语义：box3 装体内容，不再有 ins 节点：{t:?}"
         );
         assert!(
             t.contains("VOID"),

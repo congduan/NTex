@@ -87,6 +87,10 @@ impl CoreSink for NodeBuilder {
         // 盒子/对齐组：复用盒子路径（对齐组按 vbox 打包）。`\noalign` 组也
         // 开垂直列表（M4-5：材料在组结束时原样入对齐流，tex.web no_align
         // 材料直接进对齐 vlist——见 group_end 的 NoAlign 分支）。
+        // `\insert` 组（tex.web begin_insert_or_adjust 的 push_nest+mode:=-vmode）
+        // 同样走内部垂直列表，但**不是盒子组**——`\shipout`/`\setbox`/`to`/
+        // `spread`/位移前缀都不得被它认领。
+        let is_insert = kind == Some(GroupKind::Insert);
         let box_kind = match kind {
             Some(GroupKind::HBox | GroupKind::AdjustedHBox) => Some(PendingBox::HBox),
             // 仅显式 \vcenter 保留 VCenter 种类（显式 VBox 组/对齐组不受影响）
@@ -94,11 +98,13 @@ impl CoreSink for NodeBuilder {
             Some(GroupKind::VBox | GroupKind::Align | GroupKind::NoAlign) => {
                 Some(PendingBox::VBox)
             }
+            Some(GroupKind::Insert) => Some(PendingBox::VBox),
             Some(GroupKind::VTop) => Some(PendingBox::VTop),
             _ => None,
         };
+        let box_group = box_kind.is_some() && !is_insert;
         // `\shipout` 目标 = 紧邻的盒子组（内层盒子不消费该标记）
-        let ship = if box_kind.is_some() {
+        let ship = if box_group {
             std::mem::take(&mut self.page_state.shipout_next)
         } else {
             false
@@ -112,7 +118,7 @@ impl CoreSink for NodeBuilder {
         });
         // `\leaders` 引导盒子：认领到紧邻的盒子组（组结束封装时挂起等胶水）。
         // 内层盒子（如引导 hbox 里的 \vbox）不消费该标记。
-        let leaders = if box_kind.is_some() {
+        let leaders = if box_group {
             self.box_state.pending_leaders.take()
         } else {
             None
@@ -121,7 +127,7 @@ impl CoreSink for NodeBuilder {
         // box_end 语义）。内层嵌套盒（`\setbox0=\vbox{\hbox{...}}` 的 \hbox）不消费，
         // 否则 target 被第一个内层盒抢走、RHS 的 vbox 无法入寄存器。
         // `\global` 旗标同批认领（tex.web：随赋值入 box_context，嵌套赋值不覆写）。
-        let setbox = if box_kind.is_some() {
+        let setbox = if box_group {
             self.box_state.setbox_target.take()
         } else {
             None
@@ -129,14 +135,14 @@ impl CoreSink for NodeBuilder {
         let setbox_global = setbox.is_some() && self.box_state.setbox_global;
         // `to`/`spread` 规格：同 setbox 一样认领到紧邻盒子组（嵌套时内层盒的
         // box_spec 调用不得覆写外层已认领的规格）。
-        let spec = if box_kind.is_some() {
+        let spec = if box_group {
             self.box_state.pending_box_spec.take()
         } else {
             None
         };
         // 位移前缀（\raise/\lower/\moveleft/\moveright）：认领到紧邻盒子组
         // （tex.web：位移只作用于紧随其后的那个盒子，不向内层嵌套盒泄漏）。
-        let shift = if box_kind.is_some() {
+        let shift = if box_group {
             self.box_state
                 .pending_shift
                 .take()
@@ -153,6 +159,11 @@ impl CoreSink for NodeBuilder {
             setbox_global,
             spec,
             shift,
+            insert_class: if is_insert {
+                std::mem::take(&mut self.box_state.pending_insert_class)
+            } else {
+                0
+            },
             entered_line: line,
             // 组打开时是否数学模式：`\hbox{A}` 数学字段（box 原子）在数学模式
             // 打开、同模式关闭是合法流程；外层组（垂直打开）关闭时若仍处数学
@@ -264,6 +275,8 @@ impl CoreSink for NodeBuilder {
         if ctx.box_kind.is_some_and(PendingBox::is_vertical) && self.mode() == Mode::Horizontal {
             self.close_paragraph();
         }
+        // insert_group 收口三参数（tex.web：q/d/f 在 unsave **前**读组内值）
+        let insert_params = (self.params.splittopskip, self.params.splitmaxdepth, self.params.misc[37]);
         // 盒组封装的 boxmaxdepth 用**组内**值（tex.web：vbox 封装在组恢复前——
         // 与 L635-641 折行用组内 hsize 同理；trip L316 `\vbox to10pt{\boxmaxdepth
         // =-1pt...}` → 恢复后取外层会丢 -1pt 钳制）
@@ -419,6 +432,23 @@ impl CoreSink for NodeBuilder {
                 if let Some(outer) = self.lists.last_mut() {
                     outer.extend(nodes);
                 }
+            }
+            // tex.web insert_group：end_graf（上方 box_kind 臂已做）→
+            // `p:=vpack(link(head),natural)` → tail_append(ins_node)。类号取
+            // group_begin 认领的 `saved(0)`；三参数取 unsave 前的组内值。
+            GroupKind::Insert => {
+                let (split_top_skip, split_max_depth, float_cost) = insert_params;
+                let children = self.lists.pop().unwrap_or_default();
+                self.list_modes.pop();
+                let natural = vbox_dimensions(&children);
+                let body = vpack(children, natural.height + natural.depth, inner_boxmaxdepth);
+                self.append(Node::Ins {
+                    class: ctx.insert_class,
+                    body,
+                    split_top_skip,
+                    split_max_depth,
+                    float_cost,
+                });
             }
             GroupKind::HBox | GroupKind::AdjustedHBox | GroupKind::VBox | GroupKind::VTop => {
                 if let Some(kind) = ctx.box_kind {
@@ -1770,27 +1800,23 @@ impl PageSink for NodeBuilder {
             .cloned()
             .unwrap_or_default()
     }
-    /// `\insert<num>{...}`：insert 节点追加到当前列表（无维度；体 token 串无损保留）。
+    /// `\insert<num>{`：下一个组为 insert 组（tex.web group_code=insert_group=11）。
     ///
-    /// 三参数取扫描点的参数镜像——tex.web 在 insert_group 收口（`}` 处）读
-    /// `\splittopskip`/`\splitmaxdepth`/`\floatingpenalty`，NTex 体不在扫描位
-    /// 执行，组体内的同名赋值不生效（见 survey §5.bis.4 发现未修 1）。
-    /// `\insert255` 按 tex.web 报错并改道 0（box 255 是页面寄存器）——否则
-    /// 刀 3 的 fire_up 累积会写穿 [`PAGE_BOX`] 页队列。
-    fn insert_node(&mut self, class: usize, toks: Vec<Token>) -> Result<()> {
+    /// tex.web `begin_insert_or_adjust`：`scan_eight_bit_int` → `saved(0):=cur_val`
+    /// → `new_save_level(insert_group); scan_left_brace; normal_paragraph; push_nest;
+    /// mode:=-vmode`——组体由主循环在内部垂直模式照常排版，`}` 处 group_end 的
+    /// Insert 臂 vpack(natural) 后挂 ins_node（体排版在此真正发生，脚注文本因此
+    /// 可回流页底）。`\insert255` 按 tex.web 报错并改道 0（box 255 是页面寄存器）
+    /// ——否则 fire_up 累积会写穿 [`PAGE_BOX`] 页队列。
+    fn insert_begin(&mut self, class: usize) -> Result<()> {
         let mut class = class;
         if class == PAGE_BOX {
             self.report_error("You can't \\insert255.");
             self.report_help("I'm changing to \\insert0; box 255 is special.");
             class = 0;
         }
-        self.append(Node::Ins {
-            class,
-            body: toks,
-            split_top_skip: self.params.splittopskip,
-            split_max_depth: self.params.splitmaxdepth,
-            float_cost: self.params.misc[37], // \floatingpenalty
-        });
+        self.box_state.pending_kind = Some(GroupKind::Insert);
+        self.box_state.pending_insert_class = class;
         Ok(())
     }
     /// `\vadjust{...}`：adjust 节点追加到当前列表（无维度）。

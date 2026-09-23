@@ -114,6 +114,19 @@ impl NodeBuilder {
                     shrink_order: rs.shrink_order,
                 });
             }
+            // tex.web line_break：hpack 在 adjust_tail≠null 时把行内 ins/mark/
+            // adjust 节点剥出（@<Transfer node |p| to the adjustment list@>），
+            // 行盒封装后紧跟其材料——`\insert` 落在段落竖列表里才到得了断页器
+            // （留在行盒内则 shipout 时被跳过，脚注整段蒸发：广度测试 P0 #2）。
+            let mut adjustments: Vec<Node> = Vec::new();
+            let mut line_nodes = Vec::with_capacity(line.len());
+            for node in line {
+                match node {
+                    n @ Node::Ins { .. } => adjustments.push(n),
+                    other => line_nodes.push(other),
+                }
+            }
+            let line = line_nodes;
             // 行宽/左缩进按行号取（tex.web §17425-17436：`\parshape` 第 n 项，
             // 超出取末项；无形状 = `\hsize`/0）。缩进烘焙进行盒 `shift_amount`。
             let cur_width = parshape_line_width(&self.parshape, self.params.hsize, line_no + 1);
@@ -153,6 +166,11 @@ impl NodeBuilder {
             let mut lb = hpack(&line, cur_width);
             lb.shift = cur_indent;
             self.push_box(Node::Box(lb));
+            // 行盒之后紧贴本行的 insert 材料（tex.web line_break 尾部
+            // `link(tail):=link(adjust_head)` 同序）
+            for a in adjustments {
+                self.push_node(a);
+            }
         }
         last_natural
     }

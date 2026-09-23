@@ -60,21 +60,24 @@ impl NodeBuilder {
     /// ins_node 本身从页里删除——真 TeX 页盒树里没有 ins 节点，脚注由输出例程
     /// `\unvbox\footins` 回流（plain 默认例程 `\shipout\box255` 则直接丢弃）。
     ///
-    /// NTex 体未排版 → 累积盒的子节点是 [`Node::Ins`] 本尊（token 体无损保留）：
     /// `\ifvoid<insert号>`/`\unvbox<insert号>`/`\box<insert号>` 因此走既有盒子
     /// 寄存器面（tex.web：`box(c)` 就是插入号 c 的累积盒，无需新寄存器文件）。
-    /// box(255) 是页队列 → `\insert255` 已在 [`PageSink::insert_node`] 报错改道 0。
+    /// box(255) 是页队列 → `\insert255` 已在 [`PageSink::insert_begin`] 报错改道 0。
     fn insert_accumulate(&mut self, mut p: BoxNode) -> BoxNode {
-        let mut moved: Vec<(usize, Node)> = Vec::new();
+        let mut moved: Vec<(usize, BoxNode)> = Vec::new();
         let mut children = Vec::with_capacity(p.children.len());
         for n in std::mem::take(&mut p.children) {
-            match &n {
-                Node::Ins { class, .. } => moved.push((*class, n)),
-                _ => children.push(n),
+            match n {
+                // 体已排版的 ins 节点：剥壳，vlist 子树按序进累积盒
+                // （tex.web fire_up：box(n):=vpackage(ins_ptr(p),…)）
+                Node::Ins {
+                    class, body, ..
+                } => moved.push((class, body)),
+                other => children.push(other),
             }
         }
         p.children = children;
-        for (class, ins) in moved {
+        for (class, body) in moved {
             let slot = self.box_view(class).cloned();
             // tex.web ensure_vbox：累积盒只许是 vbox；本实现遇 hbox/异型直接重建
             // （`\setbox150=\hbox{}` 与 `\insert150` 撞号在真 TeX 报
@@ -83,7 +86,11 @@ impl NodeBuilder {
                 Some(b) if b.kind == BoxKind::VBox => b,
                 _ => BoxNode::new_vbox(Vec::new()),
             };
-            b.children.push(ins);
+            b.children.extend(body.children);
+            // 体子树换过（多个 insert / 同页多次 insert）→ 重算自然高深
+            let d = vbox_dimensions(&b.children);
+            b.height = d.height;
+            b.depth = d.depth;
             // 裸写不入组级日志（tex.web：页面构建器对 box(n) 的写不走 set_box）
             self.write_box(class, Some(b));
         }

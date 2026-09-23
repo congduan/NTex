@@ -511,8 +511,9 @@ pub trait PageSink {
     fn splitbotmarks(&self, _class: i64) -> String {
         String::new()
     }
-    /// `\insert<num>{<general text>}`：insert 节点（无维度；内容只收集不排版）。
-    fn insert_node(&mut self, _class: usize, _toks: Vec<Token>) -> Result<()> {
+    /// `\insert<num>{`：下一个组为 insert 组（tex.web insert_group=11；组体在
+    /// 内部垂直模式由主循环排版，`}` 处 vpack(natural) 挂 ins_node）。
+    fn insert_begin(&mut self, _class: usize) -> Result<()> {
         Ok(())
     }
     /// `\vadjust{<vertical material>}`：adjust 节点（无维度）。

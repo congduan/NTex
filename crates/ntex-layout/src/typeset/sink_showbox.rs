@@ -60,27 +60,6 @@ fn showbox_glue_spec(g: &Glue) -> String {
     s
 }
 
-/// 体 token 串（insert 节点未排版体的占位显示）：字符按字面、控制序列
-/// `\cs<下标> `（TeX show_token_list 在 cs 后补空格的样式；intern 表在
-/// expander 侧，sink 无名可查）、宏参数 `#n`。
-fn showbox_token_list(toks: &[Token]) -> String {
-    let mut s = String::new();
-    for t in toks {
-        if let Some(csid) = t.csid() {
-            s.push_str(&format!("\\cs{csid} "));
-            continue;
-        }
-        if let Some(n) = t.param_number() {
-            s.push_str(&format!("#{n}"));
-            continue;
-        }
-        if let Some(c) = t.charcode().and_then(char::from_u32) {
-            s.push(c);
-        }
-    }
-    s
-}
-
 fn showbox_format_box(
     b: &BoxNode,
     depth: usize,
@@ -254,18 +233,17 @@ fn showbox_format_node(
             float_cost,
         } => {
             // tex.web show_node @<Display insertion |p|@>：
-            // `\insert<class>, natural size <height>; split(<split_top_skip>,<depth>); float cost <float_cost>`
-            // natural size = 排版后体高（NTex 体未执行 → 0.0 占位，见 node.rs Ins 注）。
+            // `\insert<class>, natural size <height>; split(<split_top_skip>,<depth>);
+            //  float cost <float_cost>`，随后 node_list_display(ins_ptr) 逐层展开体
+            // vlist（natural size = 体高 + 体深）。
             out.push_str(&format!(
                 "{p}\\insert{class}, natural size {}; split({},{}); float cost {float_cost}\n",
-                showbox_pt(0),
+                showbox_pt(body.height + body.depth),
                 showbox_glue_spec(split_top_skip),
                 showbox_pt(*split_max_depth),
             ));
-            // 体 token 串占位显示（真 TeX 此处是 `ins_ptr` vlist 子树逐行展开）。
-            // intern 表在 expander 侧、sink 无名可查 → cs 以 \cs<下标> 显示。
-            if !body.is_empty() {
-                out.push_str(&format!("{p}{{{}}}\n", showbox_token_list(body)));
+            for c in &body.children {
+                showbox_format_node(c, depth + 1, fonts, cs_names, out);
             }
         }
         Node::Adjust { text } => out.push_str(&format!("{p}\\vadjust {text}\n")),
