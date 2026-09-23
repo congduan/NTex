@@ -487,6 +487,47 @@ mod tests {
         );
     }
 
+    /// 宿主级默认（[`Typesetter::set_cjk_break_mode`]，ntex-dvi
+    /// `--cjk-fallback`/`--utf8` 的落点）应与源内 `\cjkbreakmode=1` 同效——
+    /// 默认值要**同时**落到 expander 与排版器 params 镜像：`close_paragraph`
+    /// 读的是镜像，而 `set_misc_int` 不发 param_changed 事件（P0-4 修复：
+    /// 只写 expander 时 CLI 开关无声失效）。源内显式 `\cjkbreakmode=0` 后写
+    /// 覆盖，仍可关。
+    #[test]
+    fn host_cjk_break_default_reaches_layout_mirror() {
+        let src = "\\utfinputmode=1\\parindent=0pt\\hsize=2pt 中文中文中文中文\\par";
+
+        let mut ts = Typesetter::with_metrics(metrics);
+        ts.set_cjk_break_mode(true);
+        let on = ts.typeset(src).unwrap();
+        let on_t = ts.take_transcript();
+        assert!(
+            !on_t.contains("Overfull"),
+            "宿主默认开：字间可断，不应报 Overfull：{on_t}"
+        );
+        assert_eq!(on.len(), 4, "宿主默认开：应折成两行：{on:?}");
+
+        // 同一开关下源内显式关：后写覆盖。
+        let mut ts = Typesetter::with_metrics(metrics);
+        ts.set_cjk_break_mode(true);
+        let off = ts.typeset(&format!("\\cjkbreakmode=0{src}")).unwrap();
+        let off_t = ts.take_transcript();
+        assert_eq!(off.len(), 1, "源内显式关应盖掉宿主默认：{off:?}");
+        assert!(
+            off_t.contains("Overfull"),
+            "源内显式关应回到整段单行 Overfull：{off_t}"
+        );
+
+        // 未开默认的其他实例不受影响（引擎默认仍是 0）。
+        let mut ts = Typesetter::with_metrics(metrics);
+        let plain = ts.typeset(src).unwrap();
+        assert_eq!(plain.len(), 1, "未开默认：整段单行：{plain:?}");
+        assert!(
+            ts.take_transcript().contains("Overfull"),
+            "未开默认：应报 Overfull"
+        );
+    }
+
     /// 收缩不足：自然宽超 \hsize 且超出量 > 可收缩量 → 报 overfull。
     #[test]
     fn overfull_reported_when_shrink_insufficient() {

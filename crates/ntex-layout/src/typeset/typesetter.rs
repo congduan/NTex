@@ -292,6 +292,12 @@ pub struct Typesetter {
     /// 默认关：bytes 是引擎既有语义，TRIP/ETRIP/expl3/latex-probe 口径零
     /// 影响（`ntex-wasm` 的 Tauri/浏览器前端显式打开）。
     utf8_input_default: bool,
+    /// CJK 字间断点默认开关（`\cjkbreakmode`，misc 66）：做成引擎级默认值
+    /// 而非动 `\cjkbreakmode` 的 INITEX 默认——后者保持 0（tex.web 原义：汉字
+    /// 之间既无胶水也无断点，plain/TRIP/ETRIP 口径零影响）。前端（CLI
+    /// `--cjk-fallback`/`--utf8`、wasm 工作台）显式要中文排版能力时才打开，
+    /// 源内 `\cjkbreakmode=0` 仍可关（后写覆盖先写，同 [`Self::utf8_input_default`]）。
+    cjk_break_mode_default: bool,
     /// CJK 字体回落名（workbench 档）：`char_node` 里当前字体缺字形且码位
     /// 超过 0xFF 时自动改用它排该字符。默认 None——TRIP/ETRIP/native 语义零
     /// 影响（`ntex-wasm` 的 Tauri 前端显式下发，如 `FandolSong-Regular`）。
@@ -335,6 +341,7 @@ impl Typesetter {
             preload_hyphen: false,
             preload_compat: false,
             utf8_input_default: false,
+            cjk_break_mode_default: false,
             fallback_font: None,
             embedded_vfs_installed: false,
         }
@@ -469,6 +476,35 @@ impl Typesetter {
             .set_misc_int(ntex_core::param::MISC_UTF_INPUT_MODE, on);
     }
 
+    /// CJK 字间断点默认开关（`\cjkbreakmode`）：P0「全角标点段落不断行」的
+    /// 落点。引擎默认仍是 0（见字段文档）；只由前端在要中文排版能力时显式
+    /// 打开。`close_paragraph` 据此在可断字间（含全角标点的行首/行尾禁则）
+    /// 插零宽胶水——不开则中文段落整段单行 Overfull 出页。
+    pub fn set_cjk_break_mode(&mut self, on: bool) {
+        self.cjk_break_mode_default = on;
+    }
+
+    /// 每次排版入口把引擎级默认值落到 expander（与 [`Self::apply_utf8_input_default`]
+    /// 同一时机：fmt 载入/预载之前、用户源之前——源内显式赋值后写覆盖）。
+    ///
+    /// 排版器镜像要单独写：`\cjkbreakmode` 的消费端 `close_paragraph` 读
+    /// builder 的 `params.misc` 镜像（paragraph.rs），而镜像只经 param_changed
+    /// 事件或 `sync_params` 对齐——`set_misc_int` 不发事件。且 install_builder
+    /// 的 `sync_params` 在本调用之前跑，镜像里还是旧值。
+    fn apply_layout_defaults(&mut self) {
+        let on = i64::from(self.cjk_break_mode_default);
+        self.expander
+            .set_misc_int(ntex_core::param::MISC_CJK_BREAK_MODE, on);
+        if let Some(b) = self
+            .expander
+            .sink_mut()
+            .as_any_mut()
+            .downcast_mut::<NodeBuilder>()
+        {
+            b.params.misc[ntex_core::param::MISC_CJK_BREAK_MODE] = on;
+        }
+    }
+
     /// 导出展开引擎状态快照（`.fmt` v1；供 `ntex-format` 序列化）。
     pub fn export_state(&self) -> ntex_core::expand::FmtState {
         let mut st = self.expander.export_state();
@@ -539,6 +575,7 @@ impl Typesetter {
             preload_hyphen: false,
             preload_compat: false,
             utf8_input_default: false,
+            cjk_break_mode_default: false,
             fallback_font: None,
             embedded_vfs_installed: false,
         }
@@ -561,6 +598,7 @@ impl Typesetter {
             preload_hyphen: false,
             preload_compat: false,
             utf8_input_default: false,
+            cjk_break_mode_default: false,
             fallback_font: None,
             embedded_vfs_installed: false,
         }
@@ -571,6 +609,7 @@ impl Typesetter {
         self.install_font_loader();
         self.install_builder(NodeBuilder::new(self.fonts.clone()));
         self.apply_utf8_input_default();
+        self.apply_layout_defaults();
         self.run_plain_preload()?;
         self.run_hyphen_preload()?;
         self.run_compat_preload()?;
@@ -586,6 +625,7 @@ impl Typesetter {
         self.install_font_loader();
         self.install_builder(NodeBuilder::new(self.fonts.clone()));
         self.apply_utf8_input_default();
+        self.apply_layout_defaults();
         self.run_plain_preload()?;
         self.run_hyphen_preload()?;
         self.run_compat_preload()?;
@@ -688,6 +728,7 @@ impl Typesetter {
         self.install_font_loader();
         self.install_builder(NodeBuilder::with_pagination(self.fonts.clone(), true));
         self.apply_utf8_input_default();
+        self.apply_layout_defaults();
         self.run_plain_preload()?;
         self.run_hyphen_preload()?;
         self.run_compat_preload()?;

@@ -265,8 +265,15 @@ fn main() -> ExitCode {
     // is no ^^e5"。故回落字体一给就隐含 UTF-8（xelatex 口径），`--utf8` 亦可
     // 单独显式给。走 set_misc_int（宿主级默认值）而非源前拼行：用户源逐字节不
     // 动、行号即事实，且源内显式 `\utfinputmode=0` 仍可关（后写覆盖先写）。
+    //
+    // 同一批中文作业还差折行：`\cjkbreakmode` 引擎默认 0（tex.web 原义：汉字
+    // 之间无胶水无断点），不开则中文段落整段单行 Overfull 出页（x 到 619pt
+    // > 612pt 页宽）。全角标点（，。、：）在断点集里已有行首禁则 + 其后可断
+    // （linebreak.rs CJK_NO_BREAK_BEFORE / is_cjk_punct），缺的只是开关——
+    // 与 UTF-8 同判据打开，源内 `\cjkbreakmode=0` 仍可关。
     if cjk_fallback.is_some() || utf8 {
         ts.set_utf8_input(true);
+        ts.set_cjk_break_mode(true);
     }
     let outcome = ts.typeset_dvi(&text);
     // G0：转录透传。成功/失败两条路都取（失败时 finish 未走，转录仍在 sink）。
