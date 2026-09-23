@@ -2587,6 +2587,10 @@ impl Expander {
                     // LaTeX 的 `\check@mathfonts` 且 primitive everymath 为空，补注入该
                     // 钩子，避免 NFSS 数学尺寸宏 `\tf@size/\sf@size/\ssf@size` 未初始化。
                     if entering {
+                        // tex.web init_math（L21721 普通数学 / L21773 显示数学两路）：
+                        // 进入公式即 eq_word_define(cur_fam, -1)——每个公式开头
+                        // `\fam` 都是 -1（无字族替换），显式 `\fam<n>` 只在公式内生效
+                        self.params.misc[46] = -1;
                         let mut items = self
                             .everymath
                             .iter()
@@ -2616,7 +2620,15 @@ impl Expander {
                 // （cat 10）、组定界（cat 1/2）不走此路。
                 if self.in_math && matches!(tok.catcode(), Some(Catcode::Letter | Catcode::Other)) {
                     let ch = tok.charcode().unwrap_or(0);
-                    let code = self.mathcodes.get(&ch).copied().unwrap_or(0x8000);
+                    let mut code = self.mathcodes.get(&ch).copied().unwrap_or(0x8000);
+                    // tex.web scan_math（L21906-21908）：class ≥ var_code(0x7000)
+                    // 且 cur_fam ∈ 0..15 时 **无条件替换** fam 字段——`\rm`/`\it`
+                    // （plain `\def\rm{\fam\z@\tenrm}`）正是靠这一条把字母改道到
+                    // 正体/斜体字族。数学进入时 cur_fam 复位 -1（L21721），故只在
+                    // 显式 `\fam<n>` 后生效；\mathcode 自带的 fam 字段被抹掉。
+                    if code >= 0x7000 {
+                        code = self.mathcode_apply_fam(code);
+                    }
                     return self.sink.math_char_full(code);
                 }
                 if std::env::var_os("NTEX_HOOK_TRACE").is_some() {

@@ -13,6 +13,21 @@
 // - 函数 1:1 来自 `exec_primitive` 主 match，零行为变化。
 
 impl Expander {
+    /// tex.web scan_math 尾部（L21906-21908）：var 类（class ≥ var_code =
+    /// 0x7000）且 cur_fam ∈ 0..15 时，数学字符码的 fam 字段被 cur_fam
+    /// **无条件替换**，否则保留码内原值（`(c div 256) mod 16`）。
+    /// cur_fam 即内部整数参数 46（`free::int_param_index(\fam)`；数学进入时
+    /// 复位 -1，见 param.rs 默认表），letter/other 隐式 mathcode 与
+    /// `\mathchar` 显式码共用这一裁决。
+    pub(super) fn mathcode_apply_fam(&self, code: u32) -> u32 {
+        let cur_fam = self.params.misc[46];
+        if (0..16).contains(&cur_fam) {
+            (code & !0x0F00) | ((cur_fam as u32) << 8)
+        } else {
+            code
+        }
+    }
+
     /// 数学原语 dispatcher。
     pub(super) fn dispatch_math(&mut self, prim: Primitive) -> Result<()> {
         match prim {
@@ -182,7 +197,10 @@ impl Expander {
             // 直接产出 Char——此前 scan_number 即丢）；\delimiter<27-bit> 为
             // 定界符（Delimited 场景经 \left/\right 扫描；裸用暂简化）
             Primitive::MathChar => {
+                // tex.web math_char_num 分支与 letter/other 同流到 scan_math 尾部：
+                // 15 位码同样吃 `\fam` 替换（`\fam0 \mathchar"7101 x` → fam0 正体）
                 let n = self.scan_number()? as u32;
+                let n = if n >= 0x7000 { self.mathcode_apply_fam(n) } else { n };
                 self.sink.math_char_full(n)
             }
             Primitive::Delimiter => {

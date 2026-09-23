@@ -466,6 +466,14 @@ mod tests {
         );
     }
 
+        #[test]
+        fn fam_assign_and_the() {
+            // \fam 是 misc[46]；注意 tex.web scan_int 的数字续位怪癖：
+            // `\fam0\the\fam` 里 \the 的展开值会被并入前一数字，须用
+            // `\relax` 隔开再读回。
+            assert_eq!(expand("\\fam0\\relax \\the\\fam").unwrap(), "0");
+            assert_eq!(expand("\\the\\fam").unwrap(), "-1");
+        }
     #[test]
     fn internal_int_params_assign_and_the() {
         // \defaulthyphenchar=`- 与 \defaultskewchar=256；\the 读回

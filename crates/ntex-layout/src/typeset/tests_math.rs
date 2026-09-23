@@ -835,6 +835,43 @@ use super::*;
     }
 
     #[test]
+    fn math_fam_substitution_replaces_var_class_family() {
+        let Some(fm) = cmr10_metrics() else {
+            eprintln!("未找到 cmr10.tfm，跳过");
+            return;
+        };
+        // tex.web scan_math（L21906-21908）：class ≥ var_code(0x7000) 且
+        // cur_fam ∈ 0..15 时，数学字符的 fam 字段被 cur_fam **无条件替换**——
+        // plain 的 \rm/\it（`\def\rm{\fam\z@\tenrm}`）全靠这一条改道字族。
+        // 探针：\textfont0=cmr10，fam1 未定义（nullfont）——`\fam0 x` 的 x
+        // 若落 fam0，宽度取 cmr10 度量；替换缺失则落 mathcode 自带的 fam1
+        // → nullfont 宽 0。
+        let children =
+            math_tfm_children(r"\font\tenrm=cmr10\textfont0=\tenrm$\fam0 x$");
+        let x = children
+            .iter()
+            .find(|n| matches!(n, Node::Char { charcode: c, .. } if *c == b'x' as u32))
+            .expect("公式内应有字符 x");
+        let (w, _, _) = fm.char_metrics(b'x' as u32);
+        assert_eq!(x.dimensions().width, w, r"\fam0 后 x 应落 fam0（cmr10）度量");
+        // 对照：新公式进入时 cur_fam 复位 -1（tex.web init_math L21721），
+        // 后一公式的 x 回落 mathcode 自带 fam1 → nullfont 宽 0（不是 cmr10）。
+        let children =
+            math_tfm_children(r"\font\tenrm=cmr10\textfont0=\tenrm$\fam0 x$ $x$");
+        let xs: Vec<&Node> = children
+            .iter()
+            .filter(|n| matches!(n, Node::Char { charcode: c, .. } if *c == b'x' as u32))
+            .collect();
+        assert_eq!(xs.len(), 2, "两公式各一个 x：{children:?}");
+        assert_eq!(xs[0].dimensions().width, w, "首公式 x 落 fam0");
+        assert_eq!(
+            xs[1].dimensions().width,
+            0,
+            "次公式 x 应复位回落 fam1（nullfont），证明 \\fam 不跨公式"
+        );
+    }
+
+    #[test]
     fn math_sup_rise_uses_fontdimen_sup1() {
         let Some(fm) = cmr10_metrics() else {
             eprintln!("未找到 cmr10.tfm，跳过");
