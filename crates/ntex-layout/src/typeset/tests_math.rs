@@ -871,3 +871,15 @@ use super::*;
         walk2(&main, &mut has_rule);
         assert!(has_rule, "数学内 \\vrule 丢失：{main:?}");
     }
+
+    #[test]
+    fn math_vrule_dimensions() {
+        // 债务表项 2 的验收探针：`$\vrule width 2pt height 10pt$` →
+        // 规则节点按扫描说明的宽高（depth 缺省 0）
+        let children = math_line_children(r"$\vrule width 2pt height 10pt$");
+        assert_eq!(children.len(), 1, "单规则原子：{children:?}");
+        let d = children[0].dimensions();
+        assert_eq!(d.width, 2 * SP_PER_PT, "宽度 2pt");
+        assert_eq!(d.height, 10 * SP_PER_PT, "高度 10pt");
+        assert_eq!(d.depth, 0);
+    }
