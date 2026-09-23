@@ -2604,6 +2604,27 @@ impl Expander {
                     }
                     return Ok(if neg { g.negated() } else { g });
                 }
+                // ETRIP：`\lastskip` 作胶水量（tex.web L8535 glue_val 臂：取列表尾
+                // glue 节点整体，含 stretch/shrink）。必须先于下方"胶参数"臂：
+                // LastSkip 的 ParamKind 也映射到 Glue 值，但那是从未更新的镜像。
+                EqSlot::Primitive(Primitive::LastSkip) => {
+                    self.fetch()?; // 消费 \lastskip
+                    let g = self.sink.last_glue().unwrap_or(Glue::ZERO);
+                    if mu {
+                        self.report_incompatible_glue_units();
+                    }
+                    return Ok(if neg { g.negated() } else { g });
+                }
+                // ETRIP：`\lastkern` 作胶水量（glue 语境按宽度分量取；tex.web
+                // cur_val_level=dimen_val → glue_val 的 width 提升）。
+                EqSlot::Primitive(Primitive::LastKern) => {
+                    self.fetch()?; // 消费 \lastkern
+                    let w = self.sink.last_kern();
+                    if mu {
+                        self.report_incompatible_glue_units();
+                    }
+                    return Ok(Glue::new(if neg { -w } else { w }, 0, 0));
+                }
                 // ETRIP 第二波：\mutoglue<mu 胶水> → pt 胶水、\gluetomu<胶水> → mu 胶水
                 // （1mu = 1pt = 65536sp，数值不变；仅单位语义转换）
                 EqSlot::Primitive(Primitive::MuToGlue) => {

@@ -1628,28 +1628,43 @@ impl BoxSink for NodeBuilder {
             _ => 0,
         }
     }
-    /// e-TeX `\lastskip`：当前列表最后 glue 节点的宽度（sp；无 glue 节点 → 0）。
-    /// tex.web：lastskip 只认 glue_node（leaders 是独立节点类型，不计入）。
-    fn last_skip(&self) -> i64 {
-        if let Some(list) = self.lists.last() {
-            for n in list.iter().rev() {
-                if let Node::Glue { width, .. } = n {
-                    return *width;
-                }
-            }
+    /// `\lastskip` 完整胶水量（tex.web L8535）：**只认列表尾节点**——
+    /// 尾不是 glue_node 即 zero_glue，不向列表前段回溯。
+    fn last_glue(&self) -> Option<Glue> {
+        match self.lists.last().and_then(|l| l.last()) {
+            Some(Node::Glue {
+                width,
+                stretch,
+                shrink,
+                stretch_order,
+                shrink_order,
+                ..
+            }) => Some(Glue {
+                width: *width,
+                stretch: *stretch,
+                shrink: *shrink,
+                stretch_order: *stretch_order,
+                shrink_order: *shrink_order,
+            }),
+            _ => None,
         }
-        0
     }
-    /// e-TeX `\lastkern`：当前列表最后 kern 节点的宽度（sp；无 kern 节点 → 0）。
-    fn last_kern(&self) -> i64 {
-        if let Some(list) = self.lists.last() {
-            for n in list.iter().rev() {
-                if let Node::Kern { width } = n {
-                    return *width;
-                }
-            }
+    /// e-TeX `\lastskip` 作尺寸（tex.web L8535）：**只看列表尾**——尾是 glue_node
+    /// 取其宽度，否则 0。此前向后回溯到任意 glue 节点，`\ifdim\lastskip=\z@`
+    /// （latex.ltx `\sw@slant`）在前文有胶水时误判非零。
+    fn last_skip(&self) -> i64 {
+        match self.lists.last().and_then(|l| l.last()) {
+            Some(Node::Glue { width, .. }) => *width,
+            _ => 0,
         }
-        0
+    }
+    /// e-TeX `\lastkern`：当前列表尾 kern 节点的宽度（tex.web L8535 dimen_val
+    /// 臂同款——只看尾节点；非 kern → 0）。
+    fn last_kern(&self) -> i64 {
+        match self.lists.last().and_then(|l| l.last()) {
+            Some(Node::Kern { width }) => *width,
+            _ => 0,
+        }
     }
     /// `\raise`/`\lower<dimen>`：记录盒子参考点位移（下一个封装盒子生效）。
     fn raise(&mut self, amount: i64) -> Result<()> {

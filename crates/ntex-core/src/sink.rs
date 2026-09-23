@@ -394,6 +394,14 @@ pub trait BoxSink {
     fn last_penalty(&self) -> i64 {
         0
     }
+    /// `\lastskip` 作胶水量（tex.web L8535 `glue_val: if type(tail)=glue_node then
+    /// cur_val:=glue_ptr(tail)`）：返回**当前列表尾**的完整 glue 节点（含
+    /// stretch/shrink），尾节点不是 glue → None。`\skip@=\lastskip`（latex.ltx
+    /// `\sw@slant`）依赖此语义；此前被通用胶参数臂抢走 → 读到从未更新的
+    /// param 镜像 0，`\textbf` 前词间空格丢失。
+    fn last_glue(&self) -> Option<Glue> {
+        None
+    }
     /// ETRIP/TRIP：`\lastskip`：当前列表尾 glue 节点宽度（sp；无则 0）。
     fn last_skip(&self) -> i64 {
         0

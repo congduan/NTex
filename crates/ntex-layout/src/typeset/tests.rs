@@ -600,6 +600,29 @@ mod tests {
     }
 
     #[test]
+    fn lastskip_reads_only_tail_node() {
+        // tex.web L8535 `glue_val: if type(tail)=glue_node then cur_val:=glue_ptr(tail)`
+        // ——\lastskip 只认列表尾节点。latex.ltx \sw@slant 的 `\ifdim\lastskip=\z@`
+        // 分派依赖它；此前向后回溯到任意 glue 节点，`\textbf` 前词间空格丢失。
+        // 尾是 glue：-\lastskip 取到 5pt（回归旧"回溯"实现时这里是 0）
+        let kids = spaced_box_children(r"\hbox{a\hskip 5pt\hskip-\lastskip}");
+        match &kids[2] {
+            Node::Glue { width, .. } => {
+                assert_eq!(*width, -5 * SP_PER_PT, "lastskip 应取尾 glue 5pt");
+            }
+            other => panic!("预期 Glue，得到 {other:?}"),
+        }
+        // 尾是字符：0，不向列表前段回溯
+        let kids = spaced_box_children(r"\hbox{a\hskip 5pt b\hskip\lastskip}");
+        match &kids[3] {
+            Node::Glue { width, .. } => {
+                assert_eq!(*width, 0, "尾非 glue → 0");
+            }
+            other => panic!("预期 Glue，得到 {other:?}"),
+        }
+    }
+
+    #[test]
     fn space_becomes_glue() {
         let children = spaced_box_children(r"\hbox{a b}");
         assert_eq!(children.len(), 3);
