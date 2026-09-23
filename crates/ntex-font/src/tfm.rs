@@ -50,8 +50,8 @@ struct CharInfoEntry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LigKernStep {
     /// skip 字节：=128 = stop_flag（本条仍是可执行指令，next_char 不匹配才终止）；
-    /// >128 = 重定向（op<<8|remainder 为新程序地址，不执行）；否则为右字符
-    /// 不匹配时跳过的条目数（下一步 = 当前 + skip + 1）。
+    /// 大于 128 = 重定向（op<<8|remainder 为新程序地址，不执行）；否则为右字符
+    /// 不匹配时向后跳过的条目数（下一步 = 当前 + skip + 1）。
     pub skip_byte: u8,
     /// next_char：待匹配的右字符（匹配则执行命令并停止）。
     pub next_char: u8,
