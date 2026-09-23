@@ -12,6 +12,8 @@
 //! `--no-plain`：关掉预载（回 INITEX 裸表；内嵌文件兜底仍在）。
 //! `--quiet`：关掉 stderr 转录（`\message`/`\show`/`\write16`/错误恢复文本，
 //! 格式预载 G0）。默认开——静默是当前最大的测量陷阱（plain-format-survey §2.4）。
+//! `--utf8`：源码按 UTF-8 解码（`\utfinputmode=1`，xelatex 口径）；
+//! `--cjk-fallback` 隐含开启（bytes 模式下多字节序列到不了 >0xFF 的回落判据）。
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -61,11 +63,15 @@ fn main() -> ExitCode {
     // CJK 字体回落名（如 FandolSong-Regular）：码位 >0xFF 的字符走它，
     // 与 wasm 前端 set_fallback_font 同一引擎通路（182a113）。
     let mut cjk_fallback: Option<String> = None;
+    // UTF-8 输入解码（\utfinputmode=1）：xelatex 口径的源码编码。--cjk-fallback
+    // 隐含开启（见下面设置点的注释）；--utf8 可单独显式给。
+    let mut utf8 = false;
     let mut it = args[1..].iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--quiet" => quiet = true,
             "--no-plain" => no_plain = true,
+            "--utf8" => utf8 = true,
             "--cjk-fallback" => match it.next() {
                 Some(p) => cjk_fallback = Some(p.clone()),
                 None => {
@@ -253,6 +259,15 @@ fn main() -> ExitCode {
             ts.set_preload_plain(true);
         }
     }
+    // P0 中文默认路径：CLI 作业的 UTF-8 解码默认。bytes 模式下源码按单字节切
+    // token，多字节序列永远到不了 CJK 回落判据（该判据只接管码位 >0xFF 的字
+    // 符）→ `--cjk-fallback` 形同虚设、中文作业逐字节 "Missing character: There
+    // is no ^^e5"。故回落字体一给就隐含 UTF-8（xelatex 口径），`--utf8` 亦可
+    // 单独显式给。走 set_misc_int（宿主级默认值）而非源前拼行：用户源逐字节不
+    // 动、行号即事实，且源内显式 `\utfinputmode=0` 仍可关（后写覆盖先写）。
+    if cjk_fallback.is_some() || utf8 {
+        ts.set_utf8_input(true);
+    }
     let outcome = ts.typeset_dvi(&text);
     // G0：转录透传。成功/失败两条路都取（失败时 finish 未走，转录仍在 sink）。
     let transcript = ts.take_transcript();
@@ -315,7 +330,7 @@ fn main() -> ExitCode {
 }
 
 fn usage() -> &'static str {
-    "用法：ntex-dvi <input.tex> [output.dvi] [--fmt <latex.fmt>] [--input-path <dir>]... [--no-plain] [--cjk-fallback <字体名>] [--quiet]\n\
+    "用法：ntex-dvi <input.tex> [output.dvi] [--fmt <latex.fmt>] [--input-path <dir>]... [--no-plain] [--cjk-fallback <字体名>] [--utf8] [--quiet]\n\
      或：ntex-dvi --generate-fmt <output.fmt> [--input-path <dir>]... [--quiet]"
 }
 
