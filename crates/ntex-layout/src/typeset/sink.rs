@@ -640,6 +640,8 @@ impl CoreSink for NodeBuilder {
                 width: g.width,
                 stretch: g.stretch,
                 shrink: g.shrink,
+                stretch_order: g.stretch_order,
+                shrink_order: g.shrink_order,
             });
             return Ok(());
         }
@@ -967,6 +969,11 @@ impl FontSink for NodeBuilder {
 }
 
 impl MathSink for NodeBuilder {
+    /// \mathcode 改道只认**真实列表模式**（tex.web mmode+letter/other）：
+    /// 数学内文本盒（`\hbox{…}`/`\mbox`/`\text`）里是正文字符。
+    fn math_code_applies(&self) -> bool {
+        matches!(self.mode(), Mode::Math | Mode::DisplayMath)
+    }
     /// 数学移位（`$`，cat 3）：VM 已 peek 出 `display`（连续 `$$`）。
     /// - Math：结束行内公式；
     /// - DisplayMath：`$$` 结束显示公式，单 `$` 报错（TeX "Display math should end with $$"）；
@@ -1347,6 +1354,21 @@ impl BoxSink for NodeBuilder {
             matches!(self.mode(), Mode::Horizontal | Mode::RestrictedHorizontal);
         if horizontal != in_horizontal {
             return Ok(()); // 方向不符：忽略
+        }
+        // `\leaders\hbox{…}\hfill`：fill 胶水也是"proper glue"（tex.web 把
+        // \hfil/\hfill/\hss 归入 glue 赋值类）。此前漏臂 → 引导盒子挂起不消，
+        // 下一 token 触发 "Leaders not followed by proper glue" 并丢盒，
+        // 目录点线（\@dottedtocline 的 \leaders…\hfill）整行消失。
+        if let Some((ld, box_node)) = self.box_state.leaders_box.take() {
+            return Ok(self.append(Node::Leaders {
+                kind: ld,
+                inner: Box::new(box_node),
+                width: 0,
+                stretch,
+                shrink,
+                stretch_order: order,
+                shrink_order: 0,
+            }));
         }
         // \vfill 等不是合法数学字段开头（tex.web scan_math othercases；TRIP L396
         // `\accent\x\vfill` 在 \vfill 处报 Missing { inserted）

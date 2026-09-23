@@ -232,6 +232,15 @@ pub trait MathSink {
     fn math_close_consumes_dollar(&self) -> bool {
         true
     }
+    /// 数学码表（\mathcode）是否适用于当前字符 token：tex.web 按**模式**分流
+    /// （mmode+letter/other 才查表，L21845）。核心侧 `in_math` 是 `$` 翻转旗标，
+    /// 数学内文本盒（`\hbox{…}`/`\mbox{…}`/`\text{…}`）不清它——若照搬旗标，
+    /// 盒内文本字符也会被改道成数学字符（`.`→cmmi 槽 0x3A 而非 cmr 0x2E），
+    /// 目录点线（\@dottedtocline 的 `\hbox{$…\hbox{.}…$}`）全排成错字形。
+    /// 排版层按真实列表模式裁决；默认 true（纯展开轨道无模式概念，不影响既有行为）。
+    fn math_code_applies(&self) -> bool {
+        true
+    }
     /// 数学样式原语（`\displaystyle`=0/`\textstyle`=1/`\scriptstyle`=2/`\scriptscriptstyle`=3；M4-2）。
     fn math_style(&mut self, _style: u8) -> Result<()> {
         Ok(())

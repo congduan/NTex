@@ -2641,7 +2641,10 @@ impl Expander {
                 // $E=mc^2$ 字母默认 fam1（cmmi 斜体，initex 表 0x7100+码），
                 // 此前布局侧硬编码 fam0（cmr 正体）。`^`/`_`（cat 7/8）、空格
                 // （cat 10）、组定界（cat 1/2）不走此路。
-                if self.in_math && matches!(tok.catcode(), Some(Catcode::Letter | Catcode::Other)) {
+                if self.in_math
+                    && self.sink.math_code_applies()
+                    && matches!(tok.catcode(), Some(Catcode::Letter | Catcode::Other))
+                {
                     let ch = tok.charcode().unwrap_or(0);
                     let mut code = self.mathcodes.get(&ch).copied().unwrap_or(0x8000);
                     // tex.web scan_math（L21906-21908）：class ≥ var_code(0x7000)

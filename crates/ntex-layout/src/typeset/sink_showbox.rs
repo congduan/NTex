@@ -192,6 +192,7 @@ fn showbox_format_node(
             stretch,
             shrink,
             inner,
+            ..
         } => {
             // TeX show_box：`\{kind} {胶水规格}` + 引导内容作为子节点递归显示
             // （tex.web "Display leaders"：node_list_display(leader_ptr)）。

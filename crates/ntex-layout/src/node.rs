@@ -198,10 +198,15 @@ pub enum Node {
         kind: LeadersKind,
         /// 被重复的 box（或 rule——`\leaders\hrule\hskip10pt`，TeX 允许 rule 作引导内容）。
         inner: Box<Node>,
-        /// 胶水规格。
+        /// 胶水规格。tex.web 的引导符节点就是 glue_node（subtype=leader 旗标 +
+        /// leader_ptr），故拉伸/收缩连同**无穷阶**一并携带——`\@dottedtocline`
+        /// 行的 `\hfill`（1fill）须压过 `\parfillskip=-\rightskip` 的 -1fil，
+        /// 阶丢失会让 hpack 按 fil 阶结算、点线不铺。
         width: i64,
         stretch: i64,
         shrink: i64,
+        stretch_order: GlueOrder,
+        shrink_order: GlueOrder,
     },
     /// 断字节点（M4-6）：三段式 pre/post/replace。
     ///
@@ -632,17 +637,29 @@ pub fn hpack(children: &[Node], width: i64) -> BoxNode {
     // 不参与 glue set 语义。此前按 `name: None` 过滤，行首/行尾 `\leftskip`、
     // `\rightskip`（带名）被排除在拉伸之外——`\centering` 的
     // `\leftskip=\@flushglue`（0pt plus 1fil）永不拉伸，居中/flushleft 全失效。
+    // 引导符节点在 tex.web 里就是 glue_node（subtype=leader 旗标 + leader_ptr），
+    // 拉伸/收缩与普通胶水同权：`\@dottedtocline` 行的全部可伸量都在
+    // `\leaders\hbox{…}\hfill` 上，漏计则页码推不到右边距。
     for c in children {
-        if let Node::Glue {
-            stretch,
-            shrink,
-            stretch_order,
-            shrink_order,
-            ..
-        } = c
-        {
-            total_stretch[*stretch_order as usize] += stretch;
-            total_shrink[*shrink_order as usize] += shrink;
+        match c {
+            Node::Glue {
+                stretch,
+                shrink,
+                stretch_order,
+                shrink_order,
+                ..
+            }
+            | Node::Leaders {
+                stretch,
+                shrink,
+                stretch_order,
+                shrink_order,
+                ..
+            } => {
+                total_stretch[*stretch_order as usize] += stretch;
+                total_shrink[*shrink_order as usize] += shrink;
+            }
+            _ => {}
         }
     }
     let excess = width - natural.width;
@@ -711,6 +728,43 @@ pub fn hpack(children: &[Node], width: i64) -> BoxNode {
                     shrink_order: *shrink_order,
                 });
             }
+            // 引导符节点宽度同胶水结算（tex.web hlist_out 的 leader glue 取同一
+            // glue_set）——结算后 shipout 物化时才知道点线要铺多宽。
+            Node::Leaders {
+                kind,
+                inner,
+                width: w,
+                stretch,
+                shrink,
+                stretch_order,
+                shrink_order,
+            } => {
+                let mut w = *w;
+                match sign {
+                    Sign::Stretch if *stretch_order as usize == order => {
+                        cum += *stretch as f64;
+                        let g = (gs * cum).round();
+                        w += g as i64 - prev_g as i64;
+                        prev_g = g;
+                    }
+                    Sign::Shrink if *shrink_order as usize == order => {
+                        cum -= *shrink as f64;
+                        let g = (gs * cum).round();
+                        w += g as i64 - prev_g as i64;
+                        prev_g = g;
+                    }
+                    _ => {}
+                }
+                out.push(Node::Leaders {
+                    kind: *kind,
+                    inner: inner.clone(),
+                    width: w,
+                    stretch: *stretch,
+                    shrink: *shrink,
+                    stretch_order: *stretch_order,
+                    shrink_order: *shrink_order,
+                });
+            }
             other => out.push(other.clone()),
         }
     }
@@ -722,6 +776,89 @@ pub fn hpack(children: &[Node], width: i64) -> BoxNode {
         shift: 0,
         children: out,
     }
+}
+
+/// shipout 物化引导符（tex.web §623-629 `hlist_out`/`vlist_out` leader 分支）：
+/// 把 [`Node::Leaders`] 替换为引导单元的逐份拷贝（配 `\kern` 站位），递归子树。
+/// DVI 写出器把 Leaders 当 no-op 跳过，故引导内容必须在 ship 边界落成实体节点。
+/// 引导节点 width 已由 `hpack` 结算（NTex 盒子不存 glue_set），直接当区域宽；
+/// 不做 tex.web 的 `rule_wd+10`/`edge-10` 补偿（定点算术的浮点容差手段）。
+pub fn materialize_leaders(b: &mut BoxNode) {
+    let horiz = b.kind == BoxKind::HBox;
+    let mut out: Vec<Node> = Vec::with_capacity(b.children.len());
+    let mut cur = 0i64; // 盒内相对光标（tex.web cur_h−left_edge / cur_v−top_edge）
+    for c in b.children.drain(..) {
+        match c {
+            Node::Leaders {
+                kind,
+                inner,
+                width,
+                ..
+            } => {
+                let unit = match *inner {
+                    Node::Box(mut ib) => {
+                        materialize_leaders(&mut ib); // 引导单元内部可再含引导符
+                        Node::Box(ib)
+                    }
+                    other => other,
+                };
+                let d = unit.dimensions();
+                // 水平引导量单元 width；垂直引导量单元 h+d（tex.web L12637）。
+                let unit_ext = if horiz { d.width } else { d.total() };
+                if unit_ext <= 0 || width <= 0 {
+                    continue; // tex.web：装不下一个完整单元 → 整段不输出
+                }
+                let edge = cur + width;
+                let (mut nxt, lx) = match kind {
+                    LeadersKind::Leaders => {
+                        // 对齐网格：left_edge(=0) 起 unit_ext 的最小整数倍 ≥ cur
+                        let first = (cur / unit_ext) * unit_ext;
+                        (if first < cur { first + unit_ext } else { first }, 0)
+                    }
+                    LeadersKind::Cleaders => {
+                        let lr = width % unit_ext;
+                        (cur + lr / 2, 0)
+                    }
+                    LeadersKind::Xleaders => {
+                        let lq = width / unit_ext;
+                        let lr = width % unit_ext;
+                        let lx = lr / (lq + 1);
+                        (cur + (lr - (lq - 1) * lx) / 2, lx)
+                    }
+                };
+                while nxt + unit_ext <= edge {
+                    let gap = nxt - cur;
+                    if gap != 0 {
+                        out.push(Node::Kern { width: gap });
+                    }
+                    out.push(unit.clone());
+                    cur = nxt + unit_ext;
+                    nxt += unit_ext + lx;
+                }
+                // 尾部字距补齐区域余量：替换的是宽为 width 的节点，后续内容
+                // （同一列表里引导符之后的节点）必须从 edge 起排。
+                let rest = edge - cur;
+                if rest != 0 {
+                    out.push(Node::Kern { width: rest });
+                }
+                cur = edge;
+            }
+            Node::Box(mut ib) => {
+                materialize_leaders(&mut ib);
+                cur += if horiz {
+                    ib.width
+                } else {
+                    ib.height + ib.depth
+                };
+                out.push(Node::Box(ib));
+            }
+            other => {
+                cur += other.dimensions().width;
+                out.push(other);
+            }
+        }
+    }
+    b.children = out;
 }
 
 #[cfg(test)]
@@ -870,6 +1007,8 @@ mod tests {
             width: 120,
             stretch: 0,
             shrink: 0,
+            stretch_order: 0,
+            shrink_order: 0,
         };
         let d = ld.dimensions();
         assert_eq!(d.width, 120);

@@ -110,7 +110,10 @@ impl NodeBuilder {
 
     /// 页面入 shipped 队列（计数快照同步入 [`Self::shipped_counts`]——两表恒同长，
     /// 增量回滚截断时按同一长度截）。
-    fn push_shipped(&mut self, p: BoxNode) {
+    fn push_shipped(&mut self, mut p: BoxNode) {
+        // 引导符在 ship 边界物化（DVI 写出器视 Node::Leaders 为 no-op）；
+        // trace_shipout 已先行，showbox 转录保持 tex.web 形态（leaders 节点）。
+        crate::node::materialize_leaders(&mut p);
         self.page_state.shipped_counts.push(self.page_state.page_counts);
         self.page_state.shipped.push(p);
     }
