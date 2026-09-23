@@ -49,8 +49,9 @@ struct CharInfoEntry {
 /// lig/kern 程序步（TFM lig_kern 表的一个 32 位字；tex.web §10583-10605）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LigKernStep {
-    /// skip 字节：≥128 = 程序结束（stop_flag，无命令）；否则为右字符不匹配时
-    /// 跳过的条目数（下一步 = 当前 + skip + 1）。
+    /// skip 字节：=128 = stop_flag（本条仍是可执行指令，next_char 不匹配才终止）；
+    /// >128 = 重定向（op<<8|remainder 为新程序地址，不执行）；否则为右字符
+    /// 不匹配时跳过的条目数（下一步 = 当前 + skip + 1）。
     pub skip_byte: u8,
     /// next_char：待匹配的右字符（匹配则执行命令并停止）。
     pub next_char: u8,
@@ -212,10 +213,7 @@ impl FontMetrics {
         };
         loop {
             let s = *self.lig_kern_steps.get(k)?;
-            if s.skip_byte == 128 {
-                return None; // stop_flag：程序结束，无命令
-            }
-            // 程序中间的重定向（罕见）：继续解引用
+            // 重定向（skip>128，tex.web lig_kern_restart）：不算指令，只换地址
             if s.skip_byte > 128 {
                 k = ((s.op_byte as usize) << 8) | s.remainder as usize;
                 continue;
@@ -234,6 +232,14 @@ impl FontMetrics {
                     return Some(LigKern::Lig(s.remainder));
                 }
                 return None; // 保留左/右字符的连字（罕见）暂不支持
+            }
+            // stop_flag（skip_byte=128）也是一条可执行指令：next_char 比较在先，
+            // 不匹配才终止程序（tex.web L14555-14560 `if op_byte>=kern_flag then
+            //   if skip_byte<=stop_flag then s:=char_kern…; if skip_byte>=stop_flag
+            //   then goto done1`）。cmr10 的 ``` `` ```→``` `` ```、`--`→en-dash、
+            // `!`` →¡ 全是"单条 STOP 指令程序"，提前 return 会整条漏掉。
+            if s.skip_byte == 128 {
+                return None;
             }
             // 不匹配：跳过 skip 个中间条目（tex.web `main_k + skip + 1`）
             k += s.skip_byte as usize + 1;
@@ -697,6 +703,16 @@ mod tests {
         // 无程序的字符（如 'a'）或未命中 → None
         assert_eq!(fm.apply_lig_kern(b'a', b'b'), None);
         assert_eq!(fm.apply_lig_kern(b'v', b'x'), None);
+        // 单条 STOP 指令程序（skip_byte=128 且带命令）：``` `` ```→`` `` ``（92）、
+        // `--`→en-dash（123）、`!`` →¡（60）、`?`` →¿（62）
+        assert_eq!(fm.apply_lig_kern(96, 96), Some(LigKern::Lig(92)));
+        assert_eq!(fm.apply_lig_kern(b'-', b'-'), Some(LigKern::Lig(123)));
+        assert_eq!(fm.apply_lig_kern(b'!', b'`'), Some(LigKern::Lig(60)));
+        assert_eq!(fm.apply_lig_kern(b'?', b'`'), Some(LigKern::Lig(62)));
+        // STOP 条目自身也可是 kern 步：`f]`（f 程序尾条目 skip=128 op=128）
+        assert_eq!(fm.apply_lig_kern(b'f', b']'), Some(LigKern::Kern(50_973)));
+        // en-dash 程序（也是单条 STOP）：en-dash+`-` → em-dash（124）
+        assert_eq!(fm.apply_lig_kern(123, b'-'), Some(LigKern::Lig(124)));
     }
 
     #[test]
