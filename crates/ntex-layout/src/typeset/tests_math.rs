@@ -835,6 +835,56 @@ use super::*;
     }
 
     #[test]
+    fn math_eqno_number_right_flushed_at_displaywidth() {
+        // tex.web finish_display（L22521-22632）：\eqno 后的材料独立 mlist
+        // （after_math hpack natural 成编号盒 a），行 = 公式 + kern(z-w-e-d) +
+        // 编号盒（e=编号自然宽），hpack(natural) 后 shift=s+d——编号右缘落在
+        // displaywidth 右缘，公式照 half(z-w) 居中。leqno 反序且 d 归 0
+        // （编号左缘落在 displayindent）。
+        let main = typeset(r"\hsize 400sp $$x\eqno(1)$$").unwrap();
+        let b = as_box(&main[2]);
+        // 行 = x + kern + ( 1 ) ：kern 使编号右缘 = z = 400sp
+        let mut kern: Option<i64> = None;
+        let mut chars: Vec<u32> = Vec::new();
+        for n in &b.children {
+            match n {
+                Node::Kern { width } => kern = Some(*width),
+                Node::Char { charcode, .. } => chars.push(*charcode),
+                Node::Glue { .. } => {}
+                other => panic!("意外节点 {other:?}"),
+            }
+        }
+        assert_eq!(chars, vec![b'x' as u32, b'(' as u32, b'1' as u32, b')' as u32],
+            "公式后跟编号字符：{b:?}");
+        // mock 字体：x=1120sp、(=1040sp、1=1049sp、)=1041sp（Char 节点实测）
+        let (z, w) = (400_i64, 1120_i64);
+        let e = 1040 + 1049 + 1041;
+        // d=half(z-w)=-360 < 2e → 编号太近，公式左移 d=half(z-w-e)（tex.web L22578）
+        assert_eq!(
+            kern,
+            Some(z - w - e - half(z - w - e)),
+            "kern = z-w-e-d：{b:?}"
+        );
+        assert_eq!(b.shift, half(z - w - e), "行盒 shift = s+d（displayindent=0）");
+        // leqno：编号在最左（行首即编号字符），kern 在编号与公式之间
+        let main = typeset(r"\hsize 400sp $$x\leqno(2)$$").unwrap();
+        let b = as_box(&main[2]);
+        let mut seq: Vec<String> = Vec::new();
+        for n in &b.children {
+            match n {
+                Node::Kern { .. } => seq.push("kern".into()),
+                Node::Char { charcode, .. } => {
+                    seq.push(((*charcode as u8) as char).to_string());
+                }
+                Node::Glue { .. } => {}
+                other => panic!("意外节点 {other:?}"),
+            }
+        }
+        assert_eq!(seq.first().map(String::as_str), Some("("), "leqno 编号在行首：{b:?}");
+        assert_eq!(seq.last().map(String::as_str), Some("x"), "公式在编号之后：{b:?}");
+    }
+
+    #[test]
     fn math_fam_substitution_replaces_var_class_family() {
         let Some(fm) = cmr10_metrics() else {
             eprintln!("未找到 cmr10.tfm，跳过");

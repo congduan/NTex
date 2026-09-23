@@ -207,11 +207,16 @@ impl Expander {
                 let _ = self.scan_number()?;
                 Ok(())
             }
-            // \eqno/\leqno：显示数学内是公式编号分隔符 no-op；非数学模式 TeX
-            // 报错 + pretend 恢复（trip l.254 `\eqno` horizontal 报错对齐参考）
+            // \eqno/\leqno：显示数学内（tex.web mmode+eq_no → privileged &&
+            // cur_group=math_shift_group → start_eq_no）编号材料改道独立收集，
+            // 显示收尾按 tex.web finish_display 与公式同线装配；行内数学
+            // （mode 3）沿旧径 no-op（tex.web 应报 illegal，收窄风险后补）；
+            // 非数学模式 TeX 报错 + pretend 恢复（trip l.254 对齐参考）
             Primitive::EqNo | Primitive::LeqNo => {
                 let mode = self.sink.mode_code();
-                if matches!(mode, 3 | 6) {
+                if mode == 6 {
+                    self.sink.math_eqno(matches!(prim, Primitive::LeqNo))
+                } else if matches!(mode, 3) {
                     Ok(())
                 } else {
                     // tex.web print_mode：\halign 行 mode=hmode（正）报

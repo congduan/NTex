@@ -869,6 +869,13 @@ struct MathState {
     /// `\nonscript`：下一个数学空格在脚本模式丢弃。
     nonscript_pending: bool,
 
+    /// `\eqno`/`\leqno`（tex.web start_eq_no）：Some(leqno) 表示其后数学材料
+    /// 是公式编号（独立 mlist）；close_math 按编号侧与公式同线装配。
+    eqno_side: Option<bool>,
+
+    /// `\eqno` 事件时切出去的公式原子（tex.web after_math 的公式 mlist p）。
+    eqno_formula: Option<Vec<MathAtom>>,
+
     /// 数学字体族表（M4-3）：16 族 × 3 阶（text/script/scriptscript）。
     /// `\textfont<fam>=<cs>` 等原语分配；字符按族+字阶选字体。
     math_fonts: Vec<[Option<FontId>; 3]>,
@@ -1052,6 +1059,8 @@ impl NodeBuilder {
                 math_fonts: vec![[None; 3]; 16],
                 predisplay_size: 0,
                 after_display: false,
+                eqno_side: None,
+                eqno_formula: None,
                 // 默认数学间距（TeXbook p.170）：thin=3mu、med=4mu±2mu∓4mu、thick=5mu±5mu
                 // ——按 mu 数值存（1mu=1pt 数值=N×65536）；math_to_hlist 内部按当前 style em/18 转 sp。
                 muskip_params: [

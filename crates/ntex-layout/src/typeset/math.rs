@@ -102,6 +102,19 @@ impl NodeBuilder {
         }
         Self::math_finish_fraction(&mut level);
         let mut nodes = self.math_to_hlist(&level.atoms, style);
+        // tex.web after_math（L22421-22433）：`\eqno`/`\leqno` 后的材料是独立
+        // mlist，`cur_style:=text_style` 转 hlist 后 hpack natural 成编号盒
+        // a（e=width(a)）。math_eqno 事件时已把公式原子切去 eqno_formula，
+        // 这里 pop 出的 level.atoms 是编号材料。
+        let mut eqno_nodes: Vec<Node> = Vec::new();
+        let mut leqno = false;
+        if let Some(leq) = self.math_state.eqno_side.take() {
+            leqno = leq;
+            if let Some(formula) = self.math_state.eqno_formula.take() {
+                nodes = self.math_to_hlist(&formula, style);
+            }
+            eqno_nodes = self.math_to_hlist(&level.atoms, MathStyle::Text);
+        }
         // 行内数学边界标记（tex.web math_node）：`$` 进入/退出插 \\mathon/\\mathoff
         // （无维度；showbox 显示 `..\\mathon`。显示数学的公式盒内 TeX 同样有
         // math_node——本引擎显示公式走 `\\hbox to \\hsize` 盒，先只做行内）。
@@ -117,10 +130,16 @@ impl NodeBuilder {
             let formula_width = hbox_dimensions(&nodes).width;
             let z = self.params.hsize;
             let s = self.params.displayindent;
-            let d = half(z - formula_width);
+            // tex.web @<Determine the displacement...@>（L22578）：d=half(z-w)；
+            // 有编号且公式离编号太近（d<2e）时公式左移 d=half(z-w-e)。
+            let e = hbox_dimensions(&eqno_nodes).width;
+            let mut d = half(z - formula_width);
+            if e > 0 && d < 2 * e {
+                d = half(z - formula_width - e);
+            }
             // tex.web：`(d+s<=pre_display_size) or l` → 长 skip（ clearance 不足），
-            // 否则短 skip；eqno/leqno（l 臂）本刀不做，恒按无公式编号。
-            let long = d + s <= self.math_state.predisplay_size;
+            // 否则短 skip；leqno（l=true）恒取长 skip。
+            let long = d + s <= self.math_state.predisplay_size || leqno;
             let above = if long {
                 self.params.abovedisplayskip
             } else {
@@ -142,7 +161,33 @@ impl NodeBuilder {
             // 对齐行里）时跳过空盒——tex.web 对齐显示无公式盒，空 `\hbox to
             // \hsize` 只会多出一段空白行距；TRIP 的空显示（无对齐材料）仍照常
             // 产盒（行为不变）。
-            if !nodes.is_empty() || display_material.is_empty() {
+            if e > 0 {
+                // tex.web @<Append the display and perhaps also the equation
+                // number@>（L22606）：行 = 公式 + kern(z-w-e-d) + 编号盒，
+                // hpack(natural) 后 shift=s+d——编号右缘落在 displaywidth
+                // 右缘（eqno）/左缘（leqno：行序反过来且 d 归 0）。
+                // 不做 @<Squeeze...@>（公式挤窄）臂：公式过宽时 kern 为负，
+                // 与 tex.web 同样放行。
+                let line = if leqno {
+                    let mut l = eqno_nodes;
+                    l.push(Node::Kern {
+                        width: z - formula_width - e - d,
+                    });
+                    l.extend(nodes);
+                    d = 0;
+                    l
+                } else {
+                    let mut l = nodes;
+                    l.push(Node::Kern {
+                        width: z - formula_width - e - d,
+                    });
+                    l.extend(eqno_nodes);
+                    l
+                };
+                let mut b = hpack(&line, hbox_dimensions(&line).width);
+                b.shift = s + d;
+                self.push_box_crossing_glue(Node::Box(b));
+            } else if !nodes.is_empty() || display_material.is_empty() {
                 let mut line: Vec<Node> = Vec::with_capacity(nodes.len() + 2);
                 line.push(Node::Glue {
                 name: None,                width: 0,

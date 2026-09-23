@@ -1201,6 +1201,18 @@ impl MathSink for NodeBuilder {
         self.math_state.underline_pending = matches!(self.mode(), Mode::Math | Mode::DisplayMath);
         Ok(())
     }
+    /// `\eqno`/`\leqno`（tex.web start_eq_no → after_math）：当前层已收原子
+    /// 是公式 mlist（p），切出去暂存；其后材料进新列表，close_math 时
+    /// hpack natural 成编号盒 a（`leqno=true` → 编号在左）。
+    fn math_eqno(&mut self, leqno: bool) -> Result<()> {
+        let Some(level) = self.math_state.math.last_mut() else {
+            return Ok(());
+        };
+        let atoms = std::mem::take(&mut level.atoms);
+        self.math_state.eqno_formula = Some(atoms);
+        self.math_state.eqno_side = Some(leqno);
+        Ok(())
+    }
     /// `\mathchar<15-bit>`：完整数学字符原子（tex.web math_char）——
     /// 数学模式直接产出 Char 原子（class=n>>12&7、fam=n>>8&15、charcode=n&255）；
     /// 文本模式同 `\char` 输出低 8 位字符。此前 scan_number 即丢。

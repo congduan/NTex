@@ -247,6 +247,12 @@ pub trait MathSink {
     fn math_right(&mut self, _delim: Option<u32>) -> Result<()> {
         Ok(())
     }
+    /// `\eqno`/`\leqno`（显示数学内）：编号材料从此处起**独立成列表**收集
+    /// （tex.web start_eq_no 进普通数学模式，after_math 把它 hpack natural
+    /// 成编号盒 a；`leqno=true` 表示编号在左）。
+    fn math_eqno(&mut self, _leqno: bool) -> Result<()> {
+        Ok(())
+    }
     /// e-TeX `\middle<delimiter>`（\left...\right 内分隔符；M4-5）。
     fn math_middle(&mut self, _delim: Option<u32>) -> Result<()> {
         Ok(())
