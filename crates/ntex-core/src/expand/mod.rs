@@ -496,6 +496,19 @@ pub struct FmtState {
     /// pass1 结束时的当前字体（fmt 恢复后字符用正确字体——etrip.tex L62
     /// `\trip` 选择后 dump，pass2 若不恢复则全 nullfont + Missing 警告）。
     pub current_font: u32,
+    /// `\delcode` 表（v21：`.fmt` 此前不携带——fontmath.ltx 在 fmt 生成期做的
+    /// `\delcode`(/`[` 等赋值全丢，恢复后回退引擎 INITEX 默认 → `\left(`
+    /// 报 "Missing delimiter" 并退化普通尺寸）。
+    pub delcodes: std::collections::HashMap<u32, u32>,
+    /// `\mathcode` 表（v21：fontmath.ltx 的 `\DeclareMathSymbol` 字符赋值
+    ///（`<`→cmsy class3、`,`→class6 punct 等）随 fmt 丢失，所有非字母字符
+    /// 退回 0x7000+码 初表——字形落 cmr 同槽（`<`→`¡`）且 class 全 7/0
+    /// → punct/rel/bin 间距整族失效）。
+    pub mathcodes: std::collections::HashMap<u32, u32>,
+    /// `\lccode` 表（v21）。
+    pub lccodes: [i64; 256],
+    /// `\uccode` 表（v21）。
+    pub uccodes: [i64; 256],
 }
 
 /// 线程看门狗共享状态（挂死诊断）。
@@ -1205,6 +1218,10 @@ impl Expander {
             font_loads: self.font_loads.clone(),
             font_cs_names: self.font_cs_names.clone(),
             current_font: self.cur_font, // 引擎镜像（FMF382）；Typesetter::export_state 曾从 NodeBuilder 填充
+            delcodes: self.delcodes.clone(),
+            mathcodes: self.mathcodes.clone(),
+            lccodes: self.lccodes,
+            uccodes: self.uccodes,
         }
     }
 
@@ -1289,6 +1306,12 @@ impl Expander {
         // cur_font 镜像从 fmt 恢复（pass1 dump 时的当前字体；`.fmt` 载入后
         // `\font` 查询与字体相关的内部单位解析以此为准）。
         self.cur_font = state.current_font;
+        // 四张 code 表随 v21 恢复（fontmath.ltx 在 fmt 生成期的 `\mathcode`/
+        // `\delcode` 赋值此前全丢——非字母字符数学分派退回 INITEX 初表）
+        self.delcodes = state.delcodes;
+        self.mathcodes = state.mathcodes;
+        self.lccodes = state.lccodes;
+        self.uccodes = state.uccodes;
         // 运行时状态重置（新文档起点）
         self.stack.clear();
         self.read_floor = 0;

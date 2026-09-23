@@ -37,7 +37,12 @@ const MAGIC: &[u8; 8] = b"NTEXFMT1";
 /// v19：misc 数组增位（67→68，`\pdflastximage` 槽；图片管线 Step A）——
 ///      misc 定长序列化，长度变而版本不变时旧快照在数组读取处报
 ///      "failed to fill whole buffer"（无声错配），故布局变必须同步 bump。
-pub const FORMAT_VERSION: u8 = 20;
+/// v21：四张 code 表（`\delcode`/`\mathcode`/`\lccode`/`\uccode`）——
+///      fontmath.ltx 在 fmt 生成期做的 `\DeclareMathSymbol`/`\delcode`
+///      字符赋值此前不随快照携带，恢复后全部退回引擎 INITEX 初表
+///      （0x7000+码/0x500000）：`<`>` 落 cmr 同槽（`¡`/`¿`）、punct/rel/bin
+///      间距整族失效、`\left(`/`\right[` 大定界符报 Missing delimiter。
+pub const FORMAT_VERSION: u8 = 21;
 
 /// 当前引擎版本号：随 crate 版本进入 `.fmt` 文件头。
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -227,6 +232,30 @@ pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
     }
     // current_font（v14：pass2 恢复当前字体，防全 nullfont）
     w.write_all(&state.current_font.to_le_bytes())?;
+
+    // v21：四张 code 表（`\delcode`/`\mathcode`/`\lccode`/`\uccode`）。
+    // mathcodes/delcodes 覆盖表按码位升序（确定性）；lccode/uccode 定长 256。
+    // fontmath.ltx 在 fmt 生成期的字符级数学分派赋值此前随快照丢失。
+    let mut dels: Vec<(u32, u32)> = state.delcodes.iter().map(|(k, v)| (*k, *v)).collect();
+    dels.sort_unstable();
+    w.write_all(&(dels.len() as u32).to_le_bytes())?;
+    for (k, v) in dels {
+        w.write_all(&k.to_le_bytes())?;
+        w.write_all(&v.to_le_bytes())?;
+    }
+    let mut maths: Vec<(u32, u32)> = state.mathcodes.iter().map(|(k, v)| (*k, *v)).collect();
+    maths.sort_unstable();
+    w.write_all(&(maths.len() as u32).to_le_bytes())?;
+    for (k, v) in maths {
+        w.write_all(&k.to_le_bytes())?;
+        w.write_all(&v.to_le_bytes())?;
+    }
+    for v in &state.lccodes {
+        w.write_all(&v.to_le_bytes())?;
+    }
+    for v in &state.uccodes {
+        w.write_all(&v.to_le_bytes())?;
+    }
     Ok(())
 }
 
@@ -470,6 +499,30 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
     // current_font（v14）
     let current_font = read_u32(r)?;
 
+    // v21：四张 code 表
+    let n_del = read_u32(r)? as usize;
+    let mut delcodes = std::collections::HashMap::with_capacity(n_del.min(PREALLOC_CAP));
+    for _ in 0..n_del {
+        let k = read_u32(r)?;
+        let v = read_u32(r)?;
+        delcodes.insert(k, v);
+    }
+    let n_math = read_u32(r)? as usize;
+    let mut mathcodes = std::collections::HashMap::with_capacity(n_math.min(PREALLOC_CAP));
+    for _ in 0..n_math {
+        let k = read_u32(r)?;
+        let v = read_u32(r)?;
+        mathcodes.insert(k, v);
+    }
+    let mut lccodes = [0i64; 256];
+    for v in &mut lccodes {
+        *v = read_i64(r)?;
+    }
+    let mut uccodes = [0i64; 256];
+    for v in &mut uccodes {
+        *v = read_i64(r)?;
+    }
+
     Ok(FmtState {
         intern_names,
         catcodes,
@@ -484,6 +537,10 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
         font_loads,
         font_cs_names,
         current_font,
+        delcodes,
+        mathcodes,
+        lccodes,
+        uccodes,
     })
 }
 

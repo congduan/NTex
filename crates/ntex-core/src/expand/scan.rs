@@ -2622,6 +2622,26 @@ impl Expander {
                     }
                     return Ok(if neg { g.negated() } else { g });
                 }
+                // tex.web scan_glue：assign_mu_glue 区内部参数（\thinmuskip/
+                // \medmuskip/\thickmuskip，NTex 模型即 muskip 寄存器 0/1/2 槽）
+                // 作为完整 mu 胶量读取。plain/LaTeX 的 `\,` = `\mskip\thinmuskip`
+                // 走此臂；pt 语境读 mu 参数 → "Incompatible glue units"（1mu=1pt
+                // 继续）。此前缺臂 → `\,` 报 "Missing number … \thinmuskip"。
+                EqSlot::Primitive(
+                    p @ (Primitive::ThinMuskip | Primitive::MedMuskip | Primitive::ThickMuskip),
+                ) => {
+                    self.fetch()?; // 消费该参数 cs
+                    let idx = match p {
+                        Primitive::ThinMuskip => 0,
+                        Primitive::MedMuskip => 1,
+                        _ => 2,
+                    };
+                    let g = self.registers.muskip(idx);
+                    if !mu {
+                        self.report_incompatible_glue_units();
+                    }
+                    return Ok(if neg { g.negated() } else { g });
+                }
                 // tex.web scan_glue：assign_glue 区内部参数（\baselineskip/
                 // \abovedisplayskip/...）在胶水上下文应作为完整 glue 量读取，
                 // 不可退化成 scan_dimen 的 width 分量。LaTeX `\set@fontsize`

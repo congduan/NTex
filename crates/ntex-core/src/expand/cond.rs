@@ -128,8 +128,11 @@ impl Expander {
                         // - n<0（负数跳过，ors_left=None）或 n>0 未跳够 → 进入 else 分支
                         // - 已选中分支（case_selected）后遇多余 \\or 转 Skipping → \\else
                         //   是选中分支后的内容，保持跳过
-                        // 嵌套在被跳过区域里的非 case 条件（is_case=false）保持 Skipping。
-                        if top.is_case && !top.case_selected {
+                        // 惰性帧（嵌套在某个被跳过的假支里，owns_skip=false）一律
+                        // 保持 Skipping——tex.web `pass_text` 对嵌套条件只计数，
+                        // 其 `\else`/`\or` 是弃 token，绝不触发分支切换。
+                        // 活跃 ifcase 跳过（n>0 或 n<0） owns_skip=true（IfCase 臂置位）。
+                        if top.is_case && !top.case_selected && top.owns_skip {
                             top.state = CondState::Processing;
                         }
                     }
@@ -335,7 +338,10 @@ saved_if_type: saved_type,
                 } else {
                     CondState::Skipping
                 };
-                frame.owns_skip = n > 0;
+                // 活跃跳过（n>0 找选中分支、n<0 直奔 \else）都拥有本帧的跳过——
+                // `\else` 到来时才允许转 Processing。惰性嵌套帧（跳过区里 lazy
+                // 计数的 ifcase）保持 owns_skip=false，`\else` 是弃 token。
+                frame.owns_skip = n != 0;
                 frame.ors_left = (n > 0).then_some(n as usize);
                 frame.case_selected = n == 0;
                 Ok(())
