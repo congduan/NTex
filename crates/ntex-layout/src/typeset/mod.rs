@@ -248,12 +248,15 @@ enum MathAtom {
     Penalty { penalty: i64 },
     /// 数学规则原子（数学模式 `\vrule`；M4-1）。
     Rule { width: i64, height: i64, depth: i64 },
-    /// 数学空格（`\mskip`/`\mkern` 结果；`nonscript`：`\nonscript` 后脚本模式丢弃）。
+    /// 数学空格（`\mskip`/`\mkern` 结果；`nonscript`：`\nonscript` 后脚本模式丢弃；
+    /// `mu`：mu 单位胶——落 hlist 时按当前 style 的 em/18 换算（tex.web `math_glue`，
+    /// 只换算 mu_glue；`\hskip` 等 pt 胶原样落 hlist）。
     MSkip {
         width: i64,
         stretch: i64,
         shrink: i64,
         nonscript: bool,
+        mu: bool,
     },
     /// 已排版盒子（数学模式内 `\hbox{...}` 产出）。
     Box(BoxNode),
@@ -289,6 +292,8 @@ struct MathLevel {
     left: Option<Option<u32>>,
     /// 本层待定分式（`\over`/`\atop`；numerator 已收集，atoms 继续收 denominator）。
     fraction: Option<FractionPending>,
+    /// 待定分式的定界符（`\overwithdelims` 等；`math_fraction` 时并入 FractionPending）。
+    frac_delims: (Option<u32>, Option<u32>),
 }
 
 /// `\over`/`\atop` 中间态：numerator 已收集，当前数学层 atoms 继续收集 denominator。
@@ -297,6 +302,8 @@ struct MathLevel {
 struct FractionPending {
     thickness: Option<i64>,
     num: Vec<MathAtom>,
+    /// `\overwithdelims` 系定界符（None/None = 无）。
+    delims: (Option<u32>, Option<u32>),
 }
 
 /// 数学间距码（TeXbook 附录 G 规则 18）：0 无 / 1 thin / 2 med / 3 thick / 4 *（紧排）。

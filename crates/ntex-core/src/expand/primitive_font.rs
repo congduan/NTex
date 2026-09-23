@@ -187,8 +187,13 @@ impl Expander {
     }
 
     /// `\left`/`\right`/`\middle` 的定界符参数：字符 → charcode（`.` 为空定界符）；
-    /// `\.` → None。无法识别的 cs（如 `\par`）按 TeX 恢复：报
-    /// "! Missing delimiter (. inserted)." 到转录，并以 `(` 定界符继续。
+    /// `\.` → None。ControlSeq 按 tex.web `scan_delimiter` 的
+    /// `@<Get the next non-blank non-relax...@>` 语义**先展开**再分派——
+    /// `\{`→`\lbrace`→`\delimiter"…`、`\langle`→`\delimiter"426830A`（LaTeX
+    /// `\DeclareMathDelimiter` 的 protected 零参宏），展开到 `\delimiter`
+    /// 原语即扫 27 位数；落到普通 cs/未定义 → cur_val=-1 → 报
+    /// "! Missing delimiter (. inserted)." 并按**空定界符**继续（tex.web
+    /// `cur_val:=0`；此前误以 `(` 替身继续）。无法展开的带参宏同样落此恢复。
     fn scan_delimiter(&mut self) -> Result<Option<u32>> {
         self.skip_spaces()?;
         let (tok, _) = self
@@ -209,17 +214,71 @@ impl Expander {
                     let n = self.scan_number()?;
                     Ok(Some(u32::try_from(n).unwrap_or(0)))
                 } else {
-                    Ok(Some(ch))
+                    // tex.web：letter/other → cur_val:=del_code(chr)；delcode<0
+                    // （表无此项，`\delcode`x=-1` 同样抹表项）→ "Missing delimiter
+                    // (. inserted)" + cur_val:=0 空定界符。此前误用裸字符码——
+                    // large 变体落到 fam0 同字符（cmr10 `(`），`\binom` 的
+                    // `\abovewithdelims` 大括号变体因此缺字形。
+                    match self.delcodes.get(&ch).copied() {
+                        Some(v) => Ok(Some(v)),
+                        None => {
+                            self.report_error("Missing delimiter (. inserted).");
+                            Ok(None)
+                        }
+                    }
                 }
             }
             TokenKind::ControlSeq => {
-                let name = self.intern.name(tok.csid().expect("ControlSeq 必有 csid"));
-                if name == "." {
-                    Ok(None)
-                } else {
-                    self.report_error("Missing delimiter (. inserted).");
-                    Ok(Some(b'(' as u32))
+                // 展开循环（tex.web get_x_token：宏就地展开、`\if*` 就地求值），
+                // 直到落到终结 token：`\delimiter`（27 位扫描）、`.`（空定界符）、
+                // 其余 cs（含未定义 ≡\relax、带参宏）→ cur_val=-1 → 报错 + 空定界符。
+                // LaTeX 链路：`\{`＝`\ifmmode \lbrace \else \textbraceleft \fi`
+                // → `\lbrace`＝`\delimiter"…`（\DeclareMathDelimiter 零参宏）。
+                // 迭代上限防御 `\def\x{\x}` 式自展（tex.web 会撑爆输入栈，此处
+                // 按引擎契约落 "Missing delimiter" 恢复）。
+                let mut cur = tok;
+                for _ in 0..200 {
+                    let Some(csid) = cur.csid() else { break };
+                    if self.intern.name(csid) == "." {
+                        return Ok(None);
+                    }
+                    // 条件机跳过区：`\else` 之后假分支 token 不得当终结符
+                    // （同 expr.rs 表达式扫描的同款臂）。
+                    if self.is_skipping() {
+                        if let Some(op) = self.cond_op(cur) {
+                            self.step_conditional(op, cur)?;
+                        }
+                    } else if self.maybe_eval_cond(cur)? {
+                        // 条件开始原语在展开位就地求值
+                    } else {
+                        match self.resolve_slot(csid) {
+                            Some(EqSlot::Primitive(Primitive::Delimiter)) => {
+                                let n = self.scan_number()?;
+                                return Ok(Some(u32::try_from(n).unwrap_or(0)));
+                            }
+                            Some(EqSlot::Macro(m)) if m.value.params.num_params == 0 => {
+                                let items: Arc<[(Token, bool)]> = m
+                                    .value
+                                    .body
+                                    .iter()
+                                    .map(|t| (*t, false))
+                                    .collect::<Vec<_>>()
+                                    .into();
+                                self.push_frame(InputFrame::TokenList { items, pos: 0 });
+                            }
+                            _ => {
+                                // 字符、未定义 cs（≡\relax）、带参宏、非 \delimiter
+                                // 原语 → cur_val=-1 → Missing delimiter + 空定界符
+                                self.report_error("Missing delimiter (. inserted).");
+                                return Ok(None);
+                            }
+                        }
+                    }
+                    let Some((next, _)) = self.fetch()? else { break };
+                    cur = next;
                 }
+                self.report_error("Missing delimiter (. inserted).");
+                Ok(None)
             }
             _ => Err(Error::invalid_input("\\left/\\right 后必须是定界符")),
         }

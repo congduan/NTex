@@ -181,12 +181,18 @@ impl Expander {
             // 只认 "mu" 单位）——用 pt 上下文扫描会把 `\mkern-9mu` 报 Illegal
             // unit（8d0a71c muskip 参数化后暴露；trip L262/L275）。
             Primitive::MSkip => {
-                let _ = self.scan_glue_mu()?;
-                Ok(())
+                let g = self.scan_glue_mu()?;
+                self.sink.mu_glue(g)
             }
             Primitive::MKern => {
-                let _ = self.scan_dimen_mu()?;
-                Ok(())
+                let v = self.scan_dimen_mu()?;
+                self.sink.mu_glue(crate::Glue {
+                    width: v,
+                    stretch: 0,
+                    shrink: 0,
+                    stretch_order: 0,
+                    shrink_order: 0,
+                })
             }
             Primitive::MathAccent => {
                 let _ = self.scan_number()?;
@@ -253,8 +259,9 @@ impl Expander {
             // 此前 4 个 withdelims/above 只扫参数不挂 fraction → 分子分母被
             // 混收当前层，l.276 \abovewithdelims(.2pt 后数学状态崩）。
             Primitive::AboveWithDelims => {
-                let _ = self.scan_delimiter()?;
-                let _ = self.scan_delimiter()?;
+                let l = self.scan_delimiter()?;
+                let r = self.scan_delimiter()?;
+                self.sink.math_fraction_delims(l, r)?;
                 let thickness = self.scan_dimen()?;
                 self.sink.math_fraction(Some(thickness))
             }
@@ -264,13 +271,15 @@ impl Expander {
                 self.sink.math_fraction(Some(thickness))
             }
             Primitive::AtopWithDelims => {
-                let _ = self.scan_delimiter()?;
-                let _ = self.scan_delimiter()?;
+                let l = self.scan_delimiter()?;
+                let r = self.scan_delimiter()?;
+                self.sink.math_fraction_delims(l, r)?;
                 self.sink.math_fraction(Some(0))
             }
             Primitive::OverWithDelims => {
-                let _ = self.scan_delimiter()?;
-                let _ = self.scan_delimiter()?;
+                let l = self.scan_delimiter()?;
+                let r = self.scan_delimiter()?;
+                self.sink.math_fraction_delims(l, r)?;
                 self.sink.math_fraction(None)
             }
             // tex.web math_ac：\underline/\overline 是数学前缀——字段经主循环组

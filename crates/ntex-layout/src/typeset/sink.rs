@@ -223,6 +223,7 @@ impl CoreSink for NodeBuilder {
                 field,
                 left: None,
                 fraction: None,
+                frac_delims: (None, None),
             });
         }
         Ok(())
@@ -547,6 +548,7 @@ impl CoreSink for NodeBuilder {
                         stretch: s,
                         shrink: k,
                         nonscript: false,
+                        mu: false,
                     })?;
                 }
             },
@@ -648,6 +650,7 @@ impl CoreSink for NodeBuilder {
                 stretch: g.stretch,
                 shrink: g.shrink,
                 nonscript: false,
+                mu: false,
             })?;
             return Ok(());
         }
@@ -665,18 +668,36 @@ impl CoreSink for NodeBuilder {
         Ok(())
     }
     fn kern(&mut self, width: i64) -> Result<()> {
-        // 数学模式 `\kern`：转数学空格原子（TeX 数学模式 \kern ≡ \mkern）。
+        // 数学模式 `\kern`：转数学空格原子（TeX 数学模式 \kern 是 **pt** 胶，
+        // mlist_to_hlist 原样落 hlist——与 \mkern 的 mu 胶不同，见 mu_glue）。
         if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
             self.math_push_atom(MathAtom::MSkip {
                 width,
                 stretch: 0,
                 shrink: 0,
                 nonscript: false,
+                mu: false,
             })?;
             return Ok(());
         }
         self.append(Node::Kern { width });
         Ok(())
+    }
+    /// `\mskip`/`\mkern`（mu 单位）：数学空格原子（mu 胶），mlist_to_hlist
+    /// 按当前 style 的 em/18 换算（tex.web new_mu_glue + math_glue）。
+    fn mu_glue(&mut self, g: Glue) -> Result<()> {
+        if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            // tex.web：非数学模式 \mskip 报 "You can't use \mskip in vertical mode"
+            // 系语义（收窄风险，先按 pt 胶落列表与旧径一致）
+            return self.glue(g);
+        }
+        self.math_push_atom(MathAtom::MSkip {
+            width: g.width,
+            stretch: g.stretch,
+            shrink: g.shrink,
+            nonscript: false,
+            mu: true,
+        })
     }
     fn penalty(&mut self, penalty: i64) -> Result<()> {
         // 数学模式 `\penalty`：数学列表断行点原子（M4-1——tex.web math list
@@ -932,6 +953,7 @@ impl FontSink for NodeBuilder {
                 stretch: 0,
                 shrink: 0,
                 nonscript: false,
+                mu: false,
             });
         }
         // 垂直模式：TeX 报 "You can't use `\/' in vertical mode"
@@ -1114,7 +1136,16 @@ impl MathSink for NodeBuilder {
             return Err(Error::invalid_input("\\over 前不能有未挂脚本（Missing { inserted）"));
         }
         let num = std::mem::take(&mut level.atoms);
-        level.fraction = Some(FractionPending { thickness, num });
+        let delims = std::mem::take(&mut level.frac_delims);
+        level.fraction = Some(FractionPending { thickness, num, delims });
+        Ok(())
+    }
+    /// `\overwithdelims` 系定界符：tex.web 在 fraction 节点左/右字段（make_fraction
+    /// 包在分式两侧）。存当前数学层，`math_fraction` 打包时并入。
+    fn math_fraction_delims(&mut self, left: Option<u32>, right: Option<u32>) -> Result<()> {
+        if let Some(level) = self.math_state.math.last_mut() {
+            level.frac_delims = (left, right);
+        }
         Ok(())
     }
     /// `\left<delim>`：压一层数学层（定界符记在层上），`\right` 时收为 Delimited。

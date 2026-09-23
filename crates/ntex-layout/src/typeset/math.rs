@@ -317,12 +317,14 @@ impl NodeBuilder {
                 width,
                 stretch,
                 shrink,
+                mu,
                 ..
             } if self.math_state.nonscript_pending => MathAtom::MSkip {
                 width,
                 stretch,
                 shrink,
                 nonscript: true,
+                mu,
             },
             other => other,
         };
@@ -399,11 +401,22 @@ impl NodeBuilder {
     fn math_finish_fraction(level: &mut MathLevel) {
         if let Some(fp) = level.fraction.take() {
             let den = std::mem::take(&mut level.atoms);
-            level.atoms.push(MathAtom::Fraction {
+            let frac = MathAtom::Fraction {
                 num: fp.num,
                 den,
                 thickness: fp.thickness,
-            });
+            };
+            // tex.web make_fraction：withdelims 系把定界符（var_delimiter 节点）
+            // 包在分式两侧——复用 \left...\right 的 Delimited 装配径
+            if fp.delims.0.is_none() && fp.delims.1.is_none() {
+                level.atoms.push(frac);
+            } else {
+                level.atoms.push(MathAtom::Delimited {
+                    left: fp.delims.0,
+                    body: vec![frac],
+                    right: fp.delims.1,
+                });
+            }
         }
     }
 
@@ -745,13 +758,17 @@ impl NodeBuilder {
                 self.math_to_hlist(base, style.cramped())
             }
             MathAtom::Delimited { left, body, right } => {
+                let body_nodes = self.math_to_hlist(body, style);
+                // tex.web var_delimiter 的 needed = 括起内容的高+深（先排内容再选字形）
+                let dims = hbox_dimensions(&body_nodes);
+                let need = dims.height + dims.depth;
                 let mut inner = Vec::new();
                 if let Some(d) = left {
-                    inner.extend(self.delim_nodes(*d, style));
+                    inner.extend(self.delim_nodes_sized(*d, style, Some(need)));
                 }
-                inner.extend(self.math_to_hlist(body, style));
+                inner.extend(body_nodes);
                 if let Some(d) = right {
-                    inner.extend(self.delim_nodes(*d, style));
+                    inner.extend(self.delim_nodes_sized(*d, style, Some(need)));
                 }
                 // \\left...\\right 物化为单个 hbox（tex.web：定界符与内容同盒，
                 // 盒高由定界符撑起——参考 etrip `\\hbox(17.0+3.00002)x23.9999`
@@ -785,16 +802,28 @@ impl NodeBuilder {
                 stretch,
                 shrink,
                 nonscript,
+                mu,
             } => {
-                if *nonscript
-                    && style.size_kind() >= 1
-                {
+                if *nonscript && style.size_kind() >= 1 {
                     Vec::new()
                 } else {
+                    // mu 胶在 mlist_to_hlist 按 em/18 换算（tex.web math_glue；
+                    // 截断对齐 math_glue/mu_mult，见 mu_to_sp 注释）；pt 胶原样落
+                    let (w, st, sh) = if *mu {
+                        let em = self.math_em(style);
+                        (
+                            mu_to_sp(*width, em),
+                            mu_to_sp(*stretch, em),
+                            mu_to_sp(*shrink, em),
+                        )
+                    } else {
+                        (*width, *stretch, *shrink)
+                    };
                     vec![Node::Glue {
-            name: None,                        width: *width,
-                        stretch: *stretch,
-                        shrink: *shrink,
+                        name: None,
+                        width: w,
+                        stretch: st,
+                        shrink: sh,
                         stretch_order: 0,
                         shrink_order: 0,
                     }]
@@ -1186,11 +1215,48 @@ impl NodeBuilder {
 
     /// 定界符字符节点（当前字体 + 字阶缩放；M4-3 换 cmex10 变体伸缩）。
     fn delim_nodes(&self, d: u32, style: MathStyle) -> Vec<Node> {
-        let (num, den) = style.scale();
-        let (w, h, dd) = self.math_metrics(self.current_font, d, num, den);
+        self.delim_nodes_sized(d, style, None)
+    }
+
+    /// tex.web var_delimiter（L1184）的两档近似（不含 cmex 扩展拼接）：
+    /// 27 位定界码拆 small（fam=(d/@"4000000) mod 16、char=(d/@"10000) mod 256）/
+    /// large（fam=(d/256) mod 16、char=d mod 256）；needed=Some(内容高+深) 时
+    /// small 字形不够高即取 large（`\binom`/`\left(\frac..` 落 cmex 大字，
+    /// `\left(x` 落正文字体小括号）。needed=None 维持小字形。
+    fn delim_nodes_sized(&self, d: u32, style: MathStyle, needed: Option<i64>) -> Vec<Node> {
+        let kind = style.size_kind();
+        let pick = |s: &Self, fam: u32, ch: u32| -> Option<(FontId, u32, i64, i64, i64)> {
+            let font = s
+                .math_state
+                .math_fonts
+                .get(fam as usize)
+                .and_then(|t| t.get(kind).copied().flatten())?;
+            let (w, h, dd) = s.fonts.metrics(font, ch);
+            if w == 0 && h == 0 && dd == 0 {
+                return None;
+            }
+            Some((font, ch, w, h, dd))
+        };
+        let small_fam = (d >> 22) & 0xF;
+        let small_char = (d >> 16) & 0xFF;
+        let large_fam = (d >> 8) & 0xF;
+        let large_char = d & 0xFF;
+        let mut chosen = pick(self, small_fam, small_char);
+        if let Some(need) = needed {
+            if let Some((_, _, _, h, dd)) = chosen {
+                if h + dd < need {
+                    chosen = pick(self, large_fam, large_char).or(chosen);
+                }
+            }
+        }
+        let (font, ch, w, h, dd) = chosen.unwrap_or_else(|| {
+            let (wn, dn) = style.scale();
+            let (w, h, dd) = self.math_metrics(self.current_font, small_char, wn, dn);
+            (self.current_font, small_char, w, h, dd)
+        });
         vec![Node::Char {
-            font: self.current_font,
-            charcode: d,
+            font,
+            charcode: ch,
             width: w,
             height: h,
             depth: dd,

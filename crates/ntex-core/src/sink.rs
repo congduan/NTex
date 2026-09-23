@@ -72,6 +72,13 @@ pub trait CoreSink {
     fn kern(&mut self, _width: i64) -> Result<()> {
         Ok(())
     }
+    /// 数学胶（`\mskip`/`\mkern` 的 mu 单位扫描结果；tex.web `new_mu_glue`）。
+    /// mu 值以 NTex 约定的伪 mu（N×65536）存 width/stretch/shrink，排版层在
+    /// mlist_to_hlist 时按当前 style 的 em/18 换算（tex.web `math_glue`）。
+    /// 默认 no-op（仅排版引擎侧覆写）。
+    fn mu_glue(&mut self, _g: Glue) -> Result<()> {
+        Ok(())
+    }
     /// 惩罚（`\penalty` 的扫描结果）。
     fn penalty(&mut self, _penalty: i64) -> Result<()> {
         Ok(())
@@ -231,6 +238,12 @@ pub trait MathSink {
     }
     /// 分式原语（`\over`=None 默认厚度 / `\atop`=Some(0) / `\above`=显式；M4-2）。
     fn math_fraction(&mut self, _thickness: Option<i64>) -> Result<()> {
+        Ok(())
+    }
+    /// 分式定界符（`\overwithdelims`/`\abovewithdelims`/`\atopwithdelims` 在
+    /// `math_fraction` 前扫得的一对定界符；tex.web math_fraction 的 left/right
+    /// delimiter 字段，make_fraction 包在分式两侧）。默认 no-op。
+    fn math_fraction_delims(&mut self, _left: Option<u32>, _right: Option<u32>) -> Result<()> {
         Ok(())
     }
     /// `\left<delimiter>`：`None` = `\left.`（空定界符；M4-2）。
