@@ -683,6 +683,29 @@ mod tests {
     use ntex_layout::node::{BoxNode, FontId, Node};
     use ntex_layout::typeset::Typesetter;
 
+    /// panic 审计守护（债务表项 4）：生产路径（`#[cfg(test)]` 之前的源码）
+    /// 禁 `.unwrap()`——TeX 引擎的传统是永不 panic，损坏/恶意输入走错误恢复。
+    /// 不可达位允许 `.expect("不变量说明")`（ctm 缩放栈底恒在，见 special 处理）。
+    #[test]
+    fn production_code_has_no_unwrap() {
+        let files = [
+            concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"),
+            concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"),
+        ];
+        for file in files {
+            let src = std::fs::read_to_string(file).expect("源文件应可读");
+            let prod = src.split("#[cfg(test)]").next().expect("应有测试分界");
+            for (i, line) in prod.lines().enumerate() {
+                assert!(
+                    !line.contains(".unwrap()"),
+                    "生产代码出现 .unwrap()（{} 第 {} 行）：{line}",
+                    file.rsplit('/').next().unwrap_or(file),
+                    i + 1
+                );
+            }
+        }
+    }
+
     fn cmr_metrics(name: &str) -> FontMetrics {
         FontMetrics {
             unicode_native: false,

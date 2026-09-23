@@ -12,7 +12,9 @@ fn write_tokens(w: &mut impl Write, toks: &[Token]) -> io::Result<()> {
 
 fn read_tokens(r: &mut impl Read) -> io::Result<Vec<Token>> {
     let n = read_u32(r)? as usize;
-    let mut out = Vec::with_capacity(n);
+    // 预分配钳制：损坏 .fmt 的 token 数可填 2^32-1，按值预分配会 OOM abort
+    //（见 lib.rs PREALLOC_CAP 注释）；逐个读取计数不变，损坏文件走 EOF 报错。
+    let mut out = Vec::with_capacity(n.min(PREALLOC_CAP));
     for _ in 0..n {
         out.push(Token::from_raw(read_u64(r)?));
     }
@@ -194,7 +196,7 @@ fn read_registers(r: &mut impl Read) -> io::Result<RegisterState> {
         }
     }
     let n_toks = read_u32(r)? as usize;
-    let mut toks = Vec::with_capacity(n_toks);
+    let mut toks = Vec::with_capacity(n_toks.min(PREALLOC_CAP));
     for _ in 0..n_toks {
         let idx = read_u32(r)? as usize;
         let t = ntex_core::macrodef::TokenArray::from(read_tokens(r)?);

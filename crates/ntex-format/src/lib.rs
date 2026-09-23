@@ -42,6 +42,15 @@ pub const FORMAT_VERSION: u8 = 20;
 /// 当前引擎版本号：随 crate 版本进入 `.fmt` 文件头。
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// 解码期预分配/名字长度上限。`.fmt` 的长度字段是**文件内容**（u32），恶意
+/// 或损坏的文件可填 2^32-1：按其值 `with_capacity`/`vec![0u8; n]` 会一次性
+/// 申请数 GB——容量溢出 panic 或 OOM abort（TeX 引擎的传统是永不死于坏输入，
+/// 错误恢复后继续）。故预分配一律钳到本上限（循环计数不变，合法文件零影响：
+/// 名字/cs 名/槽数至多数千），越界的名字长度直接报 invalid——损坏文件在
+/// read_exact EOF 或显式检查处优雅失败。64 KiB 同时盖住 `read_and_check_
+/// engine_version` 的 u16 长度域（65535 = 本上限，检查恒过）。
+const PREALLOC_CAP: usize = 1 << 16;
+
 /// 编码一个 `.fmt` 快照。
 pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
     w.write_all(MAGIC)?;
@@ -240,9 +249,12 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
 
     // intern 表
     let n_names = read_u32(r)? as usize;
-    let mut intern_names = Vec::with_capacity(n_names);
+    let mut intern_names = Vec::with_capacity(n_names.min(PREALLOC_CAP));
     for _ in 0..n_names {
         let len = read_u32(r)? as usize;
+        if len > PREALLOC_CAP {
+            return Err(invalid("intern 名字长度越界（文件损坏）"));
+        }
         let mut bytes = vec![0u8; len];
         r.read_exact(&mut bytes)?;
         intern_names.push(String::from_utf8(bytes).map_err(|_| invalid("名字非 UTF-8"))?);
@@ -271,7 +283,7 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
 
     // eqtb
     let n_slots = read_u32(r)? as usize;
-    let mut eqtb = Vec::with_capacity(n_slots);
+    let mut eqtb = Vec::with_capacity(n_slots.min(PREALLOC_CAP));
     for _ in 0..n_slots {
         eqtb.push(read_slot(r)?);
     }
@@ -415,12 +427,15 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
 
     // font_loads（v13：pass2 恢复字体表；FontId → (外部名, at, scaled)）
     let n_loads = read_u32(r)? as usize;
-    let mut font_loads = Vec::with_capacity(n_loads);
+    let mut font_loads = Vec::with_capacity(n_loads.min(PREALLOC_CAP));
     for _ in 0..n_loads {
         let len = read_u32(r)? as usize;
         if len == 0 {
             font_loads.push(None);
         } else {
+            if len > PREALLOC_CAP {
+                return Err(invalid("字体名长度越界（文件损坏）"));
+            }
             let mut buf = vec![0u8; len];
             r.read_exact(&mut buf)?;
             let name = String::from_utf8_lossy(&buf).into_owned();
@@ -438,12 +453,15 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
     // font_cs_names（v13：showbox 字体标识 cs 名；**保留**——pass1 定义的
     // `\font\trip` 在 pass2 不重跑，showbox 需 cs 名）
     let n = read_u32(r)? as usize;
-    let mut font_cs_names = Vec::with_capacity(n);
+    let mut font_cs_names = Vec::with_capacity(n.min(PREALLOC_CAP));
     for _ in 0..n {
         let len = read_u32(r)? as usize;
         if len == 0 {
             font_cs_names.push(None);
         } else {
+            if len > PREALLOC_CAP {
+                return Err(invalid("字体 cs 名长度越界（文件损坏）"));
+            }
             let mut buf = vec![0u8; len];
             r.read_exact(&mut buf)?;
             font_cs_names.push(Some(String::from_utf8_lossy(&buf).into_owned()));
@@ -478,6 +496,7 @@ fn write_engine_version(w: &mut impl Write) -> io::Result<()> {
 
 fn read_and_check_engine_version(r: &mut impl Read) -> io::Result<()> {
     let len = read_u16(r)? as usize;
+    debug_assert!(len <= PREALLOC_CAP, "u16 长度域被 PREALLOC_CAP 覆盖");
     let mut bytes = vec![0u8; len];
     r.read_exact(&mut bytes)?;
     let file_version = String::from_utf8(bytes).map_err(|_| invalid(".fmt 引擎版本号非 UTF-8"))?;
@@ -496,6 +515,77 @@ include!("codec.rs");
 mod tests {
     use super::*;
     use ntex_core::expand::Expander;
+
+    /// panic 审计守护（债务表项 4）：生产路径（`#[cfg(test)]` 之前的源码，
+    /// 含 include! 进来的 codec.rs）禁 `.unwrap()`——损坏 .fmt 必须报 io::Error
+    /// 而非 panic（TeX 引擎永不 panic；不可达位用 `.expect("不变量")`）。
+    #[test]
+    fn production_code_has_no_unwrap() {
+        let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"))
+            .expect("源文件应可读");
+        let prod = src.split("#[cfg(test)]").next().expect("应有测试分界");
+        for (i, line) in prod.lines().enumerate() {
+            assert!(
+                !line.contains(".unwrap()"),
+                "生产代码出现 .unwrap()（lib.rs 第 {} 行）：{line}",
+                i + 1
+            );
+        }
+    }
+
+    /// 损坏 .fmt 的合法文件头前缀（魔数 + 版本 + 引擎版本号）。
+    fn corrupt_header() -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(MAGIC);
+        buf.push(FORMAT_VERSION);
+        buf.extend_from_slice(&(ENGINE_VERSION.len() as u16).to_le_bytes());
+        buf.extend_from_slice(ENGINE_VERSION.as_bytes());
+        buf
+    }
+
+    #[test]
+    fn load_huge_count_fails_fast_not_oom() {
+        // 恶意/损坏 .fmt：intern 表计数填 2^32-1 → 预分配钳制后立刻 EOF 优雅
+        // 报错，而非按值申请数 GB（容量溢出 panic / OOM abort）
+        let mut buf = corrupt_header();
+        buf.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
+        let err = load(&mut buf.as_slice()).unwrap_err();
+        assert!(
+            !err.to_string().contains("越界"),
+            "计数越界应走 EOF 而非显式检查：{err}"
+        );
+    }
+
+    #[test]
+    fn load_oversized_name_length_rejected() {
+        // 名字长度域填 2^32-1 → 显式 invalid 错（不再 vec![0u8; len] 整块分配）
+        let mut buf = corrupt_header();
+        buf.extend_from_slice(&1u32.to_le_bytes()); // n_names = 1
+        buf.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes()); // 名字长度
+        let err = load(&mut buf.as_slice()).unwrap_err();
+        assert!(
+            err.to_string().contains("名字长度越界"),
+            "应报名字长度越界：{err}"
+        );
+    }
+
+    #[test]
+    fn load_huge_eqtb_slots_fails_fast() {
+        // eqtb 槽计数越界：EqSlot 非零尺寸，按值预分配会容量溢出 panic
+        let mut buf = corrupt_header();
+        buf.extend_from_slice(&0u32.to_le_bytes()); // n_names = 0
+        buf.extend_from_slice(&[0u8; 256]); // catcode 表
+        buf.extend_from_slice(&0u32.to_le_bytes()); // catcode 覆盖表
+        for _ in 0..256 {
+            buf.extend_from_slice(&0u32.to_le_bytes()); // sfcodes
+        }
+        buf.extend_from_slice(&0xFFFF_FFFFu32.to_le_bytes()); // n_slots
+        let err = load(&mut buf.as_slice()).unwrap_err();
+        assert!(
+            !err.to_string().contains("capacity overflow"),
+            "不应容量溢出：{err}"
+        );
+    }
 
     fn roundtrip(state: &FmtState) -> FmtState {
         let mut buf = Vec::new();

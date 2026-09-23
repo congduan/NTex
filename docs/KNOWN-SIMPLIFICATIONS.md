@@ -102,6 +102,7 @@
 | `expand/scan.rs:32` | 十进制扫描 M1 简化版 | 待做 |
 | `expand/primitive_io.rs` `\output` 存储 | preview L380 `\let\output\pr@output`（委托给 toks17）后，引擎侧 `output_toks` 仍持旧 token 列表——委托关系不回灌引擎存储，页出货走的是 toks17 里的例程但 `\shipout` 判定/页装配仍看旧例程 → preview 文档载入成功但 0 页出（`\shipout 未触发`）。tex.web 无此分裂（`\output` 就是 toks255） | 待做（`\let` 写观测面回灌 output_toks，或引擎侧改挂 toks255 槽） |
 | `expand/io.rs` `\read` | 算法宏包链（algorithm.sty/algpseudocode）依赖的 `\read` 流未打开时报 `非法输入：\read 流未打开` 致命，pdfTeX 语义是未打开流读终端/报错后可恢复 | 待做（Calculate-Legendre l.10 现场停步） |
+| `ntex-dvi`/`ntex-format` 生产路径 panic 审计 | 全量核查（`unwrap()/expect()/panic!/unreachable!/todo!` + 输入索引）：生产代码仅 ntex-dvi lib.rs `ctm.last_mut().expect("缩放栈底恒在")` 一处（不可达：栈底构造时播种 (1,1)，pop 有 `len>1` 守卫，符合「不可能位 expect+不变量说明」口径）；任务书原列的 15 处 unwrap 全在 `#[cfg(test)] mod tests` 内（`input.rs` 已随分片重构更名）。加固：ntex-format 解码期预分配/名字长度改按 `PREALLOC_CAP`(64 KiB) 钳制——损坏 .fmt 的 u32 长度域填 2^32-1 原会容量溢出 panic/OOM abort，现走 io::Error 优雅失败（循环计数不变，合法文件零影响；DVI 产物逐字节一致）。`production_code_has_no_unwrap` 守护测试固化两 crate 的「生产禁 unwrap」门禁 | ✅ 已修（2026-09-23 技术债第一批项 4；`load_huge_count_fails_fast_not_oom`/`load_oversized_name_length_rejected`/`load_huge_eqtb_slots_fails_fast` 三测） |
 
 ---
 
