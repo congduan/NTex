@@ -1219,7 +1219,7 @@ impl NodeBuilder {
     }
 
     /// tex.web var_delimiter（L1184）的两档近似（不含 cmex 扩展拼接）：
-    /// 27 位定界码拆 small（fam=(d/@"4000000) mod 16、char=(d/@"10000) mod 256）/
+    /// 27 位定界码拆 small（fam=(d>>20)&0xF、char=(d>>12)&0xFF）/
     /// large（fam=(d/256) mod 16、char=d mod 256）；needed=Some(内容高+深) 时
     /// small 字形不够高即取 large（`\binom`/`\left(\frac..` 落 cmex 大字，
     /// `\left(x` 落正文字体小括号）。needed=None 维持小字形。
@@ -1237,8 +1237,11 @@ impl NodeBuilder {
             }
             Some((font, ch, w, h, dd))
         };
-        let small_fam = (d >> 22) & 0xF;
-        let small_char = (d >> 16) & 0xFF;
+        // tex.web var_delimiter 拆位：small_fam=(d div @'4000000) mod 16（>>20）、
+        // small_char=(d div @'10000) mod 256（>>12）、large_fam=(d div 256) mod 16、
+        // large_char=d mod 256（如 `(`="028300 → small(fam2,"() large(fam3,")）
+        let small_fam = (d >> 20) & 0xF;
+        let small_char = (d >> 12) & 0xFF;
         let large_fam = (d >> 8) & 0xF;
         let large_char = d & 0xFF;
         let mut chosen = pick(self, small_fam, small_char);

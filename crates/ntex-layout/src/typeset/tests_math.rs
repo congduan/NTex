@@ -568,7 +568,10 @@ use super::*;
 
     #[test]
     fn math_left_right_delimited() {
-        let children = math_line_children(r"$\left(x\right)$");
+        // INITEX 初表 delcode 全空（tex.web 同）：字符定界符走 delcode 表，
+        // 须先赋码——`\left(` 的 delcode = small(fam0,"() large(fam3,")
+        let children =
+            math_line_children(r#"\delcode`(="028300 \delcode`)="029301 $\left(x\right)$"#);
         // \\left...\\right 物化为单个 hbox（tex.web：定界符与内容同盒）
         assert_eq!(children.len(), 1, "\\left(\\right) 应封装为单个 hbox");
         let b = as_box(&children[0]);
