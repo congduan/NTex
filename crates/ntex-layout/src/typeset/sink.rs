@@ -315,7 +315,10 @@ impl CoreSink for NodeBuilder {
                     // `\sqrt{...}`：先收组内分式（`\sqrt{a\over b}`），再作 radicand
                     let mut lv = level;
                     Self::math_finish_fraction(&mut lv);
-                    parent.atoms.push(MathAtom::Radical { base: lv.atoms });
+                    parent.atoms.push(MathAtom::Radical {
+                        base: lv.atoms,
+                        delim: SQRT_DELIM_CODE,
+                    });
                     return Ok(());
                 }
                 Some(MathFieldKind::Underline) => {
@@ -337,13 +340,14 @@ impl CoreSink for NodeBuilder {
                     return Ok(());
                 }
                 Some(MathFieldKind::Radical(delim)) => {
-                    // `\radical<delim>{...}`：radicand 同 \sqrt（定界符号暂不参与渲染）
+                    // `\radical<delim>{...}`：radicand 同 \sqrt，定界符码进原子
+                    // （27 位码驱动 var_delimiter 取根号变体；0 = null delimiter）
                     let mut lv = level;
                     Self::math_finish_fraction(&mut lv);
-                    parent
-                        .atoms
-                        .push(MathAtom::Radical { base: lv.atoms });
-                    let _ = delim;
+                    parent.atoms.push(MathAtom::Radical {
+                        base: lv.atoms,
+                        delim,
+                    });
                     return Ok(());
                 }
                 Some(MathFieldKind::Class(class)) => {

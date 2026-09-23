@@ -220,16 +220,22 @@ impl NodeBuilder {
                 .math_state.math
                 .last_mut()
                 .ok_or_else(|| Error::internal("数学原子无数学层"))?;
-            level.atoms.push(MathAtom::Radical { base: vec![atom] });
+            level.atoms.push(MathAtom::Radical {
+                base: vec![atom],
+                delim: SQRT_DELIM_CODE,
+            });
             return Ok(());
         }
         // `\radical<delim>` 单原子字段：`\radical"3 x`（TRIP L412 everymath 注入路径）
-        if let Some(_delim) = self.math_state.radical_pending.take() {
+        if let Some(delim) = self.math_state.radical_pending.take() {
             let level = self
                 .math_state.math
                 .last_mut()
                 .ok_or_else(|| Error::internal("数学原子无数学层"))?;
-            level.atoms.push(MathAtom::Radical { base: vec![atom] });
+            level.atoms.push(MathAtom::Radical {
+                base: vec![atom],
+                delim,
+            });
             return Ok(());
         }
         // `\accent`/`\mathaccent` 单原子 nucleus 字段：第一个原子充当重音符，
@@ -687,7 +693,7 @@ impl NodeBuilder {
                 den,
                 thickness,
             } => self.fraction_nodes(num, den, *thickness, style),
-            MathAtom::Radical { base } => self.radical_nodes(base, style),
+            MathAtom::Radical { base, delim } => self.radical_nodes(base, *delim, style),
             // \underline/\overline：M4-2 简化——内容直接输出（底线/顶线渲染
             // M4-3）；核取 cramped_style（tex.web make_underline/make_overline）
             MathAtom::Underline { base } | MathAtom::Overline { base } => {
@@ -1040,7 +1046,7 @@ impl NodeBuilder {
     /// overbar(x, clr, height(y))]（GT `\sqrt b`：外盒 9.32217+1.07779 =
     /// 根号盒 0.39998+9.6 @shift −8.52222 与竖排 [kern.39998, rule.39998,
     /// kern1.57777, b 6.94444] 的 hpack 归并）。
-    fn radical_nodes(&self, base: &[MathAtom], style: MathStyle) -> Vec<Node> {
+    fn radical_nodes(&self, base: &[MathAtom], delim: u32, style: MathStyle) -> Vec<Node> {
         let x = self.math_clean_box(base, style.cramped());
         let kind = style.size_kind();
         let drt = self.math_rule_thickness(kind);
@@ -1049,7 +1055,7 @@ impl NodeBuilder {
         } else {
             drt + drt / 4
         };
-        let mut y = self.radical_delimiter(kind, x.height + x.depth + clr + drt);
+        let mut y = self.radical_delimiter(delim, kind, x.height + x.depth + clr + drt);
         let delta = y.depth - (x.height + x.depth + clr);
         if delta > 0 {
             clr += half(delta);
@@ -1077,31 +1083,60 @@ impl NodeBuilder {
         vpack(children, dims.height + dims.depth, i64::MAX)
     }
 
-    /// tex.web var_delimiter 限根号域版：\sqrt 的定界域 small=(fam 2 字阶字体,
-    /// 112 'p')、large=(fam 3, 112)；取 h+d ≥ v 的最小变体，皆不足取 large
-    /// （extensible 拼接 M4-3 待做：cmex10 的根号段在此以整体字变体代替）。
-    fn radical_delimiter(&self, kind: usize, v: i64) -> BoxNode {
-        const RADICAL_CHAR: u32 = 112; // 'p'：cmsy/cmex 的根号位
-        for fam in [2usize, 3usize] {
+    /// tex.web var_delimiter（L13880 起）按定界符码取根号变体：码拆
+    /// small=(fam 2,'p')/large=(fam 3,'p')（\sqrt 默认码 = plain.tex
+    /// `\radical"270370`），small 取 fam 的当前字阶字体，h+d ≥ v 即停，
+    /// 不足则落到 large（tex.web best-so-far：large_attempt 后必返回某变体，
+    /// 单字形近似——字阶内 char list 逐级放大与 extensible 拼接仍属 M4-3）。
+    /// 码 0（或两变体均 (fam 0, char 0)，即 tex.web `(z<>0)or(x<>min_quarterword)`
+    /// 排除位）走 null 分支：空盒宽 \nulldelimiterspace（L14108-14112）。
+    fn radical_delimiter(&self, delim: u32, kind: usize, v: i64) -> BoxNode {
+        let small_fam = ((delim >> 20) & 0xF) as usize;
+        let small_char = (delim >> 12) & 0xFF;
+        let large_fam = ((delim >> 8) & 0xF) as usize;
+        let large_char = delim & 0xFF;
+        let mut best: Option<(FontId, u32, i64, i64, i64)> = None;
+        for (fam, ch) in [(small_fam, small_char), (large_fam, large_char)] {
+            if fam == 0 && ch == 0 {
+                continue; // null delimiter 域
+            }
             if let Some(f) = self
                 .math_state
                 .math_fonts
                 .get(fam)
                 .and_then(|s| s.get(kind).copied().flatten())
             {
-                let (w, h, d) = self.math_metrics(f, RADICAL_CHAR, 1, 1);
-                if h + d >= v || fam == 3 {
-                    return BoxNode::new_hbox(vec![Node::Char {
-                        font: f,
-                        charcode: RADICAL_CHAR,
-                        width: w,
-                        height: h,
-                        depth: d,
-                    }]);
+                let (w, h, d) = self.math_metrics(f, ch, 1, 1);
+                if h + d >= v {
+                    return Self::delim_char_box(f, ch, w, h, d);
                 }
+                best = Some((f, ch, w, h, d));
             }
         }
-        BoxNode::new_hbox(Vec::new())
+        if let Some((f, ch, w, h, d)) = best {
+            return Self::delim_char_box(f, ch, w, h, d);
+        }
+        // null 分支：宽 \nulldelimiterspace 的空盒（同 make_fraction 的外壳）
+        BoxNode {
+            kind: BoxKind::HBox,
+            width: self.params.nulldelimiterspace,
+            height: 0,
+            depth: 0,
+            shift: 0,
+            children: Vec::new(),
+        }
+    }
+
+    /// var_delimiter char_box（tex.web L13958）：单字形盒，宽含斜体修正，
+    /// 高深取字形度量。
+    fn delim_char_box(f: FontId, ch: u32, w: i64, h: i64, d: i64) -> BoxNode {
+        BoxNode::new_hbox(vec![Node::Char {
+            font: f,
+            charcode: ch,
+            width: w,
+            height: h,
+            depth: d,
+        }])
     }
 
     /// 定界符字符节点（当前字体 + 字阶缩放；M4-3 换 cmex10 变体伸缩）。

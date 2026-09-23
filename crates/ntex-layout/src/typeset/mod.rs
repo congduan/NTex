@@ -179,6 +179,11 @@ impl MathStyle {
     }
 }
 
+/// `\sqrt` 原语的默认根号定界符码：plain.tex `\def\sqrt{\radical"270370}`——
+/// 按 tex.web scan_delimiter 拆分为 small=(fam 2,'p')=cmsy10 根号、
+/// large=(fam 3,'p')=cmex10 根号（27 位码的高半/低半 12 位）。
+pub(crate) const SQRT_DELIM_CODE: u32 = 0x27_03_70;
+
 /// 数学字符原子：类 + 族 + 字符码。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct MathChar {
@@ -205,8 +210,15 @@ enum MathAtom {
         den: Vec<MathAtom>,
         thickness: Option<i64>,
     },
-    /// 根式（`\sqrt`）：radicand 子列表。
-    Radical { base: Vec<MathAtom> },
+    /// 根式（`\sqrt`/`\radical`）：radicand 子列表 + 27 位定界符码（tex.web
+    /// scan_delimiter L22051 拆分：small=(码>>20&15, 码>>12&255)、large=
+    /// (码>>8&15, 码&255)；**0 = null delimiter**（var_delimiter null 分支，
+    /// 宽 \nulldelimiterspace）。`\sqrt` 原语取 plain.tex 的
+    /// `\def\sqrt{\radical"270370}` 码。
+    Radical {
+        base: Vec<MathAtom>,
+        delim: u32,
+    },
     /// `\underline`：内容子列表（底线渲染）。
     Underline { base: Vec<MathAtom> },
     /// `\overline`：内容子列表（顶线渲染）。

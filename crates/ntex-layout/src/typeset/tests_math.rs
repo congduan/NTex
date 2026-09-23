@@ -494,6 +494,78 @@ use super::*;
         assert_eq!(as_box(&children[0]).kind, BoxKind::HBox);
     }
 
+    /// 根式外层盒 = [定界符字形盒(shifted), 覆盖线 vbox]（tex.web make_radical）。
+    /// 返回（定界符字符码, 覆盖线盒）。
+    fn radical_parts(n: &Node) -> (u32, &BoxNode) {
+        let b = as_box(n);
+        assert_eq!(b.children.len(), 2, "根式 = [定界符盒, 覆盖线 vbox]：{b:?}");
+        let delim = as_box(&b.children[0]);
+        let ch = match delim.children.as_slice() {
+            [Node::Char { charcode, .. }] => *charcode,
+            other => panic!("定界符盒应含单字形，得到 {other:?}"),
+        };
+        (ch, as_box(&b.children[1]))
+    }
+
+    fn mathsy_fonts() -> &'static str {
+        "\\font\\tensy=cmsy10 \\font\\tenex=cmex10 \\textfont2=\\tensy \\textfont3=\\tenex "
+    }
+
+    #[test]
+    fn math_radical_delimiter_glyph() {
+        if cmmi10_metrics().is_none() {
+            eprintln!("未找到 cmmi10.tfm，跳过");
+            return;
+        }
+        // \sqrt 原语默认码 = plain.tex `\def\sqrt{\radical"270370}`：
+        // small=(fam 2,'p')=cmsy10 根号，h+d 足够即停（tex.web var_delimiter）
+        let kids = math_tfm_children(&format!("{}$\\sqrt{{x}}$", mathsy_fonts()));
+        assert_eq!(kids.len(), 1);
+        let (ch, over) = radical_parts(&kids[0]);
+        assert_eq!(ch, 112, "根号字形 = cmsy10 'p'（fam 2 small 变体）：{kids:?}");
+        let base = as_box(&over.children[3]);
+        assert_eq!(as_char(&base.children[0]), b'x' as u32, "radicand 位置");
+
+        // 显式 \radical 同码：定界符码驱动渲染（此前只出 radicand）
+        let kids = math_tfm_children(&format!("{}$\\radical\"270370{{x}}$", mathsy_fonts()));
+        assert_eq!(kids.len(), 1);
+        let (ch, _) = radical_parts(&kids[0]);
+        assert_eq!(ch, 112, "\\radical\"270370 应与 \\sqrt 同根号字形");
+    }
+
+    #[test]
+    fn math_radical_large_variant_from_delcode() {
+        if cmmi10_metrics().is_none() {
+            eprintln!("未找到 cmmi10.tfm，跳过");
+            return;
+        }
+        // 码 0x270362（plain.tex \root 用的根号槽字形）的 large=(fam 3, 0x62)。
+        // radicand 高深 12pt 压过 small 变体（cmsy10 'p' h+d=7.73pt）→ 取 large。
+        let src = format!(
+            "{}$\\radical\"270362{{\\vrule height 9pt depth 3pt}}$",
+            mathsy_fonts()
+        );
+        let kids = math_tfm_children(&src);
+        assert_eq!(kids.len(), 1);
+        let (ch, over) = radical_parts(&kids[0]);
+        assert_eq!(ch, 0x62, "大变体 = 码低 12 位的 fam/char：{kids:?}");
+        let base = as_box(&over.children[3]);
+        assert_eq!(base.children.len(), 1, "radicand = 规则原子");
+        assert!(matches!(base.children[0], Node::Rule { .. }));
+    }
+
+    #[test]
+    fn math_radical_null_delimiter_null_box() {
+        // 码 0 = null delimiter（tex.web `(z<>0)or(x<>min_quarterword)` 排除位
+        // → null 分支）：空盒宽 \nulldelimiterspace（1.2pt = 78643sp）
+        let kids = math_line_children(r"$\radical0 x$");
+        assert_eq!(kids.len(), 1);
+        let b = as_box(&kids[0]);
+        let delim = as_box(&b.children[0]);
+        assert!(delim.children.is_empty(), "null 定界符无字形：{delim:?}");
+        assert_eq!(delim.width, 78643, "宽 = \\nulldelimiterspace");
+    }
+
     #[test]
     fn math_left_right_delimited() {
         let children = math_line_children(r"$\left(x\right)$");

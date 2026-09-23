@@ -18,8 +18,8 @@
 | `typeset/sink.rs:1082` | 数学模式 `\penalty` 忽略 | 数学断行点缺失（M4-1） | ✅ 已修（sink penalty 数学分支转 `MathAtom::Penalty` → `Node::Penalty`，tests_math `math_penalty_kept_in_formula`/`math_penalty_inline_between_chars`） |
 | `typeset/sink.rs:1097` | 数学模式 `\vrule` 忽略 | 规则原子缺失 | ✅ 已修（sink rule 数学分支转 `MathAtom::Rule` → `Node::Rule`，tests_math `math_vrule_kept_in_formula`/`math_vrule_dimensions`） |
 | `typeset/math.rs:495` | 分式节点 M4-2 简化（垂直堆叠） | 分式线/字号精化未做（M4-3 fontdimen） | 待做 |
-| `typeset/math.rs:540` | 根式节点 M4-2 简化（横线） | cmex10 根号未换（M4-3） | 待做 |
-| `typeset/sink.rs:623` | `\radical` 定界符号不参与渲染 | `\radical"161` 等只出 radicand | 待做（l.412 mathord 报错已随隐含组 f75a638 修复消除） |
+| `typeset/math.rs:540` | 根式节点字形（原 M4-2 横线） | 定界符码已驱动 small/large 单字形变体（cmsy10/cmex10）；字阶内 char list 逐级放大与 extensible 拼接（cmex10 根号段）仍缺（M4-3） | ⚠️ 部分已修（见 sink.rs:623 行） |
+| `typeset/sink.rs:623` | `\radical` 定界符号不参与渲染 | `\radical"161` 等只出 radicand | ✅ 已修（`MathAtom::Radical{delim}` 携 27 位定界符码，radical_delimiter 按 tex.web var_delimiter 拆 small/large 变体取字形、码 0=null 分支宽 \nulldelimiterspace；`\sqrt` 原语补 plain.tex 默认码 0x270370。tests_math `math_radical_*` 三测；LaTeX `\sqrt{x}` 端到端 DVI 实证 cmsy10 0x70 根号 + cmmi10 'x'） |
 | `typeset/sink.rs:116` | 非数学模式样式错误（原"简化忽略"） | TeX 报错缺失 | ✅ 已修（942346e math_mode_error；TRIP/ETRIP 未触发） |
 
 ## 2. 数学状态机（本轮 l.260-285 暴露；见 MATH-STATE-MACHINE.md）
