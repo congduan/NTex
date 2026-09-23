@@ -223,6 +223,15 @@ pub trait MathSink {
     fn math_display_allowed(&self) -> bool {
         true
     }
+    /// 这个 `$` 是**收**数学还是**开**数学（tex.web：由 `cur_list.mode_field`
+    /// 唯一裁决——mmode/+mmode 为收，其余为开）。核心侧 `in_math` 是 `$` 翻转
+    /// 旗标，在 `\[\halign{…$x$…}\]` 一类"显示数学内嵌对齐单元"结构里与
+    /// 排版层真实模式脱钩（显示数学开过之后旗标恒 true，单元首 `$` 被误判为
+    /// 收），故 `$` 的进出裁决必须问排版层。默认 false（纯展开轨道无模式
+    /// 概念，保持既有"进"语义）。
+    fn math_shift_will_close(&self) -> bool {
+        false
+    }
     /// **收**数学时是否要求配对的第二个 `$`（tex.web mmode+math_shift →
     /// after_math：显示数学（mode=+mmode）收尾必 "Check that another $
     /// follows"——有则一并消费、无则报 "Display math should end with $$"

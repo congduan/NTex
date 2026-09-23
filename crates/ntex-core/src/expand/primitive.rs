@@ -124,7 +124,9 @@ impl Expander {
                     .fetch()?
                     .ok_or_else(|| Error::invalid_input("\\aftergroup 后无 token"))?
                     .0;
-                self.aftergroup.push((self.group_level, t));
+                // tex.web：`\aftergroup` 挂**当前最内层 save group**——数学层
+                // （math_shift_group）与 VM 组同在作用域栈上计数。
+                self.aftergroup.push((self.scope_stack.len() as u32, t));
                 Ok(())
             }
             Primitive::Afterassignment => {

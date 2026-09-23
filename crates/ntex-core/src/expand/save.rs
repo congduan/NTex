@@ -851,6 +851,7 @@ impl Expander {
     /// 组作用域（M1-11）。
     fn begin_group(&mut self) -> Result<()> {
         self.group_level += 1;
+        self.scope_stack.push(false);
         // 记录组开始时的条件栈深度：组结束时条件必须回到该深度（跨组开条件 → 错误）
         self.group_cond_depth.push(self.cond_stack.len());
         // M3-2：通知 sink 组开始（排版器据此构建盒子内容）；带进入行号
@@ -863,7 +864,18 @@ impl Expander {
         } else {
             self.current_line_no()
         } as u32;
-        self.sink.group_begin(line)
+        self.sink.group_begin(line)?;
+        // tex.web prefixed_command `done:`：盒子实参（\setbox0=\vbox{…}、
+        // \moveleft20pt\hbox{…}）的 `\afterassignment` 在 `scan_spec` 的
+        // `new_save_level`+`scan_left_brace` 推入**盒子组**后、体首 token 前
+        // 触发——体的排版在主循环，赋值本身到 `\egroup` 才完成（box_end）。
+        // 此前该 token 不在此触发，泄漏到下一个无关赋值（LaTeX \vcenter@text
+        // 靠它把 \aftergroup\…@auxii 挂到盒子组边界，再以 \box0 追加回数学
+        // 列表；泄漏后 array/cases 的盒子从未回到 display 数学）。
+        if self.pending_box_arg {
+            self.finish_assignment();
+        }
+        Ok(())
     }
 
     fn end_group(&mut self) -> Result<()> {
@@ -900,14 +912,16 @@ impl Expander {
             let (_, v) = self.save_stack.pop().expect("last() 已检查非空");
             self.restore(v);
         }
-        // 触发 \aftergroup
+        // 触发 \aftergroup（挂最内层作用域 = 本组；数学层同栈计数）
+        let scope = self.scope_stack.len() as u32;
         let tokens: Vec<Token> = self
             .aftergroup
             .iter()
-            .filter(|(l, _)| *l == self.group_level)
+            .filter(|(l, _)| *l == scope)
             .map(|(_, t)| *t)
             .collect();
-        self.aftergroup.retain(|(l, _)| *l != self.group_level);
+        self.aftergroup.retain(|(l, _)| *l != scope);
+        self.scope_stack.pop();
         if !tokens.is_empty() {
             let items: Vec<(Token, bool)> = tokens.into_iter().map(|t| (t, false)).collect();
             self.push_frame(InputFrame::TokenList {
@@ -919,6 +933,32 @@ impl Expander {
         // M3-2：通知 sink 组结束（排版器封装盒子内容）。
         // 放在 `\aftergroup` 之后：其 token 在组外上下文继续处理，不落入盒子。
         self.sink.group_end()
+    }
+
+    /// 数学作用域收尾（tex.web after_math → unsave）：弹出 `$` 开的
+    /// math_shift_group 并落 `\aftergroup` token——LaTeX `\frozen@everymath`
+    /// 的 `\aftergroup\@ignorefalse` 须在**闭合 `$` 处**执行，而不是泄漏到
+    /// 外包盒子/对齐组的行界（`\halign{#\cr $x$ \cr}` 的 `}` 被顶成新行）。
+    fn close_math_scope(&mut self) {
+        if self.scope_stack.last() != Some(&true) {
+            return; // 不平衡（错误恢复路径）：不动 VM 组的槽位
+        }
+        let scope = self.scope_stack.len() as u32;
+        let tokens: Vec<Token> = self
+            .aftergroup
+            .iter()
+            .filter(|(l, _)| *l == scope)
+            .map(|(_, t)| *t)
+            .collect();
+        self.aftergroup.retain(|(l, _)| *l != scope);
+        self.scope_stack.pop();
+        if !tokens.is_empty() {
+            let items: Vec<(Token, bool)> = tokens.into_iter().map(|t| (t, false)).collect();
+            self.push_frame(InputFrame::TokenList {
+                items: Arc::from(items),
+                pos: 0,
+            });
+        }
     }
 
     fn restore(&mut self, v: SavedValue) {

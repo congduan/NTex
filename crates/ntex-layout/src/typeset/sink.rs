@@ -63,7 +63,8 @@ impl CoreSink for NodeBuilder {
     }
     fn group_begin(&mut self, line: u32) -> Result<()> {
         // 显式组种类（\begingroup/\valign/\noalign）优先；否则盒子种类；再否则普通组
-        let explicit = self.box_state.pending_kind.take();        let mut pb_vcenter = false;
+        let explicit = self.box_state.pending_kind.take();
+        let mut pb_vcenter = false;
         let kind = explicit.or_else(|| {
             self.box_state.pending_box.take().map(|pb| match pb {
                 // 垂直/内部垂直模式中的 \hbox 是 adjusted hbox group（TeX begin_box 语义）
@@ -1095,6 +1096,11 @@ impl MathSink for NodeBuilder {
     /// 退化为两次独立进出（TRIP L210/L340）。
     fn math_display_allowed(&self) -> bool {
         matches!(self.mode(), Mode::Vertical | Mode::Horizontal)
+    }
+    /// 这个 `$` 是收还是开：数学层在栈上（Math/DisplayMath）= 收，否则 = 开。
+    /// 与 `math_shift` 的模式分派同一真源。
+    fn math_shift_will_close(&self) -> bool {
+        matches!(self.mode(), Mode::Math | Mode::DisplayMath)
     }
     /// tex.web after_math：只有**显示**数学收尾要求配对 `$`（无则报
     /// "Display math should end with $$" 照收）；行内数学收尾不 peek——

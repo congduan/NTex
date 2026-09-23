@@ -251,6 +251,7 @@ impl Expander {
     /// （sink 侧组由 align_begin/align_cell_begin 事件分别管理）。
     fn begin_silent_group(&mut self) {
         self.group_level += 1;
+        self.scope_stack.push(false);
         self.group_cond_depth.push(self.cond_stack.len());
     }
 
@@ -264,13 +265,15 @@ impl Expander {
             let (_, v) = self.save_stack.pop().expect("last() 已检查非空");
             self.restore(v);
         }
+        let scope = self.scope_stack.len() as u32;
         let tokens: Vec<Token> = self
             .aftergroup
             .iter()
-            .filter(|(l, _)| *l == self.group_level)
+            .filter(|(l, _)| *l == scope)
             .map(|(_, t)| *t)
             .collect();
-        self.aftergroup.retain(|(l, _)| *l != self.group_level);
+        self.aftergroup.retain(|(l, _)| *l != scope);
+        self.scope_stack.pop();
         if !tokens.is_empty() {
             let items: Vec<(Token, bool)> = tokens.into_iter().map(|t| (t, false)).collect();
             self.push_frame(InputFrame::TokenList {

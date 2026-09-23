@@ -889,6 +889,15 @@ pub struct Expander {
     global_pending: bool,
     /// `\aftergroup`：`(组层级, token)`。
     aftergroup: Vec<(u32, Token)>,
+    /// 统一作用域栈：VM 组（`begin_group`/静默组）与**数学组**（`$` 的
+    /// tex.web `math_shift_group`——`init_math` 同样 `new_save_level`）都
+    /// 入栈；`\aftergroup` 挂**最内层作用域**。此前数学层只记排版侧
+    /// enter/close 事件、不算 save group，`\everymath` 体里的
+    /// `\aftergroup\@ignorefalse`（LaTeX `\frozen@everymath`）错挂到外包
+    /// 对齐/盒子组，在 `\cr` 行界把 `\global…` 泄给 align_peek，
+    /// `\halign{#\cr $x$ \cr}` 之后的 `}` 被当成新行首列凭空开列。
+    /// true = 数学作用域，false = VM 组。
+    scope_stack: Vec<bool>,
     /// `\afterassignment`：下一个赋值完成后插入的 token。
     afterassignment: Option<Token>,
     /// 寄存器文件（M1-10）。
@@ -1091,6 +1100,7 @@ impl Expander {
             save_stack: Vec::new(),
             global_pending: false,
             aftergroup: Vec::new(),
+            scope_stack: Vec::new(),
             afterassignment: None,
             registers: Registers::new(),
             params: Params::default(),
@@ -1327,6 +1337,7 @@ impl Expander {
         self.long_pending = false;
         self.fontdimens.clear();
         self.aftergroup.clear();
+        self.scope_stack.clear();
         self.afterassignment = None;
         self.output_active = false;
         self.output_prev_count = usize::MAX;
@@ -2220,6 +2231,10 @@ impl Expander {
                             ) {
                                 self.pending_box_arg = false;
                                 self.trace_suppress_defer = true;
+                                // tex.web：`\setbox0=\box1` 无组盒子实参在 box_end
+                                // 后回到 prefixed_command `done:` 触发 `\afterassignment`
+                                // （组版走 begin_group 的同款触发位）。
+                                self.finish_assignment();
                             }
                         }
                     }
@@ -2577,7 +2592,11 @@ impl Expander {
                 // 数学移位（$，cat 3）：peek 下一个 token 判定 `$$`（显示数学），
                 // 交给 sink 按自身模式决定进出（M4-1）。
                 if tok.catcode() == Some(Catcode::MathShift) {
-                    let entering = !self.in_math;
+                    // tex.web init_math 的进出裁决在 **mode**（mmode=收），
+                    // 不在旗标——核心 in_math 在 `\[\halign{…$x$…}\]` 一类
+                    // 结构里与排版层脱钩（显示数学开过即恒 true，单元首 `$`
+                    // 被误判为收，everymath 注入错位到第二个 `$` 之后）。
+                    let entering = !self.sink.math_shift_will_close();
                     // tex.web init_math：`$$` 进显示数学要求 `mode>0`（垂直/
                     // 普通水平）；受限水平（\hbox/\halign 模板，mode<0）下
                     // peek 到的第二个 `$` 必须 back_input——本 `$` 单独进普通
@@ -2601,7 +2620,13 @@ impl Expander {
                         self.sink.math_close_consumes_dollar()
                     };
                     let display = self.next_is_math_shift(consume_for_display)?;
-                    self.in_math = !self.in_math;
+                    self.in_math = entering;
+                    // tex.web init_math：`$` 即 `new_save_level(math_shift_group)`
+                    // ——数学层是 save group，先入作用域栈，`\everymath` 体里的
+                    // `\aftergroup` 才挂到本层（而非外包盒子/对齐组）。
+                    if entering {
+                        self.scope_stack.push(true);
+                    }
                     // TRIP 冲刺：进入数学模式时注入 `\everymath`（TeX `$` 处理语义）。
                     //
                     // LaTeX fmt 兼容：发行快照可能来自修复前引擎，`\let\frozen@everymath
@@ -2633,7 +2658,14 @@ impl Expander {
                             });
                         }
                     }
-                    return self.sink.math_shift(display);
+                    if entering {
+                        return self.sink.math_shift(display);
+                    }
+                    // tex.web after_math → unsave：数学作用域先关，其
+                    // `\aftergroup` token 随后在外层模式继续处理。
+                    let r = self.sink.math_shift(display);
+                    self.close_math_scope();
+                    return r;
                 }
                 // 数学模式普通字符（letter/other，cat 11/12）→ 查 \mathcode 表
                 // 改道为完整数学字符原子（tex.web 主控制数学分支：普通字符=
