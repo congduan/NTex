@@ -13,7 +13,7 @@
 | `expand/primitive.rs:753` | 数学原语"简化实现消费参数" | 同上 | 逐项排查中 |
 | `eqtb/primitive.rs:559` | 同 753 | 同上 | 同上 |
 | `expand/primitive.rs:780-800` | **fraction 原语族（\abovewithdelims/\above/\atopwithdelims/\overwithdelims）此前只扫参数不挂 sink.math_fraction** | 分子分母混收当前层，trip l.276 数学状态崩 | ✅ 已修（721646c；同层嵌套歧义改恢复式，参考 l.257 Ambiguous） |
-| `expand/primitive.rs:726` / `eqtb/primitive.rs:382` | `\vcenter` 简化按 vbox | d 组待做（收集不执行） | 待做 |
+| `expand/primitive.rs:726` / `eqtb/primitive.rs:382` | `\vcenter` 简化按 vbox | d 组待做（收集不执行） | ✅ 已修（按数学轴居中：expander 保留 `Primitive::VCenter` 身份（expand/primitive_math.rs VCenter 臂），排版层 `PendingBox::VCenter` 复用 vbox 组收集（tex.web mmode+vcenter L22112 同进内层竖模式），封装时 make_vcenter（tex.web L14455）重分 ht/dp：`height=axis+half(h+d)`，轴高=现场数学样式 fam2 fontdimen 22（plain= cmsy10 param22=2.5pt；cmex10 仅 13 参数无此项）；非数学模式退化为 vbox 不动。GT 对照（etex DVI rule-y 差分法）：`\vcenter{\hbox{\vrule h20pt d4pt}}` → 14.5+9.5 一致；`\vbox` 对照 20+4 不动；`\vcenter{\hbox{$x$}}` 内字上移 0.347pt 一致。回归测试 `vcenter_splits_height_depth_on_math_axis`/`vcenter_axis_fallback_splits_at_center`） |
 | `expand/primitive_math.rs:188` | `\eqno/\leqno` 数学内 no-op；非数学报错+pretend 已补（942346e） | 显示公式编号不落节点 | ⚠️ 数学内 no-op 属功能未做；多报已随隐含组修复消除（f75a638） |
 | `typeset/sink.rs:1082` | 数学模式 `\penalty` 忽略 | 数学断行点缺失（M4-1） | ✅ 已修（sink penalty 数学分支转 `MathAtom::Penalty` → `Node::Penalty`，tests_math `math_penalty_kept_in_formula`/`math_penalty_inline_between_chars`） |
 | `typeset/sink.rs:1097` | 数学模式 `\vrule` 忽略 | 规则原子缺失 | ✅ 已修（sink rule 数学分支转 `MathAtom::Rule` → `Node::Rule`，tests_math `math_vrule_kept_in_formula`/`math_vrule_dimensions`） |

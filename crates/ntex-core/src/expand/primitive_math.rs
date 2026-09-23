@@ -130,11 +130,15 @@ impl Expander {
                 Ok(())
             }
             Primitive::Sqrt => self.sink.math_sqrt(),
-            // ETRIP 冲刺：\vcenter<box>：数学垂直居中盒（简化按 vbox 处理）
+            // \vcenter<box>：数学垂直居中盒（tex.web mmode+vcenter L22112：
+            // scan_spec(vcenter_group) 后进内层竖模式收集，组尾 vpack 成盒并
+            // 作为 vcenter_noad 的核——mlist_to_hlist 的 make_vcenter（L14455）
+            // 按数学轴重分 height/depth）。此处保留 VCenter 身份发给排版层；
+            // 收集通路与 \vbox 同构（排版层 PendingBox::VCenter 复用 vbox 组）。
             Primitive::VCenter => {
                 let (to, spread) = self.scan_box_spec()?;
                 self.sink.box_spec(to, spread)?;
-                self.sink.primitive(Primitive::VBox)
+                self.sink.primitive(Primitive::VCenter)
             }
             // TeX math_comp（tex.web L22019）：\mathord 等“定类原语”之后必有
             // <math field>；非 `{` 的 token 经 scan_math → scan_left_brace 报

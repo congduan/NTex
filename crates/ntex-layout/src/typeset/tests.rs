@@ -1161,6 +1161,75 @@ mod tests {
 
     // ---------- M4-1 数学模式 ----------
 
+    /// `\vcenter` 按数学轴重分 height/depth（tex.web make_vcenter L14455）。
+    /// pdfTeX 实测对照（etex/plain，DVI rule y 差分法）：fam2=cmsy10 轴高
+    /// （fontdimen 22）=2.5pt，
+    /// `\vcenter{\hbox{\vrule height 20pt depth 4pt width 2pt}}` → 14.5+9.5；
+    /// `\vbox` 对照 20+4 不动；`\vcenter{\hbox{$x$}}` 内部 x 上移 0.347pt。
+    #[test]
+    fn vcenter_splits_height_depth_on_math_axis() {
+        // 真 TFM + fam2=cmex10：轴高来自 fontdimen 22
+        let mut ts = Typesetter::with_tfm();
+        let main = ts
+            .typeset(concat!(
+                // plain.tex：\textfont2=\tensy（cmsy10，fontdimen 22=2.5pt 轴高；
+                // cmex10 仅 13 参数，轴高不在其上）
+                r"\font\tensy=cmsy10 \textfont2=\tensy ",
+                r"$\vcenter{\hbox{\vrule height 20pt depth 4pt width 2pt}}$",
+            ))
+            .unwrap();
+        let t = ts.take_transcript();
+        assert!(!t.contains('!'), "载入期报错：{t}");
+        let children: Vec<&Node> = as_box(&main[0])
+            .children
+            .iter()
+            .filter(|n| {
+                !matches!(
+                    n,
+                    Node::MathOn { .. } | Node::MathOff { .. } | Node::Glue { .. }
+                )
+            })
+            .collect();
+        assert_eq!(children.len(), 1, "vcenter 盒应单独入行：{children:?}");
+        let v = as_box(children[0]);
+        assert_eq!(v.kind, BoxKind::VBox);
+        // height = axis(2.5pt) + half(24pt) = 14.5pt；depth = 24 − 14.5 = 9.5pt
+        assert_eq!(v.height, (145 * SP_PER_PT) / 10, "vcenter 应按轴上移：{v:?}");
+        assert_eq!(v.depth, (95 * SP_PER_PT) / 10);
+
+        // 对照：\vbox 不做轴重分
+        let main = Typesetter::with_tfm()
+            .typeset(r"$\vbox{\hbox{\vrule height 20pt depth 4pt width 2pt}}$")
+            .unwrap();
+        let children: Vec<&Node> = as_box(&main[0])
+            .children
+            .iter()
+            .filter(|n| {
+                !matches!(
+                    n,
+                    Node::MathOn { .. } | Node::MathOff { .. } | Node::Glue { .. }
+                )
+            })
+            .collect();
+        let v = as_box(children[0]);
+        assert_eq!((v.height, v.depth), (20 * SP_PER_PT, 4 * SP_PER_PT));
+    }
+
+    /// 无 fam2 字体时轴高回退 0（tex.web `mathsy(22)` 字体未加载）：
+    /// `\vcenter` 退化为按盒中心分割（ht=dp=half(delta)）。
+    #[test]
+    fn vcenter_axis_fallback_splits_at_center() {
+        let children =
+            math_line_children(r"$\vcenter{\hbox{\vrule height 20pt depth 4pt width 2pt}}$");
+        let v = as_box(&children[0]);
+        assert_eq!(v.kind, BoxKind::VBox);
+        assert_eq!(
+            (v.height, v.depth),
+            (12 * SP_PER_PT, 12 * SP_PER_PT),
+            "轴高回退 0 → 中心分割：{v:?}"
+        );
+    }
+
     // ---------- D1 数学斜体修正 kern（tex.web §759-762） ----------
 
     /// 解析真实 cmmi10 度量（无 TeX 安装则 None，测试跳过）。
@@ -1687,3 +1756,4 @@ mod tests {
     mod tests_align { include!("tests_align.rs"); }
     mod tests_plain_format { include!("tests_plain_format.rs"); }
 }
+

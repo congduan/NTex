@@ -309,17 +309,21 @@ enum SpacingCode {
     Tight,
 }
 
-/// 待封装盒子种类（`\hbox`/`\vbox`/`\vtop` 的下一个组）。
+/// 待封装盒子种类（`\hbox`/`\vbox`/`\vtop`/`\vcenter` 的下一个组）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PendingBox {
     HBox,
     VBox,
     VTop,
+    /// `\vcenter`：收集通路与 [`PendingBox::VBox`] 同构（tex.web
+    /// mmode+vcenter 同进内层竖模式），封装后按数学轴重分 height/depth
+    /// （tex.web make_vcenter L14455）。
+    VCenter,
 }
 
 impl PendingBox {
     fn is_vertical(self) -> bool {
-        matches!(self, Self::VBox | Self::VTop)
+        matches!(self, Self::VBox | Self::VTop | Self::VCenter)
     }
 }
 
@@ -1408,6 +1412,28 @@ impl NodeBuilder {
                     _ => natural.height + natural.depth,
                 };
                 Node::Box(vpack(children, target, boxmaxdepth))
+            }
+            PendingBox::VCenter => {
+                let natural = vbox_dimensions(&children);
+                let target = match spec {
+                    Some((Some(to), _)) => to,
+                    Some((_, Some(spread))) => natural.height + natural.depth + spread,
+                    _ => natural.height + natural.depth,
+                };
+                let mut b = vpack(children, target, boxmaxdepth);
+                // tex.web make_vcenter（L14455-14463）：delta=h+d；
+                // height:=axis_height(cur_size)+half(delta)；depth:=delta−height
+                // （可负；外层 hpack 的 max 从 0 起算故不致下探）。轴高取
+                // **封装现场**的数学样式（fam 2 当前字阶 fontdimen 22）；
+                // 非数学模式（TeX 本应报错）退化为 vbox 不动。
+                if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+                    let delta = b.height + b.depth;
+                    let axis = self.axis_height(self.math_state.math_style);
+                    // tex.web half（L2168）= ceil 除法：算术右移 + 奇数进位
+                    b.height = axis + ((delta >> 1) + (delta & 1));
+                    b.depth = delta - b.height;
+                }
+                Node::Box(b)
             }
             PendingBox::VTop => {
                 // tex.web L21083-21087 Readjust：\vtop 的高度取首项高度（首项为

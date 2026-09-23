@@ -63,7 +63,8 @@ impl CoreSink for NodeBuilder {
     }
     fn group_begin(&mut self, line: u32) -> Result<()> {
         // 显式组种类（\begingroup/\valign/\noalign）优先；否则盒子种类；再否则普通组
-        let explicit = self.box_state.pending_kind.take();        let kind = explicit.or_else(|| {
+        let explicit = self.box_state.pending_kind.take();        let mut pb_vcenter = false;
+        let kind = explicit.or_else(|| {
             self.box_state.pending_box.take().map(|pb| match pb {
                 // 垂直/内部垂直模式中的 \hbox 是 adjusted hbox group（TeX begin_box 语义）
                 PendingBox::HBox => {
@@ -74,6 +75,12 @@ impl CoreSink for NodeBuilder {
                     }
                 }
                 PendingBox::VBox => GroupKind::VBox,
+                // \vcenter 组复用 vbox 收集（tex.web mmode+vcenter 同进内层竖
+                // 模式）；种类暂存，封装时按数学轴重分 height/depth。
+                PendingBox::VCenter => {
+                    pb_vcenter = true;
+                    GroupKind::VBox
+                }
                 PendingBox::VTop => GroupKind::VTop,
             })
         });
@@ -82,6 +89,8 @@ impl CoreSink for NodeBuilder {
         // 材料直接进对齐 vlist——见 group_end 的 NoAlign 分支）。
         let box_kind = match kind {
             Some(GroupKind::HBox | GroupKind::AdjustedHBox) => Some(PendingBox::HBox),
+            // 仅显式 \vcenter 保留 VCenter 种类（显式 VBox 组/对齐组不受影响）
+            Some(GroupKind::VBox) if pb_vcenter => Some(PendingBox::VCenter),
             Some(GroupKind::VBox | GroupKind::Align | GroupKind::NoAlign) => {
                 Some(PendingBox::VBox)
             }
@@ -168,7 +177,7 @@ impl CoreSink for NodeBuilder {
         if let Some(k) = box_kind {
             let new_mode = match k {
                 PendingBox::HBox => Mode::RestrictedHorizontal,
-                PendingBox::VBox | PendingBox::VTop => Mode::Vertical,
+                PendingBox::VBox | PendingBox::VTop | PendingBox::VCenter => Mode::Vertical,
             };
             self.lists.push(Vec::new());
             self.list_modes.push(new_mode);
@@ -443,6 +452,8 @@ impl CoreSink for NodeBuilder {
             Primitive::HBox => self.box_state.pending_box = Some(PendingBox::HBox),
             Primitive::VBox => self.box_state.pending_box = Some(PendingBox::VBox),
             Primitive::VTop => self.box_state.pending_box = Some(PendingBox::VTop),
+            // \vcenter（tex.web mmode+vcenter）：收集同 vbox，封装按数学轴重分
+            Primitive::VCenter => self.box_state.pending_box = Some(PendingBox::VCenter),
             // TRIP 冲刺：\leaders/\cleaders/\xleaders —— 引导符，等待其后的盒子
             // （tex.web scan_box(leader_flag+kind)；盒子经 group/rule 路径挂起）。
             Primitive::Leaders => self.box_state.pending_leaders = Some(LeadersKind::Leaders),
@@ -740,7 +751,11 @@ impl CoreSink for NodeBuilder {
                 if self.groups.iter().any(|g| {
                     matches!(
                         g.box_kind,
-                        Some(crate::typeset::PendingBox::VBox | crate::typeset::PendingBox::VTop)
+                        Some(
+                            crate::typeset::PendingBox::VBox
+                                | crate::typeset::PendingBox::VTop
+                                | crate::typeset::PendingBox::VCenter
+                        )
                     )
                 }) =>
             {
