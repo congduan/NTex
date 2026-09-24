@@ -2311,11 +2311,8 @@ impl Expander {
                         // 后压 = 先展开：`\everypar` 在触发 token 之前落列表
                         // （LaTeX 段落钩子机器 `\box_gset_to_last` 取缩进盒时，
                         // 水平列表里必须只有缩进盒）。
-                        let items: Vec<(Token, bool)> = self
-                            .everypar_toks
-                            .iter()
-                            .map(|t| (*t, false))
-                            .collect();
+                        let items: Vec<(Token, bool)> =
+                            self.everypar_toks.iter().map(|t| (*t, false)).collect();
                         self.push_frame(InputFrame::TokenList {
                             items: Arc::from(items),
                             pos: 0,
@@ -2355,9 +2352,8 @@ impl Expander {
                 match self.eqtb.slot(csid) {
                     EqSlot::Primitive(Primitive::Indent) => Some((true, false)),
                     EqSlot::Primitive(Primitive::NoIndent) => Some((false, false)),
-                    EqSlot::Primitive(Primitive::UnHBox) | EqSlot::Primitive(Primitive::UnHCopy) => {
-                        Some((true, true))
-                    }
+                    EqSlot::Primitive(Primitive::UnHBox)
+                    | EqSlot::Primitive(Primitive::UnHCopy) => Some((true, true)),
                     _ => None,
                 }
             }

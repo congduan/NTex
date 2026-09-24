@@ -790,10 +790,7 @@ pub fn materialize_leaders(b: &mut BoxNode) {
     for c in b.children.drain(..) {
         match c {
             Node::Leaders {
-                kind,
-                inner,
-                width,
-                ..
+                kind, inner, width, ..
             } => {
                 let unit = match *inner {
                     Node::Box(mut ib) => {

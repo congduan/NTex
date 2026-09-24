@@ -900,6 +900,8 @@ mod tests {
             width: 0,
             stretch: 100 * 65_536,
             shrink: 0,
+            stretch_order: 0,
+            shrink_order: 0,
         };
         let page = BoxNode {
             kind: BoxKind::HBox,
@@ -952,6 +954,8 @@ mod tests {
             width: 0,
             stretch: 25 * 65_536,
             shrink: 0,
+            stretch_order: 0,
+            shrink_order: 0,
         };
         let page = BoxNode {
             kind: BoxKind::HBox,
@@ -992,6 +996,8 @@ mod tests {
             width: 0,
             stretch: 25 * 65_536,
             shrink: 0,
+            stretch_order: 0,
+            shrink_order: 0,
         };
         let page = BoxNode {
             kind: BoxKind::HBox,
@@ -1032,6 +1038,8 @@ mod tests {
             width: 0,
             stretch: 25 * 65_536,
             shrink: 0,
+            stretch_order: 0,
+            shrink_order: 0,
         };
         let page = BoxNode {
             kind: BoxKind::HBox,
@@ -1066,6 +1074,8 @@ mod tests {
             width: 0,
             stretch: 15 * 65_536,
             shrink: 0,
+            stretch_order: 0,
+            shrink_order: 0,
         };
         let page = BoxNode {
             kind: BoxKind::HBox,
@@ -1105,6 +1115,8 @@ mod tests {
             width: 0,
             stretch: 9 * 65_536,
             shrink: 0,
+            stretch_order: 0,
+            shrink_order: 0,
         };
         for kind in [
             ntex_layout::node::LeadersKind::Leaders,
@@ -1151,6 +1163,8 @@ mod tests {
             width: 0,
             stretch: 10 * 65_536,
             shrink: 0,
+            stretch_order: 0,
+            shrink_order: 0,
         };
         let page = BoxNode {
             kind: BoxKind::HBox,

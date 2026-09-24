@@ -614,9 +614,7 @@ impl PageBuilder {
                     width = width.max(b.width + b.shift);
                 }
                 Node::Rule {
-                    width: w,
-                    depth,
-                    ..
+                    width: w, depth, ..
                 } => {
                     d = *depth;
                     width = width.max(*w);

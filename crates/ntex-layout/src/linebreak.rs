@@ -677,8 +677,8 @@ pub fn knuth_plass(
         }
     }
     // 第二遍：\tolerance（tex.web second_pass；\pretolerance=-1 时唯一一遍）
-    let (path, _total, t) = best_path(&breaks, hsize, tolerance, Pass::Second, tracing, shape)
-        .expect("第二遍必有路径");
+    let (path, _total, t) =
+        best_path(&breaks, hsize, tolerance, Pass::Second, tracing, shape).expect("第二遍必有路径");
     trace.push_str(&t);
     (path_to_lines(&breaks, &path), trace)
 }
@@ -825,8 +825,7 @@ mod tests {
 
     fn dp_min(hlist: &[Node], hsize: i64, tolerance: i64) -> i64 {
         let breaks = preprocess(hlist);
-        let (_, total, _) =
-            best_path(&breaks, hsize, tolerance, Pass::Second, false, &[]).unwrap();
+        let (_, total, _) = best_path(&breaks, hsize, tolerance, Pass::Second, false, &[]).unwrap();
         total
     }
 
@@ -864,7 +863,10 @@ mod tests {
     #[test]
     fn knuth_plass_single_line_when_fits() {
         let hlist = words(&[10, 10, 10]);
-        assert_eq!(knuth_plass(&hlist, 100, 200, 100, false, &[]).0, vec![(0, 5)]);
+        assert_eq!(
+            knuth_plass(&hlist, 100, 200, 100, false, &[]).0,
+            vec![(0, 5)]
+        );
     }
 
     #[test]
@@ -939,7 +941,10 @@ mod tests {
     fn fil_glue_single_line_when_fits() {
         let mut hlist = words(&[10, 10]);
         hlist.push(fil_glue());
-        assert_eq!(knuth_plass(&hlist, 100, 200, 100, false, &[]).0, vec![(0, 4)]);
+        assert_eq!(
+            knuth_plass(&hlist, 100, 200, 100, false, &[]).0,
+            vec![(0, 4)]
+        );
     }
 
     // ---------- M4-6 断字：discretionary 断点 ----------
@@ -974,7 +979,10 @@ mod tests {
         let mut hlist: Vec<Node> =
             vec![char_of(10), char_of(10), disc(5), char_of(10), char_of(10)];
         hlist.push(fil_glue());
-        assert_eq!(knuth_plass(&hlist, 100, 200, 100, false, &[]).0, vec![(0, 6)]);
+        assert_eq!(
+            knuth_plass(&hlist, 100, 200, 100, false, &[]).0,
+            vec![(0, 6)]
+        );
     }
 
     // ---------- M9 中文刀 5：汉字字间断点 ----------
@@ -1138,11 +1146,19 @@ mod tests {
         let mut hlist = insert_cjk_glue(&hlist);
         hlist.push(fil_glue());
         let no_shape = knuth_plass(&hlist, hsize, 200, 100, false, &[]).0;
-        assert_eq!(no_shape, vec![(0, hlist.len())], "无形状一行装下：{no_shape:?}");
+        assert_eq!(
+            no_shape,
+            vec![(0, hlist.len())],
+            "无形状一行装下：{no_shape:?}"
+        );
         // 形状一行 = 2W：4 字折成两行，每行 2 字
         let shape = [(W, 2 * W)];
         let lines = knuth_plass(&hlist, hsize, 200, 100, false, &shape).0;
-        assert_eq!(lines, vec![(0, 3), (4, hlist.len())], "形状收窄行宽：{lines:?}");
+        assert_eq!(
+            lines,
+            vec![(0, 3), (4, hlist.len())],
+            "形状收窄行宽：{lines:?}"
+        );
         // 行宽/缩进按行号取形状项；超出形状行数用末项；无形状回落 hsize/0
         assert_eq!(parshape_line_width(&shape, hsize, 1), 2 * W);
         assert_eq!(parshape_line_width(&shape, hsize, 9), 2 * W, "超出用末项");

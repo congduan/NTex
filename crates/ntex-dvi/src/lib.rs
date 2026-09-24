@@ -458,10 +458,7 @@ impl<'a> Writer<'a> {
     /// - 其余载荷：原样透传为 xxx（\special 原义）。
     fn special(&mut self, payload: &[u8]) {
         let text = std::str::from_utf8(payload).ok();
-        let mut words = text
-            .unwrap_or("")
-            .split_whitespace()
-            .map(|s| s.to_owned());
+        let mut words = text.unwrap_or("").split_whitespace().map(|s| s.to_owned());
         match words.next().as_deref() {
             Some("ntex-ctm") => {
                 let (sx, sy) = *self.ctm.last().unwrap_or(&(1.0, 1.0));

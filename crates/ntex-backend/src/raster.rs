@@ -111,6 +111,10 @@ impl Pixmap {
     /// 把紧凑 RGB8 图片缩放绘制到页面。采用最近邻采样；坐标与尺寸可为
     /// 浮点并自动裁剪。该路径服务 WASM/Tauri 的 `\includegraphics` 预览，
     /// 输入长度或尺寸非法时安全返回 `false`，不触发越界或分配。
+    ///
+    /// 参数个数 8 > clippy 阈值（7）：这是 `\includegraphics` 的天然参数面
+    /// （目标矩形 4 项 + 源图 3 项），拆结构体只为过 linter 反而让调用点变噪声。
+    #[allow(clippy::too_many_arguments)]
     pub fn blit_rgb_scaled(
         &mut self,
         x: f64,

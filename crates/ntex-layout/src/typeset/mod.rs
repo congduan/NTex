@@ -215,10 +215,7 @@ enum MathAtom {
     /// (码>>8&15, 码&255)；**0 = null delimiter**（var_delimiter null 分支，
     /// 宽 \nulldelimiterspace）。`\sqrt` 原语取 plain.tex 的
     /// `\def\sqrt{\radical"270370}` 码。
-    Radical {
-        base: Vec<MathAtom>,
-        delim: u32,
-    },
+    Radical { base: Vec<MathAtom>, delim: u32 },
     /// `\underline`：内容子列表（底线渲染）。
     Underline { base: Vec<MathAtom> },
     /// `\overline`：内容子列表（顶线渲染）。

@@ -36,11 +36,7 @@ pub enum DrawOp {
     /// 图片管线 Step B：`ntex-image` 前缀的载荷由 PDF 写出器取回登记
     /// Image XObject，其余载荷忽略（与既有"xxx 跳过"口径一致，只是不再
     /// 丢位置信息）。
-    Special {
-        h: i64,
-        v: i64,
-        payload: Vec<u8>,
-    },
+    Special { h: i64, v: i64, payload: Vec<u8> },
 }
 
 /// 一页的绘制内容。

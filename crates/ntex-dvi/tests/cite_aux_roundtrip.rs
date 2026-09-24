@@ -41,7 +41,10 @@ fn run(cwd: &Path, args: &[&Path]) -> (String, String, bool) {
 fn compile(dir: &Path, job: &str, dvi: &str) -> (String, String, bool) {
     run(
         dir,
-        &[dir.join(format!("{job}.tex")).as_path(), dir.join(dvi).as_path()],
+        &[
+            dir.join(format!("{job}.tex")).as_path(),
+            dir.join(dvi).as_path(),
+        ],
     )
 }
 
@@ -81,7 +84,10 @@ fn bibcite_in_aux_resolves_second_pass() {
 
     // 手写 \bibcite（bibtex+thebibliography 一趟后 aux 的产物）。
     let aux = fs::read_to_string(d.join("p.aux")).unwrap();
-    let seeded = aux.replace("\\gdef \\@abspage@last", "\\bibcite{foo}{1}\n\\bibcite{bar}{2}\n\\gdef \\@abspage@last");
+    let seeded = aux.replace(
+        "\\gdef \\@abspage@last",
+        "\\bibcite{foo}{1}\n\\bibcite{bar}{2}\n\\gdef \\@abspage@last",
+    );
     assert_ne!(seeded, aux, "aux 缺 \\@abspage@last 锚点：{aux:?}");
     fs::write(d.join("p.aux"), &seeded).unwrap();
 
@@ -150,7 +156,10 @@ Cite \\cite{k1} and \\cite{k2}.
     assert!(aux.contains("\\bibdata{refs}"), "aux={aux:?}");
     assert!(aux.contains("\\bibstyle{plain}"), "aux={aux:?}");
     assert!(aux.contains("\\bibcite{k1}{1}"), "aux={aux:?}");
-    assert!(aux.contains("\\bibcite{k2}{2}"), "\\bibitem 编号未按 \\@listctr 递增：{aux:?}");
+    assert!(
+        aux.contains("\\bibcite{k2}{2}"),
+        "\\bibitem 编号未按 \\@listctr 递增：{aux:?}"
+    );
 
     // 趟 2：引用解析，告警消失。
     let (stdout, stderr, ok) = compile(&d, "p", "p2.dvi");
@@ -177,7 +186,9 @@ Cite \\cite{k1}.
     let (stdout, stderr, ok) = compile(&d2, "p", "p.dvi");
     assert!(ok, "stdout={stdout}\nstderr={stderr}");
     assert!(
-        !fs::read_to_string(d2.join("p.aux")).unwrap().contains("\\bibcite"),
+        !fs::read_to_string(d2.join("p.aux"))
+            .unwrap()
+            .contains("\\bibcite"),
         "refs.bbl 不应被输入（.bbl 名随 job）"
     );
 }
