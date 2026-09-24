@@ -1349,6 +1349,27 @@ pub fn demo_tex() -> String {
 mod tests {
     use super::*;
 
+    /// 进程级开关的**串行化闸门**：`set_bundle`/`set_latex_mode`/`set_utf8_input`/
+    /// 项目目录这些开关是进程级静态量，而 `compile_pipeline`/`compile_document`
+    /// 读的正是它们——`cargo test` 默认并行跑，两个用例交错就会互相打翻。
+    ///
+    /// 现场（2026-09-24）：HEAD 连跑三次 `cargo test -p ntex-wasm`，每轮都有
+    /// 1~2 个 plain 口径用例红（`unknown_font_is_recoverable_error` /
+    /// `self_bootstrapped_plain_demo_…`）——因为 `project_directory_graphicx_…`
+    /// 正开着 `LATEX_MODE`，plain 作业被拐进 LaTeX 格式。
+    /// 纪律：**凡改开关或经开关编译的用例**开头取这把锁（列表见各 `let _guard`）；
+    /// 走可注入入口（`compile_pipeline_assets`/`compile_pipeline_with`）的用例
+    /// 不受影响，无需加锁。
+    static GLOBAL_SWITCH_TESTS: Mutex<()> = Mutex::new(());
+
+    /// 取串行化闸门（持锁期 = 用例全程）。锁毒化时取回内部值继续——
+    /// 别的用例 panic 不应把闸门变成永久失败源。
+    fn global_switch_guard() -> std::sync::MutexGuard<'static, ()> {
+        GLOBAL_SWITCH_TESTS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     /// Tauri 前端实际 fetch 的那份 Fandol Song 子集（`crates/ntex-tauri/ui/fonts/`，
     /// GPL / CTAN fandol，见 `scripts/make-cjk-subset.py`）——测试直接锁线上字节，
     /// 避免"测试用一份字体、前端用另一份"的漂移。
@@ -1361,6 +1382,7 @@ mod tests {
     /// 含 cmr10 字体定义、页数 ≥ 1。
     #[test]
     fn embedded_demo_compiles_to_dvi() {
+        let _guard = global_switch_guard();
         let compiled = compile_pipeline(DEMO_TEX).expect("示例应能编译");
         assert!(
             !compiled.pages.is_empty(),
@@ -1384,6 +1406,7 @@ mod tests {
     /// 核心 penalty 定义。此回归覆盖 Tauri/WASM 所走的无预载编译管线。
     #[test]
     fn self_bootstrapped_plain_demo_compiles_without_undefined_eject() {
+        let _guard = global_switch_guard();
         const SOURCE: &str = include_str!("../../../samples/demo1-fixed.tex");
         let compiled = compile_pipeline(SOURCE).expect("自举 plain 示例应能编译");
         assert!(!compiled.pages.is_empty(), "示例应至少产出一页");
@@ -1408,6 +1431,7 @@ mod tests {
     /// A4（595×842）白底有墨；144dpi 尺寸翻倍；越界页码报错不 panic。
     #[test]
     fn render_pipeline_paints_demo_pages() {
+        let _guard = global_switch_guard();
         let compiled = compile_pipeline(DEMO_TEX).expect("示例应能编译");
         assert!(
             compiled.pages.len() >= 2,
@@ -1463,6 +1487,7 @@ mod tests {
     /// debug overlay：独立通道叠加后墨迹严格增加，且 dpi=0 非法配置报错。
     #[test]
     fn render_pipeline_debug_overlay_and_bad_dpi() {
+        let _guard = global_switch_guard();
         let compiled = compile_pipeline(DEMO_TEX).expect("示例应能编译");
         let plain = render_page_core(
             &compiled.pages,
@@ -1503,6 +1528,7 @@ mod tests {
     /// 字体字节复用 ntex-backend 的入库 fixture（tests/data/README 同源）。
     #[test]
     fn glyph_font_injection_paints_outlines() {
+        let _guard = global_switch_guard();
         const LM_ROMAN: &[u8] =
             include_bytes!("../../ntex-backend/tests/data/lmroman10-regular.otf");
         assert!(
@@ -1572,6 +1598,7 @@ mod tests {
     /// 真正关心的事实（页面数由 plain 输出例程决定，不作硬编码断言）。
     #[test]
     fn unknown_font_is_recoverable_error() {
+        let _guard = global_switch_guard();
         let compiled = compile_pipeline("\\font\\x=nosuchfont10\\x hi\\end").expect("作业应继续");
         assert!(
             compiled
@@ -1588,6 +1615,7 @@ mod tests {
     /// 此处锁定「不报错且不产 DVI」，与 native `ntex-dvi` 空作业口径一致。
     #[test]
     fn empty_input_does_not_error() {
+        let _guard = global_switch_guard();
         let compiled = compile_pipeline("\\end").expect("空作业不应报错");
         assert_eq!(compiled.pages.len(), 0, "空作业不应凭空产页");
         assert!(compiled.dvi.is_empty(), "无页面不应出 DVI");
@@ -1913,6 +1941,7 @@ mod tests {
     /// `pdf_from_dvi` 共用核心，差别只在 DVI 取自句柄常驻字节。
     #[test]
     fn document_used_fonts_is_dvi_table_and_pdf_export_works() {
+        let _guard = global_switch_guard();
         let doc =
             compile_document("\\font\\a=cmr10 \\hsize=200pt\\a A\\end").expect("作业应能编译");
         let used = doc.used_fonts();
@@ -2253,6 +2282,7 @@ mod tests {
     /// 两遍编译解析引用，预览画出位图，PDF 写出 Image XObject。
     #[test]
     fn project_directory_graphicx_preview_and_pdf_roundtrip() {
+        let _guard = global_switch_guard();
         // 1x1 红色 RGB PNG；CRC 在当前解码器中不参与语义校验。
         let mut png = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
         let mut push_png_chunk = |tag: &[u8; 4], data: &[u8]| {
@@ -2299,7 +2329,10 @@ mod tests {
         );
         let image = doc.render_page(0, 72.0, false).expect("图片预览应成功");
         assert!(
-            image.rgba.chunks_exact(4).any(|p| p[0] > 200 && p[1] < 80 && p[2] < 80),
+            image
+                .rgba
+                .chunks_exact(4)
+                .any(|p| p[0] > 200 && p[1] < 80 && p[2] < 80),
             "预览像素中应出现红色项目图片"
         );
         let pdf = doc.pdf_bytes().expect("带图 PDF 应导出");
@@ -2309,5 +2342,51 @@ mod tests {
         );
         set_latex_mode(false);
         clear_project_files();
+    }
+
+    /// 现场回归（2026-09-24）：`article` + `\thanks` 的脚注标记是
+    /// `\textasteriskcentered`——TS1（EC「TC」字体）@10pt/7pt，DVI 字体名
+    /// `tcrm1000`/`tcrm0700`。两件事必须同时成立：
+    ///
+    /// 1. **资产包带这两族的 TFM 度量**——wasm 无 TeX Live 回落，缺了就是
+    ///    `Font … not loadable`（本测试用只喂资产包的 `EmbeddedTfmSource` 断言，
+    ///    不走 native 的宿主 TeX 树，否则假绿）；
+    /// 2. 渲染侧有 TS1 槽位表 + 族映射（`ntex-backend/src/glyphs.rs`
+    ///    `ts1_to_unicode`/`lm_file_name`，其单测另钉）。
+    ///
+    /// 走**可注入**的 `compile_pipeline_assets`（显式给 utf8 与资产），不碰
+    /// 进程级 `set_bundle`/`set_latex_mode` 全局——`cargo test` 并行线程共享那
+    /// 几个开关，污染会打翻别的用例（本文件 516 行注释同款纪律）。
+    #[test]
+    fn thanks_footnote_mark_uses_shipped_ts1_metrics() {
+        let assets = Arc::new(LatexAssets::from_bundle(&repo_bundle()).expect("资产包应能解析"));
+        let mut src = EmbeddedTfmSource {
+            latex: Some(assets.clone()),
+        };
+        for name in [
+            "tcrm1000", "tcrm0700", "tcrm1200", "tcbx1000", "tcti1000", "tctt0800", "tcss1000",
+        ] {
+            assert!(
+                ntex_layout::TfmSource::tfm_bytes(&mut src, name).is_some(),
+                "C 档资产包应带 TS1 度量 {name}（缺失时工作台报字体不可载）"
+            );
+        }
+
+        let source = "\\documentclass[12pt, letterpaper]{article}\n\
+            \\title{My first LaTeX document}\n\
+            \\author{Hubert Farnsworth\\thanks{Funded by the Overleaf team.}}\n\
+            \\date{August 2022}\n\
+            \\begin{document}\n\\maketitle\n\
+            We have now added a title, author and date to our first \\LaTeX{} document!\n\
+            \\end{document}";
+        let compiled =
+            compile_pipeline_assets(source, true, Some(assets)).expect("LaTeX 作业应能编译");
+        let used = &compiled.font_names;
+        for name in ["tcrm1000", "tcrm0700"] {
+            assert!(
+                used.iter().any(|n| n == name),
+                "标题/脚注的居中标星标记应走 TS1 {name}：{used:?}"
+            );
+        }
     }
 }

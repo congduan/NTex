@@ -251,6 +251,13 @@ mmap 只读 + 页级 COW。**暂缓理由已消解**：M2 吞吐已量化（1.01
   真字形轮廓、中文 OTF 度量+轮廓双侧注入、LaTeX 资产包 `NTEXBND1`）。
 - **Tauri 壳**：`ntex-tauri` 纯壳工作台，排版与渲染全在前端 WASM 内；PDF 导出按需
   fetch PFB 注入。
+- **字形通道编码覆盖**（2026-09-24）：OT1 + OML/OMS/OMX 之外补 **EC「TC」TS1**
+  （`glyphs.rs::ts1_to_unicode`，槽位锚定 `ts1enc.def`；EC 四位数尺寸名归一到 LM
+  光学尺寸档）——LaTeX 的 `\text…` 符号与 `\thanks` 脚注标记走这批字体
+  （现场：`tcrm1000`/`tcrm0700` 此前落方框）。C 档资产包随之补 `tcrm/tcti/tcbx/
+  tcss/tctt` 度量（`assets/tfm`），studio 认领表与工作台前端名单由
+  `ui_font_manifest_matches_rust_claim` 钉住同源；残差见
+  [docs/KNOWN-SIMPLIFICATIONS.md](docs/KNOWN-SIMPLIFICATIONS.md) §5。
 
 剩余：
 

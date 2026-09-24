@@ -83,3 +83,26 @@ Knuth License / LPPL 兼容条款随行发布）。
    - **无 TFM 的 OpenType 字体（中文等）** —— 宿主 fetch 后调
      `set_otf_font(name, bytes)`，一次注册「排版度量 + 渲染轮廓」两侧
      （见 `crates/ntex-tauri/ui/fonts/README.md` 的中文一档）。
+
+## EC（TC）TS1 度量（2026-09-24 增，67 件）
+
+LaTeX 的 `\text…` 文本符号族与 `\thanks` 脚注标记走 **TS1**（EC「TC」字体），
+DVI 里出现的字体名是 `tcrm1000`/`tcrm0700` 这类四位数尺寸名（百分之一磅）。
+wasm/Tauri 工作台没有 TeX Live 回落，缺这份度量就是
+`! Font … not loadable: Metric (TFM) file not found.`，故按族整批入库：
+
+| 族（`ts1*.fd` 的 `\EC@family` 前缀） | 件数 | 覆盖 |
+|---|---|---|
+| `tcrm` `tcti` `tcbx` | 各 14 | 罗马/意大利/粗体：`0500 0600 0700 0800 0900 1000 1095 1200 1440 1728 2074 2488 2986 3583` |
+| `tcss` | 14 | 无衬线同上 |
+| `tctt` | 11 | 打字机：`0800 0900 1000 1095 1200 1440 1728 2074 2488 2986 3583`（`ts1cmtt.fd` 把 5–8pt 归到 `tctt0800`） |
+
+来源与许可以及"为什么不整族入库"的取舍，见
+[docs/KNOWN-SIMPLIFICATIONS.md](../../docs/KNOWN-SIMPLIFICATIONS.md) §5 字体一行；
+渲染侧把四个位尺寸名归一到 LM 光学尺寸档的映射在
+`crates/ntex-backend/src/glyphs.rs::lm_file_name`。
+
+```bash
+# 复制来源（EC 包，CTAN 许可 other-free）
+ls /usr/local/texlive/2024basic/texmf-dist/fonts/tfm/jknappen/ec/
+```

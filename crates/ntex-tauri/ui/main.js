@@ -72,6 +72,34 @@ const GLYPH_FONTS = [
   ['cmtt12', 'fonts/lmmono12-regular.otf'],
   ['cmss10', 'fonts/lmsans10-regular.otf'],
   ['cmss17', 'fonts/lmsans17-regular.otf'],
+  // EC「TC」TS1 族：LaTeX 的 `\text…` 文本符号与脚注标记的落点——`\thanks`
+  // 的标记就是 `\textasteriskcentered`（TS1 @10pt/7pt → `tcrm1000`/`tcrm0700`），
+  // `\textbullet`/`\textdagger`/`\textcopyright` 等同样走 TS1/cmr|cmss|cmtt，
+  // 不注册这几个名字时它们只出方框（2026-09-24 现场）。
+  // 名称映射与 `ntex-backend/src/glyphs.rs::lm_file_name` 同口径：四位数尺寸名
+  // （百分之一磅）归一到 LM 光学尺寸档；这里只列 `ui/fonts/` 实际有的档
+  // （5/7/10/12/17），其余档（0600/0800/0900/2074…）与 native 的差别仅在此
+  // 资产面——native 走 TeX Live 的 LM 全档位。
+  ['tcrm0500', 'fonts/lmroman5-regular.otf'],
+  ['tcrm0700', 'fonts/lmroman7-regular.otf'],
+  ['tcrm1000', 'fonts/lmroman10-regular.otf'],
+  ['tcrm1095', 'fonts/lmroman10-regular.otf'],
+  ['tcrm1200', 'fonts/lmroman12-regular.otf'],
+  ['tcrm1440', 'fonts/lmroman12-regular.otf'],
+  ['tcrm1728', 'fonts/lmroman17-regular.otf'],
+  ['tcbx0700', 'fonts/lmroman7-bold.otf'],
+  ['tcbx1000', 'fonts/lmroman10-bold.otf'],
+  ['tcbx1095', 'fonts/lmroman10-bold.otf'],
+  ['tcbx1200', 'fonts/lmroman12-bold.otf'],
+  ['tcbx1440', 'fonts/lmroman12-bold.otf'],
+  ['tcti1000', 'fonts/lmroman10-italic.otf'],
+  ['tcti1095', 'fonts/lmroman10-italic.otf'],
+  ['tcti1200', 'fonts/lmroman12-italic.otf'],
+  ['tcti1440', 'fonts/lmroman12-italic.otf'],
+  ['tcss1000', 'fonts/lmsans10-regular.otf'],
+  ['tcss1728', 'fonts/lmsans17-regular.otf'],
+  ['tctt1000', 'fonts/lmmono10-regular.otf'],
+  ['tctt1200', 'fonts/lmmono12-regular.otf'],
 ];
 
 // 中文：Fandol Song 子集（OpenType 原生字体，**没有 TFM**）——排版阶段就要

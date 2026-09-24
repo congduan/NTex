@@ -3,12 +3,14 @@
 //! TFM 只有度量无轮廓（引擎布局事实源不变），本模块在**渲染侧**补字形：
 //!
 //! - TeX 字体名（cmr10 等）→ Latin Modern OpenType 文件（LM 与 CM 同源，
-//!   度量一致；文本族走光学尺寸族文件，数学族 cmmi/cmsy/cmex 共用
+//!   度量一致；文本族走光学尺寸族文件，EC「TC」TS1 族（`tcrm*` 等，四位数
+//!   尺寸名）归一到同一批光学尺寸文件，数学族 cmmi/cmsy/cmex 共用
 //!   `latinmodern-math.otf` 单文件）；
 //! - slot → Unicode 按字体编码分发（[`slot_to_unicode`]）：文本族 OT1
-//!   （`ot1enc.def`），数学族 OML/OMS/OMX（槽位锚定 plain.tex mathchardef
-//!   与 canonical TeX 编码布局，数学字母数字取 Unicode Mathematical
-//!   Alphanumeric Symbols 区）→ skrifa cmap 查字形 id；
+//!   （`ot1enc.def`）、EC TC 族 TS1（`ts1enc.def`，[`ts1_to_unicode`]），
+//!   数学族 OML/OMS/OMX（槽位锚定 plain.tex mathchardef 与 canonical TeX
+//!   编码布局，数学字母数字取 Unicode Mathematical Alphanumeric Symbols 区）
+//!   → skrifa cmap 查字形 id；
 //! - 字形绘制双通道：vello glyph run（`vello.rs::append_prims`）与软光栅
 //!   轮廓填充（[`GlyphFont::outline_paths`] → `raster::fill_polygon`）；
 //! - 字体字节来源：`kpsewhich`/texlive 文件系统之外，
@@ -287,10 +289,143 @@ pub(crate) fn omx_to_unicode(slot: u8) -> Option<u32> {
     })
 }
 
+/// TS1（Cork Text Companion）slot → Unicode 码位（EC「TC」字体：`tcrm*` 等）。
+///
+/// 槽位取自 `ts1enc.def`（LaTeX base，LPPL）的 `\DeclareTextSymbol` 声明——
+/// 那份声明就是 LaTeX 写给这批字体的布局权威，DVI 里的槽位号由它决定；
+/// 唯一的例外是 0x2A：它不走 `\DeclareTextSymbol`，而是 `ts1enc.def` 里
+/// `\DeclareTextCommand\textasteriskcentered{TS1}` 的 `\iffontchar\font 42 → \char42`
+/// 分支（EC 字体有该字形时直接发 42），即 **居中标星**（`\thanks` 脚注标记
+/// 走的就是这一支）。
+///
+/// 表内码位逐个与 `lmroman10-regular.otf` 的 cmap 对照（单测
+/// `ts1_tables_hit_lm_roman_cmap` 钉住），字体里没有对应字形的槽位**不列**——
+/// 列了也只是让 `glyph_id` 落空，与不列等价，反而误导读表人。
+/// 未列出（含 EC TS1 提供的出生/殁/叶片/婚姻/大圆圈/双括等 LM 无同形件）的
+/// 槽位回落占位方框（引擎契约）。
+pub(crate) fn ts1_to_unicode(slot: u8) -> Option<u32> {
+    Some(match slot {
+        0x0D => 0x0027,        // \textquotestraightbase（直引号基件）
+        0x12 => 0x0022,        // \textquotestraightdblbase
+        0x15 | 0x16 => 0x2014, // \texttwelveudash / \textthreequartersemdash（近似取 em dash）
+        // 0x17/0x1F：capital/ascender comp word mark（零宽标记，无形可画）。
+        // 0x20：\textblank（可见空位符，LM 无双形件）。
+        0x18 => 0x2190, // \textleftarrow
+        0x19 => 0x2192, // \textrightarrow
+        0x24 => 0x0024, // \textdollar
+        0x27 => 0x0027, // \textquotesingle
+        0x2A => 0x2217, // \textasteriskcentered（居中标星）
+        0x2D => 0x002D, // \textdblhyphen（近似取连字符）
+        0x2F => 0x2044, // \textfractionsolidus
+        // 0x30..=0x39：EC TS1 这里是**旧式数字**（\oldstylenums/\text*oldstyle
+        // 的落点）；LM Roman 无旧式字形，按同位 ASCII 数字近似（比方框可读）。
+        0x30..=0x39 => slot as u32,
+        // 0x3C/0x3E：\textlangle/\textrangle（LM 无 U+27E8/U+27E9）。
+        0x3D => 0x2212, // \textminus
+        0x4D => 0x2127, // \textmho
+        // 0x4F：\textbigcircle（LM 无 U+25EF）。
+        0x57 => 0x2126, // \textohm
+        // 0x5B/0x5D：\textlbrackdbl/\textrbrackdbl（LM 无双括）。0x62/0x63：
+        // \textborn/\textdivorced（星/斜线记，LM 无同形件）。0x6C/0x6D：叶片/婚姻。
+        0x5E => 0x2191, // \textuparrow
+        0x5F => 0x2193, // \textdownarrow
+        0x60 => 0x0060, // \textasciigrave
+        0x64 => 0x2020, // \textdied（近似取剑标）
+        0x6E => 0x266A, // \textmusicalnote
+        0x7E => 0x007E, // \texttildelow
+        0x7F => 0x002D, // \textdblhyphenchar（近似取连字符）
+        0x80 => 0x02D8, // \textasciibreve
+        0x81 => 0x02C7, // \textasciicaron
+        0x82 => 0x02DD, // \textacutedbl
+        // 0x83：\textgravedbl（LM 无 U+02F5）。
+        0x84 => 0x2020, // \textdagger
+        0x85 => 0x2021, // \textdaggerdbl
+        0x86 => 0x2016, // \textbardbl
+        0x87 => 0x2030, // \textperthousand
+        0x88 => 0x2022, // \textbullet
+        0x89 => 0x2103, // \textcelsius
+        0x8A => 0x0024, // \textdollaroldstyle
+        0x8B => 0x00A2, // \textcentoldstyle
+        0x8C => 0x0192, // \textflorin
+        0x8D => 0x20A1, // \textcolonmonetary
+        0x8E => 0x20A9, // \textwon
+        0x8F => 0x20A6, // \textnaira
+        // 0x90：\textguarani（LM 无 U+20B2）。
+        0x91 => 0x20B1, // \textpeso
+        0x92 => 0x20A4, // \textlira
+        0x93 => 0x211E, // \textrecipe
+        0x94 => 0x203D, // \textinterrobang
+        // 0x95：\textinterrobangdown（LM 无 U+2E18）。
+        0x96 => 0x20AB, // \textdong
+        0x97 => 0x2122, // \texttrademark
+        0x98 => 0x2031, // \textpertenthousand
+        0x99 => 0x00B6, // \textpilcrow
+        0x9A => 0x0E3F, // \textbaht
+        0x9B => 0x2116, // \textnumero
+        0x9C => 0x2052, // \textdiscount
+        0x9D => 0x212E, // \textestimated
+        0x9E => 0x25E6, // \textopenbullet
+        0x9F => 0x2120, // \textservicemark
+        0xA0 => 0x2045, // \textlquill
+        0xA1 => 0x2046, // \textrquill
+        0xA2 => 0x00A2, // \textcent
+        0xA3 => 0x00A3, // \textsterling
+        0xA4 => 0x00A4, // \textcurrency
+        0xA5 => 0x00A5, // \textyen
+        0xA6 => 0x00A6, // \textbrokenbar
+        0xA7 => 0x00A7, // \textsection
+        0xA8 => 0x00A8, // \textasciidieresis
+        0xA9 => 0x00A9, // \textcopyright
+        0xAA => 0x00AA, // \textordfeminine
+        // 0xAB：\textcopyleft（LM 无 U+2183）。
+        0xAC => 0x00AC, // \textlnot
+        0xAD => 0x2117, // \textcircledP
+        0xAE => 0x00AE, // \textregistered
+        0xAF => 0x00AF, // \textasciimacron
+        0xB0 => 0x00B0, // \textdegree
+        0xB1 => 0x00B1, // \textpm
+        0xB2 => 0x00B2, // \texttwosuperior
+        0xB3 => 0x00B3, // \textthreesuperior
+        0xB4 => 0x00B4, // \textasciiacute
+        0xB5 => 0x00B5, // \textmu
+        0xB6 => 0x00B6, // \textparagraph
+        0xB7 => 0x00B7, // \textperiodcentered
+        0xB8 => 0x203B, // \textreferencemark
+        0xB9 => 0x00B9, // \textonesuperior
+        0xBA => 0x00BA, // \textordmasculine
+        0xBB => 0x221A, // \textsurd
+        0xBC => 0x00BC, // \textonequarter
+        0xBD => 0x00BD, // \textonehalf
+        0xBE => 0x00BE, // \textthreequarters
+        0xBF => 0x20AC, // \texteuro
+        0xD6 => 0x00D7, // \texttimes（Cork 位，非 Latin-1 的 Ö）
+        0xF6 => 0x00F7, // \textdiv（Cork 位，非 Latin-1 的 ö）
+        _ => return None,
+    })
+}
+
+/// EC「TC」（Text Companion）TS1 字体族前缀（`ts1cmr.fd`/`ts1cmss.fd`/`ts1cmtt.fd`
+/// 的 `\EC@family{TS1}{...}{...}{<前缀>}` 声明）。
+///
+/// 只有这些字体走 [`ts1_to_unicode`]；**EC 的 T1 族（`ecrm*` 等）不走**——
+/// 它们是 Cork（T1）编码，得配 T1 表，此处按未支持处理（回落方框，见
+/// `docs/KNOWN-SIMPLIFICATIONS.md`）。
+fn is_ts1_family(family: &str) -> bool {
+    matches!(
+        family,
+        // TS1/cmr 系
+        "tcrm" | "tcsl" | "tcti" | "tcbx" | "tcrb" | "tcbi" | "tcbl" | "tcui"
+        // TS1/cmss 系
+        | "tcss" | "tcsi" | "tcsx" | "tcso"
+        // TS1/cmtt / cmvtt 系
+        | "tctt" | "tcst" | "tcit" | "tcvt" | "tcvi"
+    )
+}
+
 /// 按字体族分发的 slot → Unicode（prims 字形通道统一入口）：
 /// cmmi→OML、cmsy→OMS、cmex→OMX、cmtt 系→ASCII 直通（cmtt 编码的花括号/
 /// 反斜杠在 OT1 位上是 ligature/标点，`\string`/`\char` 转录须按字面出），
-/// 其余文本族→OT1。
+/// EC TC 族（tcrm/tcbx/…）→TS1，其余文本族→OT1。
 pub(crate) fn slot_to_unicode(tex_name: &str, slot: u8) -> Option<u32> {
     let (family, _) = family_prefix(tex_name);
     match family {
@@ -304,8 +439,35 @@ pub(crate) fn slot_to_unicode(tex_name: &str, slot: u8) -> Option<u32> {
                 ot1_to_unicode(slot)
             }
         }
+        f if is_ts1_family(f) => ts1_to_unicode(slot),
         _ => ot1_to_unicode(slot),
     }
+}
+
+/// LM 光学尺寸族（`lmroman{5,6,7,8,9,10,12,17}` 等文件实际存在的档位）。
+const LM_OPTICAL_SIZES: &[u32] = &[5, 6, 7, 8, 9, 10, 12, 17];
+
+/// EC 字体名里的尺寸段 → LM 光学尺寸档（就近取）。
+///
+/// EC 用**四位十进制百分之一磅**命名（`tcrm0700` = 7pt、`tcrm1095` = 10.95pt、
+/// `tcrm1728` = 17.28pt），LM 的 OTF 只出 5/6/7/8/9/10/12/17 八档，故按最近档
+/// 取名（`1440` → 12、`2074` → 17）。`cmr7` 这类 CM 短名（1~2 位）按整数磅读。
+/// 非纯数字（理论上不会出现）返回 None。
+fn lm_optical_size(size: &str) -> Option<u32> {
+    if size.is_empty() || !size.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    // 四位数 = 百分之一磅；其余（`7`/`12`）按整数磅。
+    let pt: f64 = if size.len() == 4 {
+        size.parse::<f64>().ok()? / 100.0
+    } else {
+        size.parse::<f64>().ok()?
+    };
+    LM_OPTICAL_SIZES.iter().copied().min_by(|a, b| {
+        let da = (*a as f64 - pt).abs();
+        let db = (*b as f64 - pt).abs();
+        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+    })
 }
 
 /// TeX 文本字体名 → Latin Modern OpenType 文件名（无映射的字体返回 None，
@@ -314,19 +476,25 @@ pub(crate) fn slot_to_unicode(tex_name: &str, slot: u8) -> Option<u32> {
 /// 覆盖 cm 常用文本族；数学族（cmmi/cmsy/cmex）共用 OpenType MATH 字体
 /// `latinmodern-math.otf`（LM 无独立 lmmi/lmsy OTF 文件，数学字形全在
 /// lm-math 包这一个 MATH 表字体内，cmap 覆盖数学字母数字区）。
+///
+/// EC「TC」TS1 族（`tcrm*` 等，LaTeX 的 `\text…` 符号与脚注标记走它们）与
+/// LM 同源，按 `lmroman`/`lmsans`/`lmmono` 相应字面取名；其中**斜体/粗体族
+/// 未随包**（`tcsl`/`tcui`/`tcbl`/`tcsi`/`tcso`/`tcvtt` 无对应 OTF 名），
+/// 按未映射返回 None → 回落方框（见 `docs/KNOWN-SIMPLIFICATIONS.md`）。
 fn lm_file_name(tex_name: &str) -> Option<String> {
     let (family, size) = family_prefix(tex_name);
-    // LM 光学尺寸族：5/6/7/8/9/10/12/17；其余字号取就近存在的文件由
-    // kpsewhich 决定（找不到即回落）。
+    // CM 短名（`cmr10`）与 EC 四位数名（`tcrm1000`）都归一到 LM 光学尺寸，
+    // 避免拼出 `lmroman0700-regular` 这种不存在的文件。
+    let size = lm_optical_size(size)?;
     let style = match family {
-        "cmr" => format!("lmroman{size}-regular"),
-        "cmbx" | "cmb" => format!("lmroman{size}-bold"),
-        "cmti" => format!("lmroman{size}-italic"),
+        "cmr" | "tcrm" => format!("lmroman{size}-regular"),
+        "cmbx" | "cmb" | "tcbx" | "tcrb" => format!("lmroman{size}-bold"),
+        "cmti" | "tcti" => format!("lmroman{size}-italic"),
         "cmsl" => format!("lmroman{size}-oblique"),
-        "cmtt" => format!("lmmono{size}-regular"),
+        "cmtt" | "tctt" => format!("lmmono{size}-regular"),
         "cmsltt" => format!("lmmono{size}-oblique"),
-        "cmss" => format!("lmsans{size}-regular"),
-        "cmssbx" => format!("lmsans{size}-bold"),
+        "cmss" | "tcss" => format!("lmsans{size}-regular"),
+        "cmssbx" | "tcsx" => format!("lmsans{size}-bold"),
         "cmssi" => format!("lmsans{size}-oblique"),
         // 数学族：LM 无独立 OTF，统一走 OpenType MATH 单文件。
         "cmmi" | "cmsy" | "cmex" => "latinmodern-math".to_owned(),
@@ -688,17 +856,36 @@ fn claim_font_dir(dir: &std::path::Path) -> Vec<(String, std::path::PathBuf)> {
 /// LM 认领的候选 TeX 名（族前缀 × 光学尺寸）：[`register_font_dir`] 用它反查
 /// [`lm_file_name`]，把目录里的 LM 文件还原成 TeX 名。
 ///
+/// 两批候选：
+/// 1. CM 短名（`cmr10`）× 光学尺寸——plain/CM 口径；
+/// 2. EC「TC」TS1 名（`tcrm1000` 等，四位数尺寸）× 同一批 LM 文件——
+///    LaTeX 的 `\text…` 符号与脚注标记走这批名字（2026-09-24 现场：
+///    工作台的 `\thanks` 标记成了方框）。同族多名指向同一 LM 文件是正常的
+///    （`tcrm1000`/`tcrm1095` 都取 `lmroman10-regular.otf`）。
+///
 /// 与 `ntex-tauri` 前端 `GLYPH_FONTS` 名单同源（那份是手写清单，这里是等价
-/// 生成式；两侧只要 LM 文件名映射不变即等价）。
+/// 生成式；两侧只要 LM 文件名映射不变即等价，`ui/fonts/` 里没有的文件名
+/// 两侧都会被跳过——见 `claim_font_dir` 的按名取文件）。
 fn lm_tex_name_candidates() -> Vec<String> {
     const FAMILIES: &[&str] = &[
         "cmr", "cmbx", "cmb", "cmti", "cmsl", "cmtt", "cmsltt", "cmss", "cmssbx", "cmssi", "cmmi",
         "cmsy", "cmex",
     ];
     const SIZES: &[u32] = &[5, 6, 7, 8, 9, 10, 12, 17];
+    // EC TS1 族 × EC 四位数尺寸名（百分之一磅，`ts1cmr.fd` 等声明的全套档位）。
+    const TS1_FAMILIES: &[&str] = &["tcrm", "tcti", "tcbx", "tcss", "tctt"];
+    const TS1_SIZES: &[&str] = &[
+        "0500", "0600", "0700", "0800", "0900", "1000", "1095", "1200", "1440", "1728", "2074",
+        "2488", "2986", "3583",
+    ];
     let mut out = Vec::new();
     for f in FAMILIES {
         for s in SIZES {
+            out.push(format!("{f}{s}"));
+        }
+    }
+    for f in TS1_FAMILIES {
+        for s in TS1_SIZES {
             out.push(format!("{f}{s}"));
         }
     }
@@ -802,6 +989,105 @@ mod tests {
             lm_file_name("cmsy7").as_deref(),
             Some("latinmodern-math.otf")
         );
+    }
+
+    /// EC「TC」TS1 族（`tcrm*` 等）：四位数尺寸名归一到 LM 光学尺寸档。
+    ///
+    /// 现场（2026-09-24）：`\documentclass[12pt]{article}` + `\thanks` 的脚注
+    /// 标记是 `\textasteriskcentered`（TS1）@10pt/7pt → DVI 字体名 `tcrm1000`/
+    /// `tcrm0700`。此前这两族无映射 → 预览里标记成方框。
+    #[test]
+    fn lm_file_name_ec_ts1_families() {
+        assert_eq!(
+            lm_file_name("tcrm1000").as_deref(),
+            Some("lmroman10-regular.otf")
+        );
+        assert_eq!(
+            lm_file_name("tcrm0700").as_deref(),
+            Some("lmroman7-regular.otf")
+        );
+        // 四位数百分之一磅 → 最近档：1440 → 12、1095 → 10、2074 → 17。
+        assert_eq!(
+            lm_file_name("tcrm1440").as_deref(),
+            Some("lmroman12-regular.otf")
+        );
+        assert_eq!(
+            lm_file_name("tcti1095").as_deref(),
+            Some("lmroman10-italic.otf")
+        );
+        assert_eq!(
+            lm_file_name("tcrm2074").as_deref(),
+            Some("lmroman17-regular.otf")
+        );
+        assert_eq!(
+            lm_file_name("tcbx1000").as_deref(),
+            Some("lmroman10-bold.otf")
+        );
+        assert_eq!(
+            lm_file_name("tcss1000").as_deref(),
+            Some("lmsans10-regular.otf")
+        );
+        assert_eq!(
+            lm_file_name("tctt1000").as_deref(),
+            Some("lmmono10-regular.otf")
+        );
+        // 未随包的 EC TS1 斜体族（LM 无对应 OTF 名）与 EC 的 **T1** 族（`ecrm*`，
+        // 配 Cork 表，本层不认）都按未映射处理 → 方框。
+        assert_eq!(lm_file_name("tcsl1000"), None);
+        assert_eq!(lm_file_name("ecrm1000"), None);
+    }
+
+    /// TS1 槽位表（`ts1enc.def` 权威）抽查 + 族分派。
+    ///
+    /// `ecrm*`（EC 的 T1 族）**不得**走 TS1 表：同一槽位两套编码语义不同，
+    /// 串了会画出错字形（此处以 0x2A 为例：T1/Cork 的 0x2A 是普通星号顶位，
+    /// TS1 的 0x2A 是居中标星）。
+    #[test]
+    fn ts1_slots_and_family_dispatch() {
+        // 脚注标记现场：0x2A = \textasteriskcentered（`\char42` 分支）→ 居中标星。
+        assert_eq!(ts1_to_unicode(0x2A), Some(0x2217));
+        assert_eq!(slot_to_unicode("tcrm1000", 0x2A), Some(0x2217));
+        assert_eq!(slot_to_unicode("tcbx0700", 0x2A), Some(0x2217));
+        // ts1enc.def 的权威槽位抽查。
+        assert_eq!(ts1_to_unicode(0x84), Some(0x2020)); // \textdagger
+        assert_eq!(ts1_to_unicode(0x85), Some(0x2021)); // \textdaggerdbl
+        assert_eq!(ts1_to_unicode(0x88), Some(0x2022)); // \textbullet
+        assert_eq!(ts1_to_unicode(0xA3), Some(0x00A3)); // \textsterling
+        assert_eq!(ts1_to_unicode(0xA9), Some(0x00A9)); // \textcopyright
+        assert_eq!(ts1_to_unicode(0xB5), Some(0x00B5)); // \textmu
+        assert_eq!(ts1_to_unicode(0xD6), Some(0x00D7)); // \texttimes（Cork 位）
+        assert_eq!(ts1_to_unicode(0xF6), Some(0x00F7)); // \textdiv（Cork 位）
+                                                        // 旧式数字（0x30..=0x39）按同位 ASCII 数字近似。
+        assert_eq!(ts1_to_unicode(0x30), Some(0x0030));
+        assert_eq!(ts1_to_unicode(0x39), Some(0x0039));
+        // 表外的槽位回落方框。
+        assert_eq!(ts1_to_unicode(0x00), None);
+        assert_eq!(ts1_to_unicode(0xFF), None);
+        // EC 的 T1 族不走 TS1（同一槽位语义不同）。
+        assert_eq!(slot_to_unicode("ecrm1000", 0x2A), Some(0x002A));
+        // CM 文本族仍走 OT1。
+        assert_eq!(slot_to_unicode("cmr10", 0x2A), Some(0x002A));
+    }
+
+    /// TS1 表全覆盖：凡映射出的 Unicode 码位必须命中 `lmroman10-regular` 的
+    /// cmap（防"表写了、字体没字形"的静默方框，口径同
+    /// `math_tables_all_hit_lm_math_cmap`）。
+    #[test]
+    fn ts1_tables_hit_lm_roman_cmap() {
+        let mut cache = GlyphCache::new();
+        assert!(register_font_bytes("lm-roman-ts1-test", LM_ROMAN));
+        let font = cache.resolve("lm-roman-ts1-test").expect("注册表命中");
+        let mut checked = 0;
+        for slot in 0u8..=255 {
+            if let Some(cp) = ts1_to_unicode(slot) {
+                assert!(
+                    font.glyph_id(cp).is_some(),
+                    "TS1 slot {slot:#x} → U+{cp:04X} 不在 lmroman10-regular cmap"
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 60, "TS1 映射应成规模（实测 {checked}）");
     }
 
     #[test]
@@ -955,5 +1241,94 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 发行字体目录（`ntex-tauri/ui/fonts`，studio 经 `register_font_dir` 读它、
+    /// Tauri 前端经 `GLYPH_FONTS` fetch 它）必须能认领 EC TS1 名——否则
+    /// LaTeX 的 `\text…` 符号与脚注标记在这两个工作台上仍是方框。
+    ///
+    /// 两侧同步由本测试钉 Rust 半边：认领表里出现 `tcrm1000`/`tcrm0700`，
+    /// 且都指向 `lmroman10-regular.otf`/`lmroman7-regular.otf`（同族多名指向
+    /// 同一文件是正常形态）。
+    #[test]
+    fn claim_font_dir_claims_ec_ts1_names() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ntex-tauri/ui/fonts");
+        let claimed = claim_font_dir(&dir);
+        let find = |name: &str| {
+            claimed
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, p)| p.file_name().unwrap().to_string_lossy().into_owned())
+        };
+        assert_eq!(
+            find("tcrm1000").as_deref(),
+            Some("lmroman10-regular.otf"),
+            "TS1 罗马 10pt 应认领到 LM Roman"
+        );
+        assert_eq!(
+            find("tcrm0700").as_deref(),
+            Some("lmroman7-regular.otf"),
+            "TS1 罗马 7pt 应认领到 LM Roman 7pt"
+        );
+        assert_eq!(find("tcbx1000").as_deref(), Some("lmroman10-bold.otf"));
+        assert_eq!(find("tcti1000").as_deref(), Some("lmroman10-italic.otf"));
+        // 目录里没有的档位不被认领（0600 → lmroman6 不存在）。
+        assert!(
+            find("tcrm0600").is_none(),
+            "无 lmroman6-regular.otf 就不该认领"
+        );
+    }
+
+    /// 前端名单与 Rust 认领表的**同名同文件**校验：`ui/main.js` 的
+    /// `GLYPH_FONTS`/`CJK_FONTS` 是手写清单（wasm 无文件系统，只能写死），
+    /// Rust 侧是生成式——两边漂了就一边能渲染一边方框，且不会有别的测试发现。
+    ///
+    /// 判据只做**单向**（JS ⊆ Rust 认领）：JS 写多一条指向错误文件的条目会
+    /// 让工作台画出错字形，这是真正要拦的；Rust 多认领几个名字无害。
+    #[test]
+    fn ui_font_manifest_matches_rust_claim() {
+        let ui = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ntex-tauri/ui");
+        let js = std::fs::read_to_string(ui.join("main.js")).expect("读 ui/main.js");
+        let claimed = claim_font_dir(&ui.join("fonts"));
+        let mut checked = 0;
+        for (name, path) in parse_js_font_pairs(&js) {
+            let file = path.rsplit('/').next().unwrap_or(&path).to_owned();
+            assert!(
+                ui.join(&path).is_file(),
+                "前端名单指向的文件不存在：{name} → {path}"
+            );
+            let hit = claimed
+                .iter()
+                .find(|(n, _)| n == &name)
+                .map(|(_, p)| p.file_name().unwrap().to_string_lossy().into_owned());
+            assert_eq!(
+                hit.as_deref(),
+                Some(file.as_str()),
+                "前端名单 {name} → {path} 与 Rust 认领不一致（claimed={hit:?}）"
+            );
+            checked += 1;
+        }
+        assert!(checked >= 40, "名单应成规模（实测 {checked} 条）");
+    }
+
+    /// 从 `ui/main.js` 里抠出 `['<TeX 字体名>', '<相对路径>']` 名单条目
+    /// （`GLYPH_FONTS` / `CJK_FONTS` 同形）。
+    fn parse_js_font_pairs(js: &str) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for line in js.lines() {
+            let Some(rest) = line.trim().strip_prefix("['") else {
+                continue;
+            };
+            let Some((name, rest)) = rest.split_once("', '") else {
+                continue;
+            };
+            let Some((path, _)) = rest.split_once("']") else {
+                continue;
+            };
+            if path.starts_with("fonts/") {
+                out.push((name.to_owned(), path.to_owned()));
+            }
+        }
+        out
     }
 }
