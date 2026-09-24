@@ -31,7 +31,7 @@ pub mod type1;
 use std::io;
 
 pub use dvi::{parse as parse_dvi, DrawOp, Dvi, Page};
-pub use pdf::{write_pdf, PdfOptions};
+pub use pdf::{clear_image_bytes, register_image_bytes, write_pdf, PdfOptions};
 
 /// 读入 DVI 字节并写出 PDF（页面尺寸默认 A4）。
 pub fn convert(dvi_bytes: &[u8], opts: &PdfOptions) -> io::Result<Vec<u8>> {

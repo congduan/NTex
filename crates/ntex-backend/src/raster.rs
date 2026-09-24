@@ -108,6 +108,55 @@ impl Pixmap {
         }
     }
 
+    /// 把紧凑 RGB8 图片缩放绘制到页面。采用最近邻采样；坐标与尺寸可为
+    /// 浮点并自动裁剪。该路径服务 WASM/Tauri 的 `\includegraphics` 预览，
+    /// 输入长度或尺寸非法时安全返回 `false`，不触发越界或分配。
+    pub fn blit_rgb_scaled(
+        &mut self,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        src_width: u32,
+        src_height: u32,
+        rgb: &[u8],
+    ) -> bool {
+        let expected = (src_width as u64)
+            .checked_mul(src_height as u64)
+            .and_then(|n| n.checked_mul(3));
+        if src_width == 0
+            || src_height == 0
+            || !x.is_finite()
+            || !y.is_finite()
+            || !w.is_finite()
+            || !h.is_finite()
+            || w <= 0.0
+            || h <= 0.0
+            || expected != Some(rgb.len() as u64)
+        {
+            return false;
+        }
+        let x0 = x.floor().max(0.0) as i64;
+        let y0 = y.floor().max(0.0) as i64;
+        let x1 = ((x + w).ceil() as i64).min(self.width as i64);
+        let y1 = ((y + h).ceil() as i64).min(self.height as i64);
+        for py in y0..y1 {
+            let sy = (((py as f64 + 0.5 - y) / h) * src_height as f64)
+                .floor()
+                .clamp(0.0, (src_height - 1) as f64) as usize;
+            for px in x0..x1 {
+                let sx = (((px as f64 + 0.5 - x) / w) * src_width as f64)
+                    .floor()
+                    .clamp(0.0, (src_width - 1) as f64) as usize;
+                let si = (sy * src_width as usize + sx) * 3;
+                let di = (py as usize * self.width as usize + px as usize) * 4;
+                self.data[di..di + 3].copy_from_slice(&rgb[si..si + 3]);
+                self.data[di + 3] = 255;
+            }
+        }
+        true
+    }
+
     /// 填充水平线段（厚度 1px）。
     pub fn fill_hline(&mut self, y: f64, x0: f64, x1: f64, color: (u8, u8, u8)) {
         let (lo, hi) = if x0 <= x1 { (x0, x1) } else { (x1, x0) };

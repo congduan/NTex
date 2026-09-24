@@ -39,7 +39,11 @@
         <div class="pane-title">
           <span><b id="mode-chip" class="mode plain" title="口径自动判定：源码含 \documentclass/\usepackage/\begin{document} 时走 LaTeX（需启动时 LaTeX 资产就绪）">plain</b>
             <em class="hint">LaTeX 自动走 latex.fmt（\documentclass/article.cls/\section…）· 中文走 Fandol Song</em></span>
-          <span class="hint">Cmd/Ctrl+S 立即重排 · 草稿自动保存</span>
+          <span class="project-actions">
+            <button id="open-project" class="text-button" disabled title="选择包含 .tex、images/ 等文件的项目目录">打开目录</button>
+            <span id="project-label" class="hint">未加载项目</span>
+            <input id="project-input" type="file" webkitdirectory directory multiple hidden />
+          </span>
         </div>
         <div class="editor-wrap">
           <pre id="gutter" aria-hidden="true">1</pre>
@@ -93,6 +97,6 @@
       <pre id="log">（等待编译…）</pre>
     </footer>
   </div>
-  <script type="module" src="main.js?v=7"></script>
+  <script type="module" src="main.js?v=8"></script>
 </body>
 </html>

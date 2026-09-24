@@ -45,6 +45,8 @@
 //! 现留在 `MemVfs` 内不回传——`ntex-io` 的 `MemVfs` 暂无枚举 API（只有 `read`/
 //! `write`/`append`/`get`），补枚举接口属 ntex-io 领地，不在本刀范围。
 
+use std::collections::BTreeMap;
+use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
@@ -291,6 +293,117 @@ impl LatexAssets {
 /// 用 `Mutex` 而非 `thread_local` 的理由同 [`OTF_METRICS`]（native 单测并行）。
 static LATEX_ASSETS: LazyLock<Mutex<Option<Arc<LatexAssets>>>> = LazyLock::new(|| Mutex::new(None));
 
+// ---------- 项目目录：宿主选择目录后注入的相对路径文件 ----------
+
+/// 项目包魔数。格式：魔数 + u32 条目数；每项为 u32 名长 + UTF-8 相对路径 +
+/// u32 数据长 + 原始字节。与发行资产包分开，避免把项目文件误当格式资产。
+const PROJECT_MAGIC: &[u8] = b"NTEXPRJ1";
+
+#[derive(Debug, Default)]
+struct ProjectFiles {
+    files: BTreeMap<String, Vec<u8>>,
+}
+
+impl ProjectFiles {
+    fn from_bundle(bytes: &[u8]) -> Result<Self, String> {
+        let mut r = BundleReader::new(bytes);
+        if r.take(PROJECT_MAGIC.len())? != PROJECT_MAGIC {
+            return Err("项目包魔数不匹配（期望 NTEXPRJ1）".to_owned());
+        }
+        let count = r.u32()?;
+        if count > 20_000 {
+            return Err(format!("项目文件数过多：{count}（上限 20000）"));
+        }
+        let mut files = BTreeMap::new();
+        let mut total = 0usize;
+        for _ in 0..count {
+            let name_len = r.u32()? as usize;
+            let raw_name = r.text(name_len)?;
+            let name = normalize_project_path(&raw_name)?;
+            let data_len = r.u32()? as usize;
+            total = total
+                .checked_add(data_len)
+                .ok_or_else(|| "项目包总长度溢出".to_owned())?;
+            if total > 256 * 1024 * 1024 {
+                return Err("项目文件总量超过 256 MiB".to_owned());
+            }
+            files.insert(name, r.take(data_len)?.to_vec());
+        }
+        Ok(Self { files })
+    }
+}
+
+fn normalize_project_path(path: &str) -> Result<String, String> {
+    let path = path.replace('\\', "/");
+    if path.is_empty()
+        || path.starts_with('/')
+        || path
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return Err(format!("项目路径不安全：`{path}`"));
+    }
+    Ok(path)
+}
+
+static PROJECT_FILES: LazyLock<Mutex<Option<Arc<ProjectFiles>>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+/// 上一遍 LaTeX 写出的辅助文件。目录重新选择时清空；同一项目重编译时保留，
+/// 供第二遍解析 `\ref`/`\pageref`/目录等交叉引用。
+static GENERATED_FILES: LazyLock<Mutex<BTreeMap<String, Vec<u8>>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+/// 可从排版器外部观察写入结果的内存 VFS。`EmbeddedFormatVfs` 会包住它，但
+/// `Arc` 句柄仍由调用方持有，所以排版结束后无需向下转型即可收集 `.aux`。
+#[derive(Debug, Clone)]
+struct SharedMemVfs {
+    files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+}
+
+impl SharedMemVfs {
+    fn new(files: BTreeMap<String, Vec<u8>>) -> Self {
+        Self {
+            files: Arc::new(Mutex::new(files)),
+        }
+    }
+
+    fn snapshot(&self) -> BTreeMap<String, Vec<u8>> {
+        self.files.lock().map(|v| v.clone()).unwrap_or_default()
+    }
+}
+
+impl ntex_io::Vfs for SharedMemVfs {
+    fn read(&mut self, path: &str) -> io::Result<Option<Vec<u8>>> {
+        Ok(self.files.lock().ok().and_then(|v| v.get(path).cloned()))
+    }
+
+    fn write(&mut self, path: &str, bytes: &[u8]) -> io::Result<()> {
+        let mut files = self
+            .files
+            .lock()
+            .map_err(|_| io::Error::other("项目 VFS 锁失效"))?;
+        files.insert(path.to_owned(), bytes.to_vec());
+        Ok(())
+    }
+
+    fn append(&mut self, path: &str, bytes: &[u8]) -> io::Result<()> {
+        let mut files = self
+            .files
+            .lock()
+            .map_err(|_| io::Error::other("项目 VFS 锁失效"))?;
+        files
+            .entry(path.to_owned())
+            .or_default()
+            .extend_from_slice(bytes);
+        Ok(())
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+}
+
 /// LaTeX 模式开关（宿主经 [`set_latex_mode`] 设置；**默认关**）。
 ///
 /// 开 = 编译时套用注入的 `.fmt`，且**不再预载 plain**——fmt 已含目标格式全量
@@ -429,20 +542,35 @@ fn compile_pipeline_assets(
         }
     }
     let mut ts = ntex_layout::Typesetter::with_tfm();
-    let mut vfs = ntex_io::MemVfs::new();
+    let mut initial_files = BTreeMap::new();
     // C 档：TeX 源文件灌进 MemVfs（wasm 无文件系统）——`\documentclass{article}`
     // 会 `\input article.cls`，`\usepackage{graphicx}` 会找 `graphicx.sty`；
     // 键用**文件主名**（与 TeX 的查找名一致），子目录只是打包时的来源路径。
     if let Some(assets) = &latex {
         for (name, bytes) in &assets.tex_files {
-            vfs.insert(name.clone(), bytes.clone());
+            initial_files.insert(name.clone(), bytes.clone());
         }
     }
-    ts.set_vfs(Box::new(vfs));
+    // 项目目录保留相对路径（如 `images/mesh.png`），并覆盖同名发行资产；
+    // 上一遍生成文件最后覆盖项目里的旧 aux，保证实时编辑时引用能收敛。
+    if let Ok(slot) = PROJECT_FILES.lock() {
+        if let Some(project) = slot.as_ref() {
+            initial_files.extend(project.files.iter().map(|(n, b)| (n.clone(), b.clone())));
+        }
+    }
+    if let Ok(generated) = GENERATED_FILES.lock() {
+        initial_files.extend(generated.iter().map(|(n, b)| (n.clone(), b.clone())));
+    }
+    let shared_vfs = SharedMemVfs::new(initial_files);
+    ts.set_vfs(Box::new(shared_vfs.clone()));
     // UTF-8 直写开关（M9 中文刀 3）：宿主在编译前设定，源文件即可直接写中文。
     // 走引擎参数注入口（而非在源码前拼 `\utfinputmode=1`）——后者会让 log 的
     // `l.N` 与编辑器行号错位一行（见 Typesetter::utf8_input_default 注释）。
     ts.set_utf8_input(utf8_input);
+    // WASM/Tauri 最终虽仍以 DVI 承载页面，但图片通道实现的是 pdfTeX 的
+    // `\pdfximage` 原语。打开兼容位让 graphics.cfg 选择 pdftex.def；用户源
+    // 显式 `\pdfoutput=0` 仍可后写覆盖。
+    ts.set_pdf_output(latex.is_some());
     // CJK 字体回落（workbench 档）：宿主经 [`set_fallback_font`] 下发回落
     // 字体名（前端在 `set_otf_font` 注入 Fandol 后设 `FandolSong-Regular`）。
     // char_node 里当前字体缺字形且码位 > 0xFF 时自动改用它——源文件不写
@@ -466,6 +594,15 @@ fn compile_pipeline_assets(
     // 出错也要收转录：TeX 语义是错误上下文行进 log，作业不止于 stderr。
     let result = ts.typeset_dvi(tex);
     let transcript = ts.take_transcript();
+    // 收集本遍写出的辅助文件，为紧随其后的第二遍编译保留。只持久化 TeX
+    // 派生物，不把发行资产/项目输入复制进全局表。
+    if let Ok(mut generated) = GENERATED_FILES.lock() {
+        for (name, bytes) in shared_vfs.snapshot() {
+            if is_generated_file(&name) {
+                generated.insert(name, bytes);
+            }
+        }
+    }
     let (pages, fonts) = match result {
         Ok(v) => v,
         // 硬失败也要把 TeX「首现场」带出去：`\read 流未打开` 只是症状，真因
@@ -504,6 +641,24 @@ fn compile_pipeline_assets(
     })
 }
 
+fn is_generated_file(name: &str) -> bool {
+    matches!(
+        name.rsplit_once('.').map(|(_, ext)| ext),
+        Some("aux" | "toc" | "out" | "lof" | "lot" | "bbl" | "blg")
+    )
+}
+
+/// LaTeX 工作台固定跑两遍：第一遍生成 aux，第二遍解析交叉引用。plain 维持
+/// 单遍，避免改变既有性能与副作用口径。
+fn compile_pipeline_stable(tex: &str) -> ntex_core::error::Result<Compiled> {
+    let first = compile_pipeline(tex)?;
+    if LATEX_MODE.load(Ordering::Relaxed) {
+        compile_pipeline(tex)
+    } else {
+        Ok(first)
+    }
+}
+
 // ---------- wasm-bindgen 导出面 ----------
 
 /// DVI 字节 → PDF 字节（两个导出面共用；`pages` 仅作 0 页守卫）。
@@ -529,7 +684,7 @@ fn pdf_from_dvi(dvi: &[u8], pages: u32) -> Result<Vec<u8>, String> {
 #[wasm_bindgen]
 pub fn compile_tex(tex: &str) -> Result<CompileResult, JsError> {
     panic_trace::install();
-    match compile_pipeline(tex) {
+    match compile_pipeline_stable(tex) {
         Ok(compiled) => Ok(CompileResult {
             dvi: compiled.dvi,
             transcript: compiled.transcript,
@@ -633,6 +788,85 @@ fn render_page_core(
     }
 }
 
+struct PreviewImageSpec {
+    width_sp: i64,
+    height_sp: i64,
+    name: String,
+}
+
+fn parse_preview_image(payload: &[u8]) -> Option<PreviewImageSpec> {
+    let text = std::str::from_utf8(payload).ok()?;
+    let rest = text.strip_prefix("ntex-image ")?;
+    let mut fields = rest.splitn(3, ' ');
+    let width_sp = fields.next()?.parse().ok()?;
+    let height_sp = fields.next()?.parse().ok()?;
+    let tail = fields.next()?;
+    let (len, name) = tail.split_once(' ')?;
+    let len: usize = len.parse().ok()?;
+    Some(PreviewImageSpec {
+        width_sp,
+        height_sp,
+        name: name.get(..len)?.to_owned(),
+    })
+}
+
+fn project_file(name: &str) -> Option<Vec<u8>> {
+    PROJECT_FILES
+        .lock()
+        .ok()?
+        .as_ref()?
+        .files
+        .get(name)
+        .cloned()
+}
+
+/// 把 DVI 中已结算缩放的 `ntex-image` special 叠到软光栅页面。DVI 当前点
+/// 是图片左下角，因此屏幕 top = 1in + v - 显示高。
+fn render_project_images(
+    pixmap: &mut ntex_backend::Pixmap,
+    dvi: &[u8],
+    page_index: u32,
+    dpi: f64,
+) -> Result<(), String> {
+    if dvi.is_empty() {
+        return Ok(());
+    }
+    let parsed = ntex_pdf::parse_dvi(dvi).map_err(|e| format!("解析图片 DVI：{e}"))?;
+    let Some(page) = parsed.pages.get(page_index as usize) else {
+        return Ok(());
+    };
+    let px_per_sp = dpi / 72.0 / 65_536.0;
+    let margin = dpi; // 默认 72pt = 1in
+    for op in &page.ops {
+        let ntex_pdf::DrawOp::Special { h, v, payload } = op else {
+            continue;
+        };
+        let Some(spec) = parse_preview_image(payload) else {
+            continue;
+        };
+        let bytes = project_file(&spec.name)
+            .ok_or_else(|| format!("图片 `{}` 未在已加载项目目录中", spec.name))?;
+        let decoded = ntex_pdf::image::decode_png_rgb(&bytes)
+            .map_err(|e| format!("预览图片 `{}`：{e}", spec.name))?;
+        let width = spec.width_sp as f64 * px_per_sp;
+        let height = spec.height_sp as f64 * px_per_sp;
+        let x = margin + *h as f64 * px_per_sp;
+        let y = margin + *v as f64 * px_per_sp - height;
+        if !pixmap.blit_rgb_scaled(
+            x,
+            y,
+            width,
+            height,
+            decoded.width,
+            decoded.height,
+            &decoded.rgb,
+        ) {
+            return Err(format!("预览图片 `{}` 的尺寸或像素数据非法", spec.name));
+        }
+    }
+    Ok(())
+}
+
 /// 编译产物句柄：持有整页盒树与字体度量常驻，可反复按页/按 dpi/按开关渲染
 /// （**不重排版**）——实时预览的 JS 侧锚点：编辑防抖后重建 Document，
 /// 翻页/调 dpi/切 overlay 只调 [`Document::render_page`]。
@@ -722,7 +956,7 @@ impl Document {
     /// [`Document::set_glyphs`] 控制（默认方框）。
     pub fn render_page(&self, index: u32, dpi: f64, debug: bool) -> Result<PageImage, JsError> {
         panic_trace::install();
-        render_page_core(
+        let mut pixmap = render_page_core(
             &self.pages,
             &self.font_metrics,
             index,
@@ -730,12 +964,13 @@ impl Document {
             debug,
             self.use_glyphs,
         )
-        .map(|pm| PageImage {
-            width: pm.width(),
-            height: pm.height(),
-            rgba: pm.data().to_vec(),
+        .map_err(|e| JsError::new(&e))?;
+        render_project_images(&mut pixmap, &self.dvi, index, dpi).map_err(|e| JsError::new(&e))?;
+        Ok(PageImage {
+            width: pixmap.width(),
+            height: pixmap.height(),
+            rgba: pixmap.data().to_vec(),
         })
-        .map_err(|e| JsError::new(&e))
     }
 }
 
@@ -821,7 +1056,7 @@ mod panic_trace {
 #[wasm_bindgen]
 pub fn compile_document(tex: &str) -> Result<Document, JsError> {
     panic_trace::install();
-    match compile_pipeline(tex) {
+    match compile_pipeline_stable(tex) {
         Ok(c) => Ok(Document {
             pages: c.pages,
             font_metrics: c.font_metrics,
@@ -958,6 +1193,60 @@ pub fn set_fallback_font(name: Option<String>) {
     if let Ok(mut slot) = FALLBACK_FONT.lock() {
         *slot = name.filter(|n| !n.is_empty());
     }
+}
+
+/// 注入用户选择的项目目录。宿主把所有文件按 [`PROJECT_MAGIC`] 契约打包，
+/// 文件名保留相对路径；后一次调用整体替换前一次并清空跨项目辅助文件。
+#[wasm_bindgen]
+pub fn set_project_files(bytes: &[u8]) -> Result<(), JsError> {
+    panic_trace::install();
+    let project = ProjectFiles::from_bundle(bytes).map_err(|e| JsError::new(&e))?;
+    ntex_pdf::clear_image_bytes();
+    for (name, data) in &project.files {
+        if is_image_path(name) {
+            ntex_pdf::register_image_bytes(name, data);
+        }
+    }
+    let mut slot = PROJECT_FILES
+        .lock()
+        .map_err(|_| JsError::new("项目文件注册表锁失效（上次 panic 污染）"))?;
+    *slot = Some(Arc::new(project));
+    if let Ok(mut generated) = GENERATED_FILES.lock() {
+        generated.clear();
+    }
+    Ok(())
+}
+
+/// 清空当前项目目录及其 aux/toc 缓存。
+#[wasm_bindgen]
+pub fn clear_project_files() {
+    if let Ok(mut slot) = PROJECT_FILES.lock() {
+        *slot = None;
+    }
+    if let Ok(mut generated) = GENERATED_FILES.lock() {
+        generated.clear();
+    }
+    ntex_pdf::clear_image_bytes();
+}
+
+/// 当前项目文件概要，供 Tauri 状态栏回显。
+#[wasm_bindgen]
+pub fn project_summary() -> Option<String> {
+    let slot = PROJECT_FILES.lock().ok()?;
+    let project = slot.as_ref()?;
+    let images = project.files.keys().filter(|n| is_image_path(n)).count();
+    Some(format!("{} 文件 · {images} 图片", project.files.len()))
+}
+
+fn is_image_path(name: &str) -> bool {
+    name.rsplit_once('.')
+        .map(|(_, ext)| {
+            matches!(
+                ext.to_ascii_lowercase().as_str(),
+                "png" | "jpg" | "jpeg" | "pdf" | "eps"
+            )
+        })
+        .unwrap_or(false)
 }
 
 /// 注入 C 档发行资产包（**一次调用装齐** fmt + TeX 文件 + 额外 TFM 度量）。
@@ -1958,5 +2247,67 @@ mod tests {
             "无 fmt 不该出现 LaTeX 类载入：{}",
             compiled.transcript
         );
+    }
+
+    /// Tauri 项目目录闭环：相对路径图片进入 VFS，graphicx 选择 pdftex.def，
+    /// 两遍编译解析引用，预览画出位图，PDF 写出 Image XObject。
+    #[test]
+    fn project_directory_graphicx_preview_and_pdf_roundtrip() {
+        // 1x1 红色 RGB PNG；CRC 在当前解码器中不参与语义校验。
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        let mut push_png_chunk = |tag: &[u8; 4], data: &[u8]| {
+            png.extend_from_slice(&(data.len() as u32).to_be_bytes());
+            png.extend_from_slice(tag);
+            png.extend_from_slice(data);
+            png.extend_from_slice(&[0; 4]); // 解码器不校验 CRC
+        };
+        push_png_chunk(b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0]);
+        push_png_chunk(
+            b"IDAT",
+            &[0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0, 0, 3, 1, 1, 0],
+        );
+        push_png_chunk(b"IEND", &[]);
+        ntex_pdf::image::decode_png_rgb(&png).expect("测试 PNG 应合法");
+
+        let mut project = PROJECT_MAGIC.to_vec();
+        project.extend_from_slice(&1u32.to_le_bytes());
+        let name = "images/mesh.png";
+        project.extend_from_slice(&(name.len() as u32).to_le_bytes());
+        project.extend_from_slice(name.as_bytes());
+        project.extend_from_slice(&(png.len() as u32).to_le_bytes());
+        project.extend_from_slice(&png);
+
+        set_bundle(&repo_bundle()).expect("发行资产应注入");
+        set_project_files(&project).expect("项目目录应注入");
+        set_latex_mode(true);
+        let source = "\\documentclass{article}\n\\usepackage{graphicx}\n\
+            \\graphicspath{{images/}}\n\\begin{document}\n\\begin{figure}[h]\n\
+            \\centering\\includegraphics[width=0.75\\textwidth]{mesh}\n\
+            \\caption{A nice plot.}\\label{fig:mesh1}\\end{figure}\n\
+            See figure \\ref{fig:mesh1} on page \\pageref{fig:mesh1}.\n\\end{document}";
+        let doc = compile_document(source).expect("graphicx 项目应完成两遍编译");
+        assert!(doc.page_count() > 0, "应至少产出一页");
+        assert!(
+            doc.transcript().contains("Driver file: pdftex.def"),
+            "工作台应选择 pdftex 图片驱动：{}",
+            doc.transcript()
+        );
+        assert!(
+            !doc.transcript().contains("undefined references"),
+            "第二遍后交叉引用应收敛：{}",
+            doc.transcript()
+        );
+        let image = doc.render_page(0, 72.0, false).expect("图片预览应成功");
+        assert!(
+            image.rgba.chunks_exact(4).any(|p| p[0] > 200 && p[1] < 80 && p[2] < 80),
+            "预览像素中应出现红色项目图片"
+        );
+        let pdf = doc.pdf_bytes().expect("带图 PDF 应导出");
+        assert!(
+            String::from_utf8_lossy(&pdf).contains("/Subtype /Image"),
+            "PDF 应包含 Image XObject"
+        );
+        set_latex_mode(false);
+        clear_project_files();
     }
 }

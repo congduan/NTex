@@ -22,11 +22,35 @@
 
 use std::collections::BTreeMap;
 use std::io::{self, Write};
+use std::sync::{LazyLock, Mutex};
 
 use crate::cid::{self, CidMap, Mapping};
 use crate::dvi::{DrawOp, Dvi};
 use crate::otf::load_otf;
 use crate::type1::load_pfb;
+
+/// WASM/Tauri 注入的图片字节。native 路径仍可使用 `PdfOptions::input_paths`；
+/// 无文件系统目标则由宿主按 TeX 文件名注册到这里。
+static IMAGE_BYTES: LazyLock<Mutex<BTreeMap<String, Vec<u8>>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+/// 注册或覆盖一张图片的原始字节。
+pub fn register_image_bytes(name: &str, bytes: &[u8]) {
+    if let Ok(mut images) = IMAGE_BYTES.lock() {
+        images.insert(name.to_owned(), bytes.to_vec());
+    }
+}
+
+/// 清空宿主图片注册表（切换项目目录时避免旧项目同名图片泄漏）。
+pub fn clear_image_bytes() {
+    if let Ok(mut images) = IMAGE_BYTES.lock() {
+        images.clear();
+    }
+}
+
+fn registered_image(name: &str) -> Option<Vec<u8>> {
+    IMAGE_BYTES.lock().ok()?.get(name).cloned()
+}
 
 /// DVI 单位：1pt = 65536sp（mag=1000）。
 const SP_PER_PT: f64 = 65_536.0;
@@ -110,7 +134,10 @@ fn ensure_image(
     if let Some(&i) = index.get(&spec.name) {
         return Ok(i);
     }
-    let path = if std::path::Path::new(&spec.name).is_absolute() {
+    let injected = registered_image(&spec.name);
+    let path = if injected.is_some() {
+        None
+    } else if std::path::Path::new(&spec.name).is_absolute() {
         Some(std::path::PathBuf::from(&spec.name))
     } else {
         input_paths
@@ -118,12 +145,15 @@ fn ensure_image(
             .map(|d| std::path::Path::new(d).join(&spec.name))
             .find(|p| p.exists())
     };
-    let Some(path) = path else {
-        return Err(format!("文件未找到（搜索路径 {input_paths:?}）"));
+    let (data, origin) = match (injected, path) {
+        (Some(data), _) => (data, format!("宿主图片 {}", spec.name)),
+        (None, Some(path)) => {
+            let data = std::fs::read(&path).map_err(|e| format!("读取 {}：{e}", path.display()))?;
+            (data, path.display().to_string())
+        }
+        (None, None) => return Err(format!("文件未找到（搜索路径 {input_paths:?}）")),
     };
-    let data = std::fs::read(&path).map_err(|e| format!("读取 {}：{e}", path.display()))?;
-    let decoded =
-        crate::image::decode_png(&data).map_err(|e| format!("{}：{e}", path.display()))?;
+    let decoded = crate::image::decode_png(&data).map_err(|e| format!("{origin}：{e}"))?;
     let idx = images.len();
     images.push(ImageEntry {
         width: decoded.width,
@@ -229,15 +259,7 @@ pub fn write_pdf(dvi: &Dvi, opts: &PdfOptions) -> io::Result<Vec<u8>> {
         contents.push(c);
     }
 
-    build_document(
-        dvi,
-        &contents,
-        &forms,
-        &used,
-        opts,
-        &images,
-        &page_images,
-    )
+    build_document(dvi, &contents, &forms, &used, opts, &images, &page_images)
 }
 
 /// 写一行字符（一个 `TJ` 数组）。

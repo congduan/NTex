@@ -6,6 +6,7 @@
 import init, {
   compile_document, demo_tex, engine_version, set_glyph_font, set_otf_font, set_utf8_input,
   set_fallback_font, set_pfb_font, set_bundle, set_latex_mode, latex_mode, bundle_summary,
+  set_project_files, clear_project_files, project_summary,
 } from './pkg/ntex_wasm.js';
 
 const $ = (id) => document.getElementById(id);
@@ -30,6 +31,7 @@ const state = {
   // PDF 导出进行中：compileNow 据此跳过 free()（导出用的是旧 doc 的 DVI，
   // 中途被 free 会 use-after-free 直接 panic）。
   exporting: false,
+  projectName: null,
 };
 // 已注入 wasm 的 PFB 名单（进程级注册表幂等，Set 只是省重复 fetch）
 const pfbReady = new Set();
@@ -193,6 +195,7 @@ async function boot() {
   // LaTeX 资产：本地 IPC（一次取齐 ~14 MB，几十毫秒），先于首编译——
   // 否则首屏的 LaTeX 文档会先按 plain 排一遍（实参泄漏成正文）再重排。
   await loadLatexAssets();
+  $('open-project').disabled = false;
   editor.value = localStorage.getItem(DRAFT_KEY) ?? demo_tex();
   refreshOverlay();
   compileNow();
@@ -203,6 +206,82 @@ async function boot() {
   // 仅重渲染救不回坏掉的页树。
   if (state.fontsReady) compileNow(); else renderPage();
 }
+
+/* ---------- 项目目录：相对路径文件 → WASM MemVfs ---------- */
+
+const PROJECT_MAGIC = new TextEncoder().encode('NTEXPRJ1');
+
+function projectPath(file) {
+  const raw = (file.webkitRelativePath || file.name).replaceAll('\\', '/');
+  const slash = raw.indexOf('/');
+  return slash >= 0 ? raw.slice(slash + 1) : raw;
+}
+
+async function buildProjectBundle(files) {
+  const enc = new TextEncoder();
+  const entries = [];
+  let total = PROJECT_MAGIC.length + 4;
+  for (const file of files) {
+    const path = projectPath(file);
+    if (!path || path.split('/').some((p) => !p || p === '.' || p === '..')) continue;
+    const name = enc.encode(path);
+    const data = new Uint8Array(await file.arrayBuffer());
+    total += 8 + name.length + data.length;
+    if (total > 256 * 1024 * 1024) throw new Error('项目文件总量超过 256 MiB');
+    entries.push({ path, name, data, file });
+  }
+  const out = new Uint8Array(total);
+  const view = new DataView(out.buffer);
+  let pos = 0;
+  out.set(PROJECT_MAGIC, pos); pos += PROJECT_MAGIC.length;
+  view.setUint32(pos, entries.length, true); pos += 4;
+  for (const entry of entries) {
+    view.setUint32(pos, entry.name.length, true); pos += 4;
+    out.set(entry.name, pos); pos += entry.name.length;
+    view.setUint32(pos, entry.data.length, true); pos += 4;
+    out.set(entry.data, pos); pos += entry.data.length;
+  }
+  return { bytes: out, entries };
+}
+
+function selectMainTex(entries) {
+  const tex = entries.filter((e) => e.path.toLowerCase().endsWith('.tex'));
+  if (!tex.length) return null;
+  return tex.find((e) => e.path.toLowerCase() === 'main.tex')
+    || tex.find((e) => e.path.toLowerCase().endsWith('/main.tex'))
+    || tex.sort((a, b) => a.path.localeCompare(b.path))[0];
+}
+
+async function openProject(files) {
+  if (!files.length) return;
+  setStatus('busy', '加载项目…');
+  try {
+    const { bytes, entries } = await buildProjectBundle(files);
+    const main = selectMainTex(entries);
+    if (!main) throw new Error('所选目录中没有 .tex 文件');
+    set_project_files(bytes);
+    const root = (files[0].webkitRelativePath || '').split('/')[0] || '项目';
+    state.projectName = root;
+    editor.value = await main.file.text();
+    refreshOverlay();
+    $('project-label').textContent = `${root} · ${main.path} · ${project_summary() ?? `${entries.length} 文件`}`;
+    clearTimeout(state.timer);
+    compileNow();
+  } catch (e) {
+    clear_project_files();
+    state.projectName = null;
+    $('project-label').textContent = '项目加载失败';
+    showErrorBar(`项目目录加载失败：${e}`);
+    setStatus('err', '项目加载失败');
+  }
+}
+
+$('open-project').addEventListener('click', () => $('project-input').click());
+$('project-input').addEventListener('change', (e) => {
+  openProject([...e.target.files]).catch((err) => showErrorBar(`项目目录加载异常：${err}`));
+  // 同一个目录也允许再次选择刷新快照。
+  e.target.value = '';
+});
 
 function schedule() {
   clearTimeout(state.timer);

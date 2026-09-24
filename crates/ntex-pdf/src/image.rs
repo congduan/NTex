@@ -26,6 +26,15 @@ pub struct DecodedPng {
     pub smask: Option<Vec<u8>>,
 }
 
+/// 预览后端使用的未压缩 PNG 像素。RGB 已按白底合成；`alpha` 保留原始
+/// 透明度，供需要独立遮罩的调用方使用。
+pub struct DecodedRgb {
+    pub width: u32,
+    pub height: u32,
+    pub rgb: Vec<u8>,
+    pub alpha: Option<Vec<u8>>,
+}
+
 /// PNG 解码失败（含"特性不支持"——调用方降级为跳图 + 警告，不 panic）。
 #[derive(Debug)]
 pub struct PngError(pub String);
@@ -39,7 +48,7 @@ impl std::fmt::Display for PngError {
 impl std::error::Error for PngError {}
 
 /// 解码 PNG 字节为 PDF 素材。不支持的颜色类型/位深/隔行 → Err（优雅降级）。
-pub fn decode_png(data: &[u8]) -> Result<DecodedPng, PngError> {
+pub fn decode_png_rgb(data: &[u8]) -> Result<DecodedRgb, PngError> {
     const SIG: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
     if data.len() < 8 || data[..8] != SIG {
         return Err(PngError("非 PNG 签名".into()));
@@ -50,8 +59,8 @@ pub fn decode_png(data: &[u8]) -> Result<DecodedPng, PngError> {
     let mut ihdr: Option<[u8; 13]> = None;
     let mut idat: Vec<u8> = Vec::new();
     while pos + 8 <= data.len() {
-        let len = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
-            as usize;
+        let len =
+            u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
         let Some(typ) = data.get(pos + 4..pos + 8) else {
             break;
         };
@@ -70,8 +79,7 @@ pub fn decode_png(data: &[u8]) -> Result<DecodedPng, PngError> {
         }
         pos += 12 + len; // len + type + data + crc
     }
-    let Some([w0, w1, w2, w3, h0, h1, h2, h3, depth, ctype, comp, filter, interlace]) = ihdr
-    else {
+    let Some([w0, w1, w2, w3, h0, h1, h2, h3, depth, ctype, comp, filter, interlace]) = ihdr else {
         return Err(PngError("缺 IHDR".into()));
     };
     let width = u32::from_be_bytes([w0, w1, w2, w3]);
@@ -116,11 +124,11 @@ pub fn decode_png(data: &[u8]) -> Result<DecodedPng, PngError> {
             let b_up = prev[i];
             let c = if i >= channels { prev[i - channels] } else { 0 };
             cur[i] = match ftag {
-                0 => b,                                // None
-                1 => b.wrapping_add(a),                // Sub
-                2 => b.wrapping_add(b_up),             // Up
+                0 => b,                                                    // None
+                1 => b.wrapping_add(a),                                    // Sub
+                2 => b.wrapping_add(b_up),                                 // Up
                 3 => b.wrapping_add(((a as u16 + b_up as u16) / 2) as u8), // Average
-                4 => b.wrapping_add(paeth(a, b_up, c)), // Paeth
+                4 => b.wrapping_add(paeth(a, b_up, c)),                    // Paeth
                 other => return Err(PngError(format!("未知滤波类型 {other}"))),
             };
         }
@@ -141,9 +149,7 @@ pub fn decode_png(data: &[u8]) -> Result<DecodedPng, PngError> {
         if channels == 4 {
             let a = p[3];
             // 合成到白底：out = c*a + 255*(1-a)（整数近似：+127 圆整）。
-            let over = |c: u8| {
-                (c as u32 * a as u32 + 255 * (255 - a as u32) + 127) / 255
-            } as u8;
+            let over = |c: u8| { (c as u32 * a as u32 + 255 * (255 - a as u32) + 127) / 255 } as u8;
             rgb.extend_from_slice(&[over(r), over(g), over(b)]);
             smask.as_mut().unwrap().push(a);
         } else {
@@ -151,11 +157,22 @@ pub fn decode_png(data: &[u8]) -> Result<DecodedPng, PngError> {
         }
     }
 
-    Ok(DecodedPng {
+    Ok(DecodedRgb {
         width,
         height,
-        rgb: deflate(&rgb),
-        smask: smask.map(|s| deflate(&s)),
+        rgb,
+        alpha: smask,
+    })
+}
+
+/// 解码 PNG 并转成 PDF Image XObject 需要的 zlib 压缩流。
+pub fn decode_png(data: &[u8]) -> Result<DecodedPng, PngError> {
+    let raw = decode_png_rgb(data)?;
+    Ok(DecodedPng {
+        width: raw.width,
+        height: raw.height,
+        rgb: deflate(&raw.rgb),
+        smask: raw.alpha.map(|a| deflate(&a)),
     })
 }
 
@@ -185,8 +202,7 @@ fn inflate(data: &[u8]) -> Result<Vec<u8>, PngError> {
 /// zlib deflate（PDF FlateDecode 同为 zlib 流；压缩级默认 6，图源是线图时
 /// 相对原始 RGB 仍大副收缩）。
 fn deflate(data: &[u8]) -> Vec<u8> {
-    let mut enc =
-        flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
     let _ = enc.write_all(data);
     enc.finish().unwrap_or_default()
 }

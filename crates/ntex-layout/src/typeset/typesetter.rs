@@ -292,6 +292,11 @@ pub struct Typesetter {
     /// 默认关：bytes 是引擎既有语义，TRIP/ETRIP/expl3/latex-probe 口径零
     /// 影响（`ntex-wasm` 的 Tauri/浏览器前端显式打开）。
     utf8_input_default: bool,
+    /// PDF 模式默认开关（`\pdfoutput`，misc 63）。NTex 最终仍写 DVI，但
+    /// workbench 可打开此兼容位，让 `graphics.cfg` 选择 `pdftex.def`，从而
+    /// 走引擎实现的 `\pdfximage`/`\pdfrefximage` 图片管线。
+    /// 默认关，保持 native DVI/TRIP 口径不变；用户源内显式赋值后写覆盖。
+    pdf_output_default: bool,
     /// CJK 字间断点默认开关（`\cjkbreakmode`，misc 66）：做成引擎级默认值
     /// 而非动 `\cjkbreakmode` 的 INITEX 默认——后者保持 0（tex.web 原义：汉字
     /// 之间既无胶水也无断点，plain/TRIP/ETRIP 口径零影响）。前端（CLI
@@ -341,6 +346,7 @@ impl Typesetter {
             preload_hyphen: false,
             preload_compat: false,
             utf8_input_default: false,
+            pdf_output_default: false,
             cjk_break_mode_default: false,
             fallback_font: None,
             embedded_vfs_installed: false,
@@ -446,6 +452,12 @@ impl Typesetter {
         self.apply_utf8_input_default();
     }
 
+    /// 设置 workbench 的 PDF 兼容模式。打开后，每次排版入口先置
+    /// `\pdfoutput=1`；用户源码仍可显式改回 0。
+    pub fn set_pdf_output(&mut self, on: bool) {
+        self.pdf_output_default = on;
+    }
+
     /// [`Self::set_utf8_input`] 的 builder 形式（链式构造）。
     pub fn utf8_input(mut self, on: bool) -> Self {
         self.set_utf8_input(on);
@@ -492,6 +504,10 @@ impl Typesetter {
     /// 事件或 `sync_params` 对齐——`set_misc_int` 不发事件。且 install_builder
     /// 的 `sync_params` 在本调用之前跑，镜像里还是旧值。
     fn apply_layout_defaults(&mut self) {
+        self.expander.set_misc_int(
+            ntex_core::param::MISC_PDF_OUTPUT,
+            i64::from(self.pdf_output_default),
+        );
         let on = i64::from(self.cjk_break_mode_default);
         self.expander
             .set_misc_int(ntex_core::param::MISC_CJK_BREAK_MODE, on);
@@ -575,6 +591,7 @@ impl Typesetter {
             preload_hyphen: false,
             preload_compat: false,
             utf8_input_default: false,
+            pdf_output_default: false,
             cjk_break_mode_default: false,
             fallback_font: None,
             embedded_vfs_installed: false,
@@ -598,6 +615,7 @@ impl Typesetter {
             preload_hyphen: false,
             preload_compat: false,
             utf8_input_default: false,
+            pdf_output_default: false,
             cjk_break_mode_default: false,
             fallback_font: None,
             embedded_vfs_installed: false,

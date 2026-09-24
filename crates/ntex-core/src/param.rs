@@ -131,6 +131,10 @@ pub enum ParamValue {
 /// 下标与 [`crate::expand::int_param_index`] 的映射一致。
 pub const MISC_INTS: usize = 68;
 
+/// `\pdfoutput` 在 [`Params::misc`] 中的下标。0 选择 DVI 图形驱动；非 0
+/// 让兼容宏包选择 pdfTeX 图片原语（NTex 仍可把最终页面承载为 DVI）。
+pub const MISC_PDF_OUTPUT: usize = 63;
+
 /// `\utfinputmode` 在 [`Params::misc`] 中的下标（M9 中文刀 2）：
 /// 源文件输入编码开关，0 = bytes（默认）、非 0 = UTF-8 解码。
 pub const MISC_UTF_INPUT_MODE: usize = 65;
