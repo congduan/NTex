@@ -1,7 +1,8 @@
 # NTex 最小 TeX 发行闭包
 
 本目录是第二十四刀加入的自包含发行资产，目标是在新机器只安装 NTex、没有
-TinyTeX/TeX Live/kpsewhich 的情况下，仍能跑通常见 `\documentclass{article}` 文档。
+TinyTeX/TeX Live/kpsewhich 的情况下，仍能跑通常见 `\documentclass{article}` /
+`\documentclass{book}`（含 `\chapter`，2026-09-25 起）文档。
 
 ## 来源
 
@@ -26,60 +27,13 @@ TinyTeX/TeX Live/kpsewhich 的情况下，仍能跑通常见 `\documentclass{art
 
 ## 内容
 
-基础闭包固定为 `tex/latex/base/` 下 51 个文件：
+基础闭包**由 `ntex-pkg vendor` 按依赖闭包全量物化**（不再手抄）。2026-09-25 起闭包
+以 TL 包 `latex`（`latex.r79618`，171 个运行面文件）为锚，`book.cls`/`bk10|11|12.clo`
+随闭包一并入库；精确文件清单与版本由仓库根 [`ntex.lock`](../../ntex.lock) 钉死，
+逐文件名单随时可用下面命令重生成：
 
-```text
-article.cls
-expl3-code.tex
-expl3.ltx
-fontmath.ltx
-fonttext.ltx
-hyphen.ltx
-l3backend-dvips.def
-latex.ltx
-omlcmm.fd
-omlcmr.fd
-omllcmm.fd
-omscmr.fd
-omscmsy.fd
-omslcmsy.fd
-omxcmex.fd
-omxlcmex.fd
-ot1cmdh.fd
-ot1cmfib.fd
-ot1cmfr.fd
-ot1cmr.fd
-ot1cmss.fd
-ot1cmtt.fd
-ot1cmvtt.fd
-ot1lcmss.fd
-ot1lcmtt.fd
-preload.ltx
-size10.clo
-t1cmdh.fd
-t1cmfib.fd
-t1cmfr.fd
-t1cmr.fd
-t1cmss.fd
-t1cmtt.fd
-t1cmvtt.fd
-t1lcmss.fd
-t1lcmtt.fd
-ts1cmr.fd
-ts1cmss.fd
-ts1cmtt.fd
-ts1cmvtt.fd
-tulmdh.fd
-tulmr.fd
-tulmss.fd
-tulmssq.fd
-tulmtt.fd
-tulmvtt.fd
-ucmr.fd
-ucmss.fd
-ucmtt.fd
-ulasy.fd
-ullasy.fd
+```bash
+find tex/latex/base -type f | sort
 ```
 
 常用 article 文档补齐目录：
@@ -106,10 +60,10 @@ tex/generic/atbegshi/
 `\special` 画树线——ntex 引擎把 `\special` 当 whatsit 节点吞掉，故树形连线
 不可视、文本结构完好。
 
-当前 TeX 文件体量约 5.1MB（182 个文件），TFM 度量 643 件约 1.5MB（`assets/tfm/`
-顶层 78 件 + `ec/` 子目录 565 件）。入包时按**主名去重**（`tex/latex/base/` 与
-`tex/latex/l3kernel/` 有同名副本如 `expl3-code.tex`，wasm 侧 `MemVfs` 按键覆盖），
-故 C 档资产包实测为 **823 条 ≈11.7 MB**（179 tex + 643 tfm + 1 fmt）。
+当前 TeX 文件体量约 6.8MB（312 个文件，2026-09-25 book 闭包落盘后），TFM 度量 643 件
+约 1.5MB（`assets/tfm/` 顶层 78 件 + `ec/` 子目录 565 件）。入包时按**主名去重**
+（`tex/latex/base/` 与 `tex/latex/l3kernel/` 有同名副本如 `expl3-code.tex`，wasm 侧
+`MemVfs` 按键覆盖），入包精确条数随闭包演进而变，以打包端实测为准。
 完整文件清单可用：
 
 ```bash
@@ -163,10 +117,11 @@ ntex-pkg vendor <tlpdb> /tmp/tl-cache assets/tex-minimal --documentclass article
 若本机已装 TeX Live，可跳过 ① 直接把 `~/.TinyTeX` 当 `<TL 树根>` 喂给 `vendor`。
 **本机网络备注**：CTAN 主站与清华镜像被策略拦截（403），走阿里云镜像可用。
 
-> **已知缺口（2026-09-19 实测，未处理）**：以真实 `latex.r79618` 闭包为源对
-> `assets/tex-minimal` 做 dry-run，得 **一致 48 · 需刷新 7 · 新增 116（1.8MB）**。
-> 即本目录当前是闭包的**子集**（且已有 7 个文件版本落后）。是否补齐是**产品决策**
-> （见 plan.md §6.2 第 8 条的三层边界：T0 引导层有体积预算），故此处只记录差异，未擅自落盘。
+> **缺口处置（2026-09-25 已补齐）**：2026-09-19 曾登记「以真实 `latex.r79618` 闭包为源
+> 做 dry-run 得 一致 48 · 需刷新 7 · 新增 116（1.8MB），是否补齐待产品决策」。2026-09-25
+> 因 `\documentclass{book}` 需求正式落盘：`fetch --documentclass book`（同样解析到
+> `latex.r79618`）→ `vendor --write --lock ntex.lock`，复跑**一致 171 / 新增 0**（幂等），
+> `ntex-pkg check` 对同代 TLPDB 报「锁与当前 TLPDB 一致」。
 > 另：`tex/latex/misc/` 的 `lingmacros.sty`/`tree-dvips.sty` 取自 CTAN LaTeX209 目录，
 > **不在 TLPDB 闭包内**，`vendor` 无法推导，须手工保留。
 

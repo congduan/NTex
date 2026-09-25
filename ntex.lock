@@ -1,0 +1,11 @@
+ntex-lock 1
+# NTex 宏包契约（生成物，请勿手改；重生成：`ntex-pkg lock`）
+# 身份字段：name / revision / sha512；参考字段：category / size / files
+
+[[pkg]]
+name latex
+category Package
+revision 79618
+size 264336
+sha512 04d6380ef7c023f63192749080c15e6e47b873aa151e838a946439f5de4455cce1a872e688cf8a366363d09ddcf03cf6b588f3db0573160486afe9cbe0f514e1
+files 171

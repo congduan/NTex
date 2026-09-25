@@ -353,6 +353,11 @@ CLI `ntex-pkg`（`index`/`provide`/`resolve`/`lock`/`check`/`local`/**`vendor`**
   `latex` 而非 `latex-base-dev`（`tds_rank` 修复在真实库生效）。刻意简化（宿主 `curl`/`tar`
   当边缘、无 GPG 验签、无断点续传、缓存布局两套）见
   [docs/KNOWN-SIMPLIFICATIONS.md §9](docs/KNOWN-SIMPLIFICATIONS.md)。
+  **2026-09-25 补充**：`assets/tex-minimal` 对该闭包的缺口（新增 116 · 需刷新 7，当日曾登记
+  为待产品决策）已按 `\documentclass{book}` 需求落盘补齐——`fetch --documentclass book`
+  （同解析到 `latex.r79618`）→ `vendor --write --lock`，仓库根新增 `ntex.lock`（包 latex
+  r79618），复跑幂等（一致 171 / 新增 0）；`book.cls` + `bk10|11|12.clo` 随闭包入库，
+  `\documentclass{book}` + `\chapter` 文档经 `ntex-dvi` 端到端编译通过（1 页 DVI）。
 - [ ] **宏包管理·取料与接线（余项）**：取料层 ③ CTAN / ④ 离线归档 + GPG detached 验签 +
   `\usepackage` 缺包即报（MiKTeX 式一条命令补）↔ 引擎接线，目标机零 TeX Live
 - [ ] 引擎身份模拟（`\pdftexversion` 等）
