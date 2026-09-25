@@ -1020,6 +1020,11 @@ impl Expander {
                     self.fontdimens.remove(font, num);
                 }
             },
+            // 当前字体回滚（tex.web cur_font_loc 是 eqtb 字，随组恢复）。
+            // 只改 expander 镜像：排版侧 NodeBuilder 有自己的 font_stack
+            // （sink.rs group_begin/group_end 同语义），不再发 font_selected
+            // 事件，否则会把排版器已经回滚好的字体再改一次。
+            SavedValue::CurFont { prev } => self.cur_font = prev,
             SavedValue::DelCode { byte, prev } => match prev {
                 Some(v) => {
                     self.delcodes.insert(u32::from(byte), v);

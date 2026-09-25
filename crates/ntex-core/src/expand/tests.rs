@@ -466,6 +466,60 @@ mod tests {
         );
     }
 
+    /// `cur_font` 随组保存/恢复（tex.web `cur_font_loc` **是 eqtb 字**：
+    /// `set_font` 走 `define(cur_font_loc,…)`，组结束回滚）。
+    ///
+    /// 现场（2026-09-25）：`\LaTeX` 徽标里 `{\sbox\z@ T\vbox…\fontsize\sf@size\z@
+    /// \selectfont A…}` 的内层组把 cur_font 设成 cmr8/7 后不收口，第二个徽标起的
+    /// `\kern-.36em`/`\kern-.1667em`/`\lower.5ex` 全按内层字体的 quad/x-height
+    /// 算 → A/E 位置错、行宽偏。oracle（tex/plain 同名探针）：`\tenrm` 下
+    /// `1em`=10.0pt、`{\sevenrm 1em}`=7.97pt、**出组后必须回到 10.0pt**。
+    #[test]
+    fn cur_font_is_saved_and_restored_by_groups() {
+        /// 两个"字体"给可区分的 quad(6)/x_height(5)：首次 load = 10pt 档，之后 = 7pt 档。
+        #[derive(Debug, Default)]
+        struct TwoSizes {
+            loaded: bool,
+        }
+        impl FontLoader for TwoSizes {
+            fn load(&mut self, _name: &str, _at: Option<i64>, _scaled: Option<i64>) -> Result<u32> {
+                if self.loaded {
+                    Ok(2)
+                } else {
+                    self.loaded = true;
+                    Ok(1)
+                }
+            }
+
+            fn font_param(&mut self, font: u32, param: usize) -> Option<i64> {
+                match (font, param) {
+                    (1, 6) => Some(655_360), // 10pt quad
+                    (1, 5) => Some(282_168), // 10pt x_height
+                    (2, 6) => Some(522_470), // 7pt quad
+                    (2, 5) => Some(197_518), // 7pt x_height
+                    _ => None,
+                }
+            }
+        }
+
+        let mut e = Expander::new();
+        e.set_font_loader(Box::new(TwoSizes::default()));
+        e.run_source(
+            "\\font\\tenrm=cmr10 \\font\\sevenrm=cmr7 \\tenrm\
+             \\message{out=\\the\\dimexpr1em\\relax}\
+             {\\sevenrm\\message{in=\\the\\dimexpr1em\\relax}}\
+             \\message{after=\\the\\dimexpr1em\\relax}",
+        )
+        .unwrap();
+        let t = e.transcript();
+        assert!(t.contains("out=10.0pt"), "外层 em 应为 10pt：{t}");
+        assert!(t.contains("in=7.97"), "组内换字体后 em 应取内层 quad：{t}");
+        assert!(
+            t.contains("after=10.0pt"),
+            "出组后 em 必须回到外层字体（cur_font 组回滚）：{t}"
+        );
+    }
+
         #[test]
         fn fam_assign_and_the() {
             // \fam 是 misc[46]；注意 tex.web scan_int 的数字续位怪癖：

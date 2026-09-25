@@ -319,6 +319,20 @@ pub(crate) enum SavedValue {
         num: u32,
         prev: Option<i64>,
     },
+    /// 当前字体（tex.web `cur_font_loc`，它**是 eqtb 字**：`define(cur_font_loc,…)`
+    /// 随组保存/恢复）。
+    ///
+    /// 此前 `Expander::cur_font` 是裸字段、选择即永久生效——组内换字体
+    /// 出组泄漏，而 em/ex 内部单位（`\kern-.36em`、`\lower.5ex`、
+    /// `\fontdimen` 语境）正是读它算的：`\LaTeX` 徽标的 `\fontsize\sf@size`
+    /// 内层组把 cur_font 设成 cmr7 后不收口，第二个起的徽标全部改用 cmr7 的
+    /// quad（7.97224pt ≠ 10pt）→ `\kern-.36em` 少缩 0.73pt、`\TeX` 的
+    /// `-.1667em`/`.5ex` 同步偏，徽标 A 与 L/T 的相对位置错（2026-09-25 现场）。
+    /// 排版侧 `NodeBuilder` 早有 `font_stack`（sink.rs group_begin/end），
+    /// 缺的就是 expander 这一半。
+    CurFont {
+        prev: u32,
+    },
     /// `\delcode`：定界符码表项（ETRIP；组内局部保存）。
     DelCode {
         byte: u8,
@@ -2562,9 +2576,19 @@ impl Expander {
                         self.call_macro(csid, def)
                     }
                     SlotAction::Font(font) => {
-                        // tex.web：字体 cs 执行即 `cur_font:=f` + 推 sink
-                        // （排版器靠该事件切换当前字体）。expander 侧镜像
-                        // 同步维护，供 `\font` 作字体标识符时查询。
+                        // tex.web：字体 cs 执行即 `define(cur_font_loc,…)` +
+                        // 推 sink（排版器靠该事件切换当前字体）。cur_font 是
+                        // eqtb 字，**随组保存/恢复**（组内换字体只在本组生效；
+                        // em/ex 内部单位读它，泄漏会让组外 `\kern-.36em` 等
+                        // 用错字体算——`\LaTeX` 徽标现场）。
+                        if !self.is_global() && self.group_level > 0 {
+                            self.save_stack.push((
+                                self.group_level,
+                                SavedValue::CurFont {
+                                    prev: self.cur_font,
+                                },
+                            ));
+                        }
                         self.cur_font = font;
                         self.sink.font_selected(font)
                     }
