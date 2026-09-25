@@ -34,8 +34,9 @@
 //!    回落占位方框口径（渲染仍可用）。
 //! 5. PDF 导出（[`Document::pdf_bytes`] / [`CompileResult::pdf_bytes`]）：与
 //!    native `ntex-pdf` 同一份 DVI→PDF 代码，**字体嵌入只能来自宿主注入**——
-//!    TFM 8-bit 字体走 Type1 PFB（[`set_pfb_font`]），OTF 字体（中文 Fandol
-//!    等）经 [`set_otf_font`] 注入时顺带登记 Type0（裸 CFF）嵌入用字节
+//!    TFM 8-bit 字体优先复用 [`set_glyph_font`] 注入的预览 OTF（同一份槽位表，
+//!    Type0/CFF），兼容路径仍可走 Type1 PFB（[`set_pfb_font`]）；OTF 原生字体
+//!    （中文 Fandol 等）经 [`set_otf_font`] 注入时顺带登记 Type0（裸 CFF）嵌入用字节
 //!    （`ntex_pdf::otf::register_otf`）。`ntex-pdf` 的宿主查找链（环境变量
 //!    目录 / TeX Live 路径 / kpsewhich）为 native 专属，见
 //!    `ntex-pdf/src/type1.rs::read_host_pfb` 与 `otf.rs::read_host_otf`
@@ -732,7 +733,7 @@ impl CompileResult {
         self.fonts.clone()
     }
 
-    /// DVI **实际引用**的字体名（`fnt_def` 表）→ PDF 导出该注入的 PFB 清单。
+    /// DVI **实际引用**的字体名（`fnt_def` 表）→ PDF 导出所需字体清单。
     ///
     /// 与 [`CompileResult::fonts`] 的差别是导出正确性的关键：`fonts` 是已载入
     /// 全表（plain 预载 48 件 CM 全在），而 DVI 只给真正被 `set_font` 过的字体发
@@ -745,7 +746,7 @@ impl CompileResult {
     }
 
     /// PDF 字节（A4；与 [`Document::pdf_bytes`] 同口径，字体须先用
-    /// [`set_pfb_font`] 注册）。本方法每次调用都会重新解析 DVI——`compile_tex`
+    /// [`set_glyph_font`] / [`set_otf_font`] 或兼容的 [`set_pfb_font`] 注册）。本方法每次调用都会重新解析 DVI——`compile_tex`
     /// 路径只带字节不带页树；实时预览等重复导出场景请走 [`Document`] 句柄
     /// （页树常驻，成本仍是每次重排 PDF 对象）。
     pub fn pdf_bytes(&self) -> Result<Vec<u8>, JsError> {
@@ -912,11 +913,10 @@ impl Document {
         self.font_names.clone()
     }
 
-    /// DVI **实际引用**的字体名（`fnt_def` 表）→ PDF 导出该注入的 PFB 清单。
+    /// DVI **实际引用**的字体名（`fnt_def` 表）→ PDF 导出所需字体清单。
     ///
-    /// 导出前对本清单逐名 fetch `<name>.pfb` 并 [`set_pfb_font`] 注入即可；
-    /// 拿不到的字体名就是最终 PDF 里「有 `/BaseFont` 无 `/FontFile`」的那些，
-    /// 前端据此给一次可见提示（而不是静默产出打不开字体的 PDF）。
+    /// 工作台正常路径已由 [`set_glyph_font`] 把预览 OTF 同步登记给 PDF；PFB
+    /// 仅作为未加载 OTF 字体的兼容回落。
     ///
     /// 与 [`Document::fonts`] 的差别见后者说明；DVI 为空（0 页）时返回空表。
     pub fn used_fonts(&self) -> Vec<String> {
@@ -933,10 +933,9 @@ impl Document {
 
     /// PDF 字节（A4，与预览同页尺寸口径）。
     ///
-    /// 与 native `ntex-pdf` 命令共用 `ntex_pdf::convert`（DVI 解析 + Type1
-    /// 嵌入 + PDF 1.4 写出）。**字体嵌入依赖已注册的 PFB**：wasm 无文件系统，
-    /// `ntex-pdf` 的宿主查找链在浏览器里必然落空，故导出前须对本
-    /// [`Document::fonts`] 逐名 fetch `<name>.pfb` 并 [`set_pfb_font`] 注入。
+    /// 与 native `ntex-pdf` 命令共用 `ntex_pdf::convert`。工作台把预览所用的
+    /// Latin Modern OTF 同时登记给 PDF，TFM 槽位经同一编码表映射到 OTF CID，
+    /// 因而屏幕与下载文件不再使用两套字体；PFB 仍是兼容回落。
     ///
     /// 未注册的字体按 `ntex-pdf` 既有口径**降级**：`/BaseFont` 保留但不写
     /// `/FontFile` 流——多数查看器会以替代字体渲染或干脆留白，所以前端应在
@@ -1071,8 +1070,9 @@ pub fn compile_document(tex: &str) -> Result<Document, JsError> {
 
 /// 注入轮廓字体字节（OTF/TTF；`tex_name` 为 TeX 排版字体名如 `cmr10`）。
 ///
-/// **仅注册渲染字形通道**（ntex-backend `glyphs.rs::register_font_bytes`）——
-/// 用于"已有 TFM 度量（cmr10 等）+ 想补真字形轮廓"的场景。此后
+/// 同时注册屏幕字形通道与 PDF 的 8-bit OTF 通道——用于"已有 TFM 度量
+/// （cmr10 等）+ 想补真字形轮廓"的场景。PDF 仍使用 TFM 度量，只复用同一
+/// OTF 字形及 [`ntex_backend::glyphs::slot_to_unicode`] 编码表。此后
 /// [`Document::set_glyphs`]（true）渲染即走真字形轮廓，未注册字体逐字符
 /// 回落占位方框。坏字节返回 false 不 panic（引擎契约）。Latin Modern
 /// 与 CM 同源（度量一致），文件来源/许可见各前端 `fonts/` 目录 README。
@@ -1082,15 +1082,18 @@ pub fn compile_document(tex: &str) -> Result<Document, JsError> {
 /// 会在排版阶段就报 `not loadable`。
 #[wasm_bindgen]
 pub fn set_glyph_font(tex_name: &str, bytes: &[u8]) -> bool {
-    ntex_backend::glyphs::register_font_bytes(tex_name, bytes)
+    let glyph_ok = ntex_backend::glyphs::register_font_bytes(tex_name, bytes);
+    let slots: Vec<Option<u32>> = (0u8..=u8::MAX)
+        .map(|slot| ntex_backend::glyphs::slot_to_unicode(tex_name, slot))
+        .collect();
+    let pdf_ok = ntex_pdf::otf::register_otf_8bit(tex_name, bytes, &slots);
+    glyph_ok && pdf_ok
 }
 
 /// 注入 Type1（PFB）字体字节 → 供 PDF 导出嵌入（`ntex_pdf::type1::register_pfb`）。
 ///
-/// **与 [`set_glyph_font`] 是两条独立通道**，别混：
-/// - [`set_glyph_font`] 管**屏幕上的字形轮廓**（OTF/TTF，走 skrifa 提轮廓）；
-/// - 本条管 **Type1 字体程序**（PFB，原样写进 `/FontFile`）——只服务 TFM
-///   8-bit 字体（cmr10 等）的 PDF 导出。
+/// 这是 [`set_glyph_font`] 的兼容回落：后者已让屏幕与 PDF 共用 OTF；本条在
+/// 宿主只有 Type1 字体时原样写进 `/FontFile`，显式注入时优先于同名 OTF。
 ///
 /// 名字与 `doc.fonts`（DVI `fnt_def` 外部名，如 `cmr10`）一致；同名重复注册
 /// 为覆盖。字节非 PFB（段头不是 `0x80 0x01`，如误传 OTF）返回 false 不 panic。
@@ -2330,7 +2333,7 @@ mod tests {
         let image = doc.render_page(0, 72.0, false).expect("图片预览应成功");
         assert!(
             image
-                .rgba
+                .rgba()
                 .chunks_exact(4)
                 .any(|p| p[0] > 200 && p[1] < 80 && p[2] < 80),
             "预览像素中应出现红色项目图片"
@@ -2388,5 +2391,135 @@ mod tests {
                 "标题/脚注的居中标星标记应走 TS1 {name}：{used:?}"
             );
         }
+    }
+
+    /// **工作台字形覆盖面锁**（2026-09-25 现场回归）：凡 LaTeX 作业实际点名的
+    /// 字体，工作台必须①有 OTF 轮廓（`ui/main.js::GLYPH_FONTS` 里有名字、
+    /// `ui/fonts/` 里有文件）②有排版度量（C 档资产包里有 TFM）。
+    ///
+    /// 现场两条：`\LaTeX{}` 徽标的 A 走 `cmr8`（`\sf@size` = 8）、
+    /// `$E=mc^2$` 走 `cmmi12`+`cmr8`——名字表漏项时预览里是灰方框（用户截图）。
+    /// 探针覆盖 10/11/12pt 的**尺寸 × 字形**矩阵 + 数学 + TS1：漏登记的名字会被
+    /// 这句断言抓住，不需要维护第二份"应该有哪些字体"的手写清单。
+    #[test]
+    fn workbench_manifest_covers_fonts_used_by_latex_docs() {
+        let assets = Arc::new(LatexAssets::from_bundle(&repo_bundle()).expect("资产包应能解析"));
+        let mut probes: Vec<String> = vec![
+            // 用户现场 1：数学（cmmi12 + 上标 2 的 cmr8）
+            "\\documentclass[12pt, letterpaper]{article}\n\\begin{document}\n\
+             In physics, the mass-energy equivalence is stated by the equation \
+             $E=mc^2$, discovered in 1905 by Albert Einstein.\n\\end{document}"
+                .to_owned(),
+            // 用户现场 2：`\LaTeX{}` 徽标（A 走 cmr8）与 TS1 脚注标记
+            "\\documentclass[12pt, letterpaper]{article}\n\
+             \\title{My first LaTeX document}\n\
+             \\author{Hubert Farnsworth\\thanks{Funded by the Overleaf team.}}\n\
+             \\begin{document}\n\\maketitle\n\
+             We have now added a title to our first \\LaTeX{} document!\n\\end{document}"
+                .to_owned(),
+            // 显示数学与大型算符（cmex*/icmex*/icmsy* 大字号档）
+            "\\documentclass[12pt, letterpaper]{article}\n\\begin{document}\n\
+             \\[ \\sum_{i=1}^{n} \\int_0^\\infty \\frac{a}{b} = \\sqrt{x^2+y^2} \\]\n\
+             $$\\left(\\bigcup_{k} A_k\\right) \\prod_k B_k$$\n\\end{document}"
+                .to_owned(),
+        ];
+        // 尺寸 × 字形矩阵（10/11/12pt 三档，覆盖 \tiny…\huge 与各字面）
+        for size in ["10pt", "11pt", "12pt"] {
+            let sizes = [
+                "tiny",
+                "scriptsize",
+                "footnotesize",
+                "small",
+                "normalsize",
+                "large",
+                "Large",
+                "LARGE",
+                "huge",
+            ];
+            let shapes = [
+                "",
+                "\\bfseries",
+                "\\itshape",
+                "\\slshape",
+                "\\scshape",
+                "\\sffamily",
+                "\\ttfamily",
+                "\\sffamily\\bfseries",
+                "\\sffamily\\itshape",
+                "\\ttfamily\\itshape",
+                "\\scshape\\bfseries",
+                "\\itshape\\bfseries",
+            ];
+            let mut src = format!("\\documentclass[{size}]{{article}}\n\\begin{{document}}\n");
+            for sh in shapes {
+                for s in sizes {
+                    src.push_str(&format!("{{\\{s}{sh} x}} "));
+                }
+                src.push('\n');
+            }
+            src.push_str("\\end{document}\n");
+            probes.push(src);
+        }
+
+        let (manifest, fonts_dir) = workbench_manifest();
+        let mut tfm_src = EmbeddedTfmSource {
+            latex: Some(assets.clone()),
+        };
+        let mut checked = 0usize;
+        for probe in &probes {
+            let compiled = compile_pipeline_assets(probe, true, Some(assets.clone()))
+                .expect("LaTeX 作业应能编译");
+            // 取 **DVI 的字体表**（页面真正点名的字体）：`Compiled::font_names` 是
+            // 引擎字体表（含 fmt 预载的 `line10`/`lcircle10` 等画图字体与重复项），
+            // 拿它当"文档用到的字体"会把工作台不该有的字体也算进来。
+            let used = ntex_pdf::parse_dvi(&compiled.dvi)
+                .expect("DVI 应可解析")
+                .font_names;
+            for name in &used {
+                let Some(path) = manifest.get(name) else {
+                    panic!(
+                        "工作台字形名单缺 {name}（预览里会是灰方框）；现场：{:?}",
+                        &probe[..probe.len().min(80)]
+                    );
+                };
+                let file = path.strip_prefix("fonts/").unwrap_or(path);
+                assert!(
+                    fonts_dir.join(file).is_file(),
+                    "名单里 {name} → {path} 文件不存在"
+                );
+                assert!(
+                    ntex_layout::TfmSource::tfm_bytes(&mut tfm_src, name).is_some(),
+                    "资产包缺 {name} 的 TFM 度量（工作台会报字体不可载）"
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked >= 60, "探针应覆盖成规模的字体（实测 {checked}）");
+    }
+
+    /// 读工作台字形名单（`ui/main.js` 的 `GLYPH_FONTS`/`CJK_FONTS` 条目）与
+    /// 字体目录，供上面两条覆盖面测试查表。
+    fn workbench_manifest() -> (
+        std::collections::HashMap<String, String>,
+        std::path::PathBuf,
+    ) {
+        let ui = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ntex-tauri/ui");
+        let js = std::fs::read_to_string(ui.join("main.js")).expect("读 ui/main.js");
+        let mut map = std::collections::HashMap::new();
+        for line in js.lines() {
+            let Some(rest) = line.trim().strip_prefix("['") else {
+                continue;
+            };
+            let Some((name, rest)) = rest.split_once("', '") else {
+                continue;
+            };
+            let Some((path, _)) = rest.split_once("']") else {
+                continue;
+            };
+            if path.starts_with("fonts/") {
+                map.insert(name.to_owned(), path.to_owned());
+            }
+        }
+        (map, ui.join("fonts"))
     }
 }

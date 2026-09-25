@@ -10,21 +10,34 @@ Latin Modern OpenType（与 Computer Modern 同源，度量一致；TeX 字体�
 wasm 导出 `set_glyph_font(tex_name, bytes)` 注入进程级注册表（wasm 无文件
 系统），`Document.set_glyphs(true)` 后渲染走真字形轮廓。
 
-| 文件 | TeX 字体名 | 用途 |
+**覆盖面口径**（2026-09-25 定）：本目录必须覆盖 LaTeX 实际会点名的**全部** CM
+字体名——`tex/latex/base/{ot1cm*,om*}.fd` 声明的尺寸 × 字形矩阵，加上 EC「TC」
+TS1 的 5 个随包族。名字清单在 `../main.js::GLYPH_FONTS`（唯一手写处），
+映射与命名规则在 `lm_file_name`；两侧一致性 + 文档级覆盖面由
+`glyphs.rs::ui_font_manifest_matches_rust_claim` 与
+`ntex-wasm` 的 `workbench_manifest_covers_fonts_used_by_latex_docs` 钉住。
+**漏一个名字 = 该字体在预览里整段灰方框**（现场两条：`\LaTeX` 徽标的 A 走
+`cmr8`、`$E=mc^2$` 走 `cmmi12`+`cmr8`）。
+
+| 组 | 文件（LM 命名） | 对应 TeX 名 |
 |---|---|---|
-| `lmroman10-regular.otf` | cmr10 | 正文罗马 |
-| `lmroman10-bold.otf` | cmbx10 | 粗体 |
-| `lmroman10-italic.otf` | cmti10 | 意大利体 |
-| `lmmono10-regular.otf` | cmtt10 | 打字机体 |
-| `lmroman12-regular.otf` | cmr12 | 标题字号 |
-| `lmroman7-regular.otf` | cmr7 | 脚本层罗马 |
-| `lmroman5-regular.otf` | cmr5 | 二阶脚本罗马 |
-| `latinmodern-math.otf` | cmmi10/7/5、cmsy10/7/5、cmex10 | 数学族（斜体字母/符号/大算符） |
+| 罗马 | `lmroman{5,6,7,8,9,10,12,17}-regular` | cmr5…cmr17 |
+| 罗马粗 | `lmroman{5,6,7,8,9,10,12}-bold` | cmbx5…cmbx12 / cmb10 |
+| 罗马意大利 | `lmroman{7,8,9,10,12}-italic` | cmti7…cmti12 |
+| 斜体 slanted | `lmromanslant{8,9,10,12,17}-regular`、`lmromanslant10-bold` | cmsl8…cmsl12、cmbxsl10 |
+| 粗意大利 | `lmroman10-bolditalic` | cmbxti10 |
+| 小体大写 | `lmromancaps10-regular` | cmcsc10 |
+| 直立体 | `lmromanunsl10-regular` | cmu10（`\pounds` 用） |
+| 无衬线 | `lmsans{8,9,10,12,17}-regular`、`lmsans10-bold`、`lmsans{8,9,10,12,17}-oblique`、`lmsansdemicond10-regular` | cmss*、cmssbx10、cmssi*、cmssdc10 |
+| 打字机 | `lmmono{8,9,10,12}-regular`、`lmmono10-italic`、`lmmonoslant10-regular`、`lmmonocaps10-regular` | cmtt*、cmitt10、cmsltt10、cmtcsc10 |
+| 变宽打字机 | （LM 无对应）按 `lmmono{8,9,10,12}-regular`/`lmmono10-italic` 近似 | cmvtt10、cmvtti10 |
+| 数学 | `latinmodern-math.otf`（单文件） | cmmi*、cmsy*、cmex*、cmmib10、cmbsy10、icmmi8、icmsy8、icmex10 |
+| EC TS1 | 按上表同族取名（`tcrm1000`→`lmroman10-regular` 等） | tcrm/tcti/tcbx/tcss/tctt × 全档 |
 
 - 来源：texlive 2024 basic（`texmf-dist/fonts/opentype/public/lm/` 与
   `lm-math/`；数学族 LM 无独立 OTF，统一走 lm-math 包的 OpenType MATH 单文件）
 - 许可：GUST Font License（可再分发，见字体文件内嵌 LICENSE 声明）
-- slot→Unicode 按字体编码分发（OT1/OML/OMS/OMX，见
+- slot→Unicode 按字体编码分发（OT1 / OML·OMS·OMX / EC-TS1，见
   `crates/ntex-backend/src/glyphs.rs`）；未映射的字符渲染时逐字符回落
   占位方框（引擎契约：不报错不 panic）
 

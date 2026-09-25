@@ -39,6 +39,36 @@
 - **第二十五刀** `\the\value{counter}` 操作数宏展开 → corpus `\the` 同源错误群清零
   （`small2e` `^!` 7→4、`lppl` 60→31、`sec1` `\the` 错 1→0）；`ntex-core` 435 passed。
 
+**现场三连**（2026-09-24 / 09-25，全部有 GT 逐字/DVI 对照）：
+
+1. **EC「TC」TS1 字形通道**（`e87321b`）：`\thanks` 脚注标记（`\textasteriskcentered`）
+   走 TS1/`tcrm*`，此前预览方框 + 工作台 `Font … not loadable`。修：`ts1_to_unicode`
+   （槽位锚定 `ts1enc.def`）+ EC 四位数尺寸名归档 + `assets/tfm` 随包 5 族度量；
+   残差见 [docs/KNOWN-SIMPLIFICATIONS.md](docs/KNOWN-SIMPLIFICATIONS.md) §5。
+2. **`cur_font` 组回滚**（2026-09-25）：tex.web 的 `cur_font_loc` **是 eqtb 字**（随组保存），
+   NTex 的 expander 镜像是裸字段 → `\LaTeX` 徽标内层 `\fontsize\sf@size\z@\selectfont`
+   的字体泄漏出组，第二个徽标起的 `\kern-.36em`/`\kern-.1667em`/`\lower.5ex` 全按内层
+   字体的 quad/x-height 算——用户看到"LaTeX 的 a 位置不对"。修：`SavedValue::CurFont`
+   （排版侧 `NodeBuilder` 早有 `font_stack`，缺的只是 expander 这一半）。验收：用户样张
+   DVI 与 pdfTeX 逐指令一致（±1sp 取整），文档纵向节奏同时回正 ~13pt；回归锁
+   `ntex-core::expand::tests::cur_font_is_saved_and_restored_by_groups`（去修复必红）。
+3. **工作台字形覆盖面**（2026-09-25）：`ui/fonts` 只覆盖手挑的少数 CM 尺寸 → 用户两条
+   现场（`\LaTeX` 徽标 A 灰方框 = `cmr8`；`$E=mc^2$` 不渲染 = `cmmi12`+`cmr8`）。
+   修：按 `ot1cm*.fd`/`om*.fd` 声明的名字矩阵补 33 个 LM OTF、`GLYPH_FONTS` 重写
+   （70 名）、`lm_file_name` 补 `lmromanslant`/`lmromancaps`/`lmmono*-italic|slant|caps`/
+   `lmromanunsl`/`bolditalic`/`lmsans*-oblique|bold`/`lmsansdemicond` + 数学粗体与大字号族
+   （顺手改对 `cmsl` 的错名：LM 里的文件叫 `lmromanslant*`，不是 `lmroman*-oblique`）。
+   两面由 `ui_font_manifest_matches_rust_claim`（名单↔映射）与
+   `workbench_manifest_covers_fonts_used_by_latex_docs`（文档级：探针文档用到的每个
+   字体都有轮廓 + 度量）钉住；遗留见 KNOWN-SIMPLIFICATIONS §5。
+4. **Tauri PDF 与预览字体同源**（2026-09-25）：预览走 LM OTF，PDF 另抓只覆盖 plain
+   47 件的 CM PFB；LaTeX 新字号/TS1 请求 404 后仍导出裸 `/BaseFont`，查看器替代导致
+   样式变化、无替代字形时直接丢字。修：`set_glyph_font` 同时向 PDF 登记 OTF + 预览
+   同源 slot→Unicode 表，`ntex-pdf` 给 TFM 8-bit 字体新增 slot→CID 的 Type0/CFF 写出，
+   前端对已注册 OTF 不再 fetch PFB。实链验收：wasm 导出 `cmr10/cmmi10/cmr7` 三族均
+   `CID Type 0C / embedded=yes`，Poppler 144dpi 渲染正文、数学、上标全部可见；回归锁
+   `write_pdf_reuses_preview_otf_for_tfm_8bit_font` + `registers_8bit_slot_map_with_font_bytes`。
+
 **fmt 快照重建刀**（2026-09-20）：真实论文（arXiv 1706.03762 standalone）`a\_b` 死循环根因 =
 **陈旧 fmt 快照**——`assets/fmt/latex.fmt` 建于 09-19 00:33，早于 `883b9b3` active 槽隔离；旧槽
 模型下 latex.ltx L15916 `\gdef_{\_}` 把 active `_` 定义写进同名单 cs `\_` 槽，robust 壳被覆盖成

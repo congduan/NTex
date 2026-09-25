@@ -40,6 +40,8 @@ const pfbReady = new Set();
 // PFB fetch——Fandol 等中文字体本无 Type1 形态，去 fetch 只会 404 并误报
 // 「未找到 Type1 字形数据」。
 const otfReady = new Set();
+// set_glyph_font 现同时登记屏幕与 PDF 两侧的同一份 OTF；导出无需再另抓 PFB。
+const glyphReady = new Set();
 
 /* ---------- 引擎 ---------- */
 
@@ -48,38 +50,111 @@ const otfReady = new Set();
 // （LM 无独立数学族 OTF；slot→Unicode 按 OML/OMS/OMX 编码分发，见 glyphs.rs）。
 // 这些字体**有内嵌 TFM 度量**，注入只补轮廓 → set_glyph_font。
 const GLYPH_FONTS = [
+  // cmr：文字罗马（m/n）
   ['cmr10', 'fonts/lmroman10-regular.otf'],
   ['cmr12', 'fonts/lmroman12-regular.otf'],
-  ['cmr7', 'fonts/lmroman7-regular.otf'],
-  ['cmr5', 'fonts/lmroman5-regular.otf'],
-  ['cmbx10', 'fonts/lmroman10-bold.otf'],
-  ['cmti10', 'fonts/lmroman10-italic.otf'],
-  ['cmtt10', 'fonts/lmmono10-regular.otf'],
-  ['cmmi10', 'fonts/latinmodern-math.otf'],
-  ['cmmi7', 'fonts/latinmodern-math.otf'],
-  ['cmmi5', 'fonts/latinmodern-math.otf'],
-  ['cmsy10', 'fonts/latinmodern-math.otf'],
-  ['cmsy7', 'fonts/latinmodern-math.otf'],
-  ['cmsy5', 'fonts/latinmodern-math.otf'],
-  ['cmex10', 'fonts/latinmodern-math.otf'],
-  // LaTeX 字号族（C 档）：`\documentclass[12pt]{article}` 会点名 cmbx12/cmr17 等
-  // ——它们不在 plain 预载集里，不注册就只有这几个字体回落方框（正文照排）。
-  // 名字映射与 `ntex-backend/src/glyphs.rs::lm_file_name` 同口径。
-  ['cmbx12', 'fonts/lmroman12-bold.otf'],
-  ['cmbx7', 'fonts/lmroman7-bold.otf'],
-  ['cmti12', 'fonts/lmroman12-italic.otf'],
   ['cmr17', 'fonts/lmroman17-regular.otf'],
-  ['cmtt12', 'fonts/lmmono12-regular.otf'],
+  ['cmr5', 'fonts/lmroman5-regular.otf'],
+  ['cmr6', 'fonts/lmroman6-regular.otf'],
+  ['cmr7', 'fonts/lmroman7-regular.otf'],
+  ['cmr8', 'fonts/lmroman8-regular.otf'],
+  ['cmr9', 'fonts/lmroman9-regular.otf'],
+  // cmbx：粗体扩展（bx/n）
+  ['cmbx10', 'fonts/lmroman10-bold.otf'],
+  ['cmbx12', 'fonts/lmroman12-bold.otf'],
+  ['cmbx5', 'fonts/lmroman5-bold.otf'],
+  ['cmbx6', 'fonts/lmroman6-bold.otf'],
+  ['cmbx7', 'fonts/lmroman7-bold.otf'],
+  ['cmbx8', 'fonts/lmroman8-bold.otf'],
+  ['cmbx9', 'fonts/lmroman9-bold.otf'],
+  // cmb：粗体（b/n）
+  ['cmb10', 'fonts/lmroman10-bold.otf'],
+  // cmti：意大利（it）
+  ['cmti10', 'fonts/lmroman10-italic.otf'],
+  ['cmti12', 'fonts/lmroman12-italic.otf'],
+  ['cmti7', 'fonts/lmroman7-italic.otf'],
+  ['cmti8', 'fonts/lmroman8-italic.otf'],
+  ['cmti9', 'fonts/lmroman9-italic.otf'],
+  // cmsl：斜体 slanted（sl）
+  ['cmsl10', 'fonts/lmromanslant10-regular.otf'],
+  ['cmsl12', 'fonts/lmromanslant12-regular.otf'],
+  ['cmsl8', 'fonts/lmromanslant8-regular.otf'],
+  ['cmsl9', 'fonts/lmromanslant9-regular.otf'],
+  // cmbxsl：粗斜体（bx/sl）
+  ['cmbxsl10', 'fonts/lmromanslant10-bold.otf'],
+  // cmbxti：粗意大利（bx/it）
+  ['cmbxti10', 'fonts/lmroman10-bolditalic.otf'],
+  // cmcsc：小体大写字母（sc）
+  ['cmcsc10', 'fonts/lmromancaps10-regular.otf'],
+  // cmu：直立体（ui，`\pounds` 用）
+  ['cmu10', 'fonts/lmromanunsl10-regular.otf'],
+  // cmss：无衬线（sf）
   ['cmss10', 'fonts/lmsans10-regular.otf'],
+  ['cmss12', 'fonts/lmsans12-regular.otf'],
   ['cmss17', 'fonts/lmsans17-regular.otf'],
-  // EC「TC」TS1 族：LaTeX 的 `\text…` 文本符号与脚注标记的落点——`\thanks`
+  ['cmss8', 'fonts/lmsans8-regular.otf'],
+  ['cmss9', 'fonts/lmsans9-regular.otf'],
+  // cmssbx：无衬线粗（sf+bx）
+  ['cmssbx10', 'fonts/lmsans10-bold.otf'],
+  // cmssi：无衬线斜（sf+sl）
+  ['cmssi10', 'fonts/lmsans10-oblique.otf'],
+  ['cmssi12', 'fonts/lmsans12-oblique.otf'],
+  ['cmssi17', 'fonts/lmsans17-oblique.otf'],
+  ['cmssi8', 'fonts/lmsans8-oblique.otf'],
+  ['cmssi9', 'fonts/lmsans9-oblique.otf'],
+  // cmssdc：无衬线小体大写（sf+sc）
+  ['cmssdc10', 'fonts/lmsansdemicond10-regular.otf'],
+  // cmtt：打字机（tt）
+  ['cmtt10', 'fonts/lmmono10-regular.otf'],
+  ['cmtt12', 'fonts/lmmono12-regular.otf'],
+  ['cmtt8', 'fonts/lmmono8-regular.otf'],
+  ['cmtt9', 'fonts/lmmono9-regular.otf'],
+  // cmitt：打字机意大利
+  ['cmitt10', 'fonts/lmmono10-italic.otf'],
+  // cmsltt：打字机斜
+  ['cmsltt10', 'fonts/lmmonoslant10-regular.otf'],
+  // cmtcsc：打字机小体大写
+  ['cmtcsc10', 'fonts/lmmonocaps10-regular.otf'],
+  // cmvtt：变宽打字机（LM 无对应，按等宽近似）
+  ['cmvtt10', 'fonts/lmmono10-regular.otf'],
+  // cmvtti：变宽打字机意大利（同上近似）
+  ['cmvtti10', 'fonts/lmmono10-italic.otf'],
+  // cmmi：数学字母数字（OML）
+  ['cmmi10', 'fonts/latinmodern-math.otf'],
+  ['cmmi12', 'fonts/latinmodern-math.otf'],
+  ['cmmi5', 'fonts/latinmodern-math.otf'],
+  ['cmmi6', 'fonts/latinmodern-math.otf'],
+  ['cmmi7', 'fonts/latinmodern-math.otf'],
+  ['cmmi8', 'fonts/latinmodern-math.otf'],
+  ['cmmi9', 'fonts/latinmodern-math.otf'],
+  // icmmi：数学字母数字大字号档
+  ['icmmi8', 'fonts/latinmodern-math.otf'],
+  // cmsy：数学符号（OMS）
+  ['cmsy10', 'fonts/latinmodern-math.otf'],
+  ['cmsy12', 'fonts/latinmodern-math.otf'],
+  ['cmsy5', 'fonts/latinmodern-math.otf'],
+  ['cmsy6', 'fonts/latinmodern-math.otf'],
+  ['cmsy7', 'fonts/latinmodern-math.otf'],
+  ['cmsy8', 'fonts/latinmodern-math.otf'],
+  ['cmsy9', 'fonts/latinmodern-math.otf'],
+  // icmsy：数学符号大字号档
+  ['icmsy8', 'fonts/latinmodern-math.otf'],
+  // cmex：数学扩展（OMX，大运算符/定界符）
+  ['cmex10', 'fonts/latinmodern-math.otf'],
+  // icmex：数学扩展大字号档
+  ['icmex10', 'fonts/latinmodern-math.otf'],
+  // cmmib：数学粗体（\boldmath）
+  ['cmmib10', 'fonts/latinmodern-math.otf'],
+  // cmbsy：数学粗体符号（\boldmath）
+  ['cmbsy10', 'fonts/latinmodern-math.otf'],
+
+  // EC「TC」TS1 族：LaTeX 的 `	ext…` 文本符号与脚注标记的落点——`\thanks`
   // 的标记就是 `\textasteriskcentered`（TS1 @10pt/7pt → `tcrm1000`/`tcrm0700`），
   // `\textbullet`/`\textdagger`/`\textcopyright` 等同样走 TS1/cmr|cmss|cmtt，
   // 不注册这几个名字时它们只出方框（2026-09-24 现场）。
   // 名称映射与 `ntex-backend/src/glyphs.rs::lm_file_name` 同口径：四位数尺寸名
-  // （百分之一磅）归一到 LM 光学尺寸档；这里只列 `ui/fonts/` 实际有的档
-  // （5/7/10/12/17），其余档（0600/0800/0900/2074…）与 native 的差别仅在此
-  // 资产面——native 走 TeX Live 的 LM 全档位。
+  // （百分之一磅）归一到 LM 光学尺寸档；只列 `assets/tfm` 已随包的 5 个族
+  // （tcrm/tcti/tcbx/tcss/tctt），其余 TS1 族未随度量（见 KNOWN-SIMPLIFICATIONS）。
   ['tcrm0500', 'fonts/lmroman5-regular.otf'],
   ['tcrm0700', 'fonts/lmroman7-regular.otf'],
   ['tcrm1000', 'fonts/lmroman10-regular.otf'],
@@ -114,7 +189,11 @@ async function loadFonts() {
   const fetchBytes = async (url) => new Uint8Array(await (await fetch(url)).arrayBuffer());
   const jobs = [
     ...GLYPH_FONTS.map(async ([name, url]) => {
-      try { return set_glyph_font(name, await fetchBytes(url)); } catch { return false; }
+      try {
+        const ok = set_glyph_font(name, await fetchBytes(url));
+        if (ok) glyphReady.add(name);
+        return ok;
+      } catch { return false; }
     }),
     ...CJK_FONTS.map(async ([name, url]) => {
       try {
@@ -459,8 +538,8 @@ $('utf8').addEventListener('change', () => {
 /* ---------- PDF 导出 ---------- */
 // 路径：doc.used_fonts()（DVI 字体表，**不是** fonts——那是引擎侧已载入全表，
 // 误用会对正文没排到的字体误报缺字体）→ 逐名分流：
-// - otfReady 里的（set_otf_font 注入成功）：**跳过**——wasm 侧已顺带登记
-//   PDF 的 OTF 注册表，导出按 Type0/OpenType 嵌入（中文不再报缺 Type1）；
+// - glyphReady / otfReady 里的：**跳过 PFB**——wasm 侧已登记与预览同一份 OTF，
+//   导出按 Type0/CFF 嵌入；
 // - 其余 fetch ui/pfb/<name>.pfb 经 set_pfb_font 注入（ntex-pdf 在 wasm 下
 //   无文件系统，宿主查找链必落空）。
 // → doc.pdf_bytes() → <a download> 触发落盘（Tauri 壳经 on_download 放行，
@@ -478,7 +557,7 @@ async function exportPdf() {
   try {
     const missing = [];
     for (const name of doc.used_fonts()) {
-      if (pfbReady.has(name) || otfReady.has(name)) continue;
+      if (pfbReady.has(name) || otfReady.has(name) || glyphReady.has(name)) continue;
       try {
         const res = await fetch(`pfb/${name}.pfb`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);

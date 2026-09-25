@@ -426,12 +426,15 @@ fn is_ts1_family(family: &str) -> bool {
 /// cmmi→OML、cmsy→OMS、cmex→OMX、cmtt 系→ASCII 直通（cmtt 编码的花括号/
 /// 反斜杠在 OT1 位上是 ligature/标点，`\string`/`\char` 转录须按字面出），
 /// EC TC 族（tcrm/tcbx/…）→TS1，其余文本族→OT1。
-pub(crate) fn slot_to_unicode(tex_name: &str, slot: u8) -> Option<u32> {
+pub fn slot_to_unicode(tex_name: &str, slot: u8) -> Option<u32> {
     let (family, _) = family_prefix(tex_name);
     match family {
-        "cmmi" => oml_to_unicode(slot),
-        "cmsy" => oms_to_unicode(slot),
-        "cmex" => omx_to_unicode(slot),
+        // 数学字母数字（OML）与符号（OMS/OMX）。`icmmi`/`icmsy`/`icmex` 是
+        // 大字号档的 "large" 变体（`omllcmm.fd`/`omslcmsy.fd`/`omxlcmex.fd`），
+        // 槽位布局与基础款相同。
+        "cmmi" | "icmmi" => oml_to_unicode(slot),
+        "cmsy" | "icmsy" => oms_to_unicode(slot),
+        "cmex" | "icmex" => omx_to_unicode(slot),
         "cmtt" | "cmsltt" | "cmtex" => {
             if (0x20..=0x7E).contains(&slot) {
                 Some(slot as u32)
@@ -444,16 +447,13 @@ pub(crate) fn slot_to_unicode(tex_name: &str, slot: u8) -> Option<u32> {
     }
 }
 
-/// LM 光学尺寸族（`lmroman{5,6,7,8,9,10,12,17}` 等文件实际存在的档位）。
-const LM_OPTICAL_SIZES: &[u32] = &[5, 6, 7, 8, 9, 10, 12, 17];
-
-/// EC 字体名里的尺寸段 → LM 光学尺寸档（就近取）。
+/// EC/CM 字体名里的尺寸段 → 给定档位表里的最近档。
 ///
 /// EC 用**四位十进制百分之一磅**命名（`tcrm0700` = 7pt、`tcrm1095` = 10.95pt、
-/// `tcrm1728` = 17.28pt），LM 的 OTF 只出 5/6/7/8/9/10/12/17 八档，故按最近档
-/// 取名（`1440` → 12、`2074` → 17）。`cmr7` 这类 CM 短名（1~2 位）按整数磅读。
-/// 非纯数字（理论上不会出现）返回 None。
-fn lm_optical_size(size: &str) -> Option<u32> {
+/// `tcrm1728` = 17.28pt），CM 短名（`cmr7`）按整数磅读。各**字面**的可用档位
+/// 并不相同（`lmromancaps10-regular.otf` 只有 10pt、`lmromanslant*` 无 5/6pt），
+/// 故档位表由调用方按字面给出。非纯数字（理论上不会出现）返回 None。
+fn lm_nearest_size(size: &str, available: &[u32]) -> Option<u32> {
     if size.is_empty() || !size.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
@@ -463,44 +463,79 @@ fn lm_optical_size(size: &str) -> Option<u32> {
     } else {
         size.parse::<f64>().ok()?
     };
-    LM_OPTICAL_SIZES.iter().copied().min_by(|a, b| {
+    available.iter().copied().min_by(|a, b| {
         let da = (*a as f64 - pt).abs();
         let db = (*b as f64 - pt).abs();
         da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
     })
 }
 
-/// TeX 文本字体名 → Latin Modern OpenType 文件名（无映射的字体返回 None，
+/// 文本/打字机族（CM 短名与 EC「TC」TS1 名）→ LM 文件名三段
+/// `(前缀, 字面后缀, 该字面真实存在的档位)`。
+///
+/// 档位表不是装饰性注释：`lm_file_name` 用它把请求尺寸归一到最近存在的文件
+/// （`cmr9` → `lmroman9-regular`；`cmbx5` → `lmroman5-bold`；
+/// `cmsl5` → `lmromanslant8-regular`——`lmromanslant*` 没有 5/6pt 档）。
+/// 表里每一条都对应 TeX Live `fonts/opentype/public/lm/` 下真实存在的文件；
+/// `ui_font_manifest_matches_rust_claim` 钉住"工作台名单里每个名字都能在
+/// `ui/fonts/` 落到同名文件"。
+///
+/// EC「TC」TS1 族只列**已随包**的 5 个（tcrm/tcti/tcbx/tcss/tctt，`assets/tfm`
+/// 有对应度量）；其余 TS1 族（tcsl/tcui/tcbl/tcsi/tcso/tcst/tcit/tcvt/tcvi）
+/// 未随包，走不到这里（返回 None → 方框，见 KNOWN-SIMPLIFICATIONS）。
+fn lm_text_style(family: &str) -> Option<(&'static str, &'static str, &'static [u32])> {
+    Some(match family {
+        // 罗马（cmr；EC TC 的 tcrm）
+        "cmr" | "tcrm" => ("lmroman", "regular", &[5, 6, 7, 8, 9, 10, 12, 17]),
+        // 粗体：bx = bold extended、b = bold（LM 只有一套 bold，二者同归）
+        "cmbx" | "tcbx" | "tcrb" | "cmb" => ("lmroman", "bold", &[5, 6, 7, 8, 9, 10, 12]),
+        // 意大利（cmti；EC TC 的 tcti）
+        "cmti" | "tcti" => ("lmroman", "italic", &[7, 8, 9, 10, 12]),
+        // 斜体：CM 的 slanted 对应 LM 的 `lmromanslant*`（无 5/6pt 档）
+        "cmsl" => ("lmromanslant", "regular", &[8, 9, 10, 12, 17]),
+        "cmbxsl" => ("lmromanslant", "bold", &[10]),
+        "cmbxti" => ("lmroman", "bolditalic", &[10]),
+        // 小体大写字母（caps & small caps）
+        "cmcsc" => ("lmromancaps", "regular", &[10]),
+        // 直立体（`\pounds` 用的 upright shape）
+        "cmu" => ("lmromanunsl", "regular", &[10]),
+        "cmss" | "tcss" => ("lmsans", "regular", &[8, 9, 10, 12, 17]),
+        "cmssbx" | "tcsx" => ("lmsans", "bold", &[10]),
+        "cmssi" => ("lmsans", "oblique", &[8, 9, 10, 12, 17]),
+        "cmssdc" => ("lmsansdemicond", "regular", &[10]),
+        "cmtt" | "tctt" => ("lmmono", "regular", &[8, 9, 10, 12]),
+        "cmitt" => ("lmmono", "italic", &[10]),
+        "cmsltt" => ("lmmonoslant", "regular", &[10]),
+        "cmtcsc" => ("lmmonocaps", "regular", &[10]),
+        // LM 无"变宽打字机"（cmvtt 系）：按等宽近似（形状有别，登记见
+        // docs/KNOWN-SIMPLIFICATIONS.md）
+        "cmvtt" => ("lmmono", "regular", &[8, 9, 10, 12]),
+        "cmvtti" => ("lmmono", "italic", &[10]),
+        _ => return None,
+    })
+}
+
+/// TeX 字体名 → Latin Modern OpenType 文件名（无映射的字体返回 None，
 /// 调用方回落占位方框）。
 ///
-/// 覆盖 cm 常用文本族；数学族（cmmi/cmsy/cmex）共用 OpenType MATH 字体
+/// 数学族（cmmi/cmsy/cmex 与粗体数学 cmmib/cmbsy）共用 OpenType MATH 字体
 /// `latinmodern-math.otf`（LM 无独立 lmmi/lmsy OTF 文件，数学字形全在
 /// lm-math 包这一个 MATH 表字体内，cmap 覆盖数学字母数字区）。
-///
-/// EC「TC」TS1 族（`tcrm*` 等，LaTeX 的 `\text…` 符号与脚注标记走它们）与
-/// LM 同源，按 `lmroman`/`lmsans`/`lmmono` 相应字面取名；其中**斜体/粗体族
-/// 未随包**（`tcsl`/`tcui`/`tcbl`/`tcsi`/`tcso`/`tcvtt` 无对应 OTF 名），
-/// 按未映射返回 None → 回落方框（见 `docs/KNOWN-SIMPLIFICATIONS.md`）。
 fn lm_file_name(tex_name: &str) -> Option<String> {
     let (family, size) = family_prefix(tex_name);
-    // CM 短名（`cmr10`）与 EC 四位数名（`tcrm1000`）都归一到 LM 光学尺寸，
-    // 避免拼出 `lmroman0700-regular` 这种不存在的文件。
-    let size = lm_optical_size(size)?;
-    let style = match family {
-        "cmr" | "tcrm" => format!("lmroman{size}-regular"),
-        "cmbx" | "cmb" | "tcbx" | "tcrb" => format!("lmroman{size}-bold"),
-        "cmti" | "tcti" => format!("lmroman{size}-italic"),
-        "cmsl" => format!("lmroman{size}-oblique"),
-        "cmtt" | "tctt" => format!("lmmono{size}-regular"),
-        "cmsltt" => format!("lmmono{size}-oblique"),
-        "cmss" | "tcss" => format!("lmsans{size}-regular"),
-        "cmssbx" | "tcsx" => format!("lmsans{size}-bold"),
-        "cmssi" => format!("lmsans{size}-oblique"),
-        // 数学族：LM 无独立 OTF，统一走 OpenType MATH 单文件。
-        "cmmi" | "cmsy" | "cmex" => "latinmodern-math".to_owned(),
-        _ => return None,
-    };
-    Some(format!("{style}.otf"))
+    if matches!(
+        family,
+        // cmmi/cmsy/cmex 基础款 + 粗体数学（cmmib/cmbsy）+ 大字号 large 变体
+        // （icmmi/icmsy/icmex）
+        "cmmi" | "cmsy" | "cmex" | "cmmib" | "cmbsy" | "icmmi" | "icmsy" | "icmex"
+    ) {
+        return Some("latinmodern-math.otf".to_owned());
+    }
+    // CM 短名（`cmr10`）与 EC 四位数名（`tcrm1000`）都归一，避免拼出
+    // `lmroman0700-regular` 这种不存在的文件。
+    let (prefix, style, sizes) = lm_text_style(family)?;
+    let size = lm_nearest_size(size, sizes)?;
+    Some(format!("{prefix}{size}-{style}.otf"))
 }
 
 /// 已解析的字形字体（共享只读）。
@@ -867,25 +902,41 @@ fn claim_font_dir(dir: &std::path::Path) -> Vec<(String, std::path::PathBuf)> {
 /// 生成式；两侧只要 LM 文件名映射不变即等价，`ui/fonts/` 里没有的文件名
 /// 两侧都会被跳过——见 `claim_font_dir` 的按名取文件）。
 fn lm_tex_name_candidates() -> Vec<String> {
-    const FAMILIES: &[&str] = &[
-        "cmr", "cmbx", "cmb", "cmti", "cmsl", "cmtt", "cmsltt", "cmss", "cmssbx", "cmssi", "cmmi",
-        "cmsy", "cmex",
-    ];
-    const SIZES: &[u32] = &[5, 6, 7, 8, 9, 10, 12, 17];
-    // EC TS1 族 × EC 四位数尺寸名（百分之一磅，`ts1cmr.fd` 等声明的全套档位）。
-    const TS1_FAMILIES: &[&str] = &["tcrm", "tcti", "tcbx", "tcss", "tctt"];
-    const TS1_SIZES: &[&str] = &[
-        "0500", "0600", "0700", "0800", "0900", "1000", "1095", "1200", "1440", "1728", "2074",
-        "2488", "2986", "3583",
-    ];
+    // 文本族候选**从 [`lm_text_style`] 生成**（族 × 该字面真实档位）——一份表
+    // 两处用，避免"映射表认某个名、认领表不认"的错位（工作台名单的漏项就是这
+    // 类错位：`cmcsc10`/`cmsl12`/`cmitt10` 等名字此前两边都没有）。
     let mut out = Vec::new();
-    for f in FAMILIES {
-        for s in SIZES {
-            out.push(format!("{f}{s}"));
+    for f in [
+        "cmr", "cmbx", "cmb", "cmti", "cmsl", "cmbxsl", "cmbxti", "cmcsc", "cmu", "cmss", "cmssbx",
+        "cmssi", "cmssdc", "cmtt", "cmitt", "cmsltt", "cmtcsc", "cmvtt", "cmvtti", "tcrm", "tcti",
+        "tcbx", "tcrb", "tcss", "tcsx", "tctt",
+    ] {
+        let Some((_, _, sizes)) = lm_text_style(f) else {
+            continue;
+        };
+        // EC「TC」TS1 名用的是**四位数百分之一磅**（`tcrm1095` = 10.95pt），
+        // 与 CM 的整数设计磅名不是同一套数字，故单独列一套档位
+        //（`ts1cmr.fd` 等声明的全套；前导零补齐，`0500` 不是 `500`）。
+        const TS1_SIZES: &[&str] = &[
+            "0500", "0600", "0700", "0800", "0900", "1000", "1095", "1200", "1440", "1728", "2074",
+            "2488", "2986", "3583",
+        ];
+        if f.starts_with("tc") {
+            for s in TS1_SIZES {
+                out.push(format!("{f}{s}"));
+            }
+        } else {
+            for s in sizes {
+                out.push(format!("{f}{s}"));
+            }
         }
     }
-    for f in TS1_FAMILIES {
-        for s in TS1_SIZES {
+    // 数学族（全部指向 latinmodern-math.otf）：基础款 + 粗体 + 大字号档。
+    const MATH_SIZES: &[u32] = &[5, 6, 7, 8, 9, 10, 12];
+    for f in [
+        "cmmi", "cmsy", "cmex", "cmmib", "cmbsy", "icmmi", "icmsy", "icmex",
+    ] {
+        for s in MATH_SIZES {
             out.push(format!("{f}{s}"));
         }
     }
@@ -1272,10 +1323,14 @@ mod tests {
         );
         assert_eq!(find("tcbx1000").as_deref(), Some("lmroman10-bold.otf"));
         assert_eq!(find("tcti1000").as_deref(), Some("lmroman10-italic.otf"));
-        // 目录里没有的档位不被认领（0600 → lmroman6 不存在）。
+        // 目录里有对应 LM 文件的四位数档位全部认领（`tcrm0600` → `lmroman6-regular.otf`
+        // 自 2026-09-25 补档后成立；此前该档位在 TeX Live 有、`ui/fonts` 没有）。
+        assert_eq!(find("tcrm0600").as_deref(), Some("lmroman6-regular.otf"));
+        assert_eq!(find("tcrm1095").as_deref(), Some("lmroman10-regular.otf"));
+        // 未随包的 TS1 族（tcsl 无度量也无轮廓）不认领。
         assert!(
-            find("tcrm0600").is_none(),
-            "无 lmroman6-regular.otf 就不该认领"
+            find("tcsl1000").is_none(),
+            "未随包的 TS1 族不该被认领（见 KNOWN-SIMPLIFICATIONS §5）"
         );
     }
 
