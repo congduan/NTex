@@ -4,7 +4,8 @@
 //!   词内间隙为 0，避免 poppler 等提取器在逐字符定位下误判出幻影空格）；
 //!   词间空隙插入空格字形并用调整量把后续字符精确落在 TFM 位置；
 //! - 规则用 `re f` 填充矩形；
-//! - 字体：TFM 8-bit 字体走 Type1 嵌入（PFB 流，见 [`crate::type1`]），
+//! - 字体：TFM 8-bit 字体若注册了预览 OTF，则按同一 slot→Unicode 表转 CID、
+//!   走 Type0/CFF 嵌入；否则走 Type1（PFB 流，见 [`crate::type1`]），
 //!   `/Encoding` 不指定——查看器用字体程序内建编码（cmr10 的 TeX 编码 =
 //!   DVI 字符码，天然一致）；`unicode_native` 字体（中文 Fandol 等，M9）
 //!   走 Type0/CIDFontType0 + `/FontFile3 /CIDFontType0C`（裸 CFF）
@@ -300,6 +301,12 @@ fn emit_line(
         Some(FontForm::Otf { cid, .. }) => cid.as_ref(),
         _ => None,
     };
+    let encoded_slots = match forms.form(font) {
+        Some(FontForm::Otf {
+            slots: Some(slots), ..
+        }) => Some(slots),
+        _ => None,
+    };
 
     // 先筛出真正画得出的字形：Unicode 字体查 CID 映射，字体未覆盖的码位跳过
     let mut glyphs: Vec<(u32, f64, Option<u16>)> = Vec::with_capacity(run.len());
@@ -316,6 +323,15 @@ fn emit_line(
             match cid {
                 Some(cid) => glyphs.push((code, x, Some(cid))),
                 None => continue, // 画不出：不画也不推进（不进 glyphs）
+            }
+        } else if let Some(slots) = encoded_slots {
+            let cid = usize::try_from(code)
+                .ok()
+                .and_then(|slot| slots.get(slot))
+                .copied()
+                .flatten();
+            if let Some(cid) = cid {
+                glyphs.push((code, x, Some(cid)));
             }
         } else {
             glyphs.push((code, x, None));
@@ -439,7 +455,12 @@ enum FontForm {
     /// 见 [`crate::cid::bare_cff`]）。
     /// `cid` = Unicode→真 CID 映射（见 [`crate::cid`]）；`None` 表示 CFF 解析
     /// 失败——此时内容流画不出任何字形，退回不嵌入降级以免写错映射。
-    Otf { cff: Vec<u8>, cid: Option<CidMap> },
+    Otf {
+        cff: Vec<u8>,
+        cid: Option<CidMap>,
+        /// TFM 8-bit 字体的 DVI 槽位 → OTF CID；Unicode 原生字体为 `None`。
+        slots: Option<Vec<Option<u16>>>,
+    },
     /// 不嵌入降级：`unicode=true` 仍给 Type0+后代字典（无 `/FontFile3`），
     /// `false` 退最小裸 Type1 字典（M8 行为）。
     Bare { unicode: bool },
@@ -501,6 +522,12 @@ fn classify_fonts(dvi: &Dvi) -> FontForms {
         }
         let entry = if fm.unicode_native {
             classify_unicode(name)
+        } else if crate::type1::registered_pfb(name).is_some() {
+            // 显式 PFB 注入优先于预览 OTF：保留 set_pfb_font 的覆盖语义，
+            // 也避免同进程测试/多文档的全局注册表互相抢来源。
+            classify_type1(name, fm)
+        } else if let Some(slots) = crate::otf::registered_8bit_slots(name) {
+            classify_encoded_otf(name, slots)
         } else {
             classify_type1(name, fm)
         };
@@ -558,7 +585,61 @@ fn classify_unicode(name: &str) -> FontEntry {
     FontEntry {
         tex_name: name.to_owned(),
         base_name: name.to_owned(),
-        form: FontForm::Otf { cff, cid },
+        form: FontForm::Otf {
+            cff,
+            cid,
+            slots: None,
+        },
+    }
+}
+
+fn bare_8bit(name: &str) -> FontEntry {
+    FontEntry {
+        tex_name: name.to_owned(),
+        base_name: name.to_ascii_uppercase(),
+        form: FontForm::Bare { unicode: false },
+    }
+}
+
+/// 已有 TFM 度量的 TeX 8-bit 字体：复用屏幕预览注册的同一份 OTF 轮廓。
+fn classify_encoded_otf(name: &str, unicode_slots: Vec<Option<u32>>) -> FontEntry {
+    let bytes = match load_otf(name) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            eprintln!("警告：{e}（以不嵌入方式引用字体）");
+            return bare_8bit(name);
+        }
+    };
+    if !bytes.starts_with(b"OTTO") {
+        eprintln!("警告：{name} 不是 CFF OpenType 字体（以不嵌入方式引用）");
+        return bare_8bit(name);
+    }
+    let map = match cid::build(&bytes) {
+        Ok(map) => map,
+        Err(e) => {
+            eprintln!("警告：{e}（{name} 以不嵌入方式引用）");
+            return bare_8bit(name);
+        }
+    };
+    let slots = unicode_slots
+        .into_iter()
+        .map(|cp| cp.and_then(|cp| map.cid(cp)))
+        .collect();
+    let cff = match cid::bare_cff(&bytes) {
+        Ok(cff) => cff,
+        Err(e) => {
+            eprintln!("警告：{e}（{name} 以不嵌入方式引用）");
+            return bare_8bit(name);
+        }
+    };
+    FontEntry {
+        tex_name: name.to_owned(),
+        base_name: name.to_owned(),
+        form: FontForm::Otf {
+            cff,
+            cid: Some(map),
+            slots: Some(slots),
+        },
     }
 }
 
@@ -779,7 +860,7 @@ fn build_document(
                 fbody.extend_from_slice(b"\nendstream\nendobj");
                 obj(&mut buf, &mut offsets, &fbody);
             }
-            FontForm::Otf { cff, cid } => {
+            FontForm::Otf { cff, cid, .. } => {
                 let (dict_obj, cid_obj, desc_obj, file_obj) =
                     (base_obj, base_obj + 1, base_obj + 2, base_obj + 3);
                 // CIDSystemInfo：如实照抄字体的 ROS；缺 ROS（退化映射）时保持
@@ -1186,6 +1267,56 @@ mod tests {
         // 页面资源字典：页 1 只有 /F1（cmr10 字典对象 7）、页 2 只有 /F2（对象 10）
         assert!(s.contains("/Resources << /Font << /F1 7 0 R >> >>"), "{s}");
         assert!(s.contains("/Resources << /Font << /F2 10 0 R >> >>"), "{s}");
+    }
+
+    /// Tauri 预览给 TFM 字体注入的 Latin Modern OTF 也必须成为 PDF 的字形
+    /// 来源；否则 PDF 会另走 CM PFB/本地替代字体，新增 LaTeX 字号族缺 PFB 时
+    /// 还会直接丢字。
+    #[test]
+    fn write_pdf_reuses_preview_otf_for_tfm_8bit_font() {
+        let Some(mut dvi) = test_dvi() else {
+            eprintln!("未找到 cmr10.tfm，跳过");
+            return;
+        };
+        let otf_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../ntex-tauri/ui/fonts/lmroman10-regular.otf");
+        let Ok(otf) = std::fs::read(&otf_path) else {
+            eprintln!("未找到 {}，跳过", otf_path.display());
+            return;
+        };
+        let name = "cmr10-preview-otf-probe";
+        dvi.font_names[0] = name.to_owned();
+        dvi.fonts[0].name = name.to_owned();
+        dvi.pages = vec![Page {
+            ops: vec![
+                DrawOp::Char {
+                    font: 0,
+                    code: u32::from(b'T'),
+                    h: 0,
+                    v: 0,
+                },
+                DrawOp::Char {
+                    font: 0,
+                    code: u32::from(b'e'),
+                    h: dvi.fonts[0].char_metrics(u32::from(b'T')).0,
+                    v: 0,
+                },
+            ],
+        }];
+        let slots: Vec<Option<u32>> = (0u16..=255)
+            .map(|slot| (slot <= 0x7f).then_some(u32::from(slot)))
+            .collect();
+        assert!(crate::otf::register_otf_8bit(name, &otf, &slots));
+
+        let map = cid::build(&otf).expect("LM OTF 应能建 CID 映射");
+        let t = map.cid(u32::from(b'T')).expect("LM 应含 T");
+        let e = map.cid(u32::from(b'e')).expect("LM 应含 e");
+        let pdf = write_pdf(&dvi, &PdfOptions::default()).unwrap();
+        let s = String::from_utf8_lossy(&pdf);
+        assert!(s.contains("/Subtype /Type0"), "{s}");
+        assert!(s.contains("/FontFile3"), "应嵌入预览 OTF：{s}");
+        assert!(s.contains(&format!("<{t:04X}><{e:04X}>")), "{s}");
+        assert!(!s.contains("[(T)(e)]"), "不得退回另一套 Type1 字体：{s}");
     }
 
     /// Unicode 直映字体（M9 中文）：`unicode_native` 度量 + 注入的 OTF 字节

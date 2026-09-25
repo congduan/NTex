@@ -1,22 +1,22 @@
 # PDF 导出字体（Type1 / PFB）
 
-**47 个 Computer Modern 字体程序**，供 `Document::pdf_bytes` 导出 PDF 时嵌入
-（合计约 1.5 MB）。前端 fetch 后经 wasm 导出 `set_pfb_font(tex_name, bytes)`
-注入进程级注册表，`ntex-pdf` 把它们原样写进 PDF 的 `/FontFile` 流。
+**47 个 Computer Modern Type1 字体程序**，作为 PDF 导出的兼容回落资产。
+正常 Tauri 路径已由 `set_glyph_font` 把 `ui/fonts/` 的 Latin Modern OTF 同时
+登记给预览与 PDF，两端字形完全同源；只有预览 OTF 未加载时，前端才按实际
+使用字体 fetch 本目录 PFB 并经 `set_pfb_font` 注入。
 
 ## 为什么这里还有一份字体（`ui/fonts/` 不是已经有 OTF 了吗）
 
-两条**互不相通**的通道，别混：
+当前是“一条同源主路 + 一条兼容回落”：
 
 | 目录 | 格式 | 谁在用 | 解决什么 |
 |---|---|---|---|
-| `ui/fonts/` | OTF/TTF | `set_glyph_font` / `set_otf_font` | **屏幕上**的字形轮廓（skrifa 提轮廓 → 光栅化） |
-| `ui/pfb/`（本目录） | Type1 PFB | `set_pfb_font` | **PDF 里**的字体程序（原样作 `/FontFile` 流） |
+| `ui/fonts/` | OTF/CFF | `set_glyph_font` / `set_otf_font` | **屏幕 + PDF** 共用字形（PDF 为 Type0/CIDFontType0C） |
+| `ui/pfb/`（本目录） | Type1 PFB | `set_pfb_font` | OTF 未就绪时的 PDF 回落（原样作 `/FontFile` 流） |
 
-PDF 的 `/FontFile` 只接受 Type1 程序——把 OTF 塞进去查看器渲染不出字形
-（要嵌 OpenType 得走 CID/OpenType 那条路，是另一个量级的工作，属另案）。
-所以屏幕端用 Latin Modern OTF 渲染、导出端仍需另配一份 CM PFB，两者字形
-同源（LM 与 CM 度量一致），页面上不会出现「屏上一套、导出另一套」的观感差。
+OTF 不会误塞进 Type1 `/FontFile`：`ntex-pdf` 从 sfnt 取裸 CFF，按预览同一张
+TeX slot→Unicode 表构造 CID，写入 `/FontFile3 /CIDFontType0C`。TFM 仍是排版
+度量事实源，所以只换字形来源，不改变断行和字符落点。
 
 ## 为什么是「plain 预载全集」而不是按需挑几个
 
@@ -73,8 +73,7 @@ md5 "$(kpsewhich cmr10.pfb)" crates/ntex-tauri/ui/pfb/cmr10.pfb
 
 ## 已知缺口
 
-- **中文（Fandol Song 等 OTF）当前没有 PDF 输出路径**：`ntex-pdf` 只懂 Type1
-  （`/FontFile` 原样嵌 PFB）。中文导 PDF 需要 `ntex-pdf` 支持 CID/OpenType
-  嵌入，属另案；在此之前中文文档只能走 DVI/位图路径。
+- TrueType/glyf 轮廓尚不能走 PDF OTF 主路；当前发行的 LM/Fandol 都是 CFF。
+- 未加载 OTF 且本目录也无 PFB 的字体仍会降级为裸 `/BaseFont`，前端会提示。
 - PFB 是**矢量**字体程序，导出的 PDF 文字可选中、可搜索、可缩放——与
   「位图 PDF」方案相比体积小得多（一页纯文字约几十 KB）。

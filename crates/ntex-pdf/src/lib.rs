@@ -1,7 +1,8 @@
 //! # ntex-pdf：DVI → PDF 转换器（正式输出后端，M8）。
 //!
 //! 取代临时 Helvetica 切片：解析 `ntex-dvi` 产出的 DVI，写出 PDF 1.4——
-//! Type1 字体以 PFB 嵌入、绝对坐标定位字符、`re f` 填充规则。
+//! TFM 8-bit 字体可复用预览 OTF（slot→CID 的 Type0/CFF）或以 Type1 PFB
+//! 嵌入；字符绝对定位，规则以 `re f` 填充。
 //! Unicode 直映字体（中文 Fandol 等，M9）走 Type0/CIDFontType0，内容流里
 //! 字符以两字节十六进制串写出，**串值 = 字体 CFF charset 里的真 CID**（中文
 //! Fandol 即 Adobe-GB1 CID，见 [`cid`]；写 Unicode 会让查看器 CID→字形

@@ -1,6 +1,7 @@
 //! OTF/CFF 字体（OpenType）嵌入支撑（M9 中文 PDF 导出）。
 //!
-//! 中文 Fandol 等字体只有 OTF/CFF 形态、无 Type1 PFB——PDF 侧按
+//! 中文 Fandol 等 Unicode 原生字体，以及 Tauri 预览使用的 Latin Modern
+//! 8-bit TeX 字体，都可复用 OTF/CFF——PDF 侧按
 //! Type0/CIDFontType0 路径的 sfnt 定位与登记（写出端取其裸 CFF 表作
 //! `/FontFile3 /CIDFontType0C`，见 [`crate::cid::bare_cff`]）
 //! （PDF 1.6+ 合法；PDF 头仍写 1.4 时多数查看器同样接受，见 [`crate::pdf`]）。
@@ -9,7 +10,8 @@
 //!
 //! 字体字节有两个来源，**注册表优先**（与 type1 同构）：
 //! 1. [`register_otf`] 的进程级注入（wasm/浏览器唯一来源；native 下覆盖环境
-//!    字体，用于测试与打包分发）——见 `ntex-wasm` 的 `set_otf_font`；
+//!    字体，用于测试与打包分发）——见 `ntex-wasm` 的 `set_otf_font` 与
+//!    `set_glyph_font`；后者还登记 256 项 TeX slot→Unicode 表；
 //! 2. 宿主文件系统查找链（native 专属，复用 [`ntex_font::find_otf`] 的
 //!    环境变量/用户字体目录/texlive/kpsewhich 链）。wasm32 无文件系统，
 //!    未注入即 [`load_otf`] 直接返回 `Err`。
@@ -20,8 +22,15 @@ use std::sync::{LazyLock, Mutex};
 
 /// 进程级 OTF 字节注册表：[`register_otf`] 写入，[`load_otf`] 优先命中
 /// （早于宿主文件系统查找）。
-static REGISTRY: LazyLock<Mutex<HashMap<String, Vec<u8>>>> =
+static REGISTRY: LazyLock<Mutex<HashMap<String, RegisteredOtf>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+
+#[derive(Clone)]
+struct RegisteredOtf {
+    bytes: Vec<u8>,
+    /// TFM 8-bit 字体的槽位 → Unicode 映射；Unicode 原生字体为 `None`。
+    slots: Option<Vec<Option<u32>>>,
+}
 
 /// sfnt 容器魔数：OTTO = CFF 轮廓（Fandol/LM 均为此形态）；
 /// 0x00010000 与 `true` = TrueType 轮廓。注册时用作最低限度格式校验——
@@ -44,7 +53,13 @@ pub fn register_otf(tex_name: &str, bytes: &[u8]) -> bool {
     }
     match REGISTRY.lock() {
         Ok(mut m) => {
-            m.insert(tex_name.to_owned(), bytes.to_vec());
+            m.insert(
+                tex_name.to_owned(),
+                RegisteredOtf {
+                    bytes: bytes.to_vec(),
+                    slots: None,
+                },
+            );
             true
         }
         // 锁毒化：持锁线程已 panic，注册按失败处理（不传播错误，引擎契约）。
@@ -52,9 +67,41 @@ pub fn register_otf(tex_name: &str, bytes: &[u8]) -> bool {
     }
 }
 
+/// 注册已有 TFM 度量的 8-bit TeX 字体所用 OpenType 轮廓。
+///
+/// `slots` 必须恰有 256 项，并与屏幕预览的 TeX 编码表同源。PDF 仍以 TFM
+/// 为排版度量事实源，只把 DVI 槽位换成 OTF 字形 CID。
+pub fn register_otf_8bit(tex_name: &str, bytes: &[u8], slots: &[Option<u32>]) -> bool {
+    if slots.len() != 256 || !SFNT_MAGICS.iter().any(|m| bytes.starts_with(m)) {
+        return false;
+    }
+    match REGISTRY.lock() {
+        Ok(mut m) => {
+            m.insert(
+                tex_name.to_owned(),
+                RegisteredOtf {
+                    bytes: bytes.to_vec(),
+                    slots: Some(slots.to_vec()),
+                },
+            );
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 /// 取已注册的 OTF 字节（不触碰宿主文件系统）。
 pub fn registered_otf(tex_name: &str) -> Option<Vec<u8>> {
-    REGISTRY.lock().ok()?.get(tex_name).cloned()
+    REGISTRY
+        .lock()
+        .ok()?
+        .get(tex_name)
+        .map(|font| font.bytes.clone())
+}
+
+/// 取已注册的 8-bit 槽位映射；Unicode 原生字体返回 `None`。
+pub(crate) fn registered_8bit_slots(tex_name: &str) -> Option<Vec<Option<u32>>> {
+    REGISTRY.lock().ok()?.get(tex_name)?.slots.clone()
 }
 
 /// 读宿主文件系统里的 OTF（复用 `ntex-font` 的查找链：环境变量 → 用户/系统
@@ -139,5 +186,17 @@ mod tests {
         let name = "zz-ttf-magic-probe";
         assert!(register_otf(name, &[0x00, 0x01, 0x00, 0x00, 0, 0]));
         assert!(registered_otf(name).is_some());
+    }
+
+    #[test]
+    fn registers_8bit_slot_map_with_font_bytes() {
+        let name = "zz-otf-8bit-registry-probe";
+        let bytes = fake_otf();
+        let mut slots = vec![None; 256];
+        slots[usize::from(b'A')] = Some(u32::from(b'A'));
+        assert!(register_otf_8bit(name, &bytes, &slots));
+        assert_eq!(registered_otf(name).as_deref(), Some(&bytes[..]));
+        assert_eq!(registered_8bit_slots(name), Some(slots));
+        assert!(!register_otf_8bit(name, &bytes, &[None; 255]));
     }
 }
