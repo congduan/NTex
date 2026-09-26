@@ -622,7 +622,7 @@ impl Expander {
                 // Bad space factor 并扰乱后续条件/环境恢复。
                 EqSlot::Primitive(Primitive::SpaceFactor) => {
                     self.fetch()?; // 消费 \spacefactor
-                    let v = self.sink.space_factor();
+                    let v = self.query_sink_ref().space_factor();
                     return Ok(if neg { -v } else { v });
                 }
                 EqSlot::Primitive(Primitive::InputLineNo) => {
@@ -691,7 +691,7 @@ impl Expander {
                 // ETRIP 第二波：\lastpenalty → 当前列表尾 penalty 值（整数上下文）
                 EqSlot::Primitive(Primitive::LastPenalty) => {
                     self.fetch()?;
-                    let v = self.sink.last_penalty();
+                    let v = self.query_sink_ref().last_penalty();
                     return Ok(if neg { -v } else { v });
                 }
                 // ETRIP 第二波：\prevdepth → 上一行 depth（sp；作为整数取其 sp 值）
@@ -727,12 +727,12 @@ impl Expander {
                 // 宽度（tex.web scan_something_internal；无则 0。l.305/318 误报修复）。
                 EqSlot::Primitive(Primitive::LastSkip) => {
                     self.fetch()?;
-                    let v = self.sink.last_skip();
+                    let v = self.query_sink_ref().last_skip();
                     return Ok(if neg { -v } else { v });
                 }
                 EqSlot::Primitive(Primitive::LastKern) => {
                     self.fetch()?;
-                    let v = self.sink.last_kern();
+                    let v = self.query_sink_ref().last_kern();
                     return Ok(if neg { -v } else { v });
                 }
                 EqSlot::Primitive(
@@ -1880,7 +1880,7 @@ impl Expander {
                 };
                 self.fetch()?; // 消费 \wd/\ht/\dp
                 let idx = self.scan_register_index()?;
-                let v = self.sink.box_dim(idx, dim);
+                let v = self.query_sink_ref().box_dim(idx, dim);
                 return Ok((if neg { -v } else { v }, 0));
             }
             // ETRIP 第二波：\prevdepth → 上一行 depth（尺寸上下文）
@@ -1926,12 +1926,12 @@ impl Expander {
             // ETRIP/TRIP：\lastskip/\lastkern 作尺寸（sp 值；无则 0）。
             if let EqSlot::Primitive(Primitive::LastSkip) = self.eqtb.slot(csid) {
                 self.fetch()?;
-                let v = self.sink.last_skip();
+                let v = self.query_sink_ref().last_skip();
                 return Ok((if neg { -v } else { v }, 0));
             }
             if let EqSlot::Primitive(Primitive::LastKern) = self.eqtb.slot(csid) {
                 self.fetch()?;
-                let v = self.sink.last_kern();
+                let v = self.query_sink_ref().last_kern();
                 return Ok((if neg { -v } else { v }, 0));
             }
             // TRIP 冲刺：glue 内部参数作尺寸（宽度分量）——`minus\baselineskip` 等
@@ -2285,7 +2285,7 @@ impl Expander {
                     };
                     self.fetch()?; // 消费 \wd/\ht/\dp
                     let idx = self.scan_register_index()?;
-                    Some(self.sink.box_dim(idx, dim))
+                    Some(self.query_sink_ref().box_dim(idx, dim))
                 }
                 // tex.web scan_dimen `<factor><internal dimen>`：内部参数也可作为
                 // 被乘的尺寸量。胶水参数在尺寸层取 width 分量；LaTeX
@@ -2609,7 +2609,7 @@ impl Expander {
                 // LastSkip 的 ParamKind 也映射到 Glue 值，但那是从未更新的镜像。
                 EqSlot::Primitive(Primitive::LastSkip) => {
                     self.fetch()?; // 消费 \lastskip
-                    let g = self.sink.last_glue().unwrap_or(Glue::ZERO);
+                    let g = self.query_sink_ref().last_glue().unwrap_or(Glue::ZERO);
                     if mu {
                         self.report_incompatible_glue_units();
                     }
@@ -2619,7 +2619,7 @@ impl Expander {
                 // cur_val_level=dimen_val → glue_val 的 width 提升）。
                 EqSlot::Primitive(Primitive::LastKern) => {
                     self.fetch()?; // 消费 \lastkern
-                    let w = self.sink.last_kern();
+                    let w = self.query_sink_ref().last_kern();
                     if mu {
                         self.report_incompatible_glue_units();
                     }

@@ -537,7 +537,7 @@ impl Expander {
                     Ok(emit_count(self.params.misc[idx]))
                 }
                 // TRIP 冲刺：\the\spacefactor → 活参数实时查询（sink 侧维护；L277/L290/L293）
-                Primitive::SpaceFactor => Ok(emit_count(self.sink.space_factor())),
+                Primitive::SpaceFactor => Ok(emit_count(self.query_sink_ref().space_factor())),
                 // TRIP：\the\catcode`X → 当前 catcode 值（L295 `\the\catcode`J`）；
                 // 刀 4：\utfinputmode=1 时 >255 码位查覆盖表（默认 letter）
                 Primitive::Catcode => {
@@ -657,10 +657,10 @@ impl Expander {
                         _ => 2,
                     };
                     let idx = self.scan_register_index()?;
-                    Ok(emit_dimen(self.sink.box_dim(idx, dim)))
+                    Ok(emit_dimen(self.query_sink_ref().box_dim(idx, dim)))
                 }
                 // ETRIP 第二波：\the\lastpenalty：当前列表尾 penalty 值（无则 0）
-                Primitive::LastPenalty => Ok(emit_count(self.sink.last_penalty())),
+                Primitive::LastPenalty => Ok(emit_count(self.query_sink_ref().last_penalty())),
                 // ETRIP 第二波：\the\prevdepth：上一行 depth（sp；未定义 < -1000pt 输出原值）
                 Primitive::PrevDepth => Ok(emit_dimen(self.params.prevdepth)),
                 // ETRIP 第二波：\the\leftskip/\the\rightskip：段落悬挂胶水

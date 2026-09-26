@@ -41,6 +41,24 @@ use super::*;
     }
 
     #[test]
+    fn box_register_dimensions_expand_inside_message() {
+        // `\message` 的 fully-expanded text 会临时把输出 sink 换成 VecSink；
+        // 只读内部量仍必须查询真实排版 sink。此前 `\the\wd0/\ht0/\dp0`
+        // 在该路径恒读 VecSink 默认 0。
+        let mut ts =
+            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+        ts.typeset_dvi(
+            r"\setbox0=\hbox{abc}\message{WD=[\the\wd0] HT=[\the\ht0] DP=[\the\dp0]}\end",
+        )
+        .ok();
+        let t = ts.take_transcript();
+        assert!(
+            t.contains("WD=[0.05026pt] HT=[0.09155pt] DP=[0.02289pt]"),
+            r"\message 内 \the\wd0/\ht0/\dp0 应读取真实盒寄存器维度：{t:?}"
+        );
+    }
+
+    #[test]
     fn box255_page_reads_dims_kind_and_vsplit() {
         // P1/P3 对照（简报探针第 1/2/4 条）：页在 → 非 void 的 vbox，\ht/\wd 可读；
         // `\vsplit255 to 10pt` 从页顶切出恰好 10pt（结果 ht+dp = to 值，

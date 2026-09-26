@@ -972,6 +972,22 @@ impl NodeBuilder {
         }
         let (w, h, d) = self.math_metrics(font, ch, num, den);
         let has_sub = sub.as_ref().is_some_and(|s| !s.is_empty());
+        let italic = {
+            let it = self.fonts.char_italic(font, ch);
+            if num == den {
+                it
+            } else {
+                xn_over_d(it, num, den)
+            }
+        };
+        // tex.web make_op：先把大算符盒宽设为字符宽 + italic correction。
+        // 若后续有下标且非 limits，再扣回 italic correction，并把它作为
+        // make_scripts 的上标水平偏移 delta。
+        let op_box_width = if has_sub && !stack_limits {
+            w
+        } else {
+            w + italic
+        };
         let axis = self.axis_height(style);
         // vcenter（cmex10 大算符基线在设计上偏离中心，如 'X' h=1.0/d=15.0 → shift≈−9.5pt）
         let shift = (h - d) / 2 - axis;
@@ -982,36 +998,14 @@ impl NodeBuilder {
             height: h,
             depth: d,
         }]);
+        sigma.width = op_box_width;
         sigma.shift = shift;
         if sub.is_none() && sup.is_none() {
             return vec![Node::Box(sigma)];
         }
         if !stack_limits {
             // nolimits：普通脚本位（tex.web make_scripts；delta 作上标水平偏移）。
-            //
-            // 注意 tex.web §14694 `make_op` 还有半句："有下标且非 limits 时算符盒
-            // 宽减 delta（remove italic correction）"。本表**暂未**照做：它与
-            // `vbox_dimensions` 少算子盒 shift（tex.web §13203）是同一处语义的两
-            // 半，而在 display 大算符字宽本身偏小（`$\displaystyle\int$`：
-            // NTex 5.55557pt vs GT 10.00002pt）之前，两半同时补会把原本"互相掩盖"
-            // 的偏差变成叠加偏离（实测：补/不补，`\int_0^1` 的上下标 x 偏移从
-            // 与 GT 逐点一致变成差一个 delta）。见 docs/breadth-2026-09-23.md #26。
-            return self.make_scripts(
-                vec![Node::Box(sigma)],
-                if has_sub {
-                    let it = self.fonts.char_italic(font, ch);
-                    if num == den {
-                        it
-                    } else {
-                        xn_over_d(it, num, den)
-                    }
-                } else {
-                    0
-                },
-                sub,
-                sup,
-                style,
-            );
+            return self.make_scripts(vec![Node::Box(sigma)], if has_sub { italic } else { 0 }, sub, sup, style);
         }
         let [bos1, bos2, bos3, bos4, bos5] = self.big_op_spacings(style);
         // op 行盒：Σ 盒 shift 后的实际占位（引擎 hbox_dimensions 不计子盒 shift，手工设）
@@ -1026,18 +1020,22 @@ impl NodeBuilder {
         let mut sub_b = sub
             .filter(|a| !a.is_empty())
             .map(|a| BoxNode::new_hbox(self.math_to_hlist(a, sub_style)));
-        let width = [Some(w), sup_b.as_ref().map(|b| b.width), sub_b.as_ref().map(|b| b.width)]
+        let width = [
+            Some(op_box_width),
+            sup_b.as_ref().map(|b| b.width),
+            sub_b.as_ref().map(|b| b.width),
+        ]
             .into_iter()
             .flatten()
             .max()
             .unwrap_or(0);
         // op 行盒（Σ 盒居中撑宽，h/d 按 shift 后实际占位）
-        let left = (width - w) / 2;
+        let left = (width - op_box_width) / 2;
         let mut op_row = BoxNode::new_hbox(vec![
             Node::Kern { width: left },
             Node::Box(sigma),
             Node::Kern {
-                width: width - w - left,
+                width: width - op_box_width - left,
             },
         ]);
         op_row.width = width;
@@ -1410,6 +1408,7 @@ impl NodeBuilder {
                 }
                 x.shift = delta; // vlist 内 Box.shift = 水平偏移
                 let kern = (shift_up - x.depth) - (y.height - shift_down);
+                let combo_width = (x.width + delta.max(0)).max(y.width);
                 let children = vec![
                     Node::Box(x),
                     Node::Kern { width: kern },
@@ -1419,6 +1418,7 @@ impl NodeBuilder {
                 // diff=0 保持自然 height/depth；参考点在末盒基线。
                 let dims = vbox_dimensions(&children);
                 let mut b = vpack(children, dims.height + dims.depth, i64::MAX);
+                b.width = combo_width;
                 b.shift = shift_down;
                 out.push(Node::Box(b));
             }

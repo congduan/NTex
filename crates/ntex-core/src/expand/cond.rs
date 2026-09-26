@@ -751,15 +751,15 @@ saved_if_type: self.cur_if_type,
             // （sink 查询：0=void、1=hbox、2=vbox）
             CondOp::IfVoid => {
                 let idx = self.scan_register_index()?;
-                Ok(self.sink.box_register_kind(idx) == 0)
+                Ok(self.query_sink_ref().box_register_kind(idx) == 0)
             }
             CondOp::IfHBox => {
                 let idx = self.scan_register_index()?;
-                Ok(self.sink.box_register_kind(idx) == 1)
+                Ok(self.query_sink_ref().box_register_kind(idx) == 1)
             }
             CondOp::IfVBox => {
                 let idx = self.scan_register_index()?;
-                Ok(self.sink.box_register_kind(idx) == 2)
+                Ok(self.query_sink_ref().box_register_kind(idx) == 2)
             }
             // ETRIP 冲刺：\iffontchar<font><char> —— 字体含该字符为真。
             // 参数缺失/非法（如 `\iffontchar \else \fi`）报错恢复取假；

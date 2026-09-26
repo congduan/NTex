@@ -511,6 +511,18 @@ use super::*;
         "\\font\\tensy=cmsy10 \\font\\tenex=cmex10 \\textfont2=\\tensy \\textfont3=\\tenex "
     }
 
+    fn display_formula_children(text: &str) -> Vec<Node> {
+        let main = typeset(text).unwrap();
+        assert_eq!(main.len(), 5, "显示公式应落为 penalty/glue/box/penalty/glue：{main:?}");
+        let display = as_box(&main[2]);
+        display
+            .children
+            .iter()
+            .filter(|n| !matches!(n, Node::Glue { .. }))
+            .cloned()
+            .collect()
+    }
+
     #[test]
     fn math_radical_delimiter_glyph() {
         if cmmi10_metrics().is_none() {
@@ -1097,11 +1109,58 @@ use super::*;
             r#"$\mathchardef\intop="1352 \intop\limits_0^1$"#,
         );
         assert_eq!(children.len(), 1, r"limits 应堆叠为单 vbox：{children:?}");
-        // display 样式残差：NTex 的 display 公式列表目前按 text style 处理
-        //（displaylimits 的"display 才堆叠"分支不可达），见 breadth #25。
-        // \sum 文本样式（$$ 之外）：不堆叠 → 两件并排
+        // \sum 文本样式（$$ 之外）：不堆叠 → 两件并排。
         let children = math_line_children(
             r#"$\mathchardef\sum="1350 \sum_0^1$"#,
         );
         assert_eq!(children.len(), 2, r"text 样式 displaylimits 不堆叠：{children:?}");
+        // \sum display 样式：displaylimits 生效 → 上下限堆叠为单个 vbox。
+        let children = display_formula_children(
+            r#"$$\mathchardef\sum="1350 \sum_0^1$$"#,
+        );
+        assert_eq!(children.len(), 1, r"display 样式 displaylimits 应堆叠：{children:?}");
+        assert_eq!(as_box(&children[0]).kind, BoxKind::VBox);
+        // \intop + \nolimits 即使在 display 样式仍走右侧脚本位。
+        let children = display_formula_children(
+            r#"$$\mathchardef\intop="1352 \intop\nolimits_0^1$$"#,
+        );
+        assert_eq!(children.len(), 2, r"display nolimits 应为算符盒+脚本盒并排：{children:?}");
+    }
+
+    #[test]
+    fn display_big_op_width_includes_italic_correction() {
+        if cmmi10_metrics().is_none() {
+            eprintln!("未找到 Computer Modern TFM，跳过");
+            return;
+        }
+        let prefix = "\\font\\tenrm=cmr10 \\font\\sevenrm=cmr7 \\font\\tenex=cmex10 \
+                      \\textfont0=\\tenrm \\scriptfont0=\\sevenrm \
+                      \\textfont3=\\tenex ";
+        let bare = math_tfm_children(&format!(
+            r#"{prefix}$\displaystyle\mathchardef\intop="1352 \intop$"#
+        ));
+        let op = as_box(&bare[0]);
+        assert!(
+            (op.width - 10 * SP_PER_PT).abs() <= 2,
+            r"display \intop 盒宽应含 italic correction，约 10pt：{}sp {:?}",
+            op.width,
+            op
+        );
+        let scripted = math_tfm_children(&format!(
+            r#"{prefix}$\displaystyle\mathchardef\intop="1352 \intop\nolimits_0^1$"#
+        ));
+        let op = as_box(&scripted[0]);
+        assert!(
+            op.width > 5 * SP_PER_PT && op.width < 6 * SP_PER_PT,
+            r"有下标且 nolimits 时算符盒宽应扣回字符宽（约 5.55557pt）：{}sp {:?}",
+            op.width,
+            op
+        );
+        let scripts = as_box(&scripted[1]);
+        assert!(
+            scripts.width > 8 * SP_PER_PT && scripts.width < 9 * SP_PER_PT,
+            r"nolimits 脚本组合盒宽应计上标 delta、忽略竖向 kern 宽（GT 约 8.93057pt）：{}sp {:?}",
+            scripts.width,
+            scripts
+        );
     }

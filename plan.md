@@ -72,12 +72,11 @@
    （副标在算符右侧，含斜体修正 delta 的水平偏移）。验收：`intg.tex` DVI 上下标 x 偏移与
    GT 逐点一致（sup +655361、sub +364090 sp）；回归锁
    `ntex-layout::typeset::tests_math::op_limit_switch_controls_script_placement`
-   （用 `\mathchardef` 原语构造，不依赖 plain 预载；去 limits 判定必红）。残差见
-   [docs/breadth-2026-09-23.md](docs/breadth-2026-09-23.md) #24/#25/#26（仅下标时的 sub
-   水平位；display 公式列表仍按 text style 处理；display 大算符**盒宽偏小**——12pt 下
-   `$\displaystyle\int$` NTex 5.55557pt vs GT 10.00002pt，连带 tex.web 的
-   "`make_op` 有下标时算符盒宽减 delta"（§14695）与"`vpack` 计入子盒 shift"（§13205）
-   两半宽度语义互相掩盖，本轮未补，详见 #26）。
+   （用 `\mathchardef` 原语构造，不依赖 plain 预载；去 limits 判定必红）。2026-09-26
+   续批补齐 [docs/breadth-2026-09-23.md](docs/breadth-2026-09-23.md) #25/#26：
+   display style 分支加回归锁（`\sum` displaylimits 堆叠、`\intop\nolimits` 仍右侧脚本位），
+   `make_op` 大算符盒宽纳入 italic correction，裸 `\displaystyle\int` 约 10pt、有下标
+   nolimits 时扣回约 5.55557pt。
 4. **Tauri PDF 与预览字体同源**（2026-09-25）：预览走 LM OTF，PDF 另抓只覆盖 plain
    47 件的 CM PFB；LaTeX 新字号/TS1 请求 404 后仍导出裸 `/BaseFont`，查看器替代导致
    样式变化、无替代字形时直接丢字。修：`set_glyph_font` 同时向 PDF 登记 OTF + 预览
