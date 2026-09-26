@@ -253,6 +253,9 @@ impl Expander {
                 Ok(())
             }
             Primitive::Unless => {
+                if diag_enabled("NTEX_IFX_TRACE") {
+                    self.dump_input_stack("unless-expanded");
+                }
                 self.unless_pending = true;
                 Ok(())
             }

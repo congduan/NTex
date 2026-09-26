@@ -253,6 +253,21 @@ impl Expander {
             // 分割点全部落空 → 模块名取到原名 → invalid-function bail out（§24.3）。
             let val: i64 = code;
             while let Some((tok, _)) = self.fetch()? {
+                // 条件机跳过区（tex.web pass_text：expand 的条件臂消费假分支
+                // 文本，get_x_token 根本不会把假分支 token 交给本循环）：
+                // 非条件 token 丢弃、条件 token 照常推进。缺此臂时 expl3 fp
+                // 分派体（`\__fp_parse_one:Nw`，`\exp:w` 字母常量前瞻循环里
+                // 展开）Test1 假支的 `\reverse_if:N`（=`\unless` 别名）被就地
+                // 展开 → unless_pending 悬挂 → 下一个 `\if_meaning:w` 被取反
+                // → `\c_zero_fp` 等全部 fp 常量走 register 误支 →
+                // `\the\s__fp` "You can't use `\relax' after \the"（ctexart
+                // 载入墙，2026-09-27 与 pdfTeX 对拍定位）。
+                if self.is_skipping() {
+                    if let Some(op) = self.cond_op(tok) {
+                        self.step_conditional(op, tok)?;
+                    }
+                    continue;
+                }
                 if let Some(csid) = tok.csid() {
                     let expandable =
                         match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {

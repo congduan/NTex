@@ -40,6 +40,9 @@ impl Expander {
         // `\unless`（e-TeX）：先于条件终结符判定——它须**就地拉取**下一个
         // `\if*` 求值（expand_unless_in_place 文档）。
         if self.slot_is_unless(t2.0) && self.expand_unless_in_place()? {
+            if diag_enabled("NTEX_IFX_TRACE") {
+                eprintln!("[trace-ifx] unless-caller=exec");
+            }
             let seq = vec![t1];
             self.push_frame(InputFrame::TokenList {
                 items: Arc::from(seq),
@@ -160,6 +163,9 @@ impl Expander {
                     // \unless：与 exec_expandafter 同理——就地拉取下一个 \if*
                     // 求值（\str_tail:n 的 `\expandafter\X\reverse_if:N\if…`）。
                     if self.slot_is_unless(b.0) && self.expand_unless_in_place()? {
+                        if diag_enabled("NTEX_IFX_TRACE") {
+                            eprintln!("[trace-ifx] unless-caller=expand_once");
+                        }
                         return Ok(());
                     }
                     // \else/\fi/\or：TeX expand() 的 fi_or_else 分支（展开为空格并推进条件机）；

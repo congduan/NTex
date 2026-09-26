@@ -202,6 +202,13 @@ impl Expander {
             | CondOp::IfFontChar => {
                 // e-TeX（M4-5）：`\unless` 取反下一个条件（类型码同时取负）
                 let neg = std::mem::take(&mut self.unless_pending);
+                if diag_enabled("NTEX_IFX_TRACE") {
+                    eprintln!("[trace-ifx] step op={op:?} neg={neg}");
+                }
+                if diag_enabled("NTEX_COND_BACKTRACE") && matches!(op, CondOp::IfCat | CondOp::IfX)
+                {
+                    eprintln!("[trace-ifx] backtrace op={op:?}:\n{}", std::backtrace::Backtrace::force_capture());
+                }
                 let code = Self::if_type_code(op) * if neg { -1 } else { 1 };
                 // TeX：`\if*` 遇到即置新类型（参数扫描期间 branch=0）
                 let saved_type = self.cur_if_type;
@@ -523,6 +530,15 @@ saved_if_type: self.cur_if_type,
         let Some((t3, _)) = self.fetch()? else {
             return Ok(false);
         };
+        if diag_enabled("NTEX_IFX_TRACE") {
+            self.dump_input_stack("unless-in-place");
+        }
+        if diag_enabled("NTEX_COND_BACKTRACE") {
+            eprintln!(
+                "[unless-in-place] backtrace:\n{}",
+                std::backtrace::Backtrace::force_capture()
+            );
+        }
         match self.cond_op(t3) {
             Some(op) => {
                 self.unless_pending = true;
@@ -687,7 +703,11 @@ saved_if_type: self.cur_if_type,
                     };
                     eprintln!("[trace-ifx] ne=({ne1},{ne2}) {} vs {}", n(t1), n(t2));
                 }
-                Ok(self.ifx_equal(t1, ne1, t2, ne2))
+                let v = self.ifx_equal(t1, ne1, t2, ne2);
+                if diag_enabled("NTEX_IFX_TRACE") {
+                    eprintln!("[trace-ifx] verdict={v} unless_pending={}", self.unless_pending);
+                }
+                Ok(v)
             }
             CondOp::IfNum => {
                 let a = self.scan_number()?;
