@@ -1,7 +1,7 @@
 # AGENTS.md — NTex 仓库目录结构
 
 > 本文件**只描述目录结构与各部分职责**。
-> 进度与待办看 [plan.md](plan.md)（唯一进度源）；构建命令与开发约定看 [README.md](README.md)。
+> 进度与待办看 [plan.md](plan.md)（唯一进度源）；构建命令与开发约定看 [README.md](README.md)（英文，默认首页）或 [README.zh-CN.md](README.zh-CN.md)（中文）。
 
 ---
 
@@ -21,7 +21,8 @@ NTex/
 ├── screenshots/       文档用截图
 ├── site/              项目站点静态资源
 ├── plan.md            唯一进度源
-├── README.md          上手入口与开发约定
+├── README.md          上手入口与开发约定（英文，仓库默认首页）
+├── README.zh-CN.md    上手入口与开发约定（中文）
 ├── idea.md            架构构想（愿景，冻结）
 ├── RFC-*.md           架构决策（RFC-1 token / RFC-3 副作用 / RFC-4 字节码 / RFC-5 并行）
 ├── Makefile           质量门禁与各管路入口

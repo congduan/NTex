@@ -1,131 +1,148 @@
 # NTex
 
-**100% 兼容 LaTeX/TeX 宏机制的现代排版 & 渲染引擎**——不修改宏语义，只换掉它的"运行平台"：
-把 1970 年代的单线程 C 解释器（Web2C），重写为 **现代 VM + 增量计算 + 并行布局 + GPU 渲染** 的现代排版内核。
+**English** | [简体中文](README.zh-CN.md)
 
-> 最简概括：**"一个基于状态快照的 TeX 虚拟机（求值）+ 纯节点流的多线程增量布局（排版）+ GPU/Canvas（渲染）"**
+**A modern typesetting & rendering engine that is 100% compatible with the LaTeX/TeX macro machinery** —
+it does not change macro semantics; it only replaces the "runtime platform" underneath: the
+single-threaded C interpreter of the 1970s (Web2C) is rewritten into a modern typesetting kernel built on
+**a modern VM + incremental computation + parallel layout + GPU rendering**.
 
-![ntex-studio 实时预览工作台（左：TeX 源码编辑；右：vello GPU 渲染）](screenshots/screenshot1.png)
+> In one sentence: **"a state-snapshot-based TeX virtual machine (evaluation) + a pure node-stream, multi-threaded incremental layout (typesetting) + GPU/Canvas (rendering)"**
 
-## 核心架构
+![The ntex-studio live preview workbench (left: TeX source editor; right: vello GPU rendering)](screenshots/screenshot1.png)
+
+## Core architecture
 
 ```
-TeX/LaTeX 源码
+TeX/LaTeX source
     ▼
-0. 输入层（VFS / 文件抽象，ntex-io）
+0. Input layer (VFS / file abstraction, ntex-io)
     ▼
-1. TeX 虚拟机（阶段 1：求值，ntex-core）
-   ┌────────────┐   ┌──────────────────────┐
-   │ Token 流    │◄─►│ 不可变状态（catcode/  │
-   │ (8B token) │   │ 宏字典/寄存器）快照    │
-   └─────┬──────┘   └──────────────────────┘
-         ▼ 宏展开 + 执行循环（字节码为默认路径）
-   纯排版节点流（Node List）
+1. TeX virtual machine (stage 1: evaluation, ntex-core)
+   ┌──────────────┐   ┌──────────────────────────────┐
+   │ Token stream │◄─►│ Immutable state snapshot     │
+   │ (8B token)   │   │ (catcode / macros /          │
+   └──────┬───────┘   │  registers)                  │
+          ▼           └──────────────────────────────┘
+   macro expansion + execution loop (bytecode is the default path)
+   pure typesetting node stream (Node List)
     ▼
-2. 增量缓存层（段级快照 + 依赖追踪 + 失效传播）
+2. Incremental cache layer (segment snapshots + dependency tracking + invalidation propagation)
     ▼
-3. 布局引擎（阶段 2：排版，ntex-layout）
-   段落折行 Knuth-Plass │ 断页 │ 数学排版 │ 断字 │ 字体
+3. Layout engine (stage 2: typesetting, ntex-layout)
+   Knuth-Plass paragraph breaking │ page breaking │ math typesetting │ hyphenation │ fonts
     ▼
-4. 盒子树 + 输出例程（\shipout）→ DVI
+4. Box tree + output routine (\shipout) → DVI
     ▼
-5. 渲染后端（阶段 3）ntex-pdf（DVI→PDF）/ ntex-backend（vello GPU / 软光栅）
+5. Rendering backends (stage 3): ntex-pdf (DVI→PDF) / ntex-backend (vello GPU / software rasterizer)
 ```
 
-**四大性能支柱**：
+**Four performance pillars**:
 
-1. **状态快照 + CoW**：不可变状态表，微秒级快照，为增量编译与撤销/重做铺路
-2. **预编译 `.fmt` 内存 Dump + mmap**：毫秒级完成 `latex.ltx` 初始化（v1 已可用，v2 待做）
-3. **段级记忆化增量求值**：改一段只重算受影响段（现状见 [plan.md](plan.md) §2 M5）
-4. **Arena 内存池**：token/节点连续分配，零 GC 暂停（待做）
+1. **State snapshot + CoW**: immutable state tables with microsecond-level snapshots, paving the way
+   for incremental compilation and undo/redo
+2. **Precompiled `.fmt` in-memory dump + mmap**: complete `latex.ltx` initialization in milliseconds
+   (v1 available, v2 pending)
+3. **Segment-level memoized incremental evaluation**: editing one segment recomputes only the affected
+   segments (see [plan.md](plan.md) §2 M5 for current status)
+4. **Arena memory pool**: contiguous allocation of tokens/nodes with zero GC pauses (pending)
 
-各 crate 的职责划分见 [AGENTS.md](AGENTS.md)；架构构想的完整论证见 [idea.md](idea.md)。
-当前进度与里程碑状态一律见 [plan.md](plan.md)。
+Crate responsibilities are described in [AGENTS.md](AGENTS.md); the full rationale behind the
+architectural vision is in [idea.md](idea.md). Current progress and milestone status always live in
+[plan.md](plan.md).
 
-## 快速开始
+## Quick start
 
 ```bash
-# 质量门禁：fmt + clippy(-D warnings) + 单元测试（提交前必须全绿）
+# Quality gate: fmt + clippy (-D warnings) + unit tests (must be green before committing)
 make check
 
-# 定位基础设施（开工定位前先读 docs/tooling-trust.md）
-make instrument-check                   # 仪器自检：诊断原语与 pdfTeX 逐字对拍
-make abcheck TEX=probe.tex ARGS=--trace # 双引擎差分对拍
-make logtrace LOG=x.transcript          # 转录/log 结构分析
-make blocker-track                      # 阻塞点单调性看板
+# Diagnostic infrastructure (read docs/tooling-trust.md before starting any debugging work)
+make instrument-check                   # instrument self-check: diagnostic primitives vs. pdfTeX, byte for byte
+make abcheck TEX=probe.tex ARGS=--trace # A/B differential run between the two engines
+make logtrace LOG=x.transcript          # transcript / log structural analysis
+make blocker-track                      # blocker monotonicity dashboard
 
-# 端到端演示：samples/demo.tex → DVI → PDF
+# End-to-end demo: samples/demo.tex → DVI → PDF
 cargo run -p ntex-dvi -- samples/demo.tex                        # → samples/demo.dvi
 cargo run -p ntex-pdf -- samples/demo.dvi                        # → samples/demo.pdf
-cargo run -p ntex-backend -- samples/demo.tex demo 144 --vello   # → PNG（GPU + 真字形）
+cargo run -p ntex-backend -- samples/demo.tex demo 144 --vello   # → PNG (GPU + real glyphs)
 
-# LaTeX 快路径：无需外部 TeX Live，默认从 assets/fmt 与 assets/tex-minimal 查找
+# LaTeX fast path: no external TeX Live needed; looks in assets/fmt and assets/tex-minimal by default
 cargo run -p ntex-dvi -- --fmt latex.fmt doc.tex
-cargo run -p ntex-dvi -- --generate-fmt /tmp/latex.fmt    # 引擎语义变更后重生成发行 fmt
+cargo run -p ntex-dvi -- --generate-fmt /tmp/latex.fmt    # regenerate the shipped fmt after engine semantic changes
 
-# 实时预览工作台（左 TeX 编辑 / 右 vello GPU 渲染，250ms 防抖重排）
-cargo run -p ntex-studio [文件.tex]
-make tauri                                                # Tauri 桌面壳（排版+渲染全在前端 WASM 内）
+# Live preview workbench (TeX editing on the left / vello GPU rendering on the right, 250 ms debounced relayout)
+cargo run -p ntex-studio [file.tex]
+make tauri                                                # Tauri desktop shell (typesetting + rendering entirely in frontend WASM)
 
-# 一致性 / 差分 / 基准管路
+# Conformance / differential / benchmark pipelines
 make trip / make diff / make bench
-make fixtures / make fixture-extras        # 获取 TRIP·ETRIP / 补充对照 fixtures
-make lvt-fetch / make lvt-run ARGS=--all   # expl3 官方测试套件跑分
+make fixtures / make fixture-extras        # fetch TRIP·ETRIP / extra reference fixtures
+make lvt-fetch / make lvt-run ARGS=--all   # run the official expl3 test suite
 ```
 
-`ntex-dvi` 的 `\input` 默认搜索链：cwd → 显式 `--input-path` → 可执行文件同目录 `tex/` →
-`~/.ntex/tex/` → `TEXINPUTS` → 仓库/发行包 `assets/tex-minimal/tex/` → 检测到的
-`~/.TinyTeX/texmf-dist/tex/` → 最后回落 `kpsewhich`。完整资产说明见
-[assets/tex-minimal/README.md](assets/tex-minimal/README.md)。
+The default `\input` search chain of `ntex-dvi` is: cwd → explicit `--input-path` → `tex/` next to the
+executable → `~/.ntex/tex/` → `TEXINPUTS` → the repository/distribution
+`assets/tex-minimal/tex/` → a detected `~/.TinyTeX/texmf-dist/tex/` → finally falling back to
+`kpsewhich`. See [assets/tex-minimal/README.md](assets/tex-minimal/README.md) for the full asset
+description.
 
-## 开发约定
+## Development conventions
 
-### 编码规范
+### Coding standards
 
-- **工程级 lint**：workspace 统一 `unsafe_code = "deny"`，clippy 全开——严禁 `unsafe`，
-  禁止 `catch_unwind`；
-- **错误模型**：错误走 `Result`/`Error`，输入可达路径禁止 `unwrap`/`expect`/`panic`
-  （引擎契约：**任意畸形输入不 panic**）；错误类型不带 blanket `From<io::Error>`，
-  强制带操作意图上下文；
-- **注释/文档/提交信息用中文**；模块顶部文档引用里程碑 ID（如 `M1-4`）与 RFC 章节
-  （如 `RFC-1 §3`）；代码改动须同步更新对应注释；
-- **格式**：`rustfmt.toml` = edition 2021 / max_width 100 / use_field_init_shorthand；
-- 提交信息风格：中文，`feat:` 开头，冒号后空格
-  （例：`feat: ETRIP 冲刺迭代 —— 表达式 i128 中间量 + 胶水阶语义`）。
+- **Project-wide lint**: the workspace uniformly sets `unsafe_code = "deny"` and enables all clippy
+  lints — `unsafe` is strictly forbidden, as is `catch_unwind`;
+- **Error model**: errors go through `Result`/`Error`; `unwrap`/`expect`/`panic` are forbidden on
+  input-reachable paths (engine contract: **no panic on any malformed input**). Error types carry no
+  blanket `From<io::Error>`; they must carry operation-intent context;
+- **Comments/docs/commit messages are in Chinese**; module-level docs reference milestone IDs
+  (e.g. `M1-4`) and RFC sections (e.g. `RFC-1 §3`); code changes must update the corresponding
+  comments in sync;
+- **Formatting**: `rustfmt.toml` = edition 2021 / max_width 100 / use_field_init_shorthand;
+- Commit message style: Chinese, prefixed with `feat:`, with a space after the colon
+  (e.g. `feat: ETRIP 冲刺迭代 —— 表达式 i128 中间量 + 胶水阶语义`).
 
-### 测试纪律
+### Testing discipline
 
-- **提交前 `make check` 全绿**（fmt + clippy `-D warnings` + 单元测试）；
-- 测试金字塔：单元测试（语义锁消息 / 逐位对照）> 差分测试（同一 `.tex` 双引擎 diff）>
-  TRIP/ETRIP（一致性硬口径）；M2 双轨等价框架（解释器 vs 字节码）必须保持绿；
-- **`cargo test --release` 会失败**：`[profile.release]` 开了 `panic = "abort"` + `lto` +
-  `codegen-units = 1`——**测试一律用默认 dev profile**（CI 亦如此）；
-- 涉及排版一致性/折行结果，验证方式：`demo.tex → DVI` 与 dvipdfmx / 真实 TeX 对照；
-- 定位类改动先读 [docs/tooling-trust.md](docs/tooling-trust.md)（仪器失真史 + 判读纪律），
-  改诊断原语后必跑 `make instrument-check`。
+- **`make check` must be green before committing** (fmt + clippy `-D warnings` + unit tests);
+- Testing pyramid: unit tests (locked semantic messages / bit-exact comparisons) > differential tests
+  (the same `.tex` diffed across two engines) > TRIP/ETRIP (the hard conformance criterion). The M2
+  dual-track equivalence framework (interpreter vs. bytecode) must stay green;
+- **`cargo test --release` will fail**: `[profile.release]` enables `panic = "abort"` + `lto` +
+  `codegen-units = 1` — **always run tests with the default dev profile** (CI does the same);
+- For anything touching typesetting conformance / line-breaking results, verify by comparing
+  `demo.tex → DVI` against dvipdfmx / real TeX;
+- Read [docs/tooling-trust.md](docs/tooling-trust.md) (instrument failure history + interpretation
+  discipline) before making any debugging-related change, and always run `make instrument-check`
+  after modifying diagnostic primitives.
 
-### 文档约定
+### Documentation conventions
 
-- **进度只写 [plan.md](plan.md)**（唯一进度源）；目录结构只写 [AGENTS.md](AGENTS.md)；
-- 长期参考文档（"是什么 / 怎么做"）放 `docs/`；历史战报与勘察全文放 `docs/archive/`；
-- 新增任何"简化 / no-op / 暂不"实现必须当天登记到
-  [docs/KNOWN-SIMPLIFICATIONS.md](docs/KNOWN-SIMPLIFICATIONS.md)（文件:行），修复后标 ✅ + commit。
+- **Progress goes only in [plan.md](plan.md)** (the single source of truth for progress); directory
+  structure goes only in [AGENTS.md](AGENTS.md);
+- Long-lived reference docs ("what it is / how to do it") live in `docs/`; historical battle reports
+  and full investigation write-ups live in `docs/archive/`;
+- Any new "simplified / no-op / not yet" implementation must be registered the same day in
+  [docs/KNOWN-SIMPLIFICATIONS.md](docs/KNOWN-SIMPLIFICATIONS.md) (file:line), and marked ✅ + commit
+  once fixed.
 
-## 文档地图
+## Documentation map
 
-| 文档 | 定位 |
+| Document | Scope |
 |---|---|
-| [plan.md](plan.md) | **整体进度**：当前焦点 / 各线状态 / 里程碑明细 / 待办 / 风险 |
-| [AGENTS.md](AGENTS.md) | **目录结构**：crate 职责、源文件布局、docs 索引 |
-| [idea.md](idea.md) | 架构构想（三阶段解耦 / 增量计算 / 并行布局的完整论证） |
-| [RFC-1-token.md](RFC-1-token.md) | Token 表示与内存布局（8B tagged union） |
-| [RFC-3-side-effects.md](RFC-3-side-effects.md) | 副作用隔离（VFS + shipout 边界提交） |
-| [RFC-4-bytecode.md](RFC-4-bytecode.md) | 字节码指令集（宏展开 VM IR） |
-| [RFC-5-parallel.md](RFC-5-parallel.md) | 并行化设计 |
-| [docs/KNOWN-SIMPLIFICATIONS.md](docs/KNOWN-SIMPLIFICATIONS.md) | 技术债清单（改动前先查表） |
-| [docs/tooling-trust.md](docs/tooling-trust.md) | 定位基础设施与仪器可信度 |
-| [docs/MATH-STATE-MACHINE.md](docs/MATH-STATE-MACHINE.md) | 数学状态机语义规格 |
-| [docs/archive/](docs/archive/README.md) | 历史归档索引（逐刀战报、勘察全文） |
+| [plan.md](plan.md) | **Overall progress**: current focus / status per workstream / milestone details / TODOs / risks |
+| [AGENTS.md](AGENTS.md) | **Directory structure**: crate responsibilities, source file layout, docs index |
+| [idea.md](idea.md) | Architectural vision (full rationale for the three-stage decoupling / incremental computation / parallel layout) |
+| [RFC-1-token.md](RFC-1-token.md) | Token representation and memory layout (8B tagged union) |
+| [RFC-3-side-effects.md](RFC-3-side-effects.md) | Side-effect isolation (VFS + commit at the shipout boundary) |
+| [RFC-4-bytecode.md](RFC-4-bytecode.md) | Bytecode instruction set (macro-expansion VM IR) |
+| [RFC-5-parallel.md](RFC-5-parallel.md) | Parallelization design |
+| [docs/KNOWN-SIMPLIFICATIONS.md](docs/KNOWN-SIMPLIFICATIONS.md) | Technical debt list (consult before changing anything) |
+| [docs/tooling-trust.md](docs/tooling-trust.md) | Diagnostic infrastructure and instrument trustworthiness |
+| [docs/MATH-STATE-MACHINE.md](docs/MATH-STATE-MACHINE.md) | Math state machine semantic specification |
+| [docs/archive/](docs/archive/README.md) | Historical archive index (battle reports, full investigations) |
 
 ## License
 
