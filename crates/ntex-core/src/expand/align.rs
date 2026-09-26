@@ -398,13 +398,27 @@ impl Expander {
                     Ok(true)
                 }
             }
+            // `{`/`}`：只有**字符 token** 调深度。tex.web 的 align_state 加减
+            // 只发生在两处字符通路：get_next 的 `mid_line+left_brace` 臂
+            // （L7335-7341，文件/行扫描）与 get_token 的 token 表分支
+            // （L7492-7493，`t<cs_token_flag` 才进 case）；cs token 分支只做
+            // outer_call 校验、**不碰 align_state**。故 `\let\bgroup={` 型
+            // cs（eq_type=left_brace）在 preamble 里是纯数据——GT pdftex
+            // 实证 `\halign{\bgroup&#\egroup\cr}` 首错是
+            // "Missing # inserted in alignment preamble"（`&` 仍按深度 0
+            // 终结 u 段）。分类仍走 cmd_class（cur_cmd 层面，tab/param/cr
+            // 的 cs 形态命中不变），只是深度记账收窄到字符形态。
             Some(CmdClass::BeginBrace) => {
-                self.preamble_adjust_depth(1);
+                if tok.kind() == TokenKind::Char {
+                    self.preamble_adjust_depth(1);
+                }
                 self.preamble_store(tok);
                 Ok(true)
             }
             Some(CmdClass::EndBrace) => {
-                self.preamble_adjust_depth(-1);
+                if tok.kind() == TokenKind::Char {
+                    self.preamble_adjust_depth(-1);
+                }
                 self.preamble_store(tok);
                 Ok(true)
             }
@@ -797,30 +811,79 @@ impl Expander {
             // **跳过** `unsave; new_save_level(align_group)` 与 `init_span(p)`）
             // ——不关 sink 单元、不开新组，只推进列指针 + 新列模板。
             CellEndKind::Span => {
-                self.align_advance_col(false);
-                let peeked = self.align_fetch_significant()?;
-                if let Some(t) = peeked {
-                    self.align_init_col(t, false)?;
+                if self.align_col_will_overflow() {
+                    self.align_extra_tab_as_cr()?;
+                } else {
+                    self.align_advance_col(false);
+                    let peeked = self.align_fetch_significant()?;
+                    if let Some(t) = peeked {
+                        self.align_init_col(t, false)?;
+                    }
                 }
             }
             CellEndKind::Tab => {
-                self.align_close_cell(AlignCellEnd::Tab)?;
-                self.align_advance_col(true);
-                let peeked = self.align_fetch_significant()?;
-                if let Some(t) = peeked {
-                    self.align_init_col(t, true)?;
+                if self.align_col_will_overflow() {
+                    self.align_extra_tab_as_cr()?;
+                } else {
+                    self.align_close_cell(AlignCellEnd::Tab)?;
+                    self.align_advance_col(true);
+                    let peeked = self.align_fetch_significant()?;
+                    if let Some(t) = peeked {
+                        self.align_init_col(t, true)?;
+                    }
                 }
             }
             CellEndKind::Cr | CellEndKind::CrCr => {
                 self.align_close_cell(AlignCellEnd::Cr)?;
-                self.sink.align_row_end()?;
-                self.align_set_row_open(true);
-                // tex.web L15732：fin_row 尾注入 \everycr（先于 align_peek）
-                self.align_inject_everycr()?;
-                self.align_peek_next()?;
+                self.align_end_row_and_peek()?;
             }
         }
         Ok(())
+    }
+
+    /// 越界判定：preamble 列表耗尽且无周期列（tex.web fin_col 的
+    /// `<If the preamble list has been traversed…>`：`p=null` 且
+    /// `extra_info(cur_align)<cr_code` 且 `cur_loop=null`）。
+    fn align_col_will_overflow(&self) -> bool {
+        match self.align_frames.last() {
+            Some(AlignFrame {
+                phase:
+                    AlignPhase::Body {
+                        cols,
+                        loop_col,
+                        cur_col,
+                        ..
+                    },
+                ..
+            }) => *cur_col + 1 >= cols.len() && loop_col.is_none(),
+            _ => false,
+        }
+    }
+
+    /// 越界 `&`/`\span` = `\cr`（tex.web 同一节：报
+    /// "Extra alignment tab has been changed to \cr" 后
+    /// `extra_info(cur_align):=cr_code` → fin_col 返回 true → 行结束，
+    /// 余下 token 由 align_peek 起新行的首列续排）。此前实现只报错却把
+    /// 内容钳进末列（单行多单元），与 GT 行数/行内容都不符。
+    fn align_extra_tab_as_cr(&mut self) -> Result<()> {
+        let _ = self.sink.write16(
+            "! Extra alignment tab has been changed to \\cr.\n\
+             You have given more \\span or & marks than there were\n\
+             in the preamble to the \\halign or \\valign now in progress.\n\
+             So I'll assume that you meant to type \\cr instead.\n"
+                .to_string(),
+        );
+        self.align_close_cell(AlignCellEnd::Cr)?;
+        self.align_end_row_and_peek()
+    }
+
+    /// 行收尾三连（tex.web fin_row：行盒入竖列 → 注入 \everycr → align_peek）。
+    fn align_end_row_and_peek(&mut self) -> Result<()> {
+        self.sink.align_row_end()?;
+        self.align_set_row_open(true);
+        // tex.web L15732：fin_row 尾注入 \everycr（先于 align_peek）
+        self.align_inject_everycr()?;
+        self.align_peek_next()
     }
 
     /// 单元封装（sink 事件 + 单元 eqtb 组收尾）。span_len = 跨列数。
@@ -839,8 +902,10 @@ impl Expander {
     }
 
     /// 列指针推进（cur_col+1）；越界时周期扩展（tex.web "Lengthen the
-    /// preamble periodically"）或报 "Extra alignment tab has been changed
-    /// to \cr"（当 \cr 处理由调用方回退——本实现改为钳在末列，结束符已定）。
+    /// preamble periodically"）。无周期列的越界**不会走到这里**——调用方
+    /// （align_fin_col）已先经 align_col_will_overflow 分流到
+    /// align_extra_tab_as_cr（越界 `&`/`\span` 按 `\cr` 收行）；此处兜底
+    /// 钳末列只为不 panic。
     ///
     /// `new_unit`：是否开始新**单元**（非 `\span`）。跨列单元（`\span`）的
     /// 起始列由 tex.web `cur_span` 记着，且 fin_col 的 span 分支**不**调
@@ -856,26 +921,14 @@ impl Expander {
         };
         let next = *cur_col + 1;
         if next >= cols.len() {
-            match loop_col {
-                Some((_start, cursor)) => {
-                    // 周期复制：新列 = cols[cursor] 的模板；其后胶水 = 该列后胶水
-                    let src = (*cursor).min(cols.len().saturating_sub(1));
-                    let col = cols[src].clone();
-                    let glue = tabskips.get(src + 1).copied().unwrap_or(Glue::ZERO);
-                    cols.push(col);
-                    tabskips.push(glue);
-                    *cursor += 1;
-                }
-                None => {
-                    // Extra alignment tab has been changed to \cr（恢复：钳末列）
-                    let _ = self.sink.write16(
-                        "! Extra alignment tab has been changed to \\cr.\n\
-                         You have given more \\span or & marks than there were\n\
-                         in the preamble to the \\halign or \\valign now in progress.\n\
-                         So I'll assume that you meant to type \\cr instead.\n"
-                            .to_string(),
-                    );
-                }
+            if let Some((_start, cursor)) = loop_col.as_mut() {
+                // 周期复制：新列 = cols[cursor] 的模板；其后胶水 = 该列后胶水
+                let src = (*cursor).min(cols.len().saturating_sub(1));
+                let col = cols[src].clone();
+                let glue = tabskips.get(src + 1).copied().unwrap_or(Glue::ZERO);
+                cols.push(col);
+                tabskips.push(glue);
+                *cursor += 1;
             }
         }
         *cur_col = (*cur_col + 1).min(cols.len().saturating_sub(1));
