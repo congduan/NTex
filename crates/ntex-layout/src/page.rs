@@ -81,6 +81,8 @@ pub struct PageBuilder {
     held_zero_empty: Option<Node>,
     /// 持有盒放行旗标：裁决为 -10003 二击标记时置位，Box 臂消费后清除。
     keep_zero_empty: bool,
+    /// 放行的页首零盒只用于让后继顶部胶水保留，不作为首基线插入 topskip。
+    release_zero_without_topskip: bool,
     /// 追踪输出缓冲（feed_one 后由调用方取走写转录）。
     trace_buf: String,
     /// `\vsize` 的**事件面**最新值（[`Primitive::VSize`] 赋值经 `param_changed`
@@ -129,6 +131,7 @@ impl PageBuilder {
             tracing: false,
             held_zero_empty: None,
             keep_zero_empty: false,
+            release_zero_without_topskip: false,
             trace_buf: String::new(),
             vsize_live: None,
         }
@@ -228,6 +231,7 @@ impl PageBuilder {
                         // 仍按第二十二刀语义丢弃持有盒，防空空白页不变量不变。
                         Some(n) if !matches!(n, Node::Penalty { .. }) => {
                             self.keep_zero_empty = true;
+                            self.release_zero_without_topskip = true;
                             true
                         }
                         _ => false,
@@ -278,7 +282,9 @@ impl PageBuilder {
                     contrib.remove(0);
                     return Outcome::Continue;
                 }
-                if !self.has_box {
+                let suppress_topskip =
+                    b.is_zero_empty() && std::mem::take(&mut self.release_zero_without_topskip);
+                if !self.has_box && !suppress_topskip {
                     // 页面初始化 + 首盒前插入 \topskip 胶水（tex.web §509）。
                     // topskip 的断点尝试（p=0，t=0）只输出追踪行，不作为断点候选
                     // （避免 \vsize 极小 + topskip 超页时空页 fire_up 死循环）。
@@ -313,6 +319,8 @@ impl PageBuilder {
                         self.shrink += params.topskip.shrink;
                         self.last_is_box = false;
                     }
+                } else if !self.has_box {
+                    self.freeze(params);
                 }
                 contrib.remove(0);
                 self.page.push(Node::Box(b));

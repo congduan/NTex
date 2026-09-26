@@ -1563,8 +1563,11 @@ impl Expander {
                 if !self.output_active && self.maybe_inject_output()? {
                     return Ok(true);
                 }
-                // RFC-3：页面真正输出（shipout 边界）时 flush 延迟写流
-                if self.sink.take_write_flush_pending() {
+                // RFC-3：页面真正输出（shipout 边界）时 flush 延迟写流。
+                // LaTeX's output routine wraps \shipout in local write-protection
+                // state; expand delayed writes only after the output routine frame
+                // has completed and those locals have been restored.
+                if !self.output_active && self.sink.take_write_flush_pending() {
                     self.flush_writes()?;
                 }
                 self.process_one()

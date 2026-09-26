@@ -696,7 +696,25 @@ impl Expander {
     /// 因此带尾空格（其 `\ifx` 对比失败 → 非致命 "BAD: old file" 噪声）。
     fn expand_to_string(&mut self, toks: &[Token]) -> Result<String> {
         self.debug_expand_caller = "write";
-        let expanded = self.expand_region(toks.to_vec())?;
+        // LaTeX structural writes are queued as token lists containing
+        // `\protect\contentsline...`. In output-routine edge cases \protect can
+        // be transiently `\relax` when the delayed write is expanded; normalize
+        // that inert state to the standard write-time `\string` behavior so the
+        // following command is printed, not executed.
+        let protect_restore = self.intern.lookup("protect").and_then(|id| {
+            let slot = self.eqtb.slot(id).clone();
+            if matches!(slot, EqSlot::Undefined | EqSlot::Primitive(Primitive::Relax)) {
+                *self.eqtb.slot_mut(id) = EqSlot::Primitive(Primitive::String_);
+                Some((id, slot))
+            } else {
+                None
+            }
+        });
+        let expanded = self.expand_region(toks.to_vec());
+        if let Some((id, slot)) = protect_restore {
+            *self.eqtb.slot_mut(id) = slot;
+        }
+        let expanded = expanded?;
         let mut s = String::new();
         for t in expanded {
             match t.catcode() {

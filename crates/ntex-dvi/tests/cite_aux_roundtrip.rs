@@ -56,6 +56,37 @@ X\\cite{foo}Y\\cite{foo, bar}Z
 ";
 
 #[test]
+fn twocolumn_section_aux_keeps_contentsline_protected() {
+    let d = workdir("twocol-section");
+    fs::write(
+        d.join("p.tex"),
+        "\
+\\documentclass[twocolumn]{article}
+\\begin{document}
+\\title{T}\\author{A}\\date{D}\\maketitle
+\\begin{abstract}Abstract text.\\end{abstract}
+\\section{Intro}
+Hello.
+\\end{document}
+",
+    )
+    .unwrap();
+
+    let (_stdout, stderr, _ok) = compile(&d, "p", "p.dvi");
+    assert!(
+        !stderr.contains("Runaway") && !stderr.contains("Incomplete \\if"),
+        "stderr={stderr:?}"
+    );
+    let aux = fs::read_to_string(d.join("p.aux")).unwrap();
+    assert!(
+        aux.contains("\\@writefile{toc}{\\contentsline"),
+        "aux={aux:?}"
+    );
+    assert!(!aux.contains("\\series@check@toks"), "aux={aux:?}");
+    assert!(!aux.contains("\\protect \\gdef"), "aux={aux:?}");
+}
+
+#[test]
 fn cite_pass1_writes_citation_and_warns_undefined() {
     let d = workdir("pass1");
     fs::write(d.join("p.tex"), CITE_DOC).unwrap();
