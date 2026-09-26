@@ -28,8 +28,14 @@ jobs:
           # CI runners have no TeX Live/TinyTeX — TFMs come from the in-repo assets
           NTEX_TFM_DIR: ${{ github.workspace }}/assets/tfm
         run: |
-          cargo run -q -p ntex-dvi -- samples/transformer-real/transformer-standalone.tex site/public/demo.dvi --input-path samples/transformer-real
-          cargo run -q -p ntex-dvi -- samples/transformer-real/transformer-standalone.tex site/public/demo.dvi --input-path samples/transformer-real
+          # \\input search chain: sample dir + in-repo LaTeX packages
+          # (amsmath/amssymb/graphicx closures live under assets/tex-minimal)
+          for i in 1 2; do
+            cargo run -q -p ntex-dvi -- samples/transformer-real/transformer-standalone.tex site/public/demo.dvi \
+              --input-path samples/transformer-real \
+              --input-path assets/tex-minimal/tex \
+              --input-path assets/tex-minimal/tex/latex
+          done
           cargo run -q -p ntex-pdf -- site/public/demo.dvi site/public/demo.pdf
           rm site/public/demo.dvi
           cp samples/transformer-real/transformer-standalone.tex site/public/demo.tex
