@@ -1590,37 +1590,25 @@ impl NodeBuilder {
         }
     }
 
-    /// 垂直列表中不阻断行间胶水的节点。显式 glue/kern 会重置 TeX 的
-    /// `prev_depth` 关系；否则 section afterskip、float textfloatsep 等显式
-    /// 间距后还会再补一段 baselineskip。
-    fn push_box_transparent(n: &Node) -> bool {
-        matches!(
-            n,
-            Node::Penalty { .. }
-                | Node::Mark { .. }
-                | Node::Ins { .. }
-                | Node::Adjust { .. }
-                | Node::Whatsit { .. }
-        )
-    }
-
-    fn previous_interline_depth(&self, cross_glue: bool) -> Option<i64> {
+    /// 行间胶水基准：`tex.web append_to_vlist`（L13315-13327）的 `prev_depth` ——
+    /// **只随盒子更新**（`prev_depth:=depth(b)`）；显式 glue/kern/penalty/mark/
+    /// ins/adjust/whatsit 都不重置它（`\vskip` 之后的下一个盒子仍按
+    /// `\baselineskip − (prevdepth + height)` 补行间 glue，多行 caption 段落
+    /// 收尾行距、广度 #27 的主根因）。唯一例外是竖直模式规则（tex.web L20516
+    /// 「baselineskip calculations are disabled after a rule」）：`\hrule` 后
+    /// `prev_depth:=ignore_depth`，下一个盒子不再补 glue。
+    /// 列表里尚无盒子时回退到断页器的 `page.prev_depth`（tex.web 的
+    /// contribution list 与当前页共用同一 `prev_depth`）。
+    fn previous_interline_depth(&self) -> Option<i64> {
         let list = self.lists.last()?;
-        let mut saw_blocking = false;
         for n in list.iter().rev() {
             match n {
                 Node::Box(prev) => return Some(prev.depth),
-                Node::Rule { depth, .. } => return Some(*depth),
-                _ if cross_glue && !matches!(n, Node::Box(_) | Node::Rule { .. }) => {}
-                _ if Self::push_box_transparent(n) => {}
-                _ => {
-                    saw_blocking = true;
-                    break;
-                }
+                Node::Rule { .. } => return None,
+                _ => {}
             }
         }
-        if !saw_blocking
-            && self.page_state.pagination
+        if self.page_state.pagination
             && self.lists.len() == 1
             && self.page_state.page.prev_depth() > crate::page::IGNORE_DEPTH
         {
@@ -1631,18 +1619,13 @@ impl NodeBuilder {
     }
 
     fn push_box(&mut self, node: Node) {
-        self.push_box_inner(node, false);
+        self.push_box_inner(node);
     }
 
-    fn push_box_crossing_glue(&mut self, node: Node) {
-        self.push_box_inner(node, true);
-    }
-
-    fn push_box_inner(&mut self, node: Node, cross_glue: bool) {
+    fn push_box_inner(&mut self, node: Node) {
         if self.mode() == Mode::Vertical {
             let display_followup = self.math_state.after_display;
-            if let Some(prev_depth) = self.previous_interline_depth(cross_glue || display_followup)
-            {
+            if let Some(prev_depth) = self.previous_interline_depth() {
                 let height = match &node {
                     Node::Box(b) => b.height,
                     _ => 0,

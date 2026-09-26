@@ -141,14 +141,18 @@ mod tests {
         assert_eq!(main.len(), 1);
         let v = as_box(&main[0]);
         assert_eq!(v.kind, BoxKind::VBox);
-        // 显式 \vskip 重置行间关系，后续盒子不再额外插 baselineskip。
-        assert_eq!(v.children.len(), 3, "盒+\\vskip+盒：{v:?}");
+        // append_to_vlist（tex.web L13315-13327）的 prev_depth 只随盒子更新：
+        // \vskip 之后下一个盒子仍补 baselineskip glue（广度 #27 多行 caption
+        // 尾行距主根因；GT pdftex 实证 `.glue 10.0` 后紧跟
+        // `.glue(\baselineskip) 5.05556`）。
+        assert_eq!(v.children.len(), 4, "盒+\\vskip+行间glue+盒：{v:?}");
         assert!(matches!(v.children[0], Node::Box(_)));
         match &v.children[1] {
             Node::Glue { width, .. } => assert_eq!(*width, 10 * SP_PER_PT),
             other => panic!("预期 Glue，得到 {other:?}"),
         }
-        assert!(matches!(v.children[2], Node::Box(_)));
+        assert!(matches!(v.children[2], Node::Glue { .. }), "\\vskip 后仍补行间 glue");
+        assert!(matches!(v.children[3], Node::Box(_)));
     }
 
     #[test]
@@ -208,14 +212,16 @@ mod tests {
     #[test]
     fn vskip_in_paragraph_ends_it_implicitly() {
         let main = typeset(r"a\vskip 6pt b").unwrap();
-        // 显式 \vskip 重置行间关系，末段落盒不再额外插 baselineskip。
-        assert_eq!(main.len(), 3, "隐式 \\par 后应为 段落盒+glue+段落盒");
+        // prev_depth 只随盒子更新（append_to_vlist）：显式 \vskip 不重置行间
+        // 关系，末段落盒仍补 baselineskip glue（GT 实证，广度 #27）。
+        assert_eq!(main.len(), 4, "隐式 \\par 后应为 段落盒+glue+行间glue+段落盒");
         assert!(matches!(main[0], Node::Box(_)), "首项应为断行后的段落盒");
         match &main[1] {
             Node::Glue { width, .. } => assert_eq!(*width, 6 * SP_PER_PT),
             other => panic!("预期 Glue，得到 {other:?}"),
         }
-        assert!(matches!(main[2], Node::Box(_)), "末项应为新起的段落盒");
+        assert!(matches!(main[2], Node::Glue { .. }), "\\vskip 后仍补行间 glue");
+        assert!(matches!(main[3], Node::Box(_)), "末项应为新起的段落盒");
     }
 
     /// tex.web L21160/L21162（head_for_vmode）：`\hrule` 只在垂直模式直接落
@@ -249,11 +255,12 @@ mod tests {
     #[test]
     fn vfil_in_paragraph_ends_it_implicitly() {
         let main = typeset(r"a\vfil b").unwrap();
-        // 显式 \vfil 重置行间关系，末段落盒不再额外插 baselineskip。
-        assert_eq!(main.len(), 3, "\\vfil 后应为 段落盒+glue+段落盒");
+        // 同 \vskip：无限阶显式 glue 也不重置 prev_depth，末段落盒仍补行间 glue。
+        assert_eq!(main.len(), 4, "\\vfil 后应为 段落盒+glue+行间glue+段落盒");
         assert!(matches!(main[0], Node::Box(_)));
         assert!(matches!(main[1], Node::Glue { .. }));
-        assert!(matches!(main[2], Node::Box(_)));
+        assert!(matches!(main[2], Node::Glue { .. }));
+        assert!(matches!(main[3], Node::Box(_)));
     }
 
     #[test]

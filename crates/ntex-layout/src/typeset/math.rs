@@ -186,7 +186,7 @@ impl NodeBuilder {
                 };
                 let mut b = hpack(&line, hbox_dimensions(&line).width);
                 b.shift = s + d;
-                self.push_box_crossing_glue(Node::Box(b));
+                self.push_box(Node::Box(b));
             } else if !nodes.is_empty() || display_material.is_empty() {
                 let mut line: Vec<Node> = Vec::with_capacity(nodes.len() + 2);
                 line.push(Node::Glue {
@@ -208,7 +208,7 @@ impl NodeBuilder {
                 // prev_depth 插行间 glue（baselineskip/lineskip），再落盒——
                 // 公式前后的 12pt 行距由此而来。走 `append` 会漏掉这段 glue
                 // （P5：display 前垂直跳缺 interline glue）。
-                self.push_box_crossing_glue(Node::Box(hpack(&line, self.params.hsize)));
+                self.push_box(Node::Box(hpack(&line, self.params.hsize)));
             }
             // 对齐行盒拼接（tex.web L22622 `link(tail):=p`；行间 interline
             // 胶水已由 align_fin 按 append_to_vlist 语义生成，此处原样拼接）。
