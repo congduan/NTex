@@ -174,6 +174,93 @@ impl Expander {
         }
     }
 
+    /// S6 模式合法性/路由（tex.web main_control 的 `abs(mode)+cur_cmd` 大
+    /// case；mode_code 见 [`CoreSink::mode_code`]：1=垂直 2=水平 3=行内数学
+    /// 4=内层垂直 5=受限水平 6=显示数学）。返回 true = 本原语已处理完毕
+    /// （报错吞掉 / 路由后由再扫描重入），调用方不得再开对齐。
+    ///
+    /// tex.web 判据（L21160/L21624-21625/L21106）：
+    /// - `abs(vmode)+halign`、`abs(hmode)+valign` → init_align（合法）；
+    /// - `mmode(+)+halign`（显示数学）→ `cur_group=math_shift_group` 才合法
+    ///   （否则 off_save）；此处放行（NTex 无组种类查询，见登记）；
+    /// - `-mmode+halign`（行内数学）→ report_illegal_case
+    ///   "You can't use `\halign' in math mode."；
+    /// - `hmode+halign` → head_for_vmode：mode>0 时插 `\par` 再重入；
+    /// - `-hmode+halign`（受限水平）→ off_save：back_input + 插配对 `}`
+    ///   + "Missing } inserted"；
+    /// - `abs(vmode)+valign` → head_for_vmode 的 else 臂等价
+    ///   `back_input; new_graf(true)`（GT m5/m6 实证：valign 在垂直模式
+    ///   会**开段**，valign 盒落在段落行内）；此处只路由外层垂直（4=内层
+    ///   垂直保持直入，见登记）；
+    /// - `mmode+valign`（行内/显示数学）→ non_math 表 → insert_dollar_sign
+    ///   "Missing $ inserted"（此处报错吞掉，不插 `$`）。
+    fn align_mode_route(&mut self, prim: Primitive) -> Result<bool> {
+        let is_h = prim == Primitive::Halign;
+        let code = self.sink.mode_code();
+        let self_cs = self.intern.intern(if is_h { "halign" } else { "valign" });
+        let self_tok = Token::control_sequence(self_cs);
+        match (is_h, code) {
+            // 合法位：垂直（含内层）的 \halign、水平（含受限）的 \valign、
+            // 显示数学的 \halign（math_shift_group 判定缺，放行）
+            (true, 1) | (true, 4) | (true, 6) | (false, 2) | (false, 5) => Ok(false),
+            // 行内数学：report_illegal_case（GT 级联：后续 # / \cr 各自报错，
+            // 本原语吞掉即可，后续 token 走自然通路）
+            (true, 3) => {
+                self.write_error_help(
+                    "You can't use `\\halign' in math mode.",
+                    "Sorry, but I'm not programmed to handle this case;\n\
+                     I'll just pretend that you didn't ask for it.\n\
+                     If you're in the wrong mode, you might be able to\n\
+                     return to the right one by typing `I}' or `I$' or `I\\par'.\n",
+                );
+                Ok(true)
+            }
+            (false, 3) | (false, 6) => {
+                self.write_error_help(
+                    "Missing $ inserted",
+                    "I've inserted a begin-math/end-math symbol since I think\n\
+                     you have left one out. Proceed, with fingers crossed.\n",
+                );
+                Ok(true)
+            }
+            // 外层水平 \halign：head_for_vmode 插 `\par`（段落先收，重入时
+            // 已在垂直模式）
+            (true, 2) => {
+                let par = Token::control_sequence(self.intern.intern("par"));
+                self.unread(self_tok);
+                self.unread(par);
+                Ok(true)
+            }
+            // 受限水平 \halign：off_save（back_input + 插配对 `}`）
+            (true, 5) => {
+                let _ = self.sink.write16(
+                    "! Missing } inserted.\n\
+                     I've inserted something that you may have forgotten.\n\
+                     (See the <inserted text> above.)\n\
+                     With luck, this will get me unwedged. But if you\n\
+                     really didn't forget anything, try typing `2' now; then\n\
+                     my insertion and my current dilemma will both disappear.\n"
+                        .to_string(),
+                );
+                let rbrace = Token::char(Catcode::EndGroup, b'}' as u32);
+                self.unread(self_tok);
+                self.unread(rbrace);
+                Ok(true)
+            }
+            // 外层垂直 \valign：`back_input; new_graf(true)`（开段后重入）
+            (false, 1) => {
+                self.sink.par_begin(true)?;
+                self.unread(self_tok);
+                Ok(true)
+            }
+            // 内层垂直 \valign：tex.web 的 abs(vmode) 判据同样开段（GT m6
+            // 实证），layout 侧 par_begin 不支持内层垂直——放行直入（登记）
+            (false, _) => Ok(false),
+            // 未知模式码（防御）：放行
+            (true, _) => Ok(false),
+        }
+    }
+
     /// `\halign`/`\valign` 启动（`{` 已由 dispatcher 消费；tex.web init_align
     /// + push_alignment + Scan the preamble）。sink 侧 align_begin 已发。
     fn align_start(&mut self, is_halign: bool) -> Result<()> {
@@ -506,9 +593,36 @@ impl Expander {
                     };
                     frame.align_state -= 1;
                     if frame.align_state < 0 {
-                        // 对齐组的 `}`（raw 平衡 -1 或行边界 peek 到）
-                        self.align_finish()
-                            .map(|_| true)
+                        // 行中 raw 扫描的 `}`（align_state 0→-1）：tex.web 里
+                        // **不是**对齐闭括号——L7264 的 raw 判据要求
+                        // `align_state=0`，-1 落到 right_brace 处理，而
+                        // handle_right_brace 的 align_group 臂（L21654-21658）
+                        // 报 "Missing \cr inserted" 并**插入 frozen \cr**；之后
+                        // align_peek 才看到 `}` 走 fin_align。对齐闭括号的唯一
+                        // 裁决位是行边界（align_peek_next 的命令层判据）。
+                        // 此前实现直接 align_finish：单元/行 sink 状态未收拢，
+                        // 对齐静默烂尾（GT 出页 + 1 条报错，NTex 0 页 0 报错）。
+                        let _ = self.sink.write16(
+                            "! Missing \\cr inserted.\n\
+                             I'm guessing that you meant to end an alignment here.\n"
+                                .to_string(),
+                        );
+                        let cr_csid = self.intern.intern("cr");
+                        if matches!(self.eqtb.slot(cr_csid), EqSlot::Primitive(Primitive::Cr)) {
+                            let cr = Token::control_sequence(cr_csid);
+                            // tex.web back_input 对 brace token 逆调 align_state
+                            // （L7028-7031：`}` 压回时 +1 抵消 get_next 读入时的
+                            // -1）——不还原，插入的 \cr 会被 align_state=-1 卡在
+                            // raw 判据外 → 主循环 "Misplaced \cr" → `}` 再进本臂
+                            // → 死循环（首版实测）。
+                            frame.align_state += 1;
+                            self.unread(tok);
+                            self.unread(cr);
+                            Ok(true)
+                        } else {
+                            // `\cr` 已被重定义：插入无从落地，退回收尾
+                            self.align_finish().map(|_| true)
+                        }
                     } else {
                         // \noalign 组配对 `}`：关组后回到行边界 peek
                         //（token 已消费，不再落 Char 分支的 end_group）

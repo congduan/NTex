@@ -19,6 +19,12 @@ impl Expander {
             // pending_kind=Align，随 `{`…… 实际由 align_start 静默开组、
             // 组关闭走 end_group（layout 在 group_end(Align) 做 fin_align）。
             Primitive::Valign | Primitive::Halign => {
+                // S6 模式合法性（tex.web main_control 的大 case 键是
+                // `abs(mode)+cur_cmd`）：合法位 vmode/hmode(mmode)+halign、
+                // hmode(mmode)+valign；其余是**路由**而非直接开对齐。
+                if self.align_mode_route(prim)? {
+                    return Ok(());
+                }
                 // 可选 `to <dimen>`/`spread <dimen>` 规格（同 \hbox 的 scan_box_spec；
                 // TRIP L332 `\halign to 0pt{...}`、L407 `\halign to 1truemm...`）
                 let (to, spread) = self.scan_box_spec()?;
