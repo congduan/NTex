@@ -26,9 +26,9 @@ jobs:
       - name: 渲染示例 PDF（引擎自举）
         run: |
           cargo run -q -p ntex-dvi -- samples/demo.tex
-          cargo run -q -p ntex-pdf -- demo.dvi -p 595.28x841.89
+          cargo run -q -p ntex-pdf -- samples/demo.dvi -p 595.28x841.89
           cp samples/demo.tex site/public/demo.tex
-          cp demo.pdf site/public/demo.pdf
+          cp samples/demo.pdf site/public/demo.pdf
 
       - uses: actions/setup-node@v4
         with:
