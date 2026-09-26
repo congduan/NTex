@@ -1849,8 +1849,8 @@ impl PageSink for NodeBuilder {
     fn output_pending_count(&self) -> usize {
         self.page_state.pending_pages.len()
     }
-    fn take_output_consumed(&mut self) -> bool {
-        std::mem::take(&mut self.page_state.output_consumed)
+    fn output_consumed(&mut self) -> bool {
+        self.page_state.output_consumed_count > 0
     }
     fn discard_pending_pages(&mut self) {
         self.page_state.pending_pages.clear();
@@ -1858,7 +1858,11 @@ impl PageSink for NodeBuilder {
         self.page_state.page.clear_fired_penalties();
     }
     fn output_break_penalty(&mut self) -> Option<i64> {
-        self.page_state.page.take_output_penalty()
+        // 每次注入取走队首页的断点惩罚（take 语义：无新点火不重复读同一值，
+        // 与单槽口径一致）；队空回退最近一次点火值——\setbox255 直接种页没有
+        // fire_up，tex.web 中 \outputpenalty 是只写不清的全局整数
+        let _ = std::mem::take(&mut self.page_state.output_consumed_count);
+        self.page_state.page.take_front_output_penalty()
     }
     fn take_page_shipped(&mut self) -> bool {
         std::mem::take(&mut self.page_state.page_shipped)

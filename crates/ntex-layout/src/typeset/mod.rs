@@ -838,13 +838,13 @@ struct PageState {
     /// 查询以来）——`dead_cycles` 清零依据（tex.web ship_out `dead_cycles:=0`）。
     page_shipped: bool,
 
-    /// 自上次 [`PageSink::take_output_consumed`] 查询以来，`box255` 被显式消费过
+    /// 自上次 [`PageSink::output_consumed`] 查询以来，`box255` 被显式消费过
     /// （`\box\@cclv` 取走 / `\setbox\@cclv=\vbox{}` 清空）。`maybe_inject_output`
     /// 的「例程未消费 → 丢弃剩余页」判定用：比较基于**上一轮**点火时的队列长度，
     /// 而例程正当消费后新断页又把队列补回同一长度（双栏首栏 `\@outputdblcol`
     /// 存 `\@leftcolumn` → 次栏 `\penalty-\@Mi` 再断）会被误判为未消费整批丢弃
     /// ——此旗标区分「真未消费」与「消费后又有新页」。
-    output_consumed: bool,
+    output_consumed_count: u32,
 
 
     /// ETRIP 冲刺：e-TeX marks 族状态（断页轮转）。
@@ -1070,7 +1070,7 @@ impl NodeBuilder {
                 pending_pages: VecDeque::new(),
                 write_flush_pending: false,
                 page_shipped: false,
-                output_consumed: false,
+                output_consumed_count: 0,
                 marks_top: std::collections::HashMap::new(),
                 marks_first: std::collections::HashMap::new(),
                 marks_bot: std::collections::HashMap::new(),
@@ -1187,9 +1187,6 @@ impl NodeBuilder {
         // 边界执行例程（ship box255）后再继续；未定义时页面直通 shipped。
         if self.page_state.pagination && self.mode() == Mode::Vertical && self.lists.len() == 1 {
             // 断点惩罚队列语境：上一页未消费（例程还没跑）= 排队超前
-            self.page_state
-                .page
-                .note_queuing_ahead(!self.page_state.pending_pages.is_empty());
             if let Some(p) = self.page_state.page.feed_one(
                 &mut self.lists[0],
                 &self.params,
@@ -1265,7 +1262,7 @@ impl NodeBuilder {
             let taken = self.page_state.pending_pages.pop_front();
             // 页被例程真取走（`\box\@cclv`）= 消费事实（maybe_inject_output 判定用）
             if taken.is_some() {
-                self.page_state.output_consumed = true;
+                self.page_state.output_consumed_count += 1;
             }
             taken
         } else {
@@ -1285,8 +1282,9 @@ impl NodeBuilder {
                 Some(b) => self.page_state.pending_pages.push_front(b),
                 None => {
                     // `\setbox\@cclv=\vbox{}` 型清空同样是消费（例程明确处理过此页）
-                    self.page_state.output_consumed |=
-                        self.page_state.pending_pages.pop_front().is_some();
+                    if self.page_state.pending_pages.pop_front().is_some() {
+                        self.page_state.output_consumed_count += 1;
+                    }
                 }
             }
         } else if let Some(slot) = self.boxes_mut().get_mut(idx) {
@@ -1328,7 +1326,7 @@ impl NodeBuilder {
             pending_pages: self.page_state.pending_pages.clone(),
             write_flush_pending: self.page_state.write_flush_pending,
             page_shipped: self.page_state.page_shipped,
-            output_consumed: self.page_state.output_consumed,
+            output_consumed_count: self.page_state.output_consumed_count,
             math_style: self.math_state.math_style,
             pending_script: self.math_state.pending_script,
             sqrt_pending: self.math_state.sqrt_pending,
@@ -1391,7 +1389,7 @@ impl NodeBuilder {
         self.page_state.pending_pages = s.pending_pages.clone();
         self.page_state.write_flush_pending = s.write_flush_pending;
         self.page_state.page_shipped = s.page_shipped;
-        self.page_state.output_consumed = s.output_consumed;
+        self.page_state.output_consumed_count = s.output_consumed_count;
         self.math_state.math_style = s.math_style;
         self.math_state.pending_script = s.pending_script;
         self.math_state.sqrt_pending = s.sqrt_pending;

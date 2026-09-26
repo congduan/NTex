@@ -179,9 +179,6 @@ impl NodeBuilder {
             }
             // 产出一页则返回；材料全部入页但未触发断页 → 循环（贡献已空时补 eject
             // 节点再试，贡献非空时继续消化既有材料）。
-            self.page_state
-                .page
-                .note_queuing_ahead(!self.page_state.pending_pages.is_empty());
             if let Some(p) = self.page_state.page.feed_one(
                 &mut self.lists[0],
                 &self.params,

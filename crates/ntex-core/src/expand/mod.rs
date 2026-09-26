@@ -2101,7 +2101,11 @@ impl Expander {
             ));
         }
         let count = self.sink.output_pending_count();
-        let consumed = self.sink.take_output_consumed();
+        // 松绑口径：例程真消费过页（box255 被取走）则不按「队列未缩短」丢弃。
+        // 纯 HEAD 口径（去掉 consumed 项）TRIP 字节一致，但双栏短文档的第二页
+        // 永远等不到注入（0 页回归）；松绑口径 TRIP 的 insert-split 演练块多出
+        // 例程运行（见 docs 登记）——两难取主目标。
+        let consumed = self.sink.output_consumed();
         if count >= self.output_prev_count && !consumed {
             // 例程未消费任何待处理页面 → 剩余页面被丢弃（TeX 语义）
             self.sink.discard_pending_pages();

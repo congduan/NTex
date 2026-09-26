@@ -508,7 +508,7 @@ pub trait PageSink {
         0
     }
     /// 自上次查询以来输出例程是否显式消费过 `\box255`（或同槽的 `\vsplit`/清空）。
-    fn take_output_consumed(&mut self) -> bool {
+    fn output_consumed(&mut self) -> bool {
         false
     }
     /// 丢弃所有待输出例程处理的页面（例程不消费 box255 时）。

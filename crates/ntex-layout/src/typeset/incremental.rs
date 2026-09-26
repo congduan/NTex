@@ -215,8 +215,8 @@ struct SideEffects {
     write_flush_pending: bool,
     /// 页面 shipout 过（`dead_cycles` 清零依据；输出例程刀 1）。
     page_shipped: bool,
-    /// box255 自上次查询以来被显式消费过（[`PageSink::take_output_consumed`]）。
-    output_consumed: bool,
+    /// box255 自上次查询以来被显式消费过（[`PageSink::output_consumed`]）。
+    output_consumed_count: u32,
     math_style: MathStyle,
     pending_script: Option<bool>,
     sqrt_pending: bool,
