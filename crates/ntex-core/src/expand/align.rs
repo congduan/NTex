@@ -337,6 +337,11 @@ impl Expander {
         // \span 后的可展开 token：展开一次（tex.web 15442-15447）
         if span_pending {
             if let Some(csid) = tok.csid() {
+                if let Some(op) = self.cond_op(tok) {
+                    self.set_preamble_span_pending(false);
+                    self.step_conditional(op, tok)?;
+                    return Ok(true);
+                }
                 match self.eqtb.slot(csid).clone() {
                     EqSlot::Macro(m) => {
                         self.set_preamble_span_pending(false);

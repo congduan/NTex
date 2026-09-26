@@ -17,7 +17,7 @@
 | `expand/primitive_math.rs:188` | `\eqno/\leqno` 显示数学内 no-op；非数学报错+pretend 已补（942346e） | 显示公式编号不落节点 | ✅ 已修（2026-09-23）：tex.web start_eq_no/after_math/finish_display 装配接入——core 侧显示数学（mode 6）`\eqno/\leqno` 发 `sink.math_eqno(leqno)`（expand/primitive_math.rs EqNo/LeqNo 臂；行内 mode 3 沿旧径 no-op，tex.web 应报 illegal，收窄风险后补）；layout 侧 math_eqno 事件把当前层公式原子切去 `MathState::eqno_formula`、后续材料当编号 mlist，`close_math`（typeset/math.rs）按 tex.web L22521-22632 装配：e=编号盒自然宽，d=half(z−w) 且 d<2e 时左移 half(z−w−e)，行=公式+kern(z−w−e−d)+编号盒（leqno 反序且 d:=0），hpack(natural) 后 shift=s+d（编号右缘=displaywidth 右缘/左缘=displayindent），长/短 skip 裁决补 `or l` 臂；不做 Squeeze（挤窄）臂。GT 对照（pdftex）：`$$x+y\eqno(1)$$` 编号右缘落版心右缘、公式照 half(z−w) 居中，`$$z\leqno(2)$$` 编号落左缘，两侧一致。回归测试 `math_eqno_number_right_flushed_at_displaywidth`（ntex-layout，含 leqno 反序断言） |
 | `typeset/sink.rs:1082` | 数学模式 `\penalty` 忽略 | 数学断行点缺失（M4-1） | ✅ 已修（sink penalty 数学分支转 `MathAtom::Penalty` → `Node::Penalty`，tests_math `math_penalty_kept_in_formula`/`math_penalty_inline_between_chars`） |
 | `typeset/sink.rs:1097` | 数学模式 `\vrule` 忽略 | 规则原子缺失 | ✅ 已修（sink rule 数学分支转 `MathAtom::Rule` → `Node::Rule`，tests_math `math_vrule_kept_in_formula`/`math_vrule_dimensions`） |
-| `typeset/math.rs:495` | 分式节点 M4-2 简化（垂直堆叠） | 分式线/字号精化未做（M4-3 fontdimen） | 待做 |
+| `typeset/math.rs:495` | 分式节点 M4-2 简化（垂直堆叠） | 分式线/字号精化未做（M4-3 fontdimen） | ✅ 已修（2026-09-26 验证）：`fraction_nodes` 已按 tex.web make_fraction 使用分子/分母字阶降级、fam3 fontdimen8 default rule thickness、fam2 fontdimen8..12 间距；`\over` 生成 rule、`\atop` 无线。回归测试 `tests_math::math_fraction_*` / `math_script_box_width_includes_scriptspace`。 |
 | `typeset/math.rs:540` | 根式节点字形（原 M4-2 横线） | 定界符码已驱动 small/large 单字形变体（cmsy10/cmex10）；字阶内 char list 逐级放大与 extensible 拼接（cmex10 根号段）仍缺（M4-3） | ⚠️ 部分已修（见 sink.rs:623 行） |
 | `typeset/sink.rs:623` | `\radical` 定界符号不参与渲染 | `\radical"161` 等只出 radicand | ✅ 已修（`MathAtom::Radical{delim}` 携 27 位定界符码，radical_delimiter 按 tex.web var_delimiter 拆 small/large 变体取字形、码 0=null 分支宽 \nulldelimiterspace；`\sqrt` 原语补 plain.tex 默认码 0x270370。tests_math `math_radical_*` 三测；LaTeX `\sqrt{x}` 端到端 DVI 实证 cmsy10 0x70 根号 + cmmi10 'x'） |
 | `typeset/sink.rs:116` | 非数学模式样式错误（原"简化忽略"） | TeX 报错缺失 | ✅ 已修（942346e math_mode_error；TRIP/ETRIP 未触发） |
@@ -41,7 +41,7 @@
 |---|---|---|
 | `expand/primitive.rs:680` | `\cr` 无操作（对齐组按盒子处理） | ⚠️ 已被 align.rs 状态机取代（raw 拦截做 Insert v_j；dispatcher 误位报 Misplaced \cr） |
 | `expand/primitive.rs:707` | `\span` 列合并无操作 | ⚠️ 已被 align.rs 取代（preamble 展开一次 + body 分隔符）；span 宽度摊派见 align_fin |
-| `expand/primitive.rs:805` | `\crcr` 与 `\-` 简化 no-op | ⚠️ \crcr 已被 align.rs 取代（行边界冗余忽略 + raw 结束符）；`\-` 仍 no-op |
+| `expand/primitive.rs:805` | `\crcr` 与 `\-` 简化 no-op | ✅ 已修（2026-09-26）：\crcr 已被 align.rs 取代（行边界冗余忽略 + raw 结束符）；`\-` 现在按当前字体 hyphenchar 发 `Discretionary{pre,post,replace}`（pre 为连字符、post/replace 空）。回归测试 `explicit_discretionary_hyphen_inserts_breakpoints`。 |
 | `expand/primitive.rs:1356` / `eqtb/primitive.rs:504` | `\omit` 简化为 no-op | ⚠️ 已被 align.rs 取代（列首 \omit 判定，单元 V 模板置空） |
 | `typeset/sink.rs:488` | 组类型 7 不另开列表（沿用对齐组列表） | 待做 |
 | `expand/align.rs`（S4） | preamble `#{` 无特判——tex.web 原文证实 preamble 扫描**无 brace 深度机制**（`&`/`\cr` 在任何位置终结 u/v 段），引擎的 brace_depth 是超集偏离；对齐 tex.web 需整体移除深度跟踪（halign-survey G3/刀 2） | 待做（先复现） |

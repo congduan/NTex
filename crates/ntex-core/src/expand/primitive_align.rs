@@ -115,8 +115,21 @@ impl Expander {
                 );
                 Ok(())
             }
-            // \-（断字断点）：简化 no-op
-            Primitive::DiscMinus => Ok(()),
+            // \-（断字断点）：tex.web disc_node；pre 为当前字体的 hyphenchar，
+            // post/replace 为空。hyphenchar 越界/负数时仍插入空 discretionary。
+            Primitive::DiscMinus => {
+                let hyphen = self
+                    .hyphenchars
+                    .get(&self.cur_font)
+                    .copied()
+                    .unwrap_or(self.params.defaulthyphenchar);
+                let pre = if (0..=i64::from(crate::token::MAX_CHARCODE)).contains(&hyphen) {
+                    vec![Token::char(Catcode::Other, hyphen as u32)]
+                } else {
+                    Vec::new()
+                };
+                self.sink.discretionary(pre, Vec::new(), Vec::new())
+            }
             // M4-5：\omit 到达 dispatcher = 非列首（合法位由 align_init_col
             // 的 peek 消费；tex.web omit case）
             Primitive::Omit => {

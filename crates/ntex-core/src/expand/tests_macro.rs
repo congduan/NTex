@@ -1487,6 +1487,25 @@ use super::*;
         );
     }
 
+    #[test]
+    fn align_preamble_span_after_tabskip_closes_condition() {
+        // amsmath gather 的 tag 列模板含：
+        //   \tabskip \iftagsleft@ <dimen> \else \z@skip \span\fi
+        // \tabskip 的 glue 扫描在 \span 前停下；tex.web get_preamble_token 语义下
+        // \span 后的 \fi 仍要推进条件机，不能存进 v-template。修复前该 \fi
+        // 在行尾模板执行期裸露，\end{gather} 报 `Extra \fi`。
+        let src = concat!(
+            "\\catcode`\\@=11 \\let\\iftagsleft@\\iffalse ",
+            "\\halign{#&\\hbox{#}\\tabskip\\iftagsleft@1pt\\else0pt\\span\\fi\\cr ",
+            "a&b\\cr}"
+        );
+        let (_r, t) = run_transcript(src);
+        assert!(
+            !t.contains("Extra \\fi") && !t.contains("Misplaced \\span"),
+            "preamble \\span 后的 \\fi 不应泄入模板：{t}"
+        );
+    }
+
     // ── \newif / \escapechar 展开链（plain.tex L598 预载 24 条 "doesn't
     // match" 根因）──────────────────────────────────────────────────────
     // plain.tex L264-271 的 \newif 定义压缩成单行（@=11、\count@=255、

@@ -1446,6 +1446,37 @@ mod tests {
         assert_eq!(b.patterns.hyphenate(b"machine"), Vec::<usize>::new());
     }
 
+    #[test]
+    fn explicit_discretionary_hyphen_inserts_breakpoints() {
+        fn collect<'a>(nodes: &'a [Node], out: &mut Vec<&'a Node>) {
+            for n in nodes {
+                if let Node::Discretionary { .. } = n {
+                    out.push(n);
+                }
+                if let Node::Box(b) = n {
+                    collect(&b.children, out);
+                }
+            }
+        }
+
+        let main = typeset_hyphen(r"\hbox{hy\-phen\-a\-tion}").unwrap();
+        let mut discs = Vec::new();
+        collect(&main, &mut discs);
+        assert_eq!(discs.len(), 3, "\\- 应插入三个 discretionary：{main:?}");
+        for disc in discs {
+            let Node::Discretionary { pre, post, replace } = disc else {
+                unreachable!();
+            };
+            assert_eq!(post.len(), 0);
+            assert_eq!(replace.len(), 0);
+            assert_eq!(pre.len(), 1);
+            match &pre[0] {
+                Node::Char { charcode, .. } => assert_eq!(*charcode, b'-' as u32),
+                other => panic!("pre 应为连字符节点：{other:?}"),
+            }
+        }
+    }
+
     /// 带窄词间胶水（3000/100000/500）的排版器：断字用例需要可拉伸词间空白。
     fn typeset_hyphen(src: &str) -> Result<Vec<Node>> {
         let mut ts = Typesetter::with_metrics(metrics).with_space(|_| Glue::new(3000, 100000, 500));
@@ -1820,4 +1851,3 @@ mod tests {
     mod tests_align { include!("tests_align.rs"); }
     mod tests_plain_format { include!("tests_plain_format.rs"); }
 }
-
