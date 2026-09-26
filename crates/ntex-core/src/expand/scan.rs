@@ -157,6 +157,12 @@ impl Expander {
                 }
                 // TRIP：条件原语在数字中先求值（TeX get_x_token 嵌套条件）
                 if self.maybe_eval_cond(tok)? {
+                    if diag_enabled("NTEX_NUMSCAN_TRACE") {
+                        eprintln!(
+                            "[trace-numscan] cond 求值 {}",
+                            tok.csid().map(|id| self.intern.name(id).to_string()).unwrap_or_default()
+                        );
+                    }
                     continue;
                 }
                 // 别名即原义：宏别名须按目标含义展开（tex.web scan_int 符号循环
@@ -168,6 +174,12 @@ impl Expander {
                     EqSlot::Primitive(p) if p.is_expandable() => true,
                     _ => false,
                 };
+                if diag_enabled("NTEX_NUMSCAN_TRACE") {
+                    eprintln!(
+                        "[trace-numscan] tok={} expandable={expandable}",
+                        self.intern.name(csid)
+                    );
+                }
                 // tex.web expand 的 fi_or_else 臂（§9897 @<Terminate the current
                 // conditional...@>）：符号循环的 get_x_token 对 `\else`/`\fi`/`\or`
                 // 同样经 expand 处理——栈顶帧 Evaluating（if_limit=if_code，外层

@@ -809,6 +809,10 @@ impl Expander {
                 // int 0 恢复（数字上下文里 "0" 被数字循环吸走，pdfTeX GT
                 // mathchar/global 三案 2026-09-14；此前硬 Err 致测试 unwrap 崩）
                 Primitive::Relax => {
+                    // \the 操作数是 relax 别名（fp 内部 scan mark `\s__fp` 系）
+                    // 时几乎必为 expl3 展开机器走错分支，栈/调用轨迹是唯一
+                    // 定位手段（NTEX_STACK_DUMP 门控，见 dump_input_stack）。
+                    self.dump_input_stack("the-relax");
                     let _ = self
                         .sink
                         .write16("! You can't use `\\relax' after \\the.\nI'm forgetting what you said and using zero instead.\n".to_owned());
