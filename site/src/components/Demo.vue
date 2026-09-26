@@ -36,6 +36,7 @@ const pageCount = ref(0)
 const dpi = ref(144)
 const debug = ref(false)
 const glyphs = ref(true)
+const latexMode = ref(false)
 const fontsReady = ref(false)
 const noPage = ref(false)
 const canvasRef = ref(null)
@@ -59,8 +60,19 @@ async function loadEngine() {
   try {
     engine = await import('../wasm/ntex_wasm.js')
     await engine.default()
+    // LaTeX 模式（C 档）：fetch NTEXBND1 资产包 → set_bundle 注入 fmt/tex/tfm，
+    // 再开 latex_mode。包 ~15MB 一次性下载，失败则静默回落 plain 模式
+    // （源内 \documentclass 等会报 Undefined control sequence，属预期回落行为）。
+    try {
+      const bundleBytes = await (await fetch(`${base}latex-bundle.bin`)).arrayBuffer()
+      engine.set_bundle(new Uint8Array(bundleBytes))
+      engine.set_latex_mode(true)
+      latexMode.value = true
+    } catch {
+      latexMode.value = false
+    }
     engineState.value = 'ready'
-    engineMsg.value = engine.engine_version()
+    engineMsg.value = engine.engine_version() + (latexMode.value ? ' · LaTeX mode' : ' · plain mode')
     if (!src.value) src.value = engine.demo_tex()
     // 字体注入与首排并行（先方框，字形就绪后重渲染；口径同 tauri 工作台）
     const fonts = loadFonts()
