@@ -1836,6 +1836,7 @@ impl PageSink for NodeBuilder {
         if !defined {
             // 例程恢复未定义：未处理页面无法再经例程产出，直接丢弃（TeX 语义）
             self.page_state.pending_pages.clear();
+            self.page_state.page.clear_fired_penalties();
         }
         Ok(())
     }
@@ -1848,8 +1849,13 @@ impl PageSink for NodeBuilder {
     fn output_pending_count(&self) -> usize {
         self.page_state.pending_pages.len()
     }
+    fn take_output_consumed(&mut self) -> bool {
+        std::mem::take(&mut self.page_state.output_consumed)
+    }
     fn discard_pending_pages(&mut self) {
         self.page_state.pending_pages.clear();
+        // 队列与断点惩罚一一对应，丢弃页面时同步丢弃惩罚
+        self.page_state.page.clear_fired_penalties();
     }
     fn output_break_penalty(&mut self) -> Option<i64> {
         self.page_state.page.take_output_penalty()
@@ -1860,6 +1866,7 @@ impl PageSink for NodeBuilder {
     fn default_output_routine(&mut self) {
         // tex.web @<Perform the default output routine@>：待处理页面不经用户
         // 例程直接 shipout（dead cycles 分支——`\output` 例程从不 ship 时）。
+        self.page_state.page.clear_fired_penalties();
         while let Some(p) = self.page_state.pending_pages.pop_front() {
             self.ship_page(p);
         }

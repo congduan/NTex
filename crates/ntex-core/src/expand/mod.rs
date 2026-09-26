@@ -2101,7 +2101,8 @@ impl Expander {
             ));
         }
         let count = self.sink.output_pending_count();
-        if count >= self.output_prev_count {
+        let consumed = self.sink.take_output_consumed();
+        if count >= self.output_prev_count && !consumed {
             // 例程未消费任何待处理页面 → 剩余页面被丢弃（TeX 语义）
             self.sink.discard_pending_pages();
             self.output_prev_count = usize::MAX;

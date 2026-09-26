@@ -87,6 +87,29 @@ Hello.
 }
 
 #[test]
+fn twocolumn_short_document_flushes_final_column() {
+    let d = workdir("twocol-short");
+    fs::write(
+        d.join("p.tex"),
+        "\
+\\documentclass[twocolumn]{article}
+\\begin{document}
+Hello.
+\\end{document}
+",
+    )
+    .unwrap();
+
+    let (stdout, stderr, ok) = compile(&d, "p", "p.dvi");
+    assert!(ok, "stdout={stdout:?}\nstderr={stderr:?}");
+    assert!(
+        stdout.contains("1 页"),
+        "short twocolumn document should ship one page: stdout={stdout:?}"
+    );
+    assert!(d.join("p.dvi").exists(), "DVI should be written");
+}
+
+#[test]
 fn cite_pass1_writes_citation_and_warns_undefined() {
     let d = workdir("pass1");
     fs::write(d.join("p.tex"), CITE_DOC).unwrap();

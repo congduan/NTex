@@ -50,6 +50,8 @@ impl NodeBuilder {
         if self.page_state.output_defined {
             self.page_state.pending_pages.push_back(p);
         } else {
+            // 直通 shipout：fire_up 记下的断点惩罚无例程消费，清队列防错位
+            self.page_state.page.clear_fired_penalties();
             self.ship_page(p);
         }
     }
@@ -177,7 +179,14 @@ impl NodeBuilder {
             }
             // 产出一页则返回；材料全部入页但未触发断页 → 循环（贡献已空时补 eject
             // 节点再试，贡献非空时继续消化既有材料）。
-            if let Some(p) = self.page_state.page.feed_one(&mut self.lists[0], &self.params) {
+            self.page_state
+                .page
+                .note_queuing_ahead(!self.page_state.pending_pages.is_empty());
+            if let Some(p) = self.page_state.page.feed_one(
+                &mut self.lists[0],
+                &self.params,
+                self.page_state.output_defined,
+            ) {
                 self.accept_page(p);
                 // ETRIP 冲刺：断页 marks 轮转（top = 旧 bot，first 清空，bot 保留继承）
                 self.rotate_marks();

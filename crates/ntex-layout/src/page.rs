@@ -59,11 +59,20 @@ pub struct PageBuilder {
     /// → `\outputpenalty := inf_penalty`(10000)。输出例程点火前由引擎经
     /// TokenSink 查询写入 [`Primitive::OutputPenalty`](ntex_core::eqtb)。
     best_penalty: Option<i64>,
-    /// `fire_up` 已为最近产出的页面写定的 `\outputpenalty` 值（tex.web
+    /// 每次 fire_up 为该页写定的 `\outputpenalty` 值队列（tex.web
     /// `@<Set the value of |output_penalty|@>` 在 fire_up 入口执行，先于
-    /// `start_new_page` 重置）——引擎在例程点火前经 [`Self::take_output_penalty`]
-    /// 取走（take 语义，防例程延后注入时读到陈旧断点）。
-    fired_penalty: Option<i64>,
+    /// `start_new_page` 重置）。**队列**而非单槽：例程运行期间页构建器照常断页
+    /// （NTex 与 tex.web 的偏差），`\@doclearpage` 尾的 `\vbox{}\clearpage` 会在
+    /// 一帧内产出多页排队——若注入时统一取「最后一次点火」的惩罚，队首页拿到的
+    /// 是队尾页的 -\@Mi，`\outputpenalty<-\@M` 恒真 → 永远走 `\@specialoutput`
+    /// 自持冲页（双栏短文档 0 页/100 dead cycles 的根因）。FIFO 与
+    /// pending_pages 队列一一对应，注入时弹出的正是队首页的断点惩罚。
+    fired_penalties: std::collections::VecDeque<i64>,
+    /// 「排队超前」语境标记（[`Self::note_queuing_ahead`]）：仅当上一页尚未被例程
+    /// 消费时，本次 fire_up 的断点惩罚**追加**入队；否则清空队列只留本次——同步
+    /// 消费语境下每页覆写，与真 TeX 每次 fire_up 重写 `\outputpenalty` 一致
+    /// （outputpenalty_glue_break_is_inf_penalty 的 TinyTeX 对拍口径）。
+    queuing_ahead: bool,
     /// 最佳断点成本（`least_page_cost`）。
     best_cost: i64,
     /// 最佳断点时的目标高度（`best_size`，fire_up 打包用）。
@@ -123,7 +132,8 @@ impl PageBuilder {
             has_box: false,
             best: None,
             best_penalty: None,
-            fired_penalty: None,
+            fired_penalties: std::collections::VecDeque::new(),
+            queuing_ahead: false,
             best_cost: AWFUL_BAD,
             best_size: 0,
             last_is_box: false,
@@ -188,7 +198,12 @@ impl PageBuilder {
     /// 增量版：每产出**一页**即返回（M3-5-3 输出例程需要页面产出后暂停，
     /// 让引擎在 token 边界执行例程，再继续处理剩余贡献）。
     /// 返回 `None` 表示贡献耗尽且无页面产出。
-    pub fn feed_one(&mut self, contrib: &mut Vec<Node>, params: &Params) -> Option<BoxNode> {
+    pub fn feed_one(
+        &mut self,
+        contrib: &mut Vec<Node>,
+        params: &Params,
+        output_defined: bool,
+    ) -> Option<BoxNode> {
         // \tracingpages：misc 59（与 ntex-core int_param_index 对齐）
         self.tracing = params.misc[59] > 0;
         if self.tracing && std::env::var("NTEX_DEBUG_TRACINGPAGES").is_ok() {
@@ -220,6 +235,10 @@ impl PageBuilder {
                 if let Some(held) = self.held_zero_empty.take() {
                     let keep = match contrib.first() {
                         Some(Node::Penalty { penalty: -10003 }) => {
+                            self.keep_zero_empty = true;
+                            true
+                        }
+                        Some(Node::Penalty { penalty: -10001 }) if output_defined => {
                             self.keep_zero_empty = true;
                             true
                         }
@@ -419,7 +438,16 @@ impl PageBuilder {
                     contrib.remove(0);
                     return Outcome::Continue;
                 }
-                if penalty < INF_PENALTY && self.try_break(penalty, true) == Some(Outcome::FireUp) {
+                // p=0 惩罚按**非惩罚断点**记账（at_penalty=false →
+                // \outputpenalty 记 inf_penalty）：tex.web 只在惩罚和 <>0 时插
+                // 行间惩罚节点（@<Append a penalty node, if a nonzero penalty is
+                // appropriate@> 的 `if pen<>0`），真 TeX 行间自然断点落在
+                // interline 胶水上、\outputpenalty:=inf_penalty(10000)。
+                // NTex 段落器无条件插 p=0 节点（节点形态被列表测试钉住），断点
+                // 成本与位置不受 at_penalty 影响（b+0 与胶水断点同值），只此
+                // 一处对齐 TinyTeX 对拍的可观测值。
+                let at_penalty = penalty != 0;
+                if penalty < INF_PENALTY && self.try_break(penalty, at_penalty) == Some(Outcome::FireUp) {
                     return Outcome::FireUp;
                 }
                 contrib.remove(0);
@@ -581,19 +609,37 @@ impl PageBuilder {
         }
     }
 
-    /// 取走 `fire_up` 为最近产出页面写定的 `\outputpenalty` 值（tex.web
+    /// 取走 `fire_up` 为**队首页面**写定的 `\outputpenalty` 值（tex.web
     /// `@<Set the value of |output_penalty|@>`）：最佳断点是惩罚节点 → 其惩罚值
     /// （如 `\newpage` 的 -10000、`\clearpage` 的 -10001、`\supereject` 的
     /// -20000）；胶水/kern 断点（页满自然断）与无记录 → `inf_penalty`(10000)。
     pub fn take_output_penalty(&mut self) -> Option<i64> {
-        self.fired_penalty.take()
+        self.fired_penalties.pop_front()
+    }
+
+    /// 清空未消费的断点惩罚队列（页队列被丢弃/直通 shipout 时同步，防陈旧值
+    /// 错位到后续页面）。
+    pub fn clear_fired_penalties(&mut self) {
+        self.fired_penalties.clear();
+    }
+
+    /// 语境标记：调用 [`Self::feed_one`] 前由页面路由层置位——`pending_pages`
+    /// 非空（例程还没消费上一页）即排队超前。
+    pub fn note_queuing_ahead(&mut self, ahead: bool) {
+        self.queuing_ahead = ahead;
     }
 
     /// `fire_up`（tex.web §709+）：按最佳断点打包页面、余下退回贡献、重置页面。
     fn fire_up(&mut self, contrib: &mut Vec<Node>) -> BoxNode {
         // tex.web fire_up 入口：先写 \outputpenalty（最佳断点的惩罚值），再打包
         // 页面并 start_new_page（后者会重置断点记录，故必须在此捕获）。
-        self.fired_penalty = Some(self.best_penalty.unwrap_or(INF_PENALTY));
+        if self.queuing_ahead {
+            self.fired_penalties.push_back(self.best_penalty.unwrap_or(INF_PENALTY));
+        } else {
+            // 同步消费：上一页的惩罚已被例程读走，直接覆写（真 TeX 语义）
+            self.fired_penalties.clear();
+            self.fired_penalties.push_back(self.best_penalty.unwrap_or(INF_PENALTY));
+        }
         let cut = self.best.unwrap_or(self.page.len());
         let page = self.package(cut);
         // 余下节点 [cut..] 拼回贡献列表前端（触发节点之前）

@@ -507,6 +507,10 @@ pub trait PageSink {
     fn output_pending_count(&self) -> usize {
         0
     }
+    /// 自上次查询以来输出例程是否显式消费过 `\box255`（或同槽的 `\vsplit`/清空）。
+    fn take_output_consumed(&mut self) -> bool {
+        false
+    }
     /// 丢弃所有待输出例程处理的页面（例程不消费 box255 时）。
     fn discard_pending_pages(&mut self) {}
     /// `fire_up` 记录的最佳断点惩罚（输出例程刀 1，tex.web
