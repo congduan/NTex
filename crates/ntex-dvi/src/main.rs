@@ -221,6 +221,12 @@ fn main() -> ExitCode {
                             // NTex 实际仍输出 DVI：该参数只作驱动选择信号。
                             state.params.misc[63] = 1;
                             ts.import_state(state);
+                            // 0e0b01d 后 Typesetter 侧 pdf_output_default 默认关，
+                            // apply_layout_defaults 会用镜像默认覆盖 import 的
+                            // misc[63]=1 → graphics.cfg 选回 dvips.def，PNG 判
+                            // 「找不到」。CLI LaTeX 作业与 pdflatex 同义，显式
+                            // 打开（源内 \pdfoutput 赋值仍可写覆盖）。
+                            ts.set_pdf_output(true);
                             // 真 latex.fmt 在格式生成期载入断字表（lthyphen.dtx）；
                             // NTex 的 .fmt 只序列化 core 侧状态，断字表（PatternTrie）
                             // 住排版器跨不进快照 → fmt 恢复后 \language=0 无表、
