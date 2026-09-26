@@ -28,6 +28,7 @@ jobs:
           # CI runners have no TeX Live/TinyTeX — TFMs come from the in-repo assets
           NTEX_TFM_DIR: ${{ github.workspace }}/assets/tfm
         run: |
+          mkdir -p site/public/Figures
           # \\input search chain: sample dir + in-repo LaTeX packages
           # (amsmath/amssymb/graphicx closures live under assets/tex-minimal)
           for i in 1 2; do
