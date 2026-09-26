@@ -13,6 +13,32 @@ use crate::node::{hbox_dimensions, Node};
 /// 无限坏度（tex.web `inf_bad`）。
 const INF_BAD: u16 = 10_000;
 
+/// 每行固定附加的左右 skip（`\leftskip`/`\rightskip`）。
+///
+/// TeX 在 `try_break` 的 active width 里计入这两份 glue；输出阶段再把同一
+/// glue 放进行盒。`center`/`\centering` 的空行能以左右 `fil` glue 达到
+/// badness 0，依赖的正是这里的折行侧计入。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LineSkips {
+    pub width: i64,
+    pub stretch: [i64; 4],
+    pub shrink: [i64; 4],
+}
+
+impl LineSkips {
+    pub fn from_glues(left: ntex_core::register::Glue, right: ntex_core::register::Glue) -> Self {
+        let mut out = Self {
+            width: left.width + right.width,
+            ..Self::default()
+        };
+        out.stretch[(left.stretch_order as usize).min(3)] += left.stretch;
+        out.stretch[(right.stretch_order as usize).min(3)] += right.stretch;
+        out.shrink[(left.shrink_order as usize).min(3)] += left.shrink;
+        out.shrink[(right.shrink_order as usize).min(3)] += right.shrink;
+        out
+    }
+}
+
 /// TeX badness：胶水需调整 `t≥0`（sp）而可用拉伸/收缩为 `s`（sp）时的坏度。
 ///
 /// tex.web §7 精确算法：`t=0→0`；`s≤0→10000`；否则
@@ -396,17 +422,30 @@ enum LineKind {
 
 /// 行 badness + 伸缩方向（tex.web §16790-16813）：
 /// 需拉伸时 fil/fill/filll 视为无限 → badness 0；收缩只用普通阶。
-fn line_badness_kind(bi: &BreakSpec, ap: &BreakSpec, hsize: i64) -> (u16, LineKind) {
-    let w = bi.width - ap.width;
+fn line_badness_kind(
+    bi: &BreakSpec,
+    ap: &BreakSpec,
+    hsize: i64,
+    skips: LineSkips,
+) -> (u16, LineKind) {
+    let w = bi.width - ap.width + skips.width;
     if w < hsize {
-        let (o, amt) = highest(bi.stretch, ap.stretch);
+        let mut st = [0; 4];
+        for (i, slot) in st.iter_mut().enumerate() {
+            *slot = bi.stretch[i] - ap.stretch[i] + skips.stretch[i];
+        }
+        let (o, amt) = highest(st, [0; 4]);
         if o > 0 {
             (0, LineKind::Stretch)
         } else {
             (badness(hsize - w, amt), LineKind::Stretch)
         }
     } else {
-        let (o, amt) = highest(bi.shrink, ap.shrink);
+        let mut sh = [0; 4];
+        for (i, slot) in sh.iter_mut().enumerate() {
+            *slot = bi.shrink[i] - ap.shrink[i] + skips.shrink[i];
+        }
+        let (o, amt) = highest(sh, [0; 4]);
         if o > 0 {
             (0, LineKind::Shrink)
         } else {
@@ -493,6 +532,7 @@ fn best_path(
     pass: Pass,
     tracing: bool,
     shape: &[(i64, i64)],
+    skips: LineSkips,
 ) -> Option<(Vec<usize>, i64, String)> {
     let n = breaks.len();
     // best[i][fc]：断点 i 结束、末行拟合类 fc 的最小总 demerits。
@@ -522,6 +562,7 @@ fn best_path(
         //   不产生候选（tex.web `goto continue`）——淘汰与记录门槛解耦。
         let is_final = pass == Pass::Second;
         let mut champion: [Option<(i64, usize, FitClass)>; 4] = [None; 4];
+        let mut overfull_fallback: Option<(FitClass, i64, usize, FitClass)> = None;
         let mut survivors: Vec<usize> = Vec::new();
         for &a in &active {
             // 行宽按行号取（tex.web `line_width` §16742）：行号 = 到达起点 a
@@ -532,10 +573,10 @@ fn best_path(
                 let ln = best_lines[a].iter().copied().min().unwrap_or(0) as usize + 1;
                 parshape_line_width(shape, hsize, ln)
             };
-            let (bad, kind) = line_badness_kind(&bi, &breaks[a], lw);
+            let (bad, kind) = line_badness_kind(&bi, &breaks[a], lw, skips);
             let forced_drop = bi.is_forced && bad as i64 > threshold;
             if bad > INF_BAD || forced_drop {
-                if is_final && champion.iter().all(|c| c.is_none()) && active.len() == 1 {
+                if is_final {
                     // artificial demerits：d=0（行 demerits 不计，路径链仍建立）
                     let fit = fit_class_of(bad, kind);
                     let (af, &ad) = best[a]
@@ -543,7 +584,9 @@ fn best_path(
                         .enumerate()
                         .min_by_key(|(_, &v)| v)
                         .expect("起点必有余量");
-                    champion[fit as usize] = Some((ad, a, af as FitClass));
+                    if ad != i64::MAX {
+                        overfull_fallback = Some((fit, ad, a, af as FitClass));
+                    }
                 }
                 // 淘汰该起点（不入 survivors）
             } else {
@@ -588,6 +631,11 @@ fn best_path(
                 Pass::First => return None,
                 // 第二遍不会到这（单 active 的 overfull 走 artificial 已记录候选）
                 Pass::Second => {}
+            }
+        }
+        if champion.iter().all(|c| c.is_none()) {
+            if let Some((fit, d, a, af)) = overfull_fallback {
+                champion[fit as usize] = Some((d, a, af));
             }
         }
         if champion.iter().any(|c| c.is_some()) {
@@ -655,6 +703,7 @@ pub fn knuth_plass(
     pretolerance: i64,
     tracing: bool,
     shape: &[(i64, i64)],
+    skips: LineSkips,
 ) -> (Vec<(usize, usize)>, String) {
     if hlist.is_empty() {
         return (Vec::new(), String::new());
@@ -663,7 +712,15 @@ pub fn knuth_plass(
     let mut trace = String::new();
     // 第一遍：\pretolerance（>=0 时）。成功即用；失败走第二遍 \tolerance。
     if pretolerance >= 0 {
-        match best_path(&breaks, hsize, pretolerance, Pass::First, tracing, shape) {
+        match best_path(
+            &breaks,
+            hsize,
+            pretolerance,
+            Pass::First,
+            tracing,
+            shape,
+            skips,
+        ) {
             Some((path, _total, t)) => {
                 trace.push_str(&t);
                 return (path_to_lines(&breaks, &path), trace);
@@ -677,8 +734,16 @@ pub fn knuth_plass(
         }
     }
     // 第二遍：\tolerance（tex.web second_pass；\pretolerance=-1 时唯一一遍）
-    let (path, _total, t) =
-        best_path(&breaks, hsize, tolerance, Pass::Second, tracing, shape).expect("第二遍必有路径");
+    let (path, _total, t) = best_path(
+        &breaks,
+        hsize,
+        tolerance,
+        Pass::Second,
+        tracing,
+        shape,
+        skips,
+    )
+    .expect("第二遍必有路径");
     trace.push_str(&t);
     (path_to_lines(&breaks, &path), trace)
 }
@@ -709,8 +774,13 @@ fn path_to_lines(breaks: &[BreakSpec], path: &[usize]) -> Vec<(usize, usize)> {
     let mut lines = Vec::new();
     for w in path.windows(2) {
         let (a, b) = (breaks[w[0]], breaks[w[1]]);
-        let (start, end) = (a.content_start, b.index);
-        if end > start {
+        let start = a.content_start;
+        let end = if b.kind == BreakKind::Penalty {
+            b.index + 1
+        } else {
+            b.index
+        };
+        if end > start || b.kind == BreakKind::Penalty {
             lines.push((start, end));
         }
     }
@@ -808,7 +878,7 @@ mod tests {
             let mut best = i64::MAX;
             for j in (i + 1)..breaks.len() {
                 let bj = breaks[j];
-                let (bad, kind) = line_badness_kind(&bj, &bi, hsize);
+                let (bad, kind) = line_badness_kind(&bj, &bi, hsize, LineSkips::default());
                 if bad as i64 > tolerance && !bj.is_forced {
                     continue;
                 }
@@ -825,7 +895,16 @@ mod tests {
 
     fn dp_min(hlist: &[Node], hsize: i64, tolerance: i64) -> i64 {
         let breaks = preprocess(hlist);
-        let (_, total, _) = best_path(&breaks, hsize, tolerance, Pass::Second, false, &[]).unwrap();
+        let (_, total, _) = best_path(
+            &breaks,
+            hsize,
+            tolerance,
+            Pass::Second,
+            false,
+            &[],
+            LineSkips::default(),
+        )
+        .unwrap();
         total
     }
 
@@ -864,7 +943,7 @@ mod tests {
     fn knuth_plass_single_line_when_fits() {
         let hlist = words(&[10, 10, 10]);
         assert_eq!(
-            knuth_plass(&hlist, 100, 200, 100, false, &[]).0,
+            knuth_plass(&hlist, 100, 200, 100, false, &[], LineSkips::default()).0,
             vec![(0, 5)]
         );
     }
@@ -874,7 +953,7 @@ mod tests {
         // 三词 a b c：hsize 25 下 "a b" | "c" 为最优（断点胶水不入行——
         // 行 "a" 无内部胶水、badness 10000，故两词行更优）
         let hlist = words(&[10, 10, 10]);
-        let lines = knuth_plass(&hlist, 25, 200, 100, false, &[]).0;
+        let lines = knuth_plass(&hlist, 25, 200, 100, false, &[], LineSkips::default()).0;
         assert_eq!(lines, vec![(0, 3), (4, 5)]);
     }
 
@@ -888,21 +967,35 @@ mod tests {
             glue(3, 0, 0),
             char_of(30),
         ];
-        let lines = knuth_plass(&hlist, 10_000, 200, 100, false, &[]).0;
-        // 强制断点（index 2）之前定案：第一行 [0, 2)；之后继续
-        assert_eq!(lines, vec![(0, 2), (3, 6)]);
+        let lines = knuth_plass(&hlist, 10_000, 200, 100, false, &[], LineSkips::default()).0;
+        // 强制断点（index 2）之前定案；penalty 节点留在上一行的 hlist，
+        // 与 TeX showbox 中行尾可见的 `\penalty` 对齐。
+        assert_eq!(lines, vec![(0, 3), (3, 6)]);
     }
 
     #[test]
     fn knuth_plass_empty_input() {
-        assert!(knuth_plass(&[], 100, 200, 100, false, &[]).0.is_empty());
+        assert!(
+            knuth_plass(&[], 100, 200, 100, false, &[], LineSkips::default())
+                .0
+                .is_empty()
+        );
     }
 
     #[test]
     fn knuth_plass_artificial_overfull_chain() {
         // 全部断点处行超宽（shrink 不足，b=inf_bad+1）：按 tex.web artificial
         // demerits 逐断点成行——不再退化为"恢复末起点"的单条巨行。
-        let lines = knuth_plass(&words(&[10, 10, 10, 10]), 12, 200, 100, false, &[]).0;
+        let lines = knuth_plass(
+            &words(&[10, 10, 10, 10]),
+            12,
+            200,
+            100,
+            false,
+            &[],
+            LineSkips::default(),
+        )
+        .0;
         // 可行处照常成行（[0,2] 收缩可容纳），不可行处 artificial 兜底推进——
         // 只断言不再退化为单条巨行（旧行为 = 1 行）且词序保持。
         assert_eq!(lines.len(), 3);
@@ -910,9 +1003,38 @@ mod tests {
     }
 
     #[test]
+    fn line_skips_make_initial_penalty_break_feasible() {
+        // Center/trivlist shape: the paragraph starts with a penalty before a
+        // too-wide table box. With left/right fil skips, TeX reports
+        // `@\penalty via @@0 b=0 p=300`, then ships an empty centered line
+        // before the overfull table line.
+        let hlist = vec![
+            Node::Penalty { penalty: 300 },
+            char_of(485),
+        ];
+        let mut skips = LineSkips::default();
+        skips.stretch[1] = 2;
+        let (lines, trace) = knuth_plass(&hlist, 470, 200, 100, true, &[], skips);
+        assert!(
+            trace.contains("@\\penalty via @@0 b=0 p=300"),
+            "penalty break should be feasible with fil line skips:\n{trace}"
+        );
+        assert_eq!(lines, vec![(0, 1), (1, 2)]);
+    }
+
+    #[test]
     fn knuth_plass_no_breaks_single_word() {
         assert_eq!(
-            knuth_plass(&[char_of(10), char_of(10)], 5, 200, 100, false, &[]).0,
+            knuth_plass(
+                &[char_of(10), char_of(10)],
+                5,
+                200,
+                100,
+                false,
+                &[],
+                LineSkips::default()
+            )
+            .0,
             vec![(0, 2)]
         );
     }
@@ -922,7 +1044,7 @@ mod tests {
         // 预处理不裁剪尾部（裁剪在排版器 close_paragraph）
         let mut hlist = words(&[10, 10]);
         hlist.push(glue(3, 0, 0));
-        let lines = knuth_plass(&hlist, 100, 200, 100, false, &[]).0;
+        let lines = knuth_plass(&hlist, 100, 200, 100, false, &[], LineSkips::default()).0;
         assert_eq!(lines, vec![(0, 4)]);
     }
 
@@ -933,7 +1055,7 @@ mod tests {
         // vs 2 行（各 0 badness → demerits 100+100=200）→ 1 行胜（TeX 精确 demerits）
         let mut hlist = words(&[10, 10]);
         hlist.push(fil_glue());
-        let lines = knuth_plass(&hlist, 22, 200, 100, false, &[]).0;
+        let lines = knuth_plass(&hlist, 22, 200, 100, false, &[], LineSkips::default()).0;
         assert_eq!(lines, vec![(0, 4)]);
     }
 
@@ -942,7 +1064,7 @@ mod tests {
         let mut hlist = words(&[10, 10]);
         hlist.push(fil_glue());
         assert_eq!(
-            knuth_plass(&hlist, 100, 200, 100, false, &[]).0,
+            knuth_plass(&hlist, 100, 200, 100, false, &[], LineSkips::default()).0,
             vec![(0, 4)]
         );
     }
@@ -968,7 +1090,7 @@ mod tests {
         hlist.push(glue(3, 1000, 14)); // 词间
         hlist.push(char_of(10)); // n
         hlist.push(fil_glue());
-        let lines = knuth_plass(&hlist, 60, 200, 100, false, &[]).0;
+        let lines = knuth_plass(&hlist, 60, 200, 100, false, &[], LineSkips::default()).0;
         // 行1 = [0..4]（m 空格 a b）+ discretionary pre；行2 = [5..14]（c..h 空格 n fil）
         assert_eq!(lines, vec![(0, 4), (5, 14)]);
     }
@@ -980,7 +1102,7 @@ mod tests {
             vec![char_of(10), char_of(10), disc(5), char_of(10), char_of(10)];
         hlist.push(fil_glue());
         assert_eq!(
-            knuth_plass(&hlist, 100, 200, 100, false, &[]).0,
+            knuth_plass(&hlist, 100, 200, 100, false, &[], LineSkips::default()).0,
             vec![(0, 6)]
         );
     }
@@ -1128,7 +1250,7 @@ mod tests {
         let mut hlist = insert_cjk_glue(&hlist);
         hlist.push(fil_glue());
         assert_eq!(hlist.len(), 12, "字间胶水应插 5 处：{hlist:?}");
-        let lines = knuth_plass(&hlist, hsize, 200, 100, false, &[]).0;
+        let lines = knuth_plass(&hlist, hsize, 200, 100, false, &[], LineSkips::default()).0;
         // 首行到第 4 字后的胶水（下标 7，其前累计宽 4W = hsize，badness 0）；
         // 取第 5 字会到 5W > hsize，而可收缩量只有 3×0.05pt 远不够 → 不可取。
         // 次行从该胶水后的字 8 起，到末尾强制断点（fil 前）
@@ -1145,7 +1267,7 @@ mod tests {
         let hlist: Vec<Node> = (0..4).map(|i| han(0x4E2D + i, W)).collect();
         let mut hlist = insert_cjk_glue(&hlist);
         hlist.push(fil_glue());
-        let no_shape = knuth_plass(&hlist, hsize, 200, 100, false, &[]).0;
+        let no_shape = knuth_plass(&hlist, hsize, 200, 100, false, &[], LineSkips::default()).0;
         assert_eq!(
             no_shape,
             vec![(0, hlist.len())],
@@ -1153,7 +1275,7 @@ mod tests {
         );
         // 形状一行 = 2W：4 字折成两行，每行 2 字
         let shape = [(W, 2 * W)];
-        let lines = knuth_plass(&hlist, hsize, 200, 100, false, &shape).0;
+        let lines = knuth_plass(&hlist, hsize, 200, 100, false, &shape, LineSkips::default()).0;
         assert_eq!(
             lines,
             vec![(0, 3), (4, hlist.len())],

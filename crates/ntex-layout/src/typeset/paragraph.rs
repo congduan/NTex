@@ -50,6 +50,7 @@ impl NodeBuilder {
             self.params.misc[13], // \pretolerance（-1 时跳过第一遍）
             tracing,
             &self.parshape,
+            crate::linebreak::LineSkips::from_glues(self.params.leftskip, self.params.rightskip),
         );
         if tracing && !trace.is_empty() {
             let _ = self.write16(trace);
@@ -61,12 +62,21 @@ impl NodeBuilder {
         let interline = self.penalty_arrays[0].clone();
         let interline_default = self.params.interlinepenalty;
         let mut last_natural: Option<i64> = None;
-        for (line_no, (s, e)) in lines.into_iter().enumerate() {
+        for (line_no, &(s, e)) in lines.iter().enumerate() {
             if line_no > 0 {
-                let p = interline
-                    .get((line_no - 1).min(interline.len().saturating_sub(1)))
-                    .copied()
-                    .unwrap_or(interline_default);
+                let p = lines
+                    .get(line_no - 1)
+                    .and_then(|&(_, prev_e)| prev_e.checked_sub(1))
+                    .and_then(|idx| match children.get(idx) {
+                        Some(Node::Penalty { penalty }) => Some(*penalty),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| {
+                        interline
+                            .get((line_no - 1).min(interline.len().saturating_sub(1)))
+                            .copied()
+                            .unwrap_or(interline_default)
+                    });
                 self.push_node(Node::Penalty { penalty: p });
             }
             // 断点胶水已在折行时排除；末行保留 \parfillskip（fil 拉伸填满行宽）。
