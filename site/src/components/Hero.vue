@@ -2,26 +2,26 @@
   <section class="hero">
     <div class="hero-inner">
       <div>
-        <span class="eyebrow">Rust · 现代排版内核</span>
+        <span class="eyebrow">Rust · A Modern Typesetting Kernel</span>
         <h1>
-          把 1970 年代的 TeX
-          <br />
-          重写为<span class="grad"> 现代排版引擎</span>
+          TeX, rewritten
+          <br />as a <span class="grad">modern engine</span>
         </h1>
         <p class="lead">
-          NTex 不修改宏语义，只换掉 TeX 的运行平台——从单线程 C 解释器，
-          升级为现代 VM、增量计算与并行布局的内核。
+          NTex keeps every macro semantic intact and replaces TeX's runtime —
+          a single-threaded C interpreter becomes a modern VM with incremental
+          computation and parallel layout.
         </p>
         <div class="hero-cta">
-          <a class="btn btn-primary" href="#demo">在线演示</a>
+          <a class="btn btn-primary" href="#demo">Live Demo</a>
           <a class="btn btn-ghost" href="https://github.com/congduan/NTex" target="_blank" rel="noopener">
-            GitHub 仓库
+            GitHub Repository
           </a>
         </div>
         <div class="hero-stats">
-          <div><b>49k+</b>行 Rust</div>
-          <div><b>620+</b>测试用例</div>
-          <div><b>字节级</b>DVI 一致性</div>
+          <div><b>50k+</b> lines of Rust</div>
+          <div><b>700+</b> tests</div>
+          <div><b>Byte-exact</b> DVI parity</div>
         </div>
       </div>
 
@@ -33,15 +33,15 @@
           <span class="terminal-title">ntex — zsh</span>
         </div>
         <div class="terminal-body">
-          <div><span class="term-prompt">$ </span><span class="term-cmd">cargo run -q -p ntex-dvi -- demo.tex</span></div>
-          <div class="term-out">已写出 demo.dvi（1933 字节，2 页，1 字体）</div>
+          <div><span class="term-prompt">$ </span><span class="term-cmd">cargo run -q -p ntex-dvi -- samples/transformer-real/transformer-standalone.tex out.dvi --input-path samples/transformer-real</span></div>
+          <div class="term-out">wrote out.dvi (45095 bytes, 16 pages, 87 fonts)</div>
           <br />
-          <div><span class="term-prompt">$ </span><span class="term-cmd">cargo run -q -p ntex-pdf -- demo.dvi -p 595.28x841.89</span></div>
-          <div class="term-out">已写出 demo.pdf（103007 字节，2 页）</div>
+          <div><span class="term-prompt">$ </span><span class="term-cmd">cargo run -q -p ntex-pdf -- out.dvi demo.pdf</span></div>
+          <div class="term-out">wrote demo.pdf (1270266 bytes, 16 pages)</div>
           <br />
           <div><span class="term-prompt">$ </span><span class="term-cmd">pdfinfo demo.pdf | head -3</span></div>
-          <div class="term-out">Pages:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;2<br />Page size:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;595.28 x 841.89 pts</div>
-          <div class="term-ok">Knuth-Plass 折行 · TFM 度量 · 断页 · Type1 嵌入</div>
+          <div class="term-out">Pages:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;16<br />Page size:&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;612 x 792 pts (letter)</div>
+          <div class="term-ok">Knuth-Plass line breaking · TFM metrics · page breaking · Type1/Type0 embedding</div>
         </div>
       </div>
     </div>

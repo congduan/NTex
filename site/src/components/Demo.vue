@@ -68,7 +68,7 @@ async function loadEngine() {
     await fonts
     if (fontsReady.value && glyphs.value && doc) {
       doc.set_glyphs(true)
-      status.value = `渲染 ${renderCurrent().toFixed(1)}ms（真字形）`
+      status.value = `rendered in ${renderCurrent().toFixed(1)}ms (real glyphs)`
     }
   } catch (e) {
     engineState.value = 'error'
@@ -107,7 +107,7 @@ function compileNow() {
   } catch (e) {
     // TeX 式错误：保留上一次成功渲染，状态行报错（编辑中间态常见，不清屏）
     statusErr.value = true
-    status.value = `编译失败：${e.message || e}`
+    status.value = `compile failed: ${e.message || e}`
     return
   }
   doc = d
@@ -118,7 +118,7 @@ function compileNow() {
   const tCompile = performance.now() - t0
   const tRender = renderCurrent()
   statusErr.value = false
-  status.value = `编译 ${tCompile.toFixed(1)}ms · 渲染 ${tRender.toFixed(1)}ms · ${doc.page_count} 页`
+  status.value = `typeset ${tCompile.toFixed(1)}ms · render ${tRender.toFixed(1)}ms · ${doc.page_count} pages`
 }
 
 // —— 渲染当前页：软光栅 RGBA → ImageData 直灌 canvas；显示宽 = 96dpi 基准 × zoom ——
@@ -220,7 +220,7 @@ function resetDemo() {
 function downloadDvi() {
   if (!doc || doc.dvi.length === 0) {
     statusErr.value = true
-    status.value = '无 DVI 可导出（0 页）'
+    status.value = 'no DVI to export (0 pages)'
     return
   }
   const blob = new Blob([doc.dvi], { type: 'application/octet-stream' })
@@ -237,7 +237,7 @@ watch([pageNo, dpi, debug], () => {
   if (engineState.value !== 'ready') return
   const t = renderCurrent()
   statusErr.value = false
-  status.value = `渲染 ${t.toFixed(1)}ms`
+  status.value = `rendered in ${t.toFixed(1)}ms`
 })
 // 真字形开关：句柄上切换轮廓/方框通道后只重渲染（字体未注入时保持方框口径）
 watch(glyphs, () => {
@@ -245,7 +245,7 @@ watch(glyphs, () => {
   doc.set_glyphs(glyphs.value && fontsReady.value)
   const t = renderCurrent()
   statusErr.value = false
-  status.value = `渲染 ${t.toFixed(1)}ms（${glyphs.value && fontsReady.value ? '真字形' : '方框'}）`
+  status.value = `rendered in ${t.toFixed(1)}ms (${glyphs.value && fontsReady.value ? 'real glyphs' : 'boxes'})`
 })
 
 onMounted(async () => {
@@ -268,61 +268,60 @@ onBeforeUnmount(() => clearTimeout(compileTimer))
   <section class="section" id="demo">
     <div class="section-head" v-reveal>
       <p class="kicker">Live Engine</p>
-      <h2>浏览器内实时排版</h2>
+      <h2>Real Typesetting in Your Browser</h2>
       <p>
-        完整引擎经 WebAssembly 跑在你的浏览器里：编辑左侧 TeX，250ms 防抖后全链重排
-        ——宏展开、Knuth-Plass 折行、断页、DVI、软光栅，全程不经任何服务器。
-        翻页 / 调 dpi / 切 overlay 只重渲染不重排；Rust 侧与桌面引擎同一份代码。
+        The full engine runs in your browser via WebAssembly: edit the TeX on the left and after a 250ms debounce the whole pipeline re-runs — macro expansion, Knuth-Plass line breaking, page breaking, DVI, and software rasterization, with no server involved.
+        Changing page, dpi, or overlay re-renders without re-typesetting; this is the same Rust code as the desktop engine.
       </p>
     </div>
 
     <div class="demo-shell" v-reveal>
       <div class="demo-tabs">
         <span class="demo-tab" :class="{ active: tab === 'live' }" @click="tab = 'live'">
-          实时预览 · WASM
+          Live preview · WASM
         </span>
         <span class="demo-tab" :class="{ active: tab === 'pdf' }" @click="tab = 'pdf'">
-          demo.pdf · CI 产物
+          demo.pdf · rendered output
         </span>
         <span
           class="demo-engine"
           :class="engineState"
           :title="engineMsg || undefined"
         >
-          {{ engineState === 'ready' ? engineMsg : engineState === 'loading' ? '引擎装载中…' : 'WASM 不可用，已回落静态 PDF' }}
+          {{ engineState === 'ready' ? engineMsg : engineState === 'loading' ? 'Loading engine…' : 'WASM unavailable — fell back to static PDF' }}
         </span>
       </div>
 
       <div class="demo-live" v-show="tab === 'live'">
         <div class="live-bar">
           <span class="live-ctl">
-            <button class="live-btn" title="上一页" :disabled="pageNo <= 0" @click="prevPage">‹</button>
+            <button class="live-btn" title="Previous page" :disabled="pageNo <= 0" @click="prevPage">‹</button>
             <span class="live-pages">{{ pageCount ? `${pageNo + 1} / ${pageCount}` : '– / –' }}</span>
-            <button class="live-btn" title="下一页" :disabled="pageNo >= pageCount - 1" @click="nextPage">›</button>
+            <button class="live-btn" title="Next page" :disabled="pageNo >= pageCount - 1" @click="nextPage">›</button>
           </span>
           <span class="live-ctl">
             <label for="live-dpi">dpi</label>
             <input id="live-dpi" type="range" min="72" max="288" step="12" v-model.number="dpi" />
             <span class="live-pages">{{ dpi }}</span>
           </span>
-          <span class="live-ctl" title="预览缩放：滚轮缩放 / 拖拽平移">
-            <button class="live-btn" title="缩小预览" :disabled="zoom <= ZOOM_MIN" @click="zoomOut">−</button>
+          <span class="live-ctl" title="Zoom with the wheel, pan by dragging">
+            <button class="live-btn" title="Zoom out" :disabled="zoom <= ZOOM_MIN" @click="zoomOut">−</button>
             <span class="live-pages">{{ Math.round(zoom * 100) }}%</span>
-            <button class="live-btn" title="放大预览" :disabled="zoom >= ZOOM_MAX" @click="zoomIn">＋</button>
-            <button class="live-btn" v-if="zoom !== 1" title="复位缩放" @click="resetZoom">100%</button>
+            <button class="live-btn" title="Zoom in" :disabled="zoom >= ZOOM_MAX" @click="zoomIn">＋</button>
+            <button class="live-btn" v-if="zoom !== 1" title="Reset zoom" @click="resetZoom">100%</button>
           </span>
           <span class="live-ctl">
-            <label><input type="checkbox" v-model="debug" /> 排版 overlay</label>
+            <label><input type="checkbox" v-model="debug" /> Typesetting overlay</label>
           </span>
           <span class="live-ctl">
             <label :title="fontsReady ? 'Latin Modern 轮廓字形' : '字体未注入（回落方框）'">
               <input type="checkbox" v-model="glyphs" :disabled="!fontsReady" />
-              真字形{{ fontsReady ? '' : '（未就绪）' }}
+              Real glyphs{{ fontsReady ? '' : ' (not ready)' }}
             </label>
           </span>
           <span class="grow"></span>
-          <button class="live-btn" title="恢复示例源码" @click="resetDemo">重置</button>
-          <button class="live-btn" title="导出当前作业的 DVI 字节" @click="downloadDvi">DVI ⤓</button>
+          <button class="live-btn" title="Restore the sample source" @click="resetDemo">Reset</button>
+          <button class="live-btn" title="Download the DVI bytes of this job" @click="downloadDvi">DVI ⤓</button>
           <span class="live-status" :class="{ err: statusErr }">{{ status }}</span>
         </div>
 
@@ -332,15 +331,15 @@ onBeforeUnmount(() => clearTimeout(compileTimer))
               class="live-editor"
               v-model="src"
               spellcheck="false"
-              placeholder="输入 plain TeX…"
+              placeholder="Enter plain TeX…"
             ></textarea>
           </div>
           <div class="live-preview" ref="previewRef" @wheel.prevent="onWheel">
             <div v-if="engineState === 'loading'" class="live-hint">
-              正在装载 WASM 引擎（约 830KB，一次性下载）…
+              Loading the WASM engine (~830KB, one-time download)…
             </div>
             <div v-else-if="engineState === 'error'" class="live-hint">
-              WASM 引擎装载失败：<code>{{ engineMsg }}</code>
+              Failed to load the WASM engine: <code>{{ engineMsg }}</code>
             </div>
             <template v-else>
               <canvas
@@ -351,13 +350,13 @@ onBeforeUnmount(() => clearTimeout(compileTimer))
                 @pointerup="onPanEnd"
                 @pointercancel="onPanEnd"
               ></canvas>
-              <div v-if="noPage" class="live-hint">无页面（作业没有 \shipout 产出）</div>
+              <div v-if="noPage" class="live-hint">No pages (the job produced no \shipout)</div>
             </template>
           </div>
         </div>
 
         <details class="live-log" open>
-          <summary>转录（.log）</summary>
+          <summary>Transcript (.log)</summary>
           <pre>{{ transcript || '—' }}</pre>
         </details>
       </div>

@@ -23,15 +23,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      - name: 渲染示例 PDF（引擎自举）
+      - name: Render the Transformer paper with NTex (engine self-hosting)
         env:
-          # CI runner 无 TeX Live/TinyTeX——TFM 用仓库自带 assets/tfm
+          # CI runners have no TeX Live/TinyTeX — TFMs come from the in-repo assets
           NTEX_TFM_DIR: ${{ github.workspace }}/assets/tfm
         run: |
-          cargo run -q -p ntex-dvi -- samples/demo.tex
-          cargo run -q -p ntex-pdf -- samples/demo.dvi -p 595.28x841.89
-          cp samples/demo.tex site/public/demo.tex
-          cp samples/demo.pdf site/public/demo.pdf
+          cargo run -q -p ntex-dvi -- samples/transformer-real/transformer-standalone.tex site/public/demo.dvi --input-path samples/transformer-real
+          cargo run -q -p ntex-dvi -- samples/transformer-real/transformer-standalone.tex site/public/demo.dvi --input-path samples/transformer-real
+          cargo run -q -p ntex-pdf -- site/public/demo.dvi site/public/demo.pdf
+          rm site/public/demo.dvi
+          cp samples/transformer-real/transformer-standalone.tex site/public/demo.tex
+          cp samples/transformer-real/refs.bbl site/public/refs.bbl
+          mkdir -p site/public/Figures
+          cp samples/transformer-real/Figures/*.png site/public/Figures/
 
       - uses: actions/setup-node@v4
         with:

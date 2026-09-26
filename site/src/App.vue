@@ -9,25 +9,25 @@ const docs = [
   {
     tag: 'PLAN',
     title: 'plan.md',
-    desc: 'M0~M9 实施计划与验收标准',
+    desc: 'M0–M9 implementation plan with acceptance criteria',
     url: 'https://github.com/congduan/NTex/blob/main/plan.md',
   },
   {
     tag: 'RFC-1',
-    title: 'Token 表示与内存布局',
-    desc: '8B tagged union / InternTable / eqtb 版本化',
+    title: 'Token Representation',
+    desc: '8-byte tagged union / InternTable / versioned eqtb',
     url: 'https://github.com/congduan/NTex/blob/main/RFC-1-token.md',
   },
   {
     tag: 'RFC-3',
-    title: '副作用模型',
-    desc: 'VFS + 输出边界提交',
+    title: 'Side-Effect Model',
+    desc: 'VFS abstraction + commit-at-boundary semantics',
     url: 'https://github.com/congduan/NTex/blob/main/RFC-3-side-effects.md',
   },
   {
     tag: 'RFC-4',
-    title: '字节码指令集',
-    desc: '宏展开 VM IR（定长 u64）',
+    title: 'Bytecode Instruction Set',
+    desc: 'Macro-expansion VM IR (fixed-width u64)',
     url: 'https://github.com/congduan/NTex/blob/main/RFC-4-bytecode.md',
   },
 ]
@@ -40,43 +40,45 @@ const docs = [
       NTex
     </a>
     <div class="nav-links">
-      <a href="#features">特性</a>
-      <a href="#pipeline">架构</a>
-      <a href="#milestones">里程碑</a>
-      <a href="#demo">演示</a>
-      <a href="#docs">文档</a>
+      <a href="#features">Features</a>
+      <a href="#pipeline">Architecture</a>
+      <a href="#milestones">Roadmap</a>
+      <a href="#demo">Demo</a>
+      <a href="#docs">Docs</a>
     </div>
     <a class="btn btn-ghost" href="https://github.com/congduan/NTex" target="_blank" rel="noopener">
       GitHub
     </a>
   </nav>
 
-  <Hero />
+  <main id="top">
+    <Hero />
+    <Features />
+    <Pipeline />
+    <Milestones />
+    <Demo />
 
-  <Features />
+    <section class="section" id="docs">
+      <div class="section-head" v-reveal>
+        <p class="kicker">Documentation</p>
+        <h2>Design Docs</h2>
+        <p>Roadmap, architecture decision records, and the full implementation plan — all in the repository.</p>
+      </div>
+      <div class="docs-grid" v-reveal>
+        <a class="card doc" v-for="d in docs" :key="d.tag" :href="d.url" target="_blank" rel="noopener">
+          <span class="doc-tag">{{ d.tag }}</span>
+          <h3>{{ d.title }}</h3>
+          <p>{{ d.desc }}</p>
+        </a>
+      </div>
+    </section>
+  </main>
 
-  <Pipeline />
-
-  <Milestones />
-
-  <Demo />
-
-  <section class="section" id="docs">
-    <div class="section-head" v-reveal>
-      <p class="kicker">Documents</p>
-      <h2>设计文档</h2>
-    </div>
-    <div class="doc-links">
-      <a v-for="d in docs" :key="d.tag" class="doc-card" :href="d.url" target="_blank" rel="noopener" v-reveal>
-        <span class="tag">{{ d.tag }}</span>
-        <h4>{{ d.title }}</h4>
-        <p>{{ d.desc }}</p>
-      </a>
-    </div>
-  </section>
-
-  <footer class="site">
-    <a href="https://github.com/congduan/NTex" target="_blank" rel="noopener">github.com/congduan/NTex</a>
-    &nbsp;·&nbsp; MIT OR Apache-2.0
+  <footer>
+    <span>NTex — a modern typesetting kernel in Rust. Not affiliated with the TeX Users Group.</span>
+    <span>
+      <a href="https://github.com/congduan/NTex" target="_blank" rel="noopener">GitHub</a>
+      · <a href="https://arxiv.org/abs/1706.03762" target="_blank" rel="noopener">Sample paper</a>
+    </span>
   </footer>
 </template>

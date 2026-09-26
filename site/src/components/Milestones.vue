@@ -5,59 +5,59 @@ const segState = ['on', 'half', 'half', 'on', 'on', 'on', 'half', 'half']
 const milestones = [
   {
     id: 'M0',
-    name: '地基',
-    desc: 'workspace / CI / 基准 / TRIP·差分工具链；RFC-1 / RFC-3 / RFC-4 定稿',
+    name: 'Foundation',
+    desc: 'workspace / CI / benchmarks / TRIP·diff tooling; RFC-1 / RFC-3 / RFC-4 finalized',
     state: 'done',
-    label: '完成',
+    label: 'Done',
   },
   {
     id: 'M1',
-    name: '展开内核',
-    desc: 'Token / InternTable / eqtb / 展开引擎 + 错误恢复 —— trip.tex 全程可跑不 panic，semantic diff 收尾中',
+    name: 'Expansion Kernel',
+    desc: 'Token / InternTable / eqtb / expansion engine + error recovery — trip.tex runs end-to-end without panics; semantic diff wrapping up',
     state: 'wip',
-    label: '核心完成',
+    label: 'Core done',
   },
   {
     id: 'M2',
-    name: '字节码 VM',
-    desc: '定长 u64 IR + 双轨等价（100 用例）；热路径消分配落地（展开吞吐 +61%）',
+    name: 'Bytecode VM',
+    desc: 'Fixed-width u64 IR + dual-track equivalence (100 cases); hot-path allocation removal landed (+61% expansion throughput)',
     state: 'wip',
-    label: '等价全绿',
+    label: 'All green',
   },
   {
     id: 'M3',
-    name: '排版核心',
-    desc: 'Knuth-Plass 折行 / 断页 / lig+kern / output 例程 / shipout→DVI，与真实 TeX 逐字节一致',
+    name: 'Typesetting Core',
+    desc: 'Knuth-Plass line breaking / page breaking / lig+kern / output routine / shipout→DVI — byte-exact against real TeX',
     state: 'done',
-    label: '完成',
+    label: 'Done',
   },
   {
     id: 'PDF',
-    name: 'DVI→PDF 输出端',
-    desc: 'DVI→PDF 直出 + Type1 嵌入；CM 全家族 6 族多字体嵌入全链验证',
+    name: 'DVI→PDF Output',
+    desc: 'Direct DVI→PDF + Type1/Type0 embedding; full-chain verification across the CM family',
     state: 'done',
-    label: '可用',
+    label: 'Usable',
   },
   {
     id: 'M4',
-    name: '数学 + e-TeX',
-    desc: '数学模式状态机 / 上下标 / 字阶 + e-TeX 全扩展 —— ETRIP 冲刺 A 组 42/42、B 组 36/36',
+    name: 'Math + e-TeX',
+    desc: 'Math-mode state machine / super-sub scripts / math styles + full e-TeX extensions — ETRIP sprint A 42/42, B 36/36',
     state: 'done',
-    label: '完成',
+    label: 'Done',
   },
   {
     id: 'M5',
-    name: '增量计算',
-    desc: '段级增量重排（阶段一~五）—— 连续编辑逐位一致，改正文 4.3x，增量墙钟翻正',
+    name: 'Incremental Computation',
+    desc: 'Paragraph-level incremental re-typesetting (phases 1–5) — bit-exact under continuous editing, 4.3x on body-text edits',
     state: 'wip',
-    label: '阶段一~五完成',
+    label: 'Phases 1–5 done',
   },
   {
     id: 'M8',
-    name: '渲染生态',
-    desc: 'vello GPU 渲染 + 真字形 · ntex-studio 实时预览工作台 · ntex-wasm A 档骨架',
+    name: 'Rendering Ecosystem',
+    desc: 'vello GPU rendering + real glyphs · ntex-studio live preview workbench · ntex-wasm runtime',
     state: 'wip',
-    label: '起步',
+    label: 'Early',
   },
 ]
 </script>
@@ -66,8 +66,8 @@ const milestones = [
   <section class="section" id="milestones">
     <div class="section-head" v-reveal>
       <p class="kicker">Roadmap</p>
-      <h2>里程碑进度</h2>
-      <p>展开、排版、数学三大核心已成，DVI 与真实 TeX 逐字节一致；增量计算与渲染生态推进中。</p>
+      <h2>Milestone Progress</h2>
+      <p>The three core pillars — expansion, typesetting, math — are complete with byte-exact DVI parity against real TeX; incremental computation and the rendering ecosystem are in progress.</p>
     </div>
 
     <div class="progress-strip" v-reveal>
