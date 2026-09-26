@@ -1506,6 +1506,59 @@ use super::*;
         );
     }
 
+    // ── S4/S5/S6 收口（tex.web 探针对拍；docs/KNOWN-SIMPLIFICATIONS 47-49）──
+    // （模式合法性路由两条在 ntex-layout typeset/tests_align.rs：core 单测的
+    // VecSink `mode_code` 恒返 1，测不出数学/受限水平路由。）
+
+    #[test]
+    fn align_preamble_cs_brace_does_not_open_depth() {
+        // S4：tex.web 的 align_state 只在**字符 token** 通路加减（get_next 的
+        // mid_line+left_brace 臂 L7335 / get_token 的 `t<cs_token_flag` 分支
+        // L7492）。`\bgroup`（cs 形态的 `{`）不该开深度——否则 `&#` 落进
+        // v 模板、行尾报 "Extra alignment tab"（修复前的伪象）。
+        let (_r, t) =
+            run_transcript(r"\halign{\bgroup&#\egroup\cr a&b\cr}");
+        assert!(
+            t.contains("! Missing # inserted in alignment preamble."),
+            "GT 首错（pdftex 同）：{t}"
+        );
+        assert!(
+            !t.contains("Extra alignment tab"),
+            "cs 花括号不该开 preamble 深度：{t}"
+        );
+    }
+
+    #[test]
+    fn align_extra_tab_ends_row_and_starts_new_row() {
+        // S5：tex.web fin_col 越界臂报 "Extra alignment tab has been changed
+        // to \cr" 后**按 \cr 收行**、余 token 由 align_peek 起新行首列——不是
+        // 钳末列丢内容（旧行为：单行 4 单元、报错两次）。
+        let (_r, t) = run_transcript(r"\halign{#&#\cr a&b&c&d\cr}");
+        assert_eq!(
+            t.matches("! Extra alignment tab has been changed to \\cr.")
+                .count(),
+            1,
+            "恰好一次越界报错（GT 同）：{t}"
+        );
+    }
+
+    #[test]
+    fn align_midrow_end_brace_inserts_cr() {
+        // S6①：行中 raw `}` 使 align_state 0→-1，落 handle_right_brace 的
+        // align_group 臂（tex.web L21654）：报 "Missing \cr inserted" 并插
+        // frozen \cr。插入前须还原 align_state（同 back_input L7028 对 brace
+        // 的逆调），否则插入的 \cr 卡在 raw 判据外 → Misplaced \cr → 死循环。
+        let (_r, t) = run_transcript(r"\halign{#&#\cr a}");
+        assert!(
+            t.contains("! Missing \\cr inserted."),
+            "GT 同（1 页 1 错）：{t}"
+        );
+        assert!(
+            !t.contains("Misplaced \\cr"),
+            "插入的 \\cr 须被 raw 判据收下：{t}"
+        );
+    }
+
     // ── \newif / \escapechar 展开链（plain.tex L598 预载 24 条 "doesn't
     // match" 根因）──────────────────────────────────────────────────────
     // plain.tex L264-271 的 \newif 定义压缩成单行（@=11、\count@=255、

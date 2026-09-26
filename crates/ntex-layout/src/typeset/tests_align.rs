@@ -158,3 +158,30 @@ fn halign_multispan_keeps_group_balance() {
         "跨列行应与两列行同宽（span_len 必须为 2，不能重置 cur_span）"
     );
 }
+
+// ── S6 模式合法性路由（tex.web main_control 大 case 键 abs(mode)+cur_cmd）──
+// core 单测的 VecSink `mode_code` 恒返 1，路由只能在真 Typesetter 侧锁。
+
+#[test]
+fn align_mode_route_math_mode_halign_is_illegal() {
+    // mmode+halign 无合法位 → report_illegal_case（GT pdftex 同首错；
+    // 级联的 #/\cr 各自报错，错误数 GT 4 / NTex 3，登记差）。
+    let mut ts = Typesetter::with_metrics(metrics);
+    let _ = ts.typeset(r"$\halign{#\cr b\cr}$");
+    let t = ts.take_transcript();
+    assert!(
+        t.contains("You can't use `\\halign' in math mode."),
+        "GT 首错：{t}"
+    );
+}
+
+#[test]
+fn align_mode_route_restricted_hmode_off_save() {
+    // 受限水平（\hbox 内）的 \halign：mode<0 → off_save，插配对 `}` 并报
+    // "Missing } inserted"（GT 错误序：Missing } inserted → Too many }'s.）。
+    let mut ts = Typesetter::with_metrics(metrics);
+    let _ = ts.typeset(r"\hbox{\halign{#\cr b\cr}}");
+    let t = ts.take_transcript();
+    assert!(t.contains("! Missing } inserted."), "off_save 报错：{t}");
+    assert!(t.contains("Too many }'s."), "GT 次错：{t}");
+}
