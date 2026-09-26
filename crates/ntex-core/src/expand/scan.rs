@@ -81,6 +81,16 @@ impl Expander {
         id
     }
 
+    fn macro_expandable_in_numeric_scan(&self, csid: u32, protected: bool) -> bool {
+        if !protected || self.suppress_expansion == 0 {
+            return true;
+        }
+        matches!(
+            self.intern.name(csid),
+            "exp_end_continue_f:w" | "exp_end_continue_f:nw"
+        )
+    }
+
     /// 扫描十进制整数；支持 `\count<idx>` 寄存器引用（M1 简化版）。
     fn scan_number(&mut self) -> Result<i64> {
         // 默认跳过可选 `=`（赋值上下文）；scan_register_index 等内部扫描不跳
@@ -152,7 +162,9 @@ impl Expander {
                 // 别名即原义：宏别名须按目标含义展开（tex.web scan_int 符号循环
                 // 的 get_x_token；Alias 槽只指向宏/未定义，见 deref_alias_chain）。
                 let expandable = match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
-                    EqSlot::Macro(_) => true,
+                    EqSlot::Macro(m) => {
+                        self.macro_expandable_in_numeric_scan(csid, m.value.protected)
+                    }
                     EqSlot::Primitive(p) if p.is_expandable() => true,
                     _ => false,
                 };
@@ -232,7 +244,9 @@ impl Expander {
                 if let Some(csid) = tok.csid() {
                     let expandable =
                         match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
-                            EqSlot::Macro(_) => true,
+                            EqSlot::Macro(m) => {
+                                self.macro_expandable_in_numeric_scan(csid, m.value.protected)
+                            }
                             EqSlot::Primitive(p) if p.is_expandable() => true,
                             _ => false,
                         };
@@ -330,7 +344,8 @@ impl Expander {
                             if let Some(csid) = t.csid() {
                                 let expandable =
                                     match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
-                                        EqSlot::Macro(_) => true,
+                                        EqSlot::Macro(m) => self
+                                            .macro_expandable_in_numeric_scan(csid, m.value.protected),
                                         EqSlot::Primitive(p) if p.is_expandable() => true,
                                         _ => false,
                                     };

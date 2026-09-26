@@ -10,6 +10,18 @@ fn expr_quotient_i128(n: i128, d: i128) -> i128 {
     }
 }
 
+std::thread_local! {
+    static EXPAND_ONCE_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+struct ExpandOnceDepthGuard;
+
+impl Drop for ExpandOnceDepthGuard {
+    fn drop(&mut self) {
+        EXPAND_ONCE_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
 impl Expander {
     /// `\expandafter a b`：输出 a，再输出 b 的一次展开结果。
     ///
@@ -73,6 +85,18 @@ impl Expander {
 
     /// 展开单个 token 一次，结果追加到 `out`。
     fn expand_once(&mut self, item: (Token, bool), out: &mut Vec<(Token, bool)>) -> Result<()> {
+        let depth = EXPAND_ONCE_DEPTH.with(|cell| {
+            let depth = cell.get().saturating_add(1);
+            cell.set(depth);
+            depth
+        });
+        let _depth_guard = ExpandOnceDepthGuard;
+        if depth > 2048 {
+            self.dump_input_stack("expand-once");
+            return Err(Error::invalid_input(format!(
+                "TeX capacity exceeded, sorry [expand_once depth = {depth}]"
+            )));
+        }
         if item.1 {
             // 已被 \noexpand 标记：不展开
             out.push(item);

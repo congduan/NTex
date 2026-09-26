@@ -1082,7 +1082,29 @@ impl Expander {
         // 187 例全 STACK 的根因；2026-09-12 trace 定性）。
         let mut unbalance = 1usize;
         let mut runaway = false;
+        let entry_stack = self.stack.len();
+        let mut scan_steps = 0u64;
+        let bc_guard_limit = bytecode_guard_limit();
         'scan: loop {
+            // `scan_edef_body` 是子展开循环；它可能在一次主循环 dispatch 内不断
+            // 压入 TokenList 帧，外层 watchdog 来不及接管。这里本地兜底，把
+            // 展开递归收敛为 TeX 式诊断，避免 native stack overflow。
+            scan_steps = scan_steps.saturating_add(1);
+            if bc_guard_limit != 0 && scan_steps > bc_guard_limit {
+                self.dump_bytecode_guard(scan_steps, bc_guard_limit);
+                return Err(Error::invalid_input(format!(
+                    "\\edef 扫描超限（{scan_steps} 步；NTEX_BC_GUARD={bc_guard_limit}）"
+                )));
+            }
+            if scan_steps > max_steps() || self.stack.len() > entry_stack + 4096 {
+                self.dump_input_stack("scan-edef-body");
+                return Err(Error::invalid_input(format!(
+                    "\\edef 扫描步数/栈深超限（疑似展开递归）；步 {} 栈深 {}（入口 {}）",
+                    scan_steps,
+                    self.stack.len(),
+                    entry_stack
+                )));
+            }
             let Some((tok, noexpand)) = self.fetch()? else {
                 runaway = unbalance > 0;
                 break 'scan;
