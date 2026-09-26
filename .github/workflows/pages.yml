@@ -24,6 +24,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: 渲染示例 PDF（引擎自举）
+        env:
+          # CI runner 无 TeX Live/TinyTeX——TFM 用仓库自带 assets/tfm
+          NTEX_TFM_DIR: ${{ github.workspace }}/assets/tfm
         run: |
           cargo run -q -p ntex-dvi -- samples/demo.tex
           cargo run -q -p ntex-pdf -- samples/demo.dvi -p 595.28x841.89
