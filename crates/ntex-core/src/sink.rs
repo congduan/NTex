@@ -301,6 +301,13 @@ pub trait MathSink {
     fn math_class(&mut self, _class: u8) -> Result<()> {
         Ok(())
     }
+    /// `\displaylimits`(0)/`\limits`(1)/`\nolimits`(2)（tex.web limit_switch →
+    /// `math_limit_switch`）：改写**当前数学层最后一个原子**（须为 Op）的
+    /// 上下限摆放方式。Op 的默认 subtype 是 0=normal（display 堆叠），
+    /// `\int`/`\oint` 定义为 `\intop\nolimits`（上下标走普通脚本位）。
+    fn math_limit_switch(&mut self, _mode: u8) -> Result<()> {
+        Ok(())
+    }
     /// `\accent`/`\mathaccent`（M4）：`plain` 为 true 时表示 `\accent` 在数学模式
     /// 被改道为 `\mathaccent`（tex.web math_ac；已由 sink 报告改道消息）。
     /// nucleus 字段的 `{` 检查与扫描由排版器按后续 token/组完成。

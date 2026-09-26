@@ -250,6 +250,7 @@ impl NodeBuilder {
                     class: MathClass::Ord,
                     fam: 0,
                     charcode: ch,
+                    limits: 0,
                 })),
             _ => Ok(()), // active 等已在展开侧处理；其余忽略
         }
@@ -620,7 +621,7 @@ impl NodeBuilder {
                 // Op 大算符：vcenter（+display 变体放大），tex.web make_op
                 // 对所有 Op 字符原子生效（demo1 差异 #3：display Σ 未放大居中）
                 if mc.class == MathClass::Op {
-                    return self.op_nodes(mc, style, None, None);
+                    return self.op_nodes(mc, style, None, None, mc.limits == 1);
                 }
                 let (font, num, den) = self.math_char_font(mc, style);
                 let (w, h, d) = self.math_metrics(font, mc.charcode, num, den);
@@ -633,12 +634,24 @@ impl NodeBuilder {
                 }]
             }
             MathAtom::Scripts { base, sub, sup } => {
-                // 大算符带上下标：limits 堆叠（tex.web make_op subtype normal
-                // 且 cur_style<text_style（display 两态）→ limits；
-                // `\sum_{n=1}^{\infty}` 上下限居中于 Σ）
+                // 大算符上下限（tex.web make_op）：op 的 subtype 1=`\limits` 恒
+                // 堆叠、0=normal/`\displaylimits` 仅 display 堆叠、2=`\nolimits`
+                // 恒不堆叠（`\int`=`\intop\nolimits`：上下标走普通脚本位，
+                // 斜体修正从核宽扣除——见 op_nodes 的 nolimits 臂）。
                 if let MathAtom::Char(mc) = base.as_ref() {
-                    if mc.class == MathClass::Op && style.code() < 2 {
-                        return self.op_nodes(mc, style, sub.as_deref(), sup.as_deref());
+                    if mc.class == MathClass::Op {
+                        let stack = match mc.limits {
+                            1 => true,
+                            2 => false,
+                            _ => style.code() < 2,
+                        };
+                        return self.op_nodes(
+                            mc,
+                            style,
+                            sub.as_deref(),
+                            sup.as_deref(),
+                            stack,
+                        );
                     }
                 }
                 let mut out = self.math_atom_nodes(base, style);
@@ -657,94 +670,7 @@ impl NodeBuilder {
                         out.push(kern);
                     }
                 }
-                // tex.web make_scripts L14884：脚本体清理盒 + 垂直清位；
-                // sub/sup 同时在场 → 单 vpack 合并盒（combo），不是并排两盒。
-                let (mut shift_up, mut shift_down) = self.script_base_shifts(&out, style);
-                let kind = style.size_kind();
-                let xh = self.mathsy_x_height(kind);
-                // 上标清理盒（@<Construct a superscript box |x|@>）
-                let sup_box = sup.as_ref().map(|sup_atoms| {
-                    let mut b = self.math_clean_box(sup_atoms, style.sup_style());
-                    b.width += self.params.scriptspace;
-                    // clr：cramped→sup3、display→sup1、其余→sup2（tex.web L14929）
-                    let clr = if style.is_cramped() {
-                        self.mathsy_param(kind, 15)
-                    } else if style.code() < 2 {
-                        self.mathsy_param(kind, 13)
-                    } else {
-                        self.mathsy_param(kind, 14)
-                    };
-                    if shift_up < clr {
-                        shift_up = clr;
-                    }
-                    let clr2 = b.depth + xh / 4;
-                    if shift_up < clr2 {
-                        shift_up = clr2;
-                    }
-                    b
-                });
-                // 下标清理盒（@<Construct a subscript box |x|@>）
-                let sub_box = sub.as_ref().map(|sub_atoms| {
-                    let mut b = self.math_clean_box(sub_atoms, style.sub_style());
-                    b.width += self.params.scriptspace;
-                    b
-                });
-                match (sup_box, sub_box) {
-                    (Some(mut x), Some(y)) => {
-                        // combo 臂（@<Construct a sub/superscript combination box
-                        // |x|...@> L14940）：下限 sub2，4×rule_thickness 间隙不足
-                        // 时下标下移、必要时整体上移（4/5·x_height 上限），最终
-                        // vpack[sup(+delta 偏移), kern, sub]、盒 shift=shift_down。
-                        let sub2 = self.mathsy_param(kind, 17);
-                        if shift_down < sub2 {
-                            shift_down = sub2;
-                        }
-                        let rt = self.math_rule_thickness(kind);
-                        let mut clr =
-                            4 * rt - ((shift_up - x.depth) - (y.height - shift_down));
-                        if clr > 0 {
-                            shift_down += clr;
-                            clr = (xh * 4) / 5 - (shift_up - x.depth);
-                            if clr > 0 {
-                                shift_up += clr;
-                                shift_down -= clr;
-                            }
-                        }
-                        x.shift = delta; // vlist 内 Box.shift = 水平偏移
-                        let kern = (shift_up - x.depth) - (y.height - shift_down);
-                        let children = vec![
-                            Node::Box(x),
-                            Node::Kern { width: kern },
-                            Node::Box(y),
-                        ];
-                        // 自然装（tex.web `vpack(x,natural)`）：目标高传自然总高，
-                        // diff=0 保持自然 height/depth；参考点在末盒基线。
-                        let dims = vbox_dimensions(&children);
-                        let mut b = vpack(children, dims.height + dims.depth, i64::MAX);
-                        b.shift = shift_down;
-                        out.push(Node::Box(b));
-                    }
-                    (Some(mut x), None) => {
-                        x.shift = -shift_up;
-                        out.push(Node::Box(x));
-                    }
-                    (None, Some(mut y)) => {
-                        // 无上标：下限 sub1（mathsy 16），且不低于
-                        // height(sub)-4/5·x_height（下标盒构造末尾）
-                        let sub1 = self.mathsy_param(kind, 16);
-                        if shift_down < sub1 {
-                            shift_down = sub1;
-                        }
-                        let clr = y.height - (xh * 4) / 5;
-                        if shift_down < clr {
-                            shift_down = clr;
-                        }
-                        y.shift = shift_down;
-                        out.push(Node::Box(y));
-                    }
-                    (None, None) => {}
-                }
-                out
+                self.make_scripts(out, delta, sub.as_deref(), sup.as_deref(), style)
             }
             MathAtom::Fraction {
                 num,
@@ -1019,16 +945,20 @@ impl NodeBuilder {
     /// Op 大算符布局（tex.web §1185 make_op）：
     /// - display 时沿 next_larger 放大一步（`\sum="1350` → cmex10 80→88）；
     /// - 字符盒 vcenter：`shift = half(h−d) − axis_height`（hlist 中正=下移）；
-    /// - display 带 sup/sub 时上下限堆叠（limits；真实 TeX showbox 验证：
+    /// - 带 sup/sub 时按 `stack_limits` 分两路：**limits**（subtype=1，或
+    ///   normal/`\displaylimits` 且 display）上下限堆叠（真实 TeX showbox 验证：
     ///   `[kern(bos5), sup, kern(shift_up), op, kern(shift_down), sub, kern(bos5)]`，
     ///   `shift_up = max(bos3 − d(sup), bos1)`，`shift_down = max(bos4 − h(sub), bos2)`，
-    ///   vbox 参考点 = op 行盒基线，height/depth 手工按段累加）。
+    ///   vbox 参考点 = op 行盒基线，height/depth 手工按段累加）；**nolimits**
+    ///   （subtype=2，`\int`=`\intop\nolimits`）走普通脚本位 make_scripts，
+    ///   斜体修正 delta 从核宽扣除并作上标水平偏移（tex.web make_op 尾部）。
     fn op_nodes(
         &self,
         mc: &MathChar,
         style: MathStyle,
         sub: Option<&[MathAtom]>,
         sup: Option<&[MathAtom]>,
+        stack_limits: bool,
     ) -> Vec<Node> {
         let (font, num, den) = self.math_char_font(mc, style);
         let mut ch = mc.charcode;
@@ -1041,6 +971,7 @@ impl NodeBuilder {
             }
         }
         let (w, h, d) = self.math_metrics(font, ch, num, den);
+        let has_sub = sub.as_ref().is_some_and(|s| !s.is_empty());
         let axis = self.axis_height(style);
         // vcenter（cmex10 大算符基线在设计上偏离中心，如 'X' h=1.0/d=15.0 → shift≈−9.5pt）
         let shift = (h - d) / 2 - axis;
@@ -1054,6 +985,33 @@ impl NodeBuilder {
         sigma.shift = shift;
         if sub.is_none() && sup.is_none() {
             return vec![Node::Box(sigma)];
+        }
+        if !stack_limits {
+            // nolimits：普通脚本位（tex.web make_scripts；delta 作上标水平偏移）。
+            //
+            // 注意 tex.web §14694 `make_op` 还有半句："有下标且非 limits 时算符盒
+            // 宽减 delta（remove italic correction）"。本表**暂未**照做：它与
+            // `vbox_dimensions` 少算子盒 shift（tex.web §13203）是同一处语义的两
+            // 半，而在 display 大算符字宽本身偏小（`$\displaystyle\int$`：
+            // NTex 5.55557pt vs GT 10.00002pt）之前，两半同时补会把原本"互相掩盖"
+            // 的偏差变成叠加偏离（实测：补/不补，`\int_0^1` 的上下标 x 偏移从
+            // 与 GT 逐点一致变成差一个 delta）。见 docs/breadth-2026-09-23.md #26。
+            return self.make_scripts(
+                vec![Node::Box(sigma)],
+                if has_sub {
+                    let it = self.fonts.char_italic(font, ch);
+                    if num == den {
+                        it
+                    } else {
+                        xn_over_d(it, num, den)
+                    }
+                } else {
+                    0
+                },
+                sub,
+                sup,
+                style,
+            );
         }
         let [bos1, bos2, bos3, bos4, bos5] = self.big_op_spacings(style);
         // op 行盒：Σ 盒 shift 后的实际占位（引擎 hbox_dimensions 不计子盒 shift，手工设）
@@ -1386,6 +1344,107 @@ impl NodeBuilder {
             .map(|f| self.fonts.font_param(f, 8))
             .unwrap_or_else(|| 2 * SP_PER_PT / 5)
     }
+
+    /// tex.web make_scripts（L14884）：脚本体清理盒 + 垂直清位；sub/sup 同时
+    /// 在场 → 单 vpack 合并盒（combo），不是并排两盒。`base` 为核节点（Op 的
+    /// nolimits 臂传 vcenter 后的算符盒），`delta` 为斜体修正（combo 臂作上标
+    /// 盒水平偏移；下标在场时核宽已在调用方扣除）。
+    fn make_scripts(
+        &self,
+        mut out: Vec<Node>,
+        delta: i64,
+        sub: Option<&[MathAtom]>,
+        sup: Option<&[MathAtom]>,
+        style: MathStyle,
+    ) -> Vec<Node> {
+        let (mut shift_up, mut shift_down) = self.script_base_shifts(&out, style);
+        let kind = style.size_kind();
+        let xh = self.mathsy_x_height(kind);
+        // 上标清理盒（@<Construct a superscript box |x|@>）
+        let sup_box = sup.as_ref().map(|sup_atoms| {
+            let mut b = self.math_clean_box(sup_atoms, style.sup_style());
+            b.width += self.params.scriptspace;
+            // clr：cramped→sup3、display→sup1、其余→sup2（tex.web L14929）
+            let clr = if style.is_cramped() {
+                self.mathsy_param(kind, 15)
+            } else if style.code() < 2 {
+                self.mathsy_param(kind, 13)
+            } else {
+                self.mathsy_param(kind, 14)
+            };
+            if shift_up < clr {
+                shift_up = clr;
+            }
+            let clr2 = b.depth + xh / 4;
+            if shift_up < clr2 {
+                shift_up = clr2;
+            }
+            b
+        });
+        // 下标清理盒（@<Construct a subscript box |x|@>）
+        let sub_box = sub.as_ref().map(|sub_atoms| {
+            let mut b = self.math_clean_box(sub_atoms, style.sub_style());
+            b.width += self.params.scriptspace;
+            b
+        });
+        match (sup_box, sub_box) {
+            (Some(mut x), Some(y)) => {
+                // combo 臂（@<Construct a sub/superscript combination box
+                // |x|...@> L14940）：下限 sub2，4×rule_thickness 间隙不足
+                // 时下标下移、必要时整体上移（4/5·x_height 上限），最终
+                // vpack[sup(+delta 偏移), kern, sub]、盒 shift=shift_down。
+                let sub2 = self.mathsy_param(kind, 17);
+                if shift_down < sub2 {
+                    shift_down = sub2;
+                }
+                let rt = self.math_rule_thickness(kind);
+                let mut clr =
+                    4 * rt - ((shift_up - x.depth) - (y.height - shift_down));
+                if clr > 0 {
+                    shift_down += clr;
+                    clr = (xh * 4) / 5 - (shift_up - x.depth);
+                    if clr > 0 {
+                        shift_up += clr;
+                        shift_down -= clr;
+                    }
+                }
+                x.shift = delta; // vlist 内 Box.shift = 水平偏移
+                let kern = (shift_up - x.depth) - (y.height - shift_down);
+                let children = vec![
+                    Node::Box(x),
+                    Node::Kern { width: kern },
+                    Node::Box(y),
+                ];
+                // 自然装（tex.web `vpack(x,natural)`）：目标高传自然总高，
+                // diff=0 保持自然 height/depth；参考点在末盒基线。
+                let dims = vbox_dimensions(&children);
+                let mut b = vpack(children, dims.height + dims.depth, i64::MAX);
+                b.shift = shift_down;
+                out.push(Node::Box(b));
+            }
+            (Some(mut x), None) => {
+                x.shift = -shift_up;
+                out.push(Node::Box(x));
+            }
+            (None, Some(mut y)) => {
+                // 无上标：下限 sub1（mathsy 16），且不低于
+                // height(sub)-4/5·x_height（下标盒构造末尾）
+                let sub1 = self.mathsy_param(kind, 16);
+                if shift_down < sub1 {
+                    shift_down = sub1;
+                }
+                let clr = y.height - (xh * 4) / 5;
+                if shift_down < clr {
+                    shift_down = clr;
+                }
+                y.shift = shift_down;
+                out.push(Node::Box(y));
+            }
+            (None, None) => {}
+        }
+        out
+    }
+
 
     /// tex.web §14884 make_scripts 开头的 nucleus 基准位移：
     /// nucleus 是单字符节点 → (0,0)；否则 hpack(natural) 后

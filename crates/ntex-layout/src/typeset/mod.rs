@@ -185,11 +185,17 @@ impl MathStyle {
 pub(crate) const SQRT_DELIM_CODE: u32 = 0x27_03_70;
 
 /// 数学字符原子：类 + 族 + 字符码。
+///
+/// `limits` 只对 **Op 类**原子有意义（tex.web `op_noad` 的 subtype：
+/// 0=normal/displaylimits——display 样式堆叠上下限、1=`\limits` 恒堆叠、
+/// 2=`\nolimits` 恒不堆叠，上下标走普通脚本位）。`\int`=`\intop\nolimits`
+/// 就靠它把上下标放回积分号右侧。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct MathChar {
     class: MathClass,
     fam: u8,
     charcode: u32,
+    limits: u8,
 }
 
 /// 数学列表原子（M4-1/2：字符/上下标/分式/根式/定界符/类化/样式/空格）。

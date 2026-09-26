@@ -1255,6 +1255,28 @@ impl MathSink for NodeBuilder {
 
         Ok(())
     }
+    /// `\limits`/`\nolimits`/`\displaylimits`（tex.web math_limit_switch）：
+    /// 改写当前数学层**最后一个原子**（须为 Op 字符原子）的上下限摆放方式。
+    /// mode：0=displaylimits/normal、1=limits、2=nolimits。
+    /// 最后原子不是 Op 时报 tex.web 同名错误（"Limit controls must follow a
+    /// math operator."）；非数学模式无害忽略（单独 `\limits` 的错误口径待
+    /// etrip 校准，见 primitive_math.rs 原注释）。
+    fn math_limit_switch(&mut self, mode: u8) -> Result<()> {
+        let Some(level) = self.math_state.math.last_mut() else {
+            return Ok(());
+        };
+        let after_op = matches!(
+            level.atoms.last(),
+            Some(MathAtom::Char(mc)) if mc.class == MathClass::Op
+        );
+        if !after_op {
+            return self.write16("! Limit controls must follow a math operator.\n".to_owned());
+        }
+        if let Some(MathAtom::Char(mc)) = level.atoms.last_mut() {
+            mc.limits = mode;
+        }
+        Ok(())
+    }
     /// `\accent`（数学模式）：TeX 报错改道为 `\mathaccent`（tex.web math_ac），
     /// <15-bit number> + nucleus 字段继续扫描（TRIP L396 `\accent\x\vfill`）。
     /// 水平/受限水平模式的 `\accent` 是合法文本重音——只在数学模式报错改道。
@@ -1300,7 +1322,12 @@ impl MathSink for NodeBuilder {
         let class = Self::class_of(((n >> 12) & 7) as u8);
         let fam = ((n >> 8) & 0xF) as u8;
         let charcode = n & 0xFF;
-        self.math_push_atom(MathAtom::Char(MathChar { class, fam, charcode }))
+        self.math_push_atom(MathAtom::Char(MathChar {
+            class,
+            fam,
+            charcode,
+            limits: 0,
+        }))
     }
     /// `\overline`：等待字段组（数学模式；组开收为 Overline 原子）。
     fn math_overline(&mut self) -> Result<()> {

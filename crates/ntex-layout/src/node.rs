@@ -421,6 +421,14 @@ pub fn hbox_dimensions(children: &[Node]) -> BoxDimensions {
     dims
 }
 
+/// 注意（与 GT 的偏差登记）：tex.web §13203 `<Incorporate box dimensions...>`
+/// 规定 vlist 子盒的 `shift_amount` 是**横向**偏移且计入 vbox 宽度
+/// （`if type(p)>=rule_node then s:=0 else s:=shift_amount(p)`），本函数目前
+/// **不计**——数学脚本 combo（上标 `shift=delta`）因此偏窄。它与 `make_op` 的
+/// "有下标且非 limits 时算符盒宽减 delta"（tex.web §14695）是同一处语义的两半：
+/// 两半一起补才对齐 GT；单独补一半会把 display 大算符既有的字宽偏差
+/// （12pt 下 `$\displaystyle\int$`：NTex 5.55557pt vs GT 10.00002pt）
+/// 从"互相掩盖"变成"叠加偏离"。见 docs/breadth-2026-09-23.md #26。
 /// vbox 维度计算（tex.web `vpackage` L13175-13211 的自然维度归并）：
 /// `width` = max 子节点 width；纵向用 (x, d) 二元组推进——
 ///

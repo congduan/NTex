@@ -167,11 +167,18 @@ impl Expander {
             Primitive::MathPunct => self.sink.math_class(6),
             Primitive::MathInner => self.sink.math_class(7),
             Primitive::Nonscript => self.sink.primitive(prim),
-            // TRIP 冲刺：\limits/\nolimits/\displaylimits（\mathop 后置上下限标志；
-            // 布局层数学原子按 `\mathop` 标志处理；单独出现时 TeX 报
-            // "Limit controls must follow a math operator"——差异待 etrip.log 校准）
+            // TRIP 冲刺：\limits/\nolimits/\displaylimits（tex.web limit_switch →
+            // math_limit_switch：chr_code 即 op_noad 的目标 subtype——
+            // 0=displaylimits/normal、1=limits、2=nolimits）。单独出现（最后原子
+            // 非 Op）时 TeX 报 "Limit controls must follow a math operator"，
+            // 由排版层判发。
             Primitive::Limits | Primitive::NoLimits | Primitive::DisplayLimits => {
-                self.sink.primitive(prim)
+                let mode = match prim {
+                    Primitive::Limits => 1,
+                    Primitive::NoLimits => 2,
+                    _ => 0,
+                };
+                self.sink.math_limit_switch(mode)
             }
             // TRIP 冲刺：\noboundary（数学字符边界抑制；水平/垂直模式 no-op）
             Primitive::NoBoundary => self.sink.primitive(prim),

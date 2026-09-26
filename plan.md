@@ -39,7 +39,7 @@
 - **第二十五刀** `\the\value{counter}` 操作数宏展开 → corpus `\the` 同源错误群清零
   （`small2e` `^!` 7→4、`lppl` 60→31、`sec1` `\the` 错 1→0）；`ntex-core` 435 passed。
 
-**现场三连**（2026-09-24 / 09-25，全部有 GT 逐字/DVI 对照）：
+**现场四连**（2026-09-24 / 09-25，全部有 GT 逐字/DVI 对照）：
 
 1. **EC「TC」TS1 字形通道**（`e87321b`）：`\thanks` 脚注标记（`\textasteriskcentered`）
    走 TS1/`tcrm*`，此前预览方框 + 工作台 `Font … not loadable`。修：`ts1_to_unicode`
@@ -61,6 +61,21 @@
    两面由 `ui_font_manifest_matches_rust_claim`（名单↔映射）与
    `workbench_manifest_covers_fonts_used_by_latex_docs`（文档级：探针文档用到的每个
    字体都有轮廓 + 度量）钉住；遗留见 KNOWN-SIMPLIFICATIONS §5。
+4. **`\limits`/`\nolimits`（limit_switch）**（2026-09-25）：`\[ \int_0^1 \frac{dx}{e^x} \]`
+   的上下限堆到积分号**上下左侧**（用户截图"积分渲染有问题"）。`\int` = `\intop\nolimits`
+   （tex.web：op_noad subtype 0=normal/displaylimits、1=limits、2=nolimits；make_op 只在
+   subtype=1，或 subtype=0 且 display 样式时堆叠），而 NTex 的 make_op 只看"是否 display"
+   → `\nolimits` 被忽略。修：core 新增 `Sink::math_limit_switch`（limit_switch 原语）→
+   layout 记入 `MathChar.limits` → make_op 分派，nolimits 走 tex.web 的 make_scripts
+   （副标在算符右侧，含斜体修正 delta 的水平偏移）。验收：`intg.tex` DVI 上下标 x 偏移与
+   GT 逐点一致（sup +655361、sub +364090 sp）；回归锁
+   `ntex-layout::typeset::tests_math::op_limit_switch_controls_script_placement`
+   （用 `\mathchardef` 原语构造，不依赖 plain 预载；去 limits 判定必红）。残差见
+   [docs/breadth-2026-09-23.md](docs/breadth-2026-09-23.md) #24/#25/#26（仅下标时的 sub
+   水平位；display 公式列表仍按 text style 处理；display 大算符**盒宽偏小**——12pt 下
+   `$\displaystyle\int$` NTex 5.55557pt vs GT 10.00002pt，连带 tex.web 的
+   "`make_op` 有下标时算符盒宽减 delta"（§14695）与"`vpack` 计入子盒 shift"（§13205）
+   两半宽度语义互相掩盖，本轮未补，详见 #26）。
 4. **Tauri PDF 与预览字体同源**（2026-09-25）：预览走 LM OTF，PDF 另抓只覆盖 plain
    47 件的 CM PFB；LaTeX 新字号/TS1 请求 404 后仍导出裸 `/BaseFont`，查看器替代导致
    样式变化、无替代字形时直接丢字。修：`set_glyph_font` 同时向 PDF 登记 OTF + 预览

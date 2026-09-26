@@ -1045,3 +1045,33 @@ use super::*;
         assert_eq!(d.height, 10 * SP_PER_PT, "高度 10pt");
         assert_eq!(d.depth, 0);
     }
+
+
+    /// `\limits`/`\nolimits`（tex.web limit_switch → make_op subtype）：
+    /// Op 原子的上下标摆放。`\int`=`\intop\nolimits`：上下标走**普通脚本位**
+    /// （算符右侧两件并排；GT showbox：op 盒 + combo vbox 两件并排）；
+    /// `\sum`（无标志 = displaylimits）display 下堆叠为单 vbox。
+    /// 现场（2026-09-25）：`\nolimits` 被忽略 → `\int_0^1` 的 0/1 堆到积分号
+    /// 上下左侧（用户截图"积分渲染有问题"）。
+    /// 不依赖 plain 预载：用 `\mathchardef` 内联定义 Op 字符
+    ///（"1352 = `\intop`、"1350 = `\sum`，largesymbols）。
+    #[test]
+    fn op_limit_switch_controls_script_placement() {
+        // \intop + \nolimits：上下标走普通脚本位 → 算符盒 + 脚本盒并排
+        let children = math_line_children(
+            r#"$\mathchardef\intop="1352 \intop\nolimits_0^1$"#,
+        );
+        assert_eq!(children.len(), 2, r"nolimits 应为算符盒+脚本盒并排：{children:?}");
+        // \intop + \limits：恒堆叠 → 单 vbox
+        let children = math_line_children(
+            r#"$\mathchardef\intop="1352 \intop\limits_0^1$"#,
+        );
+        assert_eq!(children.len(), 1, r"limits 应堆叠为单 vbox：{children:?}");
+        // display 样式残差：NTex 的 display 公式列表目前按 text style 处理
+        //（displaylimits 的"display 才堆叠"分支不可达），见 breadth #25。
+        // \sum 文本样式（$$ 之外）：不堆叠 → 两件并排
+        let children = math_line_children(
+            r#"$\mathchardef\sum="1350 \sum_0^1$"#,
+        );
+        assert_eq!(children.len(), 2, r"text 样式 displaylimits 不堆叠：{children:?}");
+    }
