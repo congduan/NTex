@@ -1473,14 +1473,13 @@ impl BoxSink for NodeBuilder {
         let b = self.box_state.lastbox_hold.take().or_else(|| self.take_box_at(idx));
         let Some(b) = b else {
             // TeX：\box 取 void 盒子 → 空 hbox 节点（tex.web：仍产生节点；TRIP L104 前 \copy200 void）
-            self.append(Node::Box(crate::node::BoxNode::new_hbox(Vec::new())));
-            return Ok(());
+            return self.append_box_or_math_atom(crate::node::BoxNode::new_hbox(Vec::new()));
         };
         if self.page_state.shipout_next {
             self.page_state.shipout_next = false;
             self.ship_page(b);
         } else {
-            self.append(Node::Box(b));
+            self.append_box_or_math_atom(b)?;
         }
         Ok(())
     }
@@ -1541,8 +1540,7 @@ impl BoxSink for NodeBuilder {
             let Some(b) = self.box_view(idx) else {
                 // TeX：\copy 取 void 盒子 → **空 hbox 节点**（tex.web copy_scan_box：
                 // void → null box，仍产生节点触发 freeze/interline；TRIP L104 `\copy200`）
-                self.append(Node::Box(crate::node::BoxNode::new_hbox(Vec::new())));
-                return Ok(());
+                return self.append_box_or_math_atom(crate::node::BoxNode::new_hbox(Vec::new()));
             };
             b.clone()
         };
@@ -1560,8 +1558,7 @@ impl BoxSink for NodeBuilder {
             self.ship_page(b);
             return Ok(());
         }
-        self.append(Node::Box(b));
-        Ok(())
+        self.append_box_or_math_atom(b)
     }
     /// `\unhbox<n>`/`\unhcopy<n>`：hbox 拆开，子节点追加到当前列表。
     /// tex.web unpackage：`if p=null then return`——void 盒**静默无操作**（真

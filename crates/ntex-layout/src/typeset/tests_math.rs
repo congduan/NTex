@@ -582,6 +582,36 @@ use super::*;
     }
 
     #[test]
+    fn box_register_in_math_is_box_atom_for_aftergroup_array_body() {
+        fn collect_chars(nodes: &[Node], out: &mut Vec<u32>) {
+            for n in nodes {
+                match n {
+                    Node::Char { charcode, .. } => out.push(*charcode),
+                    Node::Box(b) => collect_chars(&b.children, out),
+                    _ => {}
+                }
+            }
+        }
+
+        let children = math_line_children(concat!(
+            r"\def\vcauxi{\aftergroup\vcauxii}",
+            r"\def\vcauxii{\box0}",
+            r"$\left(",
+            r"\afterassignment\vcauxi",
+            r"\setbox0\vbox{\halign{\hfil$#$&$#$\hfil\cr x,&y\cr z,&w\cr}}",
+            r"\right.$",
+        ));
+        let mut chars = Vec::new();
+        collect_chars(&children, &mut chars);
+        for ch in *b"xyzw" {
+            assert!(
+                chars.contains(&(ch as u32)),
+                "\\aftergroup\\box0 的 array/vbox 主体应留在 \\left...\\right 数学层：{children:?}"
+            );
+        }
+    }
+
+    #[test]
     fn math_left_right_dot_empty_delims() {
         let children = math_line_children(r"$\left.x\right.$");
         // 空定界符不产生字符；\left.\right. 仍封装为单个 hbox（盒内仅 body）

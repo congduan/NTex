@@ -1536,6 +1536,19 @@ impl NodeBuilder {
         self.push_box(node);
     }
 
+    /// Append a box in the current mode. Box-producing primitives package through
+    /// [`Self::package_box`], but register boxes (`\box`/`\copy`) arrive here
+    /// already packaged; in math mode they must become a box noad instead of
+    /// being appended to the side list stack.
+    fn append_box_or_math_atom(&mut self, b: BoxNode) -> Result<()> {
+        if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            self.math_push_atom(MathAtom::Box(b))
+        } else {
+            self.append(Node::Box(b));
+            Ok(())
+        }
+    }
+
     /// 追加盒子到当前列表；垂直列表中前驱为盒子时插入 interline glue
     /// （tex.web `append_to_vlist`：d = \baselineskip − (depth 前 + height 新)，
     /// d < \lineskiplimit 用 \lineskip，否则用宽度调整为 d 的 \baselineskip）。
