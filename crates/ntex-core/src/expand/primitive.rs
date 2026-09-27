@@ -169,10 +169,10 @@ impl Expander {
             | Primitive::Else
             | Primitive::Fi
             | Primitive::Or => Err(Error::internal("条件原语不应到达 exec_primitive")),
-            Primitive::IfDefined | Primitive::IfCsname | Primitive::IfInCsname
-            | Primitive::IfPrimitive => {
-                Err(Error::internal("条件原语不应到达 exec_primitive"))
-            }
+            Primitive::IfDefined
+            | Primitive::IfCsname
+            | Primitive::IfInCsname
+            | Primitive::IfPrimitive => Err(Error::internal("条件原语不应到达 exec_primitive")),
             Primitive::IfFontChar => Err(Error::internal("\\iffontchar 不应到达 exec_primitive")),
             // ---- 寄存器（保留 exec_register/the/muskip_param 助手路径） ----
             Primitive::Count
@@ -187,6 +187,9 @@ impl Expander {
             Primitive::The => self.exec_the(),
             // ---- 字符代码与寄存器算术（已有助手方法，保留委托） ----
             Primitive::Catcode => self.exec_catcode(),
+            Primitive::CatcodeTable => self.exec_catcodetable(),
+            Primitive::InitCatcodeTable => self.exec_init_catcodetable(),
+            Primitive::SaveCatcodeTable => self.exec_save_catcodetable(),
             Primitive::SfCode => self.exec_sfcode(),
             Primitive::LcCode => self.exec_lccode(),
             Primitive::Uccode => self.exec_uccode(),
@@ -326,7 +329,9 @@ impl Expander {
                         // `\y=\char"7B`）；catcode 字段是展开面 token 的属性。
                         format!("\\{name}=\\char\"{charcode:X}.")
                     }
-                    EqSlot::Font(f) => format!("\\{name}=select font {f}."),
+                    EqSlot::Font(f) => {
+                        format!("\\{name}=select font {}.", self.font_meaning_name(f))
+                    }
                     EqSlot::Register(k, n) => format!("\\{name}=\\{}{}.", reg_kind_name(k), n),
                     EqSlot::Stream(_, n) => format!("\\{name}=write{n}."),
                     // \mathchardef 绑定：TeX 显示为 \mathchar"XXXX（十六进制）
@@ -525,15 +530,7 @@ impl Expander {
                     // cs 名永不含该子串 → \cctab_select 判一切表非法 →
                     // latex.ltx l.23381 \cctab_const:Nn 全簇崩。
                     EqSlot::Font(f) => {
-                        let name = if f == 0 {
-                            "nullfont".to_owned()
-                        } else {
-                            self.font_names
-                                .get(f as usize)
-                                .and_then(|n| n.clone())
-                                .unwrap_or_else(|| f.to_string())
-                        };
-                        format!("select font {name}")
+                        format!("select font {}", self.font_meaning_name(f))
                     }
                     EqSlot::Register(k, n) => format!("\\{}{}", reg_kind_name(k), n),
                     EqSlot::Stream(_, n) => format!("write{n}"),
@@ -555,6 +552,16 @@ impl Expander {
             }
             _ => String::new(),
         }
+    }
+
+    fn font_meaning_name(&self, f: u32) -> String {
+        if f == 0 {
+            return "nullfont".to_owned();
+        }
+        self.font_names
+            .get(f as usize)
+            .and_then(|n| n.clone())
+            .unwrap_or_else(|| format!("cmr10 at {f}pt"))
     }
 
     /// `\mathchardef\cs=<num>`：绑定 cs 为数学字符（类<<15 | 族<<8 | 字符）。
@@ -651,8 +658,9 @@ impl Expander {
     /// `\showifs`：显示当前条件嵌套状态（e-TeX 诊断原语；简化格式）。
     fn exec_showifs(&mut self) -> Result<()> {
         let depth = self.cond_stack.len();
-        self.sink
-            .show(format!("{depth} conditionals are open (level \\currentiflevel)"))
+        self.sink.show(format!(
+            "{depth} conditionals are open (level \\currentiflevel)"
+        ))
     }
 
     /// `\parshape=<n> <indent1> <width1> ...`：设置段落形状（n≤0 清空）。
@@ -691,7 +699,11 @@ impl Expander {
             0 | 1 => {
                 let line = if n > len { len } else { n };
                 let (i, w) = self.parshape[(line - 1) as usize];
-                if kind == 0 { i } else { w }
+                if kind == 0 {
+                    i
+                } else {
+                    w
+                }
             }
             // 2 = dimen（值 n）
             _ => {
@@ -700,10 +712,18 @@ impl Expander {
                     n
                 } else {
                     let diff = n - total;
-                    if diff % 2 == 0 { total } else { total - 1 }
+                    if diff % 2 == 0 {
+                        total
+                    } else {
+                        total - 1
+                    }
                 };
                 let (i, w) = self.parshape[((idx - 1) / 2) as usize];
-                if idx % 2 == 1 { i } else { w }
+                if idx % 2 == 1 {
+                    i
+                } else {
+                    w
+                }
             }
         }
     }
@@ -735,7 +755,11 @@ impl Expander {
                 .map(|i| start + i)
                 .unwrap_or(stream.data.len());
             let mut line = stream.data[start..end].to_vec();
-            stream.pos = if end < stream.data.len() { end + 1 } else { end };
+            stream.pos = if end < stream.data.len() {
+                end + 1
+            } else {
+                end
+            };
             // 去尾随空格（TeX readline：空白行尾去除；\r 一并处理）
             while matches!(line.last(), Some(b' ' | b'\t' | b'\r')) {
                 line.pop();

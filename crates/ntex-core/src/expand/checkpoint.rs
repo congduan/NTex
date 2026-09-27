@@ -220,6 +220,7 @@ impl Expander {
     pub fn restore_checkpoint(&mut self, cp: &EngineCheckpoint) {
         self.eqtb.replace_slots(cp.eqtb.clone());
         self.catcodes = cp.value.catcodes.clone();
+        self.catcode_tables = cp.value.catcode_tables.clone();
         self.sfcodes = cp.value.sfcodes;
         self.output_toks = cp.value.output_toks.clone();
         self.registers.restore_dirty(&cp.value.registers);

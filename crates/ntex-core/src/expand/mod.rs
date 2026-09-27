@@ -488,6 +488,8 @@ pub struct FmtState {
     pub intern_names: Vec<String>,
     /// catcode 表。
     pub catcodes: CatcodeTable,
+    /// e-TeX/LuaTeX catcode table snapshots indexed by table number.
+    pub catcode_tables: Vec<Option<CatcodeTable>>,
     /// `\sfcode` 表。
     pub sfcodes: [u32; 256],
     /// eqtb 全部槽（含原语、宏、别名、字体选择器、寄存器/流引用）。
@@ -847,6 +849,7 @@ pub struct Expander {
     #[cfg(not(target_arch = "wasm32"))]
     watchdog: Option<Arc<WatchdogShared>>,
     catcodes: CatcodeTable,
+    catcode_tables: Vec<Option<CatcodeTable>>,
     /// `\sfcode` 表（M3-4 词间距 spacefactor；TeX 默认全 1000，plain 对
     /// .,?!=3000、:=2000、;=1500、,=1250，由排版器按 plain 默认初始化）。
     sfcodes: [u32; 256],
@@ -1083,6 +1086,7 @@ impl Expander {
     /// plain/TRIP 路径继续用 [`Self::new`] 的 plain 风格表，不受影响。
     pub fn initex(mut self) -> Self {
         self.catcodes = CatcodeTable::initex();
+        self.catcode_tables.clear();
         self
     }
 
@@ -1093,6 +1097,7 @@ impl Expander {
             scanner_status: ScannerStatus::Normal,
             warning_index: None,
             catcodes: CatcodeTable::new(),
+            catcode_tables: Vec::new(),
             sfcodes: [1000; 256],
             stack: Vec::new(),
             macro_trace: std::env::var("NTEX_CALL_TRACE")
@@ -1226,6 +1231,7 @@ impl Expander {
         FmtState {
             intern_names: self.intern.names_vec(),
             catcodes: self.catcodes.clone(),
+            catcode_tables: self.catcode_tables.clone(),
             sfcodes: self.sfcodes,
             eqtb: self.eqtb.slots().to_vec(),
             registers: self.registers.export(),
@@ -1282,6 +1288,7 @@ impl Expander {
         }
         self.intern = intern;
         self.catcodes = state.catcodes;
+        self.catcode_tables = state.catcode_tables;
         self.sfcodes = state.sfcodes;
         // eqtb 替换；字节码轨道下补编译缺失的宏字节码
         let mut eqtb = Eqtb::new();
@@ -1315,6 +1322,7 @@ impl Expander {
             }
         }
         self.eqtb = eqtb;
+        self.seed_latex_catcode_tables_if_missing();
         self.registers = Registers::import(state.registers);
         self.params = state.params;
         self.output_toks = state.output_toks;
@@ -1362,6 +1370,49 @@ impl Expander {
         self.write_streams.clear();
         self.suppress_expansion = 0;
         self.expand_only = false;
+    }
+
+    fn seed_latex_catcode_tables_if_missing(&mut self) {
+        if !self.catcode_tables.is_empty() {
+            return;
+        }
+        let mut install = |name: &str, table: CatcodeTable| {
+            let Some(csid) = self.intern.lookup(name) else {
+                return;
+            };
+            let EqSlot::Char { charcode, .. } = self.eqtb.slot(csid) else {
+                return;
+            };
+            let Ok(idx) = usize::try_from(*charcode) else {
+                return;
+            };
+            if self.catcode_tables.len() <= idx {
+                self.catcode_tables.resize_with(idx + 1, || None);
+            }
+            self.catcode_tables[idx] = Some(table);
+        };
+
+        let initex = CatcodeTable::initex();
+        let mut string = initex.clone();
+        for b in [0u8, 13, 37, 92, 127] {
+            string.set(b, Catcode::Other);
+        }
+        for b in b'A'..=b'Z' {
+            string.set(b, Catcode::Other);
+        }
+        for b in b'a'..=b'z' {
+            string.set(b, Catcode::Other);
+        }
+
+        let mut latex = CatcodeTable::new();
+        latex.set(b'@', Catcode::Other);
+        let mut atletter = latex.clone();
+        atletter.set(b'@', Catcode::Letter);
+
+        install("catcodetable@initex", initex);
+        install("catcodetable@string", string);
+        install("catcodetable@latex", latex);
+        install("catcodetable@atletter", atletter);
     }
 
     /// TEMP DEBUG（第十七刀取证）：卡死前最近事件环。`NTEX_BREAK17` 开启时记录。
@@ -3732,6 +3783,8 @@ impl Expander {
 pub struct ValueState {
     /// catcode 表（`\catcode` 可改；影响后续所有 token 化）。
     pub catcodes: CatcodeTable,
+    /// catcode table snapshots selected by `\catcodetable`.
+    pub catcode_tables: Vec<Option<CatcodeTable>>,
     /// `\sfcode` 表。
     pub sfcodes: [u32; 256],
     /// `\output` 例程 token 列表（None = 未定义）。
@@ -3866,6 +3919,7 @@ impl Expander {
     pub fn value_state(&self) -> ValueState {
         ValueState {
             catcodes: self.catcodes.clone(),
+            catcode_tables: self.catcode_tables.clone(),
             sfcodes: self.sfcodes,
             output_toks: self.output_toks.clone(),
             registers: self.registers.dirty().clone(),

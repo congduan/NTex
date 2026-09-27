@@ -707,4 +707,10 @@ define_primitives! {
     PdfSave,
     PdfSetMatrix,
     PdfRestore,
+    // e-TeX/LuaTeX catcode table primitives. LaTeX/expl3 uses these when the
+    // engine exposes the LuaTeX-style cctab path; append-only to preserve .fmt
+    // primitive numbering for existing variants.
+    CatcodeTable,
+    InitCatcodeTable,
+    SaveCatcodeTable,
 }

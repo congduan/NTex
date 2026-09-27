@@ -7,6 +7,44 @@
 // 文件，效果等价于单 impl。
 
 impl Expander {
+    fn scan_catcode_table_number(&mut self) -> Result<usize> {
+        let n = self.scan_number()?;
+        usize::try_from(n).map_err(|_| Error::invalid_input("Invalid \\catcode table."))
+    }
+
+    fn ensure_catcode_table_slot(&mut self, idx: usize) {
+        if self.catcode_tables.len() <= idx {
+            self.catcode_tables.resize_with(idx + 1, || None);
+        }
+    }
+
+    fn exec_catcodetable(&mut self) -> Result<()> {
+        let idx = self.scan_catcode_table_number()?;
+        let Some(table) = self.catcode_tables.get(idx).and_then(|t| t.as_ref()) else {
+            self.report_error("Invalid \\catcode table.");
+            return Ok(());
+        };
+        self.catcodes.copy_from(table);
+        self.finish_assignment();
+        Ok(())
+    }
+
+    fn exec_init_catcodetable(&mut self) -> Result<()> {
+        let idx = self.scan_catcode_table_number()?;
+        self.ensure_catcode_table_slot(idx);
+        self.catcode_tables[idx] = Some(CatcodeTable::initex());
+        self.finish_assignment();
+        Ok(())
+    }
+
+    fn exec_save_catcodetable(&mut self) -> Result<()> {
+        let idx = self.scan_catcode_table_number()?;
+        self.ensure_catcode_table_slot(idx);
+        self.catcode_tables[idx] = Some(self.catcodes.clone());
+        self.finish_assignment();
+        Ok(())
+    }
+
     fn exec_catcode(&mut self) -> Result<()> {
         let code = self.scan_char_code()?;
         // A5 全量收口（M9 中文刀 4）：\utfinputmode=1 时字符码上界放宽到
@@ -138,9 +176,19 @@ impl Expander {
         let mut out = Vec::new();
         if n > 0 {
             const TABLES: [(&str, i64); 13] = [
-                ("m", 1000), ("cm", 900), ("d", 500), ("cd", 400), ("c", 100),
-                ("xc", 90), ("l", 50), ("xl", 40), ("x", 10), ("ix", 9),
-                ("v", 5), ("iv", 4), ("i", 1),
+                ("m", 1000),
+                ("cm", 900),
+                ("d", 500),
+                ("cd", 400),
+                ("c", 100),
+                ("xc", 90),
+                ("l", 50),
+                ("xl", 40),
+                ("x", 10),
+                ("ix", 9),
+                ("v", 5),
+                ("iv", 4),
+                ("i", 1),
             ];
             let mut roman = String::new();
             for (sym, val) in TABLES {
@@ -261,5 +309,4 @@ impl Expander {
         }
         Ok(out)
     }
-
 }

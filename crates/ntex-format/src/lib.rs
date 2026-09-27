@@ -256,6 +256,24 @@ pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
     for v in &state.uccodes {
         w.write_all(&v.to_le_bytes())?;
     }
+    // v21 兼容尾扩展：旧 v21 文件到此结束；新文件若有 cctab 数据，load 侧
+    // 读到尾巴即恢复，读不到则由 core 的旧 latex.fmt 补种逻辑兜底。
+    w.write_all(&(state.catcode_tables.len() as u32).to_le_bytes())?;
+    for table in &state.catcode_tables {
+        match table {
+            Some(t) => {
+                w.write_all(&[1])?;
+                w.write_all(t.raw())?;
+                let overrides: Vec<(u32, u8)> = t.unicode_overrides().collect();
+                w.write_all(&(overrides.len() as u32).to_le_bytes())?;
+                for (cp, v) in overrides {
+                    w.write_all(&cp.to_le_bytes())?;
+                    w.write_all(&[v])?;
+                }
+            }
+            None => w.write_all(&[0])?,
+        }
+    }
     Ok(())
 }
 
@@ -522,10 +540,19 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
     for v in &mut uccodes {
         *v = read_i64(r)?;
     }
+    let mut tail = Vec::new();
+    r.read_to_end(&mut tail)?;
+    let catcode_tables = if tail.is_empty() {
+        Vec::new()
+    } else {
+        let mut tr = &tail[..];
+        read_catcode_tables(&mut tr)?
+    };
 
     Ok(FmtState {
         intern_names,
         catcodes,
+        catcode_tables,
         sfcodes,
         eqtb,
         registers,
@@ -542,6 +569,37 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
         lccodes,
         uccodes,
     })
+}
+
+fn read_catcode_tables(r: &mut impl Read) -> io::Result<Vec<Option<ntex_core::CatcodeTable>>> {
+    let n_tables = read_u32(r)? as usize;
+    if n_tables > PREALLOC_CAP {
+        return Err(invalid("catcode table 数量越界（文件损坏）"));
+    }
+    let mut tables = Vec::with_capacity(n_tables);
+    for _ in 0..n_tables {
+        let tag = read_u8(r)?;
+        if tag == 0 {
+            tables.push(None);
+            continue;
+        }
+        if tag != 1 {
+            return Err(invalid("catcode table 标记非法（文件损坏）"));
+        }
+        let mut raw = [0u8; 256];
+        r.read_exact(&mut raw)?;
+        let mut table = ntex_core::CatcodeTable::from_raw(raw);
+        let n_overrides = read_u32(r)?;
+        for _ in 0..n_overrides {
+            let cp = read_u32(r)?;
+            let cat = read_u8(r)?;
+            if let Some(c) = ntex_core::Catcode::from_u8(cat) {
+                table.set_codepoint(cp, c);
+            }
+        }
+        tables.push(Some(table));
+    }
+    Ok(tables)
 }
 
 fn write_engine_version(w: &mut impl Write) -> io::Result<()> {

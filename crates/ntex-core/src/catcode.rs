@@ -203,6 +203,11 @@ impl CatcodeTable {
         self.unicode_cats.remove(&cp);
     }
 
+    /// 把当前表整体替换为另一张表（`\catcodetable` 表选择）。
+    pub fn copy_from(&mut self, other: &Self) {
+        *self = other.clone();
+    }
+
     /// 覆盖表只读视图（`.fmt` 快照导出用；`(码位, catcode 值)` 升序）。
     pub fn unicode_overrides(&self) -> impl Iterator<Item = (u32, u8)> + '_ {
         self.unicode_cats.iter().map(|(&cp, &v)| (cp, v))
