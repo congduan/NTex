@@ -1,0 +1,14 @@
+\documentclass{article}
+\makeatletter
+\long\protected\def\aA#1{}
+\protected\long\def\aB#1{}
+\long\def\aC#1{}
+\protected\def\aD#1{}
+\typeout{==O==}
+\typeout{OA-long-prot-def: \meaning\aA}
+\typeout{OB-prot-long-def: \meaning\aB}
+\typeout{OC-long-def: \meaning\aC}
+\typeout{OD-prot-def: \meaning\aD}
+\typeout{==O2==}
+X
+\end{document}

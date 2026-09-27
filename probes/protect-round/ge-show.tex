@@ -1,0 +1,14 @@
+\documentclass{article}
+\makeatletter
+\begin{document}
+\typeout{==A==}
+\begingroup
+\set@display@protect
+\typeout{PROTECT-IN: \meaning\protect}
+\edef\zz{{\protect\P}}\typeout{A1: \meaning\zz}
+\endgroup
+\typeout{PROTECT-OUT: \meaning\protect}
+\GenericError{d}{msg}{h}{\protect\P}
+\typeout{==B==}
+x
+\end{document}

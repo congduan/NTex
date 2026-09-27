@@ -79,6 +79,14 @@ impl FontDimens {
         self.map.iter()
     }
 
+    /// 快照导出（v22 fmt 持久化）。排序保证编码确定性。
+    pub(crate) fn to_vec(&self) -> Vec<(u32, u32, i64)> {
+        let mut v: Vec<(u32, u32, i64)> =
+            self.map.iter().map(|(&(f, n), &v)| (f, n, v)).collect();
+        v.sort_unstable();
+        v
+    }
+
     /// 检查点整体替换（M5 增量）：两份内部结构一起换，杜绝缓存失一致。
     pub(crate) fn replace_from(&mut self, other: &Self) {
         self.map.clone_from(&other.map);

@@ -525,6 +525,16 @@ pub struct FmtState {
     pub lccodes: [i64; 256],
     /// `\uccode` 表（v21）。
     pub uccodes: [i64; 256],
+    /// `\fontdimen` 覆盖表（v22：`(font_id, 参数号, 值sp)`——l3kernel 的 intarray
+    /// pdftex 回退分支把整数组模拟成字体：**条目存 `\fontdimen`、count 存
+    /// `\hyphenchar`**，且数组在 fmt 生成期创建（expl3 预载入 fmt，l.15574
+    /// `\__intarray_new:N`）。此前快照不带这张表，恢复后条目全 0、count 退回
+    /// TFM 默认 45——`\cctab_new:N` 写满的 256 项 catcode 表读回全 0，
+    /// `\cctab_select:N` 把 catcode 全抹 0（ctexhook.sty 的
+    /// `\cctab_const:Nn \c__ctex_package_cctab` 即挂在此）。
+    pub fontdimens: Vec<(u32, u32, i64)>,
+    /// `\hyphenchar` 覆盖表（v22：intarray 模拟字体的 count 存此，同上）。
+    pub hyphenchars: Vec<(u32, i64)>,
 }
 
 /// 线程看门狗共享状态（挂死诊断）。
@@ -1264,6 +1274,14 @@ impl Expander {
             mathcodes: self.mathcodes.clone(),
             lccodes: self.lccodes,
             uccodes: self.uccodes,
+            fontdimens: self.fontdimens.to_vec(),
+            // BTreeMap 语义的排序输出：编码确定性要求（fmt 字节级可复现）。
+            hyphenchars: {
+                let mut v: Vec<(u32, i64)> =
+                    self.hyphenchars.iter().map(|(&f, &c)| (f, c)).collect();
+                v.sort_unstable();
+                v
+            },
         }
     }
 
@@ -1356,6 +1374,14 @@ impl Expander {
         self.mathcodes = state.mathcodes;
         self.lccodes = state.lccodes;
         self.uccodes = state.uccodes;
+        // v22：fontdimen/hyphenchar 覆盖表随快照恢复（intarray 模拟字体的
+        // 条目与 count；此前 `fontdimens.clear()` 洗掉 fmt 生成期写入的全部
+        // l3kernel 数组——四个常量 cctab 读回全 0 的根因）。
+        self.fontdimens.clear();
+        for (f, n, v) in state.fontdimens {
+            self.fontdimens.insert(f, n, v);
+        }
+        self.hyphenchars = state.hyphenchars.iter().copied().collect();
         // 运行时状态重置（新文档起点）
         self.stack.clear();
         self.read_floor = 0;

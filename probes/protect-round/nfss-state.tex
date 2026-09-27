@@ -1,0 +1,15 @@
+\documentclass{article}
+\makeatletter
+\begin{document}
+\typeout{==S==}
+\typeout{CF: [\detokenize\expandafter{\cf@encoding}]}
+\typeout{FE: [\detokenize\expandafter{\f@encoding}]}
+\typeout{OT1CMD: \meaning\OT1-cmd}
+\typeout{P: \meaning\P}
+\typeout{TP: \meaning\textparagraph}
+\typeout{PROT: \meaning\protect}
+\typeout{TYPESetP: \meaning\@typeset@protect}
+\ifx\protect\@typeset@protect\typeout{EQ: yes}\else\typeout{EQ: no}\fi
+\typeout{==E==}
+x
+\end{document}

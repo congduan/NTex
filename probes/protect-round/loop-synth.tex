@@ -1,0 +1,10 @@
+\documentclass{article}
+\makeatletter
+\begin{document}
+\immediate\write16{==L==}
+\immediate\write16{CF-BEFORE:[\detokenize\expandafter{\cf@encoding}]}
+\let\cf@encoding\@empty
+\P
+\immediate\write16{==L-END==}
+X
+\end{document}

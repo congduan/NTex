@@ -1,0 +1,22 @@
+\documentclass{article}
+\makeatletter
+\begin{document}
+\immediate\write16{==U0==}
+\immediate\write16{CF0:[\detokenize\expandafter{\cf@encoding}] FE0:[\detokenize\expandafter{\f@encoding}]}
+\expandafter\ifx\csname\cf@encoding-cmd\endcsname\@current@cmd
+  \immediate\write16{OT1CMD0: current}\else\immediate\write16{OT1CMD0: NOT-current}\fi
+\expandafter\ifx\csname\cf@encoding -cmd\endcsname\@changed@cmd
+  \immediate\write16{OT1SPCMD0: changed}\else\immediate\write16{OT1SPCMD0: NOT-changed}\fi
+\fontencoding{T1}\selectfont
+\immediate\write16{==U1==}
+\immediate\write16{CF1:[\detokenize\expandafter{\cf@encoding}] FE1:[\detokenize\expandafter{\f@encoding}]}
+\expandafter\ifx\csname\cf@encoding-cmd\endcsname\@current@cmd
+  \immediate\write16{T1CMD1: current}\else\immediate\write16{T1CMD1: NOT-current}\fi
+\expandafter\ifx\csname T1 -cmd\endcsname\@changed@cmd
+  \immediate\write16{T1SPCMD1: changed}\else\immediate\write16{T1SPCMD1: NOT-changed}\fi
+\expandafter\ifx\csname OT1 -cmd\endcsname\@changed@cmd
+  \immediate\write16{OT1SPCMD1: changed}\else\immediate\write16{OT1SPCMD1: NOT-changed}\fi
+\P
+\immediate\write16{==U2==}
+X
+\end{document}

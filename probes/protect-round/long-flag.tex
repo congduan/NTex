@@ -1,0 +1,16 @@
+\documentclass{article}
+\ExplSyntaxOn
+\cs_new_protected:Npn \ntxa #1 { }
+\cs_new:Npn \ntxb #1 { }
+\cs_new_nopar:Npn \ntxc #1 { }
+\cs_new_protected_nopar:Npn \ntxd #1 { }
+\ExplSyntaxOff
+\typeout{==L==}
+\typeout{M1-prot-Npn: \meaning\ntxa}
+\typeout{M2-Npn: \meaning\ntxb}
+\typeout{M3-nopar-Npn: \meaning\ntxc}
+\typeout{M4-prot-nopar: \meaning\ntxd}
+\typeout{==L2==}
+\typeout{M5-plaindef: \meaning\typeout}
+X
+\end{document}

@@ -42,7 +42,13 @@ const MAGIC: &[u8; 8] = b"NTEXFMT1";
 ///      字符赋值此前不随快照携带，恢复后全部退回引擎 INITEX 初表
 ///      （0x7000+码/0x500000）：`<`>` 落 cmr 同槽（`¡`/`¿`）、punct/rel/bin
 ///      间距整族失效、`\left(`/`\right[` 大定界符报 Missing delimiter。
-pub const FORMAT_VERSION: u8 = 21;
+/// v22：`\fontdimen`/`\hyphenchar` 覆盖表——l3kernel intarray 的 pdftex 回退
+///      分支把整数组模拟成字体（条目存 `\fontdimen`、count 存 `\hyphenchar`，
+///      expl3-code l.15574 `\__intarray_new:N`），数组在 fmt 生成期创建；
+///      此前快照不带这两张表，恢复后 count 退回 TFM 默认 45、条目全 0
+///      ——四个常量 cctab 读回全 0，`\cctab_select:N` 把 catcode 全抹 0
+///      （ctex `\cctab_const:Nn \c__ctex_package_cctab` 挂点）。
+pub const FORMAT_VERSION: u8 = 22;
 
 /// 当前引擎版本号：随 crate 版本进入 `.fmt` 文件头。
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -229,6 +235,19 @@ pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
             }
             None => w.write_all(&0u32.to_le_bytes())?,
         }
+    }
+    // fontdimens / hyphenchars（v22：intarray 模拟字体的条目与 count；导出侧
+    // 已按键排序，字节确定性成立）
+    w.write_all(&(state.fontdimens.len() as u32).to_le_bytes())?;
+    for (f, n, v) in &state.fontdimens {
+        w.write_all(&f.to_le_bytes())?;
+        w.write_all(&n.to_le_bytes())?;
+        w.write_all(&v.to_le_bytes())?;
+    }
+    w.write_all(&(state.hyphenchars.len() as u32).to_le_bytes())?;
+    for (f, c) in &state.hyphenchars {
+        w.write_all(&f.to_le_bytes())?;
+        w.write_all(&c.to_le_bytes())?;
     }
     // current_font（v14：pass2 恢复当前字体，防全 nullfont）
     w.write_all(&state.current_font.to_le_bytes())?;
@@ -540,6 +559,22 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
     for v in &mut uccodes {
         *v = read_i64(r)?;
     }
+    // v22：fontdimens / hyphenchars 覆盖表（intarray 模拟字体的条目与 count）
+    let n_fd = read_u32(r)? as usize;
+    let mut fontdimens = Vec::with_capacity(n_fd.min(1 << 20));
+    for _ in 0..n_fd {
+        let f = read_u32(r)?;
+        let n = read_u32(r)?;
+        let v = read_i64(r)?;
+        fontdimens.push((f, n, v));
+    }
+    let n_hc = read_u32(r)? as usize;
+    let mut hyphenchars = Vec::with_capacity(n_hc.min(PREALLOC_CAP));
+    for _ in 0..n_hc {
+        let f = read_u32(r)?;
+        let c = read_i64(r)?;
+        hyphenchars.push((f, c));
+    }
     let mut tail = Vec::new();
     r.read_to_end(&mut tail)?;
     let catcode_tables = if tail.is_empty() {
@@ -568,6 +603,8 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
         mathcodes,
         lccodes,
         uccodes,
+        fontdimens,
+        hyphenchars,
     })
 }
 

@@ -1,0 +1,12 @@
+\documentclass{article}
+\makeatletter
+\begin{document}
+\immediate\write16{==S==}
+\immediate\write16{PROT: \meaning\protect}
+\immediate\write16{TYPESetP: \meaning\@typeset@protect}
+\ifx\protect\@typeset@protect\immediate\write16{EQ: yes}\else\immediate\write16{EQ: no}\fi
+\immediate\write16{P: \meaning\P}
+\immediate\write16{TP: \meaning\textparagraph}
+\immediate\write16{CF: [\detokenize\expandafter{\cf@encoding}]}
+x
+\end{document}
