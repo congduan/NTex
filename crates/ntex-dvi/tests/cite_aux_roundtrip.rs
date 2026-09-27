@@ -166,6 +166,41 @@ X\\cite{foo}Y\\cite{foo, bar}Z
     );
 }
 
+#[test]
+fn bibcite_key_with_subscript_char_roundtrips() {
+    let d = workdir("bibcite-underscore");
+    fs::write(
+        d.join("p.tex"),
+        "\
+\\documentclass{article}
+\\begin{document}
+Cite \\cite{foo_bar}.
+\\begin{thebibliography}{1}
+\\bibitem{foo_bar} A. Author.
+\\end{thebibliography}
+\\end{document}
+",
+    )
+    .unwrap();
+
+    let (stdout, stderr, ok) = compile(&d, "p", "p1.dvi");
+    assert!(ok, "stdout={stdout}\nstderr={stderr}");
+    let aux = fs::read_to_string(d.join("p.aux")).unwrap();
+    assert!(aux.contains("\\citation{foo_bar}"), "aux={aux:?}");
+    assert!(aux.contains("\\bibcite{foo_bar}{1}"), "aux={aux:?}");
+    assert!(
+        !aux.contains("foobar"),
+        "cat-8 underscore was dropped: {aux:?}"
+    );
+
+    let (stdout, stderr, ok) = compile(&d, "p", "p2.dvi");
+    assert!(ok, "stdout={stdout}\nstderr={stderr}");
+    assert!(
+        !stderr.contains("Citation `foo_bar' on page 1 undefined"),
+        "二趟仍未解析：{stderr:?}"
+    );
+}
+
 const BBL: &str = "\
 \\begin{thebibliography}{2}
 

@@ -688,9 +688,8 @@ impl Expander {
     /// 空格——pdfTeX 实测 `\write\w{\foo}`（\foo protected）→ out.txt =
     /// `"\foo \n"`；旧实现丢弃不可展开 cs，protected 宏静默消失）。
     ///
-    /// 偏差（有意，范围外）：tex.web `token_show` 对字符 token 一律印其字符，
-    /// 此处非字母/其他 catcode 字符（math shift 等）仍丢弃——共享此函数的
-    /// `\message`/`\show`/`\special` 输出须保持不变。副作用：引擎行模型
+    /// 字符 token 按 tex.web `token_show` 语义一律印其字符（catcode 只影响
+    /// 扫描/语法，不影响转录字面）。副作用：引擎行模型
     /// LF=5（§latex-feasibility A1 偏差）把 `^^J` 归并为空格 token，故
     /// `\write{a^^Jb}` 写出空格而非 LF；latex.ltx L177 的 texsys.aux 探测
     /// 因此带尾空格（其 `\ifx` 对比失败 → 非致命 "BAD: old file" 噪声）。
@@ -718,14 +717,7 @@ impl Expander {
         let mut s = String::new();
         for t in expanded {
             match t.catcode() {
-                Some(Catcode::Space) => s.push(' '),
-                // 组定界字符：write 输出**字面** `{`/`}`（tex.web token_show：
-                // 字符 token 一律印其字符，含组字符——pdfTeX 实测
-                // `\write{A{B}C}` → `A{B}C`；expl3 消息组大量依赖。此前落
-                // `_` 臂被丢弃，`\foo` 展开含组的 write 全部丢花括号）。
-                Some(Catcode::BeginGroup) => s.push('{'),
-                Some(Catcode::EndGroup) => s.push('}'),
-                Some(Catcode::Letter) | Some(Catcode::Other) => {
+                Some(_) => {
                     let ch = t
                         .charcode()
                         .and_then(char::from_u32)

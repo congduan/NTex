@@ -164,6 +164,90 @@ use super::*;
     }
 
     #[test]
+    fn write_stringification_prints_all_character_catcodes() {
+        let mut e = Expander::new();
+        e.set_vfs(Box::new(MemVfs::new()));
+        e.run_source("\\catcode`\\_=8 \\catcode`\\^=7 \\catcode`\\#=6 \\immediate\\write16{a_b^c#d{e}}")
+            .unwrap();
+        assert_eq!(e.transcript(), "a_b^c#d{e}\n");
+
+        let mut e = Expander::new();
+        e.set_vfs(Box::new(MemVfs::new()));
+        e.run_source("\\catcode`\\_=8 \\message{a_b}").unwrap();
+        assert_eq!(e.transcript(), "a_b");
+
+        let mut e = Expander::new();
+        e.set_vfs(Box::new(MemVfs::new()));
+        e.run_source("\\catcode`\\_=8 \\def\\m{a_b}\\show\\m").unwrap();
+        assert!(
+            e.transcript().contains("->a_b."),
+            "show transcript={:?}",
+            e.transcript()
+        );
+    }
+
+    #[derive(Debug, Default)]
+    struct SpecialCaptureSink {
+        inner: VecSink,
+        specials: Vec<String>,
+    }
+
+    impl crate::sink::CoreSink for SpecialCaptureSink {
+        fn token(&mut self, tok: Token) -> Result<()> {
+            self.inner.token(tok)
+        }
+        fn transcript(&self) -> &str {
+            self.inner.transcript()
+        }
+        fn tokens(&self) -> &[Token] {
+            self.inner.tokens()
+        }
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
+        fn as_any_ref(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    impl crate::sink::IoSink for SpecialCaptureSink {
+        fn message(&mut self, text: String) -> Result<()> {
+            self.inner.message(text)
+        }
+        fn show(&mut self, text: String) -> Result<()> {
+            self.inner.show(text)
+        }
+        fn write16(&mut self, text: String) -> Result<()> {
+            self.inner.write16(text)
+        }
+        fn special(&mut self, text: String) -> Result<()> {
+            self.specials.push(text);
+            Ok(())
+        }
+    }
+
+    impl crate::sink::FontSink for SpecialCaptureSink {}
+    impl crate::sink::MathSink for SpecialCaptureSink {}
+    impl crate::sink::BoxSink for SpecialCaptureSink {}
+    impl crate::sink::AlignSink for SpecialCaptureSink {}
+    impl crate::sink::PageSink for SpecialCaptureSink {}
+    impl crate::sink::TokenSink for SpecialCaptureSink {}
+
+    #[test]
+    fn special_stringification_prints_subscript_character() {
+        let mut e = Expander::new();
+        e.set_vfs(Box::new(MemVfs::new()));
+        e.set_sink(Box::new(SpecialCaptureSink::default()));
+        e.run_source("\\catcode`\\_=8 \\special{a_b}").unwrap();
+        let sink = e.take_sink();
+        let sink = sink
+            .as_any_ref()
+            .downcast_ref::<SpecialCaptureSink>()
+            .unwrap();
+        assert_eq!(sink.specials, vec!["a_b".to_string()]);
+    }
+
+    #[test]
     fn openout_jobname_uses_host_job_name() {
         // latex.ltx L9652 `\immediate\openout\@mainaux\jobname.aux`：名字扫描里的
         // `\jobname` 必须展开成当前作业名，否则 aux **写**路落 texput.aux，而
