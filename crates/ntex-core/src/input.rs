@@ -108,12 +108,16 @@ pub fn line_starts(bytes: &[u8]) -> Vec<u32> {
     v
 }
 
-/// 扫描器行状态（tex.web `get_next` 的 `state`：new_line / mid_line / in_space）。
+/// 扫描器行状态（tex.web `get_next` 的 `state`：new_line / mid_line / skip_blanks）。
 ///
 /// 决定两个 TeX 行为：
 /// - **空行 → `\par`**：行首（[`ScanState::LineStart`]）遇到行尾（cat 5）产生 `\par`
 ///   而非空格；
-/// - **空格折叠**：行首空格忽略、连续空格合并为单个 token。
+/// - **空格折叠**：行首空格忽略、连续空格合并为单个 token；
+/// - **skip_blanks 吸收**：[`ScanState::InSpace`] 即 tex.web `skip_blanks`——
+///   控制词/空格控制符号后进入，后随空格**按读取时的 catcode** 逐个忽略
+///   （`skip_blanks+spacer` 在「忽略字符」表里），行尾不产 token
+///   （`skip_blanks+car_ret → Finish line, goto switch`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ScanState {
     /// 行首（tex.web new_line）：空格忽略；行尾 → `\par`（空行）。
@@ -121,7 +125,8 @@ pub enum ScanState {
     LineStart,
     /// 行中（tex.web mid_line）：已产生非空格 token；首个空格 → 空格 token。
     MidLine,
-    /// 已产生空格（tex.web in_space）：连续空格忽略；行尾 → 空格 token。
+    /// tex.web skip_blanks：已产生空格或刚读控制词/空格控制符号——后随空格
+    /// 忽略（catcode 读取时裁决），行尾不产 token。
     InSpace,
 }
 
@@ -252,25 +257,35 @@ pub fn scan_token(
                     let name = std::str::from_utf8(&name)
                         .map_err(|_| Error::invalid_input("控制词含非 UTF-8 字节"))?;
                     let csid = intern.intern(name);
-                    // TeX：控制词后跟随的空格被吞掉（含行尾转换的空格）。
-                    // 物理行尾（LF 字节）同样吞掉且**不产 token**——tex.web
-                    // `skip_blanks+car_ret` → "Finish line, goto switch"（无
-                    // token）；否则 catcode(0x0A) 被改写为非 cat-5 后（如
-                    // latex.ltx L299 `\catcode`\^^J=\active`），行尾字节漏到
-                    // 主分派被当数据处理。
-                    while *pos < bytes.len() {
-                        let c2 = catcodes.get(bytes[*pos]);
-                        if !(c2.is_space() || c2.is_end_of_line() || bytes[*pos] == b'\n') {
-                            break;
-                        }
-                        *pos += 1;
-                    }
-                    *state = ScanState::MidLine;
+                    // tex.web L7417 `if cat=letter then state:=skip_blanks`：控制词后
+                    // 的空格吸收是**惰性**的 skip_blanks 状态（本引擎 InSpace），
+                    // 不是读词时就地吞字节。就地吞掉会用**控制词当时的 catcode**
+                    // 裁决后随空格；而 TeX 是取下一个 token 时再查表——两者在
+                    // 「控制词与后随空格之间发生 `\catcode` 改写」时分歧：
+                    //   `\ExplSyntaxOn` 下 cat 32 = Ignored(9)，读得 `\X` 后体内
+                    //   `\char_set_catcode_space:n{32}` 改为 Space(10)，再回来读
+                    //   行上那个空格——TeX 走 `skip_blanks+spacer`（忽略），旧实现
+                    //   已把 state 置回 MidLine → 产空格 token → 定界实参扫描
+                    //   "Use of \X doesn't match its definition"（ctex ctexopts.cfg
+                    //   `\GetIdInfo`/`\ProvidesExplFile` 自递归根因）。
+                    // 物理行尾（LF 字节）由 EndOfLine 臂处理：InSpace 状态下不产
+                    // token 且行尾回 LineStart（tex.web `skip_blanks+car_ret` →
+                    // "Finish line, goto switch" → 下一行 new_line）——catcode(0x0A)
+                    // 被改写为非 cat-5 后（latex.ltx L299 `\catcode`\^^J=\active`）
+                    // 行尾字节同样不会漏到主分派。
+                    *state = ScanState::InSpace;
                     return Ok(Some(Token::control_sequence(csid)));
                 }
-                // 控制符号：单个任意非字母字符（含空格、`\` 自身、^^/UTF-8 解码字符）
+                // 控制符号：单个任意非字母字符（含空格、`\` 自身、^^/UTF-8 解码字符）。
+                // tex.web L7418-7420：`else if cat=spacer then state:=skip_blanks
+                // else state:=mid_line`——`\ `（名字是空格字符的控制符号）同样进
+                // skip_blanks（`\ x` 里 `\ ` 后的空格被忽略，真 TeX 只出一个空格）；
+                // 其余控制符号（`\%`/`\$`/`\{`…）回 mid_line，后随空格仍有效。
                 let csid = intern.intern(&first_char.unwrap_or('\u{FFFD}').to_string());
-                *state = ScanState::MidLine;
+                *state = match first_char.and_then(|c| u8::try_from(c).ok()) {
+                    Some(b) if catcodes.get(b).is_space() => ScanState::InSpace,
+                    _ => ScanState::MidLine,
+                };
                 return Ok(Some(Token::control_sequence(csid)));
             }
             _ => {
@@ -341,6 +356,15 @@ pub fn scan_token(
                         if *state == ScanState::LineStart {
                             let csid = intern.intern("par");
                             return Ok(Some(Token::control_sequence(csid)));
+                        }
+                        // tex.web `skip_blanks+car_ret → @<Finish line, |goto switch|@>`
+                        //（L7332）：skip_blanks（本引擎 InSpace）状态下行尾**不产
+                        // token**，只回 new_line——`\message{x \ny}` 真 TeX 只出一个
+                        // 空格（空格 token 已在 mid_line+spacer 臂产出），旧实现再补
+                        // 一个行尾空格 token 成两个。
+                        if *state == ScanState::InSpace {
+                            *state = ScanState::LineStart;
+                            continue;
                         }
                         *state = ScanState::LineStart;
                         // 行尾插入字符按其**当前 catcode** 处理（tex.web

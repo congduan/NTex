@@ -174,6 +174,38 @@ impl Expander {
         if self.match_input_delim(&segments[0]).is_err() {
             // TeX：宏调用与定义不匹配 → "Use of \X doesn't match its definition."
             // 报错恢复（忽略该宏调用，按无参展开；TRIP L332 `\t2` 等）
+            if std::env::var_os("NTEX_DELIM_DBG").is_some() {
+                // 失配现场：peek 输入流下一个 token（不动流）
+                let nxt = match self.fetch() {
+                    Ok(Some((t, _))) => {
+                        self.unread(t);
+                        match t.csid() {
+                            Some(id) => format!("\\{}", self.intern.name(id)),
+                            None => format!(
+                                "char {:?} cat {:?}",
+                                t.charcode().and_then(char::from_u32),
+                                t.catcode()
+                            ),
+                        }
+                    }
+                    _ => "(无)".into(),
+                };
+                let want: Vec<String> = segments[0]
+                    .iter()
+                    .map(|t| match t.csid() {
+                        Some(id) => format!("\\{}", self.intern.name(id)),
+                        None => format!(
+                            "char {:?} cat {:?}",
+                            t.charcode().and_then(char::from_u32),
+                            t.catcode()
+                        ),
+                    })
+                    .collect();
+                eprintln!(
+                    "[delim-mismatch] 前导定界失配 name={name} want={want:?} next_tok={nxt} floor={}",
+                    self.read_floor
+                );
+            }
             let _ = self.sink.write16(format!(
                 "! Use of \\{name} doesn't match its definition.\n\
                  The macro here has not been followed by the required stuff,\n\
