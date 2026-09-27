@@ -49,7 +49,7 @@ impl Expander {
 
     /// 扫描文件名：`{...}` 或连续 cat 11/12 字符（空格终止）。
     fn scan_file_name(&mut self) -> Result<String> {
-        self.skip_spaces()?;
+        self.skip_name_leading_blanks()?;
         let first = self
             .fetch()?
             .ok_or_else(|| Error::invalid_input("扫描到输入末尾"))?

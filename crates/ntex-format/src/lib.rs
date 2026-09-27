@@ -533,6 +533,23 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
             font_cs_names.push(Some(String::from_utf8_lossy(&buf).into_owned()));
         }
     }
+    // v22：fontdimens / hyphenchars 覆盖表（intarray 模拟字体的条目与 count；
+    // 段序与 save 对齐——font_cs_names 之后、current_font 之前）
+    let n_fd = read_u32(r)? as usize;
+    let mut fontdimens = Vec::with_capacity(n_fd.min(1 << 20));
+    for _ in 0..n_fd {
+        let f = read_u32(r)?;
+        let n = read_u32(r)?;
+        let v = read_i64(r)?;
+        fontdimens.push((f, n, v));
+    }
+    let n_hc = read_u32(r)? as usize;
+    let mut hyphenchars = Vec::with_capacity(n_hc.min(PREALLOC_CAP));
+    for _ in 0..n_hc {
+        let f = read_u32(r)?;
+        let c = read_i64(r)?;
+        hyphenchars.push((f, c));
+    }
     // current_font（v14）
     let current_font = read_u32(r)?;
 
@@ -558,22 +575,6 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
     let mut uccodes = [0i64; 256];
     for v in &mut uccodes {
         *v = read_i64(r)?;
-    }
-    // v22：fontdimens / hyphenchars 覆盖表（intarray 模拟字体的条目与 count）
-    let n_fd = read_u32(r)? as usize;
-    let mut fontdimens = Vec::with_capacity(n_fd.min(1 << 20));
-    for _ in 0..n_fd {
-        let f = read_u32(r)?;
-        let n = read_u32(r)?;
-        let v = read_i64(r)?;
-        fontdimens.push((f, n, v));
-    }
-    let n_hc = read_u32(r)? as usize;
-    let mut hyphenchars = Vec::with_capacity(n_hc.min(PREALLOC_CAP));
-    for _ in 0..n_hc {
-        let f = read_u32(r)?;
-        let c = read_i64(r)?;
-        hyphenchars.push((f, c));
     }
     let mut tail = Vec::new();
     r.read_to_end(&mut tail)?;
@@ -917,5 +918,34 @@ mod tests {
         assert_eq!(state.params, loaded.params, "params");
         assert_eq!(state.output_toks, loaded.output_toks, "output_toks");
         assert_eq!(state, loaded, "文件 roundtrip 后状态应一致");
+    }
+}
+
+#[cfg(test)]
+mod fmt_file_inspect {
+    /// 临时诊断：直接读仓库 latex.fmt，核对 v22 两表是否真落盘。
+    #[test]
+    fn inspect_repo_fmt_v22_sections() {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/fmt/latex.fmt");
+        let Ok(data) = std::fs::read(&p) else {
+            eprintln!("[inspect] 无 {}，跳过", p.display());
+            return;
+        };
+        let st = match crate::load(&mut &data[..]) {
+            Ok(s) => s,
+            Err(e) => panic!("latex.fmt 解析失败：{e}"),
+        };
+        eprintln!(
+            "[inspect] fontdimens={} hyphenchars={} font_loads={}",
+            st.fontdimens.len(),
+            st.hyphenchars.len(),
+            st.font_loads.len()
+        );
+        eprintln!(
+            "[inspect] hyphenchars 前几项={:?} fontdimens 前几项={:?}",
+            &st.hyphenchars[..st.hyphenchars.len().min(5)],
+            &st.fontdimens[..st.fontdimens.len().min(5)]
+        );
     }
 }

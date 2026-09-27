@@ -988,6 +988,31 @@ impl Expander {
         }
     }
 
+    /// 文件名/字体名扫描的**前导**空格跳过（tex.web scan_file_name L10209 /
+    /// scan_font_ident L11234 循环前那一遍 `@<Get the next non-blank non-call
+    /// token@>`）。与数值扫描共用的 `skip_spaces`（只认 cat-10）不同，这里按
+    /// **字符码 32 跳过、盲于 catcode**（cat 10/11/12 一律吞）——pdftex GT
+    /// （2026-09-27 /tmp/geGT）定谳：
+    /// - mg45 `\catcode`\ =12\input q7.tex \end` → **`(./q7.tex)` 文件装载**，
+    ///   `\input` 后随的 cat-12 空格被前导跳过、未终止名字；
+    /// - mg44 同形态对不存在文件报 `I can't find file `nosuchfile.tex'`（名字
+    ///   完整；若该空格终止名字则报空名）；
+    /// - mg47/48/49 `\show` 对拍：cat-12 空格在**普通**流里仍产出空格 token
+    ///   （`\def\a{\relax x}` 双空格 vs 基线单空格）→ 吞它的位置只在名字扫描
+    ///   入口，不在全局 get_next 状态机；故名字循环内的 char-32 仍由
+    ///   `more_name` 终止（消费不回退），此处只宽前导。
+    fn skip_name_leading_blanks(&mut self) -> Result<()> {
+        loop {
+            let Some((tok, _)) = self.fetch()? else { return Ok(()) };
+            let blank = matches!(tok.catcode(), Some(Catcode::Space | Catcode::Letter | Catcode::Other))
+                && tok.charcode() == Some(b' ' as u32);
+            if !blank {
+                self.unread(tok);
+                return Ok(());
+            }
+        }
+    }
+
     /// 数字/尺寸后的 optional space（tex.web `@<Scan an optional space@>`
     /// L8755：`get_x_token; if cur_cmd<>spacer then back_input`）——**至多**
     /// 吞一个空格；非空格 token 取一次即放回，**不再向前多取**。

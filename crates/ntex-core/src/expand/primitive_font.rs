@@ -419,7 +419,7 @@ impl Expander {
     /// 此前只收 cat 11/12 字面字符，遇宏退栈 → 空名 →「\font 后缺少字体名」
     /// 致命，`\DeclarePreloadSizes`（preload.ltx l.47 起）全段卡死。
     fn scan_font_name(&mut self) -> Result<String> {
-        self.skip_spaces()?;
+        self.skip_name_leading_blanks()?;
         let mut name = String::new();
         let mut quoted = false;
         while self.more_name(&mut name, &mut quoted, false)? {}

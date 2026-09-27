@@ -1470,13 +1470,13 @@ I changed this one to zero.
         assert_eq!(calls, vec![("cmr10".to_owned(), None, None)]);
         // 文件名同口径（tex.web scan_file_name 走同一 more_name）：
         // cat-12 空格把 "tex" 隔出文件名，报错现场恰为 nosuchfile.tex。
-        // 注意 `\catcode`\ =12\input` 须**相邻**（无 optional space）：若带空格，
-        // 该空格被赋值的 optional space 消费后，`\input` 后继的空格已变 cat-12
-        // 数据字符（tex.web 控制字只跳过 cat-10 后继），名字扫描首 token 即
-        // 终止 → 空文件名（pdfTeX GT 实测同为 ".tex File ignored"，
-        // jobname=g25，2026-09-19）。相邻形式 `\input` 的控制字扫描在赋值
-        // 执行前完成、其后 cat-10 空格照常被吞，名字恰为 nosuchfile.tex
-        // （pdfTeX GT jobname=g23 同报 "I can't find file `nosuchfile.tex'"）。
+        // 名字扫描**入口**的前导空格跳过按字符码 32、盲于 catcode
+        //（`skip_name_leading_blanks`，pdftex GT 2026-09-27 /tmp/geGT：
+        // mg45 `\catcode`\ =12\input q7.tex \end` → `(./q7.tex)` 文件装载、
+        // mg44 对不存在文件报完整名 `nosuchfile.tex`；mg47/48/49 `\show`
+        // 对拍证明 cat-12 空格在普通流仍产出空格 token——吞它只在名字扫描
+        // 入口、不在全局 get_next 状态机）。名字循环内 char-32 仍由
+        // more_name 终止（消费不回退），"tex" 不入名。
         let mut e = Expander::new();
         let r = e.run_source("\\catcode`\\ =12\\input nosuchfile.tex tex\\relax");
         assert!(r.is_err());

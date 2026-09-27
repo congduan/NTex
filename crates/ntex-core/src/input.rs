@@ -618,12 +618,19 @@ mod tests {
     }
 
     #[test]
-    fn space_then_newline_yields_two_spaces() {
-        // "a \n b"：行中空格 + 行尾空格 → 两个空格 token（TeX 语义）
+    fn space_then_newline_yields_one_space() {
+        // "a \n b" → **3 个 token**（a, 空格, b）：tex.web get_next 的
+        // `skip_blanks+car_ret → finish line, |goto switch|`（L7321-7323）
+        // **不发 token**——行中空格让状态进 skip_blanks 并发一个空格 token，
+        // 行尾 `\n` 在 skip_blanks 态只收行不发；下一行行首空格在 new_line
+        // 态被 `new_line+spacer` 忽略（L7319）。GT（pdfTeX 2026-09-27
+        // /tmp/geGT/mg51.tex，`\def\a#1!{<#1>}` 定界实参捕获）实证 `<a b>`
+        // 单空格。旧期望 4 个 token 对应修前的急切字节消费语义
+        //（701ba05 改惰性 skip_blanks 后即分叉）。
         let toks = scan_all("a \n b");
-        assert_eq!(toks.len(), 4); // a, sp, sp, b
+        assert_eq!(toks.len(), 3); // a, sp, b
         assert_eq!(toks[1].catcode(), Some(Catcode::Space));
-        assert_eq!(toks[2].catcode(), Some(Catcode::Space));
+        assert_eq!(toks[2].charcode(), Some(b'b' as u32));
     }
 
     #[test]

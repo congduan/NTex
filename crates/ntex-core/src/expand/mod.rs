@@ -1395,7 +1395,8 @@ impl Expander {
         self.protected_pending = false;
         self.outer_pending = false;
         self.long_pending = false;
-        self.fontdimens.clear();
+        // fontdimens 不在此重置：上方 v22 恢复块已 clear+重建（intarray 模拟
+        // 字体的条目是 fmt 生成期状态，非运行时残渣）
         self.aftergroup.clear();
         self.scope_stack.clear();
         self.afterassignment = None;
