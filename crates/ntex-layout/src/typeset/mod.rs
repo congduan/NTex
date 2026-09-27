@@ -846,7 +846,6 @@ struct PageState {
     /// ——此旗标区分「真未消费」与「消费后又有新页」。
     output_consumed_count: u32,
 
-
     /// ETRIP 冲刺：e-TeX marks 族状态（断页轮转）。
     /// `\topmarks<c>`：继承自上一页 botmarks<c>（初始空）。
     marks_top: std::collections::HashMap<i64, String>,
@@ -1885,13 +1884,18 @@ impl NodeBuilder {
                 if let Some(action) = self.fonts.lig_kern(pf, pc as u8, charcode as u8) {
                     match action {
                         LigKern::Kern(kern) => self.append(Node::Kern { width: kern }),
-                        LigKern::Lig(result) => {
-                            // 尾节点替换为连字节点（tex.web ligature_node：
+                        LigKern::Lig {
+                            replacement,
+                            keep_left,
+                            keep_right,
+                            skip: _,
+                        } => {
+                            // 尾节点替换/保留为连字节点（tex.web ligature_node：
                             // lastnodetype=7；参考 showbox `.\trip r (ligature u|)`）。
                             // 连续连字（ffi）时尾 Ligature 继续参与匹配，components 累积。
-                            let (w, h, d) = self.fonts.metrics(font, result as u32);
+                            let (w, h, d) = self.fonts.metrics(font, replacement as u32);
                             let last = self.lists.last_mut().and_then(|l| l.last_mut());
-                            let replaced = match last {
+                            let lig = match last {
                                 Some(Node::Char {
                                     font: cf,
                                     charcode: rc,
@@ -1900,7 +1904,7 @@ impl NodeBuilder {
                                     let comps = vec![*rc as u8, charcode as u8];
                                     Some(Node::Ligature {
                                         font: *cf,
-                                        charcode: result as u32,
+                                        charcode: replacement as u32,
                                         width: w,
                                         height: h,
                                         depth: d,
@@ -1915,7 +1919,7 @@ impl NodeBuilder {
                                     comps.push(charcode as u8);
                                     Some(Node::Ligature {
                                         font: *cf,
-                                        charcode: result as u32,
+                                        charcode: replacement as u32,
                                         width: w,
                                         height: h,
                                         depth: d,
@@ -1924,12 +1928,14 @@ impl NodeBuilder {
                                 }
                                 _ => None,
                             };
-                            if let Some(node) = replaced {
-                                if let Some(l) = self.lists.last_mut() {
+                            if let Some(node) = lig {
+                                if keep_left {
+                                    self.append(node);
+                                } else if let Some(l) = self.lists.last_mut() {
                                     *l.last_mut().expect("上面已检查非空") = node;
                                 }
                             }
-                            drop_cur = true;
+                            drop_cur = !keep_right;
                         }
                     }
                 }

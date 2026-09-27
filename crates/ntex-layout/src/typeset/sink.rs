@@ -2044,8 +2044,8 @@ impl TokenSink for NodeBuilder {}
 /// 2) `to <dimen>` 摊派：自然总宽不足目标 → 差额均摊各列；
 /// 3) 单元 hpack 到跨度宽（区间列宽和 + 中间 tabskip 自然宽），
 ///    行 = hpack([g_0, cell_0, g_1, ..., g_n]) 自然宽；
-/// 4) \halign → vbox of 行盒；\valign → 简化列并排（hbox of 列盒，
-///    不做行高数学——valign 用例罕见，后续校准）。
+/// 4) \halign → 行盒直接入外层竖列表；\valign → 列盒直接入外层水平列表，
+///    行高/深度按 halign 列宽数学的对偶口径统一。
 ///
 /// 自由函数（非 TokenSink 事件）：由 `group_end` 的 Align 分支在对齐组
 /// 结束时调用，行间 interline 胶水按 `params` 的 \baselineskip 族计算。
@@ -2059,29 +2059,81 @@ fn align_fin(params: ntex_core::param::Params, dir: AlignDir, mut ctx: AlignCtx)
     let glue_w = |i: usize| ctx.tabskips.get(i).map(|g| g.width).unwrap_or(0);
     match dir {
         AlignDir::Valign => {
-            // 简化：数据列（\cr 分隔）各自 vbox 自然高并排；noalign 材料
-            // 为水平材料原样混入
+            // \valign 是 \halign 的对偶：`\cr` 分隔出来的是一列，`&`
+            // 分隔的是该列内的各行。第一遍量各行的最大纵向占据，第二遍把
+            // 每列打成 vbox，并在列内按 preamble 保留 \tabskip 胶水。
+            let mut row_extents = vec![0i64; n];
+            let mut span_extents: Vec<(usize, usize, i64)> = Vec::new();
+            for item in &ctx.stream {
+                if let AlignItem::Row(cells) = item {
+                    for c in cells {
+                        let nat = crate::node::vbox_dimensions(&c.nodes).total();
+                        if c.span_len == 1 && c.start_col < n {
+                            row_extents[c.start_col] = row_extents[c.start_col].max(nat);
+                        } else if c.span_len > 1 {
+                            span_extents.push((c.start_col, c.span_len as usize, nat));
+                        }
+                    }
+                }
+            }
+            span_extents.sort_by_key(|(_, sp, _)| *sp);
+            for (s, sp, need) in span_extents {
+                if s + sp > n {
+                    continue;
+                }
+                let have: i64 = (s..s + sp).map(|i| row_extents[i]).sum::<i64>()
+                    + ((s + 1)..s + sp).map(glue_w).sum::<i64>();
+                if need > have {
+                    let diff = need - have;
+                    let each = diff / sp as i64;
+                    let mut rem = diff % sp as i64;
+                    for h in row_extents.iter_mut().take(s + sp).skip(s) {
+                        let extra = if rem > 0 { rem -= 1; 1 } else { 0 };
+                        *h += each + extra;
+                    }
+                }
+            }
+            let target: Option<i64> = match (ctx.to, ctx.spread) {
+                (Some(t), _) => Some(t),
+                (None, Some(sp)) => {
+                    Some(row_extents.iter().sum::<i64>() + (0..=n).map(glue_w).sum::<i64>() + sp)
+                }
+                (None, None) => None,
+            };
+            let total = target.unwrap_or_else(|| {
+                row_extents.iter().sum::<i64>() + (0..=n).map(glue_w).sum::<i64>()
+            });
             let mut cols: Vec<Node> = Vec::new();
             for item in ctx.stream {
                 match item {
                     AlignItem::Row(cells) => {
-                        let mut col: Vec<Node> = Vec::new();
+                        let col_width = cells
+                            .iter()
+                            .map(|c| crate::node::vbox_dimensions(&c.nodes).width)
+                            .max()
+                            .unwrap_or(0);
+                        let mut nodes: Vec<Node> = vec![align_tabskip_node(ctx.tabskips.first())];
                         for c in cells {
-                            let nat = crate::node::vbox_dimensions(&c.nodes);
-                            col.push(Node::Box(crate::node::vpack(
-                                c.nodes,
-                                nat.height + nat.depth,
-                                params.boxmaxdepth,
-                            )));
+                            let end = (c.start_col + c.span_len as usize).min(n);
+                            let span_h: i64 = (c.start_col..end)
+                                .map(|i| row_extents[i])
+                                .sum::<i64>()
+                                + ((c.start_col + 1)..end).map(glue_w).sum::<i64>();
+                            let mut b = crate::node::vpack(c.nodes, span_h, params.boxmaxdepth);
+                            b.width = col_width;
+                            nodes.push(Node::Box(b));
+                            nodes.push(align_tabskip_node(ctx.tabskips.get(end)));
                         }
-                        let nat = crate::node::hbox_dimensions(&col).width;
-                        cols.push(Node::Box(crate::node::hpack(&col, nat)));
+                        cols.push(Node::Box(crate::node::vpack(
+                            nodes,
+                            total,
+                            params.boxmaxdepth,
+                        )));
                     }
                     AlignItem::Material(ns) => cols.extend(ns),
                 }
             }
-            let nat = crate::node::hbox_dimensions(&cols).width;
-            vec![Node::Box(crate::node::hpack(&cols, nat))]
+            cols
         }
         AlignDir::Halign => {
             // 列宽（第一遍）

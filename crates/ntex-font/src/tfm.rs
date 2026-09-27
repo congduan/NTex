@@ -67,8 +67,13 @@ pub struct LigKernStep {
 pub enum LigKern {
     /// 字距：在左字符后插入 kern（sp）。
     Kern(i64),
-    /// 连字：左字符替换为结果字符码，右字符被丢弃。
-    Lig(u8),
+    /// 连字命令（op = 4a+2b+c）：插入结果字符，按 b/c 保留左/右字符。
+    Lig {
+        replacement: u8,
+        keep_left: bool,
+        keep_right: bool,
+        skip: u8,
+    },
 }
 
 /// 字节读取器（大端）。
@@ -202,8 +207,8 @@ impl FontMetrics {
     /// 从程序起点逐条目：stop（skip==128）→ 无命令；next_char 匹配 → kern/连字；
     /// 不匹配 → 跳 skip+1。**入口重定向**（skip>128，TFM 紧凑格式：char_info
     /// 的 remainder 指向重定向表条目，目标 = u16(op_byte, remainder)——texcraft
-    /// deserialize 同款解析）：先解引用到真实程序再匹配。连字仅支持
-    /// `x y =: z`（a=b=c=0，左右都删）。
+    /// deserialize 同款解析）：先解引用到真实程序再匹配。连字 op 字节按
+    /// tex.web 拆成 `a,b,c`，调用方据此保留左/右字符。
     pub fn apply_lig_kern(&self, left: u8, right: u8) -> Option<LigKern> {
         let start = self.lig_kern_index.get(left as usize).copied().flatten()? as usize;
         // 入口重定向（skip>128）：目标程序索引 = op_byte<<8 | remainder
@@ -226,12 +231,15 @@ impl FontMetrics {
                         self.kern_values.get(ki).copied().unwrap_or(0),
                     ));
                 }
-                // 连字步 op = 4a+2b+c：仅支持 a=0、b=0、c=0（删左右、插 remainder）
+                // 连字步 op = 4a+2b+c：b=1 保留左字符，c=1 保留右字符，
+                // a 为 lig_stack 中越过字符数（常见 TFM 为 0；排版层保留字段）。
                 let (a, b, c) = (s.op_byte / 4, (s.op_byte / 2) % 2, s.op_byte % 2);
-                if a == 0 && b == 0 && c == 0 {
-                    return Some(LigKern::Lig(s.remainder));
-                }
-                return None; // 保留左/右字符的连字（罕见）暂不支持
+                return Some(LigKern::Lig {
+                    replacement: s.remainder,
+                    keep_left: b != 0,
+                    keep_right: c != 0,
+                    skip: a,
+                });
             }
             // stop_flag（skip_byte=128）也是一条可执行指令：next_char 比较在先，
             // 不匹配才终止程序（tex.web L14555-14560 `if op_byte>=kern_flag then
@@ -690,9 +698,33 @@ mod tests {
         assert!((175_000..190_000).contains(&sw), "空格字符宽 {sw}");
         assert_ne!(sw, fm.space);
         // lig/kern：'f'+'i' → fi（字符 12）、'f'+'l' → fl（13）、'f'+'f' → ff（11）
-        assert_eq!(fm.apply_lig_kern(b'f', b'i'), Some(LigKern::Lig(12)));
-        assert_eq!(fm.apply_lig_kern(b'f', b'l'), Some(LigKern::Lig(13)));
-        assert_eq!(fm.apply_lig_kern(b'f', b'f'), Some(LigKern::Lig(11)));
+        assert_eq!(
+            fm.apply_lig_kern(b'f', b'i'),
+            Some(LigKern::Lig {
+                replacement: 12,
+                keep_left: false,
+                keep_right: false,
+                skip: 0,
+            })
+        );
+        assert_eq!(
+            fm.apply_lig_kern(b'f', b'l'),
+            Some(LigKern::Lig {
+                replacement: 13,
+                keep_left: false,
+                keep_right: false,
+                skip: 0,
+            })
+        );
+        assert_eq!(
+            fm.apply_lig_kern(b'f', b'f'),
+            Some(LigKern::Lig {
+                replacement: 11,
+                keep_left: false,
+                keep_right: false,
+                skip: 0,
+            })
+        );
         // kern 对（与 pdfTeX DVI 实测一致）：v→e、w→o、n→t = -18205 sp；
         // o→c、b→e = +18205 sp
         assert_eq!(fm.apply_lig_kern(b'v', b'e'), Some(LigKern::Kern(-18_205)));
@@ -705,14 +737,115 @@ mod tests {
         assert_eq!(fm.apply_lig_kern(b'v', b'x'), None);
         // 单条 STOP 指令程序（skip_byte=128 且带命令）：``` `` ```→`` `` ``（92）、
         // `--`→en-dash（123）、`!`` →¡（60）、`?`` →¿（62）
-        assert_eq!(fm.apply_lig_kern(96, 96), Some(LigKern::Lig(92)));
-        assert_eq!(fm.apply_lig_kern(b'-', b'-'), Some(LigKern::Lig(123)));
-        assert_eq!(fm.apply_lig_kern(b'!', b'`'), Some(LigKern::Lig(60)));
-        assert_eq!(fm.apply_lig_kern(b'?', b'`'), Some(LigKern::Lig(62)));
+        assert_eq!(
+            fm.apply_lig_kern(96, 96),
+            Some(LigKern::Lig {
+                replacement: 92,
+                keep_left: false,
+                keep_right: false,
+                skip: 0,
+            })
+        );
+        assert_eq!(
+            fm.apply_lig_kern(b'-', b'-'),
+            Some(LigKern::Lig {
+                replacement: 123,
+                keep_left: false,
+                keep_right: false,
+                skip: 0,
+            })
+        );
+        assert_eq!(
+            fm.apply_lig_kern(b'!', b'`'),
+            Some(LigKern::Lig {
+                replacement: 60,
+                keep_left: false,
+                keep_right: false,
+                skip: 0,
+            })
+        );
+        assert_eq!(
+            fm.apply_lig_kern(b'?', b'`'),
+            Some(LigKern::Lig {
+                replacement: 62,
+                keep_left: false,
+                keep_right: false,
+                skip: 0,
+            })
+        );
         // STOP 条目自身也可是 kern 步：`f]`（f 程序尾条目 skip=128 op=128）
         assert_eq!(fm.apply_lig_kern(b'f', b']'), Some(LigKern::Kern(50_973)));
         // en-dash 程序（也是单条 STOP）：en-dash+`-` → em-dash（124）
-        assert_eq!(fm.apply_lig_kern(123, b'-'), Some(LigKern::Lig(124)));
+        assert_eq!(
+            fm.apply_lig_kern(123, b'-'),
+            Some(LigKern::Lig {
+                replacement: 124,
+                keep_left: false,
+                keep_right: false,
+                skip: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn lig_kern_reports_retained_left_and_right_forms() {
+        let fm = FontMetrics {
+            design_size_sp: 10 * 65_536,
+            scale: 1 << 20,
+            checksum: 0,
+            name: "synthetic-retain-lig".into(),
+            chars: vec![Some((0, 0, 0)); 256],
+            char_italic: vec![0; 256],
+            slant: 0,
+            space: 0,
+            space_stretch: 0,
+            space_shrink: 0,
+            x_height: 0,
+            quad: 0,
+            extra_space: 0,
+            lig_kern_steps: vec![
+                LigKernStep {
+                    skip_byte: 0,
+                    next_char: b'b',
+                    op_byte: 0b11,
+                    remainder: b'z',
+                },
+                LigKernStep {
+                    skip_byte: 128,
+                    next_char: b'c',
+                    op_byte: 0b10,
+                    remainder: b'y',
+                },
+            ],
+            kern_values: Vec::new(),
+            lig_kern_index: {
+                let mut v = vec![None; 256];
+                v[b'a' as usize] = Some(0);
+                v
+            },
+            next_larger: vec![None; 256],
+            font_params: Vec::new(),
+            unicode_native: false,
+            unicode_chars: Vec::new(),
+        };
+        assert_eq!(
+            fm.apply_lig_kern(b'a', b'b'),
+            Some(LigKern::Lig {
+                replacement: b'z',
+                keep_left: true,
+                keep_right: true,
+                skip: 0,
+            })
+        );
+        assert_eq!(
+            fm.apply_lig_kern(b'a', b'c'),
+            Some(LigKern::Lig {
+                replacement: b'y',
+                keep_left: true,
+                keep_right: false,
+                skip: 0,
+            })
+        );
     }
 
     #[test]

@@ -185,3 +185,32 @@ fn align_mode_route_restricted_hmode_off_save() {
     assert!(t.contains("! Missing } inserted."), "off_save 报错：{t}");
     assert!(t.contains("Too many }'s."), "GT 次错：{t}");
 }
+
+#[test]
+fn valign_packs_columns_with_row_extents_and_tabskip() {
+    // pdfTeX GT（showbox）：`\hbox{\valign{#\vfil&#\vfil\cr ...}}`
+    // 的外层 hbox 直接挂 column vbox；列内结构是 tabskip / row box /
+    // tabskip / row box / tabskip，row box 取该行最大高度+深度，宽度取列宽。
+    let nodes = typeset(concat!(
+        "\\hbox{\\valign{#\\vfil&#\\vfil\\cr ",
+        "\\hrule height 5pt depth 2pt width 2pt&",
+        "\\hrule height 10pt depth 4pt width 4pt\\cr}}",
+    ))
+    .unwrap();
+    let outer = as_box(&nodes[0]);
+    assert_eq!(outer.children.len(), 1, "\\valign 不应额外包一层 hbox");
+    let col = as_box(&outer.children[0]);
+    assert_eq!(col.kind, BoxKind::VBox);
+    assert_eq!(col.width, 4 * SP_PER_PT);
+    assert_eq!(col.height + col.depth, 21 * SP_PER_PT);
+    assert_eq!(col.children.len(), 5, "首尾和中间 tabskip 都应保留");
+    assert!(matches!(col.children[0], Node::Glue { width: 0, .. }));
+    assert!(matches!(col.children[2], Node::Glue { width: 0, .. }));
+    assert!(matches!(col.children[4], Node::Glue { width: 0, .. }));
+    let row0 = as_box(&col.children[1]);
+    let row1 = as_box(&col.children[3]);
+    assert_eq!(row0.width, 4 * SP_PER_PT);
+    assert_eq!(row0.height + row0.depth, 7 * SP_PER_PT);
+    assert_eq!(row1.width, 4 * SP_PER_PT);
+    assert_eq!(row1.height + row1.depth, 14 * SP_PER_PT);
+}
