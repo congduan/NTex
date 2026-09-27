@@ -920,32 +920,3 @@ mod tests {
         assert_eq!(state, loaded, "文件 roundtrip 后状态应一致");
     }
 }
-
-#[cfg(test)]
-mod fmt_file_inspect {
-    /// 临时诊断：直接读仓库 latex.fmt，核对 v22 两表是否真落盘。
-    #[test]
-    fn inspect_repo_fmt_v22_sections() {
-        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../assets/fmt/latex.fmt");
-        let Ok(data) = std::fs::read(&p) else {
-            eprintln!("[inspect] 无 {}，跳过", p.display());
-            return;
-        };
-        let st = match crate::load(&mut &data[..]) {
-            Ok(s) => s,
-            Err(e) => panic!("latex.fmt 解析失败：{e}"),
-        };
-        eprintln!(
-            "[inspect] fontdimens={} hyphenchars={} font_loads={}",
-            st.fontdimens.len(),
-            st.hyphenchars.len(),
-            st.font_loads.len()
-        );
-        eprintln!(
-            "[inspect] hyphenchars 前几项={:?} fontdimens 前几项={:?}",
-            &st.hyphenchars[..st.hyphenchars.len().min(5)],
-            &st.fontdimens[..st.fontdimens.len().min(5)]
-        );
-    }
-}
