@@ -22,6 +22,47 @@ impl Drop for ExpandOnceDepthGuard {
     }
 }
 
+#[derive(Default)]
+struct CsnameStats {
+    calls: u64,
+    intern_hits: u64,
+    intern_misses: u64,
+    total_name_bytes: u64,
+    max_name_bytes: usize,
+    names: HashMap<String, u64>,
+}
+
+static CSNAME_STATS: OnceLock<std::sync::Mutex<CsnameStats>> = OnceLock::new();
+
+fn note_csname_stats(name: &str, existed: bool) {
+    let stats = CSNAME_STATS.get_or_init(|| std::sync::Mutex::new(CsnameStats::default()));
+    let mut stats = stats.lock().expect("csname stats mutex poisoned");
+    stats.calls += 1;
+    if existed {
+        stats.intern_hits += 1;
+    } else {
+        stats.intern_misses += 1;
+    }
+    stats.total_name_bytes += name.len() as u64;
+    stats.max_name_bytes = stats.max_name_bytes.max(name.len());
+    *stats.names.entry(name.to_owned()).or_default() += 1;
+    if stats.calls % 50_000 == 0 {
+        let avg = stats.total_name_bytes as f64 / stats.calls as f64;
+        let mut top: Vec<(&String, &u64)> = stats.names.iter().collect();
+        top.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+        let top = top
+            .iter()
+            .take(5)
+            .map(|(name, count)| format!("{name}:{count}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        eprintln!(
+            "[csname-stats] calls={} hits={} misses={} avg_len={avg:.1} max_len={} top=[{}]",
+            stats.calls, stats.intern_hits, stats.intern_misses, stats.max_name_bytes, top
+        );
+    }
+}
+
 impl Expander {
     /// `\expandafter a b`：输出 a，再输出 b 的一次展开结果。
     ///
@@ -283,10 +324,10 @@ impl Expander {
                 EqSlot::Primitive(Primitive::Csname) => {
                     // \csname...\endcsname：名字扫描 → 控制序列 token（TeX expand() 语义）
                     let name = self.scan_csname()?;
-                    let csid = self.intern.intern(&name);
                     if diag_enabled("NTEX_IFX_TRACE") {
                         eprintln!("[trace-csname-the] line={} 制造: {name}", self.current_line_no());
                     }
+                    let csid = self.intern_csname_cached(&name);
                     // TeX eq_define(cs,relax,256)：未定义名先变 \relax 同义再放回
                     self.csname_define_relax(csid);
                     out.push((Token::control_sequence(csid), false));
@@ -1116,7 +1157,12 @@ impl Expander {
         if diag_enabled("NTEX_IFX_TRACE") {
             eprintln!("[trace-csname] 制造: {name}");
         }
-        let csid = self.intern.intern(&name);
+        let stats_enabled = diag_enabled("NTEX_CSNAME_STATS");
+        let existed = stats_enabled && self.intern.lookup(&name).is_some();
+        let csid = self.intern_csname_cached(&name);
+        if stats_enabled {
+            note_csname_stats(&name, existed);
+        }
         // TeX eq_define(cs,relax,256)：未定义名先变 \relax 同义再放回
         self.csname_define_relax(csid);
         let tok = Token::control_sequence(csid);
@@ -1163,6 +1209,21 @@ impl Expander {
         }
         *self.eqtb.slot_mut(csid) = EqSlot::Primitive(Primitive::Relax);
         self.eq_mark_level(csid, false);
+    }
+
+    /// `\csname` 名字驻留（`exec_csname` 与 `\the` 展开臂共用）：单槽
+    /// `(名字哈希, csid)` 缓存命中则跳过 InternTable 哈希查找（语义见
+    /// `csname_cache` 字段注释），未命中照常驻留并换槽。
+    fn intern_csname_cached(&mut self, name: &str) -> u32 {
+        let h = crate::intern::fast_hash(name.as_bytes());
+        if let Some((cached_hash, cached_id)) = self.csname_cache {
+            if cached_hash == h && self.intern.name(cached_id) == name {
+                return cached_id;
+            }
+        }
+        let csid = self.intern.intern(name);
+        self.csname_cache = Some((h, csid));
+        csid
     }
 
     /// `\csname` 名字扫描（`\csname`/`\ifcsname` 用）：收集直到 `\endcsname` 的名字字符。
@@ -1229,28 +1290,37 @@ impl Expander {
                     }
                     continue;
                 }
-                match self.eqtb.slot(csid).clone() {
-                    EqSlot::Undefined => {
+                if matches!(self.eqtb.slot(csid), EqSlot::Undefined) {
+                    {
                         let csname = self.intern.name(csid);
                         let _ = self.sink.write16(format!(
                             "! Undefined control sequence.\n\\{csname}\n"
                         ));
-                        continue;
                     }
-                    EqSlot::Macro(m) => {
+                    continue;
+                }
+                if let EqSlot::Macro(m) = self.eqtb.slot(csid) {
+                    let def = m.value.clone();
+                    {
                         // 0 参数宏同样须匹配纯定界串参数文本（tex.web macro_call
                         // `if info(r)<>end_match_token`）——\csname 名字扫描里展开
                         // 可展开宏时漏匹配会把定界串（如 fast-form 条件的
                         // `\fi: \use_none:n`）泄进名字文本 → "Missing endcsname
                         // inserted" 级联。
-                        let args = self.collect_args(csid, &m.value)?;
+                        let args = self.collect_args(csid, &def)?;
                         self.push_frame(InputFrame::TokenList {
-                            items: Arc::from(materialize_pairs(&m.value.body, &args)),
+                            items: Arc::from(materialize_pairs(&def.body, &args)),
                             pos: 0,
                         });
-                        continue;
                     }
-                    EqSlot::Primitive(p) if p.is_expandable() => {
+                    continue;
+                }
+                let prim = match self.eqtb.slot(csid) {
+                    EqSlot::Primitive(p) if p.is_expandable() => Some(*p),
+                    _ => None,
+                };
+                if prim.is_some() {
+                    {
                         let mut out = Vec::new();
                         self.expand_once((tok, false), &mut out)?;
                         let seq: Vec<(Token, bool)> = out;
@@ -1258,19 +1328,19 @@ impl Expander {
                             items: Arc::from(seq),
                             pos: 0,
                         });
-                        continue;
                     }
+                    continue;
+                }
+                {
                     // TeX `scan_csname`（tex.web L19368-19379）：不可展开控制序列 →
                     // 报 "Missing endcsname inserted"，放回该 cs，插入 `\endcsname`
                     // 结束名字扫描（可恢复，不中断引擎；TRIP L428 `\csname^^Mendcsname=\^^@`）。
-                    _ => {
-                        let csname = self.intern.name(csid);
-                        let _ = self.sink.write16(format!(
-                            "! Missing endcsname inserted.\n<to be read again>\n \\{csname}\n"
-                        ));
-                        self.unread(tok);
-                        return Ok(name);
-                    }
+                    let csname = self.intern.name(csid);
+                    let _ = self.sink.write16(format!(
+                        "! Missing endcsname inserted.\n<to be read again>\n \\{csname}\n"
+                    ));
+                    self.unread(tok);
+                    return Ok(name);
                 }
             }
             if let Some(ch) = tok.charcode().and_then(char::from_u32) {

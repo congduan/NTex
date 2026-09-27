@@ -665,6 +665,7 @@ const DIAG_KEYS: &[&str] = &[
     "NTEX_SANITY_CHECK",
     "NTEX_ALIGN_TRACE",
     "NTEX_BIGLIST_TRACE",
+    "NTEX_CSNAME_STATS",
 ];
 
 /// 结构化 trace 通道（JSONL）——**挂死/膨胀类定位的核心设施**。
@@ -880,6 +881,14 @@ pub struct Expander {
     /// `\csname`/`\ifcsname` 名字扫描。由 scan_csname 进出置位/还原（保存
     /// 旧值而非置假——嵌套 csname 时内层还原不得清掉外层）。
     name_in_progress: bool,
+    /// `\csname` 单槽缓存 `(名字哈希, csid)`：跳过 `InternTable` 哈希查找。
+    ///
+    /// ctex/expl3 载入有极尖的同名热循环（实测 `textparagraph` 连续上百万次）。
+    /// 失效面：InternTable 只追加、名字不可变，csid 对名字永久稳定——catcode
+    /// 变化 / `\let` 重定义 / 组作用域都只动 eqtb 槽、不动驻留 id，缓存不随
+    /// 之失效；「未定义名制造时变 relax」语义仍逐次走 `csname_define_relax`。
+    /// 键存哈希不存 String（零分配），命中后再用表内名字复核防碰撞串号。
+    csname_cache: Option<(u64, u32)>,
     /// NTEX_SANITY_CHECK 设施：错误恢复前状态快照 (组级, 条件栈深)。
     /// report_error 时记录第一个错误；主循环下一次迭代校验恢复后的状态
     /// 与错误前是否大幅偏离（偏离 = 错误恢复本身写坏了状态，内部 bug 信号）。
@@ -1111,6 +1120,7 @@ impl Expander {
             read_floor: 0,
             cond_stack: Vec::new(),
             name_in_progress: false,
+            csname_cache: None,
             err_snapshot: None,
             group_level: 0,
             cur_group_close_via_primitive: false,
