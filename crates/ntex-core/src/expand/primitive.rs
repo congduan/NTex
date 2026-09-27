@@ -381,7 +381,17 @@ impl Expander {
                         bytes.len()
                     }
                 };
-                *eof_mark = Some(line_end.max(cur_pos));
+                // 截断实施 = 真把余行剪掉，不只挂标记：`scan_token` 一次可跨行
+                // 取 token（行尾 \n 之后直接续读下一行），而 eof_mark 只在帧边界
+                // 检查——越线的 token 已经交出去，流到文件框**下方**的遗留帧里，
+                // 在飞的宏（如 l.141 的 \cs_new_protected:Npn）会把那里的 token
+                // 当实参吞掉（ctexhook.sty l.138 \file_input_stop: 现场实测）。
+                // 剪到行尾后：本行剩余 token 照常交付（tex.web 同款），行末自然
+                // 读尽走 Ok(None) pop + \everyeof 臂。
+                let cut = line_end.min(bytes.len());
+                let truncated: Arc<[u8]> = Arc::from(&bytes[..cut]);
+                *bytes = truncated;
+                *eof_mark = Some(cut.max(cur_pos));
                 // 主文件（此帧是栈中最后一个 Source）：`\endinput` 结束作业
                 // （tex.web：`\endinput` 在主文件 = `\end` 的文件截断部分）。
                 if self

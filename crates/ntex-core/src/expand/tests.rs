@@ -1762,6 +1762,26 @@ I changed this one to zero.
     }
 
     #[test]
+    fn endinput_stops_at_line_end_even_from_macro_frame() {
+        // ctexhook.sty l.138 \file_input_stop: 现场回归：`\endinput` 在宏体/宏
+        // 实参内执行时，截断必须落在**当前行行尾**。修复前只挂 eof_mark 标记，
+        // 而标记只在帧边界检查——scan_token 在 InSpace 状态跨行续扫（行尾臂
+        // continue），下一行的 token 已交出、文件框下方调用方的遗留 token 流
+        // 被在飞的宏当实参吞掉（\cs_new_protected:Npn 把
+        // \@expl@@@filehook@file@pop@assign@@nnnn 当 #1 → "already defined"）。
+        // tex.web force_eof：本行剩余照常交付，行末关文件。
+        // 行 2 以空格收尾：行尾时扫描器恰处 InSpace，正是跨行续扫的那条路径。
+        let mut vfs = MemVfs::new();
+        vfs.insert("sub.tex", "\\def\\branch{\\endinput}\n\\branch \n\\def\\mark{B}\n");
+        let (out, _) = expand_vfs("\\input sub.tex \\def\\mark{A}\\mark", vfs).unwrap();
+        assert_eq!(
+            out.trim(),
+            "A",
+            "\\endinput 之后的行不得再读（修复前读入 B 使 \\mark 变 B）"
+        );
+    }
+
+    #[test]
     fn pdffilesize_reports_bytes_and_empty_for_missing() {
         // 文件不存在 → 空展开：l3kernel \file_full_name:n 以空返回判定"未找到"
         let mut vfs = MemVfs::new();
