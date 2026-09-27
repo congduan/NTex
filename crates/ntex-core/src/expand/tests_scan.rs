@@ -226,6 +226,10 @@ use super::*;
             expand("\\toks0\\expandafter{\\string x}\\the\\toks0").unwrap(),
             "x"
         );
+        assert_eq!(
+            expand("\\toks0{A}\\toks0\\expandafter{\\the\\toks0 B}\\the\\toks0").unwrap(),
+            "AB"
+        );
         // 宏 filler 作 `{` 入口：scan_left_brace 的 get_x_token 展开 \f，
         // 体循环按 cur_tok（自然字符 token catcode 1/2）记 unbalance 收口。
         // 注意不能用 `\def\f{\bgroup y\egroup}` 别名定界——tex.web L9368
