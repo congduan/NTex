@@ -8,6 +8,9 @@
 
 use crate::register::{Glue, SP_PER_PT};
 
+/// `\interactionmode` 在 misc int 表中的槽位。
+pub const MISC_INTERACTION_MODE: usize = 19;
+
 /// 参数种类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParamKind {

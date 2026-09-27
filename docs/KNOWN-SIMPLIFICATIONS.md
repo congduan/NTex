@@ -93,6 +93,7 @@
 | 位置 | 现状 | 状态 |
 |---|---|---|
 | `expand/macros.rs:175,323` / `save.rs` | `\outer` 限制语义 | ⚠️ 部分已修（a4c2aeb）：展开上下文禁止（宏体/实参——scan_depth>0）+ \def 体跳过 + cs 名 ^^ 转义；Runaway 块/对齐模板场景待错误恢复链统一 |
+| `expand/mod.rs` / `expand/scan.rs` / `expand/cond.rs` | M1-13 错误恢复主干：Undefined control sequence 当 `\relax` 继续、多余 `}`/`\fi`/`\else`/`\or` 忽略继续、Missing `{`/number/`endcsname` 等扫描点插入或取默认值继续；`ntex-dvi --interaction=nonstopmode` 已接到 `\interactionmode`。2026-09-27 探针（article + `\undefinedcs` + `\badmacro{x}`）与本机 `pdflatex -interaction=nonstopmode` 均为 2 页、2 条 Undefined，NTex DVI 含错误前后文本。 | ⚠️ 部分达成：主循环仍将文件/I/O/fmt/栈与步数上限等 fatal 冒泡；write/message/special 构串阶段 undefined cs 仍按下行登记静默；错误去重目前依赖各恢复点消费/插入 token，尚无统一“同 token 位同类”集合。 |
 | `expand/io.rs:304` | `\write18` shell 转义拒绝（Error） | ✅ 设计如此（RFC-3 副作用隔离；TRIP/ETRIP 不触发） |
 | `expand/io.rs` `expand_to_string` | write 构串展开阶段对 undefined cs **不报** `Undefined control sequence`（静默跳过；pdfTeX 报错后恢复丢弃，输出面恰好一致；`\message`/`\show`/`\special` 共享此函数） | 待做（expl3 载入期大量暂未定义 cs 依赖静默推进） |
 | `typeset/sink.rs:1519,1525` / `mod.rs:841` | `\moveleft/\moveright` 位移不落节点（取走即清） | 待做 |

@@ -103,6 +103,24 @@ fn quiet_flag_suppresses_transcript() {
 }
 
 #[test]
+fn interaction_flag_sets_error_mode() {
+    let d = workdir("interaction");
+    let src = d.join("i.tex");
+    std::fs::write(&src, "\\error\n\\shipout\\hbox{x}\n").unwrap();
+    let dvi = d.join("i.dvi");
+    let (stdout, stderr, ok) = run(&[
+        src.as_os_str(),
+        dvi.as_os_str(),
+        OsStr::new("--interaction=nonstopmode"),
+    ]);
+    assert!(ok, "stdout={stdout}\nstderr={stderr}");
+    assert!(
+        stderr.contains("This error message was issued in nonstop or batch mode"),
+        "--interaction=nonstopmode 未落到 \\interactionmode：{stderr:?}"
+    );
+}
+
+#[test]
 #[ignore = "发行验收探针：LaTeX fmt 快路径较慢，手动或独立 CI target 跑"]
 fn clean_distribution_article_uses_bundled_fmt_and_tex_tree() {
     let d = workdir("clean-dist");

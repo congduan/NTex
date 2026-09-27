@@ -379,6 +379,12 @@ impl Typesetter {
         self.expander.set_job_name(name);
     }
 
+    /// 设置交互模式（0=batch, 1=nonstop, 2=scroll, 3=errorstop）。
+    pub fn set_interaction_mode(&mut self, mode: i64) {
+        self.expander
+            .set_misc_int(ntex_core::param::MISC_INTERACTION_MODE, mode.clamp(0, 3));
+    }
+
     /// 取回 VFS（测试断言写入内容用）。
     pub fn take_vfs(&mut self) -> Box<dyn ntex_io::Vfs> {
         self.expander.take_vfs()

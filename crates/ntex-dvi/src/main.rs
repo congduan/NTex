@@ -12,6 +12,8 @@
 //! `--no-plain`：关掉预载（回 INITEX 裸表；内嵌文件兜底仍在）。
 //! `--quiet`：关掉 stderr 转录（`\message`/`\show`/`\write16`/错误恢复文本，
 //! 格式预载 G0）。默认开——静默是当前最大的测量陷阱（plain-format-survey §2.4）。
+//! `--interaction <mode>` / `--interaction=<mode>`：设置 TeX 交互模式
+//! （batchmode/nonstopmode/scrollmode/errorstopmode）。
 //! `--utf8`：源码按 UTF-8 解码（`\utfinputmode=1`，xelatex 口径）；
 //! `--cjk-fallback` 隐含开启（bytes 模式下多字节序列到不了 >0xFF 的回落判据）。
 
@@ -60,6 +62,7 @@ fn main() -> ExitCode {
     let mut dump_fmt: Option<String> = None;
     let mut load_fmt: Option<String> = None;
     let mut generate_fmt: Option<String> = None;
+    let mut interaction_mode: Option<i64> = None;
     // CJK 字体回落名（如 FandolSong-Regular）：码位 >0xFF 的字符走它，
     // 与 wasm 前端 set_fallback_font 同一引擎通路（182a113）。
     let mut cjk_fallback: Option<String> = None;
@@ -72,6 +75,19 @@ fn main() -> ExitCode {
             "--quiet" => quiet = true,
             "--no-plain" => no_plain = true,
             "--utf8" => utf8 = true,
+            "--interaction" => match it.next() {
+                Some(mode) => match parse_interaction_mode(mode) {
+                    Some(v) => interaction_mode = Some(v),
+                    None => {
+                        eprintln!("未知 interaction 模式：{mode}");
+                        return ExitCode::from(2);
+                    }
+                },
+                None => {
+                    eprintln!("--interaction 需要一个模式参数（batchmode/nonstopmode/scrollmode/errorstopmode）");
+                    return ExitCode::from(2);
+                }
+            },
             "--cjk-fallback" => match it.next() {
                 Some(p) => cjk_fallback = Some(p.clone()),
                 None => {
@@ -107,6 +123,16 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             },
+            other if other.starts_with("--interaction=") => {
+                let mode = other.trim_start_matches("--interaction=");
+                match parse_interaction_mode(mode) {
+                    Some(v) => interaction_mode = Some(v),
+                    None => {
+                        eprintln!("未知 interaction 模式：{mode}");
+                        return ExitCode::from(2);
+                    }
+                }
+            }
             other if other.starts_with('-') => {
                 eprintln!("未知参数：{other}");
                 return ExitCode::from(2);
@@ -149,6 +175,9 @@ fn main() -> ExitCode {
         .unwrap_or("texput")
         .to_string();
     ts.set_job_name(job_name);
+    if let Some(mode) = interaction_mode {
+        ts.set_interaction_mode(mode);
+    }
     install_distribution_tfm_source();
     if let Some(name) = &cjk_fallback {
         ts.set_fallback_font(Some(name.clone()));
@@ -343,8 +372,18 @@ fn main() -> ExitCode {
 }
 
 fn usage() -> &'static str {
-    "用法：ntex-dvi <input.tex> [output.dvi] [--fmt <latex.fmt>] [--input-path <dir>]... [--no-plain] [--cjk-fallback <字体名>] [--utf8] [--quiet]\n\
+    "用法：ntex-dvi <input.tex> [output.dvi] [--fmt <latex.fmt>] [--input-path <dir>]... [--interaction <mode>] [--no-plain] [--cjk-fallback <字体名>] [--utf8] [--quiet]\n\
      或：ntex-dvi --generate-fmt <output.fmt> [--input-path <dir>]... [--quiet]"
+}
+
+fn parse_interaction_mode(mode: &str) -> Option<i64> {
+    Some(match mode {
+        "batchmode" | "batch" | "0" => 0,
+        "nonstopmode" | "nonstop" | "1" => 1,
+        "scrollmode" | "scroll" | "2" => 2,
+        "errorstopmode" | "errorstop" | "3" => 3,
+        _ => return None,
+    })
 }
 
 fn default_vfs(input_paths: &[String]) -> Box<dyn ntex_io::Vfs> {
