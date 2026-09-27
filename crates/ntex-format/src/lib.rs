@@ -777,6 +777,26 @@ mod tests {
         assert!(state.intern_names.iter().any(|n| n == "greet"));
     }
 
+    /// v22：fontdimen/hyphenchar 覆盖表随快照往返（l3kernel intarray 模拟
+    /// 字体的条目与 count；fmt 生成期创建的四个常量 cctab 恢复后读回全 0
+    /// /45 的根因回归锁——空表「写 0 个 + 读 0 个」也自洽，须**非空**）。
+    #[test]
+    fn fmt_roundtrip_preserves_fontdimen_and_hyphenchar_overrides() {
+        let mut state = sample_state();
+        // 模拟 fmt 生成期的 intarray 字体：1 号字体 count=257、条目若干
+        state.hyphenchars.push((1, 257));
+        state.fontdimens.push((1, 66, 11));
+        state.fontdimens.push((1, 257, 13));
+        state.fontdimens.push((2, 3, -7));
+        let loaded = roundtrip(&state);
+        assert_eq!(loaded.hyphenchars, vec![(1, 257)], "hyphenchar 覆盖应还原");
+        assert_eq!(
+            loaded.fontdimens,
+            vec![(1, 66, 11), (1, 257, 13), (2, 3, -7)],
+            "fontdimen 覆盖应逐条还原（含负值）"
+        );
+    }
+
     /// v15：>255 码位覆盖表随快照往返（save/load 字节流对称性的回归锁）。
     ///
     /// 覆盖表为空时「写 0 个 + 读 0 个」也能自洽，故须**非空**才真正锁住
