@@ -256,6 +256,15 @@ fn expandafter_classic() {
 }
 
 #[test]
+fn expandafter_executes_scantokens_before_argument_scan() {
+    // expl3 rescan builds `\expandafter\macro ... \scantokens{...}` chains:
+    // \scantokens must participate in expansion so the re-scanned stream and
+    // \everyeof marker are available before the macro scans its delimited arg.
+    let src = "\\def\\grab#1!{[#1]}\\everyeof{!}\\expandafter\\grab\\scantokens{AB}";
+    assert_eq!(expand(src).unwrap(), "[AB]");
+}
+
+#[test]
 fn noexpand_defers_expansion() {
     // \edef 时 \noexpand\y 使 \y 保持为 token；\z 使用时 \y 才展开
     let src = "\\def\\y{YY}\\def\\x{A\\noexpand\\y B}\\edef\\z{\\x}\\z";

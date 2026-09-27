@@ -283,6 +283,13 @@ impl Expander {
                     let toks = self.scan_expanded_group()?;
                     out.extend(toks.into_iter().map(|t| (t, false)));
                 }
+                EqSlot::Primitive(Primitive::Scantokens) => {
+                    // e-TeX \scantokens is expandable in the sense relevant to
+                    // \expandafter: it scans its general text and pushes the
+                    // re-tokenized input stream, producing no direct expansion
+                    // tokens. expl3's rescan machine depends on this ordering.
+                    self.exec_scantokens()?;
+                }
                 EqSlot::Primitive(Primitive::String_) => {
                     // \string<token>：token 转文本（字符序列）。用 string_token
                     // （tex.web sprint_cs 语义：控制词后**不**补空格——\detokenize
@@ -1129,7 +1136,7 @@ impl Expander {
     /// catcode 重新扫描（eTeX 语义：等价于从字符串 `\input`）。
     /// 参数为 `<general text>`：先展开可展开项（`\scantokens\expandafter{\1}`）。
     fn exec_scantokens(&mut self) -> Result<()> {
-        let toks = self.scan_group_contents_expanding()?;
+        let toks = self.scan_group_contents_xpand(true)?;
         let mut text: Vec<Token> = Vec::new();
         let esc = self.params.misc[34];
         for t in toks {

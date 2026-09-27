@@ -72,6 +72,10 @@ define_primitives! {
         // （pdfTeX ≥1.30 可展开原语；expl3 L196 引擎门闩 `\ifx\csname expanded
         // \endcsname\relax` 与 l3names 别名表都要求它存在）。
         Expanded,
+        // e-TeX `\scantokens` participates in expansion (`\expandafter` chains in
+        // expl3 rescan rely on it injecting a re-scanned input stream before
+        // the surrounding macro starts parameter scanning).
+        Scantokens,
         // e-TeX `\unless` 可展开（e-tex.web expand 的 unless_code 臂：就地拉取
         // 下一个 `\if*` 取反求值）。守卫双表曾分裂：执行侧 primitive.rs:237 用
         // free.rs is_expandable_prim（含 Unless，主循环旗标语义可用），而本清单
