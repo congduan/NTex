@@ -257,8 +257,7 @@ impl Expander {
                 }
                 EqSlot::Primitive(Primitive::ETeXRevision) => {
                     out.extend(
-                        ".6"
-                            .bytes()
+                        ".6".bytes()
                             .map(|b| (Token::char(Catcode::Other, u32::from(b)), false)),
                     );
                 }
@@ -332,7 +331,10 @@ impl Expander {
                     // \csname...\endcsname：名字扫描 → 控制序列 token（TeX expand() 语义）
                     let name = self.scan_csname()?;
                     if diag_enabled("NTEX_IFX_TRACE") {
-                        eprintln!("[trace-csname-the] line={} 制造: {name}", self.current_line_no());
+                        eprintln!(
+                            "[trace-csname-the] line={} 制造: {name}",
+                            self.current_line_no()
+                        );
                     }
                     let csid = self.intern_csname_cached(&name);
                     // TeX eq_define(cs,relax,256)：未定义名先变 \relax 同义再放回
@@ -343,12 +345,14 @@ impl Expander {
                 // \topmarks<n> / \firstmarks<n> / \botmarks<n> / \splitfirstmarks<n> /
                 // \splittopmarks<n> / \splitbotmarks<n>：扫描 class 号，向 sink 查询，
                 // 返回内容转为字符 token（空内容输出空）。
-                EqSlot::Primitive(p @ (Primitive::TopMarks
+                EqSlot::Primitive(
+                    p @ (Primitive::TopMarks
                     | Primitive::FirstMarks
                     | Primitive::BotMarks
                     | Primitive::SplitFirstMarks
                     | Primitive::SplitTopMarks
-                    | Primitive::SplitBotMarks)) => {
+                    | Primitive::SplitBotMarks),
+                ) => {
                     let class = self.scan_number()?;
                     let text = match p {
                         Primitive::TopMarks => self.sink.topmarks(class),
@@ -369,11 +373,13 @@ impl Expander {
                     }));
                 }
                 // TRIP 补全批次：TeX 版 marks（\topmark 等，class 0 不扫描）
-                EqSlot::Primitive(p @ (Primitive::TopMark
+                EqSlot::Primitive(
+                    p @ (Primitive::TopMark
                     | Primitive::FirstMark
                     | Primitive::BotMark
                     | Primitive::SplitFirstMark
-                    | Primitive::SplitBotMark)) => {
+                    | Primitive::SplitBotMark),
+                ) => {
                     let text = match p {
                         Primitive::TopMark => self.sink.topmarks(0),
                         Primitive::FirstMark => self.sink.firstmarks(0),
@@ -426,17 +432,14 @@ impl Expander {
                         .get(font as usize)
                         .and_then(|n| n.clone())
                         .unwrap_or_default();
-                    out.extend(
-                        name.bytes()
-                            .map(|b| {
-                                let cat = if b == b' ' {
-                                    Catcode::Space
-                                } else {
-                                    Catcode::Other
-                                };
-                                (Token::char(cat, u32::from(b)), false)
-                            }),
-                    );
+                    out.extend(name.bytes().map(|b| {
+                        let cat = if b == b' ' {
+                            Catcode::Space
+                        } else {
+                            Catcode::Other
+                        };
+                        (Token::char(cat, u32::from(b)), false)
+                    }));
                 }
                 // LaTeX 兼容第八刀：pdfTeX 可展开族（is_expandable_prim 白名单成员，
                 // 此处必须有分支——否则 `_` 原样保留触发"展开后重试"空转，
@@ -507,7 +510,11 @@ impl Expander {
                     let state = self.params.misc[PDF_RANDOM_SEED_IDX] as u32;
                     let next = state.wrapping_mul(1_103_515_245).wrapping_add(12_345);
                     self.params.misc[PDF_RANDOM_SEED_IDX] = i64::from(next);
-                    let r = if n <= 0 { 0 } else { i64::from((next >> 8) % (n as u32)) };
+                    let r = if n <= 0 {
+                        0
+                    } else {
+                        i64::from((next >> 8) % (n as u32))
+                    };
                     out.extend(emit_count(r).into_iter().map(|t| (t, false)));
                 }
                 _ => {
@@ -746,8 +753,8 @@ impl Expander {
                         }
                         EqSlot::Macro(m) => {
                             // 宏体为单个 `\relax`（如 `\def\9{\relax}`）→ 等价终止符
-                            is_relax = m.value.body.len() == 1
-                                && self.is_relax_token(&m.value.body[0]);
+                            is_relax =
+                                m.value.body.len() == 1 && self.is_relax_token(&m.value.body[0]);
                             break;
                         }
                         EqSlot::Primitive(Primitive::Relax) => {
@@ -795,17 +802,15 @@ impl Expander {
                         continue;
                     }
                 }
-                // get_x_token 展开臂：宏（非 protected 抑制面）与可展开原语展开
-                // 一次后重探。`\noexpand` 冻结的 token 不展开（e-TeX 语义）。
+                // get_x_token 展开臂：宏与可展开原语展开一次后重探。
+                // protected 宏只在构建展开 token list 的吸收循环中不展开；
+                // 表达式扫描内部须照常展开。`\noexpand` 冻结的 token 不展开。
                 if !noexpand {
-                    let expandable =
-                        match self.eqtb.slot(self.deref_alias_chain(id)).clone() {
-                            EqSlot::Macro(m) => {
-                                !(m.value.protected && self.suppress_expansion > 0)
-                            }
-                            EqSlot::Primitive(p) => p.is_expandable(),
-                            _ => false,
-                        };
+                    let expandable = match self.eqtb.slot(self.deref_alias_chain(id)).clone() {
+                        EqSlot::Macro(_) => true,
+                        EqSlot::Primitive(p) => p.is_expandable(),
+                        _ => false,
+                    };
                     if expandable {
                         let mut expansion = Vec::new();
                         self.expand_once((tok, false), &mut expansion)?;
@@ -1300,9 +1305,9 @@ impl Expander {
                 if matches!(self.eqtb.slot(csid), EqSlot::Undefined) {
                     {
                         let csname = self.intern.name(csid);
-                        let _ = self.sink.write16(format!(
-                            "! Undefined control sequence.\n\\{csname}\n"
-                        ));
+                        let _ = self
+                            .sink
+                            .write16(format!("! Undefined control sequence.\n\\{csname}\n"));
                     }
                     continue;
                 }
@@ -1356,5 +1361,4 @@ impl Expander {
         }
         Ok(name)
     }
-
 }

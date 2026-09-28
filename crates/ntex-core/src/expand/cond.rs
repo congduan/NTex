@@ -207,7 +207,10 @@ impl Expander {
                 }
                 if diag_enabled("NTEX_COND_BACKTRACE") && matches!(op, CondOp::IfCat | CondOp::IfX)
                 {
-                    eprintln!("[trace-ifx] backtrace op={op:?}:\n{}", std::backtrace::Backtrace::force_capture());
+                    eprintln!(
+                        "[trace-ifx] backtrace op={op:?}:\n{}",
+                        std::backtrace::Backtrace::force_capture()
+                    );
                 }
                 let code = Self::if_type_code(op) * if neg { -1 } else { 1 };
                 // TeX：`\if*` 遇到即置新类型（参数扫描期间 branch=0）
@@ -224,7 +227,7 @@ impl Expander {
                         ors_left: None,
                         else_seen: false,
                         case_selected: false,
-saved_if_type: saved_type,
+                        saved_if_type: saved_type,
                         saved_if_branch: saved_branch,
                         if_type: code,
                         line: self.error_line_no(),
@@ -275,9 +278,11 @@ saved_if_type: saved_type,
                 // tex.web：\if 求值后打印 {true}/{false}（tracing_commands>0；
                 // 跳过区的 \if 惰性分支不评估不打印——上方 return 已处理）
                 if self.params.misc[3] > 0 && self.trace_suppress == 0 {
-                    let _ = self
-                        .sink
-                        .write16(if truth { "{true}".into() } else { "{false}".into() });
+                    let _ = self.sink.write16(if truth {
+                        "{true}".into()
+                    } else {
+                        "{false}".into()
+                    });
                 }
                 if !truth {
                     // tex.web：false → conditional 内部 pass_text 跳到本帧的
@@ -307,7 +312,7 @@ saved_if_type: saved_type,
                         ors_left: None,
                         else_seen: false,
                         case_selected: false,
-saved_if_type: saved_type,
+                        saved_if_type: saved_type,
                         saved_if_branch: saved_branch,
                         if_type: code,
                         line: self.error_line_no(),
@@ -447,7 +452,7 @@ saved_if_type: saved_type,
                         ors_left: None,
                         else_seen: false,
                         case_selected: false,
-saved_if_type: self.cur_if_type,
+                        saved_if_type: self.cur_if_type,
                         saved_if_branch: self.cur_if_branch,
                         if_type: Self::if_type_code(op),
                         line: self.error_line_no(),
@@ -697,7 +702,12 @@ saved_if_type: self.cur_if_type,
                 if diag_enabled("NTEX_IFX_TRACE") {
                     let n = |t: Token| match t.csid() {
                         Some(id) => {
-                            format!("csid={} {} ({:?})", id, self.intern.name(id), self.eqtb.slot(id))
+                            format!(
+                                "csid={} {} ({:?})",
+                                id,
+                                self.intern.name(id),
+                                self.eqtb.slot(id)
+                            )
                         }
                         None => format!("{t:?}"),
                     };
@@ -705,7 +715,10 @@ saved_if_type: self.cur_if_type,
                 }
                 let v = self.ifx_equal(t1, ne1, t2, ne2);
                 if diag_enabled("NTEX_IFX_TRACE") {
-                    eprintln!("[trace-ifx] verdict={v} unless_pending={}", self.unless_pending);
+                    eprintln!(
+                        "[trace-ifx] verdict={v} unless_pending={}",
+                        self.unless_pending
+                    );
                 }
                 Ok(v)
             }
@@ -804,10 +817,7 @@ saved_if_type: self.cur_if_type,
                     self.report_error("Bad character code.");
                     return Ok(false);
                 }
-                Ok(self
-                    .font_loader
-                    .char_metric(font, ch as u32)
-                    .is_some())
+                Ok(self.font_loader.char_metric(font, ch as u32).is_some())
             }
             CondOp::IfCsname => {
                 let name = self.scan_csname()?;
@@ -933,8 +943,27 @@ saved_if_type: self.cur_if_type,
                 )));
             };
             if diag_enabled("NTEX_COND_TRACE") {
-                let frames: Vec<String> = self.cond_stack.iter().map(|f| format!("{}{}", if f.is_case {"C"} else {"I"}, match f.state { CondState::Processing => "P", CondState::Skipping => "S", CondState::Evaluating => "V" })).collect();
-                eprintln!("[op-fetch] line={} tok={tok:?} ne={noexpand} skip={} stack=[{}]", self.current_line_no(), self.is_skipping(), frames.join(" "));
+                let frames: Vec<String> = self
+                    .cond_stack
+                    .iter()
+                    .map(|f| {
+                        format!(
+                            "{}{}",
+                            if f.is_case { "C" } else { "I" },
+                            match f.state {
+                                CondState::Processing => "P",
+                                CondState::Skipping => "S",
+                                CondState::Evaluating => "V",
+                            }
+                        )
+                    })
+                    .collect();
+                eprintln!(
+                    "[op-fetch] line={} tok={tok:?} ne={noexpand} skip={} stack=[{}]",
+                    self.current_line_no(),
+                    self.is_skipping(),
+                    frames.join(" ")
+                );
             }
             // 跳过区惰性消费（同 scan_relation）：操作数位置的内层条件被拒分支
             // （`\ifx…\else x\fi`）由本循环吞掉，不得当操作数
@@ -983,7 +1012,9 @@ saved_if_type: self.cur_if_type,
                         // tex.web get_x_token 错误恢复：当 \relax → 非字符
                         return Ok((None, None));
                     }
-                    EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
+                    // \if/\ifcat 操作数由 get_x_token 取得；protected 宏只在
+                    // \edef/\write 的 token-list 吸收循环中不展开。
+                    EqSlot::Macro(_) => true,
                     EqSlot::Primitive(p) if p.is_expandable() => true,
                     _ => false,
                 };
@@ -1080,6 +1111,9 @@ saved_if_type: self.cur_if_type,
                 // 不可展开 cs（\relax、\hbox、字符型 cs …）→ 非字符
                 return Ok((None, None));
             }
+            if tok.kind() == TokenKind::MacroParam {
+                return Ok((Some(b'#' as u32), Some(Catcode::Parameter)));
+            }
             return Ok((tok.charcode(), tok.catcode()));
         }
     }
@@ -1133,7 +1167,9 @@ saved_if_type: self.cur_if_type,
                         ));
                         true
                     }
-                    EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
+                    // 关系符位置同属 get_x_token，不能继承外层 \edef 的
+                    // protected 抑制门。
+                    EqSlot::Macro(_) => true,
                     EqSlot::Primitive(p) if p.is_expandable() => true,
                     _ => false,
                 };
@@ -1193,5 +1229,4 @@ saved_if_type: self.cur_if_type,
             }
         }
     }
-
 }

@@ -161,12 +161,10 @@ impl Expander {
             }
             if let Some(csid) = tok.csid() {
                 if matches!(self.eqtb.slot(csid), EqSlot::Undefined) {
-                    let _ = self
-                        .sink
-                        .write16(format!(
-                            "! Undefined control sequence.\n\\{}\n",
-                            self.intern.name(csid)
-                        ));
+                    let _ = self.sink.write16(format!(
+                        "! Undefined control sequence.\n\\{}\n",
+                        self.intern.name(csid)
+                    ));
                     continue;
                 }
                 // TRIP：条件原语在数字中先求值（TeX get_x_token 嵌套条件）
@@ -174,7 +172,9 @@ impl Expander {
                     if diag_enabled("NTEX_NUMSCAN_TRACE") {
                         eprintln!(
                             "[trace-numscan] cond 求值 {}",
-                            tok.csid().map(|id| self.intern.name(id).to_string()).unwrap_or_default()
+                            tok.csid()
+                                .map(|id| self.intern.name(id).to_string())
+                                .unwrap_or_default()
                         );
                     }
                     continue;
@@ -283,14 +283,13 @@ impl Expander {
                     continue;
                 }
                 if let Some(csid) = tok.csid() {
-                    let expandable =
-                        match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
-                            EqSlot::Macro(m) => {
-                                self.macro_expandable_in_numeric_scan(csid, m.value.protected)
-                            }
-                            EqSlot::Primitive(p) if p.is_expandable() => true,
-                            _ => false,
-                        };
+                    let expandable = match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
+                        EqSlot::Macro(m) => {
+                            self.macro_expandable_in_numeric_scan(csid, m.value.protected)
+                        }
+                        EqSlot::Primitive(p) if p.is_expandable() => true,
+                        _ => false,
+                    };
                     if expandable {
                         let mut expansion = Vec::new();
                         self.expand_once((tok, false), &mut expansion)?;
@@ -385,8 +384,10 @@ impl Expander {
                             if let Some(csid) = t.csid() {
                                 let expandable =
                                     match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
-                                        EqSlot::Macro(m) => self
-                                            .macro_expandable_in_numeric_scan(csid, m.value.protected),
+                                        EqSlot::Macro(m) => self.macro_expandable_in_numeric_scan(
+                                            csid,
+                                            m.value.protected,
+                                        ),
                                         EqSlot::Primitive(p) if p.is_expandable() => true,
                                         _ => false,
                                     };
@@ -460,8 +461,8 @@ impl Expander {
                     self.fetch()?; // 消费 \catcode
                     let code = self.scan_char_code()?;
                     let utf8 = self.params.misc[crate::param::MISC_UTF_INPUT_MODE] == 1;
-                    let in_unicode = utf8
-                        && (0..=crate::font::UNICODE_MAX_CHARCODE as i64).contains(&code);
+                    let in_unicode =
+                        utf8 && (0..=crate::font::UNICODE_MAX_CHARCODE as i64).contains(&code);
                     if u8::try_from(code).is_err() && !in_unicode {
                         return Err(Error::invalid_input("\\catcode 字符码越界"));
                     }
@@ -488,8 +489,8 @@ impl Expander {
                 EqSlot::Primitive(Primitive::FontDimen) => {
                     self.fetch()?; // 消费 \fontdimen
                     let num = self.scan_number()?;
-                    let num =
-                        u32::try_from(num).map_err(|_| Error::invalid_input("\\fontdimen 参数号越界"))?;
+                    let num = u32::try_from(num)
+                        .map_err(|_| Error::invalid_input("\\fontdimen 参数号越界"))?;
                     let font = self.scan_font_ident()?;
                     let v = self.fontdimen(font, num);
                     return Ok(if neg { -v } else { v });
@@ -560,8 +561,8 @@ impl Expander {
                 EqSlot::Primitive(Primitive::LcCode) => {
                     self.fetch()?; // 消费 \lccode
                     let byte = self.scan_char_code()?;
-                    let byte =
-                        u8::try_from(byte).map_err(|_| Error::invalid_input("\\lccode 字符码越界"))?;
+                    let byte = u8::try_from(byte)
+                        .map_err(|_| Error::invalid_input("\\lccode 字符码越界"))?;
                     let v = self.lccodes[byte as usize];
                     return Ok(if neg { -v } else { v });
                 }
@@ -571,8 +572,8 @@ impl Expander {
                 EqSlot::Primitive(Primitive::SfCode) => {
                     self.fetch()?; // 消费 \sfcode
                     let byte = self.scan_char_code()?;
-                    let byte =
-                        u8::try_from(byte).map_err(|_| Error::invalid_input("\\sfcode 字符码越界"))?;
+                    let byte = u8::try_from(byte)
+                        .map_err(|_| Error::invalid_input("\\sfcode 字符码越界"))?;
                     let v = i64::from(self.sfcodes[byte as usize]);
                     return Ok(if neg { -v } else { v });
                 }
@@ -589,7 +590,9 @@ impl Expander {
                     if int_param_index(p).is_some()
                         || matches!(
                             param_kind_of(p).map(|k| self.params.get(k)),
-                            Some(ParamValue::Number(_) | ParamValue::Dimen(_) | ParamValue::Glue(_))
+                            Some(
+                                ParamValue::Number(_) | ParamValue::Dimen(_) | ParamValue::Glue(_)
+                            )
                         ) =>
                 {
                     self.fetch()?; // 消费原语
@@ -793,9 +796,9 @@ impl Expander {
                 }
                 EqSlot::Primitive(
                     Primitive::DisplayWidth
-                        | Primitive::PreDisplaySize
-                        | Primitive::PageTotal
-                        | Primitive::PageGoal,
+                    | Primitive::PreDisplaySize
+                    | Primitive::PageTotal
+                    | Primitive::PageGoal,
                 ) => {
                     self.fetch()?;
                     return Ok(0);
@@ -879,7 +882,8 @@ impl Expander {
                     // `\edef\x{\number 2\zz}`（`\zz` protected→4）= 24，见
                     // `macro_expandable_in_numeric_scan` 文档。
                     if let Some(csid) = tok.csid() {
-                        let expandable = match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
+                        let expandable = match self.eqtb.slot(self.deref_alias_chain(csid)).clone()
+                        {
                             EqSlot::Macro(_) => true,
                             EqSlot::Primitive(p) if p.is_expandable() => true,
                             _ => false,
@@ -997,7 +1001,9 @@ impl Expander {
     /// 跳过前导空格 token（输入耗尽视为合法，返回 Ok）。
     fn skip_spaces(&mut self) -> Result<()> {
         loop {
-            let Some((tok, _)) = self.fetch()? else { return Ok(()) };
+            let Some((tok, _)) = self.fetch()? else {
+                return Ok(());
+            };
             if tok.catcode() != Some(Catcode::Space) {
                 self.unread(tok);
                 return Ok(());
@@ -1020,9 +1026,13 @@ impl Expander {
     ///   `more_name` 终止（消费不回退），此处只宽前导。
     fn skip_name_leading_blanks(&mut self) -> Result<()> {
         loop {
-            let Some((tok, _)) = self.fetch()? else { return Ok(()) };
-            let blank = matches!(tok.catcode(), Some(Catcode::Space | Catcode::Letter | Catcode::Other))
-                && tok.charcode() == Some(b' ' as u32);
+            let Some((tok, _)) = self.fetch()? else {
+                return Ok(());
+            };
+            let blank = matches!(
+                tok.catcode(),
+                Some(Catcode::Space | Catcode::Letter | Catcode::Other)
+            ) && tok.charcode() == Some(b' ' as u32);
             if !blank {
                 self.unread(tok);
                 return Ok(());
@@ -1189,7 +1199,9 @@ impl Expander {
     /// 判断 RHS token 是否为 toks 寄存器（`\toks<n>` 或 `\toksdef` cs），
     /// 返回寄存器下标；否则返回 None。
     fn toks_rhs_index(&mut self, tok: Token) -> Result<Option<usize>> {
-        let Some(csid) = tok.csid() else { return Ok(None) };
+        let Some(csid) = tok.csid() else {
+            return Ok(None);
+        };
         match self.eqtb.slot(csid) {
             EqSlot::Register(RegKind::Toks, idx) => Ok(Some(*idx)),
             EqSlot::Primitive(Primitive::Toks) => {
@@ -1486,9 +1498,7 @@ impl Expander {
                     continue;
                 }
                 // protected 宏在展开抑制上下文（\edef/\write）不展开 → 视为不可展开
-                EqSlot::Macro(m)
-                    if !(m.value.protected && self.suppress_expansion > 0) =>
-                {
+                EqSlot::Macro(m) if !(m.value.protected && self.suppress_expansion > 0) => {
                     let mut expansion = Vec::new();
                     self.expand_once((open, false), &mut expansion)?;
                     let items: Vec<(Token, bool)> = expansion.into_iter().collect();
@@ -1695,7 +1705,10 @@ impl Expander {
                 continue;
             }
             let expandable = match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
-                EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
+                // scan_optional_space 是 TeX get_x_token 位：哪怕调用链来自
+                // \edef/\write，protected 宏也只在构建 token list 的吸收循环
+                // 里受抑制；scanner 内部须照常展开。
+                EqSlot::Macro(_) => true,
                 EqSlot::Primitive(p) => p.is_expandable(),
                 _ => false,
             };
@@ -1779,12 +1792,10 @@ impl Expander {
             }
             if let Some(csid) = tok.csid() {
                 if matches!(self.eqtb.slot(csid), EqSlot::Undefined) {
-                    let _ = self
-                        .sink
-                        .write16(format!(
-                            "! Undefined control sequence.\n\\{}\n",
-                            self.intern.name(csid)
-                        ));
+                    let _ = self.sink.write16(format!(
+                        "! Undefined control sequence.\n\\{}\n",
+                        self.intern.name(csid)
+                    ));
                     continue;
                 }
                 // TRIP：条件原语在尺寸中先求值（TeX get_x_token 嵌套条件）
@@ -1807,7 +1818,9 @@ impl Expander {
                 // 可展开 cs（宏/可展开原语）：展开**当前** token（第一次 fetch 的），
                 // 结果压栈后重新符号处理（\t 展开 `-.01001010pt` 以 `-` 开头，TRIP L161）。
                 let expandable = match self.eqtb.slot(csid).clone() {
-                    EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
+                    // scan_dimen 的符号/单位前瞻使用 get_x_token；protected
+                    // 抑制不跨入这种执行型扫描。
+                    EqSlot::Macro(_) => true,
                     EqSlot::Primitive(p) if p.is_expandable() => true,
                     _ => false,
                 };
@@ -1890,8 +1903,8 @@ impl Expander {
             if let EqSlot::Primitive(Primitive::FontDimen) = self.eqtb.slot(csid) {
                 self.fetch()?; // 消费 \fontdimen
                 let num = self.scan_number()?;
-                let num =
-                    u32::try_from(num).map_err(|_| Error::invalid_input("\\fontdimen 参数号越界"))?;
+                let num = u32::try_from(num)
+                    .map_err(|_| Error::invalid_input("\\fontdimen 参数号越界"))?;
                 let font = self.scan_font_ident()?;
                 let v = self.fontdimen(font, num);
                 return Ok((if neg { -v } else { v }, 0));
@@ -1914,7 +1927,10 @@ impl Expander {
             // （按被查字体判上界，M9 中文刀 1）。任一处写死 255 都会让
             // `\dimen0=\fontcharwd\zh"4E2D` 报「Bad character code」。
             if let EqSlot::Primitive(
-                Primitive::FontCharWd | Primitive::FontCharHt | Primitive::FontCharDp | Primitive::FontCharIc,
+                Primitive::FontCharWd
+                | Primitive::FontCharHt
+                | Primitive::FontCharDp
+                | Primitive::FontCharIc,
             ) = self.eqtb.slot(csid)
             {
                 let component = match self.eqtb.slot(csid) {
@@ -1981,12 +1997,12 @@ impl Expander {
             // 胶参数由下方胶臂按宽度分量、整数参数走数字通道；\lastkern 下方有
             // 专属臂读 sink 实时值，须排除在此臂外。
             let dim_param = match self.eqtb.slot(csid) {
-                EqSlot::Primitive(p) if *p != Primitive::LastKern => param_kind_of(*p).and_then(
-                    |k| match self.params.get(k) {
+                EqSlot::Primitive(p) if *p != Primitive::LastKern => {
+                    param_kind_of(*p).and_then(|k| match self.params.get(k) {
                         ParamValue::Dimen(v) => Some(v),
                         _ => None,
-                    },
-                ),
+                    })
+                }
                 _ => None,
             };
             if let Some(v) = dim_param {
@@ -2304,7 +2320,9 @@ impl Expander {
         if let Some(csid) = self.peek_csid()? {
             let quantity = match self.eqtb.slot(csid).clone() {
                 EqSlot::Primitive(
-                    Primitive::ParshapeLength | Primitive::ParshapeIndent | Primitive::ParshapeDimen,
+                    Primitive::ParshapeLength
+                    | Primitive::ParshapeIndent
+                    | Primitive::ParshapeDimen,
                 ) => {
                     let kind = match self.eqtb.slot(csid) {
                         EqSlot::Primitive(Primitive::ParshapeIndent) => 0,
@@ -2344,7 +2362,8 @@ impl Expander {
                     Some(self.registers.muskip(idx).width)
                 }
                 EqSlot::Primitive(Primitive::Skip | Primitive::Muskip) => {
-                    let is_mu = matches!(self.eqtb.slot(csid), EqSlot::Primitive(Primitive::Muskip));
+                    let is_mu =
+                        matches!(self.eqtb.slot(csid), EqSlot::Primitive(Primitive::Muskip));
                     self.fetch()?; // 消费 \skip/\muskip
                     let idx = self.scan_register_index()?;
                     if is_mu {
@@ -2588,8 +2607,8 @@ impl Expander {
         } else {
             // dd/cc 沿用 unit_to_sp 常数（TRIP L331 `\halign spread-12.truedd`
             // 等钉值；tex.web 的 1238/1157、14856/1157 精确分数另行立项对拍）
-            let unit_sp =
-                unit_to_sp(&unit).ok_or_else(|| Error::invalid_input(format!("未知单位：{unit}")))?;
+            let unit_sp = unit_to_sp(&unit)
+                .ok_or_else(|| Error::invalid_input(format!("未知单位：{unit}")))?;
             num_pt * i128::from(unit_sp) / i128::from(SP_PER_PT)
         };
         let scaled = if neg { -scaled } else { scaled };
@@ -2753,7 +2772,10 @@ impl Expander {
                 // 依赖 `\baselineskip\f@linespread\baselineskip` 与
                 // `\belowdisplayskip\abovedisplayskip` 这种参数自/互赋值。
                 EqSlot::Primitive(p)
-                    if matches!(param_kind_of(p).map(|k| self.params.get(k)), Some(ParamValue::Glue(_))) =>
+                    if matches!(
+                        param_kind_of(p).map(|k| self.params.get(k)),
+                        Some(ParamValue::Glue(_))
+                    ) =>
                 {
                     self.fetch()?;
                     let Some(ParamValue::Glue(g)) = param_kind_of(p).map(|k| self.params.get(k))
@@ -2824,11 +2846,19 @@ impl Expander {
             Some(d) => d,
             None if mu => {
                 let w = self.scan_dimen_mu()?;
-                if neg { -w } else { w }
+                if neg {
+                    -w
+                } else {
+                    w
+                }
             }
             None => {
                 let w = self.scan_dimen()?;
-                if neg { -w } else { w }
+                if neg {
+                    -w
+                } else {
+                    w
+                }
             }
         };
         let mut stretch = 0i64;
@@ -2915,14 +2945,12 @@ impl Expander {
             }
             if !ne {
                 if let Some(csid) = tok.csid() {
-                    let expandable =
-                        match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
-                            EqSlot::Macro(m) => {
-                                !(m.value.protected && self.suppress_expansion > 0)
-                            }
-                            EqSlot::Primitive(p) if p.is_expandable() => true,
-                            _ => false,
-                        };
+                    let expandable = match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
+                        // scan_keyword 同为 get_x_token 语义，protected 宏照常展开。
+                        EqSlot::Macro(_) => true,
+                        EqSlot::Primitive(p) if p.is_expandable() => true,
+                        _ => false,
+                    };
                     if expandable {
                         let mut expansion = Vec::new();
                         self.expand_once((tok, false), &mut expansion)?;
@@ -2964,5 +2992,4 @@ impl Expander {
         self.unread(tok);
         Ok(csid)
     }
-
 }
