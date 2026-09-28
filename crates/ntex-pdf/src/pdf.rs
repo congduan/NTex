@@ -8,7 +8,8 @@
 //!   走 Type0/CFF 嵌入；否则走 Type1（PFB 流，见 [`crate::type1`]），
 //!   `/Encoding` 不指定——查看器用字体程序内建编码（cmr10 的 TeX 编码 =
 //!   DVI 字符码，天然一致）；`unicode_native` 字体（中文 Fandol 等，M9）
-//!   走 Type0/CIDFontType0 + `/FontFile3 /CIDFontType0C`（裸 CFF）
+//!   走 Type0/CIDFontType0 + `/FontFile3 /CIDFontType0C`（裸 CFF **按用字
+//!   子集化**，见 [`crate::cid::subset_cff`]；全量 FandolSong 4.8 MB → KB 级）
 //!   （见 [`crate::otf`]），内容流字符写成两字节十六进制串（Identity-H），
 //!   **串值 = 字体 CFF charset 里的真 CID**（Unicode →（cmap）→ GID →
 //!   （charset）→ CID，见 [`crate::cid`]；Fandol 即 Adobe-GB1 CID——写
@@ -452,10 +453,12 @@ enum FontForm {
         encoding: Vec<Option<String>>,
     },
     /// Type0：裸 CID-keyed CFF 进 `/FontFile3`（`/Subtype /CIDFontType0C`，
-    /// 见 [`crate::cid::bare_cff`]）。
+    /// 见 [`crate::cid::bare_cff`]）；写出前按本文档用字**子集化**
+    /// （见 [`crate::cid::subset_cff`]，全量 FandolSong 4.8 MB → KB 级）。
     /// `cid` = Unicode→真 CID 映射（见 [`crate::cid`]）；`None` 表示 CFF 解析
     /// 失败——此时内容流画不出任何字形，退回不嵌入降级以免写错映射。
     Otf {
+        /// 全量裸 CFF（子集化在写出时做：`used` 用字集到那一步才齐）。
         cff: Vec<u8>,
         cid: Option<CidMap>,
         /// TFM 8-bit 字体的 DVI 槽位 → OTF CID；Unicode 原生字体为 `None`。
