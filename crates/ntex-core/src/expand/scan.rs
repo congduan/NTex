@@ -81,14 +81,28 @@ impl Expander {
         id
     }
 
-    fn macro_expandable_in_numeric_scan(&self, csid: u32, protected: bool) -> bool {
-        if !protected || self.suppress_expansion == 0 {
-            return true;
-        }
-        matches!(
-            self.intern.name(csid),
-            "exp_end_continue_f:w" | "exp_end_continue_f:nw"
-        )
+    /// 数值扫描（scan_int 的符号/字母常量/基数/十进制各循环）对**宏一律展开**。
+    ///
+    /// tex.web scan_int 各循环取 token 走 get_x_token——没有 protected 门；e-TeX
+    /// 的 protected 抑制面只盖「构建展开 token 列表」语境（`\edef`/`\write` 的
+    /// 吸收循环，见 `scan_edef_body`/`scan_group_contents_xpand` 的 protected 臂），
+    /// **数值扫描不在其列**。GT pdflatex 实证（ctex 第六刀，2026-09-28）：
+    ///   ```tex
+    ///   \cs_new_protected:Npn \myp { 0 }
+    ///   \edef \x { \exp:w \myp Z }   % \exp:w = \romannumeral
+    ///   ```
+    /// GT 给 `\x`=Z 无错误——protected 宏在 `\edef` 内的 `\romannumeral` 数值
+    /// 扫描中**照样展开**，`0` 作为内部整数收场；`\number 2\zz`（`\zz` protected
+    /// 展开成 4）同样得 24。
+    ///
+    /// 此前 68e5d55 的 WIP 护栏在 `suppress_expansion > 0` 时只白名单
+    /// `exp_end_continue_f:w`/`:nw`，于是 l3tl-build 哨兵 `\__tl_build_last:NNn`
+    /// （protected）在 `\exp:w` 前瞻里落成不可展开 → tl_build 机器每耗尽一枚
+    /// `\exp_end:`（chardef 0，初值 4 枚、每次 put_right 消耗一枚）就从第 5 次
+    /// put_right 起报一次 Missing number：zhnumber 载入 167 条同一签名
+    /// （`<to be read again> \__tl_build_last:NNn`），GT（pdflatex 同探针）0 条。
+    fn macro_expandable_in_numeric_scan(&self, _csid: u32, _protected: bool) -> bool {
+        true
     }
 
     /// 扫描十进制整数；支持 `\count<idx>` 寄存器引用（M1 简化版）。
@@ -861,9 +875,12 @@ impl Expander {
                     // （l.18141 `\\fp_const:Nn \\c_e_fp {2.718 2818 2845 9045}`）的根因。
                     // pdfTeX 决定性证据：`\\def\\zz{4} \\count11=2\\zz` → 24（吸收，
                     // 非 2）。定性见 docs/archive/expl3-lvt-scoreboard.md 第三刀节/附录 A。
+                    // protected 宏同样展开（无 protected 门）——GT pdflatex
+                    // `\edef\x{\number 2\zz}`（`\zz` protected→4）= 24，见
+                    // `macro_expandable_in_numeric_scan` 文档。
                     if let Some(csid) = tok.csid() {
                         let expandable = match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
-                            EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
+                            EqSlot::Macro(_) => true,
                             EqSlot::Primitive(p) if p.is_expandable() => true,
                             _ => false,
                         };
