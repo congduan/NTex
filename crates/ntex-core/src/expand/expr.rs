@@ -116,7 +116,12 @@ impl Expander {
             return Ok(());
         }
         let mut expansion = Vec::new();
+        self.expand_once_recovered = false;
         self.expand_once(t2, &mut expansion)?;
+        if self.expand_once_recovered {
+            self.expand_once_recovered = false;
+            return Ok(());
+        }
         let mut seq = Vec::with_capacity(1 + expansion.len());
         seq.push(t1);
         seq.extend(expansion);
@@ -190,7 +195,21 @@ impl Expander {
                     // 泄给条件机——帧被体内 `\fi:` 提前弹掉，随后定界串里的 `\fi:`
                     // 再来一次即 "! Extra \fi."（expl3-code l.7934 起 \str_const:Ne
                     // 区级联，\str_case 全线 extra-} 失衡即源于此）。
+                    let save_arg_recovery = self.arg_scan_recovered;
+                    self.arg_scan_recovered = false;
                     let args = self.collect_args(csid, &def)?;
+                    let recovered = self.arg_scan_recovered;
+                    self.arg_scan_recovered = save_arg_recovery;
+                    if recovered {
+                        // 失配恢复：宏调用已被判定无效（tex.web macro_call abort
+                        // 分支不展开宏体）。这里的旗标只作上报（供上游
+                        // `\expandafter` 区分「合法空宏」与「失配忽略」，
+                        // 见下方 Expandafter 臂），宏体仍以已收集实参物化收场——
+                        // 让体尾收口/\fi 类结构闭合（第十八刀语义，
+                        // tests_bytecode18 bytecode_delimited_arg_extra_end_group_recovery_terminates
+                        // 锁定 `[R]` 失配后照常产出）。
+                        self.expand_once_recovered = true;
+                    }
                     out.extend(materialize_pairs(&def.body, &args));
                 }
                 EqSlot::Primitive(Primitive::Expandafter) => {
@@ -200,18 +219,19 @@ impl Expander {
                     let b = self
                         .fetch()?
                         .ok_or_else(|| Error::invalid_input("\\expandafter 链中断"))?;
-                    out.push(a);
                     // \unless：与 exec_expandafter 同理——就地拉取下一个 \if*
                     // 求值（\str_tail:n 的 `\expandafter\X\reverse_if:N\if…`）。
                     if self.slot_is_unless(b.0) && self.expand_unless_in_place()? {
                         if diag_enabled("NTEX_IFX_TRACE") {
                             eprintln!("[trace-ifx] unless-caller=expand_once");
                         }
+                        out.push(a);
                         return Ok(());
                     }
                     // \else/\fi/\or：TeX expand() 的 fi_or_else 分支（展开为空格并推进条件机）；
                     // 开着的跳过区同样就地消费（见 exec_expandafter 的说明）
                     if let Some(op) = self.cond_op(b.0) {
+                        out.push(a);
                         let before = self.cond_stack.len();
                         self.step_conditional(op, b.0)?;
                         if !matches!(op, CondOp::Fi) {
@@ -223,7 +243,14 @@ impl Expander {
                             self.drain_open_skip(depth)?;
                         }
                     } else {
-                        self.expand_once(b, out)?;
+                        let mut expansion = Vec::new();
+                        self.expand_once_recovered = false;
+                        self.expand_once(b, &mut expansion)?;
+                        if self.expand_once_recovered {
+                            return Ok(());
+                        }
+                        out.push(a);
+                        out.extend(expansion);
                     }
                 }
                 EqSlot::Primitive(Primitive::Noexpand) => {

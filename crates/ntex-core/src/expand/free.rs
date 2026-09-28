@@ -476,6 +476,15 @@ fn detokenize_token(tok: Token, intern: &InternTable, esc: i64, out: &mut Vec<To
                 Catcode::Other
             };
             out.push(Token::char(cat, ch));
+            // 宏参数字符（cat 6）翻倍：e-TeX detokenize 走 conv_toks →
+            // show_token_list 印刷语义（tex.web `mac_param: print(c); print(c)`）。
+            // GT（pdfTeX 2026-09-28 /tmp/r8）：`\detokenize{#1}`=`##1`、
+            // `\detokenize{##1}`=`####1`、`\tl_to_str:n{#1}`=`##1`。
+            // 宏体参数引用（MacroParam，out_param）仍单印（`\meaning\a`
+            // 的 `macro:#1->x#1y`），与此处 Char 臂不同。
+            if tok.catcode() == Some(Catcode::Parameter) {
+                out.push(Token::char(cat, ch));
+            }
         }
         TokenKind::ControlSeq => {
             let name = intern.name(tok.csid().expect("ControlSeq 必有 csid"));

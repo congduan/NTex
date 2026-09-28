@@ -151,6 +151,7 @@ impl Expander {
                      The macro here has not been followed by the required stuff,\n\
                      so I'm ignoring it.\n"
                 ));
+                self.arg_scan_recovered = true;
             }
             return Ok(Vec::new());
         }
@@ -211,6 +212,10 @@ impl Expander {
                  The macro here has not been followed by the required stuff,\n\
                  so I'm ignoring it.\n"
             ));
+            if self.suppress_expansion > 0 {
+                self.discard_to_balanced_delim(segments.last().map(Vec::as_slice).unwrap_or(&[]))?;
+            }
+            self.arg_scan_recovered = true;
             return Ok(Vec::new());
         }
         for k in 0..n {
@@ -486,6 +491,38 @@ impl Expander {
             .iter()
             .zip(delim)
             .all(|(&(a, _), &b)| self.delim_token_eq(a, b))
+    }
+
+    /// 展开吸收上下文中的宏失配恢复：宏调用已被判定为无效后，继续按平衡
+    /// 花括号丢弃到参数文本的尾定界符。LaTeX expl3 的 `\q_stop`/递归尾哨兵
+    /// 若残留在 `\expanded`/f 型实参里，会被当成可展开 quark 反复重推；
+    /// tex.web 的错误恢复语义是在 matching 状态下丢弃该次调用的未完成参数。
+    fn discard_to_balanced_delim(&mut self, delim: &[Token]) -> Result<()> {
+        if delim.is_empty() {
+            return Ok(());
+        }
+        let mut buf: Vec<(Token, bool)> = Vec::new();
+        let mut depth = 0usize;
+        while let Some((tok, noexpand)) = self.fetch()? {
+            match tok.catcode() {
+                Some(Catcode::BeginGroup) => {
+                    buf.push((tok, noexpand));
+                    depth += 1;
+                    continue;
+                }
+                Some(Catcode::EndGroup) if depth > 0 => {
+                    depth -= 1;
+                    buf.push((tok, noexpand));
+                    continue;
+                }
+                _ => {}
+            }
+            buf.push((tok, noexpand));
+            if depth == 0 && self.suffix_matches_delim(&buf, delim) {
+                break;
+            }
+        }
+        Ok(())
     }
 
     /// 收集一个无分隔实参：
@@ -1142,6 +1179,10 @@ impl Expander {
                 break 'scan;
             };
             if noexpand {
+                if diag_enabled("NTEX_HASH_SCAN_DBG") && tok.catcode() == Some(Catcode::Parameter)
+                {
+                    eprintln!("[hash-edef] frozen-hash");
+                }
                 out.push(tok);
                 continue;
             }

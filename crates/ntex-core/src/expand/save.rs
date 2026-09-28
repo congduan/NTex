@@ -1205,6 +1205,9 @@ impl Expander {
             match t.kind() {
                 TokenKind::Char => {
                     if let Some(ch) = t.charcode().and_then(char::from_u32) {
+                        if t.catcode() == Some(Catcode::Parameter) {
+                            s.push(ch);
+                        }
                         s.push(ch);
                     }
                 }

@@ -1,0 +1,19 @@
+\documentclass{article}
+\ExplSyntaxOn
+% 校准法：同一打印机通道下，被测列表 vs 手工参照列表。
+% 打印机若把 # 印成 ##，两侧同倍——对比「是否相等」即可排除打印器干扰。
+\tl_new:N \l_a_tl
+\tl_new:N \l_ref_two
+\tl_new:N \l_ref_one
+% 翻倍结果
+\tl_set:Ne \l_a_tl { \__hook_double_hashes:n { #1 } }
+% 参照：实参里两个 cat-6 hash 字符 + 1
+\tl_set:Nn \l_ref_two { ##1 }
+% 参照：实参里一个 cat-6 hash 字符 + 1
+\tl_set:Nn \l_ref_one { #1 }
+\typeout{A=\tl_to_str:N \l_a_tl}
+\typeout{REF2=\tl_to_str:N \l_ref_two}
+\typeout{REF1=\tl_to_str:N \l_ref_one}
+\typeout{A-EQ-REF2=\tl_if_eq:NNTF \l_a_tl \l_ref_two {YES}{NO}}
+\typeout{A-EQ-REF1=\tl_if_eq:NNTF \l_a_tl \l_ref_one {YES}{NO}}
+\stop

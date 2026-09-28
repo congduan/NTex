@@ -1585,6 +1585,16 @@ impl Expander {
                 _ => tokens.push(t),
             }
         }
+        if diag_enabled("NTEX_HASH_SCAN_DBG") {
+            let hashes = tokens
+                .iter()
+                .filter(|t| t.catcode() == Some(Catcode::Parameter))
+                .count();
+            eprintln!(
+                "[hash-scan] xpand={xpand} len={} hashes={hashes}",
+                tokens.len()
+            );
+        }
         Ok(tokens)
     }
 

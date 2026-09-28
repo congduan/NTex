@@ -676,6 +676,7 @@ const DIAG_KEYS: &[&str] = &[
     "NTEX_ALIGN_TRACE",
     "NTEX_BIGLIST_TRACE",
     "NTEX_CSNAME_STATS",
+    "NTEX_HASH_SCAN_DBG",
 ];
 
 /// 结构化 trace 通道（JSONL）——**挂死/膨胀类定位的核心设施**。
@@ -1015,6 +1016,12 @@ pub struct Expander {
     /// 当前 macro_call 的实参扫描是否已由「Paragraph ended」类恢复中止。
     /// tex.web 此时不再继续扫描后续参数、更不展开该宏体；恢复材料交回外层输入。
     arg_scan_recovered: bool,
+    /// 最近一次 [`Self::expand_once`] 是否因宏参数失配恢复而产出空展开。
+    ///
+    /// `\expandafter` 必须区分「合法空宏」与「宏调用被错误恢复忽略」：
+    /// 后者不能把前置 token 反复放回同一输入位置，否则会形成
+    /// `\expandafter` × 单 token 的恢复活锁。
+    expand_once_recovered: bool,
     /// `\fontdimen` 覆盖表：(font_id, 参数号) → 值（sp）。TFM 度量在排版层，
     /// 此处仅存覆盖项；无覆盖读回 0（后续接入 TFM 时回退真实参数）。
     /// （第九刀：附每字体最大参数号缓存——越界判定 O(1)，见 fontdimens.rs。）
@@ -1179,6 +1186,7 @@ impl Expander {
             outer_pending: false,
             long_pending: false,
             arg_scan_recovered: false,
+            expand_once_recovered: false,
             fontdimens: FontDimens::new(),
             hyphenchars: HashMap::new(),
             delcodes: HashMap::new(),
@@ -2141,10 +2149,18 @@ impl Expander {
                 }
                 InputFrame::Bytecode { pc, .. } => format!("Bytecode(pc={})", pc),
                 InputFrame::TokenList { items, pos } => {
-                    format!("TokenList({}tok,pos={})", items.len(), pos)
+                    let head = items
+                        .get(*pos)
+                        .map(|(t, _)| self.render_token(*t))
+                        .unwrap_or_else(|| "EOF".to_owned());
+                    format!("TokenList({}tok,pos={},head={})", items.len(), pos, head)
                 }
                 InputFrame::MacroArg { items, pos } => {
-                    format!("MacroArg({}tok,pos={})", items.len(), pos)
+                    let head = items
+                        .get(*pos)
+                        .map(|(t, _)| self.render_token(*t))
+                        .unwrap_or_else(|| "EOF".to_owned());
+                    format!("MacroArg({}tok,pos={},head={})", items.len(), pos, head)
                 }
                 InputFrame::One { tok, .. } => format!("One({tok:?})"),
                 InputFrame::OutputRoutine { items, pos } => {

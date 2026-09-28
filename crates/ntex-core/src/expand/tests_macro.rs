@@ -973,7 +973,12 @@ fn hash_brace_makes_last_param_brace_delimited() {
                                         // catcode 下空格是 token，expl3 里是 cat 9）
         ))
         .unwrap(),
-        "X#1Yrest" // #4=`#1`（`{` 作定界符消费）；体尾 hash_brace `{` 与源 `}` 配成组，rest 在组内
+        // #4=`#1`（`{` 作定界符消费）；体尾 hash_brace `{` 与源 `}` 配成组，rest 在组内。
+        // `##1`：#4 内容是 cat-6 `#`+`1`，detokenize 按 show_token_list 印刷语义翻倍
+        // （tex.web `mac_param: print(c); print(c)`；GT pdfTeX 2026-09-28 /tmp/r8
+        // 同构探针得 `X##1Y{rest}`——NTex 残差仅 `{}` 组括号：\write 串行化
+        // 已知缺口，见第二十轮登记）。
+        "X##1Yrest"
     );
 }
 
