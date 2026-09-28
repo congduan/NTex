@@ -64,6 +64,104 @@ fn note_csname_stats(name: &str, existed: bool) {
 }
 
 impl Expander {
+    fn expand_kernel_codepoint_to_bytes(
+        &mut self,
+        args: &[ArgArray],
+    ) -> Result<Vec<(Token, bool)>> {
+        let Some(arg) = args.first() else {
+            return Ok(Vec::new());
+        };
+        let depth = self.stack.len();
+        let saved_floor = self.read_floor;
+        self.push_frame(InputFrame::TokenList {
+            items: Arc::from(arg.iter().copied().collect::<Vec<_>>()),
+            pos: 0,
+        });
+        self.read_floor = depth;
+        let codepoint = self.scan_number();
+        self.stack.truncate(depth);
+        self.read_floor = saved_floor;
+        let codepoint = codepoint?;
+
+        let bytes = if codepoint <= 0x7f {
+            vec![codepoint]
+        } else if codepoint <= 0x7ff {
+            vec![0xc0 + codepoint / 64, 0x80 + codepoint % 64]
+        } else if codepoint <= 0xffff {
+            vec![
+                0xe0 + codepoint / (64 * 64),
+                0x80 + (codepoint / 64) % 64,
+                0x80 + codepoint % 64,
+            ]
+        } else {
+            vec![
+                0xf0 + codepoint / (64 * 64 * 64),
+                0x80 + (codepoint / (64 * 64)) % 64,
+                0x80 + (codepoint / 64) % 64,
+                0x80 + codepoint % 64,
+            ]
+        };
+
+        let byte_len = bytes.len();
+        let mut out = Vec::new();
+        for b in bytes {
+            out.push((Token::char(Catcode::BeginGroup, b'{' as u32), false));
+            for digit in b.to_string().bytes() {
+                out.push((Token::char(Catcode::Other, u32::from(digit)), false));
+            }
+            out.push((Token::char(Catcode::EndGroup, b'}' as u32), false));
+        }
+        for _ in byte_len..4 {
+            out.push((Token::char(Catcode::BeginGroup, b'{' as u32), false));
+            out.push((Token::char(Catcode::EndGroup, b'}' as u32), false));
+        }
+        Ok(out)
+    }
+
+    fn eval_token_arg_as_number(&mut self, arg: &ArgArray) -> Result<i64> {
+        let depth = self.stack.len();
+        let saved_floor = self.read_floor;
+        self.push_frame(InputFrame::TokenList {
+            items: Arc::from(arg.iter().copied().collect::<Vec<_>>()),
+            pos: 0,
+        });
+        self.read_floor = depth;
+        let n = self.scan_number();
+        self.stack.truncate(depth);
+        self.read_floor = saved_floor;
+        n
+    }
+
+    fn expand_codepoint_str_generate(&mut self, args: &[ArgArray]) -> Result<Vec<(Token, bool)>> {
+        let mut out = Vec::new();
+        for arg in args {
+            if arg.is_empty() {
+                continue;
+            }
+            let byte = self.eval_token_arg_as_number(arg)?;
+            if (0..=255).contains(&byte) {
+                out.push((Token::char(Catcode::Other, byte as u32), false));
+            }
+        }
+        Ok(out)
+    }
+
+    fn expand_codepoint_str_generate_n(&mut self, args: &[ArgArray]) -> Result<Vec<(Token, bool)>> {
+        let Some(arg) = args.first() else {
+            return Ok(Vec::new());
+        };
+        let codepoint = self.eval_token_arg_as_number(arg)?;
+        let Some(ch) = char::from_u32(codepoint as u32) else {
+            return Ok(Vec::new());
+        };
+        Ok(ch
+            .to_string()
+            .into_bytes()
+            .into_iter()
+            .map(|b| (Token::char(Catcode::Other, u32::from(b)), false))
+            .collect())
+    }
+
     /// `\expandafter a b`：输出 a，再输出 b 的一次展开结果。
     ///
     /// 展开"一次"：宏 → 实参替换后的宏体（不再递归展开）；`\expandafter` → 递归；
@@ -209,6 +307,18 @@ impl Expander {
                         // tests_bytecode18 bytecode_delimited_arg_extra_end_group_recovery_terminates
                         // 锁定 `[R]` 失配后照常产出）。
                         self.expand_once_recovered = true;
+                    }
+                    if self.intern.name(csid) == "__kernel_codepoint_to_bytes:n" {
+                        out.extend(self.expand_kernel_codepoint_to_bytes(&args)?);
+                        return Ok(());
+                    }
+                    if self.intern.name(csid) == "codepoint_str_generate:n" {
+                        out.extend(self.expand_codepoint_str_generate_n(&args)?);
+                        return Ok(());
+                    }
+                    if self.intern.name(csid) == "__codepoint_str_generate:nnnn" {
+                        out.extend(self.expand_codepoint_str_generate(&args)?);
+                        return Ok(());
                     }
                     out.extend(materialize_pairs(&def.body, &args));
                 }

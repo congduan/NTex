@@ -1222,6 +1222,41 @@ fn expanded_preserves_noexpand_for_outer_edef() {
 }
 
 #[test]
+fn expanded_codepoint_helper_materializes_in_outer_edef() {
+    // l3kernel \codepoint_str_generate:n is used to build UTF-8 file-name
+    // fragments such as zhnumber-utf8.cfg.  NTex handles the public generator
+    // directly so the internal f-expansion helper cannot leak into file names.
+    let src = concat!(
+        "\\catcode`\\_=11 \\catcode`\\:=11 ",
+        "\\def\\codepoint_str_generate:n#1{BAD}",
+        "\\edef\\x{\\codepoint_str_generate:n{`u}",
+        "\\codepoint_str_generate:n{`t}",
+        "\\codepoint_str_generate:n{`f}",
+        "\\codepoint_str_generate:n{`8}}",
+        "\\meaning\\x"
+    );
+    assert_eq!(expand(src).unwrap(), "macro:->utf8");
+}
+
+#[test]
+fn def_param_text_resolves_let_char_alias() {
+    // tex.web let（@<Assignments@> `define(p,cur_cmd,cur_chr)`）：`\let\cs=<字符>`
+    // 让 cs 与字符全同义，参数文本扫描须把这种 cs 解析回字符——expl3
+    // `\c_parameter_token` 惯用法（`\cs_new_protected:Npn \f:n \c_parameter_token 1`，
+    // ctexart.cls l.1203）依赖此语义定义出 1 参宏。
+    let src = concat!(
+        "\\catcode`\\_=11 \\catcode`\\:=11 ",
+        "\\let\\cParm=#",
+        // 参数文本：`\cParm 1` → 1 参宏
+        "\\def\\foo:n \\cParm 1{Y\\cParm 1Z}",
+        // 宏体：`\cParm 1` → 参数槽 #1（tex.web scan_toks 体循环同臂）
+        "\\edef\\res{\\foo:n{AB}}",
+        "\\meaning\\res"
+    );
+    assert_eq!(expand(src).unwrap(), "macro:->YABZ");
+}
+
+#[test]
 fn edef_keeps_self_quark_marker_as_data() {
     assert_eq!(
         expand("\\catcode`\\_=11 \\def\\q_demo{\\q_demo}\\edef\\x{\\q_demo}\\meaning\\x").unwrap(),

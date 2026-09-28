@@ -965,6 +965,31 @@ impl Expander {
     /// `##` → 字面 `#`（跳过一个 #，文本中保留一个）。第三元组项 = 参数文本以
     /// `#{` 收尾时需追加到宏体末尾的 `{` token（tex.web scan_toks hash_brace，
     /// 无则 `None`）。
+    /// tex.web let（@<Assignments@> `define(p,cur_cmd,cur_chr)`）：`\let\cs=<字符>`
+    /// 使 cs 与该字符**同 cmd/chr**。expl3 `\c_parameter_token` 即
+    /// `\cs_new_eq:NN \c_parameter_token #`（expl3-code l.9446），ctex 用它在
+    /// expl3 猫码下书写含 `#` 的参数文本/宏体
+    /// （`\cs_new_protected:Npn \__ctex_patch_toc_width:n \c_parameter_token 1`
+    /// ctexart.cls l.1203）：
+    /// - 参数文本不解析 → 定义出 0 参宏，调用点报 doesn't match its definition；
+    /// - 宏体不解析 → 体里残留 cs token，调用时流入 `\@ifpackageloaded` 实参
+    ///   → `\csname ver@\c_parameter_token 1.sty` 报 Missing endcsname。
+    ///
+    /// **只解析 cat-6**：tex.web scan_toks 两循环中组配平按 `cur_tok` 判
+    /// （`cur_tok<right_brace_limit` → cs token 永不算花括号，etrip
+    /// `\let\bgroup={` 惯用法依赖此），参数转换按 `cur_cmd` 判
+    /// （L9342/L9402）→ 字符别名 cs 只有 mac_param 语义生效。
+    fn resolve_let_param_char_alias(&self, tok: Token) -> Token {
+        if let Some(csid) = tok.csid() {
+            if let EqSlot::Char { catcode, charcode } = self.eqtb.slot(csid) {
+                if *catcode == Catcode::Parameter {
+                    return Token::char(*catcode, *charcode);
+                }
+            }
+        }
+        tok
+    }
+
     fn scan_parameter_text(&mut self) -> Result<(u8, TokenArray, Option<Token>)> {
         let mut num = 0u8;
         let mut text = Vec::new();
@@ -974,6 +999,7 @@ impl Expander {
                 .fetch()?
                 .ok_or_else(|| Error::invalid_input("\\def 参数文本未闭合（缺少 {）"))?
                 .0;
+            let tok = self.resolve_let_param_char_alias(tok);
             match tok.catcode() {
                 Some(Catcode::BeginGroup) => break,
                 // TeX scan_toks macro_def（tex.web L22945 `if cur_chr=...end_group`）：
@@ -1050,6 +1076,7 @@ impl Expander {
                 .fetch()?
                 .ok_or_else(|| Error::invalid_input("替换文本未闭合（缺少 }）"))?
                 .0;
+            let tok = self.resolve_let_param_char_alias(tok);
             match tok.catcode() {
                 Some(Catcode::EndGroup) => {
                     if depth == 0 {
@@ -1430,7 +1457,7 @@ impl Expander {
                         )));
                     }
                     let mut expansion = Vec::new();
-                    self.expand_once((tok, noexpand), &mut expansion)?;
+                    self.expand_once((tok, false), &mut expansion)?;
                     if expansion.is_empty() {
                         continue;
                     }
@@ -1441,7 +1468,7 @@ impl Expander {
                 }
                 EqSlot::Primitive(p) if p.is_expandable() => {
                     let mut expansion = Vec::new();
-                    self.expand_once((tok, noexpand), &mut expansion)?;
+                    self.expand_once((tok, false), &mut expansion)?;
                     // expand_once 不识别但声明可展开的原语（\uppercase/\lowercase/
                     // \char/\romannumeral 等）：原样返回自身——若压帧会无限循环
                     // （TRIP L338 `\edef\A{\uppercase{...}}` 曾因此 OOM 挂死）。
