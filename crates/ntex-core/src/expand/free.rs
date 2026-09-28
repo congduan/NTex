@@ -393,6 +393,18 @@ fn detok_tokens(toks: &[Token], intern: &InternTable) -> String {
             TokenKind::Char => {
                 if let Some(ch) = t.charcode().and_then(char::from_u32) {
                     s.push(ch);
+                    // cat 6 字符 token 翻倍：tex.web show_token_list
+                    // `mac_param: print(c); print(c);`（L6283 区）——本函数
+                    // 是 `\show`/`\meaning`/`\showthe` 的 token_show 通道
+                    // （三处调用点均走 tex.web token_show），与 save.rs
+                    // show_toks 同规。GT（pdfTeX 2026-09-28 /tmp/r8
+                    // hash-chan）：体含 `##1`（两个 cat6 Char）的宏
+                    // `\meaning`=`macro:->…{####1}`；宏体参数引用
+                    // （MacroParam/out_param）仍单印 `#n`（GT
+                    // `\meaning\a`=`macro:#1->x#1y`）。
+                    if t.catcode() == Some(Catcode::Parameter) {
+                        s.push(ch);
+                    }
                 }
             }
             TokenKind::ControlSeq => {
