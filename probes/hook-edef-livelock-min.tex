@@ -1,0 +1,17 @@
+\documentclass{article}
+\ExplSyntaxOn
+\cs_new:Npn \myaux:N #1 { \if_catcode:w ## \exp_not:N #1 X \else: Y \fi: }
+\cs_new:Npn \mytake:N #1 #2 \q_stop { \myaux:N #1 }
+\tl_set:Nn \l_c_tl { # }
+\typeout{H1}
+\tl_set:Ne \l_r_tl { \exp_args:No \mytake:N \l_c_tl \q_stop }
+\typeout{P1=\tl_to_str:N \l_r_tl}
+\typeout{H2}
+\cs_new:Npn \mytake2:N #1 #2 \q_stop { \if_catcode:w #1 X \else: Y \fi: }
+\tl_set:Ne \l_r_tl { \exp_args:No \mytake2:N \l_c_tl \q_stop }
+\typeout{P2=\tl_to_str:N \l_r_tl}
+\typeout{H3}
+\cs_new:Npn \mytake3:N #1 #2 \q_stop { \if_catcode:w \exp_not:N #1 X \else: Y \fi: }
+\tl_set:Ne \l_r_tl { \exp_args:No \mytake3:N \l_c_tl \q_stop }
+\typeout{P3=\tl_to_str:N \l_r_tl}
+\stop

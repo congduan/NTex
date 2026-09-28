@@ -1,0 +1,6 @@
+\documentclass{article}
+\ExplSyntaxOn
+\makeatletter
+\edef\x{\__hook_double_hashes:n { \tl_set:Nn \ttl@a {#1} }}
+\typeout{X=\meaning\x}
+\stop

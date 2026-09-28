@@ -1,0 +1,11 @@
+\documentclass{article}
+\ExplSyntaxOn
+\tl_set:Ne \l_a_tl { \__hook_double_hashes:n { #1 } }
+\typeout{D1=\tl_to_str:N \l_a_tl}
+\tl_set:Ne \l_a_tl { \__hook_double_hashes:n { # } }
+\typeout{D2=\tl_to_str:N \l_a_tl}
+\tl_set:Ne \l_a_tl { \__hook_double_hashes:n { { #1 } } }
+\typeout{D3=\tl_to_str:N \l_a_tl}
+\tl_set:Ne \l_a_tl { \__hook_double_hashes:n { \tl_set:Nn \l_x_tl { #1 } } }
+\typeout{D4=\tl_to_str:N \l_a_tl}
+\stop
