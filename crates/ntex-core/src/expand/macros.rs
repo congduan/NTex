@@ -1139,6 +1139,27 @@ impl Expander {
     ///   构造 catcode 查表时 `#`（cat 6）进入 `\expanded` 实参即依赖此语义
     ///   （latex.ltx --initex 256 条 IPN 的根因，2026-09-08 修复）。
     fn scan_edef_body(&mut self, def_name: &str, in_definition: bool) -> Result<Vec<Token>> {
+        Ok(self
+            .scan_edef_body_pairs(def_name, in_definition, false)?
+            .into_iter()
+            .map(|(tok, _)| tok)
+            .collect())
+    }
+
+    fn is_self_quark_macro(&self, tok: Token, def: &MacroDef) -> bool {
+        let Some(csid) = tok.csid() else {
+            return false;
+        };
+        let name = self.intern.name(csid);
+        name.starts_with("q_") && def.body.len() == 1 && def.body[0] == tok
+    }
+
+    fn scan_edef_body_pairs(
+        &mut self,
+        def_name: &str,
+        in_definition: bool,
+        preserve_noexpand: bool,
+    ) -> Result<Vec<(Token, bool)>> {
         let mut out = Vec::new();
         // tex.web scan_toks（L9394）：`unbalance:=1` 起始——首个 `{` 已被
         // scan_left_brace/参数部消费，体扫描从「已开一个未配平组」起算。
@@ -1297,7 +1318,7 @@ impl Expander {
                 {
                     eprintln!("[hash-edef] frozen-hash");
                 }
-                out.push(tok);
+                out.push((tok, preserve_noexpand));
                 continue;
             }
             // 条件原语：即时求值（优先级与 process_one 相同）
@@ -1340,12 +1361,12 @@ impl Expander {
                     if unbalance == 0 {
                         break 'scan; // 外层 }：宏体结束（不收入体）
                     }
-                    out.push(tok);
+                    out.push((tok, false));
                     continue;
                 }
                 Some(Catcode::BeginGroup) => {
                     unbalance += 1;
-                    out.push(tok);
+                    out.push((tok, false));
                     continue;
                 }
                 _ => {}
@@ -1359,9 +1380,9 @@ impl Expander {
                         .ok_or_else(|| Error::invalid_input("替换文本中 # 后无 token"))?
                         .0;
                     if let Some(d) = digit_value(next) {
-                        out.push(Token::macro_param(d));
+                        out.push((Token::macro_param(d), false));
                     } else if is_parameter_char(next) {
-                        out.push(Token::char(Catcode::Parameter, b'#' as u32));
+                        out.push((Token::char(Catcode::Parameter, b'#' as u32), false));
                     } else {
                         // 同 scan_balanced_text：tex.web L9416-9423 可恢复语义
                         self.unread(next);
@@ -1376,10 +1397,10 @@ impl Expander {
                              Or maybe a } was forgotten somewhere earlier, and things\n\
                              are all screwed up? I'm going to assume that you meant ##.\n",
                         );
-                        out.push(tok);
+                        out.push((tok, false));
                     }
                 } else {
-                    out.push(tok);
+                    out.push((tok, false));
                 }
                 continue;
             };
@@ -1391,7 +1412,13 @@ impl Expander {
                 // 落入 `_` 原样收集，不改深度。
                 // protected 宏在展开抑制上下文（\edef/\write）不展开 → 原样收入
                 EqSlot::Macro(m) if m.value.protected && self.suppress_expansion > 0 => {
-                    out.push(tok);
+                    out.push((tok, false));
+                }
+                // expl3 quarks are self-recursive marker macros. In real use they
+                // are delimiter/data tokens; if a frame split leaks one into this
+                // absorbing loop, expanding it can only reproduce the same token.
+                EqSlot::Macro(m) if self.is_self_quark_macro(tok, &m.value) => {
+                    out.push((tok, false));
                 }
                 // 可展开项（宏/可展开原语）：展开后压帧，重新进入本扫描
                 EqSlot::Macro(m) => {
@@ -1445,7 +1472,7 @@ impl Expander {
                 // 实参扫描失衡（「实参组未闭合」fatal，latex.ltx l.9114 停点）。
                 // 字符别名 `\let\egroup=}`（etrip.tex 29-34）EqSlot 为 Char，本就
                 // 落此臂原样收集。
-                _ => out.push(tok),
+                _ => out.push((tok, false)),
             }
         }
         if runaway {

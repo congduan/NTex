@@ -1211,6 +1211,25 @@ fn expanded_primitive_expands_like_edef() {
 }
 
 #[test]
+fn expanded_preserves_noexpand_for_outer_edef() {
+    // `\expanded` 返回给外层 `\edef` 时，内部 `\noexpand` 产生的一次性
+    // 冻结位必须跨过 primitive 边界。否则自指 quark 类宏会在外层 edef
+    // 扫描器中二次展开并活锁。
+    assert_eq!(
+        expand("\\def\\q{\\q}\\edef\\x{\\expanded{\\noexpand\\q}}\\meaning\\x").unwrap(),
+        "macro:->\\q "
+    );
+}
+
+#[test]
+fn edef_keeps_self_quark_marker_as_data() {
+    assert_eq!(
+        expand("\\catcode`\\_=11 \\def\\q_demo{\\q_demo}\\edef\\x{\\q_demo}\\meaning\\x").unwrap(),
+        "macro:->\\q_demo "
+    );
+}
+
+#[test]
 fn expanded_takes_literal_hash_without_ipn() {
     // tex.web scan_toks(macro_def=false)：\expanded 实参**不做参数 # 处理**
     // ——字面 #（含 cat 6）原样收集，不报 Illegal parameter number，## 亦不

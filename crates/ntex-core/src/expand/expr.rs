@@ -305,9 +305,10 @@ impl Expander {
                 }
                 EqSlot::Primitive(Primitive::Expanded) => {
                     // pdfTeX \expanded{...}：组内容按 \edef 语义全展开（结果已
-                    // 无可展开项，标记 false 直接入 out；\edef 扫描器会原样吸收）
-                    let toks = self.scan_expanded_group()?;
-                    out.extend(toks.into_iter().map(|t| (t, false)));
+                    // 无可展开项；\noexpand/\unexpanded 产物的冻结位需交给外层
+                    // 展开器消费一次，不能在 \expanded 边界抹掉。
+                    let toks = self.scan_expanded_group_pairs()?;
+                    out.extend(toks);
                 }
                 EqSlot::Primitive(Primitive::Scantokens) => {
                     // e-TeX \scantokens is expandable in the sense relevant to
@@ -1143,8 +1144,8 @@ impl Expander {
     /// **全展开**后放回输入流继续处理（`\edef\1{...}` 的体内联版）。
     /// 主循环执行与展开上下文（`\edef`/`\write`/外层 `\expanded`）同路径。
     fn exec_expanded(&mut self) -> Result<()> {
-        let toks = self.scan_expanded_group()?;
-        self.emit_tokens(toks)
+        let toks = self.scan_expanded_group_pairs()?;
+        self.emit_tokens(toks.into_iter().map(|(tok, _)| tok).collect())
     }
 
     /// `\expanded` 实参扫描：scan_left_brace（filler 语义——跳空格/`\relax`、
@@ -1154,12 +1155,12 @@ impl Expander {
     /// **不做参数 `#` 处理**（tex.web scan_toks macro_def=false——字面 `#`
     /// 原样收集、不报 Illegal parameter number；expl3-code l.9356-9372 经
     /// `\lowercase` 构造 catcode 查表时 `#` 进 `\expanded` 实参即依赖此）。
-    fn scan_expanded_group(&mut self) -> Result<Vec<Token>> {
+    fn scan_expanded_group_pairs(&mut self) -> Result<Vec<(Token, bool)>> {
         self.scan_left_brace()?;
         self.suppress_expansion += 1;
         // macro_def=false：不报 IPN，def_name 不再使用（此前传空串使消息
         // 缺 "of \X" 段——现参数 `#` 检查整体关闭）。
-        let scanned = self.scan_edef_body("", false);
+        let scanned = self.scan_edef_body_pairs("", false, true);
         self.suppress_expansion -= 1;
         scanned
     }
