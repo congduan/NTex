@@ -167,6 +167,551 @@ pub fn build(bytes: &[u8]) -> Result<CidMap, CidError> {
     })
 }
 
+// ---------- CFF 子集化（运行时按用字裁剪，xdvipdfmx 同款） ----------
+
+/// CFF 子集化：只保留 GID 0（`.notdef`）与 `used`（内容流实际写出的 CID 值，
+/// 语义由 `mapping` 约定）对应的字形，重写 charset / CharStrings / FDArray /
+/// FDSelect / Private 等结构；字形轮廓与子程序字节**原样搬运**（不重编码
+/// Type 2，全局/局部子程序整体保留），任何畸形输入只需 `Err`、不会 panic。
+///
+/// ## 为什么内容流的 CID 不用重排
+///
+/// 子集的 charset 直接写**原 CID**（新 GID → 原 CID 映射表），查看器按 CID
+/// 反查字形与全量字体完全一致——内容流、`/W`、[`CidMap`] 三者零改动。这是
+/// 体积收益的全部来源（FandolSong 全量 CFF 4.8 MB，其中 CharStrings 4.83 MB
+/// 独占 10379 个字形；4 字文档子集 <2 KB）。
+///
+/// 退化映射（[`Mapping::GlyphIdFallback`]）同理：charset 写 `used` 原值，与
+/// 内容流保持同一口径（此时两者都是 GID）。
+///
+/// `used` 里 charset 反查落空或 GID 超字形数的项**跳过**而非报错：内容流里
+/// 多一个查看器画不出的 CID，代价只是 notdef，不至于让整个 PDF 退回全量。
+pub fn subset_cff(cff: &[u8], used: &[u16], mapping: Mapping) -> Result<Vec<u8>, CidError> {
+    // ---- 解析：结构与 [`parse_cff`] 同一条路，额外取 INDEX 原字节区间 ----
+    let hdr_size = usize::from(*cff.get(2).ok_or_else(|| CidError("CFF 头部截断".into()))?);
+    let (names, p) =
+        read_index(cff, hdr_size).ok_or_else(|| CidError("CFF Name INDEX 损坏".into()))?;
+    let (tops, p) = read_index(cff, p).ok_or_else(|| CidError("CFF TopDICT INDEX 损坏".into()))?;
+    let strings_at = p;
+    let (_strings, p) =
+        read_index(cff, p).ok_or_else(|| CidError("CFF String INDEX 损坏".into()))?;
+    // String INDEX 整段原样搬运：ROS / FontName /版本等 SID 不能挪位
+    let strings_raw = slice(cff, strings_at, p - strings_at)
+        .ok_or_else(|| CidError("CFF String INDEX 越界".into()))?;
+    let gsubr_at = p;
+    let (_gsubrs, p) =
+        read_index(cff, p).ok_or_else(|| CidError("CFF Global Subr INDEX 损坏".into()))?;
+    let gsubr_raw = slice(cff, gsubr_at, p - gsubr_at)
+        .ok_or_else(|| CidError("CFF Global Subr INDEX 越界".into()))?;
+    let top = tops
+        .first()
+        .ok_or_else(|| CidError("CFF 无 TopDICT".into()))?;
+
+    let spans = dict_spans(top);
+    let op_raw = |key: (u8, bool)| -> Option<&[u8]> {
+        spans
+            .iter()
+            .find(|(_, op)| *op == key)
+            .map(|(r, _)| &top[r.clone()])
+    };
+    let usize_of = |key: (u8, bool)| -> Option<usize> {
+        op_raw(key)
+            .and_then(|raw| dict_operands(raw).into_iter().next())
+            .and_then(|v| usize::try_from(v).ok())
+    };
+    // CID-keyed 判据与 [`parse_cff`] 同源：Top DICT 有 ROS 操作数（12 30）
+    if op_raw((30, true)).is_none() {
+        return Err(CidError("CFF 非 CID-keyed（无 ROS），暂不子集化".into()));
+    }
+
+    let charset_off = usize_of((15, false)).unwrap_or(0);
+    let cs_off = usize_of((17, false)).ok_or_else(|| CidError("TopDICT 缺 CharStrings".into()))?;
+    let (charstrings, _) =
+        read_index(cff, cs_off).ok_or_else(|| CidError("CharStrings INDEX 越界".into()))?;
+    let glyph_count = charstrings.len();
+    let charset: Vec<u16> = if charset_off <= 2 {
+        (0..glyph_count).map(|g| g as u16).collect()
+    } else {
+        parse_charset(cff, charset_off, glyph_count)?
+    };
+
+    // ---- 保留集：内容流值 → 原 GID（按值升序，即新 GID 的次序） ----
+    let mut keep: Vec<(u16, u16)> = match mapping {
+        // charset 反查表：值(CID) → 首个 GID（charset 理论上不重复，重复取小）
+        Mapping::CharsetCid => {
+            let mut rev: Vec<(u16, u16)> = charset
+                .iter()
+                .enumerate()
+                .skip(1)
+                .map(|(g, &c)| (c, g as u16))
+                .collect();
+            rev.sort_unstable();
+            rev.dedup_by_key(|(c, _)| *c);
+            used.iter()
+                .filter_map(|&cid| {
+                    rev.binary_search_by_key(&cid, |(c, _)| *c)
+                        .ok()
+                        .map(|i| (cid, rev[i].1))
+                })
+                .collect()
+        }
+        Mapping::GlyphIdFallback => used.iter().map(|&v| (v, v)).collect(),
+    };
+    keep.sort_unstable();
+    keep.dedup();
+    keep.retain(|&(_, g)| usize::from(g) < glyph_count);
+
+    // ---- 各段产物。偏移类操作数用定长编码（[`dict_int_fixed`]），故先以占位
+    // 值建一遍求各段长度，再以真值建一遍产出，两遍字节数完全一致 ----
+    // charset（format 0）：新 GID 1.. 每字形一个 u16 = 内容流值（原 CID）
+    let mut charset_out = Vec::with_capacity(1 + 2 * keep.len());
+    charset_out.push(0u8);
+    for &(cid, _) in &keep {
+        charset_out.extend_from_slice(&cid.to_be_bytes());
+    }
+
+    // FDSelect：原字体带 FDSelect 才写（单 FD 可省，规范允许），format 0 定长
+    let fdselect_out = match usize_of((37, true)) {
+        Some(off) => {
+            let fd_of_gid = parse_fdselect(cff, off, glyph_count)?;
+            let mut v = Vec::with_capacity(2 + keep.len());
+            v.push(0u8); // format 0
+            v.push(0u8); // GID 0 → FD 0
+            for &(_, g) in &keep {
+                v.push(fd_of_gid.get(usize::from(g)).copied().unwrap_or(0));
+            }
+            Some(v)
+        }
+        None => None,
+    };
+
+    // CharStrings INDEX：GID 0（.notdef）+ 保留字形，轮廓字节原样
+    let mut cs_items: Vec<&[u8]> = Vec::with_capacity(keep.len() + 1);
+    cs_items.push(charstrings.first().copied().unwrap_or(&[]));
+    cs_items.extend(keep.iter().map(|&(_, g)| charstrings[g as usize]));
+    let charstrings_out = build_index(&cs_items);
+
+    // FDArray 与各 FD 的 Private（含局部 Subrs 原字节区间）
+    let fd_dicts: Vec<&[u8]> = match usize_of((36, true)) {
+        Some(off) => {
+            read_index(cff, off)
+                .ok_or_else(|| CidError("FDArray INDEX 越界".into()))?
+                .0
+        }
+        None => Vec::new(),
+    };
+    let privates: Vec<PrivateSrc> = fd_dicts
+        .iter()
+        .map(|d| PrivateSrc::of_fd(cff, d))
+        .collect::<Result<_, _>>()?;
+
+    let name = names.first().copied().unwrap_or(b"NTexSub");
+    let build_top = |r: TopRefs| -> Vec<u8> {
+        let mut v = Vec::with_capacity(top.len() + 32);
+        let mut wrote_charset = false;
+        for (range, op) in spans.iter() {
+            let value = match *op {
+                (15, false) => {
+                    wrote_charset = true;
+                    Some(r.charset)
+                }
+                (17, false) => Some(r.charstrings),
+                (36, true) if !fd_dicts.is_empty() => Some(r.fdarray),
+                // 原字体带 FDSelect 才写；否则该操作符整个丢弃
+                (37, true) => r.fdselect,
+                // CID-keyed 的 Private 只属于 FDArray 字典，Top DICT 不写
+                (18, false) => continue,
+                _ => {
+                    v.extend_from_slice(&top[range.clone()]);
+                    None
+                }
+            };
+            if let Some(val) = value {
+                dict_int_fixed(val, &mut v);
+            }
+            v.extend_from_slice(&op_bytes(*op));
+        }
+        // 原 Top DICT 缺 charset（预定义 charset，偏移 0/1/2）：补上显式表
+        if !wrote_charset {
+            dict_int_fixed(r.charset, &mut v);
+            v.extend_from_slice(&op_bytes((15, false)));
+        }
+        v
+    };
+    let build_fd_array = |priv_at: &[usize], priv_len: &[usize]| -> Vec<u8> {
+        let items: Vec<Vec<u8>> = fd_dicts
+            .iter()
+            .enumerate()
+            .map(|(i, d)| rewrite_private_ref(d, priv_len[i], priv_at[i]))
+            .collect();
+        let refs: Vec<&[u8]> = items.iter().map(Vec::as_slice).collect();
+        build_index(&refs)
+    };
+
+    // ---- 布局 ----
+    let name_out = build_index(&[name]);
+    let priv_len: Vec<usize> = privates.iter().map(|p| p.rewrite_subrs(0).len()).collect();
+    let zeros: Vec<usize> = privates.iter().map(|_| 0).collect();
+    let top_len = wrap_index(&build_top(TopRefs {
+        charset: 0,
+        charstrings: 0,
+        fdselect: fdselect_out.as_ref().map(|_| 0),
+        fdarray: 0,
+    }))
+    .len();
+    let fdarray_len = if fd_dicts.is_empty() {
+        0
+    } else {
+        build_fd_array(&zeros, &priv_len).len()
+    };
+
+    let mut pos = 4 + name_out.len() + top_len + strings_raw.len() + gsubr_raw.len();
+    let charset_at = pos;
+    pos += charset_out.len();
+    let fdselect_at = pos;
+    pos += fdselect_out.as_ref().map_or(0, Vec::len);
+    let cs_at = pos;
+    pos += charstrings_out.len();
+    let fdarray_at = pos;
+    pos += fdarray_len;
+    let mut priv_at = Vec::with_capacity(privates.len());
+    for &len in &priv_len {
+        priv_at.push(pos);
+        pos += len;
+    }
+    let subrs_at: Vec<usize> = priv_at
+        .iter()
+        .zip(&priv_len)
+        .map(|(&at, &len)| at + len)
+        .collect();
+
+    // ---- 产出 ----
+    let mut out = Vec::with_capacity(pos + 16);
+    out.extend_from_slice(&[0x01, 0x00, 0x04, 0x04]);
+    out.extend_from_slice(&name_out);
+    out.extend_from_slice(&wrap_index(&build_top(TopRefs {
+        charset: charset_at,
+        charstrings: cs_at,
+        fdselect: fdselect_out.as_ref().map(|_| fdselect_at),
+        fdarray: fdarray_at,
+    })));
+    out.extend_from_slice(strings_raw);
+    out.extend_from_slice(gsubr_raw);
+    out.extend_from_slice(&charset_out);
+    if let Some(f) = &fdselect_out {
+        out.extend_from_slice(f);
+    }
+    out.extend_from_slice(&charstrings_out);
+    if !fd_dicts.is_empty() {
+        out.extend_from_slice(&build_fd_array(&priv_at, &priv_len));
+    }
+    for (i, p) in privates.iter().enumerate() {
+        out.extend_from_slice(&p.rewrite_subrs(subrs_at[i]));
+    }
+    for p in &privates {
+        if let Some(raw) = p.subrs_raw {
+            out.extend_from_slice(raw);
+        }
+    }
+    Ok(out)
+}
+
+/// Top DICT 里需重写的四处偏移（布局期占位 0 一遍、真值一遍）。
+#[derive(Clone, Copy)]
+struct TopRefs {
+    charset: usize,
+    charstrings: usize,
+    /// `None` = 不写 FDSelect 操作符（原字体就没有）。
+    fdselect: Option<usize>,
+    fdarray: usize,
+}
+
+/// FD 字典引用的 Private：私有 DICT 原字节与其局部 Subrs 原字节区间。
+struct PrivateSrc<'a> {
+    /// 私有 DICT 原字节（重建时只改 Subrs 偏移一个操作数）。
+    dict: &'a [u8],
+    /// 局部 Subrs INDEX 原字节（整体搬运，子程序号在 Type 2 体里是下标引用，
+    /// 不能裁剪也不能重排——除非重编码全部字形轮廓）。
+    subrs_raw: Option<&'a [u8]>,
+}
+
+impl<'a> PrivateSrc<'a> {
+    /// 抽 FD 字典里的 Private 引用（无 Private → 空段，不占布局空间）。
+    fn of_fd(c: &'a [u8], fd: &'a [u8]) -> Result<Self, CidError> {
+        for (range, op) in dict_spans(fd) {
+            if op != (18, false) {
+                continue;
+            }
+            let vals = dict_operands(&fd[range]);
+            let Some(i) = vals.len().checked_sub(2) else {
+                break; // 操作数不足：<Private 大小> <偏移>，当无 Private 处理
+            };
+            let size = usize::try_from(vals[i]).map_err(|_| CidError("Private 大小为负".into()))?;
+            let off =
+                usize::try_from(vals[i + 1]).map_err(|_| CidError("Private 偏移为负".into()))?;
+            let dict = slice(c, off, size).ok_or_else(|| CidError("Private DICT 越界".into()))?;
+            return Ok(Self {
+                dict,
+                subrs_raw: Self::subrs_raw(c, dict)?,
+            });
+        }
+        Ok(Self {
+            dict: &[],
+            subrs_raw: None,
+        })
+    }
+
+    /// 私有 DICT 的 Subrs 偏移 → 该 INDEX 的原字节区间。
+    fn subrs_raw(c: &'a [u8], dict: &'a [u8]) -> Result<Option<&'a [u8]>, CidError> {
+        for (range, op) in dict_spans(dict) {
+            if op != (19, false) {
+                continue;
+            }
+            let Some(&off) = dict_operands(&dict[range]).last() else {
+                break;
+            };
+            let off = usize::try_from(off).map_err(|_| CidError("Subrs 偏移为负".into()))?;
+            let (_, end) =
+                read_index(c, off).ok_or_else(|| CidError("局部 Subrs INDEX 越界".into()))?;
+            return Ok(slice(c, off, end - off));
+        }
+        Ok(None)
+    }
+
+    /// 重建私有 DICT：Subrs 偏移换成子集里的新位置，其余字节原样。
+    fn rewrite_subrs(&self, subrs_off: usize) -> Vec<u8> {
+        let mut v = Vec::with_capacity(self.dict.len() + 8);
+        for (range, op) in dict_spans(self.dict) {
+            if op == (19, false) {
+                dict_int_fixed(subrs_off, &mut v);
+            } else {
+                v.extend_from_slice(&self.dict[range]);
+            }
+            v.extend_from_slice(&op_bytes(op));
+        }
+        v
+    }
+}
+
+/// 重建 FD 字典：Private 换成子集里的新 (大小, 偏移)，其余字节原样。
+fn rewrite_private_ref(fd: &[u8], priv_len: usize, priv_off: usize) -> Vec<u8> {
+    let mut v = Vec::with_capacity(fd.len() + 16);
+    for (range, op) in dict_spans(fd) {
+        if op == (18, false) {
+            dict_int_fixed(priv_len, &mut v);
+            dict_int_fixed(priv_off, &mut v);
+        } else {
+            v.extend_from_slice(&fd[range]);
+        }
+        v.extend_from_slice(&op_bytes(op));
+    }
+    v
+}
+
+/// 装 INDEX：offSize 取容纳最大偏移的最小宽度，偏移自 1 起（CFF 约定）。
+fn build_index(items: &[&[u8]]) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&(items.len() as u16).to_be_bytes());
+    if items.is_empty() {
+        return out;
+    }
+    let mut offs = Vec::with_capacity(items.len() + 1);
+    offs.push(1usize);
+    let mut last = 1usize;
+    for it in items {
+        last = last.saturating_add(it.len());
+        offs.push(last);
+    }
+    let off_size = if last <= 0xFF {
+        1
+    } else if last <= 0xFFFF {
+        2
+    } else if last <= 0xFF_FFFF {
+        3
+    } else {
+        4
+    };
+    out.push(off_size);
+    for &o in &offs {
+        push_be(&mut out, o, usize::from(off_size));
+    }
+    for it in items {
+        out.extend_from_slice(it);
+    }
+    out
+}
+
+/// 单条目 INDEX（Top DICT 用）。
+fn wrap_index(item: &[u8]) -> Vec<u8> {
+    build_index(&[item])
+}
+
+/// 定宽大端整数（INDEX 偏移，宽 1..=4）。
+fn push_be(out: &mut Vec<u8>, v: usize, width: usize) {
+    for k in (0..width).rev() {
+        out.push((v >> (8 * k)) as u8);
+    }
+}
+
+/// DICT 整数操作数定长编码：恒用 29（`<i32>`）5 字节，宽度与值无关——子集化
+/// 靠这一点免掉「占位一遍求长度 + 补丁」的两遍布局机制（占位 0 与真值等长）。
+fn dict_int_fixed(v: usize, out: &mut Vec<u8>) {
+    out.push(29);
+    out.extend_from_slice(&i32::try_from(v).unwrap_or(i32::MAX).to_be_bytes());
+}
+
+/// 操作符字节（12 xx 转义两字节，其余一字节）。
+fn op_bytes(op: (u8, bool)) -> Vec<u8> {
+    match op {
+        (b1, true) => vec![12, b1],
+        (b0, false) => vec![b0],
+    }
+}
+
+/// DICT 逐操作符切分：`(操作数字节区间, 操作符)`，按原顺序（畸形尾部截断）。
+fn dict_spans(d: &[u8]) -> Vec<(std::ops::Range<usize>, (u8, bool))> {
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut i = 0usize;
+    while i < d.len() {
+        let (op, op_len) = match d[i] {
+            12 => match d.get(i + 1) {
+                Some(&b1) => ((b1, true), 2usize),
+                None => break,
+            },
+            0..=21 => ((d[i], false), 1usize),
+            28 => {
+                i += 3;
+                continue;
+            }
+            29 => {
+                i += 5;
+                continue;
+            }
+            30 => {
+                // 实数（BCD）：本项目不消费实数值，只跳过其字节
+                i += 1;
+                while i < d.len() {
+                    let v = d[i];
+                    i += 1;
+                    if v >> 4 == 0xF || v & 0xF == 0xF {
+                        break;
+                    }
+                }
+                continue;
+            }
+            32..=246 => {
+                i += 1;
+                continue;
+            }
+            247..=254 => {
+                i += 2;
+                continue;
+            }
+            // 22..=27 / 31 / 255：保留字节，跳过
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        out.push((start..i, op));
+        i += op_len;
+        start = i;
+    }
+    out
+}
+
+/// DICT 操作数字节 → 整数值（实数记 0：本项目只搬字节，不消费实数值）。
+fn dict_operands(raw: &[u8]) -> Vec<i32> {
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < raw.len() {
+        match raw[i] {
+            28 => match raw.get(i + 1..i + 3) {
+                Some(s) => {
+                    out.push(i16::from_be_bytes([s[0], s[1]]) as i32);
+                    i += 3;
+                }
+                None => break,
+            },
+            29 => match raw.get(i + 1..i + 5) {
+                Some(s) => {
+                    out.push(i32::from_be_bytes([s[0], s[1], s[2], s[3]]));
+                    i += 5;
+                }
+                None => break,
+            },
+            30 => {
+                i += 1;
+                while i < raw.len() {
+                    let v = raw[i];
+                    i += 1;
+                    if v >> 4 == 0xF || v & 0xF == 0xF {
+                        break;
+                    }
+                }
+                out.push(0);
+            }
+            32..=246 => {
+                out.push(i32::from(raw[i]) - 139);
+                i += 1;
+            }
+            247..=250 => match raw.get(i + 1) {
+                Some(&b1) => {
+                    out.push((i32::from(raw[i]) - 247) * 256 + i32::from(b1) + 108);
+                    i += 2;
+                }
+                None => break,
+            },
+            251..=254 => match raw.get(i + 1) {
+                Some(&b1) => {
+                    out.push(-(i32::from(raw[i]) - 251) * 256 - i32::from(b1) - 108);
+                    i += 2;
+                }
+                None => break,
+            },
+            _ => i += 1,
+        }
+    }
+    out
+}
+
+/// 解析 FDSelect（format 0/3）→ GID → FD 号全表（缺项按 0）。
+fn parse_fdselect(c: &[u8], off: usize, glyph_count: usize) -> Result<Vec<u8>, CidError> {
+    match c.get(off) {
+        Some(&0) => Ok(slice(c, off + 1, glyph_count)
+            .ok_or_else(|| CidError("FDSelect format 0 截断".into()))?
+            .to_vec()),
+        Some(&3) => {
+            let n = usize::from(
+                u16_at(c, off + 1).ok_or_else(|| CidError("FDSelect format 3 截断".into()))?,
+            );
+            let sentinel = usize::from(
+                u16_at(c, off + 3 + 3 * n).ok_or_else(|| CidError("FDSelect 段哨兵截断".into()))?,
+            );
+            let mut out = vec![0u8; glyph_count];
+            for i in 0..n {
+                let p = off + 3 + 3 * i;
+                let first =
+                    usize::from(u16_at(c, p).ok_or_else(|| CidError("FDSelect 段截断".into()))?);
+                let fd = *c
+                    .get(p + 2)
+                    .ok_or_else(|| CidError("FDSelect 段截断".into()))?;
+                let next = if i + 1 < n {
+                    usize::from(u16_at(c, p + 3).ok_or_else(|| CidError("FDSelect 段截断".into()))?)
+                } else {
+                    sentinel
+                };
+                for slot in out.iter_mut().take(next.min(glyph_count)).skip(first) {
+                    *slot = fd;
+                }
+            }
+            Ok(out)
+        }
+        _ => Err(CidError("FDSelect 格式未知".into())),
+    }
+}
+
 // ---------- sfnt / CFF / cmap 解析（只读、全越界检查） ----------
 
 /// 取 `bytes[off..off+len]`，越界返回 `None`。
@@ -567,4 +1112,117 @@ fn cmap_format12(b: &[u8], off: usize) -> Result<Vec<(u32, u16)>, CidError> {
         }
     }
     Ok(out)
+}
+
+// ---------- 测试 ----------
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    /// 仓库内 FandolSong（Tauri 前端自带）；缺文件则跳过，不硬依赖。
+    pub(crate) fn fandol() -> Option<Vec<u8>> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../ntex-tauri/ui/fonts/FandolSong-Regular.otf");
+        std::fs::read(path).ok()
+    }
+
+    /// 用引擎同一套解析器拆 CFF：返回（charset 全表, 每字形轮廓字节）。
+    pub(crate) fn inspect(cff: &[u8]) -> Result<(Vec<u16>, Vec<Vec<u8>>), CidError> {
+        let hdr = usize::from(*cff.get(2).ok_or_else(|| CidError("头部截断".into()))?);
+        let (_, p) = read_index(cff, hdr).ok_or_else(|| CidError("Name INDEX".into()))?;
+        let (tops, p) = read_index(cff, p).ok_or_else(|| CidError("TopDICT INDEX".into()))?;
+        let top = tops.first().ok_or_else(|| CidError("无 TopDICT".into()))?;
+        let (_, p) = read_index(cff, p).ok_or_else(|| CidError("String INDEX".into()))?;
+        let (_, _p) = read_index(cff, p).ok_or_else(|| CidError("Global Subr INDEX".into()))?;
+        let spans = dict_spans(top);
+        let val = |key: (u8, bool)| -> usize {
+            spans
+                .iter()
+                .find(|(_, op)| *op == key)
+                .and_then(|(r, _)| dict_operands(&top[r.clone()]).into_iter().next())
+                .unwrap_or(0) as usize
+        };
+        let (cs, _) =
+            read_index(cff, val((17, false))).ok_or_else(|| CidError("CharStrings".into()))?;
+        let charset_off = val((15, false));
+        let charset = if charset_off <= 2 {
+            (0..cs.len()).map(|g| g as u16).collect()
+        } else {
+            parse_charset(cff, charset_off, cs.len())?
+        };
+        Ok((charset, cs.iter().map(|s| s.to_vec()).collect()))
+    }
+
+    #[test]
+    fn subset_keeps_only_used_cids_and_preserves_ros() {
+        let Some(otf) = fandol() else {
+            eprintln!("未找到 FandolSong，跳过");
+            return;
+        };
+        let full = bare_cff(&otf).expect("剥壳");
+        let map = build(&otf).expect("CID 映射");
+        assert_eq!(map.mapping(), Mapping::CharsetCid);
+        // 「中」= 0x11CF（Adobe-GB1 CID 4559）、「国」= 0x0753（与 pdf.rs 测试同源）
+        let used = [0x11CF_u16, 0x0753];
+        let sub = subset_cff(&full, &used, Mapping::CharsetCid).expect("子集化");
+        assert!(
+            sub.len() < 4096,
+            "2 字形子集应在 KB 级：{}（全量 {}）",
+            sub.len(),
+            full.len()
+        );
+
+        // 结构自洽：可再解析、charset 恰为原 CID、字形数 = 用到数 + .notdef
+        let (charset, cs) = inspect(&sub).expect("子集应可再解析");
+        assert_eq!(charset, vec![0, 0x0753, 0x11CF], "charset 应写原 CID");
+        assert_eq!(cs.len(), 3, "GID 0 + 2 个保留字形");
+        // 轮廓字节与全量字体逐字节一致（不重编码 Type 2）
+        let (full_charset, full_cs) = inspect(&full).expect("全量可解析");
+        for (new, cid) in [(1usize, 0x0753u16), (2, 0x11CF)] {
+            let old = full_charset
+                .iter()
+                .position(|&c| c == cid)
+                .expect("全量应含该 CID");
+            assert_eq!(cs[new], full_cs[old], "CID {cid} 的轮廓应原样搬运");
+        }
+
+        // 保留集为空时只剩 .notdef
+        let empty = subset_cff(&full, &[], Mapping::CharsetCid).expect("空子集");
+        assert_eq!(inspect(&empty).unwrap().1.len(), 1);
+    }
+
+    #[test]
+    fn subset_is_resubsetable_and_drops_unused_subrs_never() {
+        // 子集本身再子集化（收窄保留集）应仍得到合法结构——布局/偏移改写可重入
+        let Some(otf) = fandol() else {
+            eprintln!("未找到 FandolSong，跳过");
+            return;
+        };
+        let full = bare_cff(&otf).expect("剥壳");
+        let sub = subset_cff(&full, &[0x11CF, 0x0753], Mapping::CharsetCid).expect("子集");
+        let sub2 = subset_cff(&sub, &[0x11CF], Mapping::CharsetCid).expect("二次子集");
+        let (charset, cs) = inspect(&sub2).expect("二次子集应可再解析");
+        assert_eq!(charset, vec![0, 0x11CF]);
+        assert_eq!(cs.len(), 2);
+    }
+
+    #[test]
+    fn subset_reports_malformed_input_without_panicking() {
+        let Some(otf) = fandol() else {
+            eprintln!("未找到 FandolSong，跳过");
+            return;
+        };
+        let full = bare_cff(&otf).expect("剥壳");
+        // 截断在各个前缀上都必须 Err，不得 panic（引擎契约：畸形输入不 panic）
+        for cut in [0usize, 1, 2, 3, 4, 8, 16, 40, 300, 1000] {
+            let Some(bytes) = full.get(..cut) else { break };
+            assert!(
+                subset_cff(bytes, &[0x11CF], Mapping::CharsetCid).is_err(),
+                "截断到 {cut} 字节应报错"
+            );
+        }
+        // 非 CID-keyed（无 ROS）字体：明确拒绝而非产出坏结构
+        assert!(subset_cff(b"\x01\x00\x04\x04garbage", &[1], Mapping::CharsetCid).is_err());
+    }
 }

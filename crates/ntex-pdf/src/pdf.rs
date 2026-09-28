@@ -903,6 +903,29 @@ fn build_document(
                         }
                     }
                 }
+                // 嵌入体按本文档**实际用到的 CID** 子集化：全量 FandolSong CFF
+                // 4.8 MB，只写几个字的文档也整包带走（2026-09-28 现场：单页
+                // 「中文测试」→ 4.9 MB PDF）。charset 直接写原 CID，GID 虽重排
+                // 但内容流 / `/W` / `CidMap` 三者零改动（见 [`cid::subset_cff`]）。
+                // 只对正路映射（CharsetCid）做；退化映射与子集化失败一律退回
+                // 全量——宁可大，不可产出查看器解不开的字体。
+                let cff_out: Vec<u8> = if cid
+                    .as_ref()
+                    .is_some_and(|m| m.mapping() == Mapping::CharsetCid)
+                {
+                    let used_cids: Vec<u16> = widths_of_name.keys().copied().collect();
+                    match cid::subset_cff(cff, &used_cids, Mapping::CharsetCid) {
+                        Ok(sub) if sub.len() < cff.len() => sub,
+                        // 用字多到子集反而不小（子程序占大头）时，全量更省事
+                        Ok(_) => cff.clone(),
+                        Err(e) => {
+                            eprintln!("警告：{e}，{base_name} 嵌入全量字体");
+                            cff.clone()
+                        }
+                    }
+                } else {
+                    cff.clone()
+                };
                 obj(
                     &mut buf,
                     &mut offsets,
@@ -929,10 +952,10 @@ fn build_document(
                 );
                 let mut fbody = format!(
                     "{file_obj} 0 obj << /Subtype /CIDFontType0C /Length {} >>\nstream\n",
-                    cff.len()
+                    cff_out.len()
                 )
                 .into_bytes();
-                fbody.extend_from_slice(cff);
+                fbody.extend_from_slice(&cff_out);
                 fbody.extend_from_slice(b"\nendstream\nendobj");
                 obj(&mut buf, &mut offsets, &fbody);
             }
@@ -1430,25 +1453,47 @@ mod tests {
         );
         // 不应再有 TFM 时代的八位字面串字形
         assert!(!s.contains("/Subtype /Type1"), "{s}");
-        // 裸 CID-keyed CFF 嵌入（/CIDFontType0C）：流体 = sfnt 内 CFF 表原样，
-        // 以裸 CFF 魔数（header major=1）开始；整包 OTTO 嵌入会让 poppler/
-        // CoreGraphics 把 CID 解析到错误字形（2026-09-13 实验定标）
-        let marker = format!("<< /Subtype /CIDFontType0C /Length {} >>\nstream\n", {
-            let cff = crate::cid::bare_cff(&otf).unwrap();
-            assert_ne!(cff.len(), otf.len(), "裸 CFF 应小于 sfnt 整包");
-            cff.len()
-        });
-        let pos = pdf
-            .windows(marker.len())
-            .position(|w| w == marker.as_bytes())
-            .expect("FontFile3 流头");
-        let cff = crate::cid::bare_cff(&otf).unwrap();
-        assert_eq!(
-            &pdf[pos + marker.len()..pos + marker.len() + cff.len()],
-            &cff[..],
-            "裸 CFF 应原样嵌入"
+        // 裸 CID-keyed CFF 嵌入（/CIDFontType0C），且是**按用字子集化**的：
+        // 全量 FandolSong CFF 4.8 MB（10379 字形），只写几个字的文档不该整包
+        // 带走（2026-09-28 现场：单页「中文测试」→ 4.9 MB PDF）。子集 charset
+        // 写原 CID，内容流与 /W 因此不受 GID 重排影响（见 [`cid::subset_cff`]）；
+        // 整包 OTTO 嵌入则会让 poppler/CoreGraphics 把 CID 解析到错误字形
+        // （2026-09-13 实验定标）。
+        let full = crate::cid::bare_cff(&otf).unwrap();
+        assert_ne!(full.len(), otf.len(), "裸 CFF 应小于 sfnt 整包");
+        let marker = |len: u32| format!("<< /Subtype /CIDFontType0C /Length {len} >>\nstream\n");
+        // 先取全量口径的流头确认它已不在场（Length 不同 ⇒ 子集确实生效）
+        let full_marker = marker(full.len() as u32);
+        assert!(
+            !pdf.windows(full_marker.len())
+                .any(|w| w == full_marker.as_bytes()),
+            "不应再整包嵌入全量 CFF（{} 字节）",
+            full.len()
         );
-        assert_eq!(&cff[..2], &[0x01, 0x00], "CFF 头魔数");
+        let sub_len = s
+            .split("/Subtype /CIDFontType0C /Length ")
+            .nth(1)
+            .and_then(|t| t.split(" >>").next())
+            .and_then(|t| t.parse::<u32>().ok())
+            .expect("应能取到子集流长");
+        assert!(
+            sub_len * 100 < full.len() as u32,
+            "子集应小于全量的 1%：{sub_len} vs {}",
+            full.len()
+        );
+        let sub_marker = marker(sub_len);
+        let pos = pdf
+            .windows(sub_marker.len())
+            .position(|w| w == sub_marker.as_bytes())
+            .expect("FontFile3 流头");
+        let sub = &pdf[pos + sub_marker.len()..pos + sub_marker.len() + sub_len as usize];
+        assert_eq!(&sub[..2], &[0x01, 0x00], "CFF 头魔数");
+        // 子集 charset 必须包含内容流实际写出的 CID（「中」=0x11CF、「国」）
+        let (charset, _) = crate::cid::tests::inspect(sub).expect("子集应可再解析");
+        assert_eq!(charset.len(), 3, "GID 0 + 2 个用到的字形：{charset:?}");
+        for cid in [0x11CF_u16, guo] {
+            assert!(charset.contains(&cid), "子集 charset 应含 CID {cid}");
+        }
     }
 
     /// 同一字体名的**多个号数**共用一组 PDF 对象时，`/W` 必须取全部号数用到
