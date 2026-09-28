@@ -1154,11 +1154,58 @@ impl Expander {
         let entry_stack = self.stack.len();
         let mut scan_steps = 0u64;
         let bc_guard_limit = bytecode_guard_limit();
+        // 放量定性采样（ctex 第九刀）：`NTEX_EDEF_PROG=<间隔>` 时每 N 子步打一行
+        // 进度——`out` 长度是「体是否真的在变大」的判据（持续增长=真进展/性能，
+        // 停滞=同一段在反复转=递归），stack 尾帧给出转动现场。
+        let (prog, prog_step) = match std::env::var("NTEX_EDEF_PROG") {
+            Ok(v) => (true, v.parse::<u64>().unwrap_or(1_000_000).max(1)),
+            Err(_) => (false, 1),
+        };
+        // 逐 token 追踪：`NTEX_EDEF_TRACE=<起>:<长>` 从第 <起> 子步起连打 <长>
+        // 个 token（名/字符码+catcode）——把循环体形状直接拍出来。
+        let (trace_start, trace_len) = match std::env::var("NTEX_EDEF_TRACE") {
+            Ok(v) => {
+                let mut it = v.split(':');
+                let s = it.next().and_then(|x| x.parse::<u64>().ok()).unwrap_or(0);
+                let l = it.next().and_then(|x| x.parse::<u64>().ok()).unwrap_or(200);
+                (s, l)
+            }
+            Err(_) => (u64::MAX, 0),
+        };
+        let prog_start = std::time::Instant::now();
+        // 同 token 连续重复 fetch（≥100 次）= 自我复制展开（quark 活锁）第一现场：
+        // 只拍一次 Rust backtrace，指出是谁把这一 token 作为可展开帧推回来的。
+        // `NTEX_EREPEAT=1` 才开重复跟踪（默认关：逐步 `tok.clone()` 有实测常数
+        // 税，非诊断场景不该付）。
+        let erepeat = std::env::var_os("NTEX_EREPEAT").is_some();
+        let mut prev_tok: Option<Token> = None;
+        let mut repeat = 0u64;
+        let mut bt_taken = false;
+        // `NTEX_QLIVE=1`：环形缓冲记最近 200 个 token，同 token 重复 50 次时
+        // 把缓冲 + 后续 60 步一起打出——自定位活锁起点（无需预知哪次调用）。
+        let qlive = std::env::var_os("NTEX_QLIVE").is_some();
+        let mut ring: std::collections::VecDeque<(u64, String)> =
+            std::collections::VecDeque::new();
+        let mut live_left = 0u64;
+        let mut bt2_taken = false;
         'scan: loop {
             // `scan_edef_body` 是子展开循环；它可能在一次主循环 dispatch 内不断
             // 压入 TokenList 帧，外层 watchdog 来不及接管。这里本地兜底，把
             // 展开递归收敛为 TeX 式诊断，避免 native stack overflow。
             scan_steps = scan_steps.saturating_add(1);
+            if trace_len > 0 && scan_steps < trace_start {
+                // 追踪窗口未开：直接落回正常处理（trace 打印在 fetch 之后）。
+            }
+            if prog && scan_steps % prog_step == 0 {
+                eprintln!(
+                    "[edef-prog] def=\\{} steps={scan_steps} out={} elapsed={:.1}s last_tok={:?} stack={}",
+                    def_name,
+                    out.len(),
+                    prog_start.elapsed().as_secs_f32(),
+                    self.last_tok,
+                    self.debug_stack_summary()
+                );
+            }
             if bc_guard_limit != 0 && scan_steps > bc_guard_limit {
                 self.dump_bytecode_guard(scan_steps, bc_guard_limit);
                 return Err(Error::invalid_input(format!(
@@ -1178,6 +1225,73 @@ impl Expander {
                 runaway = unbalance > 0;
                 break 'scan;
             };
+            if trace_len > 0 && scan_steps >= trace_start && scan_steps < trace_start + trace_len {
+                let desc = match tok.csid() {
+                    Some(c) => format!("\\{}", self.intern.name(c)),
+                    None => format!("ch={:?} cat={:?}", tok.charcode(), tok.catcode()),
+                };
+                eprintln!(
+                    "[edef-trace] steps={scan_steps} depth={} tok={desc}",
+                    self.stack.len()
+                );
+            }
+            if erepeat && !bt_taken {
+                if prev_tok.as_ref() == Some(&tok) {
+                    repeat += 1;
+                    if repeat >= 100 {
+                        bt_taken = true;
+                        let desc = match tok.csid() {
+                            Some(c) => format!("\\{}", self.intern.name(c)),
+                            None => format!("ch={:?} cat={:?}", tok.charcode(), tok.catcode()),
+                        };
+                        eprintln!(
+                            "[edef-repeat] 同 token 连续重复 fetch 第一现场 steps={scan_steps} out={} tok={desc} stack={}",
+                            out.len(),
+                            self.debug_stack_summary()
+                        );
+                        eprintln!("{}", std::backtrace::Backtrace::force_capture());
+                    }
+                } else {
+                    repeat = 0;
+                }
+            }
+            if qlive {
+                let desc = match tok.csid() {
+                    Some(c) => format!("\\{}", self.intern.name(c)),
+                    None => format!("ch={:?} cat={:?}", tok.charcode(), tok.catcode()),
+                };
+                if live_left > 0 {
+                    eprintln!(
+                        "[edef-live] steps={scan_steps} depth={} tok={desc}",
+                        self.stack.len()
+                    );
+                    live_left -= 1;
+                } else if !bt2_taken {
+                    if ring.len() >= 200 {
+                        ring.pop_front();
+                    }
+                    ring.push_back((scan_steps, desc));
+                }
+                if !bt2_taken && prev_tok.as_ref() == Some(&tok) {
+                    repeat += 1;
+                    if repeat >= 50 {
+                        bt2_taken = true;
+                        for (s, d) in &ring {
+                            eprintln!("[edef-ring] steps={s} tok={d}");
+                        }
+                        eprintln!(
+                            "[edef-live] 活锁现场 stack={}",
+                            self.debug_stack_summary()
+                        );
+                        live_left = 60;
+                    }
+                } else if !bt2_taken {
+                    repeat = 0;
+                }
+            }
+            if erepeat || qlive {
+                prev_tok = Some(tok);
+            }
             if noexpand {
                 if diag_enabled("NTEX_HASH_SCAN_DBG") && tok.catcode() == Some(Catcode::Parameter)
                 {
