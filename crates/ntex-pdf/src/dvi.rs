@@ -692,6 +692,7 @@ mod tests {
     fn wide_char_codes_are_not_truncated() {
         // 度量用注册表注入（避免依赖宿主 Fandol TFM）：一个全角宽码位表
         let mut fm = ntex_font::FontMetrics {
+            hyphenchar: 45,
             unicode_native: false,
             unicode_chars: Vec::new(),
             design_size_sp: 655_360,
@@ -767,6 +768,7 @@ mod tests {
         // 度量走注册表注入，不依赖宿主 TFM/Fandol
         let probe = |name: &str| {
             let mut fm = ntex_font::FontMetrics {
+                hyphenchar: 45,
                 unicode_native: false,
                 unicode_chars: Vec::new(),
                 design_size_sp: 655_360,

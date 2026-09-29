@@ -705,6 +705,7 @@ mod tests {
 
     fn cmr_metrics(name: &str) -> FontMetrics {
         FontMetrics {
+            hyphenchar: 45,
             unicode_native: false,
             unicode_chars: Vec::new(),
             design_size_sp: 10 * 65_536,

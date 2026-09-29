@@ -360,6 +360,7 @@ pub fn build_metrics(data: Vec<u8>, name: &str) -> Result<FontMetrics> {
             .map(|i| unicode_chars[i].1 .0)
     };
     let space = char_w(0x20).filter(|&w| w > 0).unwrap_or(design / 4);
+    let hyphenchar = if char_w(0x2d).is_some() { 45 } else { -1 };
     let space_stretch = space / 2;
     let space_shrink = space / 3;
     let x_height = snap
@@ -399,6 +400,7 @@ pub fn build_metrics(data: Vec<u8>, name: &str) -> Result<FontMetrics> {
             design,
             extra_space,
         ],
+        hyphenchar,
         unicode_native: true,
         unicode_chars,
     })

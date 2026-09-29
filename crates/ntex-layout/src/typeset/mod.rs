@@ -17,7 +17,7 @@
 //! - `\hbox to <glue>` / `\hbox spread <glue>` 规格暂拒。
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
 use ntex_core::error::{Error, Result};
@@ -516,6 +516,18 @@ impl Fonts {
         }
     }
 
+    /// 字体默认断字符；负值表示该字体禁用自动断字。
+    fn hyphenchar(&self, font: FontId) -> i64 {
+        match self {
+            Fonts::Fn { .. } => 45,
+            Fonts::Tfm(table) => table
+                .borrow()
+                .get(font.0 as usize)
+                .map(|fm| fm.hyphenchar)
+                .unwrap_or(45),
+        }
+    }
+
     /// 字体外部名（showbox 字符显示 `.\trip 1`；fn 指针占位无名字回退 `\font`）。
     fn space(&self, font: FontId) -> Glue {
         match self {
@@ -712,6 +724,8 @@ struct NodeBuilder {
 
     /// 断字模式表（M4-6）：`\patterns{...}` 解析后的 Liang trie。
     patterns: PatternTrie,
+    /// `\hyphenchar<font>` 覆盖表；未覆盖时回落到字体度量默认值。
+    hyphenchars: HashMap<u32, i64>,
 
     /// ETRIP 冲刺：断字异常词表（`\hyphenation{...}`）：小写字母 + 允许断点
     /// （0 = 词首、len = 词尾）。断字时优先于模式表。
@@ -1040,6 +1054,7 @@ impl NodeBuilder {
             fallback_loaded: None,
             fonts,
             patterns: PatternTrie::default(),
+            hyphenchars: HashMap::new(),
             hyph_exceptions: Vec::new(),
             record_main: None,
             box_state: BoxState {
@@ -1337,6 +1352,7 @@ impl NodeBuilder {
             nonscript_pending: self.math_state.nonscript_pending,
             math_fonts: self.math_state.math_fonts.clone(),
             patterns: self.patterns.clone(),
+            hyphenchars: self.hyphenchars.clone(),
             hyph_exceptions: self.hyph_exceptions.clone(),
             setbox_target: self.box_state.setbox_target,
             setbox_global: self.box_state.setbox_global,
@@ -1400,6 +1416,7 @@ impl NodeBuilder {
         self.math_state.nonscript_pending = s.nonscript_pending;
         self.math_state.math_fonts = s.math_fonts.clone();
         self.patterns = s.patterns.clone();
+        self.hyphenchars = s.hyphenchars.clone();
         self.hyph_exceptions = s.hyph_exceptions.clone();
         self.box_state.setbox_target = s.setbox_target;
         self.box_state.setbox_global = s.setbox_global;

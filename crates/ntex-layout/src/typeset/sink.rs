@@ -923,6 +923,10 @@ impl FontSink for NodeBuilder {
         self.font_cs_names[font as usize] = Some(cs_name.to_string());
         Ok(())
     }
+    fn hyphen_char_changed(&mut self, font: u32, value: i64) -> Result<()> {
+        self.hyphenchars.insert(font, value);
+        Ok(())
+    }
     fn current_font(&self) -> u32 {
         self.current_font.0
     }

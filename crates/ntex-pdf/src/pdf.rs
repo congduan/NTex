@@ -1368,6 +1368,7 @@ mod tests {
         assert!(crate::otf::register_otf(name, &otf), "OTTO 魔数应注册成功");
 
         let mut fm = ntex_font::FontMetrics {
+            hyphenchar: 45,
             unicode_native: false,
             unicode_chars: Vec::new(),
             design_size_sp: 655_360,
@@ -1527,6 +1528,7 @@ mod tests {
         // 「字号变大而字形没变大」，`width_1000`（宽度 / 缩放后字号）就会凭空
         // 差 1/scale（1000 → 909）。
         let mk = |unicode_chars: Vec<(u32, (i64, i64, i64))>| ntex_font::FontMetrics {
+            hyphenchar: 45,
             unicode_native: true,
             unicode_chars,
             design_size_sp: 655_360,
@@ -1624,6 +1626,7 @@ mod tests {
         // 宿主查找链必然没有这个名字（注册表也未注册）
         let name = "zz-type0-bare-probe";
         let mut fm = ntex_font::FontMetrics {
+            hyphenchar: 45,
             unicode_native: false,
             unicode_chars: Vec::new(),
             design_size_sp: 655_360,

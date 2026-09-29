@@ -228,6 +228,7 @@ struct SideEffects {
     nonscript_pending: bool,
     math_fonts: Vec<[Option<FontId>; 3]>,
     patterns: PatternTrie,
+    hyphenchars: std::collections::HashMap<u32, i64>,
     hyph_exceptions: Vec<(Vec<u8>, Vec<usize>)>,
     setbox_target: Option<usize>,
     setbox_global: bool,

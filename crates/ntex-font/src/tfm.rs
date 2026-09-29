@@ -152,6 +152,11 @@ pub struct FontMetrics {
     /// 全量字体参数（fontdimen；`font_params[i-1]` = TFM 参数 i，已缩放）。
     /// 数学字体用：参数 8+（sup/sub 高度、分式间距、delimiter 等）。
     pub font_params: Vec<i64>,
+    /// TeX `\hyphenchar` 默认值。负值表示该字体禁用自动断字。
+    ///
+    /// TFM 字体默认使用连字符槽位 45；Unicode 直映字体只在 U+002D 存在时同样
+    /// 使用 45，否则按 tex.web 语义置为 -1。
+    pub hyphenchar: i64,
     /// Unicode 直映字体标记（M9 中文刀 1）：本字体由 OTF/TTF 加载，字符度量
     /// 按 Unicode 码位存于 [`Self::unicode_chars`]，[`Self::chars`]（8-bit 槽表）
     /// 保持空。`\char` 的合法码位上限、后端字形查找口径均据此分叉——TFM 字体
@@ -293,6 +298,7 @@ impl FontMetrics {
             lig_kern_index: self.lig_kern_index.clone(),
             next_larger: self.next_larger.clone(),
             font_params: self.font_params.iter().map(|&v| scale(v)).collect(),
+            hyphenchar: self.hyphenchar,
             unicode_native: self.unicode_native,
             // 码位顺序在缩放中不变（逐项线性变换），二分前提得以保持
             unicode_chars: self
@@ -449,6 +455,7 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
         lig_kern_index,
         next_larger,
         font_params,
+        hyphenchar: 45,
         // TFM 是 8-bit 编码向量字体：永远走 `chars` 槽表（0..=255）
         unicode_native: false,
         unicode_chars: Vec::new(),
@@ -825,6 +832,7 @@ mod tests {
             },
             next_larger: vec![None; 256],
             font_params: Vec::new(),
+            hyphenchar: 45,
             unicode_native: false,
             unicode_chars: Vec::new(),
         };

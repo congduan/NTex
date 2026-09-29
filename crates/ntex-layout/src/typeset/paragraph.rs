@@ -240,13 +240,18 @@ impl NodeBuilder {
                         .into_iter()
                         .filter(|&j| j >= l_hyf && j + r_hyf <= hn)
                         .collect();
+                    let hyphenchar = self.effective_hyphenchar(run_font);
                     let mut bi = 0;
                     for (k, node) in children[run_start..j].iter().enumerate() {
                         out.push(node.clone());
-                        // 断点 = 第 k 个字母之后（位置 k+1）：插入 discretionary
-                        if bi < breaks.len() && breaks[bi] == k + 1 {
-                            out.push(self.make_discretionary(run_font));
-                            bi += 1;
+                        // 断点 = 第 k 个字母之后（位置 k+1）：插入 discretionary；
+                        // hyphenchar 缺失（<0 或字形不在）→ 整词禁断（tex.web
+                        // §hyphenate `hyf_char<0 → goto done1`）。
+                        if let Some(hc) = hyphenchar {
+                            if bi < breaks.len() && breaks[bi] == k + 1 {
+                                out.push(self.make_discretionary(run_font, hc));
+                                bi += 1;
+                            }
                         }
                     }
                     i = j;
@@ -268,14 +273,24 @@ impl NodeBuilder {
             .map(|(_, b)| b.clone())
     }
 
-    /// 断字 discretionary 节点：`pre` = 连字符（charcode 45，当前 run 字体度量），
+    /// 当前字体有效 `\hyphenchar`；负值或超出字符码上限时禁用自动断字。
+    fn effective_hyphenchar(&self, font: FontId) -> Option<u32> {
+        let v = self
+            .hyphenchars
+            .get(&font.0)
+            .copied()
+            .unwrap_or_else(|| self.fonts.hyphenchar(font));
+        u32::try_from(v).ok().filter(|&c| self.fonts.char_exists(font, c))
+    }
+
+    /// 断字 discretionary 节点：`pre` = 当前字体 hyphenchar，当前 run 字体度量，
     /// `post`/`replace` 为空（字母留在主列表）。
-    fn make_discretionary(&self, font: FontId) -> Node {
-        let (w, h, d) = self.fonts.metrics(font, 45);
+    fn make_discretionary(&self, font: FontId, hyphenchar: u32) -> Node {
+        let (w, h, d) = self.fonts.metrics(font, hyphenchar);
         Node::Discretionary {
             pre: vec![Node::Char {
                 font,
-                charcode: 45,
+                charcode: hyphenchar,
                 width: w,
                 height: h,
                 depth: d,

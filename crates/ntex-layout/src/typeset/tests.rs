@@ -1595,6 +1595,55 @@ mod tests {
         );
     }
 
+    /// `\hyphenchar<font>` 接入断字（tex.web §hyphenate `hyf_char := hyphen_char[hf]`、
+    /// `hyf_char<0 → goto done1`，L17589-91）：
+    /// - 无覆盖 → 字体默认（`Fonts::hyphenchar`，Fn 占位 = 45）→ 断点照插；
+    /// - 覆盖负值 → 整词禁断（此前排版层恒取 45，赋值被静默忽略——2026-09-29
+    ///   现场探针实证）；
+    /// - 覆盖正值 → discretionary 的连字符改用该字符码。
+    #[test]
+    fn hyphenchar_override_gates_and_replaces_hyphen_glyph() {
+        let word = |s: &[u8]| -> Vec<Node> {
+            s.iter()
+                .map(|&c| Node::Char {
+                    font: FontId(0),
+                    charcode: u32::from(c),
+                    width: 1000,
+                    height: 6000,
+                    depth: 1500,
+                })
+                .collect()
+        };
+        let build = |letters: &[u8], hc: Option<i64>| {
+            let mut b = NodeBuilder::new(Fonts::Fn {
+                metrics: |_, _| (1000, 6000, 1500),
+                space: |_| Glue::ZERO,
+            });
+            b.patterns(b"ab5c".to_vec()).unwrap();
+            if let Some(v) = hc {
+                b.hyphenchars.insert(0, v);
+            }
+            b.hyphenate_paragraph(word(letters))
+        };
+        let discs = |out: &[Node]| -> Vec<u32> {
+            out.iter()
+                .filter_map(|n| match n {
+                    Node::Discretionary { pre, .. } if pre.len() == 1 => match &pre[0] {
+                        Node::Char { charcode, .. } => Some(*charcode),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect()
+        };
+        // 默认：Fn 占位字体 hyphenchar = 45（tex.web default_hyphen_char）
+        assert_eq!(discs(&build(b"abcdef", None)), vec![45], "无覆盖 → 默认连字符 45");
+        // \hyphenchar\font=-1 → tex.web `hyf_char<0 → goto done1`：整词禁断
+        assert_eq!(discs(&build(b"abcdef", Some(-1))), Vec::<u32>::new(), "负值禁断");
+        // \hyphenchar\font=`? → 连字符字符码换成 63
+        assert_eq!(discs(&build(b"abcdef", Some(63))), vec![63], "正值替换连字符字符码");
+    }
+
     #[test]
     fn patterns_hyphenates_word_across_lines() {
         // \patterns{ab5c} → "abcdefgh" 断点 2（ab-cdefgh）。

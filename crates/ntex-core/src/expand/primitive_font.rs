@@ -584,6 +584,7 @@ impl Expander {
         // tex.web：字体参数赋值恒全局，不进 save stack（同 \fontdimen 臂注）。
         let _global = self.is_global();
         self.hyphenchars.insert(font, value);
+        self.sink.hyphen_char_changed(font, value)?;
         self.finish_assignment();
         Ok(())
     }
