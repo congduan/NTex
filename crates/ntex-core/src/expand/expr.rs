@@ -63,6 +63,25 @@ fn note_csname_stats(name: &str, existed: bool) {
     }
 }
 
+/// `\prop_to_keyval:N` 哨兵（`\use_none:n`）流向定位（临时仪：
+/// `NTEX_SENTINEL_DBG=1`；ctex 第十二刀）。只打哨兵名，噪声可控。
+pub(crate) fn sentinel_dbg(site: &str, expander: &Expander, tok: Token, note: &str) {
+    if !diag_enabled("NTEX_SENTINEL_DBG") {
+        return;
+    }
+    let Some(csid) = tok.csid() else {
+        return;
+    };
+    if expander.intern.name(csid) != "use_none:n" {
+        return;
+    }
+    eprintln!(
+        "[sentinel-dbg] site={site} note={note} suppress={} stack={}",
+        expander.suppress_expansion,
+        expander.debug_stack_summary()
+    );
+}
+
 impl Expander {
     fn expand_kernel_codepoint_to_bytes(
         &mut self,
@@ -367,6 +386,7 @@ impl Expander {
                     let t = self
                         .fetch()?
                         .ok_or_else(|| Error::invalid_input("\\noexpand 后无 token"))?;
+                    sentinel_dbg("noexpand-mark", self, t.0, "");
                     out.push((t.0, true));
                 }
                 EqSlot::Primitive(Primitive::The) => {
@@ -414,11 +434,31 @@ impl Expander {
                     out.extend(detok.into_iter().map(|t| (t, false)));
                 }
                 EqSlot::Primitive(Primitive::Expanded) => {
-                    // pdfTeX \expanded{...}：组内容按 \edef 语义全展开（结果已
-                    // 无可展开项；\noexpand/\unexpanded 产物的冻结位需交给外层
-                    // 展开器消费一次，不能在 \expanded 边界抹掉。
+                    // pdfTeX \expanded{...}：组内容按 \edef 语义全展开，结果
+                    // **放回输入流由外层扫描再展开**（GT pdflatex 实证：
+                    // `\edef\x{\expanded{\noexpand\a B}}`→`GOBBLED[B]`、
+                    // `\expanded{\unexpanded{\a B}}`→`GOBBLED[B]`、
+                    // `\expanded{\the\toks0}`（toks 含宏）→ 再展开成宏体；
+                    // 对照同扫描 `\the`/`\unexpanded` 的 verbatim 保留）。
+                    // tex.web 语义：`\noexpand` 冻结只护**当前展开轮**——
+                    // scan_toks 的 expand 循环里 `x_token` 对被护 token 取
+                    // `cur_tok:=cs_token_flag+cur_cs`（L7845-7856），落盘的
+                    // 是**普通 cs token**，无任何持久冻结位。故冻结位不得
+                    // 跨过本边界，否则 l3kernel `\prop_to_keyval:N` 的哨兵
+                    // `\exp_not:N \use_none:n` 永不展开、keyval 拿到幽灵首键
+                    // （`Missing '=' in '\use_none:n '`，ctexart.cls l.1467）。
+                    // 自指 quark 的活锁防护不在此处，由吸收循环的
+                    // `is_self_quark_macro` 臂（expl3 约定 `q_` 前缀）承担。
                     let toks = self.scan_expanded_group_pairs()?;
-                    out.extend(toks);
+                    if let Some((first, bit)) = toks.first() {
+                        sentinel_dbg(
+                            "expanded-boundary",
+                            self,
+                            *first,
+                            &format!("first_bit={bit} len={}", toks.len()),
+                        );
+                    }
+                    out.extend(toks.into_iter().map(|(t, _)| (t, false)));
                 }
                 EqSlot::Primitive(Primitive::Scantokens) => {
                     // e-TeX \scantokens is expandable in the sense relevant to
@@ -1270,7 +1310,7 @@ impl Expander {
         self.suppress_expansion += 1;
         // macro_def=false：不报 IPN，def_name 不再使用（此前传空串使消息
         // 缺 "of \X" 段——现参数 `#` 检查整体关闭）。
-        let scanned = self.scan_edef_body_pairs("", false, true);
+        let scanned = self.scan_edef_body_pairs("", false);
         self.suppress_expansion -= 1;
         scanned
     }

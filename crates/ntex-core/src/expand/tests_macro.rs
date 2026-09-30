@@ -1211,13 +1211,36 @@ fn expanded_primitive_expands_like_edef() {
 }
 
 #[test]
-fn expanded_preserves_noexpand_for_outer_edef() {
-    // `\expanded` 返回给外层 `\edef` 时，内部 `\noexpand` 产生的一次性
-    // 冻结位必须跨过 primitive 边界。否则自指 quark 类宏会在外层 edef
-    // 扫描器中二次展开并活锁。
+fn expanded_returns_result_to_stream_for_outer_reexpansion() {
+    // tex.web：`\expanded` 的结果**放回输入流**，外层扫描对它**再展开**；
+    // `\noexpand` 的一次性冻结只护 `\expanded` 自己那轮（scan_toks 落盘
+    // 普通 cs token，无持久冻结位）。GT pdflatex 实测三案：
+    //   `\edef\x{\expanded{\noexpand\a B}}` → `GOBBLED[B]`（哨兵被外层消费）
+    //   `\edef\x{\expanded{\unexpanded{\a B}}}` → `GOBBLED[B]`
+    //   `\edef\x{\expanded{\the\toks0}}`（toks 含宏）→ 宏体（再展开）
+    // 冻结位若跨边界，l3kernel `\prop_to_keyval:N` 的哨兵
+    // `\exp_not:N \use_none:n` 永不展开 → keyval 幽灵首键（ctexart l.1467）。
     assert_eq!(
-        expand("\\def\\q{\\q}\\edef\\x{\\expanded{\\noexpand\\q}}\\meaning\\x").unwrap(),
-        "macro:->\\q "
+        expand(
+            "\\def\\probeSentinel#1{GOBBLED[#1]}\
+             \\edef\\x{\\expanded{\\noexpand\\probeSentinel B}}\
+             \\meaning\\x"
+        )
+        .unwrap(),
+        "macro:->GOBBLED[B]"
+    );
+    // 自指 quark 的活锁防护走吸收循环的 `is_self_quark_macro` 臂
+    // （expl3 约定 `q_` 前缀自展开体=自身），与冻结位无关：
+    // `\expanded` 内护住的 quark 回到外层 edef 后按**定界数据**收集。
+    assert_eq!(
+        expand(
+            "\\catcode`\\_=11 \
+             \\def\\q_demo{\\q_demo}\
+             \\edef\\x{\\expanded{\\noexpand\\q_demo}}\
+             \\meaning\\x"
+        )
+        .unwrap(),
+        "macro:->\\q_demo "
     );
 }
 

@@ -1,0 +1,43 @@
+% probes/prop-keyval-sentinel-bisect.tex
+%
+% 探针（第四层）：bisect ctexart 失败形态 vs 我此前通过形态的差异。
+%   COne  2 项 + \prop_put:Nnn + 单层值（已知通过）
+%   CTwo  1 项 + \prop_put:Nne + 双层花括组值（ctex 真形态）
+%   CThr 16 项 + \prop_put:Nne + 双层花括组值（ctex 完整形态）
+%   CFou  2 项 + 值含 ~ 空格 + 双层花括组
+\documentclass{article}
+\begin{document}
+\ttfamily
+\ExplSyntaxOn
+\prop_new:N \l_c_prop
+\tl_new:N \l_c_tl
+\cs_new_protected:Npn \c_show:n #1
+  {
+    \tl_set:Ne \l_c_tl { \prop_to_keyval:N #1 }
+    \typeout{C: <\tl_to_str:N \l_c_tl>}
+  }
+% ---- COne ---------------------------------------------------------------
+\prop_put:Nnn \l_c_prop { font } { small }
+\prop_put:Nnn \l_c_prop { size } { 12 ~ bp }
+\c_show:n \l_c_prop
+\prop_clear:N \l_c_prop
+% ---- CTwo ---------------------------------------------------------------
+\prop_put:Nne \l_c_prop { 8 } { { \dim_to_decimal:n { 5.01874 pt } } { \dim_to_decimal:n { 6.02249 pt } } }
+\c_show:n \l_c_prop
+\prop_clear:N \l_c_prop
+% ---- CThr（16 项完整形态）----------------------------------------------
+\clist_map_inline:nn
+  { {8}{5.01874pt} , {7}{5.52061pt} , {-6}{6.52437pt} , {6}{7.52812pt} ,
+    {-5}{9.03374pt} , {5}{10.53937pt} , {-4}{12.045pt} , {4}{14.05249pt} ,
+    {-3}{15.05624pt} , {3}{16.06pt} , {-2}{18.06749pt} , {2}{22.08249pt} ,
+    {-1}{24.09pt} , {1}{26.09749pt} , {-0}{36.13499pt} , {0}{42.15749pt} }
+  { \prop_put:Nne \l_c_prop {##1} { { \dim_to_decimal:n {##2} } { \dim_to_decimal:n { (##2) * 6 / 5 } } } }
+\c_show:n \l_c_prop
+\prop_clear:N \l_c_prop
+% ---- CFou ---------------------------------------------------------------
+\prop_put:Nne \l_c_prop { a } { { x ~ y } { z ~ w } }
+\prop_put:Nne \l_c_prop { b } { { p } { q } }
+\c_show:n \l_c_prop
+\ExplSyntaxOff
+OK
+\end{document}

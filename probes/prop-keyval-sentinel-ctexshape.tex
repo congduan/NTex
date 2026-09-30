@@ -1,0 +1,26 @@
+% probes/prop-keyval-sentinel-ctexshape.tex
+%
+% 探针（第三层）：ctexart.cls l.1460-1468 原样形状（含字号表值带空格、
+% \group_begin:/\group_end: 包裹、\prop_if_empty 路径）。
+\documentclass{article}
+\begin{document}
+\ttfamily
+\ExplSyntaxOn
+\group_begin:
+  \prop_new:N \l__ctexfont_size_temp_prop
+  \prop_new:N \l__ctexfont_size_temp_seq
+  \seq_put_right:Nn \l__ctexfont_size_temp_seq { -3 }
+  \prop_put:Nnn \l__ctexfont_size_temp_prop { -3 } { 15   bp }
+  \seq_put_right:Nn \l__ctexfont_size_temp_seq { 0 }
+  \prop_put:Nnn \l__ctexfont_size_temp_prop { 0 } { 42   bp }
+  \exp_args:NNe \prop_const_from_keyval:Nn \c__ctexfont_size_prop
+    { \prop_to_keyval:N \l__ctexfont_size_temp_prop }
+  \exp_args:NNe \seq_const_from_clist:Nn \c__ctexfont_size_seq
+    { \seq_use:Nn \l__ctexfont_size_temp_seq { , } }
+  \typeout{CTEX:SEQ <\seq_use:Nn \c__ctexfont_size_seq {|}>}
+\group_end:
+\prop_map_inline:Nn \c__ctexfont_size_prop
+  { \typeout{CTEX:PAIR [ \tl_to_str:n{##1} ] => [ \tl_to_str:n{##2} ]} }
+\ExplSyntaxOff
+OK
+\end{document}

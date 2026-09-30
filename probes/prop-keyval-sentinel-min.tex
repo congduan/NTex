@@ -1,0 +1,43 @@
+% probes/prop-keyval-sentinel-min.tex
+%
+% 探针：\prop_to_keyval:N 哨兵（\exp_not:N \use_none:n）在 e 型展开后的残留形态。
+%
+% 背景见任务：ctexart.cls l.1467 报 `Missing '=' in '\use_none:n '`。
+% l3kernel \prop_to_keyval:N 在内层 \expanded 里用 \exp_not:N \use_none:n
+% 护住哨兵，期待它在**下一轮**展开被消费；ctex 用 \exp_args:NNe 包裹。
+%
+% 三段：
+%   [1] 纯 TeX 层：\edef 里 \noexpand\<cs> 落盘的 token 形态（tex.web 魔法
+%       relax|no_expand_flag=257 vs NTex 的 cs token）+ 第二轮展开是否被消费；
+%   [2] expl3 层：\exp_args:NNe \tl_set:Nn 后哨兵是否残留（\tl_to_str 打印）；
+%   [3] ctex 同款：\exp_args:NNe \prop_const_from_keyval:Nn 走 keyval 解析，
+%       真引擎应无 `Missing '=' in '\use_none:n '`。
+\documentclass{article}
+\begin{document}
+\ttfamily
+\ExplSyntaxOn
+% ---- [1] 纯 TeX 层：\noexpand 落盘形态 ----------------------------------
+\def\probeSentinel:#1{GOBBLED[#1]}
+\edef\probeRawEdef{\noexpand\probeSentinel: B}
+\typeout{A1:EDEF: <\detokenize\expandafter{\probeRawEdef}>}
+\show\probeRawEdef
+% 第二轮展开：魔法 relax → 原样保留 `B`；cs token → 哨兵吞掉 `B`
+\edef\probeUseEdef{\probeRawEdef}
+\show\probeUseEdef
+\typeout{A1:USE: <\detokenize\expandafter{\probeUseEdef}>}
+% ---- [2] expl3 e 型展开 --------------------------------------------------
+\prop_new:N \l_probe_prop
+\prop_put:Nnn \l_probe_prop { font } { small }
+\prop_put:Nnn \l_probe_prop { size } { 12 ~ bp }
+\tl_new:N \l_probe_e_tl
+\exp_args:NNe \tl_set:Nn \l_probe_e_tl { \prop_to_keyval:N \l_probe_prop }
+\typeout{A2:KEYVAL: <\tl_to_str:N \l_probe_e_tl>}
+% ---- [3] ctex 同款 prop 往返 --------------------------------------------
+\exp_args:NNe \prop_const_from_keyval:Nn \c_probe_prop
+  { \prop_to_keyval:N \l_probe_prop }
+\prop_map_inline:Nn \c_probe_prop
+  { \typeout{A3:PAIR: [\tl_to_str:n {##1}] => [\tl_to_str:n {##2}]} }
+\typeout{A3:COUNT: \prop_count:N \c_probe_prop}
+\ExplSyntaxOff
+OK
+\end{document}

@@ -1167,7 +1167,7 @@ impl Expander {
     ///   （latex.ltx --initex 256 条 IPN 的根因，2026-09-08 修复）。
     fn scan_edef_body(&mut self, def_name: &str, in_definition: bool) -> Result<Vec<Token>> {
         Ok(self
-            .scan_edef_body_pairs(def_name, in_definition, false)?
+            .scan_edef_body_pairs(def_name, in_definition)?
             .into_iter()
             .map(|(tok, _)| tok)
             .collect())
@@ -1185,7 +1185,6 @@ impl Expander {
         &mut self,
         def_name: &str,
         in_definition: bool,
-        preserve_noexpand: bool,
     ) -> Result<Vec<(Token, bool)>> {
         let mut out = Vec::new();
         // tex.web scan_toks（L9394）：`unbalance:=1` 起始——首个 `{` 已被
@@ -1273,6 +1272,9 @@ impl Expander {
                 runaway = unbalance > 0;
                 break 'scan;
             };
+            if noexpand {
+                sentinel_dbg("absorb-fetch-frozen", self, tok, "");
+            }
             if trace_len > 0 && scan_steps >= trace_start && scan_steps < trace_start + trace_len {
                 let desc = match tok.csid() {
                     Some(c) => format!("\\{}", self.intern.name(c)),
@@ -1345,7 +1347,11 @@ impl Expander {
                 {
                     eprintln!("[hash-edef] frozen-hash");
                 }
-                out.push((tok, preserve_noexpand));
+                // tex.web：冻结只护当前展开轮——被护 token 落盘即普通 token
+                // （scan_toks expand 循环 x_token 的 `cur_cs<>0` 臂）。此处
+                // 不再外传冻结位：`\expanded` 结果须回到输入流被外层再展开
+                // （\prop_to_keyval:N 哨兵消费依赖此）。
+                out.push((tok, false));
                 continue;
             }
             // 条件原语：即时求值（优先级与 process_one 相同）
@@ -1449,6 +1455,7 @@ impl Expander {
                 }
                 // 可展开项（宏/可展开原语）：展开后压帧，重新进入本扫描
                 EqSlot::Macro(m) => {
+                    sentinel_dbg("absorb-macro-expand", self, tok, "");
                     // TeX：\edef 中 outer 宏 → forbidden
                     if m.value.outer {
                         return Err(Error::invalid_input(format!(

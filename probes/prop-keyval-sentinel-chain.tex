@@ -1,0 +1,35 @@
+% probes/prop-keyval-sentinel-chain.tex
+%
+% 探针（第二层）：把 \prop_to_keyval:N 的展开链逐站拆开，定位哨兵在哪一站
+% 该被消费而没被消费。（expl3 名内不得用数字——cs 扫描在数字处断开，
+% 上一版 \l_b1_tl 被当 `\l_b`+`1`+`_tl`，两引擎同毁。）
+%   BOne  内层 \expanded 直展（护哨兵后的产物形态）
+%   BTwo  \tl_set:Ne 直展（l3 e 变体）
+%   BThr  \exp_args:NNe 路径
+%   BFou  手工复刻 \exp_args:NNe 的体（\ea\ea\tex_expanded:D）——独立判定位
+\documentclass{article}
+\begin{document}
+\ttfamily
+\ExplSyntaxOn
+\prop_new:N \l_probe_prop
+\prop_put:Nnn \l_probe_prop { font } { small }
+% ---- BOne 内层 \expanded 直展 -------------------------------------------
+\tl_set:Nx \l_bone_tl
+  { \tex_expanded:D { \exp_not:N \use_none:n \prop_map_function:NN \l_probe_prop \__prop_to_keyval:nn } }
+\typeout{BONE:INNER: <\tl_to_str:N \l_bone_tl>}
+% ---- BTwo \tl_set:Ne 直展 ----------------------------------------------
+\tl_set:Ne \l_btwo_tl { \prop_to_keyval:N \l_probe_prop }
+\typeout{BTWO:TLE: <\tl_to_str:N \l_btwo_tl>}
+% ---- BThr \exp_args:NNe 路径 -------------------------------------------
+\tl_new:N \l_bthr_tl
+\exp_args:NNe \tl_set:Nn \l_bthr_tl { \prop_to_keyval:N \l_probe_prop }
+\typeout{BTHR:EXPARGS: <\tl_to_str:N \l_bthr_tl>}
+% ---- BFou 手工复刻 \exp_args:NNe 的体 ----------------------------------
+\cs_new:Npn \probe_caller:Nn #1#2
+  { \exp_after:wN #1 \exp_after:wN #2 \tex_expanded:D { { \prop_to_keyval:N \l_probe_prop } } }
+\tl_new:N \l_bfou_tl
+\probe_caller:Nn \tl_set:Nn \l_bfou_tl
+\typeout{BFOU:MANUAL: <\tl_to_str:N \l_bfou_tl>}
+\ExplSyntaxOff
+OK
+\end{document}

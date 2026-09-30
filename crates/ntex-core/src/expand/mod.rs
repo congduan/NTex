@@ -677,6 +677,7 @@ const DIAG_KEYS: &[&str] = &[
     "NTEX_BIGLIST_TRACE",
     "NTEX_CSNAME_STATS",
     "NTEX_HASH_SCAN_DBG",
+    "NTEX_SENTINEL_DBG",
 ];
 
 /// 结构化 trace 通道（JSONL）——**挂死/膨胀类定位的核心设施**。

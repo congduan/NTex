@@ -1261,7 +1261,9 @@ impl Expander {
                     EqSlot::Primitive(Primitive::Relax) => continue,
                     // 被 \noexpand 冻结：不展开，直接作为 filler 结果返回
                     // （TeX get_x_token 的 noexpand 分支）
-                    _ if ne => {}
+                    _ if ne => {
+                        sentinel_dbg("filler-frozen", self, t, "");
+                    }
                     // protected 宏在展开抑制上下文（\edef/\write）不展开 → 视为不可展开
                     EqSlot::Macro(m) if !(m.value.protected && self.suppress_expansion > 0) => {
                         self.push_expansion(t, ne)?;
