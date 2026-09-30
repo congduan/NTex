@@ -564,7 +564,7 @@ fn best_path(
         let mut champion: [Option<(i64, usize, FitClass)>; 4] = [None; 4];
         let mut overfull_fallback: Option<(FitClass, i64, usize, FitClass)> = None;
         let mut survivors: Vec<usize> = Vec::new();
-        for &a in &active {
+        for (&a, ai) in active.iter().zip(0usize..) {
             // 行宽按行号取（tex.web `line_width` §16742）：行号 = 到达起点 a
             // 的行数 + 1；`\parshape` 空表时恒为 `\hsize`（行为不变）。
             let lw = if shape.is_empty() {
@@ -576,8 +576,20 @@ fn best_path(
             let (bad, kind) = line_badness_kind(&bi, &breaks[a], lw, skips);
             let forced_drop = bi.is_forced && bad as i64 > threshold;
             if bad > INF_BAD || forced_drop {
-                if is_final {
-                    // artificial demerits：d=0（行 demerits 不计，路径链仍建立）
+                // artificial demerits（tex.web @<Prepare to deactivate node |r|...@>，
+                // L16824）：**仅**在 final pass、本断点尚无任何可行候选
+                // （`minimum_demerits=awful_bad`）、且 r 已是**仅剩**的活动节点
+                // （`prev_r=active` 且 `link(r)=last_active`，即前面无人存活、
+                // 后面无人排队）时才以 d=0 强行记录一行。此前的「任何
+                // overful 起点都记 d=0」会在候选稀疏区（长单词/行内数学的
+                // 不可断长段）给每个断点白送一条 0-demits 路径，毒化后续
+                // 总 demerits 比较——溢出行反而压过可行行（探针
+                // math-boundary-breakpoint：22pt+107pt Overfull vs GT 0）。
+                if is_final
+                    && survivors.is_empty()
+                    && ai + 1 == active.len()
+                    && champion.iter().all(|c| c.is_none())
+                {
                     let fit = fit_class_of(bad, kind);
                     let (af, &ad) = best[a]
                         .iter()
