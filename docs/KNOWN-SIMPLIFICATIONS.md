@@ -70,6 +70,7 @@
 |---|---|---|
 | `catcode.rs` / `input.rs` | `\utfinputmode=1`（M9 中文刀 2）已通 UTF-8 直写；**默认 bytes 模式逐字节语义零改动**（TRIP/ETRIP 已对照）。>255 码位的 `\catcode` 覆盖表（刀 4）已落地 | 见下行遗留 |
 | `expand/scan.rs` `\catcode` 处理器 | **>255 码位赋值的预读时序**：`\catcode"XXXX=13` 的数值扫描为确认数字结束而预读下一个 token，该 token 用**赋值前**的 catcode 切分——紧跟的 `\def<该字>{…}` 会把 `\def` 与该字粘成一个控制字（`\def中` → `! Undefined control sequence. \def中`），随后该字恒未定义（2026-09-17 实测；`1234567` 行号亦随之错位到 `l.15` 一类越界值）。**规避**：`\catcode` 行与 `\def` 行之间放一个 ASCII token（`\relax`／空行／任何 ASCII 语句）。与 TeX 的差别在**预读深度**：tex.web `scan_int` 只 back_input 一个 token，控制字的扫描留到赋值之后 | 待做（刀 6） |
+| `linebreak.rs` `best_path` | **artificial demerits 面过宽**（行内数学边界断点缺失探针 `probes/math-boundary-breakpoint.tex`，GT 0 Overfull vs NTex 22pt+107pt）：数学边界 glue **本就**在段落 hlist 里、**本就**已登记为 BreakSpec（`\showbox`+插桩双证，任务假设的「边界 glue 未标断点」被证伪）——真根因在折行器：`overfull_fallback` 对**每一个**候选枯竭的断点都记 `d=0` 兜底路径，而 tex.web @<Prepare to deactivate node |r|...@>（L16824）的 artificial demerits 只在 final pass、本断点尚无任何可行候选（`minimum_demerits=awful_bad`）且 r 是**仅剩**活动节点（`prev_r=active` 且 `link(r)=last_active`）时才触发。候选稀疏区（不可断长段=行内数学/长单词）里每个断点被白送一条 0-demerits 路径，毒化总 demerits 比较——溢出行反而压过可行行（插桩实证：i=26 idx=99 处 a=0 bad=10001 该淘汰的起点成了兜底源 vs a=25 bad=10000 可行但超 tolerance 不记候选）。已修（2026-09-30）：兜底收紧为「final pass + 无幸存起点 + r 是活动链末位 + 全部 fit 类无候选」四条件合取。**回归面**：探针 Overfull 2→0；Transformer Overfull 41→9（18 页/3 图/[?]=0 不变）；TRIP/ETRIP 签名零新增；ntex-core 476 + ntex-layout 256 全绿 | ✅ 已修（`50d8601`；回归锁 `artificial_demerits_needs_sole_surviving_active`，已实测在 `50d8601` 之前失败） |
 | 折行 | **CJK 汉字字间断点已通**（M9 中文刀 5，2026-09-17）：`\cjkbreakmode=1` 时段落关闭阶段在可断字间插零宽可拉伸胶水（`0pt plus 0.5pt minus 0.05pt`，XeTeX inter-character skip 同款），断点 + 两端对齐同时到位；开/闭标点禁则按 **gap** 判定（能同时看两侧，故行首禁则与行尾禁则都落地）。**中西文交界断点亦已通**（同日补）：CJK ↔ ASCII 字母/数字之间给断点（拉丁词/数字**整体不拆**，断点只落交界），这是 `\XeTeXlinebreaklocale "zh"` 的等价行为——缺它则一串西文与前汉字之间的**唯一**断点距离可达数十 pt，折行器只能超宽出页。默认关（断点会改折行结果，TRIP/ETRIP 必须零影响）。遗留：不限 CJK 符号挤压（标点宽度不压缩） | ✅ 已修（④ 主项）；标点挤压待做 |
 | `ntex-font/otf.rs` `build_metrics` | OTF 度量只有 advance/height/depth（hmtx+bbox），italic correction 恒 0；无 kerning/连字/HarfBuzz 整形 | 待做（M9 ②） |
 | `ntex-backend` CJK 渲染 | 字形经 cmap 直查（`unicode_native` 字体 codepoint→glyph）；缺字形逐字回落方框；无 CJK 字体链 fallback | 待做 |
@@ -190,6 +191,8 @@ demo1 六刀 + 输出例程刀 2/3/5 的修复登记；全部已提交，留作�
 ---
 
 ## 维护记录
+
+- 2026-09-30：行内数学边界断点（探针 math-boundary-breakpoint，GT 0 vs NTex 22pt+107pt Overfull）✅ 已修（`50d8601`）——**任务假设被证伪**：数学边界 glue 既在段落 hlist 里、也确已登记为 BreakSpec（`\showbox` + best_path 插桩双证，bp[49]/bp[50] kind=Glue 都在）。真根因在折行器 `best_path` 的 `overfull_fallback`：对**每一个**候选枯竭断点都记 `d=0` 兜底，而 tex.web @<Prepare to deactivate node |r|...@>（L16824）只在「final pass + 本断点无任何可行候选 + r 是**仅剩**活动节点」时才触发；候选稀疏区（不可断长段）每断点被白送 0-demerits 路径，毒化总 demerits 比较，溢出行压过可行行。修后：探针 2→0；Transformer Overfull 41→9（18 页/3 图/[?]=0 不变）；TRIP/ETRIP 签名零新增；core 476 + layout 256 全绿。回归锁 `artificial_demerits_needs_sole_surviving_active`（`d4b0777`，已实测在修复前失败）。**遗留（未修，另行立案）**：① `preprocess` 的 Glue 臂不累计 `name:Some`（`\spaceskip` 等）的 stretch/shrink——badness 分母偏窄，属次要偏差；② 任务原列的四条排查方向中「显式连字符 discretionary 正常、问题特定于数学边界」的现象学描述成立，但机理是候选稀疏而非边界缺失。
 
 - 2026-09-17：第十八刀尾递归鞍具 ✅ 已修（d222043，已用 `git show --stat` 核对）：
   `tests_bytecode18` 补数字终止空格及 `\iter` 调用边界，三项双轨回归使门禁
