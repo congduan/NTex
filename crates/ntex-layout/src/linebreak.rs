@@ -1014,6 +1014,53 @@ mod tests {
         assert_eq!(lines[0], (0, 3));
     }
 
+
+    #[test]
+    fn artificial_demerits_needs_sole_surviving_active() {
+        // tex.web @<Prepare to deactivate node |r|...@>（L16824）：artificial
+        // demerits（d=0 兜底）只在 r 是**仅剩**活动节点时触发
+        // （`minimum_demerits=awful_bad` 且 `prev_r=active` 且
+        // `link(r)=last_active`）。
+        //
+        // 场景：自然宽恰好的首行（断点 g3 处 b=0）后跟一条不可断长块（大盒，
+        // 行内数学的替身），把后续断点摊开成候选稀疏区。区内 g4 处：起点 0 →
+        // 行超宽（b=inf_bad+1，淘汰）；起点 g3 → 行超短（b=inf_bad，可行但超
+        // tolerance，不记候选）。旧实现对起点 0 也记 d=0，让 g4 白得一条零代价
+        // 路径并一路压过可行链——首行越过不可断块推到 g4；tex.web 语义下 g3
+        // 仍活着，g4 根本不成断点。
+        let g = glue(4, 2, 5);
+        let hlist = vec![
+            char_of(56),                              // 0
+            g.clone(),                                // 1  g1
+            char_of(30),                              // 2
+            g.clone(),                                // 3  g2
+            char_of(6),                               // 4
+            g.clone(),                                // 5  g3 ← 首行应在此收（恰 100）
+            Node::Box(crate::node::hpack(&[char_of(60)], 60)), // 6 不可断长块
+            g.clone(),                                // 7  g4（旧 d=0 兜底落点）
+            char_of(6),                               // 8
+            g.clone(),                                // 9
+            char_of(6),                               // 10
+            g.clone(),                                // 11
+            char_of(6),                               // 12
+            g.clone(),                                // 13
+            char_of(6),                               // 14
+            g.clone(),                                // 15
+            char_of(6),                               // 16
+            g.clone(),                                // 17
+            char_of(6),                               // 18
+            g.clone(),                                // 19
+            char_of(30),                              // 20
+        ];
+        let (lines, _trace) =
+            knuth_plass(&hlist, 100, 200, 100, false, &[], LineSkips::default());
+        assert_eq!(
+            lines,
+            vec![(0, 5), (6, 19), (20, 21)],
+            "首行应断在 g3（自然宽恰好的断点），而非被 d=0 兜底推过不可断块"
+        );
+    }
+
     #[test]
     fn line_skips_make_initial_penalty_break_feasible() {
         // Center/trivlist shape: the paragraph starts with a penalty before a
