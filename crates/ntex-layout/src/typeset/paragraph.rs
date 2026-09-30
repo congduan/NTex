@@ -229,11 +229,19 @@ impl NodeBuilder {
                         })
                         .collect();
                     let hn = letters.len();
+                    // tex.web @<Try to hyphenate...@>（L17540-17550）：断字只在
+                    // 「胶水断点之后」发起，向词首回扫途中遇到非 char/ligature/
+                    // normal kern/whatsit 节点（math_node、盒子、disc、penalty…）
+                    // 或列表头一律 `goto done1` 放弃。故段首单词、紧贴公式/
+                    // 盒子的字母串不断字——`$warmup\_steps$` 里 `_` 的规则盒
+                    // 夹出的 `steps` 此前被断成 `st-eps` 折行溢出（GT 整体挪行）。
+                    let eligible = Self::hyph_eligible(&children, run_start);
                     // 异常词优先（精确匹配小写字母）；否则走模式表
-                    let raw = match self.exception_breaks(&letters) {
-                        Some(b) => b,
-                        None if hn < l_hyf + r_hyf => Vec::new(), // 词过短：tex.web `hn<l_hyf+r_hyf`
-                        None => self.patterns.hyphenate(&letters),
+                    let raw = match (eligible, self.exception_breaks(&letters)) {
+                        (_, Some(b)) => b,
+                        (false, None) => Vec::new(),
+                        (true, None) if hn < l_hyf + r_hyf => Vec::new(), // 词过短：tex.web `hn<l_hyf+r_hyf`
+                        (true, None) => self.patterns.hyphenate(&letters),
                     };
                     // tex.web `found:`：仅保留 `l_hyf <= j <= hn - r_hyf`
                     let breaks: Vec<usize> = raw
@@ -262,6 +270,23 @@ impl NodeBuilder {
             i += 1;
         }
         out
+    }
+
+    /// tex.web @<Skip to node |ha|...@>（L17516-17534）：从词首回扫到断点胶水，
+    /// 途中只准经过 ligature、normal kern、whatsit 与 `lc_code=0` 的字符；
+    /// 遇到其他节点（math_node、盒子、disc、penalty…）→ `done1` 整词禁断。
+    ///
+    /// 此处只收口**数学/盒子邻接**这一支（`\mathon`/`\mathoff`/盒节点紧跟的
+    /// 字母串）：`$warmup\_steps$` 里 `\_` 的规则盒夹出的 `steps` 曾被断成
+    /// `st-eps` 折行溢出（GT 把整个公式盒挪到下一行）。tex.web 的其余回扫
+    /// 分支（段首单词、紧贴 disc/penalty 的字母串也禁断）**未落地**——NTex
+    /// 的断字覆盖不及 GT（如 `positions` 一词无断点），靠宽松规则补偿；
+    /// 完整落地实测在本样张上多出 7 处 Overfull，登记 KNOWN-SIMPLIFICATIONS 另案。
+    fn hyph_eligible(children: &[Node], run_start: usize) -> bool {
+        !matches!(
+            children.get(run_start.wrapping_sub(1)),
+            Some(Node::MathOn { .. }) | Some(Node::MathOff { .. }) | Some(Node::Box(_))
+        )
     }
 
     /// 异常词表查词：小写字母精确匹配 → 返回其允许断点（可含 0 = 词首、len = 词尾，

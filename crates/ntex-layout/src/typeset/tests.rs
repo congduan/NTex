@@ -1674,6 +1674,32 @@ mod tests {
     }
 
     #[test]
+    fn explicit_hyphen_gives_line_break() {
+        // tex.web wrapup（@<Make a ligature node...@>）：主水平模式里字符 =
+        // \hyphenchar 时其后紧跟空 disc（new_disc：pre/post/replace 全空）——
+        // 显式连字符因此成为折行断点（罚分 \exhyphenpenalty=50）。NTex 此前把
+        // 连字符当普通 Char 入表，encoder-decoder 整词不可断 → 首行超宽
+        // 41.5pt（GT 在 encoder- 处断，b=11 p=50 d=2941）。窄 \hsize 下唯一
+        // 可行路径断在显式连字符处：行1 = "m abcd-"（连字符本体留在行内）、
+        // 行2 = "efgh n"。注意与断字 disc 不同：这里 pre 为空，连字符不是
+        // packaging 时补的，而是主列表里的真实字符。
+        let main = typeset_hyphen(r"\hsize 10000sp m abcd-efgh n").unwrap();
+        assert_eq!(main.len(), 4, "应折成两行（行间 penalty + interline glue）：{main:?}");
+        let l1 = as_box(&main[0]);
+        assert_eq!(
+            as_char(l1.children.last().unwrap()),
+            b'-' as u32,
+            "行1 以显式连字符收尾：{l1:?}"
+        );
+        assert!(
+            !l1.children.iter().any(|n| matches!(n, Node::Discretionary { .. })),
+            "空 disc 已被 packaging 消费：{l1:?}"
+        );
+        let l2 = as_box(&main[3]);
+        assert_eq!(as_char(&l2.children[0]), b'e' as u32, "行2 从连字符后继续：{l2:?}");
+    }
+
+    #[test]
     fn without_patterns_word_stays_whole() {
         // 无 \patterns：词内无断点，行超宽且收缩不足 → tex.web artificial
         // demerits 在空格断点逐断点成行（真实 TeX 同为多条 Overfull 行）；
