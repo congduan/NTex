@@ -1965,6 +1965,21 @@ impl NodeBuilder {
                     height,
                     depth,
                 });
+                // tex.web `wrapup`（§@<Make a ligature node...@>）：主水平模式里
+                // 追加的字符等于当前字体 `\hyphenchar`（显式连字符 `-`）时，其后
+                // 紧跟空 discretionary（`new_disc`：pre/post/replace 全空）——折行
+                // 器据此在显式连字符处获得断点（罚分 \exhyphenpenalty）。tex.web
+                // 的 `mode>0` 条件（内部模式为负号）在此即主水平模式；`\hbox` 内
+                // （受限模式）不插，避免 discretionary 套 discretionary。
+                if self.mode() == Mode::Horizontal
+                    && self.effective_hyphenchar(font) == Some(charcode)
+                {
+                    self.append(Node::Discretionary {
+                        pre: Vec::new(),
+                        post: Vec::new(),
+                        replace: Vec::new(),
+                    });
+                }
             }
         } else {
             self.append(node);
