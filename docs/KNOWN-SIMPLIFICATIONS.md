@@ -71,6 +71,10 @@
 | `catcode.rs` / `input.rs` | `\utfinputmode=1`（M9 中文刀 2）已通 UTF-8 直写；**默认 bytes 模式逐字节语义零改动**（TRIP/ETRIP 已对照）。>255 码位的 `\catcode` 覆盖表（刀 4）已落地 | 见下行遗留 |
 | `expand/scan.rs` `\catcode` 处理器 | **>255 码位赋值的预读时序**：`\catcode"XXXX=13` 的数值扫描为确认数字结束而预读下一个 token，该 token 用**赋值前**的 catcode 切分——紧跟的 `\def<该字>{…}` 会把 `\def` 与该字粘成一个控制字（`\def中` → `! Undefined control sequence. \def中`），随后该字恒未定义（2026-09-17 实测；`1234567` 行号亦随之错位到 `l.15` 一类越界值）。**规避**：`\catcode` 行与 `\def` 行之间放一个 ASCII token（`\relax`／空行／任何 ASCII 语句）。与 TeX 的差别在**预读深度**：tex.web `scan_int` 只 back_input 一个 token，控制字的扫描留到赋值之后 | 待做（刀 6） |
 | `linebreak.rs` `best_path` | **artificial demerits 面过宽**（行内数学边界断点缺失探针 `probes/math-boundary-breakpoint.tex`，GT 0 Overfull vs NTex 22pt+107pt）：数学边界 glue **本就**在段落 hlist 里、**本就**已登记为 BreakSpec（`\showbox`+插桩双证，任务假设的「边界 glue 未标断点」被证伪）——真根因在折行器：`overfull_fallback` 对**每一个**候选枯竭的断点都记 `d=0` 兜底路径，而 tex.web @<Prepare to deactivate node |r|...@>（L16824）的 artificial demerits 只在 final pass、本断点尚无任何可行候选（`minimum_demerits=awful_bad`）且 r 是**仅剩**活动节点（`prev_r=active` 且 `link(r)=last_active`）时才触发。候选稀疏区（不可断长段=行内数学/长单词）里每个断点被白送一条 0-demerits 路径，毒化总 demerits 比较——溢出行反而压过可行行（插桩实证：i=26 idx=99 处 a=0 bad=10001 该淘汰的起点成了兜底源 vs a=25 bad=10000 可行但超 tolerance 不记候选）。已修（2026-09-30）：兜底收紧为「final pass + 无幸存起点 + r 是活动链末位 + 全部 fit 类无候选」四条件合取。**回归面**：探针 Overfull 2→0；Transformer Overfull 41→9（18 页/3 图/[?]=0 不变）；TRIP/ETRIP 签名零新增；ntex-core 476 + ntex-layout 256 全绿 | ✅ 已修（`50d8601`；回归锁 `artificial_demerits_needs_sole_surviving_active`，已实测在 `50d8601` 之前失败） |
+| `typeset/mod.rs` `append_char` / `typeset/paragraph.rs` `hyphenate_paragraph` | **显式连字符无断点 + 行内公式邻接字母串被断字**（接棒 `50d8601` 残余，Transformer 正文 span 超界 >486pt 4 行：p2×2 / p4 / p9）。两根因：① tex.web `wrapup`（@<Make a ligature node...@>，L20177-186）在主水平模式里追加的字符 = `\hyphenchar`（显式连字符 `-`）时紧跟空 discretionary（`new_disc`，pre/post/replace 全空）——折行器据此在显式连字符处取断点（罚分 `\exhyphenpenalty`）；NTex 此前把 `-` 当普通 Char 入表，`encoder-decoder` 整词不可断 → 段首行超宽 41.5pt。已修（`f02063b`）：`append_char` 补 `mode==Horizontal && hyphenchar==charcode` 臂（`\hbox` 受限模式不插，避免 disc 套 disc）。② tex.web @<Try to hyphenate...@>（L17540-17550）断字只在「胶水断点之后」发起，向词首回扫途中遇非 char/ligature/normal kern/whatsit 节点（math_node、盒、disc、penalty…）一律 `goto done1` 整词放弃；NTex 的 run 式断字无视这点，`$warmup\_steps$` 里 `\_` 的规则盒夹出的 `steps` 被断成 `st-eps`，折行器在**公式内部**取断点把 `st-` 留在上一行溢出（GT 整个公式盒挪行）。已修（`d586278`）：`hyph_eligible` 邻接守卫——run 首前一节点为 MathOn/MathOff/Box 时整词禁断。**回归面**：显式连字符探针 Overfull 2→0（GT 0，首断点 `b=11 p=50 d=2941` 与 GT 全同）；Transformer Overfull 9→5（余 5 处与 GT 同为表格行）；正文 span 超界 4→1；TRIP/ETRIP 签名零新增；core 476 + layout 257 全绿。**遗留（未修，另行立案）**见下两行 | ✅ 已修（两刀；回归锁 `explicit_hyphen_gives_line_break`） |
+| 折行 | **tex.web「词前必须有胶水」回扫规则未落地**：上述守卫只收口数学/盒邻接一支。完整规则还禁断段首单词、紧贴 disc/penalty 的字母串（GT `fw.tex` 实证段首词 `extraordinarily` 不断 → Overfull 4.88919pt，NTex 反而断字成功）。**完整落地实测在本样张多出 7 处 Overfull**（Overfull 5→12，p5 519.8pt）——NTex 断字点覆盖不及 GT（`positions` 一词 0 断点、GT 给 `po-si-tions`），宽松规则一直在补偿覆盖缺口。根治次序：先补断字覆盖（模式表/词界 `.` 过滤，见上表 `hyphen.rs` 行），再收口回扫规则 | 待做（覆盖先行） |
+| 折行 | **行内公式整体挪行裁决与 GT 不一致**（残差 1 行：p9 `' warmupsteps'` x1=508.6 超 18.6pt）：公式前的断点（`…for the first` 行尾）被折行器判为 infeasible（badness 超 tolerance），于是选含公式块的 overfull 线；GT 同断点可行（行1 x1=484.5）。已核两侧 glue 度量全同（space 3.64999 / plus 1.82498 / minus 1.21667），差异在行 1 的可行性/demerits 计量，未在预算内定位 | 待做（须 `\tracingparagraphs` 逐候选对照） |
+| 折行 | **断字点覆盖差**：NTex 部分词拿不到 GT 的全部断点（`positions` 无断点 vs GT `po-si-tions`；`\showhyphens` 未实现，只能窄版心探针间接验）。影响：收口任何「多断字」方向的修复都会直接变 Overfull，是上面两条遗留的前置 | 待做 |
 | 折行 | **CJK 汉字字间断点已通**（M9 中文刀 5，2026-09-17）：`\cjkbreakmode=1` 时段落关闭阶段在可断字间插零宽可拉伸胶水（`0pt plus 0.5pt minus 0.05pt`，XeTeX inter-character skip 同款），断点 + 两端对齐同时到位；开/闭标点禁则按 **gap** 判定（能同时看两侧，故行首禁则与行尾禁则都落地）。**中西文交界断点亦已通**（同日补）：CJK ↔ ASCII 字母/数字之间给断点（拉丁词/数字**整体不拆**，断点只落交界），这是 `\XeTeXlinebreaklocale "zh"` 的等价行为——缺它则一串西文与前汉字之间的**唯一**断点距离可达数十 pt，折行器只能超宽出页。默认关（断点会改折行结果，TRIP/ETRIP 必须零影响）。遗留：不限 CJK 符号挤压（标点宽度不压缩） | ✅ 已修（④ 主项）；标点挤压待做 |
 | `ntex-font/otf.rs` `build_metrics` | OTF 度量只有 advance/height/depth（hmtx+bbox），italic correction 恒 0；无 kerning/连字/HarfBuzz 整形 | 待做（M9 ②） |
 | `ntex-backend` CJK 渲染 | 字形经 cmap 直查（`unicode_native` 字体 codepoint→glyph）；缺字形逐字回落方框；无 CJK 字体链 fallback | 待做 |
@@ -191,6 +195,27 @@ demo1 六刀 + 输出例程刀 2/3/5 的修复登记；全部已提交，留作�
 ---
 
 ## 维护记录
+
+- 2026-09-30：折行器数学 token 行超界收尾（接棒 `50d8601` 的 4 行正文超界残差）✅ 两刀已修——
+  **任务分型命中两根因、修后剩 1 行另案**：
+  ① 显式连字符断点缺失（p2 段首行 `encoder-decoder` 超宽 41.5pt）：tex.web `wrapup`
+  （L20177-186）在主水平模式里追加字符 = `\hyphenchar` 时紧跟**空** discretionary
+  （`new_disc`），折行器据此在显式连字符处取断点（罚分 `\exhyphenpenalty`）；NTex 把
+  `-` 当普通 Char，整词不可断。修 = `append_char` 补 `mode==Horizontal` 臂（`f02063b`，
+  `\hbox` 内不插）。探针 Overfull 2→0（GT 0，首断点 `b=11 p=50 d=2941` 与 GT 全同）。
+  ② 行内公式邻接字母串被断字（p2×2/p4）：tex.web 断字回扫遇 math_node/盒 `goto done1`
+  （L17540-17550），NTex 的 run 式断字把 `$warmup\_steps$` 的 `steps` 断成 `st-eps`，
+  折行器在公式**内部**取断点致上一行溢出（GT 整个公式盒挪行）。修 = `hyph_eligible`
+  邻接守卫（`d586278`，只收口数学/盒邻接一支）。
+  **回归面**：Transformer Overfull 9→5（余 5 处与 GT 同为表格行）；正文 span 超界
+  >486pt 4→1；18 页/3 图/`[?]=0` 不变；TRIP/ETRIP 签名零新增；core 476 + layout 257
+  全绿。回归锁 `explicit_hyphen_gives_line_break`。
+  **遗留（未修，另行立案，已入表）**：③ tex.web「词前必须有胶水」回扫规则未落地
+  （段首词/disc/penalty 邻接仍断字；GT `fw.tex` 段首词 Overfull 4.88919pt 而 NTex 不断
+  ——完整落地实测 +7 Overfull，因 NTex 断字覆盖不及 GT，须先补覆盖再收口规则）；
+  ④ p9 行内公式整体挪行裁决与 GT 不一致（glue 度量已核全同，差异在行 1 可行性
+  判定，须 `\tracingparagraphs` 逐候选对照）；⑤ 断字点覆盖差（`positions` 0 断点 vs
+  GT `po-si-tions`；`\showhyphens` 未实现，验证只能窄版心探针）。
 
 - 2026-09-30：行内数学边界断点（探针 math-boundary-breakpoint，GT 0 vs NTex 22pt+107pt Overfull）✅ 已修（`50d8601`）——**任务假设被证伪**：数学边界 glue 既在段落 hlist 里、也确已登记为 BreakSpec（`\showbox` + best_path 插桩双证，bp[49]/bp[50] kind=Glue 都在）。真根因在折行器 `best_path` 的 `overfull_fallback`：对**每一个**候选枯竭断点都记 `d=0` 兜底，而 tex.web @<Prepare to deactivate node |r|...@>（L16824）只在「final pass + 本断点无任何可行候选 + r 是**仅剩**活动节点」时才触发；候选稀疏区（不可断长段）每断点被白送 0-demerits 路径，毒化总 demerits 比较，溢出行压过可行行。修后：探针 2→0；Transformer Overfull 41→9（18 页/3 图/[?]=0 不变）；TRIP/ETRIP 签名零新增；core 476 + layout 256 全绿。回归锁 `artificial_demerits_needs_sole_surviving_active`（`d4b0777`，已实测在修复前失败）。**遗留（未修，另行立案）**：① `preprocess` 的 Glue 臂不累计 `name:Some`（`\spaceskip` 等）的 stretch/shrink——badness 分母偏窄，属次要偏差；② 任务原列的四条排查方向中「显式连字符 discretionary 正常、问题特定于数学边界」的现象学描述成立，但机理是候选稀疏而非边界缺失。
 
