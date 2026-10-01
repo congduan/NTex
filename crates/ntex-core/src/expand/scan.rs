@@ -167,6 +167,29 @@ impl Expander {
                     ));
                     continue;
                 }
+                // tex.web scan_int 符号循环的 `space_token: ;` 臂：空格在符号
+                // 处理中跳过。cs 别名到空格字符（`\let\exp_stop_f: ~`，
+                // l3expan L1093 `\use:nn{\cs_new_eq:NN\exp_stop_f:}{~}`）≡
+                // spacer——tex.web \let 复制字符 token 的 cmd，空格的
+                // cmd=spacer，与 `\chardef`（char_given）以 cmd 区分；NTex
+                // 的 `EqSlot::Char` 槽里 `\chardef` 硬编码 cat12
+                // （primitive_toks_state），cat10 只能来自 let→空格，同构可
+                // 判。缺此臂时 `\exp_stop_f:` 落入下方内部量分派的
+                // `EqSlot::Char` 臂按 chardef 读字符码 32：`\number
+                // \exp_stop_f: 00000001.3` 产出 "3200000001.3"（32⊕字面接
+                // 排），l3fp decimate 定点打印机器 `\fp_use:N` 全族翻倍放大
+                // 3.2e9 → ctexart linespread 灌 3200000001.3 → baselineskip
+                // 饱和 Dimension too large（2026-10-01 与 pdfTeX 对拍定位，
+                // H1/J1/J4 探针链）。
+                if matches!(
+                    self.eqtb.slot(self.deref_alias_chain(csid)),
+                    EqSlot::Char {
+                        catcode: Catcode::Space,
+                        ..
+                    }
+                ) {
+                    continue;
+                }
                 // TRIP：条件原语在数字中先求值（TeX get_x_token 嵌套条件）
                 if self.maybe_eval_cond(tok)? {
                     if diag_enabled("NTEX_NUMSCAN_TRACE") {
