@@ -1555,7 +1555,11 @@ mod tests {
         assert!(s.contains("/Subtype /CIDFontType0C /Length"), "{s}");
         // CID 照字体 charset 写：「中」的 GB1 CID 与字重无关
         let map = crate::cid::build(&otf).expect("构建 CID 映射");
-        assert_eq!(map.cid(0x4E2D), Some(0x11CF), "Bold 的「中」CID 应仍为 4559");
+        assert_eq!(
+            map.cid(0x4E2D),
+            Some(0x11CF),
+            "Bold 的「中」CID 应仍为 4559"
+        );
         assert!(s.contains("<11CF>"), "内容流应写 GB1 CID：{s}");
         // 子集化对 Bold 同样只搬运用到的字形（退全量即 5 MB 级 CFF 整包）
         let full = crate::cid::bare_cff(&otf).unwrap();
