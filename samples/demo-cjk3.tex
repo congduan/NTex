@@ -38,8 +38,12 @@
     \ntex@cjk@load{b}{FandolSong-Bold}\else
   \def\ntex@cjk@tmp{m/it}\ifx\ntex@cjk@req\ntex@cjk@tmp
     \ntex@cjk@load{k}{FandolKai-Regular}\else
+  \def\ntex@cjk@tmp{bx/it}\ifx\ntex@cjk@req\ntex@cjk@tmp
+    \ntex@cjk@load{k}{FandolKai-Regular}\else
+  \def\ntex@cjk@tmp{b/it}\ifx\ntex@cjk@req\ntex@cjk@tmp
+    \ntex@cjk@load{k}{FandolKai-Regular}\else
     \ntex@cjk@load{r}{FandolSong-Regular}%
-  \fi\fi\fi}
+  \fi\fi\fi\fi\fi}
 % \ntex@cjk@load{<家族键>}{<字体文件名>}：按当前 \f@size 装载并缓存。
 \def\ntex@cjk@load#1#2{%
   \expandafter\ifx\csname ntex@cjk@#1@\f@size\endcsname\relax
@@ -60,6 +64,8 @@
 \textbf{粗体命令：}行内粗体回到常规，数字 12345 与 Latin 保持 CM 字形。
 
 {\itshape 楷体（斜体位）：中文没有真斜体，惯例以楷体承担。}
+
+{\bfseries\itshape 粗斜体位同样落楷体（Fandol 无粗楷，粗宋楷不可兼得）。}
 
 {\zhhei 黑体（标题层）：与粗宋互补，字形均匀无衬线。}
 

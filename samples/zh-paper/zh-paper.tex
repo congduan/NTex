@@ -22,8 +22,12 @@
     \ntex@cjk@load{b}{FandolSong-Bold}\else
   \def\ntex@cjk@tmp{m/it}\ifx\ntex@cjk@req\ntex@cjk@tmp
     \ntex@cjk@load{k}{FandolKai-Regular}\else
+  \def\ntex@cjk@tmp{bx/it}\ifx\ntex@cjk@req\ntex@cjk@tmp
+    \ntex@cjk@load{k}{FandolKai-Regular}\else
+  \def\ntex@cjk@tmp{b/it}\ifx\ntex@cjk@req\ntex@cjk@tmp
+    \ntex@cjk@load{k}{FandolKai-Regular}\else
     \ntex@cjk@load{r}{FandolSong-Regular}%
-  \fi\fi\fi}
+  \fi\fi\fi\fi\fi}
 \def\ntex@cjk@load#1#2{%
   \expandafter\ifx\csname ntex@cjk@#1@\f@size\endcsname\relax
     \expandafter\font\csname ntex@cjk@#1@\f@size\endcsname=#2\space at \f@size pt\relax

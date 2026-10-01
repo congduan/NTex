@@ -330,7 +330,7 @@ mmap 只读 + 页级 COW。**暂缓理由已消解**：M2 吞吐已量化（1.01
 | 2 | `\utfinputmode`（misc 65）UTF-8 直写通路，默认 bytes 零改动 | ✅ |
 | 3 | 宿主端端到端（Tauri/WASM）：内嵌 TFM 48 件 + OTF 度量缝 + 引擎级 UTF-8 开关 + `\fam\bffam` 误判修复 | ✅ |
 | 5 | `\cjkbreakmode`（misc 66）CJK 字间断点 + 禁则；中西文交界断点 + `\lefthyphenmin`/`\righthyphenmin` | ✅（XeTeX 对照 oracle + `cmp` 逐字节零回归） |
-| 4 | 中文粗体/斜体：FandolSong-Bold / FandolHei / FandolKai 三款全链路（OTF 度量 → Type0 嵌入 → CFF 子集化）；`\bfseries`→粗宋、`\itshape`→楷体由**宏包层伴随字体桥**承接（见 `samples/demo-cjk3.tex`） | ✅（引擎零改动；引擎级 family fallback 未做，见 KNOWN-SIMPLIFICATIONS §11） |
+| 4 | 中文粗体/斜体：FandolSong-Bold / FandolHei / FandolKai 三款全链路（OTF 度量 → Type0 嵌入 → CFF 子集化）；`\bfseries`→粗宋、`\itshape`→楷体由**宏包层伴随字体桥**承接（见 `samples/demo-cjk3.tex`） | ✅（引擎零改动；引擎级 family fallback 未做，见 KNOWN-SIMPLIFICATIONS §5） |
 
 **宏包管理（`ntex-pkg`，2026-09-19 新建）**：边界见 §6.2 第 8/9 条。已落地**解析层 + 契约层 + 取料层 ①②**——
 `tlpdb.rs`（TLPDB 状态机解析 + `by_basename`/`by_path` 反查 + TDS 优先级 + `RELOC/` 归一）、`resolve.rs`
