@@ -387,7 +387,17 @@ impl Expander {
                         .fetch()?
                         .ok_or_else(|| Error::invalid_input("\\noexpand 后无 token"))?;
                     sentinel_dbg("noexpand-mark", self, t.0, "");
-                    out.push((t.0, true));
+                    // tex.web @<Suppress expansion of the next token@>（L7718）：
+                    // `if t>=cs_token_flag then` 才插 frozen_dont_expand 标记——
+                    // 非 cs token（含 `#k` 参数 token）原样回流，不得冻结：
+                    // ctex zhmap 的 `\edef\x#1{\edef\noexpand#1{…}}` 里 \noexpand
+                    // 后面是外层宏的参数 token，冻结它会把参数引用降成字面
+                    // `#`+数字，\x 调用点参数替换失配。
+                    if t.0.csid().is_some() {
+                        out.push((t.0, true));
+                    } else {
+                        out.push((t.0, false));
+                    }
                 }
                 EqSlot::Primitive(Primitive::The) => {
                     // `\the` 冻结位（tex.web L9395-9411：scan_toks 的 xpand

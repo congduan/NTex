@@ -1480,7 +1480,13 @@ impl Expander {
                     // \char/\romannumeral 等）：原样返回自身——若压帧会无限循环
                     // （TRIP L338 `\edef\A{\uppercase{...}}` 曾因此 OOM 挂死）。
                     // TeX scan_toks 语义：展开不成则**执行**（扫描参数 + 发射结果）。
-                    if expansion.len() == 1 && expansion[0].0 == tok {
+                    // 例外（第十五刀）：返回项带冻结位（ne=true）的是 \noexpand 的
+                    // 保护产物，非「未识别」信号——`\noexpand\noexpand` 惯用法
+                    // （ctex zhmap l.61）中保护产物恰与输入同一 cs，若走执行回退
+                    // 会把 exec 的 fetch 再吃一个 token（第三个 \noexpand 被
+                    // 顶掉），其保护目标（\endinput）便裸奔在定义期被执行，
+                    // 输入文件被截断 → 文件级 \begingroup 泄漏。
+                    if expansion.len() == 1 && expansion[0].0 == tok && !expansion[0].1 {
                         self.exec_primitive(p)?;
                         continue;
                     }

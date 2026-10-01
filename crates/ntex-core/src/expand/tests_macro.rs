@@ -1245,6 +1245,39 @@ fn expanded_returns_result_to_stream_for_outer_reexpansion() {
 }
 
 #[test]
+fn noexpand_triple_protects_endinput_inside_nested_edef() {
+    // 第十五刀（ctex zhmap l.61 惯用法 `\noexpand\noexpand\noexpand\endinput`）：
+    // \edef 体扫描中第 2 个 \noexpand 的保护产物恰与输入同一 cs——旧实现把它
+    // 当「展开不成」走执行回退，exec 的 fetch 又吃掉第 3 个 \noexpand，
+    // \endinput 于是裸奔在**定义期**被执行 → 输入文件被就地截断 → 文件级
+    // \begingroup 泄漏（`end occurred inside a group at level 3`，shipout
+    // firstpage 盒扫描内嵌套定义现场）。GT pdftex 实测：`\y`=
+    // `macro:->\endinput` 且后续输入照常处理（本断言的 `\meaning\y` 即
+    // 「文件未被截断」的证人）。
+    assert_eq!(
+        expand(concat!(
+            "\\edef\\x#1{\\edef\\noexpand#1{\\noexpand\\noexpand\\noexpand\\endinput}}",
+            "\\x\\y\\meaning\\y"
+        ))
+        .unwrap(),
+        "macro:->\\endinput "
+    );
+}
+
+#[test]
+fn noexpand_leaves_macro_parameter_token_unprotected() {
+    // tex.web @<Suppress expansion of the next token@>（L7718）只在下一 token
+    // 为 cs token（`t>=cs_token_flag`）时才插 frozen_dont_expand 标记。
+    // `#k` 参数 token 不得冻结——否则 `\edef\wrap#1{\def\noexpand#1{…}}`
+    // 的参数引用被降成字面 `#`+数字，调用点参数替换失配。GT pdftex 实测
+    // `\wrap\z` 后 `\meaning\z`=`macro:->GOT`。
+    assert_eq!(
+        expand("\\edef\\wrap#1{\\def\\noexpand#1{GOT}}\\wrap\\z\\meaning\\z").unwrap(),
+        "macro:->GOT"
+    );
+}
+
+#[test]
 fn expanded_codepoint_helper_materializes_in_outer_edef() {
     // l3kernel \codepoint_str_generate:n is used to build UTF-8 file-name
     // fragments such as zhnumber-utf8.cfg.  NTex handles the public generator
