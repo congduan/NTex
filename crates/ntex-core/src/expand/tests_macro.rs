@@ -1803,23 +1803,32 @@ fn newif_ifus_at_zero_errors() {
 }
 
 #[test]
-fn number_scan_skips_let_space_alias_in_sign_loop() {
-    // tex.web scan_int 符号循环的 `space_token: ;` 臂：cs 别名到空格字符
-    // （expl3 `\exp_stop_f:` = `\cs_new_eq:NN\exp_stop_f:{ }`，l3expan
-    // L1093 经 `\use:nn` 落成 `\let` 到空格 token）≡ spacer，在符号处理
-    // 中跳过。缺此臂时落入下方内部量分派的 `EqSlot::Char` 臂按 chardef
-    // 读字符码 32：l3fp decimate 定点打印流 `\number \exp_stop_f:
-    // 00000001.3` 产出 "32"⊕"00000001.3"=3200000001.3，`\fp_use:N` 全族
-    // 放大 3.2e9 → ctexart linespread 灌爆 baselineskip（第十三刀）。
-    assert_eq!(expand("\\catcode`\\~=10 \\let\\sp~ \\number\\sp 00000001.3").unwrap(), "1.3");
-    assert_eq!(expand("\\catcode`\\~=10 \\let\\sp~ \\number\\sp 42").unwrap(), "42");
-    // 真实命名形态：expl3 `\exp_stop_f:`（: / _ 需 cat11 才同身份）
+fn let_equals_absorbs_cat10_token_source_is_next_token() {
+    // 探针坑①（GT pdftex 实测）：运行时 `\let\cs~` **造不出** spacer 别名槽
+    // ——tex.web `\let` 的 ⟨equals⟩（scan_optional_equals）把 cat10 token 当
+    // 空格吸收，源 token 错拿**下一**个：`\let\sp~\relax` → `\sp`≡`\relax`。
+    // 故 expl3 `\exp_stop_f:` 那份 Char{cat10,32} 槽只在 fmt 生成期落成，
+    // 数字扫描 spacer 臂的回归锁只能对 eqtb 直编程（见
+    // number_scan_skips_char_space_slot_in_sign_loop）；本测试钉住吸收律
+    // 本身，防止 `\let` 语义改动后误以为运行时路径已覆盖。
     assert_eq!(
-        expand("\\catcode`\\~=10 \\catcode`\\_=11 \\catcode`\\:=11 \\let\\exp_stop_f:~ \\number\\exp_stop_f: 00000001.3").unwrap(),
+        expand("\\catcode`\\~=10 \\let\\sp~\\relax \\meaning\\sp").unwrap(),
+        "\\relax"
+    );
+    // cat10 token 被吸收的直接证据：源错拿紧随其后的字母 `Q`（若按
+    // "spacer 别名"语义则此处应是 blank space）。NTex 的 `\meaning` 对
+    // 字符槽渲染成 chardef 形态 `\char"51`（GT="the character Q"，
+    // KNOWN-SIMPLIFICATIONS §6 已登记的显示面二阶偏差，不追）
+    assert_eq!(
+        expand("\\catcode`\\~=10 \\let\\sp~ Q\\meaning\\sp").unwrap(),
+        "\\char\"51"
+    );
+    // 吸收律不影响后续数字扫描（对照 char_space_slot 锁：真 spacer 槽才走该臂）
+    assert_eq!(
+        expand("\\catcode`\\~=10 \\let\\sp~ \\number\\sp 00000001.3").unwrap(),
         "1.3"
     );
 }
-
 #[test]
 fn number_scan_skips_char_space_slot_in_sign_loop() {
     // tex.web scan_int 符号循环的 `space_token: ;` 臂：cmd=spacer 的槽在
