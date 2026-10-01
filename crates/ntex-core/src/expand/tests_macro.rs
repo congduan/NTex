@@ -1801,3 +1801,54 @@ fn newif_ifus_at_zero_errors() {
     assert!(!ta.contains("doesn't match"), "字节码轨道报错：{ta}");
     assert!(!tb.contains("doesn't match"), "解释器轨道报错：{tb}");
 }
+
+#[test]
+fn number_scan_skips_let_space_alias_in_sign_loop() {
+    // tex.web scan_int 符号循环的 `space_token: ;` 臂：cs 别名到空格字符
+    // （expl3 `\exp_stop_f:` = `\cs_new_eq:NN\exp_stop_f:{ }`，l3expan
+    // L1093 经 `\use:nn` 落成 `\let` 到空格 token）≡ spacer，在符号处理
+    // 中跳过。缺此臂时落入下方内部量分派的 `EqSlot::Char` 臂按 chardef
+    // 读字符码 32：l3fp decimate 定点打印流 `\number \exp_stop_f:
+    // 00000001.3` 产出 "32"⊕"00000001.3"=3200000001.3，`\fp_use:N` 全族
+    // 放大 3.2e9 → ctexart linespread 灌爆 baselineskip（第十三刀）。
+    assert_eq!(expand("\\catcode`\\~=10 \\let\\sp~ \\number\\sp 00000001.3").unwrap(), "1.3");
+    assert_eq!(expand("\\catcode`\\~=10 \\let\\sp~ \\number\\sp 42").unwrap(), "42");
+    // 真实命名形态：expl3 `\exp_stop_f:`（: / _ 需 cat11 才同身份）
+    assert_eq!(
+        expand("\\catcode`\\~=10 \\catcode`\\_=11 \\catcode`\\:=11 \\let\\exp_stop_f:~ \\number\\exp_stop_f: 00000001.3").unwrap(),
+        "1.3"
+    );
+}
+
+#[test]
+fn number_scan_skips_char_space_slot_in_sign_loop() {
+    // tex.web scan_int 符号循环的 `space_token: ;` 臂：cmd=spacer 的槽在
+    // 符号处理中跳过。expl3 的 `\exp_stop_f:`（fmt 预载
+    // `\cs_new_eq:NN\exp_stop_f:~` 落成 Char{cat10,32} 槽，GT pdflatex
+    // `\meaning` = "blank space  "）在 l3fp decimate 定点打印流里必经
+    // `\number \exp_stop_f: 00000001.3`。缺此臂时落入下方内部量分派的
+    // `EqSlot::Char` 臂按 chardef 读字符码 32："32"⊕"00000001.3"=
+    // 3200000001.3，`\fp_use:N` 全族放大 3.2e9 → ctexart linespread
+    // 灌爆 baselineskip（第十三刀根因）。
+    // INITEX 单测无 fmt，直接对 eqtb 编程造同构槽——运行时
+    // `\let\cs~` 造不出：`\let` 的 ⟨equals⟩ 把 cat10 token 当空格
+    // 吃掉、目标错拿下一 token（GT pdftex 实测 `\let\sp~\relax`
+    // → `\sp`≡`\relax`），expl3 那份 spacer 槽只存在于 fmt 生成期。
+    for use_bytecode in [true, false] {
+        let mut e = if use_bytecode {
+            Expander::new()
+        } else {
+            Expander::new_interpreter()
+        };
+        let csid = e.intern.intern("sp");
+        e.eqtb
+            .char_alias(csid, crate::catcode::Catcode::Space, 32);
+        e.run_source("\\number\\sp 00000001.3").unwrap();
+        let out: String = e
+            .output()
+            .iter()
+            .map(|t| t.charcode().and_then(char::from_u32).unwrap_or('\u{FFFD}'))
+            .collect();
+        assert_eq!(out, "1.3", "bytecode={use_bytecode}");
+    }
+}
