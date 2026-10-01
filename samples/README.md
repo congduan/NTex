@@ -27,11 +27,13 @@ cargo run -p ntex-backend -- samples/demo.tex demo 144 --vello    # → samples/
 | `demo1-fixed.tex` | 上者的 NTex 自举版：5 个手工自举块显式装配字体族与 plain 宏（101 行） | **`crates/ntex-wasm/src/lib.rs` `include_str!`**（回归锁 `self_bootstrapped_plain_demo_compiles_without_undefined_eject`） |
 | `demo-cjk.tex` | M9 中文刀 1 验收样张：OpenType 中文字体 + 大码位 `\char`（**刻意不走** UTF-8 输入） | `plan.md` |
 | `demo-cjk2.tex` | M9 中文刀 2 验收样张：**源文件直写中文**（UTF-8 输入），与上者对照 | `plan.md` |
+| `demo-cjk3.tex` | M9 中文刀 4 验收样张：**中文粗体/黑体/楷体**（`documentclass` + 宏包层「伴随字体桥」，`\bfseries`→FandolSong-Bold、`\itshape`→FandolKai、字号跟随 `\f@size`） | `plan.md`、`docs/KNOWN-SIMPLIFICATIONS.md` §5 |
 | `resume-plain.tex` | Plain TeX 简历真文档，含 XeTeX / pdfTeX / NTex 三分支字体判定（靠 `\ifx\utfinputmode\undefined` 分流） | **`crates/ntex-wasm/src/lib.rs` `include_str!`**；2026-09-11 Tauri 缺字体现场 |
 | `resume1-plain.tex` | LLM 手写的"朴素 plain"简历（73 行，夹带 LaTeX 习惯写法），**文件本身保持零改动** | 2026-09-17 CJK 断行/字距现场，见 `docs/KNOWN-SIMPLIFICATIONS.md` |
 | `resume1-driver.tex` | `resume1-plain.tex` 的**环境注入驱动**：只补齐运行环境再 `\input` 目标文件（用法见文件头注释） | 与上者配对使用 |
 | `plain-cv-sample.tex` | 自造 Plain TeX 简历样本，用 `\sect`/`\job`/`\point` 宏验 bare plain 排版 | — |
 | `latex-sample2e-slim.tex` | LaTeX 官方 `sample2e` 的瘦身变体（1144B），专测 `lingmacros`/`tree-dvips` 宏包闭包与 `tabular` 前言的交互 | `crates/ntex-wasm/src/lib.rs`、`crates/ntex-wasm/README.md`、`assets/tex-minimal/README.md` |
+| `zh-paper/zh-paper.tex` | 中文长文档（3 页：多级标题/表格/数学/粗体强调），ctex 战役收官 + 中文刀 4 收口的验收样张——标题粗宋、节标题真黑体（FandolHei），同款「伴随字体桥」承接 `\textbf` | `docs/KNOWN-SIMPLIFICATIONS.md` §5 |
 
 ## 注意
 

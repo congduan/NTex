@@ -1500,6 +1500,90 @@ mod tests {
         }
     }
 
+    /// 中文粗体链（M9 中文刀 4）：FandolSong-Bold 全链路——`find_otf` 搜索链
+    /// 定位 → `build_metrics`（Unicode 直映度量，非手写夹具）→
+    /// Type0/CIDFontType0 + Identity-H 嵌入 → runtime CFF 按用字子集化。
+    ///
+    /// Bold 与 Regular 同厂同代，都是 Adobe-GB1 CID-keyed CFF：「中」的 CID
+    /// 不随字重变（0x11CF = 4559）；CharStrings 结构同源，子集化同样只搬运
+    /// 用到的字形。「子集 < 全量 1%」这条顺带钉死"name-keyed 退全量"的退路
+    /// （若哪天换来的 Bold 是 name-keyed，这里会先红，而不是悄悄发 5 MB 的
+    /// PDF）。
+    ///
+    /// 样本缺失（CI 无 `~/.ntex-fonts` / TeX Live）时早退跳过，与
+    /// `ntex-layout/tests/cjk_charcode.rs` 同约定。
+    #[test]
+    fn write_pdf_embeds_fandol_song_bold_as_subset_type0() {
+        let Some(otf) = ntex_font::find_otf("FandolSong-Bold").and_then(|p| std::fs::read(p).ok())
+        else {
+            eprintln!("未找到 FandolSong-Bold，跳过");
+            return;
+        };
+        let name = "FandolSong-Bold-Probe";
+        assert!(crate::otf::register_otf(name, &otf), "OTTO 魔数应注册成功");
+        // 度量走引擎同款 OTF 通道：「中」在 10pt 设计字号下应为全角 1 em
+        let fm = ntex_font::build_metrics(otf.clone(), name).expect("Bold OTF 度量");
+        assert!(fm.unicode_native, "Bold 应是 Unicode 直映字体");
+        assert_eq!(fm.char_metrics(0x4E2D).0, 655_360, "「中」应为全角 1 em");
+
+        let dvi = Dvi {
+            pages: vec![Page {
+                ops: vec![
+                    DrawOp::Char {
+                        font: 0,
+                        code: 0x4E2D,
+                        h: 0,
+                        v: 0,
+                    },
+                    DrawOp::Char {
+                        font: 0,
+                        code: 0x56FD,
+                        h: 655_360,
+                        v: 0,
+                    },
+                ],
+            }],
+            fonts: vec![fm],
+            font_names: vec![name.to_owned()],
+        };
+        let pdf = write_pdf(&dvi, &PdfOptions::default()).unwrap();
+        let s = String::from_utf8_lossy(&pdf);
+
+        assert!(s.contains(&format!("/BaseFont /{name}")), "{s}");
+        assert!(s.contains("/Subtype /CIDFontType0 "), "{s}");
+        assert!(s.contains("/Encoding /Identity-H"), "{s}");
+        assert!(s.contains("/Subtype /CIDFontType0C /Length"), "{s}");
+        // CID 照字体 charset 写：「中」的 GB1 CID 与字重无关
+        let map = crate::cid::build(&otf).expect("构建 CID 映射");
+        assert_eq!(map.cid(0x4E2D), Some(0x11CF), "Bold 的「中」CID 应仍为 4559");
+        assert!(s.contains("<11CF>"), "内容流应写 GB1 CID：{s}");
+        // 子集化对 Bold 同样只搬运用到的字形（退全量即 5 MB 级 CFF 整包）
+        let full = crate::cid::bare_cff(&otf).unwrap();
+        let marker = |len: u32| format!("<< /Subtype /CIDFontType0C /Length {len} >>\nstream\n");
+        let sub_len = s
+            .split("/Subtype /CIDFontType0C /Length ")
+            .nth(1)
+            .and_then(|t| t.split(" >>").next())
+            .and_then(|t| t.parse::<u32>().ok())
+            .expect("应能取到子集流长");
+        assert!(
+            sub_len * 100 < full.len() as u32,
+            "Bold 子集应小于全量的 1%：{sub_len} vs {}",
+            full.len()
+        );
+        let sub_marker = marker(sub_len);
+        let pos = pdf
+            .windows(sub_marker.len())
+            .position(|w| w == sub_marker.as_bytes())
+            .expect("FontFile3 流头");
+        let sub = &pdf[pos + sub_marker.len()..pos + sub_marker.len() + sub_len as usize];
+        let (charset, _) = crate::cid::tests::inspect(sub).expect("子集应可再解析");
+        assert_eq!(charset.len(), 3, "GID 0 + 2 个用到的字形：{charset:?}");
+        for cid in [0x11CF_u16, map.cid(0x56FD).unwrap()] {
+            assert!(charset.contains(&cid), "子集 charset 应含 CID {cid}");
+        }
+    }
+
     /// 同一字体名的**多个号数**共用一组 PDF 对象时，`/W` 必须取全部号数用到
     /// 的 CID 的并集（`used` 按 DVI 字体号索引、PDF 字体对象按**名字**去重，
     /// 两者不同维）。
