@@ -508,7 +508,10 @@ pub fn insert_cjk_glue(nodes: &[Node]) -> Vec<Node> {
             shrink_order,
         } = node
         {
-            if nodes.get(i + 1).is_some_and(|n| charcode_of(n).is_some_and(is_cjk_char)) {
+            if nodes
+                .get(i + 1)
+                .is_some_and(|n| charcode_of(n).is_some_and(is_cjk_char))
+            {
                 out.push(cjk_glue());
             } else {
                 out.push(Node::Glue {
@@ -1179,7 +1182,6 @@ mod tests {
         assert_eq!(lines[0], (0, 3));
     }
 
-
     #[test]
     fn artificial_demerits_needs_sole_surviving_active() {
         // tex.web @<Prepare to deactivate node |r|...@>（L16824）：artificial
@@ -1195,30 +1197,29 @@ mod tests {
         // 仍活着，g4 根本不成断点。
         let g = glue(4, 2, 5);
         let hlist = vec![
-            char_of(56),                              // 0
-            g.clone(),                                // 1  g1
-            char_of(30),                              // 2
-            g.clone(),                                // 3  g2
-            char_of(6),                               // 4
-            g.clone(),                                // 5  g3 ← 首行应在此收（恰 100）
+            char_of(56),                                       // 0
+            g.clone(),                                         // 1  g1
+            char_of(30),                                       // 2
+            g.clone(),                                         // 3  g2
+            char_of(6),                                        // 4
+            g.clone(),                                         // 5  g3 ← 首行应在此收（恰 100）
             Node::Box(crate::node::hpack(&[char_of(60)], 60)), // 6 不可断长块
-            g.clone(),                                // 7  g4（旧 d=0 兜底落点）
-            char_of(6),                               // 8
-            g.clone(),                                // 9
-            char_of(6),                               // 10
-            g.clone(),                                // 11
-            char_of(6),                               // 12
-            g.clone(),                                // 13
-            char_of(6),                               // 14
-            g.clone(),                                // 15
-            char_of(6),                               // 16
-            g.clone(),                                // 17
-            char_of(6),                               // 18
-            g.clone(),                                // 19
-            char_of(30),                              // 20
+            g.clone(),                                         // 7  g4（旧 d=0 兜底落点）
+            char_of(6),                                        // 8
+            g.clone(),                                         // 9
+            char_of(6),                                        // 10
+            g.clone(),                                         // 11
+            char_of(6),                                        // 12
+            g.clone(),                                         // 13
+            char_of(6),                                        // 14
+            g.clone(),                                         // 15
+            char_of(6),                                        // 16
+            g.clone(),                                         // 17
+            char_of(6),                                        // 18
+            g.clone(),                                         // 19
+            char_of(30),                                       // 20
         ];
-        let (lines, _trace) =
-            knuth_plass(&hlist, 100, 200, 100, false, &[], LineSkips::default());
+        let (lines, _trace) = knuth_plass(&hlist, 100, 200, 100, false, &[], LineSkips::default());
         assert_eq!(
             lines,
             vec![(0, 5), (6, 19), (20, 21)],
@@ -1232,10 +1233,7 @@ mod tests {
         // too-wide table box. With left/right fil skips, TeX reports
         // `@\penalty via @@0 b=0 p=300`, then ships an empty centered line
         // before the overfull table line.
-        let hlist = vec![
-            Node::Penalty { penalty: 300 },
-            char_of(485),
-        ];
+        let hlist = vec![Node::Penalty { penalty: 300 }, char_of(485)];
         let mut skips = LineSkips::default();
         skips.stretch[1] = 2;
         let (lines, trace) = knuth_plass(&hlist, 470, 200, 100, true, &[], skips);
@@ -1373,8 +1371,14 @@ mod tests {
         assert_eq!(kerns, vec![-PUNCT_W / 2], "仅 。」 一处半格：{out:?}");
         // 」「之间是零宽断点胶水（可断），不是挤压 kern
         assert!(
-            out.iter()
-                .any(|n| matches!(n, Node::Glue { name: None, width: 0, .. })),
+            out.iter().any(|n| matches!(
+                n,
+                Node::Glue {
+                    name: None,
+                    width: 0,
+                    ..
+                }
+            )),
             "」「保留可断胶水：{out:?}"
         );
         // 汉字相邻处不插 kern（只插断点胶水）
@@ -1468,7 +1472,11 @@ mod tests {
             trace.contains("@secondpass"),
             "无挤压：第一遍应无可行解（超宽/太松）→ {trace}"
         );
-        assert_eq!(without, vec![(0, 8)], "无挤压：应急单行（5W 超宽 0.5W）{without:?}");
+        assert_eq!(
+            without,
+            vec![(0, 8)],
+            "无挤压：应急单行（5W 超宽 0.5W）{without:?}"
+        );
         skips.squeeze = true;
         let (with, trace) = knuth_plass(&prepared, hsize, 200, 100, true, &[], skips);
         assert_eq!(with, vec![(0, 9)], "挤压后整段一行（恰合版心）{with:?}");

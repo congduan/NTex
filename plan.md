@@ -346,7 +346,7 @@ CLI `ntex-pkg`（`index`/`provide`/`resolve`/`lock`/`check`/`local`/**`vendor`**
 剩余清单：
 
 - [ ] ~~中文粗体/斜体（刀 4）~~ ✅（2026-10-01，见上表；遗留引擎级 family fallback 与 FandolHei-Bold，见 KNOWN-SIMPLIFICATIONS §5）；`\catcode` >255 赋值扩展（A5 全量收口）
-- [ ] CJK 标点挤压、HarfBuzz 整形与整形缓存、**CJK 整形捷径**（无复杂特性时跳过 HarfBuzz 直读 hmtx，目标 5~10x）
+- [ ] ~~CJK 标点挤压~~ ✅（M9 中文刀 6，2026-10-01：`\cjkbreakmode` 挤压面——行尾闭标点让半格/连续闭标点压半格/汉字邻接源内空格吞掉；zh-paper gap 方差 −95%、最大 5.86→0.62pt，见 KNOWN-SIMPLIFICATIONS §5；遗留行首开括号挤压与 PunctStyle 可配置）；HarfBuzz 整形与整形缓存、**CJK 整形捷径**（无复杂特性时跳过 HarfBuzz 直读 hmtx，目标 5~10x）
 - [ ] ctex/xeCJK 宏兼容（从 xeCJK 最小子集起步）；OpenType fontspec 路径
 - [ ] 宏包 CI 回归集：geometry / amsmath / hyperref / biblatex / tikz / ctex
 - [x] **宏包管理·解析/契约层**（2026-09-19，`ntex-pkg` crate，§6.2 第 8/9 条落地）：
