@@ -294,7 +294,7 @@ impl Expander {
         };
         let name = self.intern.name(csid).to_owned();
         let value_toks = self.the_tokens_after(tok)?;
-        let value = detok_tokens(&value_toks, &self.intern);
+        let value = detok_tokens(&value_toks, &self.intern, &self.catcodes);
         self.sink.show(format!("> \\{name}={value}."))
     }
 
@@ -314,7 +314,7 @@ impl Expander {
                         let params: String = (1..=m.value.params.num_params)
                             .map(|n| format!("#{n}"))
                             .collect();
-                        let body = detok_tokens(&m.value.body, &self.intern);
+                        let body = detok_tokens(&m.value.body, &self.intern, &self.catcodes);
                         // 同 meaning_text：protected 前缀（tex.web print_meaning）
                         let head = if m.value.protected {
                             "\\protected macro:"
@@ -499,8 +499,8 @@ impl Expander {
                         // 的 `#1#2`）——此前只渲染 `#n`，定界符丢失：
                         // `\uppercase{\gdef\if@12{}}` 的 `\meaning\if@` 误报
                         // `macro:->`（pdfTeX 为 `macro:if->`）。
-                        let params = detok_tokens(&m.value.params.text, &self.intern);
-                        let body = detok_tokens(&m.value.body, &self.intern);
+                        let params = detok_tokens(&m.value.params.text, &self.intern, &self.catcodes);
+                        let body = detok_tokens(&m.value.body, &self.intern, &self.catcodes);
                         // tex.web print_meaning（e-TeX）：protected 宏前缀
                         // `\protected`（长貌 `\long` 前缀需 MacroDef 记录 long
                         // 位，暂缺，维持现状）。expl3 `\cs_generate_variant`

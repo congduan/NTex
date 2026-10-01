@@ -1214,13 +1214,10 @@ impl Expander {
                 TokenKind::ControlSeq => {
                     if let Some(csid) = t.csid() {
                         s.push_str(&self.cs_name_display(csid));
-                        // tex.web show_token_list：cs 后若非空格 token 则补
-                        // 分隔空格（`macro:->\relax `；\detokenize 同规则）——
-                        // 宏体尾 cs（后面是组结束/结尾）也补
-                        let next_is_space = toks.get(i + 1).is_some_and(|nt| {
-                            nt.charcode() == Some(u32::from(b' '))
-                        });
-                        if !next_is_space {
+                        // print_cs 尾空格律（tex.web L5598，见 cs_trailing_space）：
+                        // 控制词恒补（`macro:->\relax ` 尾空格同源；\detokenize
+                        // 同规则）——宏体尾 cs（后面是组结束/结尾）也补
+                        if cs_trailing_space(self.intern.name(csid), &self.catcodes) {
                             s.push(' ');
                         }
                     }

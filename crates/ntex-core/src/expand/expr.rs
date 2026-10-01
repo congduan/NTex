@@ -429,7 +429,7 @@ impl Expander {
                     let mut detok = Vec::new();
                     let esc = self.params.misc[34];
                     for t in toks {
-                        detokenize_token(t, &self.intern, esc, &mut detok);
+                        detokenize_token(t, &self.intern, esc, &self.catcodes, &mut detok);
                     }
                     out.extend(detok.into_iter().map(|t| (t, false)));
                 }
@@ -666,7 +666,13 @@ impl Expander {
                 EqSlot::Primitive(Primitive::PdfStrCmp) => {
                     let a = self.scan_group_contents_xpand(true)?;
                     let b = self.scan_group_contents_xpand(true)?;
-                    let v = pdf_strcmp_value(&a, &b, &self.intern, self.params.misc[34]);
+                    let v = pdf_strcmp_value(
+                    &a,
+                    &b,
+                    &self.intern,
+                    self.params.misc[34],
+                    &self.catcodes,
+                );
                     out.extend(emit_count(v).into_iter().map(|t| (t, false)));
                 }
                 EqSlot::Primitive(Primitive::PdfFileSize) => {
@@ -1271,7 +1277,7 @@ impl Expander {
         let mut out = Vec::new();
         let esc = self.params.misc[34];
         for t in toks {
-            detokenize_token(t, &self.intern, esc, &mut out);
+            detokenize_token(t, &self.intern, esc, &self.catcodes, &mut out);
         }
         self.emit_tokens(out)
     }
@@ -1323,7 +1329,7 @@ impl Expander {
         let mut text: Vec<Token> = Vec::new();
         let esc = self.params.misc[34];
         for t in toks {
-            detokenize_token(t, &self.intern, esc, &mut text);
+            detokenize_token(t, &self.intern, esc, &self.catcodes, &mut text);
         }
         let bytes: Vec<u8> = text
             .iter()

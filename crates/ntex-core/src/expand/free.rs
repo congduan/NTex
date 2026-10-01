@@ -318,9 +318,15 @@ fn pdf_creation_date_tokens(day: i64, month: i64, year: i64, minutes: i64) -> Ve
 }
 
 /// `\pdfstrcmp`：两 token 串的字符串比较（detokenize 同规则转字节）→ -1/0/1。
-fn pdf_strcmp_value(a: &[Token], b: &[Token], intern: &InternTable, esc: i64) -> i64 {
-    let sa = pdf_detokenize_bytes(a, intern, esc);
-    let sb = pdf_detokenize_bytes(b, intern, esc);
+fn pdf_strcmp_value(
+    a: &[Token],
+    b: &[Token],
+    intern: &InternTable,
+    esc: i64,
+    catcodes: &CatcodeTable,
+) -> i64 {
+    let sa = pdf_detokenize_bytes(a, intern, esc, catcodes);
+    let sb = pdf_detokenize_bytes(b, intern, esc, catcodes);
     match sa.cmp(&sb) {
         std::cmp::Ordering::Less => -1,
         std::cmp::Ordering::Equal => 0,
@@ -329,10 +335,15 @@ fn pdf_strcmp_value(a: &[Token], b: &[Token], intern: &InternTable, esc: i64) ->
 }
 
 /// token 串 → 字节串（与 `\detokenize` 同一转换，再取字符码）。
-fn pdf_detokenize_bytes(toks: &[Token], intern: &InternTable, esc: i64) -> Vec<u8> {
+fn pdf_detokenize_bytes(
+    toks: &[Token],
+    intern: &InternTable,
+    esc: i64,
+    catcodes: &CatcodeTable,
+) -> Vec<u8> {
     let mut text = Vec::new();
     for t in toks {
-        detokenize_token(*t, intern, esc, &mut text);
+        detokenize_token(*t, intern, esc, catcodes, &mut text);
     }
     text.iter()
         .filter_map(|t| t.charcode().and_then(|c| u8::try_from(c).ok()))
@@ -376,11 +387,28 @@ fn reg_kind_name(k: RegKind) -> &'static str {
     }
 }
 
+/// print_cs 尾空格律（tex.web L5598）：控制词（名字 ≥2 字符）**无条件**补
+/// 分隔空格；单字符 cs 仅当该字符 catcode=letter 才补；空名（null_cs）恒补。
+///
+/// 伪律证伪记录（2026-10-01，ctex 第十四刀）：旧实现「下一 token 是空格 token
+/// 则不补」——但控制词后的空格 token 在扫描期已被吸收（skip_blanks），真残留
+/// 只能来自 catcode 改写（cat12 空格），GT pdfTeX F1 探针（/tmp/gt-show6）
+/// `\catcode`\ =12 \def\zz{a\list b}` 的 `\meaning` = `a\list␣␣b` **两个空格**。
+/// 单字符律 GT：`\meaning\qq`（`\def\qq{\let\\\@centercr x}`）=
+/// `\let \\\@centercr x`（`\` 的 catcode=0 非字母 → `\\` 后无空格）；
+/// `/tmp/gt-show4` cat11 X → `\X tail`、cat12 X → `\Xtail`（律随当前 catcode 表）。
+fn cs_trailing_space(name: &str, catcodes: &CatcodeTable) -> bool {
+    match name.as_bytes() {
+        [b] => catcodes.get(*b) == Catcode::Letter,
+        _ => true,
+    }
+}
+
 /// token 列表 → 文本（`\show` 宏体/`\showthe` 值显示用）：
 /// 字符取字符、控制序列 → `\名字`、宏参数 → `#n`。
-fn detok_tokens(toks: &[Token], intern: &InternTable) -> String {
+fn detok_tokens(toks: &[Token], intern: &InternTable, catcodes: &CatcodeTable) -> String {
     let mut s = String::new();
-    for (i, t) in toks.iter().enumerate() {
+    for t in toks.iter() {
         // active 字符 token：tex.web show_token_list → print_cs →
         // `print(p-active_base)`（L5609）= **裸字符**，无 `\` 前缀、无尾空格
         // （GT pdfTeX 2026-09-19 /tmp/gt5：`\meaning` 体 `x|` = `x` + 裸 active
@@ -409,16 +437,14 @@ fn detok_tokens(toks: &[Token], intern: &InternTable) -> String {
             }
             TokenKind::ControlSeq => {
                 s.push('\\');
-                s.push_str(intern.name(t.csid().expect("ControlSeq 必有 csid")));
-                // tex.web show_token_list（L320 区）：cs 后若下一 token 非
-                // 空格则补一个空格（`macro:->\relax `）——\meaning/\show
-                // 共用。缺它则 NFSS/amsmath 的 \meaning 切分（\@tempb#1>#2#3
-                // <空格>#4）找不到空格定界符，吞到 \par 报
+                let name = intern.name(t.csid().expect("ControlSeq 必有 csid"));
+                s.push_str(name);
+                // print_cs 尾空格律（tex.web L5598，见 cs_trailing_space）：
+                // 控制词恒补（`macro:->\relax ` 尾空格同源）——缺它则
+                // NFSS/amsmath 的 \meaning 切分（\@tempb#1>#2#3 <空格>#4）
+                // 找不到空格定界符，吞到 \par 报
                 // "Paragraph ended before \@tempb was complete"。
-                let next_is_space = toks
-                    .get(i + 1)
-                    .is_some_and(|nt| nt.charcode() == Some(u32::from(b' ')));
-                if !next_is_space {
+                if cs_trailing_space(name, catcodes) {
                     s.push(' ');
                 }
             }
@@ -457,14 +483,21 @@ fn str_char_token(b: u8) -> Token {
 }
 
 /// `\detokenize` 单 token 转换：字符 → catcode 12（空格 10）；控制序列 → `\名字`。
-/// e-TeX：控制词（名字以字母开头）后补一个空格分隔符（TeX `\detokenize{a\relax b}`
-/// 输出 "a\relax b"——控制词后的空格 token 已被扫描吞掉）。
+/// e-TeX：控制词后补一个空格分隔符（print_cs 律，见 [`cs_trailing_space`]；
+/// GT `/tmp/gt-show2` D5：`\detokenize{\\\@centercr}` = `\\\@centercr `——
+/// `\@centercr` 虽 `@` 开头仍是控制词，照补；`\\` 单字符非字母不补）。
 ///
 /// 转义字符取 `\escapechar`（`esc`）：tex.web `print_esc` 只在 `0<=esc<256` 时打印
 /// 转义字符（负数 / 256 / >255 一律不可见）——plain `\newif` 的
 /// `\expandafter\if@\string\iffoo` 依赖 `\escapechar=-1` 时 `\string` 不带前导 `\`
 /// （`\if@` 的 "if" 定界才匹配得上）。旧实现硬编码 `\` 使 -1 失效。
-fn detokenize_token(tok: Token, intern: &InternTable, esc: i64, out: &mut Vec<Token>) {
+fn detokenize_token(
+    tok: Token,
+    intern: &InternTable,
+    esc: i64,
+    catcodes: &CatcodeTable,
+    out: &mut Vec<Token>,
+) {
     // active 字符：e-TeX detokenize 逐 token 走 conv_toks → sprint_cs →
     // `print(p-active_base)`（tex.web L5624）= **裸字符**，无 escape 前缀、
     // 无控制词尾空格。GT（pdfTeX 2026-09-19 /tmp/gt5）：`\gdef\tC{x|}`（| active）
@@ -511,7 +544,7 @@ fn detokenize_token(tok: Token, intern: &InternTable, esc: i64, out: &mut Vec<To
                 };
                 out.push(Token::char(cat, u32::from(b)));
             }
-            if name.bytes().next().is_some_and(|c| c.is_ascii_alphabetic()) {
+            if cs_trailing_space(name, catcodes) {
                 out.push(Token::char(Catcode::Space, u32::from(b' ')));
             }
         }

@@ -122,7 +122,13 @@ impl Expander {
             Primitive::PdfStrCmp => {
                 let a = self.scan_group_contents_xpand(true)?;
                 let b = self.scan_group_contents_xpand(true)?;
-                let v = pdf_strcmp_value(&a, &b, &self.intern, self.params.misc[34]);
+                let v = pdf_strcmp_value(
+                    &a,
+                    &b,
+                    &self.intern,
+                    self.params.misc[34],
+                    &self.catcodes,
+                );
                 self.emit_tokens(emit_count(v))
             }
             // \pdffilesize{<file>}：文件字节数；文件不存在展开为空
