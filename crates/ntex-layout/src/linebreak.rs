@@ -23,6 +23,10 @@ pub struct LineSkips {
     pub width: i64,
     pub stretch: [i64; 4],
     pub shrink: [i64; 4],
+    /// 行尾挤压开关（M9 中文刀 6，`\cjkbreakmode` 的挤压面）：行尾闭标点的
+    /// 空白半格不计入行宽。默认关——TeX 原义零改动（TRIP/ETRIP/西文文档
+    /// 全部走 `Default`，本字段只由 `close_paragraph` 在 cjkbreakmode=1 时置位）。
+    pub squeeze: bool,
 }
 
 impl LineSkips {
@@ -83,6 +87,10 @@ struct BreakSpec {
     is_forced: bool,
     /// 断点类型（`\tracingparagraphs` 显示名；tex.web print_esc 语义）。
     kind: BreakKind,
+    /// 行尾挤压候选（M9 中文刀 6）：`(字符节点下标, 半宽)`——断点前最后一个
+    /// 字符是**右半空白**的全角句读时记录。折行记账按「该标点是否落在本行」
+    /// 决定是否扣减；行盒装配侧用同一规则补 kern（两侧不一致会 6pt 错位）。
+    punct: Option<(usize, i64)>,
 }
 
 /// 断点类型（tex.web 断点描述：glue 断点不打印类型名）。
@@ -123,6 +131,7 @@ fn preprocess(hlist: &[Node]) -> Vec<BreakSpec> {
         penalty: 0,
         is_forced: false,
         kind: BreakKind::Start,
+        punct: None,
     }];
     let mut width = 0i64;
     let mut stretch = [0i64; 4];
@@ -148,6 +157,7 @@ fn preprocess(hlist: &[Node]) -> Vec<BreakSpec> {
                     penalty: 0,
                     is_forced: false,
                     kind: BreakKind::Glue,
+                    punct: squeeze_punct_before(hlist, i),
                 });
                 width += w;
                 stretch[(*so as usize).min(3)] += st;
@@ -165,6 +175,7 @@ fn preprocess(hlist: &[Node]) -> Vec<BreakSpec> {
                         penalty: *penalty,
                         is_forced: *penalty <= -10_000,
                         kind: BreakKind::Penalty,
+                        punct: squeeze_punct_before(hlist, i),
                     });
                 }
             }
@@ -181,6 +192,7 @@ fn preprocess(hlist: &[Node]) -> Vec<BreakSpec> {
                     penalty: HYPHEN_PENALTY,
                     is_forced: false,
                     kind: BreakKind::Disc,
+                    punct: squeeze_punct_before(hlist, i),
                 });
             }
             other => {
@@ -198,6 +210,7 @@ fn preprocess(hlist: &[Node]) -> Vec<BreakSpec> {
         penalty: -10_000,
         is_forced: true,
         kind: BreakKind::Par,
+        punct: squeeze_punct_before(hlist, hlist.len()),
     });
     out
 }
@@ -268,6 +281,95 @@ const CJK_NO_BREAK_AFTER: &[u32] = &[
     0x201C, // “
 ];
 
+/// 挤压対象·**右半空白**（M9 中文刀 6 行尾挤压 / 连续标点挤压）。
+///
+/// 这些全角句读/闭标点的墨迹居 em 框**左半**、右半是排版空白（Fandol 实测：
+/// `。`/`，` advance 1em、墨迹右缘在 0.5em 处），挤压就是把这半格让出来。
+/// 刻意**不含** `—`/`…`/`＝`：破折号与省略号墨迹横贯全宽、全角等号墨迹居中，
+/// 压半格会切进墨迹。W3C《中文排版需求》§3.4.4 的「行尾标点」「连续标点」
+/// 两条挤压规则的対象即此集。
+const CJK_SQUEEZE_AFTER: &[u32] = &[
+    0x3001, // 、
+    0x3002, // 。
+    0x3009, // 〉
+    0x300B, // 》
+    0x300D, // 」
+    0x300F, // 』
+    0x3011, // 】
+    0x3015, // 〕
+    0x3017, // 〗
+    0x3019, // 〙
+    0x301B, // 〛
+    0xFF09, // ）
+    0xFF3D, // ］
+    0xFF5D, // ｝
+    0xFF0C, // ，
+    0xFF0E, // ．
+    0xFF1A, // ：
+    0xFF1B, // ；
+    0xFF01, // ！
+    0xFF1F, // ？
+    0x2019, // ’
+    0x201D, // ”
+];
+
+/// 挤压対象·**左半空白**（开括号/开引号）：墨迹居 em 框右半，与前邻闭标点
+/// 相连时让出前者的右半格（`」，` `」。` 的连续挤压）。
+const CJK_SQUEEZE_BEFORE: &[u32] = &[
+    0x3008, // 〈
+    0x300A, // 《
+    0x300C, // 「
+    0x300E, // 『
+    0x3010, // 【
+    0x3014, // 〔
+    0x3016, // 〖
+    0x3018, // 〘
+    0x301A, // 〚
+    0xFF08, // （
+    0xFF3B, // ［
+    0xFF5B, // ｛
+    0x2018, // ‘
+    0x201C, // “
+];
+
+/// 行的最后一个字符节点：从 `end-1` 向前回扫，跳过胶水/kern/惩罚（断点两侧
+/// 可丢弃件），遇盒子/规则/断字件即止（行尾不是字符 → 无挤压候选）。
+///
+/// 返回 `(节点下标, 码位, 字符宽)`。折行侧与行盒装配侧共用本函数——挤压
+/// 扣减若两侧不同式，行宽就差出半格。
+fn trailing_char_before(nodes: &[Node], end: usize) -> Option<(usize, u32, i64)> {
+    for i in (0..end).rev() {
+        match &nodes[i] {
+            Node::Char {
+                charcode, width, ..
+            }
+            | Node::Ligature {
+                charcode, width, ..
+            } => return Some((i, *charcode, *width)),
+            Node::Glue { .. } | Node::Kern { .. } | Node::Penalty { .. } => {}
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// 行尾挤压候选：断点 `end` 前最后一个字符是右半空白的全角句读时，
+/// 返回 `(该字符下标, 半宽)`。
+fn squeeze_punct_before(nodes: &[Node], end: usize) -> Option<(usize, i64)> {
+    trailing_char_before(nodes, end)
+        .filter(|(_, cp, _)| CJK_SQUEEZE_AFTER.contains(cp))
+        .map(|(i, _, w)| (i, w / 2))
+}
+
+/// 行盒装配侧的行尾挤压量：`[start, end)` 行的行尾闭标点半宽
+/// （与 [`squeeze_punct_before`] 同一判据，额外要求标点落在本行内）。
+pub fn line_end_squeeze_discount(nodes: &[Node], start: usize, end: usize) -> Option<i64> {
+    match squeeze_punct_before(nodes, end) {
+        Some((at, half)) if at >= start => Some(half),
+        _ => None,
+    }
+}
+
 /// 表意文字/假名（字间断点的一侧）。区段取 Unicode 15 的区块表；
 /// `0x2A700..=0x2EBE0` 一并覆盖扩展 C/D/E/F（中间的空洞是未分配平面区）。
 fn is_cjk_ideograph(cp: u32) -> bool {
@@ -294,6 +396,14 @@ fn is_cjk_punct(cp: u32) -> bool {
         | 0xFF3B..=0xFF40               // 全角 ［..｀
         | 0xFF5B..=0xFF65               // 全角 ｛..･
     )
+}
+
+/// 汉字/假名/全角标点（"这是 CJK 字符"的总判据）。
+///
+/// [`insert_cjk_glue`] 的空格吞掉落判用它：源内空格两侧**皆** CJK 才吞
+/// （`中文 英文` 的空格是西文词界，必须保留）。
+pub fn is_cjk_char(cp: u32) -> bool {
+    is_cjk_ideograph(cp) || is_cjk_punct(cp)
 }
 
 /// ASCII 字母/数字（拉丁词或数字 run 的内容）。码位可能超出 255（UTF-8 模式），
@@ -384,16 +494,64 @@ fn cjk_glue() -> Node {
 pub fn insert_cjk_glue(nodes: &[Node]) -> Vec<Node> {
     let mut out: Vec<Node> = Vec::with_capacity(nodes.len() + nodes.len() / 2);
     for (i, node) in nodes.iter().enumerate() {
+        // CJK 邻接源内空格的落判（M9 中文刀 6）：append 侧只知左邻是 CJK，
+        // 右侧要等这里看。两侧皆 CJK → 吞掉（XeCJK/ctex 语义：汉字间空白
+        // 不计宽——源文件按版心宽换行时每行都会在汉字间留一个 ~0.4em 的
+        // 词间胶水，是两端对齐行「字距拉伸」的最大单项）；否则恢复无名
+        // 胶水（width 照旧，断点语义保留）。
+        if let Node::Glue {
+            name: Some("cjk-space"),
+            width,
+            stretch,
+            shrink,
+            stretch_order,
+            shrink_order,
+        } = node
+        {
+            if nodes.get(i + 1).is_some_and(|n| charcode_of(n).is_some_and(is_cjk_char)) {
+                out.push(cjk_glue());
+            } else {
+                out.push(Node::Glue {
+                    name: None,
+                    width: *width,
+                    stretch: *stretch,
+                    shrink: *shrink,
+                    stretch_order: *stretch_order,
+                    shrink_order: *shrink_order,
+                });
+            }
+            continue;
+        }
         if i > 0 {
             if let (Some(prev), Some(next)) = (charcode_of(&nodes[i - 1]), charcode_of(node)) {
                 if cjk_breakable(prev, next) {
                     out.push(cjk_glue());
+                } else if is_cjk_squeeze_after(prev)
+                    && (is_cjk_squeeze_after(next) || is_cjk_squeeze_before(next))
+                {
+                    // 连续全角标点：后者压半格（M9 中文刀 6）。无条件挤压是
+                    // 安全的——两标点都在开/闭禁则表里，中间不可能有断点，
+                    // 必然同行；空白让出后两标点墨迹相接，与 XeCJK quanjiao
+                    // 的连续标点挤压同款（「」，」不至松成两格半）。
+                    out.push(Node::Kern {
+                        width: -nodes[i - 1].dimensions().width / 2,
+                    });
                 }
             }
         }
         out.push(node.clone());
     }
     out
+}
+
+/// 右半空白的全角句读/闭标点（行尾挤压、连续标点挤压的対象）。
+fn is_cjk_squeeze_after(cp: u32) -> bool {
+    CJK_SQUEEZE_AFTER.contains(&cp)
+}
+
+/// 左半空白的全角开括号/开引号（连续标点挤压的後邻侧）。
+fn is_cjk_squeeze_before(cp: u32) -> bool {
+    CJK_SQUEEZE_BEFORE.contains(&cp)
 }
 
 /// 拟合类（tex.web §16099-16105）：very_loose=0, loose=1, decent=2, tight=3。
@@ -428,7 +586,14 @@ fn line_badness_kind(
     hsize: i64,
     skips: LineSkips,
 ) -> (u16, LineKind) {
-    let w = bi.width - ap.width + skips.width;
+    // 行尾挤压（M9 中文刀 6）：行尾闭标点的空白半格不计入行宽。扣减只在
+    // 该标点**确实落在本行**（下标 ≥ 行内容起点）时生效——同一断点对不同
+    // 行起点是不同的行。行盒装配侧以同一规则补负 kern（paragraph.rs）。
+    let discount = match bi.punct {
+        Some((at, half)) if skips.squeeze && at >= ap.content_start => half,
+        _ => 0,
+    };
+    let w = bi.width - ap.width + skips.width - discount;
     if w < hsize {
         let mut st = [0; 4];
         for (i, slot) in st.iter_mut().enumerate() {
@@ -1178,6 +1343,186 @@ mod tests {
             height: 0,
             depth: 0,
         }
+    }
+
+    // ---------- M9 中文刀 6：CJK 标点挤压 ----------
+
+    const PUNCT_W: i64 = 720_896; // 12pt 全角标点 advance
+
+    /// 连续全角标点：**不可断**的连续句读（。」、。，）之间压半格；可断对
+    /// （」「：」可收行、「可起行）保留字间断点胶水——断点与挤压互斥，若
+    /// 同插，行在该胶水断开时半格 kern 会与行尾挤压扣减双重记账。
+    #[test]
+    fn squeeze_kern_between_consecutive_cjk_puncts() {
+        let nodes = vec![
+            han(0x3002, PUNCT_W), // 。
+            han(0x300D, PUNCT_W), // 」→ 与。连续（。后不可断）：」前 -6pt kern
+            han(0x4E2D, PUNCT_W), // 中
+            han(0x300D, PUNCT_W), // 」
+            han(0x300C, PUNCT_W), // 「→ 可断对（」可收行）：胶水非 kern
+            han(0x4E2D, PUNCT_W), // 中
+        ];
+        let out = insert_cjk_glue(&nodes);
+        let kerns: Vec<i64> = out
+            .iter()
+            .filter_map(|n| match n {
+                Node::Kern { width } => Some(*width),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(kerns, vec![-PUNCT_W / 2], "仅 。」 一处半格：{out:?}");
+        // 」「之间是零宽断点胶水（可断），不是挤压 kern
+        assert!(
+            out.iter()
+                .any(|n| matches!(n, Node::Glue { name: None, width: 0, .. })),
+            "」「保留可断胶水：{out:?}"
+        );
+        // 汉字相邻处不插 kern（只插断点胶水）
+        let out2 = insert_cjk_glue(&[han(0x4E2D, PUNCT_W), han(0x6587, PUNCT_W)]);
+        assert!(
+            out2.iter().all(|n| !matches!(n, Node::Kern { .. })),
+            "汉字之间无挤压：{out2:?}"
+        );
+    }
+
+    /// 破折号/省略号墨迹横贯全宽，**不**参与挤压：连续挤压规则的挤压量来自
+    /// **左邻**标点的右半空白，`…`/`—` 无空白可让（与 `。` 的墨迹本就相接，
+    /// 中间没有空隙），故 `…。` 之间无 kern；句读相邻（！！）才有。
+    #[test]
+    fn em_dash_and_ellipsis_are_not_squeezed() {
+        let nodes = vec![
+            han(0x4E2D, PUNCT_W),
+            han(0x2014, PUNCT_W), // —
+            han(0x2014, PUNCT_W), // —
+            han(0x2026, PUNCT_W), // …
+            han(0x3002, PUNCT_W), // 。（左邻 … 无半格可让 → 无 kern）
+        ];
+        let out = insert_cjk_glue(&nodes);
+        let kerns = out
+            .iter()
+            .filter_map(|n| match n {
+                Node::Kern { width } => Some(*width),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(kerns.is_empty(), "…— 均无半格可让：{out:?}");
+        // 正对照：两个対象集成员相邻 → 半格 kern
+        let pair = insert_cjk_glue(&[han(0xFF01, PUNCT_W), han(0xFF1F, PUNCT_W)]);
+        let pair_kerns: Vec<i64> = pair
+            .iter()
+            .filter_map(|n| match n {
+                Node::Kern { width } => Some(*width),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pair_kerns, vec![-PUNCT_W / 2], "！！之间应有半格：{pair:?}");
+    }
+
+    /// 行尾挤压判据：行尾闭标点 → 半宽；标点不在行内 / 行尾非标点 → 无。
+    #[test]
+    fn line_end_squeeze_discount_truth_table() {
+        let nodes = vec![
+            han(0x4E2D, PUNCT_W), // 0 中
+            han(0x3002, PUNCT_W), // 1 。
+            glue(0, 0, 0),        // 2 断点胶水
+            han(0x6587, PUNCT_W), // 3 文
+        ];
+        // 断点 2（。后胶水）：行尾是。→ 半宽，且。在下标 1 ≥ 行起点 0/1 → 有效
+        assert_eq!(
+            line_end_squeeze_discount(&nodes, 0, 2),
+            Some(PUNCT_W / 2),
+            "行尾。让半格"
+        );
+        // 行起点越过。（行从断点胶水自身起）：。不在本行 → 无效
+        assert_eq!(line_end_squeeze_discount(&nodes, 2, 2), None, "。不在行内");
+        // 断点 4（末尾强制）：行尾是文（非标点）→ 无
+        assert_eq!(line_end_squeeze_discount(&nodes, 0, 4), None, "行尾非标点");
+    }
+
+    /// 挤压 A/B：行尾句读的半格让宽把「中中中中。」（5W）从**不可行**变成
+    /// **恰合版心**（断行记账与装配两侧同式）——挤压面对折行的净贡献，也是
+    /// 它对 DVI 生效的证据。
+    ///
+    /// 无挤压时该单元在版心 4.5W 里没有一行是可行的：`。` 不得起行（禁则），
+    /// 「中中中」只有 3W、要拉伸 1.5W 而字间胶水仅 3×0.5pt（坏度爆炸），
+    /// 「中中中中。」5W 又超宽 0.5W → 两遍全败走应急、整段超宽一行。挤压后
+    /// 行宽按 4.5W 记账（装配侧同一规则补 -0.5W kern）→ 第一遍即恰合。
+    #[test]
+    fn squeeze_lets_line_end_punct_pack_one_more_char() {
+        const W: i64 = 720_896; // 12pt
+        let hsize = 4 * W + W / 2; // 4.5 字宽：无挤压时第 5 字进不来
+        let hlist: Vec<Node> = vec![
+            han(0x4E2D, W),
+            han(0x4E2D, W),
+            han(0x4E2D, W),
+            han(0x4E2D, W),
+            han(0x3002, W),
+            fil_glue(),
+        ];
+        let mut prepared = insert_cjk_glue(&hlist);
+        let mut skips = LineSkips::default();
+        // 失败标记 = `@secondpass`（只在第一遍失败后出现；`@firstpass` 是
+        // 两遍共用的转录头，不能当失败标记）。
+        let (without, trace) = knuth_plass(&prepared, hsize, 200, 100, true, &[], skips);
+        assert!(
+            trace.contains("@secondpass"),
+            "无挤压：第一遍应无可行解（超宽/太松）→ {trace}"
+        );
+        assert_eq!(without, vec![(0, 8)], "无挤压：应急单行（5W 超宽 0.5W）{without:?}");
+        skips.squeeze = true;
+        let (with, trace) = knuth_plass(&prepared, hsize, 200, 100, true, &[], skips);
+        assert_eq!(with, vec![(0, 9)], "挤压后整段一行（恰合版心）{with:?}");
+        assert!(
+            !trace.contains("@secondpass"),
+            "挤压后第一遍即可行：{trace}"
+        );
+        // 装配侧判据与断行侧同式（同一函数），行尾。→ 半格 kern
+        prepared.pop(); // 去 fil，模拟装配遍看到的行内容
+        assert_eq!(
+            line_end_squeeze_discount(&prepared, 0, prepared.len()),
+            Some(W / 2)
+        );
+    }
+
+    /// CJK 邻接源内空格 A/B：两侧皆 CJK 吞掉（`cjk-space` 标记 → 零宽断点胶水），
+    /// 右侧是西文时恢复无名胶水（宽度照旧、断点保留）。
+    #[test]
+    fn cjk_adjacent_source_space_swallowed_only_between_cjk() {
+        let space = |w: i64| Node::Glue {
+            name: Some("cjk-space"),
+            width: w,
+            stretch: CJK_GLUE_STRETCH,
+            shrink: 0,
+            stretch_order: 0,
+            shrink_order: 0,
+        };
+        let nodes = vec![
+            han(0x4E2D, PUNCT_W), // 中
+            space(PUNCT_W / 3),   // 源内空格（左邻中，右邻文）→ 吞
+            han(0x6587, PUNCT_W), // 文
+            space(PUNCT_W / 3),   // 源内空格（左邻文，右邻拉丁）→ 保留
+            han(0x41, 300_000),   // A
+        ];
+        let out = insert_cjk_glue(&nodes);
+        let kinds: Vec<String> = out
+            .iter()
+            .map(|n| match n {
+                Node::Glue { name, width, .. } => format!("glue({name:?},{width})"),
+                Node::Char { charcode, .. } => format!("char({charcode:X})"),
+                other => format!("other({other:?})"),
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                "char(4E2D)",
+                "glue(None,0)", // 吞掉：零宽无名胶水（断点 + 对齐余量）
+                "char(6587)",
+                "glue(None,240298)", // 保留：宽度原样、名字复原（720896/3 整除）
+                "char(41)",
+            ],
+            "{out:?}"
+        );
     }
 
     #[test]

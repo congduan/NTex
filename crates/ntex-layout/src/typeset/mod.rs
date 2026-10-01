@@ -1825,13 +1825,29 @@ impl NodeBuilder {
             )
         };
         self.append(Node::Glue {
-            name: None,
+            name: self.cjk_adjacent_space_name(),
             width,
             stretch,
             shrink,
             stretch_order: 0,
             shrink_order: 0,
         });
+    }
+
+    /// 源内空格的 CJK 邻接标记（M9 中文刀 6）：`\cjkbreakmode=1` 且当前水平
+    /// 列表尾是 CJK 字符时空格胶水挂 `cjk-space` 名。「右侧是否也是 CJK」
+    /// 此刻不可知（流式排版，字符还没来），由 `insert_cjk_glue` 在段落关闭
+    /// 时落判——两侧皆 CJK 才吞（`中文 英文` 的空格是西文词界，必须保留）。
+    fn cjk_adjacent_space_name(&self) -> Option<&'static str> {
+        if self.params.misc[ntex_core::param::MISC_CJK_BREAK_MODE] == 0 {
+            return None;
+        }
+        match self.lists.last().and_then(|l| l.last()) {
+            Some(Node::Char { charcode, .. }) if crate::linebreak::is_cjk_char(*charcode) => {
+                Some("cjk-space")
+            }
+            _ => None,
+        }
     }
 
     /// `\␣` 的词间空白（tex.web `append_normal_space`，L20332）：`\spaceskip`
@@ -1844,7 +1860,7 @@ impl NodeBuilder {
     fn append_normal_space(&mut self) {
         let (w, s, k, name) = self.normal_space_glue();
         self.append(Node::Glue {
-            name,
+            name: self.cjk_adjacent_space_name().or(name),
             width: w,
             stretch: s,
             shrink: k,

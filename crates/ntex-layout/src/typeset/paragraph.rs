@@ -22,6 +22,11 @@ impl NodeBuilder {
         if self.params.misc[ntex_core::param::MISC_CJK_BREAK_MODE] > 0 {
             children = crate::linebreak::insert_cjk_glue(&children);
         }
+        // M9 中文刀 6：行尾挤压（`\cjkbreakmode` 挤压面）——与上面的字间断点
+        // 同一开关。断行记账按「行尾闭标点的空白半格不计入行宽」给折行器多
+        // 排一个字的余量；装配侧（下方行循环）按同一规则补负 kern，两侧不同
+        // 式行宽就差半格。
+        let cjk_squeeze = self.params.misc[ntex_core::param::MISC_CJK_BREAK_MODE] > 0;
         // 段落末尾：裁剪尾部可丢弃节点 + 追加 `\parfillskip`（默认 0pt plus 1fil，
         // 末行无限拉伸；`\parfillskip=0pt` 时末行保持自然宽度）。
         // 注意 Params 快照的默认值是 `Glue::new(0,1,0)`——**fil 阶隐含在布局侧**
@@ -50,7 +55,13 @@ impl NodeBuilder {
             self.params.misc[13], // \pretolerance（-1 时跳过第一遍）
             tracing,
             &self.parshape,
-            crate::linebreak::LineSkips::from_glues(self.params.leftskip, self.params.rightskip),
+            crate::linebreak::LineSkips {
+                squeeze: cjk_squeeze,
+                ..crate::linebreak::LineSkips::from_glues(
+                    self.params.leftskip,
+                    self.params.rightskip,
+                )
+            },
         );
         if tracing && !trace.is_empty() {
             let _ = self.write16(trace);
@@ -110,6 +121,14 @@ impl NodeBuilder {
             }
             if let Some(Node::Discretionary { pre, .. }) = children.get(e) {
                 line.extend(pre.iter().cloned());
+            }
+            // M9 中文刀 6：行尾挤压装配侧——本行行尾是右半空白的闭标点时，
+            // 其空白半格以负 kern 让出（与折行记账同式：hpack 据此分摊胶水，
+            // 行尾标点墨迹贴向右缘，省下的半格换成行内多排的字）。
+            if cjk_squeeze {
+                if let Some(half) = crate::linebreak::line_end_squeeze_discount(&children, s, e) {
+                    line.push(Node::Kern { width: -half });
+                }
             }
             // 行尾 `\rightskip`（tex.web：每行行尾 rightskip glue——末行的
             // \parfillskip 在 children 内、rightskip 在其后；参考 `.\\glue(\\rightskip) 0.0`）
