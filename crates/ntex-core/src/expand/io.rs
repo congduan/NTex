@@ -305,6 +305,24 @@ impl Expander {
         Ok(n as usize)
     }
 
+    /// `\read`/`\readline` 对「未打开/已关闭」读流的致命臂（第十八刀，逐字
+    /// 对齐 pdfTeX GT）：tex.web read_toks 对 closed 流走交互式终端输入，
+    /// nonstop/batch 模式禁止交互输入 → fatal_error。web2c 转录三行（TinyTeX
+    /// pdftex 实测顺序）：`! Emergency stop.` / `<read 15> ` / `*** (cannot
+    /// \read from terminal in nonstop modes)`，随后作业终止（run() 返回
+    /// Err）。scroll/errorstop 模式真 TeX 会等终端输入；引擎无交互层（同
+    /// exec_input 缺文件臂先例），登记有意偏差：同样致命、同一 GT 文本。
+    fn fatal_closed_read_stream(&mut self, what: &str, idx: usize) -> Error {
+        let _ = self.sink.write16("! Emergency stop.".to_string());
+        let _ = self.sink.write16(format!("<read {idx}> "));
+        let _ = self
+            .sink
+            .write16("*** (cannot \\read from terminal in nonstop modes)".to_string());
+        Error::invalid_input(format!(
+            "cannot \\read from terminal in nonstop modes（{what} 流 {idx} 未打开）"
+        ))
+    }
+
     /// `\openin<n>=<file>`：文件存在 → 读入内存打开；不存在 → 流保持未打开（不报错）。
     fn exec_openin(&mut self) -> Result<()> {
         let idx = self.scan_stream_index("\\openin", 15)?;
@@ -383,7 +401,8 @@ impl Expander {
         // 取下一行（到 \n 或文件末尾）
         let line = {
             let Some(stream) = self.read_streams.get_mut(idx).and_then(|s| s.as_mut()) else {
-                return Err(Error::invalid_input("\\read 流未打开"));
+                // 未开流（read_open=closed）→ pdfTeX GT：交互输入禁止 → 致命
+                return Err(self.fatal_closed_read_stream("\\read", idx));
             };
             if stream.pos >= stream.data.len() {
                 // tex.web read_toks（L9510-9517）：input_ln 失败 → `a_close +

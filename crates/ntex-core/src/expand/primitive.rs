@@ -753,10 +753,31 @@ impl Expander {
             .ok_or_else(|| Error::invalid_input("\\readline to 后必须是控制序列"))?;
         let line = {
             let Some(stream) = self.read_streams.get_mut(idx).and_then(|s| s.as_mut()) else {
-                return Err(Error::invalid_input("\\readline 流未打开"));
+                // 未开流（read_open=closed）→ 与 \read 家族同站（tex.web
+                // read_toks）：交互式终端输入在 nonstop/batch 下禁止 → 致命。
+                // GT 转录三行见 io.rs fatal_closed_read_stream（第十八刀）。
+                return Err(self.fatal_closed_read_stream("\\readline", idx));
             };
             if stream.pos >= stream.data.len() {
-                return Err(Error::invalid_input("\\readline 到文件末尾（EOF）"));
+                // EOF 同 \read 家族语义（tex.web read_toks L9510-9517）：
+                // 不报错、赋空表、撤流条目（read_open:=closed）。此后若再读，
+                // 落上方未开流臂 → 与 \read 一致的 closed 流致命臂。第十八刀：
+                // 旧实现此站私设 fatal，与 \read EOF 臂（第十刀已修）不一致。
+                self.read_streams[idx] = None;
+                let def = MacroDef {
+                    params: ParamSpec {
+                        num_params: 0,
+                        long: false,
+                        text: Default::default(),
+                    },
+                    body: Arc::from(Vec::new()),
+                    code: None,
+                    protected: false,
+                    outer: false,
+                    active_slot: false,
+                };
+                self.define_macro_scoped(csid, def);
+                return Ok(());
             }
             let start = stream.pos;
             let end = stream.data[start..]

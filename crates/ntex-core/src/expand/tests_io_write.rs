@@ -391,9 +391,10 @@ use super::*;
         .unwrap();
         assert_eq!(out, "TTE");
 
-        // 已 closed 的流再 \read：tex.web 转终端输入（非停等模式 = fatal），
-        // 本引擎报"流未打开"错——作业终止而非静默吞。（读 1 取行、读 2 触发
-        // EOF 臂撤流条目，读 3 才是 closed 流再读。）
+        // 已 closed 的流再 \read：tex.web 转终端输入，nonstop/batch 禁止交互
+        // → pdfTeX GT 致命（第十八刀，见 fatal_closed_read_stream）——作业
+        // 终止而非静默吞。（读 1 取行、读 2 触发 EOF 臂撤流条目，读 3 才是
+        // closed 流再读。）
         let mut vfs = MemVfs::new();
         vfs.insert("data.txt", "one\n");
         let err = expand_vfs(
@@ -402,9 +403,75 @@ use super::*;
         )
         .unwrap_err();
         assert!(
-            err.to_string().contains("流未打开"),
-            "closed 流再读应报错，实得：{err}"
+            err
+                .to_string()
+                .contains("cannot \\read from terminal in nonstop modes"),
+            "closed 流再读应报 GT 文本，实得：{err}"
         );
+    }
+
+    #[test]
+    fn read_from_unopened_stream_is_emergency_stop_not_invalid_input() {
+        // 第十八刀回归锁：未开流 \read 逐字对齐 pdfTeX GT（TinyTeX 实测转录
+        // 三行顺序），且不得回退成旧的引擎内部"流未打开"消息。
+        let mut e = Expander::new();
+        e.set_misc_int(crate::param::MISC_INTERACTION_MODE, 1);
+        let err = e.run_source("\\read15 to \\x").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("cannot \\read from terminal in nonstop modes"),
+            "应报 GT 文本，实得：{msg}"
+        );
+        assert!(!msg.contains("流未打开"), "旧消息不得回归：{msg}");
+        let t = e.transcript();
+        let emergency = t.find("! Emergency stop.");
+        let read = t.find("<read 15>");
+        let abort = t.find("*** (cannot \\read from terminal in nonstop modes)");
+        let (Some(emergency), Some(read), Some(abort)) = (emergency, read, abort) else {
+            panic!("GT 转录三行缺失：{t:?}");
+        };
+        assert!(emergency < read && read < abort, "GT 顺序错乱：{t:?}");
+    }
+
+    #[test]
+    fn readline_unopened_stream_aligns_read_semantics() {
+        // \readline 与 \read 同站（tex.web read_toks）：未开流 → 同一 GT
+        // 致命臂，非 \readline 私设消息。
+        let mut e = Expander::new();
+        e.set_misc_int(crate::param::MISC_INTERACTION_MODE, 1);
+        let err = e.run_source("\\readline15 to \\x").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("cannot \\read from terminal in nonstop modes"),
+            "应报 GT 文本，实得：{msg}"
+        );
+        assert!(!msg.contains("流未打开"), "旧消息不得回归：{msg}");
+        let t = e.transcript();
+        assert!(t.contains("! Emergency stop."), "转录缺 Emergency stop：{t:?}");
+        assert!(t.contains("<read 15>"), "转录缺 <read 15>：{t:?}");
+        assert!(
+            t.contains("*** (cannot \\read from terminal in nonstop modes)"),
+            "转录缺 *** 段：{t:?}"
+        );
+    }
+
+    #[test]
+    fn readline_at_eof_assigns_empty_and_closes_stream_no_error() {
+        // \readline EOF 臂与 \read 同语义（第十八刀）：不报错、赋空表、
+        // `\ifeof` 为真（流撤条目 ⇔ closed）。旧实现此站私设 fatal，靠本测
+        // 锁住不回退。
+        let mut vfs = MemVfs::new();
+        vfs.insert("empty.txt", "");
+        let (out, _) = expand_vfs(
+            concat!(
+                "\\newread\\r\\openin\\r=empty.txt\\readline\\r to \\line",
+                "\\ifeof\\r T\\else F\\fi",
+                "\\def\\empty{}\\ifx\\line\\empty E\\else N\\fi\\end",
+            ),
+            vfs,
+        )
+        .unwrap();
+        assert_eq!(out, "TE");
     }
 
     #[test]
