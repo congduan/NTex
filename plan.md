@@ -149,6 +149,9 @@ babel 配置（引用宿主缺失的 dehypht-x-2024-02-28.tex）→ 断字配置
    维度/上标语境，GT 同构复现 3 错同型；真 TeX 语义即如此）；③2× Limit controls
    （`\_` 非算符，GT 同病）。**引擎错误构成已与 GT 对齐，无引擎刀**；hyperref 评估
    转宏包生态闭包时做。
+   **2026-10-03 复核**：booktabs/multirow 入 assets 后重跑仍 40 错——与预期一致
+   （样张源头缺 `\usepackage{booktabs,multirow}`，非引擎缺口；样张补包名属改原文，
+   不做）。
 4. **宏包生态闭包**（最大体量项）：geometry/amsmath/hyperref/biblatex/tikz/ctex
    CI 回归集 + ntex-pkg 引擎接线（缺包即报 + 一条命令补）。
    **刀 1（b81b587，2026-10-03 第二十一刀）**：booktabs ✅（本体零债）+ multirow ✅
