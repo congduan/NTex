@@ -817,6 +817,21 @@ impl Expander {
                     let v = self.query_sink_ref().last_kern();
                     return Ok(if neg { -v } else { v });
                 }
+                // mu 参数（\thinmuskip 等）在整数上下文按 width 的 sp 直读
+                // （tex.web scan_something_internal 对 assign_mu_glue 区参数同
+                // 降级口径；\number\thinmuskip 等依赖）。
+                EqSlot::Primitive(
+                    p @ (Primitive::ThinMuskip | Primitive::MedMuskip | Primitive::ThickMuskip),
+                ) => {
+                    self.fetch()?;
+                    let idx = match p {
+                        Primitive::ThinMuskip => 0,
+                        Primitive::MedMuskip => 1,
+                        _ => 2,
+                    };
+                    let v = self.registers.muskip(idx).width;
+                    return Ok(if neg { -v } else { v });
+                }
                 EqSlot::Primitive(
                     Primitive::DisplayWidth
                     | Primitive::PreDisplaySize
@@ -1816,6 +1831,37 @@ impl Expander {
                     Some((n, _)) if n.charcode().is_some_and(|c| (c as u8).is_ascii_digit()) => {
                         continue;
                     }
+                    // `+` 后跟小数点/逗号（`\kern+.16667em`，latex.ltx `\tmspace`
+                    // 文本模式形态；trip L81 `--+.1pt` 同）：正号已吸收（neg 不变），
+                    // `.`/`,` 退回流头由下方数字扫描作小数分隔符——不可落 `_` 运算符
+                    // 消解臂把 `+` 一起退回，否则数字扫描从 `+` 起步报 Missing
+                    // number（LaTeX `X\,Y` 复现件即此）。
+                    Some((n, _))
+                        if matches!(
+                            n.charcode(),
+                            Some(c) if c == b'.' as u32 || c == b',' as u32
+                        ) =>
+                    {
+                        self.unread(n);
+                        break;
+                    }
+                    // `+` 后跟 mu 参数（`\kern+\thinmuskip`）：正号已吸收（neg 不变），
+                    // mu 参数退回流头交下方内部量臂——不可 continue：该 token 已被
+                    // fetch 消费，继续符号循环会把它丢掉，值读成 0/Missing number。
+                    Some((n, _))
+                        if matches!(
+                            self.eqtb
+                                .slot(self.deref_alias_chain(n.csid().unwrap_or(u32::MAX))),
+                            EqSlot::Primitive(
+                                Primitive::ThinMuskip
+                                | Primitive::MedMuskip
+                                | Primitive::ThickMuskip,
+                            ),
+                        ) =>
+                    {
+                        self.unread(n);
+                        break;
+                    }
                     _ => {
                         if let Some((n, _)) = next {
                             self.unread(n);
@@ -1876,6 +1922,7 @@ impl Expander {
         }
         // 寄存器引用：\dimen<idx>
         if let Some(csid) = self.peek_csid()? {
+            let csid = self.deref_alias_chain(csid);
             if let EqSlot::Primitive(Primitive::Dimen) = self.eqtb.slot(csid) {
                 self.fetch()?; // 消费 \dimen
                 let idx = self.scan_register_index()?;
@@ -1893,6 +1940,27 @@ impl Expander {
                 self.fetch()?; // 消费 \muskip
                 let idx = self.scan_register_index()?;
                 let v = self.registers.muskip(idx).width;
+                return Ok((if neg { -v } else { v }, 0));
+            }
+            // tex.web scan_dimen：内部量臂（scan_something_internal）——
+            // \thinmuskip/\medmuskip/\thickmuskip 参数原语形态。mu 参数在
+            // 尺寸上下文按 1mu=1pt 取数值继续（"! Incompatible glue units."
+            // + help 行，GT plain `\kern+\thinmuskip` 同款）；与 scan_glue_inner
+            // 的同族臂（下方胶水语境）同语义。LaTeX `\,` =
+            // `\tmspace+\thinmuskip{.16667em}` → 文本模式 `\kern+\thinmuskip`
+            // 依赖此臂（此前缺臂 → "Missing number … +"）。
+            if let EqSlot::Primitive(
+                p @ (Primitive::ThinMuskip | Primitive::MedMuskip | Primitive::ThickMuskip),
+            ) = self.eqtb.slot(csid).clone()
+            {
+                self.fetch()?; // 消费该参数 cs
+                let idx = match p {
+                    Primitive::ThinMuskip => 0,
+                    Primitive::MedMuskip => 1,
+                    _ => 2,
+                };
+                let v = self.registers.muskip(idx).width;
+                self.report_incompatible_glue_units();
                 return Ok((if neg { -v } else { v }, 0));
             }
             // tex.web `<internal dimen>`（scan_dimen 开头 `cur_cmd∈[min_internal,max_internal]`

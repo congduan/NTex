@@ -550,6 +550,121 @@ ab5c}").unwrap();
         assert_eq!(out, ".0mu", "1mu=1pt 恢复口径：\"0\" 折入下标后余 .0mu");
     }
 
+    /// 第十九刀：mu 参数（\thinmuskip 等参数原语形态）在尺寸上下文是内部量——
+    /// `\kern+\thinmuskip` 不再报 Missing number；按 GT 报 "Incompatible glue
+    /// units." + help 行 "1mu=1pt" 后以 mu 数值当 pt 继续（plain 形态，恒 pt 语境）。
+    #[test]
+    fn kern_plus_muskip_param_is_internal_dimen_with_incompatible_note() {
+        let mut e = Expander::new();
+        let kerns = Rc::new(RefCell::new(Vec::new()));
+        e.set_sink(Box::new(KernCaptureSink::new(kerns.clone())));
+        e.run_source("\\thinmuskip=3mu\\relax").unwrap();
+        e.feed_source("X\\kern+\\thinmuskip Y");
+        e.run().unwrap();
+        let kerns = kerns.take();
+        assert_eq!(
+            kerns.as_slice(),
+            &[196_608],
+            "3mu 应按 1mu=1pt 作 3sp 尺寸：{:?}",
+            kerns
+        );
+        assert!(
+            e.transcript().contains("Incompatible glue units"),
+            "尺寸语境读 mu 参数应报 Incompatible glue units：{}",
+            e.transcript()
+        );
+        assert!(
+            e.transcript().contains("1mu=1pt"),
+            "应带 help 行：{}",
+            e.transcript()
+        );
+        assert!(
+            !e.transcript().contains("Missing number"),
+            "缺臂的 Missing number 应消除：{}",
+            e.transcript()
+        );
+    }
+
+    /// 第十九刀：LaTeX `\,` 文本模式链的最小模拟 `\kern+\medmuskip`——
+    /// 0 错通排（此前正号 + mu 参数 → "Missing number … +" 级联）。
+    #[test]
+    fn latex_thinspace_text_mode_no_missing_number() {
+        let mut e = Expander::new();
+        let kerns = Rc::new(RefCell::new(Vec::new()));
+        e.set_sink(Box::new(KernCaptureSink::new(kerns.clone())));
+        e.run_source("\\medmuskip=2mu plus1mu X\\kern+\\medmuskip Y").unwrap();
+        let kerns = kerns.take();
+        assert_eq!(
+            kerns.as_slice(),
+            &[131_072],
+            "2mu → 2sp：{:?}",
+            kerns
+        );
+        assert!(
+            !e.transcript().contains("Missing number"),
+            "\\kern+\\medmuskip 应 0 错：{}",
+            e.transcript()
+        );
+    }
+
+    /// 记录 kern 事件宽度的 sink（`\kern` 走 CoreSink::kern 事件；VecSink 同款
+    /// 结构 + Rc<RefCell> 外泄记录，tests.rs EventSink / tests_io_write
+    /// SpecialCaptureSink 的最小组合）。
+    #[derive(Debug, Default)]
+    struct KernCaptureSink {
+        inner: VecSink,
+        kerns: Rc<RefCell<Vec<i64>>>,
+    }
+
+    impl KernCaptureSink {
+        fn new(kerns: Rc<RefCell<Vec<i64>>>) -> Self {
+            Self {
+                inner: VecSink::default(),
+                kerns,
+            }
+        }
+    }
+
+    impl CoreSink for KernCaptureSink {
+        fn token(&mut self, tok: Token) -> Result<()> {
+            self.inner.token(tok)
+        }
+        fn transcript(&self) -> &str {
+            self.inner.transcript()
+        }
+        fn tokens(&self) -> &[Token] {
+            self.inner.tokens()
+        }
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
+        fn as_any_ref(&self) -> &dyn std::any::Any {
+            &self.kerns
+        }
+        fn kern(&mut self, width: i64) -> Result<()> {
+            self.kerns.borrow_mut().push(width);
+            Ok(())
+        }
+    }
+
+    impl FontSink for KernCaptureSink {}
+    impl MathSink for KernCaptureSink {}
+    impl BoxSink for KernCaptureSink {}
+    impl AlignSink for KernCaptureSink {}
+    impl PageSink for KernCaptureSink {}
+    impl IoSink for KernCaptureSink {
+        fn message(&mut self, text: String) -> Result<()> {
+            self.inner.message(text)
+        }
+        fn show(&mut self, text: String) -> Result<()> {
+            self.inner.show(text)
+        }
+        fn write16(&mut self, text: String) -> Result<()> {
+            self.inner.write16(text)
+        }
+    }
+    impl TokenSink for KernCaptureSink {}
+
 /// `\uppercase`/`\lowercase` 语义锁（tex.web `shift_case` @23609）：
 /// 判据 `t < cs_token_flag + single_base` —— **只对单字符 token（char / active
 /// char）施表，多字母控制序列一律原样保留**。plain.tex L271
