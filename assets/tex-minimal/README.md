@@ -45,6 +45,8 @@ tex/latex/xcolor/
 tex/latex/url/
 tex/latex/geometry/
 tex/latex/l3kernel/
+tex/latex/booktabs/       ← 2026-10-03 新增：三线表（booktabs.sty）
+tex/latex/multirow/       ← 2026-10-03 新增：跨行单元格（multirow.sty）
 tex/latex/misc/          ← 2026-09-18 新增：lingmacros.sty + tree-dvips.sty
 tex/generic/iftex/
 tex/generic/infwarerr/
