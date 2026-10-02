@@ -447,7 +447,9 @@ impl PageBuilder {
                 // 成本与位置不受 at_penalty 影响（b+0 与胶水断点同值），只此
                 // 一处对齐 TinyTeX 对拍的可观测值。
                 let at_penalty = penalty != 0;
-                if penalty < INF_PENALTY && self.try_break(penalty, at_penalty) == Some(Outcome::FireUp) {
+                if penalty < INF_PENALTY
+                    && self.try_break(penalty, at_penalty) == Some(Outcome::FireUp)
+                {
                     return Outcome::FireUp;
                 }
                 contrib.remove(0);
@@ -614,9 +616,7 @@ impl PageBuilder {
     /// （如 `\newpage` 的 -10000、`\clearpage` 的 -10001、`\supereject` 的
     /// -20000）；胶水/kern 断点（页满自然断）与无记录 → `inf_penalty`(10000)。
     pub fn take_front_output_penalty(&mut self) -> Option<i64> {
-        self.fired_penalties
-            .pop_front()
-            .or(self.last_fired_penalty)
+        self.fired_penalties.pop_front().or(self.last_fired_penalty)
     }
 
     /// 弹出队首页的断点惩罚——**只在例程真消费了该页之后**（[`Self::front_output_penalty`]
@@ -636,7 +636,6 @@ impl PageBuilder {
     pub fn clear_fired_penalties(&mut self) {
         self.fired_penalties.clear();
     }
-
 
     /// `fire_up`（tex.web §709+）：按最佳断点打包页面、余下退回贡献、重置页面。
     fn fire_up(&mut self, contrib: &mut Vec<Node>) -> BoxNode {
