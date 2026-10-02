@@ -31,7 +31,7 @@
 | plain.tex 预载 | ✅ G0–G3 完成 | 1241 行全通；`\newif` 端到端与 pdfTeX 一致；剩 G4（`\lccode/\uccode` 初表）、G5（初表分裂脑收敛） |
 | expl3 全文载入 | ✅ 载入走通 | `[LOAD-DONE]` + DVI 落盘；载入期错误 2492 → **4**（NTex 独有仅 1，不阻断） |
 | latex.ltx 主体加载 | ✅ **主墙已越（口径刷新 2026-10-02）** | 发行 latex.fmt 全链（latex.ltx + expl3 + NFSS 字体）可用；`\documentclass{article}` 文档端到端出 DVI（见下行）。initex 逐行推进口径：fixtures 闭包补齐后 `blocker-track` 最远 **l.36005**（expl3-code 载入段，`扫描到输入末尾`；09-12 旧口径 1147 是缺件伪影），非当前主战场 |
-| `\documentclass` / article.cls | ✅ 最小闭环已通 | **主控实测（c680bc7，2026-10-02）**：small2e **0 错** 1 页、sample2e 2 错（`Missing number, treated as zero`×2，`\z@`/字号代换域）、testpage 卡 `\read` 流未打开（`\read` 未开流恢复臂缺失，KNOWN-SIMPLIFICATIONS §6 已登记）；transformer-standalone **18 页/87 字体/49245B 与基线一致**、40 错（hypertext/URL 域字符为主） |
+| `\documentclass` / article.cls | ✅ 最小闭环已通 | **主控实测（fae2350，2026-10-02）**：small2e **0 错** 1 页、sample2e **0 错**（原 Missing number ×2，第十九刀 `scan_dimen` mu 参数内部量臂 + 正号小数臂清零，b497294 同日先修 `\read` 未开流臂）、testpage `\read` 未开流已对齐 GT（Emergency stop 语义，GT nonstop 同 fatal，销账）；transformer-standalone **18 页/87 字体/49245B 与基线一致**、40 错（hypertext/URL 域字符为主） |
 | 结构宏（`\maketitle`/`\section`）+ NFSS 字体 | 🟡 主体已通 | `\section`/`\maketitle`/`\LaTeX` 徽标/字号代换链已通（09-24/25 现场四连）；余 NFSS 长尾（`\ifdim` size range、`try@simples`）见 §5 P1 |
 
 **最近两刀**（2026-09-17 / 09-18）：
@@ -136,10 +136,12 @@ babel 配置（引用宿主缺失的 dehypht-x-2024-02-28.tex）→ 断字配置
 
 > 主墙 88.4% 已越、`\documentclass` 最小闭环已通（见 §0.1），本节旧序作废重排：
 
-1. **`\read` 未开流恢复臂**（pdfTeX 语义：报错可恢复读终端，现 fatal）——
-   testpage 即卡死点，algorithmic 类宏包通用墙（KNOWN-SIMPLIFICATIONS §6）。
-2. **sample2e `Missing number, treated as zero` ×2**（`\z@`/字号代换域）——
-   NFSS 长尾残余，最小复现后归入 `\ifdim` size range / `try@simples` 一并清。
+1. **`\read` 未开流恢复臂** ~~（testpage 卡死点）~~ ✅ 已修（b497294，第十八刀）；
+   testpage 销账：GT nonstop 下同 fatal（交互式版面询问文档）。
+2. ~~**sample2e `Missing number, treated as zero` ×2**~~ ✅ 已清（fae2350，第十九刀）——
+   根因非 NFSS：`scan_dimen_body` 缺 `\thinmuskip` 系内部量臂 + `+`/小数正号前瞻臂
+   （LaTeX `\,` = `\tmspace+\thinmuskip{...}`/`\kern+.16667em` 级联）。余 NFSS 长尾
+   （`\ifdim` size range / `try@simples`）未动，撞上即做。
 3. **transformer-standalone 40 错清账**（hypertext/URL 域字符为主）→ 归零后接
    `\usepackage{hyperref}` 真实现评估。
 4. **宏包生态闭包**（最大体量项）：geometry/amsmath/hyperref/biblatex/tikz/ctex
