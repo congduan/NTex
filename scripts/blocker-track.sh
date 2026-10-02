@@ -55,8 +55,11 @@ echo "== 跑 latex_probe（--initex）…"
 # 用源所在目录；在仓库 fixtures 时带上 fixtures/latex2e（2026-09-13 接线）。
 SRC_DIR="$(dirname "$SRC")"
 INPUT_PATH_ARGS=(--input-path "$SRC_DIR")
+# fixtures 路线补兄弟目录：latex2e 的载入闭包要跨目录取 l3kernel 的
+# expl3-code.tex / UnicodeData.txt 等件（2026-10-02：explN-code 找不到
+# 假性回退 38446→200 的根因，缺件引擎早退伪影，非引擎回归）。
 if [[ "$SRC" == "$REPO"/* ]]; then
-    INPUT_PATH_ARGS=(--input-path "$REPO/fixtures/latex2e")
+    INPUT_PATH_ARGS+=(--input-path "$REPO/fixtures/l3kernel")
 fi
 timeout 600 cargo run -q --release -p ntex-test-support --example latex_probe -- \
     "$SRC" --initex "${INPUT_PATH_ARGS[@]}" > "$PROBE_LOG" 2>&1

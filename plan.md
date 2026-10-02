@@ -30,9 +30,9 @@
 |---|---|---|
 | plain.tex 预载 | ✅ G0–G3 完成 | 1241 行全通；`\newif` 端到端与 pdfTeX 一致；剩 G4（`\lccode/\uccode` 初表）、G5（初表分裂脑收敛） |
 | expl3 全文载入 | ✅ 载入走通 | `[LOAD-DONE]` + DVI 落盘；载入期错误 2492 → **4**（NTex 独有仅 1，不阻断） |
-| latex.ltx 主体加载 | 🟡 **当前主墙** | 实测停点 **pos=685828（88.4%）**、500s 超时、steps=11180000；根因待定 |
-| `\documentclass` / article.cls | ⬜ 未开始 | — |
-| 结构宏（`\maketitle`/`\section`）+ NFSS 字体 | 🟡 部分 | `\section` 链已推进；NFSS 字号墙未越过 |
+| latex.ltx 主体加载 | ✅ **主墙已越（口径刷新 2026-10-02）** | 发行 latex.fmt 全链（latex.ltx + expl3 + NFSS 字体）可用；`\documentclass{article}` 文档端到端出 DVI（见下行）。initex 逐行推进口径：fixtures 闭包补齐后 `blocker-track` 最远 **l.36005**（expl3-code 载入段，`扫描到输入末尾`；09-12 旧口径 1147 是缺件伪影），非当前主战场 |
+| `\documentclass` / article.cls | ✅ 最小闭环已通 | **主控实测（c680bc7，2026-10-02）**：small2e **0 错** 1 页、sample2e 2 错（`Missing number, treated as zero`×2，`\z@`/字号代换域）、testpage 卡 `\read` 流未打开（`\read` 未开流恢复臂缺失，KNOWN-SIMPLIFICATIONS §6 已登记）；transformer-standalone **18 页/87 字体/49245B 与基线一致**、40 错（hypertext/URL 域字符为主） |
+| 结构宏（`\maketitle`/`\section`）+ NFSS 字体 | 🟡 主体已通 | `\section`/`\maketitle`/`\LaTeX` 徽标/字号代换链已通（09-24/25 现场四连）；余 NFSS 长尾（`\ifdim` size range、`try@simples`）见 §5 P1 |
 
 **最近两刀**（2026-09-17 / 09-18）：
 
@@ -109,7 +109,7 @@ babel 配置（引用宿主缺失的 dehypht-x-2024-02-28.tex）→ 断字配置
 
 | 线 | 状态 |
 |---|---|
-| 主线：LaTeX/expl3 兼容 | 🟡 88.4% 主墙（见 §0.1） |
+| 主线：LaTeX/expl3 兼容 | ✅ 主墙已越（2026-10-02 口径刷新）；`\documentclass` 最小闭环已通；余长尾见 §0.1/§5 |
 | 输出例程战 | ✅ 刀 1–5 全落（`\outputpenalty`/box255/insert 分配/`\newinsert`/页号链） |
 | 格式预载（G 线） | ✅ G0–G3；剩 G4/G5 |
 | M5 增量计算 | 🟡 阶段一~五完成（改正文 4.3x / 改宏体 1.1x）；阶段六待办见 §2 M5 |
@@ -132,17 +132,20 @@ babel 配置（引用宿主缺失的 dehypht-x-2024-02-28.tex）→ 断字配置
 - **EVIDENCE 口径**：任何数字入库须带 commit / 命令 / 样本规模；仪器失真史见
   [docs/tooling-trust.md](docs/tooling-trust.md)（开工定位前先读）。
 
-### 0.4 下一步（按执行序）
+### 0.4 下一步（按执行序，2026-10-02 口径刷新）
 
-1. **定根因**：latex.ltx 88.4% 主墙（输入栈泄漏、Call/Ret 均已证伪）——单点最大信息量。
-2. **NFSS 字号墙**：`\ifdim` size range 解析 / `try@simples`；连带 `preload.ltx` l.47
-   `\DeclarePreloadSizes` → `! \font 后缺少字体名`（当前致命终止点）。
-3. **数学字母登记链**：`\SetMathAlphabet\mathsf/\mathit{bold}`（fontmath l.73/74）
-   → ``Command `' not defined as a math alphabet`` ×2；`\in@` 与尾空格 csname 名构造已证伪，
-   待查 `\alpha@list`/`\version@list` 与 `\meaning#4` 文本。
-4. 越过 88.4% 后：ltoutput 尾段 / lttagging / ltfinal 至 `\dump`（约 11.6%）
-   → article.cls → 结构宏 → 真 LaTeX 版面 PDF。
-5. 并行线：M5 阶段六、M1-13 错误恢复通用机制、格式预载 G4/G5。
+> 主墙 88.4% 已越、`\documentclass` 最小闭环已通（见 §0.1），本节旧序作废重排：
+
+1. **`\read` 未开流恢复臂**（pdfTeX 语义：报错可恢复读终端，现 fatal）——
+   testpage 即卡死点，algorithmic 类宏包通用墙（KNOWN-SIMPLIFICATIONS §6）。
+2. **sample2e `Missing number, treated as zero` ×2**（`\z@`/字号代换域）——
+   NFSS 长尾残余，最小复现后归入 `\ifdim` size range / `try@simples` 一并清。
+3. **transformer-standalone 40 错清账**（hypertext/URL 域字符为主）→ 归零后接
+   `\usepackage{hyperref}` 真实现评估。
+4. **宏包生态闭包**（最大体量项）：geometry/amsmath/hyperref/biblatex/tikz/ctex
+   CI 回归集 + ntex-pkg 引擎接线（缺包即报 + 一条命令补）。
+5. 并行线：M1-13 错误恢复通用机制收口、M5 阶段六、M7 `.fmt` v2
+   （发行 fmt 载入仍分钟级，产品化前必修）。
 
 ---
 
@@ -455,16 +458,19 @@ CLI `ntex-pkg`（`index`/`provide`/`resolve`/`lock`/`check`/`local`/**`vendor`**
 
 ### P0 —— 战役关键路径
 
-- [ ] **latex.ltx 88.4% 主墙根因**（pos=685828）；输入栈泄漏与 Call/Ret 均已证伪
-- [ ] **NFSS 字号墙**：`\ifdim` size range 解析 / `try@simples`（`Missing number … \@M`）
-- [ ] `preload.ltx` l.47 `\DeclarePreloadSizes` → `! \font 后缺少字体名`（当前致命终止点，
-      `\font` 原语在 `\small@sizes` 展开体上的扫描偏差）
-- [ ] `\SetMathAlphabet\mathsf/\mathit{bold}`（fontmath l.73/74）→
-      ``Command `' not defined as a math alphabet`` ×2
+- [ ] **P0 刷新（2026-10-02）**：~~latex.ltx 88.4% 主墙根因~~ ✅ 已越（发行 fmt 全链可用，
+      `\documentclass` 最小闭环已通，见 §0.1）；余 P0 重排：
+- [ ] **`\read` 未开流恢复臂**（testpage 卡死点；pdfTeX 报错可恢复，现 fatal）
+- [ ] **NFSS 长尾**：`\ifdim` size range 解析 / `try@simples`（sample2e
+      `Missing number, treated as zero` ×2 同源）；
+      `preload.ltx` l.47 `\DeclarePreloadSizes` / `\SetMathAlphabet` fontmath 链
+      （initex 逐行口径下仍登记，发行 fmt 路径已绕过）
 - [ ] **M1-13 错误恢复通用机制**：`back_input` / 插入恢复 token / `\errhelp` ——
       影响**所有报错原语**的"报错后继续"路径；TRIP 卡点根因；契约级（任意畸形输入不 panic）
 - [ ] **TRIP / ETRIP semantic diff 归零**（−5619/+1412 与 −3051/+2352）+ 错误块抽查
-- [ ] `\documentclass` / article.cls → 结构宏 → 真 LaTeX 版面 PDF
+- [ ] ~~`\documentclass` / article.cls → 结构宏 → 真 LaTeX 版面 PDF~~ ✅ 最小闭环已通
+      （small2e 0 错 / transformer 18 页与基线一致，2026-10-02 主控实测）；
+      余项转宏包生态闭包（§2 M9）
 
 ### P1 —— LaTeX 前置能力（撞上即做）
 
