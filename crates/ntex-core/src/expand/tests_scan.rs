@@ -450,6 +450,85 @@ ab5c}").unwrap();
         );
     }
 
+    /// 第二十一刀（count 系数 × dimen 内部量，tex.web scan_glue S=scan_int
+    /// 分支 L9094 `if cur_val_level=int_val then scan_dimen(mu,false,true)`）：
+    /// countdef'd cs 在胶水语境回 int_val → 落穿 scan_dimen，与后续 dimendef'd
+    /// cs 结成乘积进 skip。multirow L171
+    /// `\addtolength\multirow@dima{\multirow@cntb\bigstrutjot}` 的承重臂。
+    /// GT 真值（TinyTeX pdftex g1.tex 实测）：10pt 基数、系数 2、5pt 内部量
+    /// → advance 后 `\the\myskip` = `20.0pt`。此前落硬错误
+    /// 「胶水上下文需要 \skip/\muskip 寄存器」 fatal。
+    #[test]
+    fn advance_skip_with_count_times_dimen_internal() {
+        let src = concat!(
+            "\\countdef\\mycnt=5 \\mycnt=2 %\n",
+            "\\dimendef\\mydim=6 \\mydim=5pt %\n",
+            "\\skipdef\\myskip=7 \\myskip=10pt %\n",
+            "\\advance\\myskip \\mycnt\\mydim %\n",
+            "\\message{A=[\\the\\myskip]}"
+        );
+        let (r, transcript) = run_transcript(src);
+        r.unwrap();
+        assert!(
+            !transcript.contains("胶水上下文需要"),
+            "count 寄存器系数不得落硬错误臂：{transcript}"
+        );
+        assert!(
+            !transcript.contains("Missing number"),
+            "countdef'd cs 须被数字臂认作系数：{transcript}"
+        );
+        assert!(
+            transcript.contains("A=[20.0pt]"),
+            "GT 期望 10pt+2×5pt=20.0pt：{transcript}"
+        );
+    }
+
+    /// 负系数变体：GT（TinyTeX pdflatex g2.tex，LaTeX `\setlength` 实测）
+    /// `\setlength\myskip{-\mycnt\mydim}`（\mycnt=3、\mydim=5pt）→
+    /// `-15.0pt`。NTex 单元锁走同语义的直接赋值形态（LaTeX 括号组路径已由
+    /// b15 `\setlength\multirow@dima{2\ht\@arstrutbox}` 双侧验证）。
+    #[test]
+    fn setlength_skip_with_negative_count_factor() {
+        let src = concat!(
+            "\\countdef\\mycnt=5 \\mycnt=3 %\n",
+            "\\dimendef\\mydim=6 \\mydim=5pt %\n",
+            "\\skipdef\\myskip=7 %\n",
+            "\\myskip=-\\mycnt\\mydim %\n",
+            "\\message{D=[\\the\\myskip]}"
+        );
+        let (r, transcript) = run_transcript(src);
+        r.unwrap();
+        assert!(
+            !transcript.contains("Missing number"),
+            "负系数亦不得报 Missing number：{transcript}"
+        );
+        assert!(
+            transcript.contains("D=[-15.0pt]"),
+            "GT 期望 -3×5pt=-15.0pt：{transcript}"
+        );
+    }
+
+    /// multirow 原文场景模拟（GT TinyTeX pdftex g1.tex F 实测）：`\skb=1pt`、
+    /// `\cntb=4`、`\bigstrutjot=3pt`，连续两次 `\advance\skb \cntb\jot` →
+    /// `25.0pt`（1+12+12）。锁「多轮连续乘积 advance」不串值。
+    #[test]
+    fn advance_skip_repeated_count_factor_multirow_shape() {
+        let src = concat!(
+            "\\countdef\\cntb=5 \\cntb=4 %\n",
+            "\\dimendef\\jot=6 \\jot=3pt %\n",
+            "\\skipdef\\skb=7 \\skb=1pt %\n",
+            "\\advance\\skb \\cntb\\jot %\n",
+            "\\advance\\skb \\cntb\\jot %\n",
+            "\\message{F=[\\the\\skb]}"
+        );
+        let (r, transcript) = run_transcript(src);
+        r.unwrap();
+        assert!(
+            transcript.contains("F=[25.0pt]"),
+            "GT 期望 1pt+2×(4×3pt)=25.0pt：{transcript}"
+        );
+    }
+
     /// 第二十一刀：tex.web scan_glue 的 assign_glue 内部量分支。
     /// `\baselineskip` 等胶水参数在胶水上下文须复制完整 glue（三分量），
     /// 不能退化为 scan_dimen 的 width。LaTeX `\set@fontsize` 会执行

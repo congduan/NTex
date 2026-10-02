@@ -2901,6 +2901,18 @@ impl Expander {
                         self.report_incompatible_glue_units();
                     }
                 }
+                // tex.web scan_glue（S=scan_int 分支，L9094
+                // `if cur_val_level=int_val then scan_dimen(mu,false,true)`）：
+                // countdef'd cs 回 int_val → 落穿 scan_dimen 的 shortcut 路径
+                // （系数已入 cur_val，直接进单位扫描）。**不消费**该 token，留流
+                // 交下方 scan_dimen 数字臂作系数读出、与后续内部尺寸量结成乘积
+                // （multirow L171
+                // `\addtolength\multirow@dima{\multirow@cntb\bigstrutjot}`
+                // 即此；Char/MathChar/`\count` 原语形态本就落穿该路）。GT 真值：
+                // `\myskip=10pt\mycnt=2\mydim=5pt` advance 后 `\the\myskip`
+                // = `20.0pt`。此前落 `_` 臂硬报「胶水上下文需要 \skip/\muskip
+                // 寄存器」 fatal，tex.web 无此报错路径。
+                EqSlot::Register(RegKind::Count, _) => {}
                 EqSlot::Register(kind, idx) => {
                     // skipdef/muskipdef 绑定的寄存器 cs
                     self.fetch()?;
