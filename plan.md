@@ -151,6 +151,10 @@ babel 配置（引用宿主缺失的 dehypht-x-2024-02-28.tex）→ 断字配置
    转宏包生态闭包时做。
 4. **宏包生态闭包**（最大体量项）：geometry/amsmath/hyperref/biblatex/tikz/ctex
    CI 回归集 + ntex-pkg 引擎接线（缺包即报 + 一条命令补）。
+   **刀 1（b81b587，2026-10-03 第二十一刀）**：booktabs ✅（本体零债）+ multirow ✅
+   （`scan_glue` 补 countdef'd cs int_val 落穿臂——`\advance\myskip \mycnt\mydim`
+   count 系数×dimen 内部量乘积；tex.web L9094 scan_glue S 分支，无硬报错路径）。
+   三线表最小样张 0 错出 DVI。assets 备料待入：booktabs.sty/multirow.sty。
 5. 并行线：M1-13 错误恢复通用机制收口、M5 阶段六、M7 `.fmt` v2
    （发行 fmt 载入仍分钟级，产品化前必修）。
 
