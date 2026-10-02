@@ -142,8 +142,13 @@ babel 配置（引用宿主缺失的 dehypht-x-2024-02-28.tex）→ 断字配置
    根因非 NFSS：`scan_dimen_body` 缺 `\thinmuskip` 系内部量臂 + `+`/小数正号前瞻臂
    （LaTeX `\,` = `\tmspace+\thinmuskip{...}`/`\kern+.16667em` 级联）。余 NFSS 长尾
    （`\ifdim` size range / `try@simples`）未动，撞上即做。
-3. **transformer-standalone 40 错清账**（hypertext/URL 域字符为主）→ 归零后接
-   `\usepackage{hyperref}` 真实现评估。
+3. ~~**transformer-standalone 40 错清账**~~ ✅ 销账（2026-10-02 GT 裁决）：40 错全部为
+   「原文档对 GT 也不合法」构造——①23× Undefined（`\multirow`/`\specialrule`/
+   `\cmidrule` 等，standalone 简化件没 `\usepackage{booktabs,multirow}`，GT 同报）；
+   ②15× Missing number/Illegal unit（`\newlength` 声明的 **skip 寄存器**裸用于数学
+   维度/上标语境，GT 同构复现 3 错同型；真 TeX 语义即如此）；③2× Limit controls
+   （`\_` 非算符，GT 同病）。**引擎错误构成已与 GT 对齐，无引擎刀**；hyperref 评估
+   转宏包生态闭包时做。
 4. **宏包生态闭包**（最大体量项）：geometry/amsmath/hyperref/biblatex/tikz/ctex
    CI 回归集 + ntex-pkg 引擎接线（缺包即报 + 一条命令补）。
 5. 并行线：M1-13 错误恢复通用机制收口、M5 阶段六、M7 `.fmt` v2
