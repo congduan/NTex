@@ -386,21 +386,6 @@ impl Expander {
         let Some(frame) = self.align_frames.last_mut() else {
             return Ok(false);
         };
-        if diag_enabled("NTEX_ALIGN_TRACE") {
-            let ph = match &frame.phase {
-                AlignPhase::Preamble {
-                    brace_depth,
-                    seen_hash,
-                    ..
-                } => format!("pre d={} h={}", brace_depth, seen_hash),
-                AlignPhase::Body { cur_col, .. } => format!("body col={}", cur_col),
-            };
-            let name = tok
-                .csid()
-                .map(|csid| self.intern.name(csid).to_string())
-                .unwrap_or_default();
-            eprintln!("[trace-align] tok={:?} \\{} {}", tok, name, ph);
-        }
         match &mut frame.phase {
             AlignPhase::Preamble { .. } => self.align_preamble_step(tok),
             AlignPhase::Body { .. } => self.align_body_step(tok),
@@ -624,27 +609,18 @@ impl Expander {
                             self.align_finish().map(|_| true)
                         }
                     } else {
-                        // \noalign 组配对 `}`：关组后回到行边界 peek
-                        //（token 已消费，不再落 Char 分支的 end_group）
-                        let closes_noalign = matches!(
-                            &frame.phase,
-                            AlignPhase::Body {
-                                noalign_level: Some(l),
-                                ..
-                            } if *l == self.group_level
-                        );
-                        if closes_noalign {
-                            if let Some(AlignFrame {
-                                phase: AlignPhase::Body { noalign_level, .. },
-                                ..
-                            }) = self.align_frames.last_mut()
-                            {
-                                *noalign_level = None;
-                            }
-                            self.end_group()?;
-                            self.align_peek_next()?;
-                            return Ok(true);
-                        }
+                        // 此处只做平衡计数，**不裁决 noalign 组闭合**：抵达
+                        // 本位的 `}` 未必是组闭合命令——被跳过区（\else 假支
+                        // 逐 token 流经本位再在主循环 is_skipping 丢弃）或被
+                        // 扫描借走（内层 `{…}` 组由 fetch 层直接消费，align
+                        // 计数照走）的 `}` 同样经过这里，且其真实组级与
+                        // noalign 组一致，按"组级相等"裁决必误关（b38
+                        // booktabs 复现）。tex.web 的裁决位是命令分派：
+                        // handle_right_brace 的 no_align_group 臂（L21663
+                        // `end_graf; unsave; align_peek`）——只有真被当作组
+                        // 闭合命令执行的 `}`/`\egroup` 才到那里。故闭合收口
+                        // 移至主循环/字符槽分派臂的 close_group_and_resume_
+                        // align（本文件），本臂一律放行。
                         Ok(false)
                     }
                 }
@@ -1152,6 +1128,50 @@ impl Expander {
             }
             return Ok(Some(tok));
         }
+    }
+
+    /// `}`（字符或 `\let` 字符槽别名 `\egroup`）作为组闭合命令抵达分派位
+    /// 后的统一收口：关组 + noalign 组恢复。tex.web L21663 handle_right_
+    /// brace 的 `no_align_group: end_graf; unsave; align_peek`——裁决键是
+    /// **分派时**的 cur_group（本处 group_level 落位），不是 token 级平衡
+    /// 计数：扫描借走的 `}`（fetch 层直接消费）与跳过区流经的 `}`（主循环
+    /// is_skipping 丢弃）根本到不了分派位，天然不会误关。
+    /// end_group 走错误臂（"Too many }'s" 等，组级不变）时不恢复对齐——
+    /// 与 tex.web 只在真关组分支进 align_peek 一致。
+    fn close_group_and_resume_align(&mut self) -> Result<()> {
+        let closed = self.group_level;
+        self.cur_group_close_via_primitive = false;
+        self.end_group()?;
+        if self.group_level < closed {
+            self.align_after_group_close(closed)?;
+        }
+        Ok(())
+    }
+
+    /// 关组后的对齐恢复：刚关的组恰是行边界悬置的 `\noalign{` 组时，
+    /// 清 noalign_level 并回到行边界 peek（tex.web align_peek）。
+    fn align_after_group_close(&mut self, closed_level: u32) -> Result<()> {
+        let was_noalign = matches!(
+            self.align_frames.last(),
+            Some(AlignFrame {
+                phase: AlignPhase::Body {
+                    noalign_level: Some(l),
+                    ..
+                },
+                ..
+            }) if *l == closed_level
+        );
+        if !was_noalign {
+            return Ok(());
+        }
+        if let Some(AlignFrame {
+            phase: AlignPhase::Body { noalign_level, .. },
+            ..
+        }) = self.align_frames.last_mut()
+        {
+            *noalign_level = None;
+        }
+        self.align_peek_next()
     }
 
     /// 行边界 peek（tex.web align_peek）：`\noalign{`（真实组）→ 开组；

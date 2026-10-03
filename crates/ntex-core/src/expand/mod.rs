@@ -2544,9 +2544,9 @@ impl Expander {
                         match catcode {
                             Catcode::BeginGroup => self.begin_group(),
                             Catcode::EndGroup => {
-                                // `}` 字符闭合：报错文本区分标志（见 end_group）
-                                self.cur_group_close_via_primitive = false;
-                                self.end_group()
+                                // `}` 字符闭合（tex.web handle_right_brace）：
+                                // 关组 + noalign 组恢复（裁决键=分派时的组级）
+                                self.close_group_and_resume_align()
                             }
                             _ => self.sink.token(c),
                         }
@@ -2852,15 +2852,12 @@ impl Expander {
                 }
                 // 组定界符（cat 1/2）在主流层建立/结束组（M1-11）。
                 // 对齐上下文（`\halign`/`\valign`）的 `{`/`}` 平衡计数、
-                // `\noalign` 组与对齐组配对已在 align_on_token（align_body_step）
-                // 处理；此处只建立/结束普通组。
+                // `\noalign` 组的建立与行边界裁决已在 align_on_token 处理；
+                // 此处建立/结束普通组，`}` 关组后按 tex.web L21663 恢复
+                // 悬置的 noalign 组（close_group_and_resume_align）。
                 match tok.catcode() {
                     Some(Catcode::BeginGroup) => self.begin_group(),
-                    Some(Catcode::EndGroup) => {
-                        // `}` 字符闭合：报错文本区分标志（见 end_group）
-                        self.cur_group_close_via_primitive = false;
-                        self.end_group()
-                    }
+                    Some(Catcode::EndGroup) => self.close_group_and_resume_align(),
                     _ => self.sink.token(tok),
                 }
             }

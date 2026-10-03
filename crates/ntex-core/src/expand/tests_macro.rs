@@ -1894,3 +1894,53 @@ fn number_scan_skips_char_space_slot_in_sign_loop() {
         assert_eq!(out, "1.3", "bytecode={use_bytecode}");
     }
 }
+
+#[test]
+fn noalign_param_brace_does_not_finish_halign() {
+    // 第二十二刀：`\noalign{\ifnum0=`}\fi`（booktabs \cmidrule/\specialrule
+    // 宏体首句形态）的 `}` 被 \ifnum 字母常量扫描消费（组深不变），noalign
+    // 组仍开；其后的组内 `}` 抵达分派位时按 tex.web handle_right_brace 的
+    // no_align_group 臂（L21663）关组+恢复对齐——**不得**触发 align_finish
+    // 把整个 halign 收掉（修复前：`}` 直接走 EndBrace→align_finish，
+    // 表格组被杀，\end{tabular} 报 Extra \endgroup + ended by）。
+    // GT（TinyTeX pdflatex，/tmp/bt38）：6 错全是 Misplaced 级，表格组存活，
+    // TEST-OK/B38-OK 都出。
+    let src = concat!(
+        "\\catcode`\\@=11 ",
+        "\\halign{\\hfil#\\hfil\\cr",
+        "A\\cr",
+        "\\noalign{\\ifnum0=`}\\fi",
+        "\\message{TRAP-PASSED}",
+        "B\\cr}",
+        "\\message{HALIGN-SURVIVED}"
+    );
+    let (_r, t) = run_transcript(src);
+    assert!(
+        !t.contains("Extra \\endgroup"),
+        "陷阱反引号消费的 `}}` 不得收掉 halign 组（Extra \\endgroup）： {t}"
+    );
+    assert!(
+        t.contains("TRAP-PASSED"),
+        "陷阱后 noalign 参数后续 token 须继续：{t}"
+    );
+    assert!(t.contains("HALIGN-SURVIVED"), "表格须存活到收尾：{t}");
+}
+
+#[test]
+fn noalign_paired_brace_at_row_boundary_keeps_table() {
+    // 正常配对 `\noalign{...}`：组闭合后表格继续（行边界 `}` 走组关闭而非
+    // align_finish——修复后 close_group_and_resume_align 的正向场景）。
+    let src = concat!(
+        "\\halign{\\hfil#\\hfil\\cr",
+        "A\\cr",
+        "\\noalign{\\vskip 2pt}",
+        "B\\cr}",
+        "\\message{NA-PAIR-OK}"
+    );
+    let (_r, t) = run_transcript(src);
+    assert!(
+        !t.contains("Misplaced"),
+        "正常配对 noalign 不应有 Misplaced：{t}"
+    );
+    assert!(t.contains("NA-PAIR-OK"), "表格须正常收尾：{t}");
+}
