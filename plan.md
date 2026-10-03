@@ -157,7 +157,16 @@ babel 配置（引用宿主缺失的 dehypht-x-2024-02-28.tex）→ 断字配置
    **刀 1（b81b587，2026-10-03 第二十一刀）**：booktabs ✅（本体零债）+ multirow ✅
    （`scan_glue` 补 countdef'd cs int_val 落穿臂——`\advance\myskip \mycnt\mydim`
    count 系数×dimen 内部量乘积；tex.web L9094 scan_glue S 分支，无硬报错路径）。
-   三线表最小样张 0 错出 DVI。assets 备料待入：booktabs.sty/multirow.sty。
+   三线表最小样张 0 错出 DVI。assets 备料已入（booktabs.sty/multirow.sty，9e2e90a）。
+   **刀 2（b735923，2026-10-03 第二十二刀）**：`\cmidrule`/`\specialrule` 墙拆除 ✅——
+   `\noalign{\ifnum0=`}\fi` 陷阱此前把 halign 组干净关掉（Extra \endgroup +
+   ended by）。修：`close_group_and_resume_align`（tex.web L21663 handle_right_brace
+   no_align_group 臂）——裁决键=分派时组级，token 级平衡计数不可靠（msg 机器扫描层
+   消费组定界符）。b26 cmidrule 真宏 13 错→0 错。三线表全构造（top/mid/bottom/
+   cmidrule/specialrule/multirow）双闭环。**hyperref 下一步**：最小探针 19 错=
+   16× Undefined PDF 原语族（\pdfcolorstack\pdfdest\pdfcatalog\pdfstartlink 等）
+   + 2× Missing number + 1× Missing \begin{document}——按 pdfximage 先例批量
+   注册吞参数发 whatsit 级。
 5. 并行线：M1-13 错误恢复通用机制收口、M5 阶段六、M7 `.fmt` v2
    （发行 fmt 载入仍分钟级，产品化前必修）。
 
