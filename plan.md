@@ -163,10 +163,17 @@ babel 配置（引用宿主缺失的 dehypht-x-2024-02-28.tex）→ 断字配置
    ended by）。修：`close_group_and_resume_align`（tex.web L21663 handle_right_brace
    no_align_group 臂）——裁决键=分派时组级，token 级平衡计数不可靠（msg 机器扫描层
    消费组定界符）。b26 cmidrule 真宏 13 错→0 错。三线表全构造（top/mid/bottom/
-   cmidrule/specialrule/multirow）双闭环。**hyperref 下一步**：最小探针 19 错=
-   16× Undefined PDF 原语族（\pdfcolorstack\pdfdest\pdfcatalog\pdfstartlink 等）
-   + 2× Missing number + 1× Missing \begin{document}——按 pdfximage 先例批量
-   注册吞参数发 whatsit 级。
+   **刀 3（bd533ad，2026-10-03 第二十三刀，Codex）**：hyperref 8 个 PDF 原语注册 ✅——
+   `\pdfminorversion`（misc int）/`\pdflinkmargin`（dimen 参数）可赋可读；
+   `\pdfinfo`/`\pdfcatalog`/`\pdfcolorstack`/`\pdfdest`/`\pdfstartlink`/`\pdfendlink`
+   吞参数发 `PDF-PRIMITIVE-STUB` specials。fmt VERSION 22→23（misc 扩容）。
+   h1 探针 19→6 错（Undefined 16→7），HYPER-OK 出 DVI。KNOWN-SIMPLIFICATIONS 已登记。
+   **遗留债（另案）**：①发行 fmt v22 无法重生成 v23——`--generate-fmt` 在
+   expl3-code l.36005（codepoint 数据装载，\ior_open CaseFolding.txt 后）报
+   「扫描到输入末尾」；二分收敛 [4034839(09-18), 9bcb79f(09-28)] ctex 深水刀区间，
+   基础 \read 链无债（/tmp/ior-read 探针），炸点是 codepoint 装载特定构造。
+   修复前发行 fmt 停 v22：含新原语的作业须靠无 fmt 路径（载入慢）。
+   ②h1 残 6 错 = 载入链在 v22 回落 plain 后的结构宏 Undefined（非本刀域）。
 5. 并行线：M1-13 错误恢复通用机制收口、M5 阶段六、M7 `.fmt` v2
    （发行 fmt 载入仍分钟级，产品化前必修）。
 
