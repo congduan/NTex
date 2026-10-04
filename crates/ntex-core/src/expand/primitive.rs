@@ -241,6 +241,13 @@ impl Expander {
             Primitive::PdfSave => self.exec_pdf_save(),
             Primitive::PdfSetMatrix => self.exec_pdf_setmatrix(),
             Primitive::PdfRestore => self.exec_pdf_restore(),
+            // hyperref 最小 PDF 原语族：吞 pdfTeX 参数形态并发 stub 标记。
+            Primitive::PdfInfo => self.exec_pdf_info(),
+            Primitive::PdfCatalog => self.exec_pdf_catalog(),
+            Primitive::PdfColorStack => self.exec_pdf_colorstack(),
+            Primitive::PdfDest => self.exec_pdf_dest(),
+            Primitive::PdfStartLink => self.exec_pdf_startlink(),
+            Primitive::PdfEndLink => self.exec_pdf_endlink(),
             // M4-6 断字
             Primitive::Patterns => self.exec_patterns(),
             Primitive::Hyphenation => self.exec_hyphenation(),

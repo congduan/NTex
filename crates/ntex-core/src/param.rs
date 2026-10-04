@@ -118,6 +118,8 @@ pub enum ParamKind {
     VOffset,
     /// `\hoffset`：整页横向偏移（TeX initex 默认 0pt）。
     HOffset,
+    /// pdfTeX `\pdflinkmargin`：链接矩形外扩尺寸（默认 0pt）。
+    PdfLinkMargin,
     /// TeX/e-TeX 内部整数参数（ETRIP 冲刺）：`misc[idx]`（见 [`MISC_INTS`]）。
     MiscInt(usize),
 }
@@ -132,7 +134,7 @@ pub enum ParamValue {
 
 /// 内部整数参数总数（TeX/e-TeX 内部整数，ETRIP/TRIP 冲刺；仅存储/回读）。
 /// 下标与 [`crate::expand::int_param_index`] 的映射一致。
-pub const MISC_INTS: usize = 68;
+pub const MISC_INTS: usize = 69;
 
 /// `\pdfoutput` 在 [`Params::misc`] 中的下标。0 选择 DVI 图形驱动；非 0
 /// 让兼容宏包选择 pdfTeX 图片原语（NTex 仍可把最终页面承载为 DVI）。
@@ -151,6 +153,10 @@ pub const MISC_CJK_BREAK_MODE: usize = 66;
 /// `\pdflastximage` 在 [`Params::misc`] 中的下标（图片管线 Step A）：
 /// 最近一次 `\pdfximage` 的 xobject id，0 = 尚无图（pdfTeX 同口径）。
 pub const MISC_PDF_LAST_XIMAGE: usize = 67;
+
+/// `\pdfminorversion` 在 [`Params::misc`] 中的下标。pdfTeX 默认 PDF 版本
+/// 随发行变化；DVI 模式下 hyperref 只需要可赋可读，取 5（PDF 1.5）作稳定默认。
+pub const MISC_PDF_MINOR_VERSION: usize = 68;
 
 /// `\lefthyphenmin` 在 [`Params::misc`] 中的下标（tex.web `left_hyphen_min_code`
 /// = int_base+51，本地内部整数序号 10）。
@@ -279,6 +285,8 @@ pub fn default_misc() -> [i64; MISC_INTS] {
         // 图片管线 Step A：\pdflastximage（最近一次 \pdfximage 的 xobject id；
         // initex 默认 0 = 无图。运行时状态，不入 .fmt 语义）
         0,
+        // hyperref PDF 原语 stub：\pdfminorversion（可赋可读；不影响 DVI 输出）
+        5,
     ]
 }
 
@@ -391,6 +399,8 @@ pub struct Params {
     pub voffset: i64,
     /// `\hoffset`（TeX initex 默认 0pt）。
     pub hoffset: i64,
+    /// `\pdflinkmargin`（pdfTeX PDF 链接矩形边距；默认 0pt）。
+    pub pdflinkmargin: i64,
     /// TeX/e-TeX 内部整数参数（ETRIP 冲刺；下标见 [`MISC_INTS`]）。
     pub misc: [i64; MISC_INTS],
 }
@@ -462,6 +472,7 @@ impl Default for Params {
             overfullrule: 327_680,      // 5pt
             voffset: 0,
             hoffset: 0,
+            pdflinkmargin: 0,
             misc: default_misc(),
         }
     }
@@ -522,6 +533,7 @@ impl Params {
             ParamKind::OverfullRule => ParamValue::Dimen(self.overfullrule),
             ParamKind::VOffset => ParamValue::Dimen(self.voffset),
             ParamKind::HOffset => ParamValue::Dimen(self.hoffset),
+            ParamKind::PdfLinkMargin => ParamValue::Dimen(self.pdflinkmargin),
             ParamKind::MiscInt(idx) => ParamValue::Number(self.misc[idx]),
         }
     }
@@ -584,6 +596,7 @@ impl Params {
             (ParamKind::OverfullRule, ParamValue::Dimen(v)) => self.overfullrule = v,
             (ParamKind::VOffset, ParamValue::Dimen(v)) => self.voffset = v,
             (ParamKind::HOffset, ParamValue::Dimen(v)) => self.hoffset = v,
+            (ParamKind::PdfLinkMargin, ParamValue::Dimen(v)) => self.pdflinkmargin = v,
             (ParamKind::MiscInt(idx), ParamValue::Number(v)) => self.misc[idx] = v,
             // 类型不匹配忽略（VM 侧保证参数种类与值类型匹配）
             _ => {}

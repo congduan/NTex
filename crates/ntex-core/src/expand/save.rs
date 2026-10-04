@@ -455,6 +455,7 @@ impl Expander {
                 | Primitive::OverfullRule
                 | Primitive::VOffset
                 | Primitive::HOffset
+                | Primitive::PdfLinkMargin
                 | Primitive::TopSkip
                 | Primitive::MaxDepth
                 | Primitive::ParSkip
@@ -523,6 +524,7 @@ impl Expander {
                         Primitive::OverfullRule => ParamKind::OverfullRule,
                         Primitive::VOffset => ParamKind::VOffset,
                         Primitive::HOffset => ParamKind::HOffset,
+                        Primitive::PdfLinkMargin => ParamKind::PdfLinkMargin,
                         _ => ParamKind::Mag,
                     };
                     Ok(match self.params.get(kind) {
@@ -1520,6 +1522,7 @@ fn param_name(kind: ParamKind) -> &'static str {
         OverfullRule => "overfullrule",
         VOffset => "voffset",
         HOffset => "hoffset",
+        PdfLinkMargin => "pdflinkmargin",
         MiscInt(idx) => misc_int_name(idx),
     }
 }
@@ -1601,6 +1604,7 @@ fn misc_int_name(idx: usize) -> &'static str {
         64 => "pdfrandomseed",
         // 图片管线 Step A：\pdflastximage（misc 67）
         67 => "pdflastximage",
+        68 => "pdfminorversion",
         _ => "?",
     }
 }

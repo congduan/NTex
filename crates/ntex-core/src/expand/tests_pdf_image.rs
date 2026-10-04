@@ -121,3 +121,61 @@ fn pdfximage_skips_attr_page_and_pagebox_keywords() {
     let (out, _) = expand_vfs(src, vfs).unwrap();
     assert_eq!(out, "1");
 }
+
+#[test]
+fn pdf_minorversion_and_linkmargin_roundtrip() {
+    let (out, _) = expand_vfs(
+        r"\pdfminorversion=5 \the\pdfminorversion:\pdflinkmargin=2pt \the\pdflinkmargin",
+        MemVfs::new(),
+    )
+    .unwrap();
+    assert_eq!(out, "5:2.0pt");
+}
+
+#[test]
+fn pdf_colorstack_push_pop_consumes_group() {
+    let (out, _) = expand_vfs(
+        r"\pdfcolorstack0 push{red}A\pdfcolorstack0 pop B\pdfcolorstack0 set{blue}C",
+        MemVfs::new(),
+    )
+    .unwrap();
+    assert_eq!(out, "A BC");
+}
+
+#[test]
+fn hyperref_minimal_pdf_primitives_error_free() {
+    let src = concat!(
+        r"\pdfminorversion=5 ",
+        r"\pdflinkmargin=1pt ",
+        r"\pdfinfo{/Title(h1)}",
+        r"\pdfcatalog{/PageMode/UseNone}",
+        r"\pdfcolorstack0 push{0 0 1 rg}",
+        r"\pdfdest name{section.1} xyz ",
+        r"Section ",
+        r"\pdfstartlink attr{/Border[0 0 0]} goto name{section.1}Link\pdfendlink ",
+        r"\pdfcolorstack0 pop ",
+        r"\message{HYPER-OK}",
+    );
+    let (r, t) = run_transcript(src);
+    assert!(r.is_ok(), "run failed: {r:?}\n{t}");
+    assert!(
+        !t.contains("Undefined control sequence"),
+        "pdfTeX PDF primitive stubs must all be registered: {t}"
+    );
+    assert!(t.contains("HYPER-OK"), "probe marker missing: {t}");
+}
+
+#[test]
+fn pdf_dest_and_startlink_consume_common_actions() {
+    let (out, _) = expand_vfs(
+        concat!(
+            r"\pdfdest name{abc} fitr 1pt 2pt 3pt 4pt A",
+            r"\pdfdest num 3 xyz B",
+            r"\pdfstartlink user{/Subtype/Link/A<<>>}U\pdfendlink ",
+            r"\pdfstartlink goto page 1{/Fit}P\pdfendlink",
+        ),
+        MemVfs::new(),
+    )
+    .unwrap();
+    assert_eq!(out, "A BUP");
+}

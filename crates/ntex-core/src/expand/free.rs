@@ -173,6 +173,8 @@ fn int_param_index(p: Primitive) -> Option<usize> {
         Primitive::UtfInputMode => crate::param::MISC_UTF_INPUT_MODE,
         // M9 中文刀 5：\cjkbreakmode（misc 66；汉字字间断点开关，0=关 非 0=开）
         Primitive::CjkBreakMode => crate::param::MISC_CJK_BREAK_MODE,
+        // hyperref PDF 原语 stub：\pdfminorversion 可赋可读（DVI 后端暂不消费）。
+        Primitive::PdfMinorVersion => crate::param::MISC_PDF_MINOR_VERSION,
         _ => return None,
     })
 }
@@ -245,6 +247,7 @@ fn param_kind_of(p: Primitive) -> Option<ParamKind> {
         Primitive::OverfullRule => ParamKind::OverfullRule,
         Primitive::VOffset => ParamKind::VOffset,
         Primitive::HOffset => ParamKind::HOffset,
+        Primitive::PdfLinkMargin => ParamKind::PdfLinkMargin,
         Primitive::EndlineChar => ParamKind::EndlineChar,
         Primitive::NewlineChar => ParamKind::NewlineChar,
         Primitive::DefaultHyphenChar => ParamKind::DefaultHyphenChar,
@@ -675,6 +678,7 @@ fn is_param_prim(p: Primitive) -> bool {
             | Primitive::OverfullRule
             | Primitive::VOffset
             | Primitive::HOffset
+            | Primitive::PdfLinkMargin
             | Primitive::BaselineSkip
             | Primitive::LineSkip
             | Primitive::HSize

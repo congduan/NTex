@@ -48,7 +48,9 @@ const MAGIC: &[u8; 8] = b"NTEXFMT1";
 ///      此前快照不带这两张表，恢复后 count 退回 TFM 默认 45、条目全 0
 ///      ——四个常量 cctab 读回全 0，`\cctab_select:N` 把 catcode 全抹 0
 ///      （ctex `\cctab_const:Nn \c__ctex_package_cctab` 挂点）。
-pub const FORMAT_VERSION: u8 = 22;
+/// v23：misc 数组增位（68→69，`\pdfminorversion` 槽）+ 追加 hyperref 依赖
+///      PDF 原语变体；旧 fmt 的原语编号集合与参数布局不再同构。
+pub const FORMAT_VERSION: u8 = 23;
 
 /// 当前引擎版本号：随 crate 版本进入 `.fmt` 文件头。
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -148,6 +150,8 @@ pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
     ] {
         w.write_all(&v.to_le_bytes())?;
     }
+    // v23：pdfTeX 链接边距 dimen 参数（\pdflinkmargin）。
+    w.write_all(&p.pdflinkmargin.to_le_bytes())?;
     // ETRIP 冲刺（v4 追加）：TeX/e-TeX 内部整数参数（misc 数组）
     for v in p.misc {
         w.write_all(&v.to_le_bytes())?;
@@ -387,6 +391,8 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
     let overfullrule = read_i64(r)?;
     let voffset = read_i64(r)?;
     let hoffset = read_i64(r)?;
+    // v23：pdfTeX 链接边距 dimen 参数（\pdflinkmargin）。
+    let pdflinkmargin = read_i64(r)?;
     // ETRIP 冲刺（v4）：TeX/e-TeX 内部整数参数（misc 数组）
     let mut misc = [0i64; ntex_core::param::MISC_INTS];
     for v in &mut misc {
@@ -474,6 +480,7 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
         overfullrule,
         voffset,
         hoffset,
+        pdflinkmargin,
         misc,
     };
 

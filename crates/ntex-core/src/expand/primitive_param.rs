@@ -32,14 +32,16 @@ impl Expander {
             | Primitive::ScriptSpace
             | Primitive::OverfullRule
             | Primitive::VOffset
-            | Primitive::HOffset => {
+            | Primitive::HOffset
+            | Primitive::PdfLinkMargin => {
                 let v = self.scan_dimen()?;
                 let kind = match prim {
                     Primitive::NullDelimiterSpace => ParamKind::NullDelimiterSpace,
                     Primitive::ScriptSpace => ParamKind::ScriptSpace,
                     Primitive::OverfullRule => ParamKind::OverfullRule,
                     Primitive::VOffset => ParamKind::VOffset,
-                    _ => ParamKind::HOffset,
+                    Primitive::HOffset => ParamKind::HOffset,
+                    _ => ParamKind::PdfLinkMargin,
                 };
                 self.assign_param(kind, ParamValue::Dimen(v))
             }

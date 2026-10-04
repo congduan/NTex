@@ -4,6 +4,12 @@
 > 修复某项后，从清单移除并注明 commit。本清单是"踩坑前先查表"的索引，
 > 防止同一领域反复探路（如数学状态机、对齐组）。
 
+## 0. PDF 原语兼容 stub
+
+| 位置 | 现状 | 影响 | 状态 |
+|---|---|---|---|
+| `expand/primitive_pdf_image.rs:33` | hyperref 依赖的 pdfTeX PDF 原语族（`\pdfinfo`/`\pdfcatalog`/`\pdfcolorstack`/`\pdfdest`/`\pdfstartlink`/`\pdfendlink`）只按常见 pdfTeX 参数形态吞参并发 `PDF-PRIMITIVE-STUB` 标记；`\pdfstartlink` action 文法仅覆盖 `user{...}`、`goto name{...}`、`goto num<n>`、`goto page<n>{...}`、`thread` 同 target 族，PDF 后端尚不消费 Catalog/Info/Link/Dest/ColorStack | hyperref 最小 DVI 路径可过；真实 PDF link/catalog/info/color 输出仍缺语义，罕见 action 形态会显式报错而非静默错吞 | ⚠️ 第二十三刀最小实现 |
+
 ## 1. 数学原语（存在性测试/消费参数——最高风险区）
 
 | 位置 | 现状 | 影响 | 状态 |

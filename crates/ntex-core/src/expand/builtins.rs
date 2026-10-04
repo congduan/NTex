@@ -6,7 +6,7 @@
 /// Step B 补 PDF 变换栈 \pdfsave/\pdfsetmatrix/\pdfrestore 3 项；
 /// ctex 第二墙补 catcode table 三原语），
 /// 供 `register_builtins` 注册与 `tests.rs` 的一致性测试共用。
-pub(crate) const BUILTINS: [(&str, Primitive); 425] = [
+pub(crate) const BUILTINS: [(&str, Primitive); 433] = [
     ("def", Primitive::Def),
     ("edef", Primitive::Edef),
     ("gdef", Primitive::Gdef),
@@ -557,6 +557,15 @@ pub(crate) const BUILTINS: [(&str, Primitive); 425] = [
     ("catcodetable", Primitive::CatcodeTable),
     ("initcatcodetable", Primitive::InitCatcodeTable),
     ("savecatcodetable", Primitive::SaveCatcodeTable),
+    // hyperref 最小 PDF 原语族：参数形态见 primitive_pdf_image.rs。
+    ("pdfminorversion", Primitive::PdfMinorVersion),
+    ("pdfinfo", Primitive::PdfInfo),
+    ("pdfcatalog", Primitive::PdfCatalog),
+    ("pdflinkmargin", Primitive::PdfLinkMargin),
+    ("pdfcolorstack", Primitive::PdfColorStack),
+    ("pdfdest", Primitive::PdfDest),
+    ("pdfstartlink", Primitive::PdfStartLink),
+    ("pdfendlink", Primitive::PdfEndLink),
 ];
 
 /// `Primitive → 规范名`（`BUILTINS` 反查；tests.rs

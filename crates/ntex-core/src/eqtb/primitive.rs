@@ -717,4 +717,16 @@ define_primitives! {
     CatcodeTable,
     InitCatcodeTable,
     SaveCatcodeTable,
+    // hyperref 最小路径依赖的 pdfTeX PDF 原语族（第二十三刀）：
+    // 注册为 DVI 兼容 stub，按 pdfTeX 参数形态吞参并发/保留标记；PDF 后端
+    // 消费 Catalog/Info/Link/Dest/ColorStack 是后续刀口。变体仍追加在尾部，
+    // 保持既有 .fmt 原语编号不重排。
+    PdfMinorVersion,
+    PdfInfo,
+    PdfCatalog,
+    PdfLinkMargin,
+    PdfColorStack,
+    PdfDest,
+    PdfStartLink,
+    PdfEndLink,
 }

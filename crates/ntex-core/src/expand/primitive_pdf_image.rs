@@ -30,6 +30,85 @@
 // - 入口由 `primitive.rs` 主 match 委托。
 
 impl Expander {
+    /// `\pdfinfo{...}`：pdfTeX 扫一个 general text 组；NTex DVI 路径只保留
+    /// stub 标记。GT 对拍（2026-10-04）：组后 token 立即可见。
+    fn exec_pdf_info(&mut self) -> Result<()> {
+        let _ = self.scan_group_contents(None)?;
+        self.sink.special("PDF-PRIMITIVE-STUB pdfinfo".to_owned())
+    }
+
+    /// `\pdfcatalog{...}`：同 `\pdfinfo`，吞一个字典组。
+    fn exec_pdf_catalog(&mut self) -> Result<()> {
+        let _ = self.scan_group_contents(None)?;
+        self.sink
+            .special("PDF-PRIMITIVE-STUB pdfcatalog".to_owned())
+    }
+
+    /// `\pdfcolorstack<n> push{...}|set{...}|pop|current`。
+    ///
+    /// hyperref/colorlinks 主要走 `push{color}`/`pop`。pdfTeX 允许颜色栈编号后接
+    /// 关键字；`push`/`set` 后必须跟一个平衡组，`pop` 无组。这里不维护真实颜色
+    /// 栈，只发标记给后端将来选择性消费。
+    fn exec_pdf_colorstack(&mut self) -> Result<()> {
+        let stack = self.scan_number()?;
+        let op = self
+            .scan_keyword(|w| matches!(w, "push" | "pop" | "set" | "current"))?
+            .unwrap_or_else(|| "push".to_owned());
+        if matches!(op.as_str(), "push" | "set") {
+            let _ = self.scan_group_contents(None)?;
+        }
+        self.sink
+            .special(format!("PDF-PRIMITIVE-STUB pdfcolorstack {stack} {op}"))
+    }
+
+    /// `\pdfdest name{...}|num<n> <view>`。
+    ///
+    /// GT 对拍：`name{abc} xyz`、`name{abc} fit`、`num 3 xyz`、`fitr`+4 dimen
+    /// 都完整吞参后继续。视图坐标只影响 PDF 后端，当前仅消费常见形态。
+    fn exec_pdf_dest(&mut self) -> Result<()> {
+        self.consume_pdf_name_or_num()?;
+        self.consume_pdf_view_spec()?;
+        self.sink.special("PDF-PRIMITIVE-STUB pdfdest".to_owned())
+    }
+
+    /// `\pdfstartlink [attr{...}] <action>`。
+    ///
+    /// 这是本族最复杂的文法。GT 对拍（2026-10-04）：水平模式下常见
+    /// `attr{...} goto name{...}`、`user{...}`、`goto page <n>{...}` 均在 action
+    /// 后把后续 token 留给正文；未知 action 报 "action type missing"。NTex 当前
+    /// 只覆盖这些 hyperref/pdftex.def 路径，登记在 KNOWN-SIMPLIFICATIONS。
+    fn exec_pdf_startlink(&mut self) -> Result<()> {
+        loop {
+            if self.scan_keyword(|w| w == "attr")?.is_some() {
+                let _ = self.scan_group_contents(None)?;
+                continue;
+            }
+            if self.scan_keyword(|w| w == "width" || w == "height" || w == "depth")?.is_some() {
+                let _ = self.scan_dimen()?;
+                continue;
+            }
+            break;
+        }
+        if self.scan_keyword(|w| w == "user")?.is_some() {
+            let _ = self.scan_group_contents(None)?;
+        } else if self
+            .scan_keyword(|w| matches!(w, "goto" | "thread"))?
+            .is_some()
+        {
+            self.consume_pdf_link_target()?;
+        } else {
+            return Err(Error::invalid_input("\\pdfstartlink: action type missing"));
+        }
+        self.sink
+            .special("PDF-PRIMITIVE-STUB pdfstartlink".to_owned())
+    }
+
+    /// `\pdfendlink`：无参数，结束当前链接矩形。
+    fn exec_pdf_endlink(&mut self) -> Result<()> {
+        self.sink
+            .special("PDF-PRIMITIVE-STUB pdfendlink".to_owned())
+    }
+
     /// `\pdfsave`：变换域开括号。以 `ntex-ctm` 标记 whatsit 落进当前列表——
     /// **不是**引擎侧状态：graphicx 的 \Gscale@box 先排内容盒（`\pdfrefximage`
     /// 在此执行、CTM 尚未生效）后开矩阵域再 `\copy` 重放，所以缩放语义只能
@@ -172,6 +251,67 @@ impl Expander {
             pos: 0,
         });
         Ok(())
+    }
+
+    fn consume_pdf_name_or_num(&mut self) -> Result<()> {
+        if self.scan_keyword(|w| w == "name")?.is_some() {
+            let _ = self.scan_group_contents(None)?;
+            Ok(())
+        } else if self.scan_keyword(|w| w == "num")?.is_some() {
+            let _ = self.scan_number()?;
+            Ok(())
+        } else {
+            Err(Error::invalid_input("\\pdf primitive: expected name or num"))
+        }
+    }
+
+    fn consume_pdf_link_target(&mut self) -> Result<()> {
+        if self.scan_keyword(|w| w == "file")?.is_some() {
+            let _ = self.scan_group_contents(None)?;
+        }
+        if self.scan_keyword(|w| w == "name")?.is_some() {
+            let _ = self.scan_group_contents(None)?;
+        } else if self.scan_keyword(|w| w == "num")?.is_some() {
+            let _ = self.scan_number()?;
+        } else if self.scan_keyword(|w| w == "page")?.is_some() {
+            let _ = self.scan_number()?;
+            if self.next_token_is_begin_group()? {
+                let _ = self.scan_group_contents(None)?;
+            }
+        } else {
+            return Err(Error::invalid_input("\\pdfstartlink: target missing"));
+        }
+        Ok(())
+    }
+
+    fn consume_pdf_view_spec(&mut self) -> Result<()> {
+        if self.scan_keyword(|w| w == "fitr")?.is_some() {
+            for _ in 0..4 {
+                let _ = self.scan_dimen()?;
+            }
+            return Ok(());
+        }
+        if self
+            .scan_keyword(|w| matches!(w, "fit" | "fith" | "fitv" | "fitb" | "fitbh" | "fitbv"))?
+            .is_some()
+        {
+            return Ok(());
+        }
+        if self.scan_keyword(|w| w == "xyz")?.is_some() {
+            // hyperref 的 anchor 路径常为裸 `xyz`。坐标三元组（数字/null）后续补。
+            return Ok(());
+        }
+        Ok(())
+    }
+
+    fn next_token_is_begin_group(&mut self) -> Result<bool> {
+        self.skip_spaces()?;
+        let Some((tok, _)) = self.fetch()? else {
+            return Ok(false);
+        };
+        let is_group = self.resolve_group_char(tok).catcode() == Some(Catcode::BeginGroup);
+        self.unread(tok);
+        Ok(is_group)
     }
 }
 
