@@ -168,12 +168,13 @@ babel 配置（引用宿主缺失的 dehypht-x-2024-02-28.tex）→ 断字配置
    `\pdfinfo`/`\pdfcatalog`/`\pdfcolorstack`/`\pdfdest`/`\pdfstartlink`/`\pdfendlink`
    吞参数发 `PDF-PRIMITIVE-STUB` specials。fmt VERSION 22→23（misc 扩容）。
    h1 探针 19→6 错（Undefined 16→7），HYPER-OK 出 DVI。KNOWN-SIMPLIFICATIONS 已登记。
-   **遗留债（另案）**：①发行 fmt v22 无法重生成 v23——`--generate-fmt` 在
-   expl3-code l.36005（codepoint 数据装载，\ior_open CaseFolding.txt 后）报
-   「扫描到输入末尾」；二分收敛 [4034839(09-18), 9bcb79f(09-28)] ctex 深水刀区间，
-   基础 \read 链无债（/tmp/ior-read 探针），炸点是 codepoint 装载特定构造。
-   修复前发行 fmt 停 v22：含新原语的作业须靠无 fmt 路径（载入慢）。
-   ②h1 残 6 错 = 载入链在 v22 回落 plain 后的结构宏 Undefined（非本刀域）。
+   **遗留债（定性修正 2026-10-03 深夜）**：fmt 生成停 v22 **非回归**——v22（09-27
+   生成）时 latex.ltx 载入墙在 88.4%（早于 l.36005），\dump 前根本没走到 codepoint
+   段；ctex 战役把载入推过 l.36005 后才暴露 **expl3 官方套件 89.4% 墙**（§0.1 已
+   登记的 \__codepoint_finalize_blocks_aux:n \__int_step:Nw 块循环）= fmt 生成与
+   latex_probe 同一堵墙。修复路径 = 既有战役目标（expl3 codepoint 装载段），
+   非 fmt 链语义破坏。**影响不变**：fmt 停 v22 期间，新原语作业走无 fmt 慢路径；
+   h1 残 6 错 = v22 回落 plain 后的结构宏 Undefined（非本刀域）。
 5. 并行线：M1-13 错误恢复通用机制收口、M5 阶段六、M7 `.fmt` v2
    （发行 fmt 载入仍分钟级，产品化前必修）。
 
