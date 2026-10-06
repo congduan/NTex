@@ -389,7 +389,7 @@ use super::*;
             vfs,
         )
         .unwrap();
-        assert_eq!(out, "TTE");
+        assert_eq!(out, "FTE");
 
         // 已 closed 的流再 \read：tex.web 转终端输入，nonstop/batch 禁止交互
         // → pdfTeX GT 致命（第十八刀，见 fatal_closed_read_stream）——作业
@@ -408,6 +408,27 @@ use super::*;
                 .contains("cannot \\read from terminal in nonstop modes"),
             "closed 流再读应报 GT 文本，实得：{err}"
         );
+    }
+
+    #[test]
+    fn ior_read_no_trailing_newline_last_line_counts() {
+        // tex.web input_ln：无换行符尾行仍是一次成功读；read_open 要到下一次
+        // input_ln 失败才 closed。因此读完尾行后的 \ifeof 仍为假，第四次读才 EOF。
+        let mut vfs = MemVfs::new();
+        vfs.insert("data.txt", "one\ntwo\nthree");
+        let (out, _) = expand_vfs(
+            concat!(
+                "\\newread\\r\\openin\\r=data.txt\\endlinechar=-1",
+                "\\read\\r to \\a\\ifeof\\r T\\else F\\fi\\a,",
+                "\\read\\r to \\b\\ifeof\\r T\\else F\\fi\\b,",
+                "\\read\\r to \\c\\ifeof\\r T\\else F\\fi\\c,",
+                "\\read\\r to \\d\\ifeof\\r T\\else F\\fi",
+                "\\def\\empty{}\\ifx\\d\\empty E\\else N\\fi\\end",
+            ),
+            vfs,
+        )
+        .unwrap();
+        assert_eq!(out, "Fone,Ftwo,Fthree,TE");
     }
 
     #[test]

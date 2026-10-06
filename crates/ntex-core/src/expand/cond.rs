@@ -772,13 +772,12 @@ impl Expander {
             CondOp::IfVMode => Ok(matches!(self.sink.mode_code(), 1 | 4)),
             CondOp::IfHMode => Ok(matches!(self.sink.mode_code(), 2 | 5)),
             CondOp::IfMMode => Ok(matches!(self.sink.mode_code(), 3 | 6)),
-            // ETRIP 冲刺：\ifeof<流> —— 读流未打开或已到末尾为真
+            // ETRIP 冲刺：\ifeof<流> —— 读流未打开或已由一次失败读关闭时为真。
+            // `pos == data.len()` 仍可能只是刚成功交付了最后一行；tex.web
+            // read_toks 要到下一次 input_ln 失败后才 `read_open:=closed`。
             CondOp::IfEof => {
                 let idx = self.scan_stream_index("\\ifeof", 15)?;
-                Ok(self.read_streams.get(idx).map_or(true, |s| match s {
-                    None => true,
-                    Some(rs) => rs.pos >= rs.data.len(),
-                }))
+                Ok(self.read_streams.get(idx).map_or(true, |s| s.is_none()))
             }
             // ETRIP 冲刺：\ifvoid/\ifhbox/\ifvbox<寄存器> —— 盒子寄存器种类
             // （sink 查询：0=void、1=hbox、2=vbox）
