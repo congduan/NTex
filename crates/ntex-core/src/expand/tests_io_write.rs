@@ -432,6 +432,37 @@ use super::*;
     }
 
     #[test]
+    fn input_stack_tailrecursion_macro_loop_35k_lines() {
+        // tex.web macro_call: a macro whose active branch ends in a self call must
+        // not keep one input frame per iteration. The expl3 UnicodeData loader uses
+        // this shape via \__ior_map_inline_loop over 34931 lines.
+        // This do-while probe counts the EOF-closing empty read too; keep 34930
+        // content lines to lock the externally observed LINES:34931 criterion.
+        let mut vfs = MemVfs::new();
+        let mut data = String::new();
+        for i in 0..34_930 {
+            if i != 0 {
+                data.push('\n');
+            }
+            data.push_str(&format!("{i:04X}; NAME"));
+        }
+        vfs.insert("UnicodeData.txt", data);
+        let (out, _) = expand_vfs(
+            concat!(
+                "\\newread\\uin",
+                "\\openin\\uin=UnicodeData.txt\\relax",
+                "\\def\\rdloop{\\ifeof\\uin\\relax\\else",
+                "\\begingroup\\endlinechar=-1 \\readline\\uin to \\uline\\endgroup",
+                "\\advance\\count0 by 1 \\rdloop\\fi}",
+                "\\rdloop LINES:\\the\\count0\\end",
+            ),
+            vfs,
+        )
+        .unwrap();
+        assert_eq!(out, "LINES:34931");
+    }
+
+    #[test]
     fn read_from_unopened_stream_is_emergency_stop_not_invalid_input() {
         // 第十八刀回归锁：未开流 \read 逐字对齐 pdfTeX GT（TinyTeX 实测转录
         // 三行顺序），且不得回退成旧的引擎内部"流未打开"消息。
