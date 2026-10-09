@@ -466,6 +466,16 @@ use super::*;
     }
 
     #[test]
+    fn incomplete_iffalse_at_eof_recovers() {
+        let (r, t) = run_transcript("\\iffalse ignored");
+        assert!(r.is_ok(), "未闭合条件 EOF 应可恢复：{t}");
+        assert!(
+            t.contains("! Incomplete \\iffalse; all text was ignored after line 1."),
+            "转录：{t}"
+        );
+    }
+
+    #[test]
     fn ifx_compares_font_meanings() {
         // GT（pdfTeX -ini 实证）：\font 名字扫描遇 \ifx 会就地求值并把真支收进
         // 名字（\a 变 nullfont）——测试若要比较字体含义，须用 \relax 终止名字

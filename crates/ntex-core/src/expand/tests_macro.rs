@@ -22,6 +22,39 @@ fn macro_with_two_arguments() {
 }
 
 #[test]
+fn runaway_at_eof_recovers_and_continues_parent_input() {
+    // GT: child EOF while scanning the delimited argument reports
+    // "File ended while scanning use of \act", inserts \par, then resumes main.
+    let mut e = Expander::new();
+    let sink = VecSink::default();
+    e.set_sink(Box::new(sink));
+    let mut vfs = ntex_io::MemVfs::new();
+    vfs.insert("child.tex", b"\\act xx yy".to_vec());
+    e.set_vfs(Box::new(vfs));
+
+    let r = e.run_source(concat!(
+        "\\def\\act#1\\stop{\\message{[#1]}}",
+        "\\input child ",
+        "\\message{[AFTER]}"
+    ));
+    let sink = e.take_sink();
+    let mut sink = sink;
+    let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+    let t = std::mem::take(&mut sink.transcript);
+
+    assert!(r.is_ok(), "runaway at child EOF must recover: {t}");
+    assert!(
+        t.contains("Runaway argument?\n! File ended while scanning use of \\act."),
+        "转录：{t}"
+    );
+    assert!(t.contains("[AFTER]"), "父输入须继续执行：{t}");
+    assert!(
+        !t.contains("[xx yy"),
+        "残缺宏体不得用吞到 EOF 的实参继续展开：{t}"
+    );
+}
+
+#[test]
 fn edef_expands_at_definition() {
     assert_eq!(expand("\\def\\a{1}\\edef\\y{\\a2}\\y").unwrap(), "12");
 }

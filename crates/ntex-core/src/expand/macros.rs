@@ -387,18 +387,18 @@ impl Expander {
             let (tok, noexpand) = match self.fetch()? {
                 Some(t) => t,
                 None => {
-                    // TeX：定界参数扫描到输入末尾 → "Runaway argument?" +
-                    // "! Paragraph ended before \<name> was complete." 恢复
-                    // （trip.log L6557-6560）：`\par` 插入输入流终止参数，
-                    // 返回已收集内容（可恢复，不中断；TRIP L431 `\l}`）。
+                    // TeX：定界参数扫描遇当前文件 EOF → "Runaway argument?" +
+                    // "! File ended while scanning use of \<name>."，插入 `\par`
+                    // 并放弃残缺宏调用；父输入随后继续执行（可继续 \shipout）。
+                    self.arg_scan_recovered = true;
                     let _ = self.sink.write16(format!(
                         "Runaway argument?\n\
-                         ! Paragraph ended before \\{name} was complete.\n\
+                         ! File ended while scanning use of \\{name}.\n\
                          <to be read again>\n                   \\par\n"
                     ));
                     let par = Token::control_sequence(self.intern.intern("par"));
                     self.unread(par);
-                    return Ok(Arc::from(buf));
+                    return Ok(Arc::from([]));
                 }
             };
             // 实参位置的条件 token（`\if*`/`\else`/`\fi`/`\or`）一律是**数据**

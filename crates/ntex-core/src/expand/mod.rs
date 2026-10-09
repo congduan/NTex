@@ -3564,6 +3564,8 @@ impl Expander {
                                     items: Arc::from(seq),
                                     pos: 0,
                                 });
+                            } else if self.scanner_status != ScannerStatus::Normal {
+                                return Ok(None);
                             }
                             continue;
                         }
@@ -3596,6 +3598,15 @@ impl Expander {
                                     items: Arc::from(seq),
                                     pos: 0,
                                 });
+                            } else if self.scanner_status != ScannerStatus::Normal {
+                                // tex.web `check_outer_validity` / `macro_call`：
+                                // 宏实参、定义体等扫描语境中，**当前文件**耗尽即
+                                // 是 runaway 边界；不能静默弹回父输入继续吞 token。
+                                // 典型形态：`\input child`，child 内 `\act` 的定界
+                                // 参数未闭合。GT 在 child EOF 处报
+                                // "File ended while scanning use of \act."，插入
+                                // `\par` 后继续读父文件，从而还能执行后续 \shipout。
+                                return Ok(None);
                             }
                             continue;
                         }
