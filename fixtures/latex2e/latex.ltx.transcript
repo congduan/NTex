@@ -208,15 +208,7 @@ Package: expl3 2026-08-10 L3 programming layer (code)
 \l__coffin_display_x_dim=\dimen51
 \l__coffin_display_y_dim=\dimen52
 \g__codepoint_data_ior=\read1
-! Missing number, treated as zero.
-l.38446   }
-           
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-hacks,document commands,\l__cmd_current_arg_int=\count135
+MAP01F0-DONE-GL:0BEFORE-38446hacks,document commands,\l__cmd_current_arg_int=\count135
 \l__cmd_total_args_int=\count136
 \l__cmd_last_mandatory_arg_int=\count137
 \g__cmd_grabber_int=\count138
