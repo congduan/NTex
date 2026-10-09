@@ -103,6 +103,11 @@ babel 配置（引用宿主缺失的 dehypht-x-2024-02-28.tex）→ 断字配置
 
 **expl3 官方套件口径**（l3kernel `.lvt` × 187）：载入终点 **l.36005 = 89.4% 行 / 90.0% 字节**，
 载入期真错 573 → **1**（不阻断）；墙 = `\__codepoint_finalize_blocks_aux:n` 的 `\__int_step:Nw` 块循环。
+**✅ 2026-10-04 墙拆除（四刀连环 e080686）**：①`\ifeof` EOF 尾行判定（8c75995）②else 分支
+尾递归输入栈帧消解（025784d，34931 行读循环）③scan_int EOF 探测误报 fatal——
+`try_scan_backquote`/`peek_csid` 的 fetch(None) 改交 Missing number 恢复（beffd0f）。
+发行 fmt **v23 已生成入库**（assets/fmt/latex.fmt，9082372B），`--generate-fmt` 全链复活。
+expl3 载入终点已越过 l.36005（exgeneric 过、backend def 链通）。
 剩余 10.6% 行 = codepoint 收尾 / l3text 五段 / l3legacy+l3deprecation / 文件尾 / exgeneric 尾。
 
 ### 0.2 各线状态
