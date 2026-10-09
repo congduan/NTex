@@ -90,13 +90,14 @@ impl Expander {
         let Some(arg) = args.first() else {
             return Ok(Vec::new());
         };
-        let depth = self.stack.len();
         let saved_floor = self.read_floor;
+        self.drain_depleted_frames();
+        let depth = self.stack.len();
+        self.read_floor = depth;
         self.push_frame(InputFrame::TokenList {
             items: Arc::from(arg.iter().copied().collect::<Vec<_>>()),
             pos: 0,
         });
-        self.read_floor = depth;
         let codepoint = self.scan_number();
         self.stack.truncate(depth);
         self.read_floor = saved_floor;
@@ -138,13 +139,14 @@ impl Expander {
     }
 
     fn eval_token_arg_as_number(&mut self, arg: &ArgArray) -> Result<i64> {
-        let depth = self.stack.len();
         let saved_floor = self.read_floor;
+        self.drain_depleted_frames();
+        let depth = self.stack.len();
+        self.read_floor = depth;
         self.push_frame(InputFrame::TokenList {
             items: Arc::from(arg.iter().copied().collect::<Vec<_>>()),
             pos: 0,
         });
-        self.read_floor = depth;
         let n = self.scan_number();
         self.stack.truncate(depth);
         self.read_floor = saved_floor;

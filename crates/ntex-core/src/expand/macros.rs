@@ -1536,6 +1536,7 @@ impl Expander {
     /// 区域内条件必须闭合（回到进入时的条件栈深度）。
     fn expand_region(&mut self, tokens: Vec<Token>) -> Result<Vec<Token>> {
         let saved_floor = self.read_floor;
+        self.drain_depleted_frames();
         let depth = self.stack.len();
         let cond_depth = self.cond_stack.len();
         self.read_floor = depth;

@@ -1295,6 +1295,39 @@ fn expanded_codepoint_helper_materializes_in_outer_edef() {
 }
 
 #[test]
+fn exp_after_bytecode_boundary_no_token_loss() {
+    // expl3 现场同构：`\exp_after:wN` 展开一个 e 型参数，参数扫描刚把
+    // 调用者 Bytecode 帧推进到 End，随后 `codepoint_str_generate:n` 对实参
+    // 另开临时数字扫描。临时 read_floor 若用清理前的栈深，会把刚压入的
+    // `"01F0` 参数帧挡在读取边界外，scan_int 退化成 Missing number。
+    let src = concat!(
+        "\\catcode`\\_=11 \\catcode`\\:=11 ",
+        "\\def\\codepoint_str_generate:n#1{BAD}",
+        "\\def\\caller{\\expandafter\\relax\\codepoint_str_generate:n{\"01F0}}",
+        "\\caller"
+    );
+    for use_bytecode in [true, false] {
+        let mut e = if use_bytecode {
+            Expander::new()
+        } else {
+            Expander::new_interpreter()
+        };
+        e.run_source(src).unwrap();
+        assert!(
+            !e.transcript().contains("Missing number"),
+            "bytecode={use_bytecode} transcript={}",
+            e.transcript()
+        );
+        let out: String = e
+            .output()
+            .iter()
+            .map(|t| t.charcode().and_then(char::from_u32).unwrap_or('\u{FFFD}'))
+            .collect();
+        assert_eq!(out, "Ç°", "bytecode={use_bytecode}");
+    }
+}
+
+#[test]
 fn def_param_text_resolves_let_char_alias() {
     // tex.web let（@<Assignments@> `define(p,cur_cmd,cur_chr)`）：`\let\cs=<字符>`
     // 让 cs 与字符全同义，参数文本扫描须把这种 cs 解析回字符——expl3
