@@ -305,6 +305,61 @@ use super::*;
     }
 
     #[test]
+    fn openin_chardef_stream_cs_expands_to_number() {
+        // latex.ltx `\newread` 最终经 `\chardef` 绑定流 cs；`\openin` 的流号
+        // 扫描必须走 scan_int 语义，把 cs 取值为流号，而不是把 cs 名字符当
+        // 文件名前缀吞入（曾见 `@inputcheck` + `texsys.aux` 污染）。
+        let mut vfs = MemVfs::new();
+        vfs.insert("x.tex", "OK\n");
+        vfs.insert("scx.tex", "BAD\n");
+        let (out, _) = expand_vfs(
+            "\\chardef\\sc=3\\openin\\sc=x.tex \\read\\sc to \\line\\line",
+            vfs,
+        )
+        .unwrap();
+        assert_eq!(out, " OK ");
+    }
+
+    #[test]
+    fn openin_chardef_stream_cs_reads_immediate_write() {
+        // mini latex_probe 同款：先写 texsys.aux，再用 chardef'd cs 作为 openin/read
+        // 流号读回。另放入污染文件，若流 cs 名字符混进文件名会读到 BAD。
+        let mut vfs = MemVfs::new();
+        vfs.insert("sctexsys.aux", "BAD\n");
+        let (out, _) = expand_vfs(
+            concat!(
+                "\\immediate\\openout15=texsys.aux",
+                "\\immediate\\write15{OK}",
+                "\\immediate\\closeout15",
+                "\\chardef\\sc=3",
+                "\\openin\\sc texsys.aux ",
+                "\\read\\sc to \\line\\line",
+            ),
+            vfs,
+        )
+        .unwrap();
+        assert_eq!(out, " OK ");
+    }
+
+    #[test]
+    fn newread_stream_cs_reads_immediate_write() {
+        let vfs = MemVfs::new();
+        let (out, _) = expand_vfs(
+            concat!(
+                "\\immediate\\openout15=texsys.aux",
+                "\\immediate\\write15{OK}",
+                "\\immediate\\closeout15",
+                "\\newread\\r",
+                "\\openin\\r texsys.aux ",
+                "\\ifeof\\r NO\\else\\read\\r to \\line\\line\\fi",
+            ),
+            vfs,
+        )
+        .unwrap();
+        assert_eq!(out, " OK ");
+    }
+
+    #[test]
     fn braced_file_name_expands_macros() {
         // tex.web scan_file_name 的循环顶是 get_x_token（L10210）：花括号组名
         // 里的宏**在名字扫描内展开**。真现场 graphics.sty `\Gin@getbase` →
