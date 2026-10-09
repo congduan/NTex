@@ -1,8 +1,15 @@
-BAD: old file 2026/09/13:06:05 (should be 2026/09/13:06:05)
- \par !! No syntax for the current directory could be found 
- \par \@currdirset to: . 
- Assuming \openin and \input  have the same search path. 
- Defining generic filename parser. 
+./texsys.aux found
+
+
+\@currdirset to: ./.
+
+
+Assuming \openin and \input 
+have the same search path.
+
+
+Defining UNIX/DOS style filename parser.
+
 catcodes,registers,\@inputcheck=\read0
 \@unused=\write0
 \maxdimen=\dimen10
@@ -66,4338 +73,12 @@ Package: expl3 2026-08-10 L3 programming layer (code)
 \c__fp_Bigg_leading_shift_int=\count49
 \c__fp_Bigg_middle_shift_int=\count50
 \c__fp_Bigg_trailing_shift_int=\count51
-! Use of \??? doesn't match its definition.
-The macro here has not been followed by the required stuff,
-so I'm ignoring it.
-
-! Argument of \__fp_parse_infix_after_operand:NwN has an extra }.
-I've run across a `}' that doesn't seem to match anything.
-For example, `\def\a#1{...}' and `\a}' would produce
-this error. If you simply proceed now, the `\par' that
-I've just inserted will cause me to report a runaway
-argument that might be the root of the problem. But if
-your `}' was spurious, just type `2' and it will go away.
-
-! Argument of \__fp_parse_continue:NwN has an extra }.
-I've run across a `}' that doesn't seem to match anything.
-For example, `\def\a#1{...}' and `\a}' would produce
-this error. If you simply proceed now, the `\par' that
-I've just inserted will cause me to report a runaway
-argument that might be the root of the problem. But if
-your `}' was spurious, just type `2' and it will go away.
-
-! Argument of \__fp_parse_continue:NwN has an extra }.
-<to be read again>
-                   }
-
-! Use of \__fp_sanitize_zero:w doesn't match its definition.
-The macro here has not been followed by the required stuff,
-so I'm ignoring it.
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \s__fp
-l.18141 ....718 2818 2845 9045 }
-                                
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Use of \??? doesn't match its definition.
-The macro here has not been followed by the required stuff,
-so I'm ignoring it.
-
-! Argument of \__fp_parse_continue:NwN has an extra }.
-I've run across a `}' that doesn't seem to match anything.
-For example, `\def\a#1{...}' and `\a}' would produce
-this error. If you simply proceed now, the `\par' that
-I've just inserted will cause me to report a runaway
-argument that might be the root of the problem. But if
-your `}' was spurious, just type `2' and it will go away.
-
-! Argument of \__fp_parse_continue:NwN has an extra }.
-<to be read again>
-                   }
-
-! Argument of \__fp_parse_after:ww has an extra }.
-I've run across a `}' that doesn't seem to match anything.
-For example, `\def\a#1{...}' and `\a}' would produce
-this error. If you simply proceed now, the `\par' that
-I've just inserted will cause me to report a runaway
-argument that might be the root of the problem. But if
-your `}' was spurious, just type `2' and it will go away.
-
-! Argument of \__fp_parse_after:ww has an extra }.
-<to be read again>
-                   }
-
-! Use of \??? doesn't match its definition.
-The macro here has not been followed by the required stuff,
-so I'm ignoring it.
-
-! Argument of \__fp_parse_infix_after_operand:NwN has an extra }.
-I've run across a `}' that doesn't seem to match anything.
-For example, `\def\a#1{...}' and `\a}' would produce
-this error. If you simply proceed now, the `\par' that
-I've just inserted will cause me to report a runaway
-argument that might be the root of the problem. But if
-your `}' was spurious, just type `2' and it will go away.
-
-! Argument of \__fp_parse_continue:NwN has an extra }.
-I've run across a `}' that doesn't seem to match anything.
-For example, `\def\a#1{...}' and `\a}' would produce
-this error. If you simply proceed now, the `\par' that
-I've just inserted will cause me to report a runaway
-argument that might be the root of the problem. But if
-your `}' was spurious, just type `2' and it will go away.
-
-! Argument of \__fp_parse_continue:NwN has an extra }.
-<to be read again>
-                   }
-
-! Use of \__fp_sanitize_zero:w doesn't match its definition.
-The macro here has not been followed by the required stuff,
-so I'm ignoring it.
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \s__fp
-l.18143 ....141 5926 5358 9793 }
-                                
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Use of \??? doesn't match its definition.
-The macro here has not been followed by the required stuff,
-so I'm ignoring it.
-
-! Argument of \__fp_parse_infix_after_operand:NwN has an extra }.
-I've run across a `}' that doesn't seem to match anything.
-For example, `\def\a#1{...}' and `\a}' would produce
-this error. If you simply proceed now, the `\par' that
-I've just inserted will cause me to report a runaway
-argument that might be the root of the problem. But if
-your `}' was spurious, just type `2' and it will go away.
-
-! Argument of \__fp_parse_continue:NwN has an extra }.
-I've run across a `}' that doesn't seem to match anything.
-For example, `\def\a#1{...}' and `\a}' would produce
-this error. If you simply proceed now, the `\par' that
-I've just inserted will cause me to report a runaway
-argument that might be the root of the problem. But if
-your `}' was spurious, just type `2' and it will go away.
-
-! Argument of \__fp_parse_continue:NwN has an extra }.
-<to be read again>
-                   }
-
-! Use of \__fp_sanitize_zero:w doesn't match its definition.
-The macro here has not been followed by the required stuff,
-so I'm ignoring it.
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \s__fp
-l.18144 ...1745 3292 5199 4330 }
-                                
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Extra \else.
-
-l.21039   }
-
-! Use of \??? doesn't match its definition.
-The macro here has not been followed by the required stuff,
-so I'm ignoring it.
-
 \c__kernel_randint_max_int=\count52
 \l__fp_function_arg_int=\count53
 \g__fp_array_int=\count54
 \l__fp_array_loop_int=\count55
 \l__bitset_tmp_int=\count56
 \g__cctab_allocate_int=\count57
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \tex_global:D
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \tex_global:D
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23381 \cctab_const:Nn \c_other_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \c_initex_cctab
-l.23381 
-        \cctab_const:Nn \c_other_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23387   }
-           
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \tex_global:D
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \tex_global:D
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23442 \cctab_new:N \g_tmpb_cctab
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpa_cctab
-l.23442 
-        \cctab_new:N \g_tmpb_cctab
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \tex_global:D
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \tex_global:D
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \fi:
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing font identifier.
-
-l.23443 \msg_new:nnnn { cctab } { stack-full }
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \g_tmpb_cctab
-l.23443 
-        \msg_new:nnnn { cctab } { stack-...
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
-! Missing number, treated as zero.
-<to be read again> 
-                   \tex_long:D
-l.23448   }
-           
-
-A number should have been here; I inserted `0'.
-(If you can't figure out why I needed to see a number,
-look up `weird error' in the index to The TeXbook.)
-
 \l__sort_length_int=\count58
 \l__sort_min_int=\count59
 \l__sort_top_int=\count60
@@ -4411,55 +92,11 @@ look up `weird error' in the index to The TeXbook.)
 \l__sort_C_int=\count68
 \c__str_replacement_char_int=\count69
 \l__str_modulo_int=\count70
-! Improper alphabetic constant.
-A one-character control sequence belongs after a ` mark.
-So I'm essentially inserting \0 here.
-
-! Improper alphabetic constant.
-A one-character control sequence belongs after a ` mark.
-So I'm essentially inserting \0 here.
-
-! Improper alphabetic constant.
-A one-character control sequence belongs after a ` mark.
-So I'm essentially inserting \0 here.
-
-! Improper alphabetic constant.
-A one-character control sequence belongs after a ` mark.
-So I'm essentially inserting \0 here.
-
 \l__tl_analysis_normal_int=\count71
 \l__tl_analysis_index_int=\count72
 \l__tl_analysis_nesting_int=\count73
 \l__tl_analysis_type_int=\count74
 \l__tl_peek_charcode_int=\count75
-! Use of \??? doesn't match its definition.
-The macro here has not been followed by the required stuff,
-so I'm ignoring it.
-
-! Argument of \__fp_parse_continue:NwN has an extra }.
-I've run across a `}' that doesn't seem to match anything.
-For example, `\def\a#1{...}' and `\a}' would produce
-this error. If you simply proceed now, the `\par' that
-I've just inserted will cause me to report a runaway
-argument that might be the root of the problem. But if
-your `}' was spurious, just type `2' and it will go away.
-
-! Argument of \__fp_parse_continue:NwN has an extra }.
-<to be read again>
-                   }
-
-! Argument of \__fp_parse_after:ww has an extra }.
-I've run across a `}' that doesn't seem to match anything.
-For example, `\def\a#1{...}' and `\a}' would produce
-this error. If you simply proceed now, the `\par' that
-I've just inserted will cause me to report a runaway
-argument that might be the root of the problem. But if
-your `}' was spurious, just type `2' and it will go away.
-
-! Argument of \__fp_parse_after:ww has an extra }.
-<to be read again>
-                   }
-
 \g__benchmark_nesting_int=\count76
 \g__benchmark_duration_int=\count77
 \g__benchmark_time_int=\count78
@@ -4570,16 +207,705 @@ your `}' was spurious, just type `2' and it will go away.
 \l__coffin_display_offset_dim=\dimen50
 \l__coffin_display_x_dim=\dimen51
 \l__coffin_display_y_dim=\dimen52
-! Argument of \__iow_wrap_fix_newline:w has an extra }.
-I've run across a `}' that doesn't seem to match anything.
-For example, `\def\a#1{...}' and `\a}' would produce
-this error. If you simply proceed now, the `\par' that
-I've just inserted will cause me to report a runaway
-argument that might be the root of the problem. But if
-your `}' was spurious, just type `2' and it will go away.
+\g__codepoint_data_ior=\read1
+! Missing number, treated as zero.
+l.38446   }
+           
 
-Runaway argument?
-! Paragraph ended before \__iow_wrap_chunk:nw was complete.
-<to be read again>
-                   \par
+A number should have been here; I inserted `0'.
+(If you can't figure out why I needed to see a number,
+look up `weird error' in the index to The TeXbook.)
 
+hacks,document commands,\l__cmd_current_arg_int=\count135
+\l__cmd_total_args_int=\count136
+\l__cmd_last_mandatory_arg_int=\count137
+\g__cmd_grabber_int=\count138
+\l__cmd_m_args_int=\count139
+\l__cmd_v_nesting_int=\count140
+\l__hook_labels_int=\count141
+\l__hook_patch_num_args_int=\count142
+templates,\l__template_tmp_dim=\dimen53
+\l__template_tmp_int=\count143
+\l__template_tmp_muskip=\muskip16
+\l__template_tmp_skip=\skip20
+\@tempcnta=\count144
+\@tempcntb=\count145
+\@tempdima=\dimen54
+\@tempdimb=\dimen55
+\@tempdimc=\dimen56
+\@tempboxa=\box31
+\@tempskipa=\skip21
+\@tempskipb=\skip22
+\@temptokena=\toks11
+\@flushglue=\skip23
+control,par,\everypar=\toks12
+\g_para_indent_box=\box32
+\g__kernel_target_int=\count146
+spacing,\@savsk=\dimen57
+\@savsf=\count147
+\smallskipamount=\skip24
+\medskipamount=\skip25
+\bigskipamount=\skip26
+\sp@ce@skip=\skip27
+\fill=\skip28
+Missing character: There is no ^^M in font nullfont!
+files,\@mainaux=\write1
+\@partaux=\write2
+\@clubpenalty=\count148
+LaTeX Info: Redefining \IfFileExists on input line 9827.
+font encodings,lengths,NFSS base,\everymath=\toks13
+\everydisplay=\toks14
+\@math@level=\count149
+NFSS axes,\series@check@toks=\toks15
+NFSS tracing,\every@math@size=\toks16
+\lower@bound=\dimen58
+\upper@bound=\dimen59
+NFSS declarative interface,\c@localmathalphabets=\count150
+NFSS initialization,\c@mv@normal=\count151
+\c@mv@bold=\count152
+====================================
+
+Local config file fonttext.cfg used
+
+====================================
+File: fonttext.cfg 2025/06/05 v3.0l LaTeX Kernel (Uncustomized text font setup) 
+File: fonttext.ltx 2025/06/05 v3.0l LaTeX Kernel (Text font setup) 
+=== Don't modify this file, use a .cfg file instead ===
+
+File: omlenc.def 2025/07/18 v2.1d Standard LaTeX file
+File: omsenc.def 2025/07/18 v2.1d Standard LaTeX file
+File: ot1enc.def 2025/07/18 v2.1d Standard LaTeX file
+File: t1enc.def 2025/07/18 v2.1d Standard LaTeX file
+File: ts1enc.def 2001/06/05 v3.0e (jk/car/fm) Standard LaTeX file
+LaTeX Font Info:    Trying to load font information for TS1+cmr on input line 55.
+File: ts1cmr.fd 2024/11/19 v2.5n Standard LaTeX font definitions
+LaTeX Font Info:    Setting cmr sub-encoding to TS1/0 on input line 63.
+File: t1cmr.fd 2024/11/19 v2.5n Standard LaTeX font definitions
+File: ot1cmr.fd 2024/11/19 v2.5n Standard LaTeX font definitions
+File: ts1cmr.fd 2024/11/19 v2.5n Standard LaTeX font definitions
+LaTeX Font Info:    Changing cmr sub-encoding to TS1/0 on input line 63.
+File: t1cmss.fd 2024/11/19 v2.5n Standard LaTeX font definitions
+File: t1cmtt.fd 2024/11/19 v2.5n Standard LaTeX font definitions
+File: ot1cmss.fd 2024/11/19 v2.5n Standard LaTeX font definitions
+File: ot1cmtt.fd 2024/11/19 v2.5n Standard LaTeX font definitions
+File: ts1cmss.fd 2024/11/19 v2.5n Standard LaTeX font definitions
+LaTeX Font Info:    Setting cmss sub-encoding to TS1/0 on input line 61.
+File: ts1cmtt.fd 2024/11/19 v2.5n Standard LaTeX font definitions
+LaTeX Font Info:    Setting cmtt sub-encoding to TS1/0 on input line 59.
+====================================
+
+Local config file fontmath.cfg used
+
+====================================
+File: fontmath.cfg 2025/06/05 v3.0l LaTeX Kernel (Uncustomized math font setup) 
+File: fontmath.ltx 2025/06/05 v3.0l LaTeX Kernel (Math font setup) 
+=== Don't modify this file, use a .cfg file instead ===
+
+LaTeX Font Info:    Redeclaring font encoding OML on input line 44.
+LaTeX Font Info:    Redeclaring font encoding OMS on input line 45.
+File: omlcmm.fd 2024/11/19 v2.5n Standard LaTeX font definitions
+File: omscmsy.fd 2024/11/19 v2.5n Standard LaTeX font definitions
+File: omxcmex.fd 2024/11/19 v2.5n Standard LaTeX font definitions
+File: ucmr.fd 2024/11/19 v2.5n Standard LaTeX font definitions
+\symoperators=\mathgroup0
+\symletters=\mathgroup1
+\symsymbols=\mathgroup2
+\symlargesymbols=\mathgroup3
+LaTeX Font Info:    Overwriting symbol font `operators' in version `bold'
+(Font)                  OT1/cmr/m/n --> OT1/cmr/bx/n on input line 63.
+LaTeX Font Info:    Overwriting symbol font `letters' in version `bold'
+(Font)                  OML/cmm/m/it --> OML/cmm/b/it on input line 64.
+LaTeX Font Info:    Overwriting symbol font `symbols' in version `bold'
+(Font)                  OMS/cmsy/m/n --> OMS/cmsy/b/n on input line 65.
+LaTeX Font Info:    Overwriting math alphabet `\mathsf' in version `bold'
+(Font)                  OT1/cmss/m/n --> OT1/cmss/bx/n on input line 73.
+LaTeX Font Info:    Overwriting math alphabet `\mathit' in version `bold'
+(Font)                  OT1/cmr/m/it --> OT1/cmr/bx/it on input line 74.
+====================================
+
+Local config file preload.cfg used
+
+=====================================
+File: preload.cfg 2025/06/05 v3.0l LaTeX Kernel (Uncustomized preload font setup) 
+File: preload.ltx 2021/10/04 v2.1g LaTeX Kernel (Font Preloading)
+LaTeX Encoding Info:    Redeclaring text command \textdollar (encoding ?) on input line 14600.
+LaTeX Encoding Info:    Undeclare text command \textdollar (encoding OT1) on input line 14601.
+LaTeX Encoding Info:    Redeclaring text command \textsterling (encoding ?) on input line 14602.
+LaTeX Encoding Info:    Undeclare text command \textsterling (encoding OT1) on input line 14603.
+LaTeX Encoding Info:    Undeclare text command \textperthousand (encoding T1) on input line 14605.
+LaTeX Encoding Info:    Redeclaring text command \textasteriskcentered (encoding ?) on input line 14606.
+LaTeX Encoding Info:    Redeclaring text command \textbullet (encoding ?) on input line 14607.
+LaTeX Encoding Info:    Redeclaring text command \textdaggerdbl (encoding ?) on input line 14608.
+LaTeX Encoding Info:    Redeclaring text command \textdagger (encoding ?) on input line 14609.
+LaTeX Encoding Info:    Redeclaring text command \textparagraph (encoding ?) on input line 14610.
+LaTeX Encoding Info:    Redeclaring text command \textperiodcentered (encoding ?) on input line 14611.
+LaTeX Encoding Info:    Redeclaring text command \textsection (encoding ?) on input line 14612.
+LaTeX Encoding Info:    Redeclaring text command \textcopyright (encoding ?) on input line 14617.
+LaTeX Encoding Info:    Redeclaring text command \textordfeminine (encoding ?) on input line 14624.
+LaTeX Encoding Info:    Redeclaring text command \textordmasculine (encoding ?) on input line 14625.
+LaTeX Encoding Info:    Redeclaring text command \textregistered (encoding ?) on input line 14630.
+LaTeX Encoding Info:    Redeclaring text command \texttrademark (encoding ?) on input line 14635.
+LaTeX Encoding Info:    Redeclaring text command \textcircled (encoding ?) on input line 14641.
+LaTeX Encoding Info:    Redeclaring text command \t (encoding ?) on input line 14643.
+LaTeX Encoding Info:    Undeclare text command \textpertenthousand (encoding T1) on input line 14794.
+LaTeX Encoding Info:    Redeclaring text command \textbardbl (encoding ?) on input line 14851.
+LaTeX Font Info:    Setting ? sub-encoding to TS1/9 on input line 14874.
+LaTeX Font Info:    Setting ccr sub-encoding to TS1/0 on input line 14875.
+LaTeX Font Info:    Setting cmbr sub-encoding to TS1/0 on input line 14876.
+LaTeX Font Info:    Setting cmtl sub-encoding to TS1/0 on input line 14877.
+LaTeX Font Info:    Setting pxr sub-encoding to TS1/0 on input line 14878.
+LaTeX Font Info:    Setting pxss sub-encoding to TS1/0 on input line 14879.
+LaTeX Font Info:    Setting pxtt sub-encoding to TS1/0 on input line 14880.
+LaTeX Font Info:    Setting qag sub-encoding to TS1/0 on input line 14881.
+LaTeX Font Info:    Setting qbk sub-encoding to TS1/0 on input line 14882.
+LaTeX Font Info:    Setting qcr sub-encoding to TS1/0 on input line 14883.
+LaTeX Font Info:    Setting qcs sub-encoding to TS1/0 on input line 14884.
+LaTeX Font Info:    Setting qhvc sub-encoding to TS1/0 on input line 14885.
+LaTeX Font Info:    Setting qhv sub-encoding to TS1/0 on input line 14886.
+LaTeX Font Info:    Setting qpl sub-encoding to TS1/0 on input line 14887.
+LaTeX Font Info:    Setting qtm sub-encoding to TS1/0 on input line 14888.
+LaTeX Font Info:    Setting qzc sub-encoding to TS1/0 on input line 14889.
+LaTeX Font Info:    Setting txr sub-encoding to TS1/0 on input line 14890.
+LaTeX Font Info:    Setting txss sub-encoding to TS1/0 on input line 14891.
+LaTeX Font Info:    Setting txtt sub-encoding to TS1/0 on input line 14892.
+LaTeX Font Info:    Setting lmr sub-encoding to TS1/1 on input line 14893.
+LaTeX Font Info:    Setting lmdh sub-encoding to TS1/1 on input line 14894.
+LaTeX Font Info:    Setting lmss sub-encoding to TS1/1 on input line 14895.
+LaTeX Font Info:    Setting lmssq sub-encoding to TS1/1 on input line 14896.
+LaTeX Font Info:    Setting lmvtt sub-encoding to TS1/1 on input line 14897.
+LaTeX Font Info:    Setting lmtt sub-encoding to TS1/1 on input line 14898.
+LaTeX Font Info:    Setting ptmx sub-encoding to TS1/2 on input line 14899.
+LaTeX Font Info:    Setting ptmj sub-encoding to TS1/2 on input line 14900.
+LaTeX Font Info:    Setting ul8 sub-encoding to TS1/2 on input line 14901.
+LaTeX Font Info:    Setting bch sub-encoding to TS1/5 on input line 14902.
+LaTeX Font Info:    Setting futj sub-encoding to TS1/5 on input line 14903.
+LaTeX Font Info:    Setting futs sub-encoding to TS1/5 on input line 14904.
+LaTeX Font Info:    Setting futx sub-encoding to TS1/5 on input line 14905.
+LaTeX Font Info:    Setting pag sub-encoding to TS1/5 on input line 14906.
+LaTeX Font Info:    Setting pbk sub-encoding to TS1/5 on input line 14907.
+LaTeX Font Info:    Setting pcr sub-encoding to TS1/5 on input line 14908.
+LaTeX Font Info:    Setting phv sub-encoding to TS1/5 on input line 14909.
+LaTeX Font Info:    Setting pnc sub-encoding to TS1/5 on input line 14910.
+LaTeX Font Info:    Setting pplj sub-encoding to TS1/5 on input line 14911.
+LaTeX Font Info:    Setting pplx sub-encoding to TS1/5 on input line 14912.
+LaTeX Font Info:    Setting ppl sub-encoding to TS1/5 on input line 14913.
+LaTeX Font Info:    Setting ptm sub-encoding to TS1/5 on input line 14914.
+LaTeX Font Info:    Setting pzc sub-encoding to TS1/5 on input line 14915.
+LaTeX Font Info:    Setting ul9 sub-encoding to TS1/5 on input line 14916.
+LaTeX Font Info:    Setting dayroms sub-encoding to TS1/6 on input line 14917.
+LaTeX Font Info:    Setting dayrom sub-encoding to TS1/6 on input line 14918.
+LaTeX Font Info:    Setting augie sub-encoding to TS1/8 on input line 14919.
+LaTeX Font Info:    Setting put sub-encoding to TS1/8 on input line 14920.
+LaTeX Font Info:    Setting uag sub-encoding to TS1/8 on input line 14921.
+LaTeX Font Info:    Setting ugq sub-encoding to TS1/8 on input line 14922.
+LaTeX Font Info:    Setting zi4 sub-encoding to TS1/9 on input line 14923.
+LaTeX Font Info:    Setting hls sub-encoding to TS1/5 on input line 14924.
+LaTeX Font Info:    Setting hlst sub-encoding to TS1/5 on input line 14925.
+LaTeX Font Info:    Setting hlct sub-encoding to TS1/5 on input line 14926.
+LaTeX Font Info:    Setting hlh sub-encoding to TS1/5 on input line 14927.
+LaTeX Font Info:    Setting hlx sub-encoding to TS1/8 on input line 14928.
+LaTeX Font Info:    Setting hlce sub-encoding to TS1/8 on input line 14929.
+LaTeX Font Info:    Setting hlcn sub-encoding to TS1/8 on input line 14930.
+LaTeX Font Info:    Setting hlcw sub-encoding to TS1/8 on input line 14931.
+LaTeX Font Info:    Setting hlcf sub-encoding to TS1/8 on input line 14932.
+LaTeX Font Info:    Setting lato-LF sub-encoding to TS1/0 on input line 14933.
+LaTeX Font Info:    Setting lato-TLF sub-encoding to TS1/0 on input line 14933.
+LaTeX Font Info:    Setting lato-OsF sub-encoding to TS1/0 on input line 14933.
+LaTeX Font Info:    Setting lato-TOsF sub-encoding to TS1/0 on input line 14933.
+LaTeX Font Info:    Setting opensans-LF sub-encoding to TS1/0 on input line 14934.
+LaTeX Font Info:    Setting opensans-TLF sub-encoding to TS1/0 on input line 14934.
+LaTeX Font Info:    Setting opensans-OsF sub-encoding to TS1/0 on input line 14934.
+LaTeX Font Info:    Setting opensans-TOsF sub-encoding to TS1/0 on input line 14934.
+LaTeX Font Info:    Setting cantarell-LF sub-encoding to TS1/0 on input line 14935.
+LaTeX Font Info:    Setting cantarell-TLF sub-encoding to TS1/0 on input line 14935.
+LaTeX Font Info:    Setting cantarell-OsF sub-encoding to TS1/0 on input line 14935.
+LaTeX Font Info:    Setting cantarell-TOsF sub-encoding to TS1/0 on input line 14935.
+LaTeX Font Info:    Setting tli sub-encoding to TS1/1 on input line 14936.
+LaTeX Font Info:    Setting fbb-LF sub-encoding to TS1/2 on input line 14937.
+LaTeX Font Info:    Setting fbb-TLF sub-encoding to TS1/2 on input line 14937.
+LaTeX Font Info:    Setting fbb-OsF sub-encoding to TS1/2 on input line 14937.
+LaTeX Font Info:    Setting fbb-TOsF sub-encoding to TS1/2 on input line 14937.
+LaTeX Font Info:    Setting Alegreya-LF sub-encoding to TS1/2 on input line 14938.
+LaTeX Font Info:    Setting Alegreya-TLF sub-encoding to TS1/2 on input line 14938.
+LaTeX Font Info:    Setting Alegreya-OsF sub-encoding to TS1/2 on input line 14938.
+LaTeX Font Info:    Setting Alegreya-TOsF sub-encoding to TS1/2 on input line 14938.
+LaTeX Font Info:    Setting AlegreyaSans-LF sub-encoding to TS1/2 on input line 14939.
+LaTeX Font Info:    Setting AlegreyaSans-TLF sub-encoding to TS1/2 on input line 14939.
+LaTeX Font Info:    Setting AlegreyaSans-OsF sub-encoding to TS1/2 on input line 14939.
+LaTeX Font Info:    Setting AlegreyaSans-TOsF sub-encoding to TS1/2 on input line 14939.
+LaTeX Font Info:    Setting BaskervilleF-LF sub-encoding to TS1/2 on input line 14940.
+LaTeX Font Info:    Setting BaskervilleF-TLF sub-encoding to TS1/2 on input line 14940.
+LaTeX Font Info:    Setting BaskervilleF-OsF sub-encoding to TS1/2 on input line 14940.
+LaTeX Font Info:    Setting BaskervilleF-TOsF sub-encoding to TS1/2 on input line 14940.
+LaTeX Font Info:    Setting DejaVuSans-TLF sub-encoding to TS1/2 on input line 14941.
+LaTeX Font Info:    Setting DejaVuSansCondensed-TLF sub-encoding to TS1/2 on input line 14942.
+LaTeX Font Info:    Setting DejaVuSansMono-TLF sub-encoding to TS1/2 on input line 14943.
+LaTeX Font Info:    Setting EBGaramond-LF sub-encoding to TS1/2 on input line 14944.
+LaTeX Font Info:    Setting EBGaramond-TLF sub-encoding to TS1/2 on input line 14944.
+LaTeX Font Info:    Setting EBGaramond-OsF sub-encoding to TS1/2 on input line 14944.
+LaTeX Font Info:    Setting EBGaramond-TOsF sub-encoding to TS1/2 on input line 14944.
+LaTeX Font Info:    Setting Merriwthr-OsF sub-encoding to TS1/2 on input line 14945.
+LaTeX Font Info:    Setting MerriwthrSans-OsF sub-encoding to TS1/2 on input line 14946.
+LaTeX Font Info:    Setting Montserrat-LF sub-encoding to TS1/2 on input line 14947.
+LaTeX Font Info:    Setting Montserrat-TLF sub-encoding to TS1/2 on input line 14947.
+LaTeX Font Info:    Setting Montserrat-OsF sub-encoding to TS1/2 on input line 14947.
+LaTeX Font Info:    Setting Montserrat-TOsF sub-encoding to TS1/2 on input line 14947.
+LaTeX Font Info:    Setting MontserratAlternates-LF sub-encoding to TS1/2 on input line 14948.
+LaTeX Font Info:    Setting MontserratAlternates-TLF sub-encoding to TS1/2 on input line 14948.
+LaTeX Font Info:    Setting MontserratAlternates-OsF sub-encoding to TS1/2 on input line 14948.
+LaTeX Font Info:    Setting MontserratAlternates-TOsF sub-encoding to TS1/2 on input line 14948.
+LaTeX Font Info:    Setting NotoSansMono-TLF sub-encoding to TS1/2 on input line 14949.
+LaTeX Font Info:    Setting NotoSansMono-TOsF sub-encoding to TS1/2 on input line 14950.
+LaTeX Font Info:    Setting Tempora-TLF sub-encoding to TS1/2 on input line 14951.
+LaTeX Font Info:    Setting Tempora-TOsF sub-encoding to TS1/2 on input line 14952.
+LaTeX Font Info:    Setting XCharter-TLF sub-encoding to TS1/2 on input line 14953.
+LaTeX Font Info:    Setting XCharter-TOsF sub-encoding to TS1/2 on input line 14954.
+LaTeX Font Info:    Setting erewhon-LF sub-encoding to TS1/2 on input line 14955.
+LaTeX Font Info:    Setting erewhon-TLF sub-encoding to TS1/2 on input line 14955.
+LaTeX Font Info:    Setting erewhon-OsF sub-encoding to TS1/2 on input line 14955.
+LaTeX Font Info:    Setting erewhon-TOsF sub-encoding to TS1/2 on input line 14955.
+LaTeX Font Info:    Setting Arimo-TLF sub-encoding to TS1/3 on input line 14956.
+LaTeX Font Info:    Setting Crlt-LF sub-encoding to TS1/3 on input line 14957.
+LaTeX Font Info:    Setting Crlt-TLF sub-encoding to TS1/3 on input line 14957.
+LaTeX Font Info:    Setting Crlt-OsF sub-encoding to TS1/3 on input line 14957.
+LaTeX Font Info:    Setting Crlt-TOsF sub-encoding to TS1/3 on input line 14957.
+LaTeX Font Info:    Setting IBMPlexMono-TLF sub-encoding to TS1/3 on input line 14958.
+LaTeX Font Info:    Setting IBMPlexSans-TLF sub-encoding to TS1/3 on input line 14959.
+LaTeX Font Info:    Setting IBMPlexSerif-TLF sub-encoding to TS1/3 on input line 14960.
+LaTeX Font Info:    Setting SourceCodePro-TLF sub-encoding to TS1/3 on input line 14961.
+LaTeX Font Info:    Setting SourceCodePro-TOsF sub-encoding to TS1/3 on input line 14962.
+LaTeX Font Info:    Setting SourceSansPro-LF sub-encoding to TS1/3 on input line 14963.
+LaTeX Font Info:    Setting SourceSansPro-TLF sub-encoding to TS1/3 on input line 14963.
+LaTeX Font Info:    Setting SourceSansPro-OsF sub-encoding to TS1/3 on input line 14963.
+LaTeX Font Info:    Setting SourceSansPro-TOsF sub-encoding to TS1/3 on input line 14963.
+LaTeX Font Info:    Setting SourceSerifPro-LF sub-encoding to TS1/3 on input line 14964.
+LaTeX Font Info:    Setting SourceSerifPro-TLF sub-encoding to TS1/3 on input line 14964.
+LaTeX Font Info:    Setting SourceSerifPro-OsF sub-encoding to TS1/3 on input line 14964.
+LaTeX Font Info:    Setting SourceSerifPro-TOsF sub-encoding to TS1/3 on input line 14964.
+LaTeX Font Info:    Setting Tinos-TLF sub-encoding to TS1/3 on input line 14965.
+LaTeX Font Info:    Setting AccanthisADFStdNoThree-LF sub-encoding to TS1/4 on input line 14966.
+LaTeX Font Info:    Setting Cabin-TLF sub-encoding to TS1/4 on input line 14967.
+LaTeX Font Info:    Setting Caladea-TLF sub-encoding to TS1/4 on input line 14968.
+LaTeX Font Info:    Setting Chivo-LF sub-encoding to TS1/4 on input line 14969.
+LaTeX Font Info:    Setting Chivo-TLF sub-encoding to TS1/4 on input line 14969.
+LaTeX Font Info:    Setting Chivo-OsF sub-encoding to TS1/4 on input line 14969.
+LaTeX Font Info:    Setting Chivo-TOsF sub-encoding to TS1/4 on input line 14969.
+LaTeX Font Info:    Setting ClearSans-TLF sub-encoding to TS1/4 on input line 14970.
+LaTeX Font Info:    Setting Coelacanth-LF sub-encoding to TS1/4 on input line 14971.
+LaTeX Font Info:    Setting CrimsonPro-LF sub-encoding to TS1/4 on input line 14972.
+LaTeX Font Info:    Setting CrimsonPro-TLF sub-encoding to TS1/4 on input line 14972.
+LaTeX Font Info:    Setting CrimsonPro-OsF sub-encoding to TS1/4 on input line 14972.
+LaTeX Font Info:    Setting CrimsonPro-TOsF sub-encoding to TS1/4 on input line 14972.
+LaTeX Font Info:    Setting FiraMono-TLF sub-encoding to TS1/4 on input line 14973.
+LaTeX Font Info:    Setting FiraMono-TOsF sub-encoding to TS1/4 on input line 14974.
+LaTeX Font Info:    Setting FiraSans-LF sub-encoding to TS1/4 on input line 14975.
+LaTeX Font Info:    Setting FiraSans-TLF sub-encoding to TS1/4 on input line 14975.
+LaTeX Font Info:    Setting FiraSans-OsF sub-encoding to TS1/4 on input line 14975.
+LaTeX Font Info:    Setting FiraSans-TOsF sub-encoding to TS1/4 on input line 14975.
+LaTeX Font Info:    Setting Go-TLF sub-encoding to TS1/4 on input line 14976.
+LaTeX Font Info:    Setting GoMono-TLF sub-encoding to TS1/4 on input line 14977.
+LaTeX Font Info:    Setting InriaSans-LF sub-encoding to TS1/4 on input line 14978.
+LaTeX Font Info:    Setting InriaSans-TLF sub-encoding to TS1/4 on input line 14978.
+LaTeX Font Info:    Setting InriaSans-OsF sub-encoding to TS1/4 on input line 14978.
+LaTeX Font Info:    Setting InriaSans-TOsF sub-encoding to TS1/4 on input line 14978.
+LaTeX Font Info:    Setting InriaSerif-LF sub-encoding to TS1/4 on input line 14979.
+LaTeX Font Info:    Setting InriaSerif-TLF sub-encoding to TS1/4 on input line 14979.
+LaTeX Font Info:    Setting InriaSerif-OsF sub-encoding to TS1/4 on input line 14979.
+LaTeX Font Info:    Setting InriaSerif-TOsF sub-encoding to TS1/4 on input line 14979.
+LaTeX Font Info:    Setting LibertinusSans-LF sub-encoding to TS1/4 on input line 14980.
+LaTeX Font Info:    Setting LibertinusSans-TLF sub-encoding to TS1/4 on input line 14980.
+LaTeX Font Info:    Setting LibertinusSans-OsF sub-encoding to TS1/4 on input line 14980.
+LaTeX Font Info:    Setting LibertinusSans-TOsF sub-encoding to TS1/4 on input line 14980.
+LaTeX Font Info:    Setting LibertinusSerif-LF sub-encoding to TS1/4 on input line 14981.
+LaTeX Font Info:    Setting LibertinusSerif-TLF sub-encoding to TS1/4 on input line 14981.
+LaTeX Font Info:    Setting LibertinusSerif-OsF sub-encoding to TS1/4 on input line 14981.
+LaTeX Font Info:    Setting LibertinusSerif-TOsF sub-encoding to TS1/4 on input line 14981.
+LaTeX Font Info:    Setting LibreBodoni-TLF sub-encoding to TS1/4 on input line 14982.
+LaTeX Font Info:    Setting LibreFranklin-TLF sub-encoding to TS1/4 on input line 14983.
+LaTeX Font Info:    Setting LinguisticsPro-LF sub-encoding to TS1/4 on input line 14984.
+LaTeX Font Info:    Setting LinguisticsPro-OsF sub-encoding to TS1/4 on input line 14985.
+LaTeX Font Info:    Setting LinuxBiolinumT-LF sub-encoding to TS1/4 on input line 14986.
+LaTeX Font Info:    Setting LinuxBiolinumT-TLF sub-encoding to TS1/4 on input line 14986.
+LaTeX Font Info:    Setting LinuxBiolinumT-OsF sub-encoding to TS1/4 on input line 14986.
+LaTeX Font Info:    Setting LinuxBiolinumT-TOsF sub-encoding to TS1/4 on input line 14986.
+LaTeX Font Info:    Setting LinuxLibertineT-LF sub-encoding to TS1/4 on input line 14987.
+LaTeX Font Info:    Setting LinuxLibertineT-TLF sub-encoding to TS1/4 on input line 14987.
+LaTeX Font Info:    Setting LinuxLibertineT-OsF sub-encoding to TS1/4 on input line 14987.
+LaTeX Font Info:    Setting LinuxLibertineT-TOsF sub-encoding to TS1/4 on input line 14987.
+LaTeX Font Info:    Setting MintSpirit-LF sub-encoding to TS1/4 on input line 14988.
+LaTeX Font Info:    Setting MintSpirit-TLF sub-encoding to TS1/4 on input line 14988.
+LaTeX Font Info:    Setting MintSpirit-OsF sub-encoding to TS1/4 on input line 14988.
+LaTeX Font Info:    Setting MintSpirit-TOsF sub-encoding to TS1/4 on input line 14988.
+LaTeX Font Info:    Setting MintSpiritNoTwo-LF sub-encoding to TS1/4 on input line 14989.
+LaTeX Font Info:    Setting MintSpiritNoTwo-TLF sub-encoding to TS1/4 on input line 14989.
+LaTeX Font Info:    Setting MintSpiritNoTwo-OsF sub-encoding to TS1/4 on input line 14989.
+LaTeX Font Info:    Setting MintSpiritNoTwo-TOsF sub-encoding to TS1/4 on input line 14989.
+LaTeX Font Info:    Setting PTMono-TLF sub-encoding to TS1/4 on input line 14990.
+LaTeX Font Info:    Setting PTSans-TLF sub-encoding to TS1/4 on input line 14991.
+LaTeX Font Info:    Setting PTSansCaption-TLF sub-encoding to TS1/4 on input line 14992.
+LaTeX Font Info:    Setting PTSansNarrow-TLF sub-encoding to TS1/4 on input line 14993.
+LaTeX Font Info:    Setting PTSerif-TLF sub-encoding to TS1/4 on input line 14994.
+LaTeX Font Info:    Setting PTSerifCaption-TLF sub-encoding to TS1/4 on input line 14995.
+LaTeX Font Info:    Setting Raleway-TLF sub-encoding to TS1/4 on input line 14996.
+LaTeX Font Info:    Setting Raleway-TOsF sub-encoding to TS1/4 on input line 14997.
+LaTeX Font Info:    Setting Roboto-LF sub-encoding to TS1/4 on input line 14998.
+LaTeX Font Info:    Setting Roboto-TLF sub-encoding to TS1/4 on input line 14998.
+LaTeX Font Info:    Setting Roboto-OsF sub-encoding to TS1/4 on input line 14998.
+LaTeX Font Info:    Setting Roboto-TOsF sub-encoding to TS1/4 on input line 14998.
+LaTeX Font Info:    Setting RobotoMono-TLF sub-encoding to TS1/4 on input line 14999.
+LaTeX Font Info:    Setting RobotoSlab-TLF sub-encoding to TS1/4 on input line 15000.
+LaTeX Font Info:    Setting Rosario-LF sub-encoding to TS1/4 on input line 15001.
+LaTeX Font Info:    Setting Rosario-TLF sub-encoding to TS1/4 on input line 15001.
+LaTeX Font Info:    Setting Rosario-OsF sub-encoding to TS1/4 on input line 15001.
+LaTeX Font Info:    Setting Rosario-TOsF sub-encoding to TS1/4 on input line 15001.
+LaTeX Font Info:    Setting SticksTooText-LF sub-encoding to TS1/4 on input line 15002.
+LaTeX Font Info:    Setting SticksTooText-TLF sub-encoding to TS1/4 on input line 15002.
+LaTeX Font Info:    Setting SticksTooText-OsF sub-encoding to TS1/4 on input line 15002.
+LaTeX Font Info:    Setting SticksTooText-TOsF sub-encoding to TS1/4 on input line 15002.
+LaTeX Font Info:    Setting UniversalisADFStd-LF sub-encoding to TS1/4 on input line 15003.
+LaTeX Font Info:    Setting Almndr-OsF sub-encoding to TS1/5 on input line 15004.
+LaTeX Font Info:    Setting Baskervaldx-LF sub-encoding to TS1/5 on input line 15005.
+LaTeX Font Info:    Setting Baskervaldx-TLF sub-encoding to TS1/5 on input line 15005.
+LaTeX Font Info:    Setting Baskervaldx-OsF sub-encoding to TS1/5 on input line 15005.
+LaTeX Font Info:    Setting Baskervaldx-TOsF sub-encoding to TS1/5 on input line 15005.
+LaTeX Font Info:    Setting Bttr-TLF sub-encoding to TS1/5 on input line 15006.
+LaTeX Font Info:    Setting Cinzel-LF sub-encoding to TS1/5 on input line 15007.
+LaTeX Font Info:    Setting CinzelDecorative-LF sub-encoding to TS1/5 on input line 15008.
+LaTeX Font Info:    Setting Cochineal-LF sub-encoding to TS1/5 on input line 15009.
+LaTeX Font Info:    Setting Cochineal-TLF sub-encoding to TS1/5 on input line 15009.
+LaTeX Font Info:    Setting Cochineal-OsF sub-encoding to TS1/5 on input line 15009.
+LaTeX Font Info:    Setting Cochineal-TOsF sub-encoding to TS1/5 on input line 15009.
+LaTeX Font Info:    Setting DejaVuSerif-TLF sub-encoding to TS1/5 on input line 15010.
+LaTeX Font Info:    Setting DejaVuSerifCondensed-TLF sub-encoding to TS1/5 on input line 15011.
+LaTeX Font Info:    Setting GilliusADF-LF sub-encoding to TS1/5 on input line 15012.
+LaTeX Font Info:    Setting GilliusADFCond-LF sub-encoding to TS1/5 on input line 15013.
+LaTeX Font Info:    Setting GilliusADFNoTwo-LF sub-encoding to TS1/5 on input line 15014.
+LaTeX Font Info:    Setting GilliusADFNoTwoCond-LF sub-encoding to TS1/5 on input line 15015.
+LaTeX Font Info:    Setting OldStandard-TLF sub-encoding to TS1/5 on input line 15016.
+LaTeX Font Info:    Setting PlyfrDisplay-TLF sub-encoding to TS1/5 on input line 15017.
+LaTeX Font Info:    Setting PlyfrDisplay-TOsF sub-encoding to TS1/5 on input line 15018.
+LaTeX Font Info:    Setting TheanoDidot-TLF sub-encoding to TS1/5 on input line 15019.
+LaTeX Font Info:    Setting TheanoDidot-TOsF sub-encoding to TS1/5 on input line 15020.
+LaTeX Font Info:    Setting TheanoModern-TLF sub-encoding to TS1/5 on input line 15021.
+LaTeX Font Info:    Setting TheanoModern-TOsF sub-encoding to TS1/5 on input line 15022.
+LaTeX Font Info:    Setting TheanoOldStyle-TLF sub-encoding to TS1/5 on input line 15023.
+LaTeX Font Info:    Setting TheanoOldStyle-TOsF sub-encoding to TS1/5 on input line 15024.
+LaTeX Font Info:    Setting charssil-TLF sub-encoding to TS1/5 on input line 15025.
+LaTeX Font Info:    Setting Crimson-TLF sub-encoding to TS1/6 on input line 15026.
+LaTeX Font Info:    Setting LibertinusSerifDisplay-LF sub-encoding to TS1/6 on input line 15027.
+LaTeX Font Info:    Setting LinuxLibertineDisplayT-LF sub-encoding to TS1/6 on input line 15028.
+LaTeX Font Info:    Setting LinuxLibertineDisplayT-TLF sub-encoding to TS1/6 on input line 15028.
+LaTeX Font Info:    Setting LinuxLibertineDisplayT-OsF sub-encoding to TS1/6 on input line 15028.
+LaTeX Font Info:    Setting LinuxLibertineDisplayT-TOsF sub-encoding to TS1/6 on input line 15028.
+LaTeX Font Info:    Setting LinuxLibertineMonoT-LF sub-encoding to TS1/6 on input line 15029.
+LaTeX Font Info:    Setting LinuxLibertineMonoT-TLF sub-encoding to TS1/6 on input line 15030.
+LaTeX Font Info:    Setting Ovrlck-LF sub-encoding to TS1/6 on input line 15031.
+LaTeX Font Info:    Setting ComicNeue-TLF sub-encoding to TS1/7 on input line 15032.
+LaTeX Font Info:    Setting ComicNeueAngular-TLF sub-encoding to TS1/7 on input line 15033.
+LaTeX Font Info:    Setting CormorantGaramond-LF sub-encoding to TS1/7 on input line 15034.
+LaTeX Font Info:    Setting CormorantGaramond-TLF sub-encoding to TS1/7 on input line 15034.
+LaTeX Font Info:    Setting CormorantGaramond-OsF sub-encoding to TS1/7 on input line 15034.
+LaTeX Font Info:    Setting CormorantGaramond-TOsF sub-encoding to TS1/7 on input line 15034.
+LaTeX Font Info:    Setting Heuristica-TLF sub-encoding to TS1/7 on input line 15035.
+LaTeX Font Info:    Setting Heuristica-TOsF sub-encoding to TS1/7 on input line 15036.
+LaTeX Font Info:    Setting IMFELLEnglish-TLF sub-encoding to TS1/7 on input line 15037.
+LaTeX Font Info:    Setting LibreBskrvl-TLF sub-encoding to TS1/7 on input line 15038.
+LaTeX Font Info:    Setting LibreCsln-LF sub-encoding to TS1/7 on input line 15039.
+LaTeX Font Info:    Setting LibreCsln-TLF sub-encoding to TS1/7 on input line 15039.
+LaTeX Font Info:    Setting LibreCsln-OsF sub-encoding to TS1/7 on input line 15039.
+LaTeX Font Info:    Setting LibreCsln-TOsF sub-encoding to TS1/7 on input line 15039.
+LaTeX Font Info:    Setting Lbstr-LF sub-encoding to TS1/7 on input line 15040.
+LaTeX Font Info:    Setting Mrcls-LF sub-encoding to TS1/7 on input line 15041.
+LaTeX Font Info:    Setting NotoSans-LF sub-encoding to TS1/7 on input line 15042.
+LaTeX Font Info:    Setting NotoSans-TLF sub-encoding to TS1/7 on input line 15042.
+LaTeX Font Info:    Setting NotoSans-OsF sub-encoding to TS1/7 on input line 15042.
+LaTeX Font Info:    Setting NotoSans-TOsF sub-encoding to TS1/7 on input line 15042.
+LaTeX Font Info:    Setting NotoSerif-LF sub-encoding to TS1/7 on input line 15043.
+LaTeX Font Info:    Setting NotoSerif-TLF sub-encoding to TS1/7 on input line 15043.
+LaTeX Font Info:    Setting NotoSerif-OsF sub-encoding to TS1/7 on input line 15043.
+LaTeX Font Info:    Setting NotoSerif-TOsF sub-encoding to TS1/7 on input line 15043.
+LaTeX Font Info:    Setting Quattro-LF sub-encoding to TS1/7 on input line 15044.
+LaTeX Font Info:    Setting QuattroSans-LF sub-encoding to TS1/7 on input line 15045.
+LaTeX Font Info:    Setting Frm-LF sub-encoding to TS1/7 on input line 15046.
+LaTeX Font Info:    Setting LibertinusMono-TLF sub-encoding to TS1/8 on input line 15047.
+LaTeX Font Info:    Setting AlgolRevived-TLF sub-encoding to TS1/9 on input line 15048.
+page nos.,x-ref,environments,center,\@rightskip=\skip29
+verbatim,\@verbvisiblespacebox=\box33
+math definitions,\jot=\dimen60
+\interdisplaylinepenalty=\count153
+\rootbox=\box34
+LaTeX Info: Redefining \: on input line 15892.
+\c@equation=\count154
+LaTeX Info: Redefining \sqrt on input line 15960.
+\@eqcnt=\count155
+\@eqpen=\count156
+\@centering=\skip30
+\topsep=\skip31
+\partopsep=\skip32
+\itemsep=\skip33
+\parsep=\skip34
+\@topsep=\skip35
+\@topsepadd=\skip36
+\@outerparskip=\skip37
+\leftmargin=\dimen61
+\rightmargin=\dimen62
+\listparindent=\dimen63
+\itemindent=\dimen64
+\labelwidth=\dimen65
+\labelsep=\dimen66
+\linewidth=\dimen67
+\@totalleftmargin=\dimen68
+\leftmargini=\dimen69
+\leftmarginii=\dimen70
+\leftmarginiii=\dimen71
+\leftmarginiv=\dimen72
+\leftmarginv=\dimen73
+\leftmarginvi=\dimen74
+\@listdepth=\count157
+\@itempenalty=\count158
+\@beginparpenalty=\count159
+\@endparpenalty=\count160
+\@labels=\box35
+\par@deathcycles=\count161
+\@enumdepth=\count162
+\c@enumi=\count163
+\c@enumii=\count164
+\c@enumiii=\count165
+\c@enumiv=\count166
+\@itemdepth=\count167
+boxes,\fboxrule=\dimen75
+\fboxsep=\dimen76
+\@mplistdepth=\count168
+\@mpfootins=\insert254
+LaTeX Info: Redefining \underline on input line 16604.
+\@gtempa=\dimen77
+\@gtempa=\dimen78
+\@gtempa=\dimen79
+\@gtempa=\dimen80
+\@gtempa=\dimen81
+\@gtempa=\dimen82
+\@gtempa=\dimen83
+\@gtempa=\dimen84
+\@gtempa=\dimen85
+\@gtempa=\dimen86
+\@gtempa=\dimen87
+\@gtempa=\dimen88
+\@gtempa=\dimen89
+\@gtempa=\dimen90
+\@nxttabmar=\count169
+\@curtabmar=\count170
+\@curtab=\count171
+\@hightab=\count172
+\@tabpush=\count173
+\@curline=\box36
+\@curfield=\box37
+\@tabfbox=\box38
+\tabbingsep=\dimen91
+\@chclass=\count174
+\@lastchclass=\count175
+\@chnum=\count176
+\arraycolsep=\dimen92
+\tabcolsep=\dimen93
+\arrayrulewidth=\dimen94
+\doublerulesep=\dimen95
+\@arstrutbox=\box39
+\@wholewidth=\dimen96
+\@halfwidth=\dimen97
+\unitlength=\dimen98
+\@picbox=\box40
+\@picht=\dimen99
+\@ovxx=\dimen100
+\@ovyy=\dimen101
+\@ovdx=\dimen102
+\@ovdy=\dimen103
+\@ovro=\dimen104
+\@ovri=\dimen105
+\@xarg=\count177
+\@yarg=\count178
+\@yyarg=\count179
+\@multicnt=\count180
+\@xdim=\dimen106
+\@ydim=\dimen107
+\@linechar=\box41
+\@linelen=\dimen108
+\@clnwd=\dimen109
+\@clnht=\dimen110
+\@dashdim=\dimen111
+\@dashbox=\box42
+\@dashcnt=\count181
+LaTeX Info: Command `\linethickness' is already robust on input line 17403.
+LaTeX Info: Command `\thinlines' is already robust on input line 17409.
+title,sectioning,\@secpenalty=\count182
+\c@secnumdepth=\count183
+\c@tocdepth=\count184
+contents,floats,\@floatpenalty=\count185
+footnotes,\footins=\insert253
+\c@footnote=\count186
+\c@mpfootnote=\count187
+\footnotesep=\dimen112
+index,bibliography,\l__mark_box=\box43
+\l__mark_ii_box=\box44
+\g__mark_int=\count188
+\pkgcls@targetdate=\count189
+\l_shipout_box=\box45
+\l__shipout_raw_box=\box46
+\l__shipout_firstpage_box=\box47
+\l_shipout_box_ht_dim=\dimen113
+\l_shipout_box_dp_dim=\dimen114
+\l_shipout_box_wd_dim=\dimen115
+\l_shipout_box_ht_plus_dp_dim=\dimen116
+\l__shipout_tmp_box=\box48
+\g_shipout_readonly_int=\count190
+\g_shipout_totalpages_int=\count191
+output,\bx@A=\insert252
+\bx@B=\insert251
+\bx@C=\insert250
+\bx@D=\insert249
+\bx@E=\insert248
+\bx@F=\insert247
+\bx@G=\insert246
+\bx@H=\insert245
+\bx@I=\insert244
+\bx@J=\insert243
+\bx@K=\insert242
+\bx@L=\insert241
+\bx@M=\insert240
+\bx@N=\insert239
+\bx@O=\insert238
+\bx@P=\insert237
+\bx@Q=\insert236
+\bx@R=\insert235
+\bx@S=\insert234
+\bx@T=\insert233
+\bx@U=\insert232
+\bx@V=\insert231
+\bx@W=\insert230
+\bx@X=\insert229
+\bx@Y=\insert228
+\bx@Z=\insert227
+\bx@AA=\insert226
+\bx@BB=\insert225
+\bx@CC=\insert224
+\bx@DD=\insert223
+\bx@EE=\insert222
+\bx@FF=\insert221
+\bx@GG=\insert220
+\bx@HH=\insert219
+\bx@II=\insert218
+\bx@JJ=\insert217
+\bx@KK=\insert216
+\bx@LL=\insert215
+\bx@MM=\insert214
+\bx@NN=\insert213
+\bx@OO=\insert212
+\bx@PP=\insert211
+\bx@QQ=\insert210
+\bx@RR=\insert209
+\bx@SS=\insert208
+\bx@TT=\insert207
+\bx@UU=\insert206
+\bx@VV=\insert205
+\bx@WW=\insert204
+\bx@XX=\insert203
+\bx@YY=\insert202
+\bx@ZZ=\insert201
+\topmargin=\dimen117
+\oddsidemargin=\dimen118
+\evensidemargin=\dimen119
+\headheight=\dimen120
+\headsep=\dimen121
+\footskip=\dimen122
+\textheight=\dimen123
+\textwidth=\dimen124
+\columnwidth=\dimen125
+\columnsep=\dimen126
+\columnseprule=\dimen127
+\marginparwidth=\dimen128
+\marginparsep=\dimen129
+\marginparpush=\dimen130
+\@begindvibox=\box49
+\@maxdepth=\dimen131
+\paperheight=\dimen132
+\paperwidth=\dimen133
+\stockheight=\dimen134
+\stockwidth=\dimen135
+\col@number=\count192
+\@topnum=\count193
+\@toproom=\dimen136
+\@dbltopnum=\count194
+\@dbltoproom=\dimen137
+\@botnum=\count195
+\@botroom=\dimen138
+\@colnum=\count196
+\@textmin=\dimen139
+\@fpmin=\dimen140
+\@colht=\dimen141
+\@colroom=\dimen142
+\@pageht=\dimen143
+\@pagedp=\dimen144
+\@mparbottom=\dimen145
+\@currtype=\count197
+\@outputbox=\box50
+\@leftcolumn=\box51
+\@holdpg=\box52
+\@outputbox@depth=\dimen146
+\@kludgeins=\insert200
+\@fpstype=\count198
+\@reqcolroom=\dimen147
+\@textfloatsheight=\dimen148
+\saved@reqcolroom=\dimen149
+\c@topnumber=\count199
+\c@bottomnumber=\count266
+\c@totalnumber=\count267
+\c@dbltopnumber=\count268
+\floatsep=\skip38
+\textfloatsep=\skip39
+\intextsep=\skip40
+\dblfloatsep=\skip41
+\dbltextfloatsep=\skip42
+\@fptop=\skip43
+\@fpsep=\skip44
+\@fpbot=\skip45
+\@dblfptop=\skip46
+\@dblfpsep=\skip47
+\@dblfpbot=\skip48
+\l__tag_block_flattened_level_int=\count269
+\g__tbl_col_int=\count270
+\g__tbl_row_int=\count271
+\g__tbl_missing_cells_int=\count272
+\@lowpenalty=\count273
+\@medpenalty=\count274
+\@highpenalty=\count275
+\c__mark_class_2e-left_mark=\marks1
+\c__mark_class_2e-right_mark=\marks2
+\c__mark_class_2e-right-nonempty_mark=\marks3
+File: hyphen.ltx 1994/12/04 v1.0h LaTeX Kernel (hyphenation interface)
+Loading hyphenation patterns for US english.\l@nohyphenation=\language1
+\pdfgentounicode=\count276
+File: utf8.def 2022/06/07 v1.3c UTF-8 support
+Now handling font encoding OML ...
+... no UTF-8 mapping file for font encoding OML
+Now handling font encoding OMS ...
+... no UTF-8 mapping file for font encoding OMS
+Now handling font encoding OT1 ...
+... no UTF-8 mapping file for font encoding OT1
+Now handling font encoding T1 ...
+... no UTF-8 mapping file for font encoding T1
+Now handling font encoding TS1 ...
+... no UTF-8 mapping file for font encoding TS1
+Now handling font encoding OMX ...
+... no UTF-8 mapping file for font encoding OMX
+Now handling font encoding U ...
+... no UTF-8 mapping file for font encoding U
+   defining Unicode char U+00A9 (decimal 169)
+   defining Unicode char U+00AA (decimal 170)
+   defining Unicode char U+00AE (decimal 174)
+   defining Unicode char U+00BA (decimal 186)
+   defining Unicode char U+02C6 (decimal 710)
+   defining Unicode char U+02DC (decimal 732)
+   defining Unicode char U+200C (decimal 8204)
+   defining Unicode char U+2026 (decimal 8230)
+   defining Unicode char U+2122 (decimal 8482)
+   defining Unicode char U+2423 (decimal 9251)
+   defining Unicode char U+FEFF (decimal 65279)
+File: latex2e-first-aid-for-external-files.ltx 2026-03-12 v1.1x LaTeX kernel fixes to external files and packages

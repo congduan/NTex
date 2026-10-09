@@ -51,6 +51,11 @@ impl SurveyVfs {
 impl Vfs for SurveyVfs {
     fn read(&mut self, path: &str) -> std::io::Result<Option<Vec<u8>>> {
         let path = &normalize(path);
+        // 写后读一致：\openout 落 mem 的文件优先（latex.ltx 的 texsys.aux
+        // 探测 = openout 后立即 openin 读回；磁盘 roots 若有同名旧件会遮蔽）。
+        if let Some(bytes) = self.mem.read(path)? {
+            return Ok(Some(bytes));
+        }
         let stripped = path.strip_prefix(&self.root).unwrap_or(path);
         // 多路查找：主 root 优先，其后 extra_roots（--input-path，对齐
         // ntex-dvi CLI 语义）。latex.ltx 载入闭包跨目录时必需（如源在

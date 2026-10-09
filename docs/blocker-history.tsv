@@ -5,3 +5,9 @@ ts	head	furthest_line	first_error	terminal	stack_overflow	verdict
 2026-10-02T05:51:18Z	c680bc7	38446	非法输入：扫描到输入末尾	ERROR	0	FORWARD
 2026-10-02T05:53:09Z	c680bc7	36005	非法输入：扫描到输入末尾	ERROR	0	REGRESSION
 2026-10-02T05:55:52Z	c680bc7	36005	非法输入：扫描到输入末尾	ERROR	0	STALL
+2026-10-09T02:54:11Z	3a486f3	117	非法输入：cannot \read from terminal in nonstop modes�	ERROR	0	REGRESSION
+2026-10-09T03:07:11Z	3a486f3	117	非法输入：cannot \read from terminal in nonstop modes�	ERROR	0	STALL
+2026-10-09T03:29:28Z	fd50153	117	非法输入：cannot \read from terminal in nonstop modes�	ERROR	0	STALL
+2026-10-09T03:31:35Z	fd50153	54	<none>	END	0	REGRESSION
+2026-10-09T03:33:57Z	fd50153	22585	非法输入：cannot \read from terminal in nonstop modes�	ERROR	0	FORWARD
+2026-10-09T03:36:05Z	fd50153	0	<none>	END	0	REGRESSION
