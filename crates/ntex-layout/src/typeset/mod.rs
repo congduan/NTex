@@ -37,7 +37,7 @@ use crate::node::{
     hbox_dimensions, hpack, split_vbox, vbox_dimensions, vpack, BoxKind, BoxNode, FontId,
     LeadersKind, Node, GLUE_ORDER_FIL, GLUE_ORDER_FILL,
 };
-use crate::page::PageBuilder;
+use crate::page::{InsertRegs, PageBuilder};
 
 /// 模式（TeX 模式状态机的 M3-2 子集 + M4 数学）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -816,6 +816,9 @@ struct PageState {
     /// 页面构建器（`pagination` 时把顶层垂直列表拆成页面）。
     page: PageBuilder,
 
+    /// Insert 三联寄存器镜像：页面构建器用它给脚注等插入物预留空间。
+    insert_regs: InsertRegs,
+
     /// `\shipout`：下一个封装盒子作为页面（DVI shipout，M3-5）。
     shipout_next: bool,
 
@@ -1075,6 +1078,7 @@ impl NodeBuilder {
             page_state: PageState {
                 pagination,
                 page: PageBuilder::new(),
+                insert_regs: InsertRegs::default(),
                 shipout_next: false,
                 shipped: Vec::new(),
                 shipped_counts: Vec::new(),
@@ -1201,9 +1205,12 @@ impl NodeBuilder {
         // 边界执行例程（ship box255）后再继续；未定义时页面直通 shipped。
         if self.page_state.pagination && self.mode() == Mode::Vertical && self.lists.len() == 1 {
             // 断点惩罚队列语境：上一页未消费（例程还没跑）= 排队超前
-            if let Some(p) = self.page_state.page.feed_one(
+            let page = &mut self.page_state.page;
+            let insert_regs = &self.page_state.insert_regs;
+            if let Some(p) = page.feed_one(
                 &mut self.lists[0],
                 &self.params,
+                insert_regs,
                 self.page_state.output_defined,
             ) {
                 self.accept_page(p);

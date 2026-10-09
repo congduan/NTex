@@ -13,10 +13,15 @@
 //!   触发节点（eject 的 penalty 等）留待对（新）空页重处理并被丢弃——
 //!   这正是 `\end` 不产生多余空页的机制。
 //!
-//! 不支持：insert/mark/whatsit（M4+）。用户 output routine（M3-5-3）由
-//! [crate::typeset::NodeBuilder] 在页面产出后路由到 box255 + 引擎 token 注入。
+//! Insert 已做最小脚注计账（按 `\count/\dimen/\skip` 三联寄存器扣 page_goal），
+//! 但长插入物 split/holdover 仍是已登记简化。mark/whatsit 不参与断页测量。
+//! 用户 output routine（M3-5-3）由 [crate::typeset::NodeBuilder] 在页面产出后
+//! 路由到 box255 + 引擎 token 注入。
+
+use std::collections::{HashMap, HashSet};
 
 use ntex_core::param::Params;
+use ntex_core::register::{Glue, REGISTER_COUNT};
 
 use crate::node::{BoxKind, BoxNode, Node};
 
@@ -29,6 +34,25 @@ const DEPLORABLE: i64 = 100_000;
 
 /// `ignore_depth`（tex.web §321）：无前驱盒子时 interline glue 被抑制。
 pub const IGNORE_DEPTH: i64 = -65_536_000;
+
+/// Insert 三联寄存器镜像（`\count` factor / `\dimen` max height /
+/// `\skip` first-insert skip）。TeX 的插入类号与盒寄存器号共用下标。
+#[derive(Debug, Clone)]
+pub struct InsertRegs {
+    pub counts: Vec<i64>,
+    pub dimens: Vec<i64>,
+    pub skips: Vec<Glue>,
+}
+
+impl Default for InsertRegs {
+    fn default() -> Self {
+        Self {
+            counts: vec![0; REGISTER_COUNT],
+            dimens: vec![0; REGISTER_COUNT],
+            skips: vec![Glue::ZERO; REGISTER_COUNT],
+        }
+    }
+}
 
 /// 页面构建器状态（tex.web `page_so_far` 的 Rust 表达）。
 /// `Clone`（M5 阶段三）：排版层段边界检查点克隆页面构建器
@@ -102,6 +126,10 @@ pub struct PageBuilder {
     /// 事件面值只在显式赋值时更新，恰好承载 LaTeX「每次例程尾都重设 \vsize」
     /// 的契约；None 时退回镜像。
     vsize_live: Option<i64>,
+    /// 当前页各 insert 类已接纳的自然高度（tex.web page_insert 中 `height(p)`）。
+    insert_heights: HashMap<usize, i64>,
+    /// 当前页已经为哪些 insert 类扣过 `\skip<class>`。
+    insert_skips_seen: HashSet<usize>,
 }
 
 /// `process` 单节点处理结果。
@@ -144,6 +172,8 @@ impl PageBuilder {
             release_zero_without_topskip: false,
             trace_buf: String::new(),
             vsize_live: None,
+            insert_heights: HashMap::new(),
+            insert_skips_seen: HashSet::new(),
         }
     }
 
@@ -202,6 +232,7 @@ impl PageBuilder {
         &mut self,
         contrib: &mut Vec<Node>,
         params: &Params,
+        inserts: &InsertRegs,
         output_defined: bool,
     ) -> Option<BoxNode> {
         // \tracingpages：misc 59（与 ntex-core int_param_index 对齐）
@@ -263,7 +294,7 @@ impl PageBuilder {
             if contrib.is_empty() {
                 return None;
             }
-            match self.process(contrib, params) {
+            match self.process(contrib, params, inserts) {
                 Outcome::Continue => {}
                 Outcome::FireUp => {
                     // fire_up 已把页内剩余节点拼回贡献前端，由调用方继续处理
@@ -276,7 +307,12 @@ impl PageBuilder {
     /// 处理贡献列表头节点（tex.web "Move node p to the current page"）。
     ///
     /// 入页/丢弃时从贡献移除；fire_up 时保留在贡献前端。
-    fn process(&mut self, contrib: &mut Vec<Node>, params: &Params) -> Outcome {
+    fn process(
+        &mut self,
+        contrib: &mut Vec<Node>,
+        params: &Params,
+        inserts: &InsertRegs,
+    ) -> Outcome {
         let node = contrib[0].clone();
         match node {
             Node::Box(b) => {
@@ -454,6 +490,38 @@ impl PageBuilder {
                 }
                 contrib.remove(0);
                 self.page.push(Node::Penalty { penalty });
+                Outcome::Continue
+            }
+            Node::Ins {
+                class, ref body, ..
+            } => {
+                if !self.has_box {
+                    contrib.remove(0);
+                    return Outcome::Continue;
+                }
+                let body_height = body.height + body.depth;
+                let already = *self.insert_heights.get(&class).unwrap_or(&0);
+                let max_for_class = inserts.dimens.get(class).copied().unwrap_or(0);
+                let accepted_height = if max_for_class > 0 {
+                    body_height.min((max_for_class - already).max(0))
+                } else {
+                    body_height
+                };
+                if accepted_height > 0 {
+                    let mut debit = accepted_height;
+                    let factor = inserts.counts.get(class).copied().unwrap_or(1000);
+                    if factor > 0 {
+                        debit = debit.saturating_mul(factor) / 1000;
+                    }
+                    if self.insert_skips_seen.insert(class) {
+                        debit += inserts.skips.get(class).map(|g| g.width).unwrap_or(0);
+                    }
+                    self.goal = self.goal.saturating_sub(debit);
+                    self.insert_heights.insert(class, already + accepted_height);
+                }
+                contrib.remove(0);
+                self.page.push(node);
+                self.last_is_box = false;
                 Outcome::Continue
             }
             // mark/leaders 等：直接入页（不参与断点与测量）
@@ -734,6 +802,8 @@ impl PageBuilder {
         self.best_size = self.goal;
         self.last_is_box = false;
         self.prev_depth = IGNORE_DEPTH;
+        self.insert_heights.clear();
+        self.insert_skips_seen.clear();
         // \tracingpages：freeze 时输出目标行（tex.web freeze_page_specs）
         if self.tracing {
             self.trace_buf.push_str(&format!(
@@ -759,5 +829,7 @@ impl PageBuilder {
         self.best_size = 0;
         self.last_is_box = false;
         self.prev_depth = IGNORE_DEPTH;
+        self.insert_heights.clear();
+        self.insert_skips_seen.clear();
     }
 }

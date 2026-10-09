@@ -111,6 +111,7 @@
 | `typeset/sink.rs:1519,1525` / `mod.rs:841` | `\moveleft/\moveright` 位移不落节点（取走即清） | 待做 |
 | `typeset/sink.rs:1101` | 非引导上下文未定宽度简化落 0 | 待做 |
 | `typeset/sink.rs:1439` | `\showlists` 简化转录（诊断用） | 待做 |
+| `page.rs` `Node::Ins` 计账 | `\insert` 已按 `\count/\dimen/\skip` 三联寄存器扣减本页正文目标并让输出例程可 `\unvbox\footins` 回流；但长 insert 超出 `\dimen<class>` 时尚未实现 tex.web `page_insert` 的 split/holdover（`\insertpenalties` 与剩余体跨页保留仍缺） | ⚠️ 第三十刀最小脚注可用；跨页拆分待做 |
 | `expand/primitive.rs:2684` | `\showifs` 简化格式 | ✅ 诊断原语（ETRIP l.651 被错误交互打断，无直接比对场景） |
 | `ntex-trip/harness.rs:8` | ETRIP 终端输出经 dvitype 比对暂不纳入 | 待做 |
 | `expand/macros.rs:844` | 宏不复制宏体（M1 简化） | 待做 |

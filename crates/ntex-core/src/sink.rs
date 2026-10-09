@@ -534,11 +534,21 @@ pub trait PageSink {
     /// 待处理页面不经用户例程直接 shipout（`\output` 例程从不 ship 时，
     /// `dead_cycles >= max_dead_cycles` 触发）。
     fn default_output_routine(&mut self) {}
-    /// `\count<n>=<值>`（含 `\advance`/组内回滚还原；输出例程刀 5，idx < 10 才推送）：
+    /// `\count<n>=<值>`（含 `\advance`/组内回滚还原；所有下标都会推送）：
     /// 页号链镜像——tex.web `ship_out` L12694 在 shipout 边界**直接读 count(j)**
     /// 打页标签、写 DVI bop 的 10 计数字，排版器侧无从反查引擎寄存器，故与
     /// [`TokenSink::param_changed`] 同款赋值即推送。
     fn count_changed(&mut self, _idx: usize, _value: i64) -> Result<()> {
+        Ok(())
+    }
+    /// `\dimen<n>=<值>`（含 `\advance`/组内回滚还原）：页面构建器用 insert
+    /// 三联寄存器中的 `\dimen<class>` 作为本页该类插入物上限。
+    fn dimen_changed(&mut self, _idx: usize, _value: i64) -> Result<()> {
+        Ok(())
+    }
+    /// `\skip<n>=<值>`（含 `\advance`/组内回滚还原）：页面构建器用 insert
+    /// 三联寄存器中的 `\skip<class>` 作为该类插入物首次出现的页内间距。
+    fn skip_changed(&mut self, _idx: usize, _value: Glue) -> Result<()> {
         Ok(())
     }
     /// e-TeX marks 族查询：`\topmarks<n>`（继承自上一页的 botmarks；初始为空）。

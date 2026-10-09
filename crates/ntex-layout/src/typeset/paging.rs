@@ -179,9 +179,12 @@ impl NodeBuilder {
             }
             // 产出一页则返回；材料全部入页但未触发断页 → 循环（贡献已空时补 eject
             // 节点再试，贡献非空时继续消化既有材料）。
-            if let Some(p) = self.page_state.page.feed_one(
+            let page = &mut self.page_state.page;
+            let insert_regs = &self.page_state.insert_regs;
+            if let Some(p) = page.feed_one(
                 &mut self.lists[0],
                 &self.params,
+                insert_regs,
                 self.page_state.output_defined,
             ) {
                 self.accept_page(p);

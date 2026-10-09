@@ -522,7 +522,9 @@ CLI `ntex-pkg`（`index`/`provide`/`resolve`/`lock`/`check`/`local`/**`vendor`**
 
 - [ ] `\halign`/`\valign` 精化剩余刀（刀 0 对拍仪器 / 刀 2 preamble 宏展开通路 + S3–S7；
       刀 1/3 已落：`\everycr` 两点注入、align_peek 入口复位、to/spread 摊派）
-- [ ] `\insert` **体排版化**（脚注仍不可用；分配面已落：`\newinsert` + 三联寄存器）
+- [ ] `\insert` **体排版化**：第三十刀已让 insert 体参与断页计账（`\count/\dimen/\skip`
+      三联寄存器）并可在输出例程中 `\unvbox\footins` 回流；plain `\footnote*{...}` 最小
+      DVI 对拍 1 页通过。余：长脚注 split/holdover 与 `\insertpenalties`。
 - [ ] 数学矩阵（`\matrix`/`\eqalign`）—— 勘察结论：无独立引擎战役，
       本体是宏层 + `\halign` 地基，引擎增量仅 `\vcenter` 数学包装验证 +
       `Improper \halign inside $$'s` 检查 + Align 产物盒交 `MathAtom::Box`

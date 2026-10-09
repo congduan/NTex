@@ -130,3 +130,33 @@ use super::*;
         );
         assert!(t.contains("FULL"), "改道后 \\ifvoid0 应为假：{t:?}");
     }
+
+    /// 脚注类 insert 参与断页计账：`\box255` 的正文页高要扣掉
+    /// `\skip<class>` 与 insert 体自然高，输出例程随后可 `\unvbox<class>`
+    /// 把脚注排到页底。
+    #[test]
+    fn insert_footnote_reaches_page_bottom_and_reserves_space() {
+        let mut ts = Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+        let (pages, _) = ts
+            .typeset_dvi(
+                r"\count150=1000 \dimen150=50pt \skip150=12pt
+                  \vsize=100pt \hsize=200pt
+                  \output={\dimen0=\ht255 \showthe\dimen0
+                    \shipout\vbox to\vsize{\unvbox255\vfil
+                      \ifvoid150\else\vskip\skip150\hrule\unvbox150\fi}}
+                  \hbox{BODY}\insert150{\hbox{FN}}\vfill\penalty-10000\end",
+            )
+            .unwrap();
+        assert_eq!(pages.len(), 1, "应输出单页：{pages:?}");
+        let t = ts.take_transcript();
+        let ht255 = showthe_values(&t, "dimen");
+        assert_eq!(ht255.len(), 1, "输出例程应展示一次 box255 高度：{t:?}");
+        assert_ne!(
+            ht255[0], "100.0pt",
+            "box255 不能占满 vsize，否则脚注没有参与断页让位：{t:?}"
+        );
+        let mut text = String::new();
+        collect_text(&pages[0], &mut text);
+        assert!(text.contains("BODY"), "正文应在输出页：{text:?}");
+        assert!(text.contains("FN"), "脚注体应由输出例程回流到页底：{text:?}");
+    }
