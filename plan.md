@@ -509,6 +509,10 @@ CLI `ntex-pkg`（`index`/`provide`/`resolve`/`lock`/`check`/`local`/**`vendor`**
       （initex 逐行口径下仍登记，发行 fmt 路径已绕过）
 - [ ] **M1-13 错误恢复通用机制**：`back_input` / 插入恢复 token / `\errhelp` ——
       影响**所有报错原语**的"报错后继续"路径；TRIP 卡点根因；契约级（任意畸形输入不 panic）
+      **🟡 首刀落地（0f271ee，2026-10-09）**：fetch() 向扫描语境暴露 Source EOF；
+      定界参数 EOF → `File ended while scanning use of \<name>` + 插 `\par` +
+      废弃坏宏调用 + 父输入继续；`Incomplete \iffalse` EOF 补 `\fi`。
+      Transformer 实测 48957B 出页（基线 49245B）。余：`\errhelp`/back_input 全面化。
 - [ ] **TRIP / ETRIP semantic diff 归零**（−5619/+1412 与 −3051/+2352）+ 错误块抽查
 - [ ] ~~`\documentclass` / article.cls → 结构宏 → 真 LaTeX 版面 PDF~~ ✅ 最小闭环已通
       （small2e 0 错 / transformer 18 页与基线一致，2026-10-02 主控实测）；
