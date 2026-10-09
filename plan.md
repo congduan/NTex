@@ -108,6 +108,12 @@ babel 配置（引用宿主缺失的 dehypht-x-2024-02-28.tex）→ 断字配置
 `try_scan_backquote`/`peek_csid` 的 fetch(None) 改交 Missing number 恢复（beffd0f）。
 发行 fmt **v23 已生成入库**（assets/fmt/latex.fmt，9082372B），`--generate-fmt` 全链复活。
 expl3 载入终点已越过 l.36005（exgeneric 过、backend def 链通）。
+**✅ 2026-10-09 载入闭包补件 + dumped=true（76d11bb）**：fixtures 缺件链补齐
+（5 enc.def + 41 base/*.fd + hyphen/zerohyph + utf8 系，51 件）——latex_probe
+`pass1 OK, dumped=true`，载入终点 **l.38446**（l3text-map 段，89.4%→95%+）。
+SurveyVfs read() mem 优先（写后读一致）。廿七刀证伪 chardef 假说但落 3 把
+回归锁（fd50153）。残 1 错 Missing number @38446（01F0 mapping，带病可恢复；
+纯 expl3 场景不现，依赖 latex.ltx 前置语境，另案）。
 剩余 10.6% 行 = codepoint 收尾 / l3text 五段 / l3legacy+l3deprecation / 文件尾 / exgeneric 尾。
 
 ### 0.2 各线状态
