@@ -979,18 +979,17 @@ impl Expander {
     /// 反引号后可跟任意字符 token（取其字符码），或单字符控制符号（取其字符）；
     /// 控制词（如 `` `\par ``）报 "Improper alphabetic constant"（TeX 同规则）。
     fn try_scan_backquote(&mut self) -> Result<Option<i64>> {
-        let tok = self
-            .fetch()?
-            .ok_or_else(|| Error::invalid_input("扫描到输入末尾"))?
-            .0;
+        let Some((tok, _)) = self.fetch()? else {
+            return Ok(None);
+        };
         if tok.catcode() != Some(Catcode::Other) || tok.charcode() != Some(b'`' as u32) {
             self.unread(tok);
             return Ok(None);
         }
-        let t2 = self
-            .fetch()?
-            .ok_or_else(|| Error::invalid_input("反引号后缺少字符"))?
-            .0;
+        let Some((t2, _)) = self.fetch()? else {
+            self.report_missing_number();
+            return Ok(Some(0));
+        };
         match t2.kind() {
             TokenKind::Char => Ok(Some(t2.charcode().expect("Char 必有 charcode") as i64)),
             TokenKind::ControlSeq => {
@@ -3099,10 +3098,9 @@ impl Expander {
 
     /// 窥视下一个 token 是否为控制序列（fetch + unread）。
     fn peek_csid(&mut self) -> Result<Option<u32>> {
-        let tok = self
-            .fetch()?
-            .ok_or_else(|| Error::invalid_input("扫描到输入末尾"))?
-            .0;
+        let Some((tok, _)) = self.fetch()? else {
+            return Ok(None);
+        };
         let csid = tok.csid();
         self.unread(tok);
         Ok(csid)

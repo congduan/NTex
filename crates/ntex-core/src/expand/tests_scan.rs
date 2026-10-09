@@ -116,6 +116,38 @@ use super::*;
         );
     }
 
+    /// 第二十六刀：字母常量探测位于数字扫描的可选分支，EOF 只表示“没有
+    /// 反引号可读”，不得升级成 fatal。真实墙面是 expl3-code 载入末端的
+    /// `\romannumeral`/f 型展开前瞻刚好读到输入边界，旧实现把
+    /// `try_scan_backquote` 的探测 EOF 报成“扫描到输入末尾”。
+    #[test]
+    fn backquote_probe_at_expansion_boundary_eof_is_recoverable() {
+        let (r, transcript) = run_transcript("\\def\\n{}\\count0=\\n");
+        r.unwrap();
+        assert!(
+            transcript.contains("Missing number"),
+            "EOF 数字扫描仍应走 Missing number 恢复：{transcript}"
+        );
+        assert!(
+            !transcript.contains("扫描到输入末尾"),
+            "反引号可选探测不得把 EOF 升级成 fatal：{transcript}"
+        );
+    }
+
+    #[test]
+    fn dangling_backquote_at_eof_is_missing_number_zero() {
+        let (r, transcript) = run_transcript("\\count0=`");
+        r.unwrap();
+        assert!(
+            transcript.contains("Missing number"),
+            "反引号后 EOF 按 TeX 错误恢复插入 0：{transcript}"
+        );
+        assert!(
+            !transcript.contains("扫描到输入末尾") && !transcript.contains("反引号后缺少字符"),
+            "反引号 EOF 不应 fatal：{transcript}"
+        );
+    }
+
     /// 数字扫描的**别名即原义**（tex.web §24.4：`\let` 在 eqtb 层复制含义）。
     /// 本引擎 Alias 槽保留于宏/未定义目标（`let_to`），数字扫描的符号循环
     /// expandable 检查与内部量分派、表达式因子/运算符位展开检查此前都不追链：
