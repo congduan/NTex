@@ -2976,11 +2976,13 @@ impl Expander {
             // 已回推的恢复材料而重放同一残流。
             return Ok(());
         }
-        self.collapse_tail_conditionals_for_macro_call();
         // TeX 输入栈上限（tex.web `stack_size`）：宏递归展开无终止条件时以此
-        // 报错终止，而非耗尽内存。检查放在实参扫描和尾部条件收束之后：`\if...
-        // \else <tail call> \fi` 的调用点在物理上还剩一个 `\fi`，但 tex.web
-        // macro_call 的 conserve-stack 语义会让这类分支尾调用不按行数涨栈。
+        // 报错终止，而非耗尽内存。GT 锚（pdfTeX，35k 行裸 `\rdloop\fi` 循环）：
+        // `TeX capacity exceeded, sorry [input stack size = 10000].`——tex.web
+        // macro_call 并无 conserve-stack 语义，调用者帧照常入栈；只有
+        // `\expandafter\loop\fi` 形态（展开位急切闭合条件，真宏调用前 `\fi`
+        // 已消费）才不按行数涨栈。绝不可在此偷收束调用者尾部的 `\fi`：那是
+        // 数据，可能是正被扫描的定界实参（\robust@command@act@do，刀A）。
         if self.stack.len() >= MAX_INPUT_STACK {
             let name = self.intern.name(csid).to_owned();
             let _ = self.sink.write16(format!(
@@ -3011,86 +3013,6 @@ impl Expander {
             args,
         });
         Ok(())
-    }
-
-    /// 收束宏体尾部的条件闭合 token，让分支尾调用不保留一层调用者帧。
-    ///
-    /// 典型形态是逐行读取循环：
-    ///
-    /// ```text
-    /// \def\loop{\ifeof\r ...\else ... \loop \fi}
-    /// ```
-    ///
-    /// 递归调用发生时，调用者帧物理上还剩 `\fi`，普通 `drain_depleted_frames`
-    /// 因而看不到“耗尽帧”。tex.web 的 token-list 回收语义会让这种宏体末尾
-    /// 自调用不占无界输入栈；这里仅在剩余流完全由可立即闭合的 `\fi` 组成时
-    /// 提前闭合对应条件帧，并把调用者帧推进到耗尽位置。
-    fn collapse_tail_conditionals_for_macro_call(&mut self) {
-        let Some(count) = self.trailing_fi_count_for_top_frame() else {
-            return;
-        };
-        if count == 0 || self.cond_stack.len() < count {
-            return;
-        }
-        if !self
-            .cond_stack
-            .iter()
-            .rev()
-            .take(count)
-            .all(|f| f.state == CondState::Processing && f.else_seen)
-        {
-            return;
-        }
-        for _ in 0..count {
-            if let Some(frame) = self.cond_stack.pop() {
-                self.cur_if_type = frame.saved_if_type;
-                self.cur_if_branch = frame.saved_if_branch;
-            }
-        }
-        match self.stack.last_mut() {
-            Some(InputFrame::Macro { body, pos, .. }) => *pos = body.len(),
-            Some(InputFrame::Bytecode { code, pc, .. }) => *pc = code.len(),
-            _ => {}
-        }
-        self.drain_depleted_frames();
-    }
-
-    fn trailing_fi_count_for_top_frame(&self) -> Option<usize> {
-        let frame = self.stack.last()?;
-        match frame {
-            InputFrame::Macro { body, pos, .. } => {
-                let mut count = 0usize;
-                for &tok in body.as_ref().get(*pos..)? {
-                    if self.is_fi_token(tok) {
-                        count += 1;
-                    } else {
-                        return None;
-                    }
-                }
-                Some(count)
-            }
-            InputFrame::Bytecode { code, pc, .. } => {
-                let mut count = 0usize;
-                let mut at = *pc;
-                while at < code.len() {
-                    match Instruction::decode(code.words()[at]) {
-                        Instruction::Emit { token } if self.is_fi_token(token) => {
-                            count += 1;
-                            at += 1;
-                        }
-                        Instruction::End => return Some(count),
-                        _ => return None,
-                    }
-                }
-                Some(count)
-            }
-            _ => None,
-        }
-    }
-
-    fn is_fi_token(&self, tok: Token) -> bool {
-        tok.csid()
-            .is_some_and(|csid| matches!(self.eqtb.slot(csid), EqSlot::Primitive(Primitive::Fi)))
     }
 
     // ---------- 输入获取 ----------

@@ -487,12 +487,75 @@ use super::*;
     }
 
     #[test]
-    fn input_stack_tailrecursion_macro_loop_35k_lines() {
-        // tex.web macro_call: a macro whose active branch ends in a self call must
-        // not keep one input frame per iteration. The expl3 UnicodeData loader uses
-        // this shape via \__ior_map_inline_loop over 34931 lines.
-        // This do-while probe counts the EOF-closing empty read too; keep 34930
-        // content lines to lock the externally observed LINES:34931 criterion.
+    fn delimited_arg_fi_of_open_cond_is_data_not_cond_close() {
+        // 刀A 回归锁（latex.ltx `\robust@command@act@do` 形态最小化，两层）：
+        // 外层 `\mid` 调用时调用者帧剩余恰为一个 `\fi`、外层 `\ifx` 处于 else
+        // 分支——投机“尾部条件收束”在此把 `\fi` 连同条件帧一起偷走，随后
+        // `\mid` 体内 `\do` 的定界实参扫描就再也见不到 `\fi` → Runaway。
+        // tex.web scan_toks：实参位 token 一律是数据——`\fi` 作 `#1` 的定界符
+        // 被消费，**不**步进条件机（`\ifx` 由流末的 `\fi` 闭合）。
+        // GT 锚（pdfTeX plain，/tmp/bladeA/p5.tex）：输出 `X<A|B>`、无 Runaway。
+        let (out, _) = expand_vfs(
+            concat!(
+                "\\def\\do#1\\fi#2\\zz{<#1|#2>}",
+                "\\def\\mid{X\\do A}",
+                "\\def\\wrap{\\mid\\fi}",
+                "\\ifx\\wrap\\relaxU",
+                "\\else",
+                "\\wrap B\\zz",
+                "\\fi",
+                "\\end",
+            ),
+            MemVfs::new(),
+        )
+        .unwrap();
+        assert!(
+            !out.contains("Runaway"),
+            "定界实参不得因偷闭合条件而 runaway：{out}"
+        );
+        assert_eq!(out, "X<A|B>", "\\fi 须按数据消费为定界符：{out}");
+    }
+
+    #[test]
+    fn input_stack_macro_loop_bare_tail_call_hits_capacity() {
+        // tex.web `stack_size`：宏分支尾自调用**没有** conserve-stack 语义——
+        // 调用者帧照常入栈，裸 `\rdloop\fi` 循环按行数涨栈直至容量超限。
+        // GT 锚（pdfTeX plain，35k 行）：`TeX capacity exceeded, sorry
+        // [input stack size = 10000].`。修掉“尾部条件收束”投机优化后回归。
+        let mut vfs = MemVfs::new();
+        let mut data = String::new();
+        for i in 0..10_050 {
+            if i != 0 {
+                data.push('\n');
+            }
+            data.push_str(&format!("{i:04X}; NAME"));
+        }
+        vfs.insert("UnicodeData.txt", data);
+        let err = expand_vfs(
+            concat!(
+                "\\newread\\uin",
+                "\\openin\\uin=UnicodeData.txt\\relax",
+                "\\def\\rdloop{\\ifeof\\uin\\relax\\else",
+                "\\begingroup\\endlinechar=-1 \\readline\\uin to \\uline\\endgroup",
+                "\\advance\\count0 by 1 \\rdloop\\fi}",
+                "\\rdloop\\end",
+            ),
+            vfs,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("输入栈超限"),
+            "裸尾调用应触输入栈容量超限（GT 同构），实得：{err}"
+        );
+    }
+
+    #[test]
+    fn input_stack_macro_loop_expandafter_form_completes_35k_lines() {
+        // `\expandafter\rdloop\fi` 形态：展开位急切闭合条件，真宏调用前 `\fi`
+        // 已消费——调用者帧耗尽，不按行数涨栈。GT 锚（pdfTeX plain，g2.tex
+        // 35k 行，exit=0 出 DVI）。expl3 UnicodeData 装载器
+        // `\__ior_map_inline_loop:NNN` 正是先消费 `\fi:` 再尾调用。
+        // 本探针把 EOF 收束的空读也计入；锁外部判据 LINES:34931 须 34930 行内容。
         let mut vfs = MemVfs::new();
         let mut data = String::new();
         for i in 0..34_930 {
@@ -508,7 +571,7 @@ use super::*;
                 "\\openin\\uin=UnicodeData.txt\\relax",
                 "\\def\\rdloop{\\ifeof\\uin\\relax\\else",
                 "\\begingroup\\endlinechar=-1 \\readline\\uin to \\uline\\endgroup",
-                "\\advance\\count0 by 1 \\rdloop\\fi}",
+                "\\advance\\count0 by 1 \\expandafter\\rdloop\\fi}",
                 "\\rdloop LINES:\\the\\count0\\end",
             ),
             vfs,
