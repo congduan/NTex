@@ -545,8 +545,8 @@ mod tests {
         let mut state = ScanState::LineStart;
         let src = b"^^X\\def\\innerA{XV}\n^^Q\\def\\innerB{QV}\n}\n";
         let mut out = Vec::new();
-        while let Some(t) = scan_token(src, &mut pos, &catcodes, &mut intern, &mut state, false, 13)
-            .unwrap()
+        while let Some(t) =
+            scan_token(src, &mut pos, &catcodes, &mut intern, &mut state, false, 13).unwrap()
         {
             out.push(t);
         }
@@ -785,7 +785,10 @@ mod tests {
             13,
         )
         .unwrap_err();
-        assert!(matches!(err, Error::InvalidCharacter { byte: 127 }), "{err:?}");
+        assert!(
+            matches!(err, Error::InvalidCharacter { byte: 127 }),
+            "{err:?}"
+        );
         // 错误后该字符已消费：续扫得空格折叠后的 x
         let tok = scan_token(
             "^^? x".as_bytes(),
