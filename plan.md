@@ -191,6 +191,14 @@ SurveyVfs read() mem 优先（写后读一致）。廿七刀证伪 chardef 假�
    非 fmt 链语义破坏。**影响不变**：fmt 停 v22 期间，新原语作业走无 fmt 慢路径；
    h1 残 6 错 = v22 回落 plain 后的结构宏 Undefined（非本刀域）。
    **✅ CI 回归集落地（刀D，2026-10-10）**：`scripts/pkg-regression.py` + `fixtures/pkg-regression/`
+   13 包矩阵 + 基线文档入库；**刀E/F/G 三连修复后 12/13 PASS**（xcolor/graphicx/geometry
+   全部转绿，仅剩 microtype——pdfTeX protrusion 原语缺口 rpcode/lpcode/pdfmatch/
+   pdffontexpand，FAIL(1128) 但整篇跑通出 DVI，文本层 80.4%）。刀G（0c38ca4）：
+   `\ifdim` 谓词扫描缺宏展开臂（trig `\TG@@sin` 递归收敛全炸的根因）；刀E
+   （dc89ccb+4a988dc）：scan_dimen 数字循环缺展开臂 + 数量×内部量截断 +
+   format_dimen 舍入 + preamble `\rshift` 泄残流误报；刀F（23c7a2d）：`^^` 置换
+   产物缺 reswitch 重分派（microtype `^^Q`/`^^X` 引擎条件编译失效 → 自引用定义
+   → edef 栈超限）。
    13 包矩阵双跑（ntex --auto-pkg vs pdfTeX GT），PASS 9/13；基线报告
    `docs/pkg-regression-baseline.md`（重跑逐字节幂等）。非 PASS=geometry 1 错、
    xcolor 10 错、graphicx 40 错（均出 DVI）、microtype 719 错（无 DVI）；
