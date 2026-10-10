@@ -2136,28 +2136,24 @@ impl Expander {
                 let v = self.query_sink_ref().last_kern();
                 return Ok((if neg { -v } else { v }, 0));
             }
-            // TRIP 冲刺：glue 内部参数作尺寸（宽度分量）——`minus\baselineskip` 等
-            if matches!(
-                self.eqtb.slot(csid),
-                EqSlot::Primitive(
-                    Primitive::BaselineSkip
-                        | Primitive::LineSkip
-                        | Primitive::ParSkip
-                        | Primitive::ParFillSkip
-                        | Primitive::TopSkip
-                        | Primitive::XSpaceSkip
-                )
-            ) {
-                self.fetch()?;
-                let g = match self.eqtb.slot(csid) {
-                    EqSlot::Primitive(Primitive::BaselineSkip) => self.params.baselineskip,
-                    EqSlot::Primitive(Primitive::LineSkip) => self.params.lineskip,
-                    EqSlot::Primitive(Primitive::ParSkip) => self.params.parskip,
-                    EqSlot::Primitive(Primitive::ParFillSkip) => self.params.parfillskip,
-                    EqSlot::Primitive(Primitive::XSpaceSkip) => self.params.xspaceskip,
-                    _ => self.params.topskip,
-                };
-                return Ok((if neg { -g.width } else { g.width }, 0));
+            // tex.web scan_something_internal(dimen_val) 的 glue_val 降级臂：
+            // `assign_glue → scanned_result(equiv(m))(glue_val)` 后
+            // `while cur_val_level>level do <Convert cur_val to a lower level>`
+            // 取胶水宽度分量（tex.web L8587 `cur_val:=width(cur_val)`），
+            // 无需单位、不再报 Missing number。此前硬编码六参数白名单漏
+            // \splittopskip——plain.tex `\footstrut`=`\vbox to\splittopskip{}`
+            // 双报 Missing number，\vfootnote 整体报废。与 scan_glue_inner 的
+            // 同族参数臂共用 free.rs::param_kind_of 一张表（G3 教训：通写读两侧）；
+            // \lastskip/\lastkern 专属臂在上方先行，不落此处读陈旧镜像。
+            if let EqSlot::Primitive(p) = self.eqtb.slot(csid) {
+                let g = param_kind_of(*p).and_then(|k| match self.params.get(k) {
+                    ParamValue::Glue(g) => Some(g),
+                    _ => None,
+                });
+                if let Some(g) = g {
+                    self.fetch()?; // 消费该参数 cs
+                    return Ok((if neg { -g.width } else { g.width }, 0));
+                }
             }
             // ETRIP 第二波：\mutoglue<mu 胶水> / \gluetomu<胶水> → 胶水宽度（尺寸上下文），
             // 转换为胶水后取 width 分量（1mu = 1pt = 65536sp，数值不变）。

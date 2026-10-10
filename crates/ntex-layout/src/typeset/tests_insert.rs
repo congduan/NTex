@@ -160,3 +160,77 @@ use super::*;
         assert!(text.contains("BODY"), "正文应在输出页：{text:?}");
         assert!(text.contains("FN"), "脚注体应由输出例程回流到页底：{text:?}");
     }
+
+    // ---------- 刀 B：长脚注 split/holdover 前置——plain \vfootnote 通路 ------
+    //
+    // lf3.tex（长脚注 2 页样张）在 NTex 全军覆没的真根因不在 page.rs 拆分臂
+    // （该探针 insert 高 < 剩余页高，GT 也不走 split），而在脚注宏机制两处
+    // 扫描缺陷：① `\footstrut`=`\vbox to\splittopskip{}` 双报 Missing number
+    // （胶参数在尺寸上下文无 glue_val→width 降级臂）；② `\fo@t` 的
+    // `\ifcat\bgroup\noexpand\next` 误判真 → 误入 `\f@@t` 分支 → `\@foot`
+    // 的 `\egroup` 永不执行 → 组泄漏、整篇无页。两测去修复必红。
+
+    /// 根因①：胶水内部参数在**尺寸**上下文按 tex.web
+    /// scan_something_internal 的 `while cur_val_level>level` 转换臂取宽度分量，
+    /// 不报 Missing number（plain.tex `\footstrut` 即 `\vbox to\splittopskip{}`）。
+    #[test]
+    fn glue_param_in_dimen_context_takes_width() {
+        let mut ts = Typesetter::with_metrics(metrics);
+        let _ = ts.typeset_dvi(
+            r"\splittopskip=7pt \setbox0=\vbox to\splittopskip{\hbox{X}}\ifdim\ht0>6.9pt\message{HTOK}\else\message{HTBAD}\fi\end",
+        );
+        let t = ts.take_transcript();
+        assert!(
+            !t.contains("Missing number"),
+            "胶参数在尺寸上下文应取宽度分量而非报 Missing number：{t:?}"
+        );
+        assert!(t.contains("HTOK"), "\\vbox to\\splittopskip 应取 7pt 为高：{t:?}");
+        assert!(!t.contains("HTBAD"), "高度不应落 0：{t:?}");
+    }
+
+    /// 根因②：`\let` 到字符的 cs 在 `\if`/`\ifcat` 操作数位按 tex.web
+    /// get_x_token 呈现其字符含义（cur_cmd/cur_chr 即 eq_type/equiv）——
+    /// `\ifcat\bgroup\noexpand\next`（\next=字符 Z）判假（cat1 vs 非字符哨兵）、
+    /// `\if\bgroup{` 判真。此前一刀切非字符哨兵 → `\ifcat` 恒真 → 误支。
+    #[test]
+    fn let_to_char_cs_is_a_character_in_if_operands() {
+        let mut ts = Typesetter::with_metrics(metrics);
+        let _ = ts.typeset_dvi(
+            r"\let\bgroup={ \let\next=Z\ifcat\bgroup\noexpand\next\message{CATTRUE}\else\message{CATFALSE}\fi \let\bg={ \if\bg{\message{CHREQ}\fi\end",
+        );
+        let t = ts.take_transcript();
+        assert!(
+            t.contains("CATFALSE"),
+            "cat1（\\bgroup）vs noexpand 冻结非字符哨兵应判假：{t:?}"
+        );
+        assert!(!t.contains("CATTRUE"), "不应误支：{t:?}");
+        assert!(t.contains("CHREQ"), "\\if 对 let-to-char 与字面同字符应判真：{t:?}");
+    }
+
+    /// plain `\vfootnote` 骨架端到端：`\insert\bgroup …\futurelet\next\fo@t`
+    /// 分派脚注文本首 token、`\@foot` 闭合 insert 组，脚注体经断页投进
+    /// box(class)、出页不中断（组泄漏 = 无页）。去两修复之一必红
+    /// （① 载体 `\vbox to\splittopskip` 的 \footstrut 同款未在此复刻，
+    /// 该测锁的是②的组闭合链 + insert 落页）。
+    #[test]
+    fn vfootnote_dispatch_closes_insert_group_and_ships_page() {
+        let mut ts = Typesetter::with_metrics(metrics);
+        let (pages, _) = ts
+            .typeset_dvi(
+                r"\catcode`\@=11 \let\bgroup={ \let\egroup=} \def\myfoot{\egroup}%
+                  \def\f@t#1{#1\myfoot}%
+                  \def\fo@t{\ifcat\bgroup\noexpand\next \let\next\BADBRANCH\else\let\next\f@t\fi \next}%
+                  \vsize=100pt \hsize=200pt
+                  \hbox{BODY}\insert254\bgroup FN\futurelet\next\fo@t Ztail\par
+                  \vfill\penalty-10000 \ifvoid254\message{VOID}\else\message{FULL}\fi\end",
+            )
+            .unwrap();
+        let t = ts.take_transcript();
+        assert!(
+            !t.contains("Undefined control sequence"),
+            "\\fo@t 应走 \\f@t 臂（\\BADBRANCH 不该被执行）：{t:?}"
+        );
+        assert_eq!(pages.len(), 1, "组应闭合、断页应出页：{pages:?}");
+        assert!(t.contains("FULL"), "组闭合后脚注体应投进 box254：{t:?}");
+        assert!(!t.contains("VOID"), "不应走 void 臂：{t:?}");
+    }

@@ -1107,7 +1107,28 @@ impl Expander {
                     // 不符，第十二刀更正。）
                     return Ok((None, None));
                 }
-                // 不可展开 cs（\relax、\hbox、字符型 cs …）→ 非字符
+                // 不可展开 cs（\relax、\hbox、寄存器 …）→ 非字符；但 `\let` 到
+                // 字符的 cs（`\bgroup`=`{`、`\egroup`=`}`）按 tex.web get_x_token
+                // 语义呈现其**字符含义**：cs token 的 cur_cmd/cur_chr 即 eq_type/
+                // equiv（`\let\bgroup={` → cur_cmd=1/begin_group），`\ifcat` 把它
+                // 当 cat-1 字符参战。plain.tex `\fo@t` = `\ifcat\bgroup\noexpand
+                // \next`（`\vfootnote` 分派脚注文本带不带花括号）靠「cat-1 vs
+                // noexpand 冻结哨兵（非字符）」判假；此前一刀切 (None,None) 使
+                // `\bgroup` 与哨兵同落 None==None → 判真 → 误入 `\f@@t` 分支，
+                // `\@foot` 的 `\egroup` 永不执行 → `\vfootnote` 组泄漏、整篇无页
+                // （刀B 根因2）。`\if` 的字符码比较同理受益（`\if\bgroup{` 判真）。
+                //
+                // 排除 cat12：`\chardef` 在 NTex 槽模型里硬编码 Catcode::Other
+                // （primitive_toks_state，eqtb 混装遗留），而 tex.web chardef'd cs
+                // 的 eq_type=char_given（命令码，非 letter/other_char）——`\if\gB B`
+                // 判假（pdfTeX GT th8 探针 2026-09-15 钉死，chardef_texweb_
+                // semantics 测试锁）。`\let\cs=.`（let-to-other）暂时同待遇，
+                // 与 chardef 在槽内不可分（第二十七轮遗留）。
+                if let Some(EqSlot::Char { catcode, charcode }) = self.resolve_slot(csid) {
+                    if catcode != Catcode::Other {
+                        return Ok((Some(charcode), Some(catcode)));
+                    }
+                }
                 return Ok((None, None));
             }
             if tok.kind() == TokenKind::MacroParam {
