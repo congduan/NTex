@@ -16,7 +16,7 @@
 | multirow | 0 | 有 | 1 | 0 | 1 | 100.0% | 0.02% | **PASS** | （源已在路径） |
 | enumitem | 0 | 有 | 1 | 0 | 1 | 100.0% | 0.52% | **PASS** | （源已在路径） |
 | hyperref | 0 | 有 | 1 | 0 | 1 | 79.1% | 0.92%† | **PASS** | （源已在路径） |
-| microtype | 719 | 无 | - | 0 | 1 | n/a | — | **FAIL(719)** | （源已在路径） |
+| microtype | 1128 | 有 | 1 | 0 | 1 | 80.4% | — | **FAIL(1128)** | （源已在路径） |
 | array | 0 | 有 | 1 | 0 | 1 | 96.8% | 0.49% | **PASS** | （源已在路径） |
 | xcolor | 0 | 有 | 1 | 0 | 1 | 100.0% | — | **PASS** | （源已在路径） |
 | tabularx | 0 | 有 | 1 | 0 | 1 | 94.9% | 1.44% | **PASS** | （源已在路径） |
@@ -36,10 +36,15 @@
 ### geometry — FAIL(1)（NTex 1 错，GT 0 错）
 - NTex：`! LaTeX Error: Missing \begin{document}.`
 
-### microtype — FAIL(719)（NTex 719 错，GT 0 错）
-- NTex：`! Undefined control sequence.`
-- NTex：`! Extra \else.`
-- NTex：`! Package keyval Error: encoding undefined.`
+### microtype — FAIL(1128)（NTex 1128 错，GT 0 错；刀F 后载入不再 fatal）
+- 刀F（2026-10-10）：`^^` 置换产物缺 reswitch 重分派（input.rs）——`\MT@fix@catcode{17}{14}`
+  后行首 `^^Q` 注释失效，`\MT@ifdefined@c@T` ^^X/^^Q 双引擎变体全进 def 体，下游
+  `\MT@prlist@family@` 自引用 edef 栈超限 fatal。修复后整篇跑通（1 页 DVI、文本层 80.4%），
+  719→1128 是"fatal 截断"→"全文累积"的口径变化，非回归。
+- 残差（记录不顺手修）：pdfTeX 原语缺口为主——`! Undefined control sequence`
+  337 = `\rpcode`162+`\lpcode`114+`\pdfmatch`56+`\pdffontexpand`3+MT 内部 2；
+  `Missing number`（503， protrusion 尺寸链连锁）、`Missing font identifier`（171）。
+  下一刀 = pdfTeX 字符 protrusion 原语族（`\lpcode`/`\rpcode`/`\pdfmatch`）。
 
 ### xcolor — PASS（刀E 后 NTex 0 错 = GT 平齐；原 FAIL(10)）
 - 根因：`scan_dimen` 数字循环缺宏展开臂 + `数量×内部量` 截断 + print_scaled 舍入偏差

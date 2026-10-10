@@ -337,8 +337,42 @@ pub fn scan_token(
                     && bytes.get(*pos + 1) == Some(&b'^')
                 {
                     if let Some(d) = decode_circumflex(bytes, pos, catcodes) {
-                        ch = d as u32;
-                        cat = catcodes.get(d);
+                        // tex.web ^^ 置换后 `goto reswitch`：按**新字符**的 catcode
+                        // 完整重新分派。此前只重取 catcode 落进下方内层 match，而内层
+                        // 没有 Comment/Ignored/Invalid 三个「不产 token」臂——^^ 产物
+                        // 一律降级成字符 token。现场：microtype.sty 条件编译
+                        // `\MT@fix@catcode{17}{14}` 后行首 `^^Q` 注释失效，把
+                        // `\MT@ifdefined@c@T` 的 ^^X/^^Q 双引擎变体全收进 def 体
+                        // （GT 侧 ^^Q 行从不进体），下游滚成 keyval 注册失败 +
+                        // `\MT@prlist@family@` 自引用 edef 栈超限（刀 F）。
+                        // （^^ 产物为 Escape 的全重入不在本臂——`\` 只能经不可打印
+                        // 字符产生，现实文件不可达，见 control-word 续读循环的自然
+                        // reswitch。）
+                        match catcodes.get(d) {
+                            // 注释：吞到物理行尾（含行尾字节，LF 字节身份终止），
+                            // 状态回 new_line——与外层 Comment 臂同一语义。
+                            Catcode::Comment => {
+                                while *pos < bytes.len()
+                                    && bytes[*pos] != b'\n'
+                                    && !catcodes.get(bytes[*pos]).is_end_of_line()
+                                {
+                                    *pos += 1;
+                                }
+                                *pos += 1; // 越过行尾字符（若存在）
+                                *state = ScanState::LineStart;
+                                continue;
+                            }
+                            // 忽略字符：字节已被 decode_circumflex 消费，直接续扫。
+                            Catcode::Ignored => continue,
+                            // 无效字符：消费并回报（外层 Invalid 臂同语义，可恢复）。
+                            Catcode::Invalid => {
+                                return Err(Error::invalid_character(d));
+                            }
+                            ncat => {
+                                ch = d as u32;
+                                cat = ncat;
+                            }
+                        }
                     } else {
                         *pos += 1; // 非 ^^（如行尾）：按单字符处理
                         ch = b as u32;
@@ -492,6 +526,43 @@ mod tests {
         let toks = scan_all(src);
         let kinds: Vec<_> = toks.iter().map(|t| t.kind()).collect();
         assert_eq!(kinds, expected, "tokens: {toks:?}");
+    }
+
+    #[test]
+    fn circumflex_product_redispatches_no_token_cats() {
+        // ^^ 置换产物必须按**新字符**的 catcode 完整重分派（tex.web
+        // `goto reswitch`）。复刻 microtype.sty 条件编译精确形状：
+        // `\MT@fix@catcode{17}{14}`（^^Q=注释）+ `{24}{9}`（^^X=忽略）后，
+        // 行首 `^^X`/`^^Q` 行只有 ^^X 变体进 def 体——此前 ^^Q 产物降级成
+        // cat-14 字符 token，双引擎变体全收进替换文本，下游滚成
+        // `\MT@prlist@family@` 自引用 edef 栈超限（刀 F）。
+        // GT 对照：pdflatex 同构样张宏体 = `\def \innerA {XV}` 单变体。
+        let mut catcodes = CatcodeTable::new();
+        catcodes.set(17, Catcode::Comment); // ^^Q
+        catcodes.set(24, Catcode::Ignored); // ^^X
+        let mut intern = InternTable::new();
+        let mut pos = 0usize;
+        let mut state = ScanState::LineStart;
+        let src = b"^^X\\def\\innerA{XV}\n^^Q\\def\\innerB{QV}\n}\n";
+        let mut out = Vec::new();
+        while let Some(t) = scan_token(src, &mut pos, &catcodes, &mut intern, &mut state, false, 13)
+            .unwrap()
+        {
+            out.push(t);
+        }
+        let names: Vec<String> = out
+            .iter()
+            .map(|t| match t.csid() {
+                Some(c) => intern.name(c).to_string(),
+                None => format!("ch{:?}", t.charcode()),
+            })
+            .collect();
+        // ^^Q 整行（含 `\def\innerB{QV}`）被注释吞掉；^^X 消失、其余照常
+        assert!(
+            !names.iter().any(|n| n == "innerB"),
+            "^^Q 行泄漏进 token 流: {names:?}"
+        );
+        assert!(names.iter().any(|n| n == "innerA"), "{names:?}");
     }
 
     #[test]
@@ -694,12 +765,40 @@ mod tests {
         assert_eq!(toks.len(), 1);
         assert_eq!(toks[0].kind(), TokenKind::Char);
         assert_eq!(toks[0].charcode(), Some(1));
-        // ^^@ → 字符码 0（@=64 − 64）
+        // ^^@ → 字符码 0（@=64 − 64；plain 表 cat 12 → 字符 token）
         let toks = scan_all("^^@");
         assert_eq!(toks[0].charcode(), Some(0));
-        // ^^? → 字符码 127（?=63 + 64）
-        let toks = scan_all("^^?");
-        assert_eq!(toks[0].charcode(), Some(127));
+        // ^^? → 字符码 127 = plain 表 Invalid：tex.web get_next invalid_char
+        // 臂——报错（可恢复）+ 跳过该字符，**不产 token**。此前 ^^ 产物缺
+        // reswitch 重分派，降级成 cat-15 字符 token（假语义）。
+        let mut intern = InternTable::new();
+        let catcodes = CatcodeTable::new();
+        let mut pos = 0usize;
+        let mut state = ScanState::LineStart;
+        let err = scan_token(
+            "^^? x".as_bytes(),
+            &mut pos,
+            &catcodes,
+            &mut intern,
+            &mut state,
+            false,
+            13,
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::InvalidCharacter { byte: 127 }), "{err:?}");
+        // 错误后该字符已消费：续扫得空格折叠后的 x
+        let tok = scan_token(
+            "^^? x".as_bytes(),
+            &mut pos,
+            &catcodes,
+            &mut intern,
+            &mut state,
+            false,
+            13,
+        )
+        .unwrap()
+        .expect("x token");
+        assert_eq!(tok.charcode(), Some(b'x' as u32));
         // 十六进制对：^^5e → 0x5E
         let toks = scan_all("^^5e");
         assert_eq!(toks[0].charcode(), Some(0x5E));
