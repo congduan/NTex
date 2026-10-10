@@ -521,7 +521,17 @@ CLI `ntex-pkg`（`index`/`provide`/`resolve`/`lock`/`check`/`local`/**`vendor`**
       **🟡 首刀落地（0f271ee，2026-10-09）**：fetch() 向扫描语境暴露 Source EOF；
       定界参数 EOF → `File ended while scanning use of \<name>` + 插 `\par` +
       废弃坏宏调用 + 父输入继续；`Incomplete \iffalse` EOF 补 `\fi`。
-      Transformer 实测 48957B 出页（基线 49245B）。余：`\errhelp`/back_input 全面化。
+      Transformer 实测 48957B 出页（基线 49245B）。
+      **✅ 刀C（c0849ed，2026-10-10）**：`\errhelp` 消费链（interaction 门控 +
+      组作用域）+ `\errmessage`/`\message` 实参展开吞错修复（undefined cs 在扫描位
+      正常报错不断链）+ error_anchor 跨扫描污染修复（err1 场景 l.5→l.2，与 GT 同构）。
+      ntex-core 508 绿含回归锁 2 把。余：`\write` 展开层静默丢弃独立评估、
+      half_error_line 32 vs TL2026 50（预存常量分歧）、errorstopmode 停等。
+- [ ] **amsmath 后续**：pmatrix `\left(`/`\right)` 垂直模式恢复分歧（NTex 报
+      can't use in vertical mode 丢括号 vs GT Missing $ 保留括号——计数同构字形
+      分歧，刀A 遗留①，2026-10-10 登记）；输入栈超限消息非 GT 逐字（fetch 护栏
+      先于 call_macro 触发，刀A 遗留②）。amsmath 载入本体已 0 错（10b88fb 刀A：
+      调用点 collapse_tail_conditionals_for_macro_call 偷走定界实参数据 `\fi`）。
 - [ ] **TRIP / ETRIP semantic diff 归零**（−5619/+1412 与 −3051/+2352）+ 错误块抽查
 - [ ] ~~`\documentclass` / article.cls → 结构宏 → 真 LaTeX 版面 PDF~~ ✅ 最小闭环已通
       （small2e 0 错 / transformer 18 页与基线一致，2026-10-02 主控实测）；
@@ -537,7 +547,11 @@ CLI `ntex-pkg`（`index`/`provide`/`resolve`/`lock`/`check`/`local`/**`vendor`**
 - [ ] 数学矩阵（`\matrix`/`\eqalign`）—— 勘察结论：无独立引擎战役，
       本体是宏层 + `\halign` 地基，引擎增量仅 `\vcenter` 数学包装验证 +
       `Improper \halign inside $$'s` 检查 + Align 产物盒交 `MathAtom::Box`
-- [ ] `\vsplit` marks 拆分（`\splitfirstmarks` 等现返回空）
+- [ ] **P1 长脚注余项**：`\vsplit` marks 拆分（`splitfirstmarks` 等现返回空）与
+      `\insertpenalties`。**✅ split 基础面已通（刀B，1f26809，2026-10-10）**：
+      长脚注超页样张 0 错 2 页、脚注落第 1 页底（PDF 文本层与 GT 同构）；
+      真根因 = `\vfootnote` 通路两扫描缺陷（非 insert 拆分臂缺失——GT 在该
+      样张下同样不走 split）。ntex-layout 266 绿。
 - [ ] `\output` 例程消费判定改显式 `\shipout\box255`（现为 count 启发式）
 - [ ] `\scriptfont` 接真实字体
 - [ ] `\catcode` >255 赋值扩展（Unicode catcode 表，A5 全量）+ `\catcode"XXXX=13` 预读时序粘连

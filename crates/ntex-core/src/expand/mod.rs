@@ -1868,9 +1868,7 @@ impl Expander {
     /// write_error_help* 调用面的无条件 help 本刀不动，新报错站一律走此门控。
     fn write_error_stop_aware(&mut self, msg: &str, help: &str) {
         self.write_error_help_no_read_again(msg, "");
-        if !help.is_empty()
-            && self.params.misc[crate::param::MISC_INTERACTION_MODE] == 3
-        {
+        if !help.is_empty() && self.params.misc[crate::param::MISC_INTERACTION_MODE] == 3 {
             let _ = self.sink.write16(format!("? {help}\n\n"));
         }
     }
