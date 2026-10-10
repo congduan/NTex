@@ -1116,3 +1116,37 @@ fn xcolor_rshift_delimited_fixedpoint() {
         "数字位展开链缺臂→残流泄主输入（刀E/E2 同根）：{transcript}"
     );
 }
+
+/// 刀E2 锁：preamble 里 `\rshift\dimen@` 曾把残流（`0\p@`）泄进主输入——
+/// `0` 排版起段（LaTeX `\everypar{\@nodocument}` → "Missing \begin{document}"），
+/// `\p@` 被当赋值目标吞 `\typeout` 展开报 Missing number 且恢复赋 0pt，
+/// 后续 `0.6\p@` 全链归零（e2t.tex AA-RS2 0.0pt 现场）。
+/// 修复后数字循环就地展开展开链，无残流——`\everypar` 哨兵不得触发。
+#[test]
+fn preamble_rshift_no_paragraph_leak() {
+    let src = concat!(
+        "\\catcode`\\@=11 \\catcode`\\#=6 %\n",
+        "\\def\\sentry{SENTRY-FIRED} %\n",
+        "\\everypar{\\sentry} %\n",
+        "\\begingroup\\catcode`P=12 \\catcode`T=12 %\n",
+        "\\lowercase{\\def\\@@tmp{\\def\\rshift@##1.##2PT{\\rshift@@##1\\relax##2\\p@}}} %\n",
+        "\\expandafter\\endgroup\\@@tmp %\n",
+        "\\def\\rshift@@#1#2{\\ifx#2\\relax.#1\\else#1\\expandafter\\rshift@@\\expandafter#2\\fi} %\n",
+        "\\def\\rshift#1{#1\\expandafter\\rshift@\\the#1} %\n",
+        "\\dimendef\\dimen@=0 \\dimendef\\p@=11 \\p@=65536sp %\n",
+        "\\dimen@=60\\p@ \\rshift\\dimen@ \\immediate\\write16{RS:\\the\\dimen@} %\n",
+        "\\dimen@=0.6\\p@ \\rshift\\dimen@ \\immediate\\write16{RS2:\\the\\dimen@} %\n",
+    );
+    let (r, transcript) = run_transcript(src);
+    r.unwrap();
+    assert!(transcript.contains("RS:6.0pt"), "60pt 右移：{transcript}");
+    assert!(transcript.contains("RS2:0.06pt"), "0.6pt 右移：{transcript}");
+    assert!(
+        !transcript.contains("SENTRY-FIRED"),
+        "残流泄主输入起段（\\everypar 哨兵触发）＝preamble 误报 Missing \\begin{{document}} 的引擎级机制：{transcript}"
+    );
+    assert!(
+        !transcript.contains("Missing number"),
+        "数字位展开链缺臂→\\p@ 被当赋值目标：{transcript}"
+    );
+}
