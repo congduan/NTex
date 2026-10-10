@@ -219,6 +219,96 @@ use super::*;
     }
 
     #[test]
+    fn ifdim_plus_sign_before_internal_quantity() {
+        // 刀G：`\ifdim` 右操作数 `+` 后跟内部量/宏。tex.web scan_dimen 符号循环
+        // 对 `+` 无任何前瞻（正号恒吸收，与 `-` 同形），后随 token 由同循环的
+        // 内部量/宏展开臂接管。此前 NTex 在 `+` 位前瞻后随 token，非数字即把
+        // `+` 退回流头 → 落数字路径报 Missing number（trig.sty `\TG@@sin` 的
+        // `\ifdim\TG@reduce>+` 灾害链 → graphicx 旋转计算全崩）。
+        // g8t 形状：宏左操作数（展开臂）+ `+`+dimendef 内部量右操作数
+        assert_eq!(
+            expand(
+                "\\dimendef\\pd=0 \\dimen0=1pt \\dimen1=5pt \
+                 \\def\\getval{\\dimen1}\\ifdim\\getval>+\\pd T\\else F\\fi"
+            )
+            .unwrap(),
+            "T"
+        );
+        // g4t/trig 形状：`+` 后跟 chardef 整数 × 内部量单位（`\ninety pt`＝90pt；
+        // harness 初表 @ 为 cat12，cs 名避用 @）
+        assert_eq!(
+            expand(
+                "\\chardef\\ninety=90 \\dimendef\\onept=0 \\dimen0=1pt \
+                 \\ifdim15pt>+\\ninety\\onept T\\else F\\fi"
+            )
+            .unwrap(),
+            "F"
+        );
+        assert_eq!(
+            expand(
+                "\\chardef\\ninety=90 \\dimendef\\onept=0 \\dimen0=1pt \
+                 \\ifdim15pt<+\\ninety\\onept T\\else F\\fi"
+            )
+            .unwrap(),
+            "T"
+        );
+        // `+` 后跟宏（宏展开为字面尺寸）
+        assert_eq!(
+            expand("\\def\\v{2pt}\\ifdim5pt>+\\v T\\else F\\fi").unwrap(),
+            "T"
+        );
+        // `+` 后跟字面数字（0f4de8e 前瞻 digit 臂 continue 吞已 fetch 数位的缺陷：
+        // `+5pt` 曾读成 0pt）
+        assert_eq!(expand("\\ifdim5pt=+5pt T\\else F\\fi").unwrap(), "T");
+        // 正号前空格、负号混合（TRIP L160 `+1,001` 形态的符号循环语义）
+        assert_eq!(expand("\\ifdim5pt= +5pt T\\else F\\fi").unwrap(), "T");
+        assert_eq!(expand("\\ifdim5pt=-+5pt F\\else T\\fi").unwrap(), "T");
+    }
+
+    #[test]
+    fn ifdim_quantity_internal_unit_with_space() {
+        // 刀G 第二缺陷：数字与内部量单位之间的空格。tex.web 内部量单位探针取
+        // token 是 blank-skipping getter（@<Scan for u units that are internal
+        // dimensions@> L8967 `@<Get the next non-blank non-call token@>`），且
+        // scan_keyword 首字符位跳 spacer（§377 `(cur_cmd<>spacer)or(p<>backup_head)`
+        // ——`2 pt` 合法）。trig.sty `\TG@rem@pt` 产物 `\@tempa`="0.2618␣" 后随
+        // `\dimen@` 即此形态：`\TG@series` 全族数量×内部量被此空格击穿
+        // （Missing number 恢复 0，`\TG@@sin` 灾害链）。
+        // 数量×内部量（带空格）：0.2618 × 1pt = 0.2618pt（tex.web round_decimals
+        // + xn_over_d 定点乘法，刀 E 地基；\dd 为目标、\dimen0 为单位）
+        assert_eq!(
+            expand(
+                "\\dimendef\\dd=1 \\dimen0=1pt \
+                 \\def\\tt{0.2618 }\\dd\\tt\\dimen0 \\ifdim\\dd=0.2618pt T\\else F\\fi"
+            )
+            .unwrap(),
+            "T"
+        );
+        // 字面数字带尾空格：`0.2618 \dimen0`
+        assert_eq!(
+            expand(
+                "\\dimendef\\dd=1 \\dimen0=1pt \
+                 \\dd 0.2618 \\dimen0 \\ifdim\\dd=0.2618pt T\\else F\\fi"
+            )
+            .unwrap(),
+            "T"
+        );
+        // 整数宏带尾空格：`2 ␣\dimen0` = 2 × 2pt
+        assert_eq!(
+            expand(
+                "\\dimendef\\dd=1 \\dimen0=2pt \\def\\vv{2 }\\dd\\vv\\dimen0 \\ifdim\\dd=4pt T\\else F\\fi"
+            )
+            .unwrap(),
+            "T"
+        );
+        // 字母单位前空格（scan_keyword 首字符位 spacer 语义）：`2 pt`
+        assert_eq!(
+            expand("\\dimen0=2 pt \\ifdim\\dimen0=2pt T\\else F\\fi").unwrap(),
+            "T"
+        );
+    }
+
+    #[test]
     fn ifx_compares_meanings() {
         // 相同定义的宏 → 相等；不同定义 → 不等
         assert_eq!(
@@ -714,3 +804,6 @@ use super::*;
         let src2 = "\\ifnum0%\n  \\ifdefined\\qqneverdefined 1\\fi\n  \\ifdefined\\zzneverdefined 1\\fi\n  >0 T\\else F\\fi";
         assert_eq!(expand(src2).unwrap(), "F");
     }
+
+
+

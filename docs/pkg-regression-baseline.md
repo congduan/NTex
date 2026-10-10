@@ -20,12 +20,12 @@
 | array | 0 | 有 | 1 | 0 | 1 | 96.8% | 0.49% | **PASS** | （源已在路径） |
 | xcolor | 0 | 有 | 1 | 0 | 1 | 100.0% | — | **PASS** | （源已在路径） |
 | tabularx | 0 | 有 | 1 | 0 | 1 | 94.9% | 1.44% | **PASS** | （源已在路径） |
-| graphicx | 40 | 有 | 1 | 0 | 1 | 45.6% | 1.14%† | **FAIL(40)** | （源已在路径） |
+| graphicx | 0 | 有 | 1 | 0 | 1 | 68.4% | — | **PASS** | （源已在路径） |
 | etoolbox | 0 | 有 | 1 | 0 | 1 | 94.7% | 0.16% | **PASS** | （源已在路径） |
 
 † 页面尺寸不合：GT 裸 article 在本机 TinyTeX 缺省 **A4**，载入 hyperref/xcolor 后 GT 侧被翻成 **letter**（612×792），NTex/dvipdfmx 侧保持 A4——该列像素差已按左上交集裁剪对照，不代表内容全分歧。
 
-**PASS 9/13**。
+**PASS 10/13**。
 
 ## auto-pkg 缺包负例（契约验收）
 
@@ -51,8 +51,8 @@
   （`\rshift@`/`\lshift@` 定点小数族地基，见刀E 提交）。
 - 文本层 93.9%→100.0%（颜色表达式数值全对齐）。
 
-### graphicx — FAIL(40)（NTex 40 错，GT 0 错）
-- NTex：`! Missing number, treated as zero.`
-- NTex：`! Missing number, treated as zero.`
-- NTex：`! Missing number, treated as zero.`
+### graphicx — PASS（刀G 后 NTex 0 错 = GT 平齐；原 FAIL(40)）
+- 根因：`scan_dimen` 符号循环对 `+` 的前瞻消解偏离 tex.web（非数字臂把 `+` 退回流头）
+  + 内部量单位探针缺 blank-skipping（`数量␣内部量` 的空格被拒）。
+- 文本层 45.6%→68.4%（`\rotatebox` 角度计算链 trig→graphicx 全通）。
 

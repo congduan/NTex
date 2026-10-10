@@ -1834,54 +1834,17 @@ impl Expander {
                 continue;
             }
             // TeX scan_dimen：正号忽略（`\varunit=+1,001...`，TRIP L160）。
-            // 但 \glueexpr 表达式里 {7pt+} 的 + 是运算符（+ 后非数字）——放回由
-            // 表达式循环（peek_int_op）处理；仅 + 后跟数字时才是正号（etrip L888
-            // `\glueexpr{7pt+}{12pt/4}` = 7pt + 12pt/4）。
+            // 符号循环对 `+` **无任何前瞻**（tex.web §8724 的符号宏：`-` 翻
+            // negative、`+` 纯吸收，二者同形）——后随 token 由同循环的既有臂
+            // 接管（内部量寄存器/参数、chardef 数、宏展开臂）。eTeX 表达式的
+            // 二元 `+` 恒经 expr.rs peek_int_op 在因子之间消费（`{7pt+}` 走
+            // dimen_expr_term 组分支 pending 退回），从不以运算符形态到达此循环；
+            // 此前在此前瞻后随 token 做正号/运算符消解是伪需求（第十九刀裁定），
+            // 且非数字臂把 `+` 退回流头 → 落数字路径报 Missing number、`+` 残流
+            // 泄主输入（刀G：trig.sty `\TG@@sin` 的 `\ifdim\TG@reduce>+` 全炸
+            // → graphicx 旋转计算崩；digit 臂 continue 还吞已 fetch 的数位）。
             if tok.charcode() == Some(b'+' as u32) {
-                let next = self.fetch()?;
-                match next {
-                    Some((n, _)) if n.charcode().is_some_and(|c| (c as u8).is_ascii_digit()) => {
-                        continue;
-                    }
-                    // `+` 后跟小数点/逗号（`\kern+.16667em`，latex.ltx `\tmspace`
-                    // 文本模式形态；trip L81 `--+.1pt` 同）：正号已吸收（neg 不变），
-                    // `.`/`,` 退回流头由下方数字扫描作小数分隔符——不可落 `_` 运算符
-                    // 消解臂把 `+` 一起退回，否则数字扫描从 `+` 起步报 Missing
-                    // number（LaTeX `X\,Y` 复现件即此）。
-                    Some((n, _))
-                        if matches!(
-                            n.charcode(),
-                            Some(c) if c == b'.' as u32 || c == b',' as u32
-                        ) =>
-                    {
-                        self.unread(n);
-                        break;
-                    }
-                    // `+` 后跟 mu 参数（`\kern+\thinmuskip`）：正号已吸收（neg 不变），
-                    // mu 参数退回流头交下方内部量臂——不可 continue：该 token 已被
-                    // fetch 消费，继续符号循环会把它丢掉，值读成 0/Missing number。
-                    Some((n, _))
-                        if matches!(
-                            self.eqtb
-                                .slot(self.deref_alias_chain(n.csid().unwrap_or(u32::MAX))),
-                            EqSlot::Primitive(
-                                Primitive::ThinMuskip
-                                | Primitive::MedMuskip
-                                | Primitive::ThickMuskip,
-                            ),
-                        ) =>
-                    {
-                        self.unread(n);
-                        break;
-                    }
-                    _ => {
-                        if let Some((n, _)) = next {
-                            self.unread(n);
-                        }
-                        self.unread(tok);
-                        break;
-                    }
-                }
+                continue;
             }
             if let Some(csid) = tok.csid() {
                 if matches!(self.eqtb.slot(csid), EqSlot::Undefined) {
@@ -2461,7 +2424,14 @@ impl Expander {
         }
         // <整数>[<小数>]<内部尺寸量>：`11\parshapedimen4` = 11 × 4pt、
         // `2\fontdimen6\font` 等（TeX scan_dimen 的数量乘内部量）。
-        if let Some(csid) = self.peek_csid()? {
+        // 探针取 token 是 blank-skipping getter（tex.web
+        // @<Scan for u units that are internal dimensions@> L8967-8969：
+        // `save_cur_val:=cur_val; @<Get the next non-blank non-call token@>;`
+        // ——repeat get_x_token until cur_cmd<>spacer）：数字与内部量单位之间的
+        // 空格（trig.sty `\TG@rem@pt` 产物 `\@tempa`="0.2618␣" 后随 `\dimen@`，
+        // `\TG@series` 全族即此形态）须跳过后再认内部量；非 spacer token 放回
+        // （空格已消费——tex.web 同：随后的字母单位词扫描因此兼容 `2 pt`）。
+        if let Some(csid) = self.peek_csid_after_blanks()? {
             let quantity = match self.eqtb.slot(csid).clone() {
                 EqSlot::Primitive(
                     Primitive::ParshapeLength
@@ -3173,5 +3143,35 @@ impl Expander {
         let csid = tok.csid();
         self.unread(tok);
         Ok(csid)
+    }
+
+    /// [`Self::peek_csid`] 的 blank-skipping 变体：跳过 spacer token（含 cs 别名
+    /// 到空格——tex.web `\let` 复制 cmd，`cur_cmd=spacer` 同列）后 peek 下一
+    /// token 的 csid，非 spacer token 放回。tex.web 内部量单位探针
+    /// （@<Scan for u units that are internal dimensions@>）的取 token 位即
+    /// `@<Get the next non-blank non-call token@>`（L8723-8729 符号宏的去符号
+    /// 形态：repeat get_x_token until cur_cmd<>spacer）。
+    fn peek_csid_after_blanks(&mut self) -> Result<Option<u32>> {
+        loop {
+            let Some((tok, _)) = self.fetch()? else {
+                return Ok(None);
+            };
+            let is_spacer = match tok.csid() {
+                None => tok.catcode() == Some(Catcode::Space),
+                Some(csid) => matches!(
+                    self.eqtb.slot(self.deref_alias_chain(csid)),
+                    EqSlot::Char {
+                        catcode: Catcode::Space,
+                        ..
+                    }
+                ),
+            };
+            if is_spacer {
+                continue;
+            }
+            let csid = tok.csid();
+            self.unread(tok);
+            return Ok(csid);
+        }
     }
 }
