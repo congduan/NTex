@@ -18,7 +18,7 @@
 | hyperref | 0 | 有 | 1 | 0 | 1 | 79.1% | 0.92%† | **PASS** | （源已在路径） |
 | microtype | 719 | 无 | - | 0 | 1 | n/a | — | **FAIL(719)** | （源已在路径） |
 | array | 0 | 有 | 1 | 0 | 1 | 96.8% | 0.49% | **PASS** | （源已在路径） |
-| xcolor | 10 | 有 | 1 | 0 | 1 | 93.9% | 0.88%† | **FAIL(10)** | （源已在路径） |
+| xcolor | 0 | 有 | 1 | 0 | 1 | 100.0% | — | **PASS** | （源已在路径） |
 | tabularx | 0 | 有 | 1 | 0 | 1 | 94.9% | 1.44% | **PASS** | （源已在路径） |
 | graphicx | 40 | 有 | 1 | 0 | 1 | 45.6% | 1.14%† | **FAIL(40)** | （源已在路径） |
 | etoolbox | 0 | 有 | 1 | 0 | 1 | 94.7% | 0.16% | **PASS** | （源已在路径） |
@@ -41,10 +41,10 @@
 - NTex：`! Extra \else.`
 - NTex：`! Package keyval Error: encoding undefined.`
 
-### xcolor — FAIL(10)（NTex 10 错，GT 0 错）
-- NTex：`! Missing number, treated as zero.`
-- NTex：`! Missing number, treated as zero.`
-- NTex：`! Missing number, treated as zero.`
+### xcolor — PASS（刀E 后 NTex 0 错 = GT 平齐；原 FAIL(10)）
+- 根因：`scan_dimen` 数字循环缺宏展开臂 + `数量×内部量` 截断 + print_scaled 舍入偏差
+  （`\rshift@`/`\lshift@` 定点小数族地基，见刀E 提交）。
+- 文本层 93.9%→100.0%（颜色表达式数值全对齐）。
 
 ### graphicx — FAIL(40)（NTex 40 错，GT 0 错）
 - NTex：`! Missing number, treated as zero.`

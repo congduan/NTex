@@ -2264,6 +2264,10 @@ impl Expander {
         let mut int_part: i64 = 0;
         let mut frac: i64 = 0;
         let mut frac_len: u32 = 0;
+        // 小数位序列（tex.web L8916 `if k<17` 只入栈前 17 位——round_decimals
+        // 的正确舍入只看这 17 位；`数量×内部量` 路径用它走 tex.web 舍入语义）
+        let mut frac_digits = [0u8; 17];
+        let mut frac_dn = 0usize;
         let mut any = false;
         let mut saw_dot = false;
         if let Some(rv) = radix_val {
@@ -2327,7 +2331,7 @@ impl Expander {
                 int_part = self.scan_number()?;
                 any = true;
             } else {
-                while let Some((tok, _)) = self.fetch()? {
+                while let Some((tok, ne)) = self.fetch()? {
                     // 真条件的假分支 token 丢弃（scan_number 数字循环同款，仅
                     // 条件终结符走状态机推进——tex.web get_x_token 语义）。
                     if self.is_skipping() {
@@ -2341,6 +2345,31 @@ impl Expander {
                     if self.maybe_eval_cond(tok)? {
                         continue;
                     }
+                    // tex.web 数字循环 get_x_token 语义：可展开 cs 就地展开后续收
+                    // （xcolor `\rshift\dimen@` = `\dimen0=\expandafter\rshift@\the\dimen@`
+                    // 的展开链把 `\expandafter`/`\rshift@@` 落进数字位——缺臂即扫描
+                    // 早断：值只吃到已收数位，残流（`0\p@`）泄主输入——`0` 排版起段
+                    // （\everypar→\@nodocument = "Missing \begin{document}"），`\p@`
+                    // 被当赋值目标吞 `\typeout` 展开报 Missing number 且恢复赋 0pt，
+                    // 后续 `\dimen@=0.6\p@` 全链归零（刀E 60pt 现场）。
+                    if let Some(csid) = tok.csid() {
+                        let expandable = match self.eqtb.slot(csid).clone() {
+                            EqSlot::Macro(_) => true,
+                            EqSlot::Primitive(p) => p.is_expandable(),
+                            _ => false,
+                        };
+                        if expandable {
+                            let mut expansion = Vec::new();
+                            self.expand_once((tok, ne), &mut expansion)?;
+                            if !expansion.is_empty() {
+                                self.push_frame(InputFrame::TokenList {
+                                    items: Arc::from(expansion),
+                                    pos: 0,
+                                });
+                            }
+                            continue;
+                        }
+                    }
                     // eTeX 表达式分组（{7pt+}{12pt/4} 的 {7pt+}）只属于 \dimexpr 因子层
                     // （expr.rs dimen_expr_term），scan_dimen 遇组字符 { 应报
                     // Missing number（tex.web scan_dimen 无分组分支）。
@@ -2351,6 +2380,10 @@ impl Expander {
                             if frac < i64::MAX / 10 {
                                 frac = frac * 10 + i64::from(d);
                                 frac_len += 1;
+                            }
+                            if frac_dn < 17 {
+                                frac_digits[frac_dn] = d;
+                                frac_dn += 1;
                             }
                         } else if int_part < i64::MAX / 10 {
                             int_part = int_part * 10 + i64::from(d);
@@ -2518,9 +2551,36 @@ impl Expander {
                 _ => None,
             };
             if let Some(q) = quantity {
-                let denom = 10i128.pow(frac_len);
-                let v = (i128::from(int_part) * denom + i128::from(frac)) * i128::from(q) / denom;
-                let v = i64::try_from(v).unwrap_or(i64::MAX);
+                // tex.web @<Scan for u units that are internal dimensions@>
+                // （L8930-8951）：cur_val := nx_plus_y(save_cur_val, v,
+                // xn_over_d(v, f, unity))——小数先经 round_decimals（L2189-2198：
+                // 自最低位逐位 `(a+dig·2^17) div 10` 进位、末位 `(a+1) div 2`
+                // 正确舍入）打包成 2^16 定点 f，再按 xn_over_d（L2299-2322：
+                // @'100000=32768 分割的 1.5 精度乘法、余数进位）乘内部量。
+                // 此前 `(int·10^k+frac)·q/10^k` 一步整除把 `.6\p@` 截成
+                // 39321sp（GT 39322sp、`\the` "0.6pt"）——xcolor \rshift@/
+                // \lshift@ 定点小数族（刀E）的地基，`\the\dimen@` 打 "0.59999pt"。
+                let mut a: i128 = 0;
+                for &dg in frac_digits[..frac_dn].iter().rev() {
+                    a = (a + i128::from(dg) * 131072) / 10;
+                }
+                let n = (a + 1) / 2; // 0..2^16 定点小数（tex.web round_decimals）
+                let (xabs, xpos) = if q < 0 { (-i128::from(q), false) } else { (i128::from(q), true) };
+                let d = i128::from(SP_PER_PT);
+                let t = (xabs % 32768) * n;
+                let u = (xabs / 32768) * n + t / 32768;
+                let mut prod = 32768 * (u / d) + ((u % d) * 32768 + t % 32768) / d;
+                if !xpos {
+                    prod = -prod;
+                }
+                let v = i128::from(int_part) * i128::from(q) + prod;
+                let v = if v > i64::MAX as i128 {
+                    i64::MAX
+                } else if v < i64::MIN as i128 {
+                    i64::MIN
+                } else {
+                    v as i64
+                };
                 return Ok((if neg { -v } else { v }, 0));
             }
         }

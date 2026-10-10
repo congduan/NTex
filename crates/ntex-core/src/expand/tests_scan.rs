@@ -1035,3 +1035,84 @@ fn number_scan_hyphenchar_skewchar_font_integer() {
         "数字上下文缺 \\skewchar 臂：{transcript}"
     );
 }
+
+/// 刀E：scan_dimen「数量×内部量」乘法的 tex.web 舍入语义。
+///
+/// tex.web L8930-8951：`⟨factor⟩⟨internal dimen⟩` 的小数先经 round_decimals
+/// （L2189-2198：自最低位逐位 `(a+dig·2^17) div 10` 进位、末位 `(a+1) div 2`
+/// 正确舍入）打包成 2^16 定点 f，再按 xn_over_d（L2299-2322：32768 分割的
+/// 1.5 精度乘法）乘内部量。`.6\p@` = 39322sp（`\the` → "0.6pt"）；此前的
+/// `(int·10^k+frac)·q/10^k` 一步整除截成 39321sp（`\the` → "0.59999pt"）
+/// ——xcolor `\rshift@`/`\lshift@` 定点小数族的地基偏差（刀E）。
+///
+/// pdfTeX GT：`\dimen0=0.6\p@ \typeout{\the\dimen0}` → `0.6pt`。
+#[test]
+fn scan_dimen_quantity_internal_rounding() {
+    let pre = "\\catcode`\\@=11 \\dimendef\\p@=11 \\p@=65536sp ";
+    assert_eq!(
+        expand(&format!("{pre}\\dimen0=0.6\\p@ \\the\\dimen0")).unwrap(),
+        "0.6pt"
+    );
+    // 逐位对照（GT sp：3932 / 32768 / 393216 / 58982）
+    assert_eq!(
+        expand(&format!("{pre}\\dimen0=0.06\\p@ \\the\\dimen0")).unwrap(),
+        "0.06pt"
+    );
+    assert_eq!(
+        expand(&format!("{pre}\\dimen0=0.5\\p@ \\the\\dimen0")).unwrap(),
+        "0.5pt"
+    );
+    assert_eq!(
+        expand(&format!("{pre}\\dimen0=6.00\\p@ \\the\\dimen0")).unwrap(),
+        "6.0pt"
+    );
+    assert_eq!(
+        expand(&format!("{pre}\\dimen0=0.9\\p@ \\the\\dimen0")).unwrap(),
+        "0.9pt"
+    );
+}
+
+/// 刀E 端到端：xcolor `\rshift\dimen@`（定点小数右移一位）机制级复刻。
+///
+/// xcolor.sty L410-421：`\def\rshift#1{#1\expandafter\rshift@\the#1}` +
+/// catcode-PT/lowercase 定义的 `\rshift@##1.##2PT{\rshift@@##1\relax##2\p@}`。
+/// 展开链把 `\expandafter`/`\rshift@@` 落进数字位（tex.web 数字循环
+/// get_x_token 语义）：60pt 现场缺展开臂时扫描早断，残流 `0\p@` 泄主输入
+/// ——`\p@` 被当赋值目标吞后续展开报 Missing number 且被恢复赋 0pt，
+/// 随后 `\dimen@=0.6\p@` 全链归零（LaTeX 层即 "Missing \begin{document}"
+/// 误报 + AA-RS2 0.0pt，刀E/E2 同根）。
+///
+/// pdflatex+真 xcolor GT：`RS1:6.0pt`、`RS2:0.06pt`、零错误。
+#[test]
+fn xcolor_rshift_delimited_fixedpoint() {
+    let src = concat!(
+        "\\catcode`\\@=11 \\catcode`\\#=6 %\n",
+        "\\begingroup\\catcode`P=12 \\catcode`T=12 %\n",
+        "\\lowercase{\\def\\@@tmp{%\n",
+        "  \\def\\rshift@##1.##2PT{\\rshift@@##1\\relax##2\\p@}%\n",
+        "  \\def\\lshift@##1.##2##3PT{##1##2\\ifnum0##3>\\z@.##3\\fi\\p@}}} %\n",
+        "\\expandafter\\endgroup\\@@tmp %\n",
+        "\\def\\rshift@@#1#2{\\ifx#2\\relax.#1\\else#1\\expandafter\\rshift@@\\expandafter#2\\fi} %\n",
+        "\\def\\rshift#1{#1\\expandafter\\rshift@\\the#1} %\n",
+        "\\def\\lshift#1{#1\\expandafter\\lshift@\\the#1} %\n",
+        "\\dimendef\\da=0 \\dimendef\\p@=11 \\p@=65536sp %\n",
+        "\\countdef\\z@=0 %\n",
+        "\\da=60\\p@ \\rshift\\da \\immediate\\write16{RS1:\\the\\da} %\n",
+        "\\da=0.6\\p@ \\rshift\\da \\immediate\\write16{RS2:\\the\\da} %\n",
+        "\\da=0.6\\p@ \\lshift\\da \\immediate\\write16{LS1:\\the\\da} %\n",
+    );
+    let (r, transcript) = run_transcript(src);
+    if let Err(e) = &r {
+        panic!(
+            "运行失败 {e}；转录尾：{}",
+            &transcript[transcript.len().saturating_sub(600)..]
+        );
+    }
+    assert!(transcript.contains("RS1:6.0pt"), "60pt 右移：{transcript}");
+    assert!(transcript.contains("RS2:0.06pt"), "0.6pt 右移：{transcript}");
+    assert!(transcript.contains("LS1:6.0pt"), "0.6pt 左移：{transcript}");
+    assert!(
+        !transcript.contains("Missing number"),
+        "数字位展开链缺臂→残流泄主输入（刀E/E2 同根）：{transcript}"
+    );
+}

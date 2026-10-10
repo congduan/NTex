@@ -308,27 +308,39 @@ pub fn format_count(v: i64) -> String {
     v.to_string()
 }
 
-/// scaled → pt 字符串（对照 pdfTeX 的 print_scaled）：
-/// 5 位小数、末位四舍五入、去尾零、至少保留一位小数。
+/// scaled → pt 字符串（对照 pdfTeX 的 print_scaled，tex.web §103 逐行移植）：
+/// `s:=10*(s mod unity)+5; delta:=10; repeat [delta>unity 时 s+=32768-50000
+/// （第 5 位舍入）] 打 `s div unity` 位；`s:=10*(s mod unity); delta*=10;
+/// until s<=delta`——余数追上 10^k 即停（尾零自然消隐，至少留 1 位）。
 ///
-/// 实测样例：1pt→"1.0"、2.5pt→"2.5"、-3.125pt→"-3.125"、1in→"72.26999"、1sp→"0.00002"。
+/// 此前「真十进制四舍五入到 5 位」把 39322sp（=0.6\p@ 的 tex.web 精确值）
+/// 打成 "0.60001pt"（GT "0.6pt"）——`\the` 产物喂 xcolor `\rshift@` 的
+/// `##1.##2PT` 定界匹配时多出的 `1` 直接进 ##2（刀E 第三面）。
+///
+/// 实测样例（pdfTeX GT 逐位对照）：1pt→"1.0"、2.5pt→"2.5"、-3.125pt→"-3.125"、
+/// 1in→"72.26999"、1sp→"0.00002"、39321sp→"0.59999"、39322sp→"0.6"。
 pub fn format_dimen(scaled: i64) -> String {
     let mut out = String::new();
+    let mag = scaled.unsigned_abs() as i128;
     if scaled < 0 {
         out.push('-');
     }
-    let mag = scaled.unsigned_abs();
-    let n = mag / SP_PER_PT as u64;
-    let frac = (mag % SP_PER_PT as u64) as i64;
-    out.push_str(&n.to_string());
+    let unity: i128 = 65_536;
+    out.push_str(&(mag / unity).to_string());
     out.push('.');
-    // round(frac * 100000 / 65536)：用 (frac*200000 + 65536) / 131072 实现四舍五入
-    let digits = ((frac as i128 * 200_000 + 65_536) / 131_072) as i64;
-    let mut frac_str = format!("{digits:05}");
-    while frac_str.ends_with('0') && frac_str.len() > 1 {
-        frac_str.pop();
+    let mut s: i128 = 10 * (mag % unity) + 5;
+    let mut delta: i128 = 10;
+    loop {
+        if delta > unity {
+            s += 32_768 - 50_000; // round the last digit
+        }
+        out.push(char::from(b'0' + (s / unity) as u8));
+        s = 10 * (s % unity);
+        delta *= 10;
+        if s <= delta {
+            break;
+        }
     }
-    out.push_str(&frac_str);
     out
 }
 
