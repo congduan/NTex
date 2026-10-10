@@ -23,7 +23,7 @@ use crate::tlpdb::{ProviderRef, TlPdb};
 use crate::Error;
 
 /// 需求种类：决定候选扩展名。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RequireKind {
     /// `\usepackage{...}`：`x.sty` → `x.ltx` → `x.tex`。
     UsePackage,

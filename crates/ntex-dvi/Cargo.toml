@@ -11,6 +11,7 @@ ntex-layout.workspace = true
 ntex-font.workspace = true
 ntex-io.workspace = true
 ntex-format.workspace = true
+ntex-pkg.workspace = true
 
 [lints]
 workspace = true

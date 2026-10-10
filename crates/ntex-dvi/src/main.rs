@@ -21,6 +21,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use ntex_io::Vfs;
+use ntex_pkg::resolve::{self, RequireKind};
+use ntex_pkg::source::{LocalTexLiveSource, ResolveOutcome, SourceChain};
+use ntex_pkg::tlpdb::TlPdb;
+use ntex_pkg::vendor::{self, FileState};
+
 #[derive(Debug)]
 struct AssetTfmSource {
     roots: Vec<PathBuf>,
@@ -62,6 +68,10 @@ fn main() -> ExitCode {
     let mut dump_fmt: Option<String> = None;
     let mut load_fmt: Option<String> = None;
     let mut generate_fmt: Option<String> = None;
+    let mut auto_pkg = false;
+    let mut pkg_tlpdb: Option<String> = None;
+    let mut pkg_root: Option<String> = None;
+    let mut pkg_vendor_dir: Option<String> = None;
     let mut interaction_mode: Option<i64> = None;
     // CJK 字体回落名（如 FandolSong-Regular）：码位 >0xFF 的字符走它，
     // 与 wasm 前端 set_fallback_font 同一引擎通路（182a113）。
@@ -75,6 +85,8 @@ fn main() -> ExitCode {
             "--quiet" => quiet = true,
             "--no-plain" => no_plain = true,
             "--utf8" => utf8 = true,
+            "--auto-pkg" => auto_pkg = true,
+            "--no-pkg" => auto_pkg = false,
             "--interaction" => match it.next() {
                 Some(mode) => match parse_interaction_mode(mode) {
                     Some(v) => interaction_mode = Some(v),
@@ -123,6 +135,27 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             },
+            "--pkg-tlpdb" => match it.next() {
+                Some(p) => pkg_tlpdb = Some(p.clone()),
+                None => {
+                    eprintln!("--pkg-tlpdb 需要一个 texlive.tlpdb 路径参数");
+                    return ExitCode::from(2);
+                }
+            },
+            "--pkg-root" => match it.next() {
+                Some(p) => pkg_root = Some(p.clone()),
+                None => {
+                    eprintln!("--pkg-root 需要一个 TeX Live 树根路径参数");
+                    return ExitCode::from(2);
+                }
+            },
+            "--pkg-vendor-dir" => match it.next() {
+                Some(p) => pkg_vendor_dir = Some(p.clone()),
+                None => {
+                    eprintln!("--pkg-vendor-dir 需要一个目标目录参数");
+                    return ExitCode::from(2);
+                }
+            },
             other if other.starts_with("--interaction=") => {
                 let mode = other.trim_start_matches("--interaction=");
                 match parse_interaction_mode(mode) {
@@ -167,6 +200,20 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if !auto_pkg && (pkg_tlpdb.is_some() || pkg_root.is_some() || pkg_vendor_dir.is_some()) {
+        auto_pkg = true;
+    }
+    if auto_pkg && generate_fmt.is_some() {
+        eprintln!("--auto-pkg 不用于 --generate-fmt");
+        return ExitCode::from(2);
+    }
+    if auto_pkg && pkg_tlpdb.is_none() {
+        pkg_tlpdb = discover_pkg_tlpdb();
+    }
+    if auto_pkg && pkg_root.is_none() {
+        pkg_root = discover_pkg_root(pkg_tlpdb.as_deref());
+    }
+
     let mut ts = ntex_layout::typeset::Typesetter::with_tfm();
     let job_name = PathBuf::from(input)
         .file_stem()
@@ -216,6 +263,29 @@ fn main() -> ExitCode {
         };
         ts.import_state(state);
     }
+    let auto_pkg_dirs = if auto_pkg {
+        match prepare_auto_packages(
+            &text,
+            &input_paths,
+            pkg_tlpdb.as_deref(),
+            pkg_root.as_deref(),
+            pkg_vendor_dir.as_deref(),
+            quiet,
+        ) {
+            Ok(dirs) => dirs,
+            Err(e) => {
+                eprintln!("{e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
+    };
+    if let Some(dirs) = &auto_pkg_dirs {
+        for dir in dirs.iter().rev() {
+            input_paths.insert(0, dir.clone());
+        }
+    }
     {
         // 第二十四刀：发行版默认搜索链。显式 --input-path 仍排最前；
         // 随后接便携 tex/、用户扩展、TEXINPUTS、入仓 tex-minimal、TinyTeX
@@ -223,6 +293,7 @@ fn main() -> ExitCode {
         ts.set_vfs(default_vfs(&input_paths));
         ts.use_embedded_format();
     }
+    let _keep_auto_pkg_dirs_alive = auto_pkg_dirs;
     if no_plain && load_fmt.is_none() {
         // --no-plain 且未显式给 fmt：纯 iniTeX 起点，不注入任何格式。
     } else if load_fmt.is_none() {
@@ -372,7 +443,7 @@ fn main() -> ExitCode {
 }
 
 fn usage() -> &'static str {
-    "用法：ntex-dvi <input.tex> [output.dvi] [--fmt <latex.fmt>] [--input-path <dir>]... [--interaction <mode>] [--no-plain] [--cjk-fallback <字体名>] [--utf8] [--quiet]\n\
+    "用法：ntex-dvi <input.tex> [output.dvi] [--fmt <latex.fmt>] [--input-path <dir>]... [--auto-pkg] [--pkg-tlpdb <texlive.tlpdb>] [--pkg-root <TL根>] [--interaction <mode>] [--no-plain] [--cjk-fallback <字体名>] [--utf8] [--quiet]\n\
      或：ntex-dvi --generate-fmt <output.fmt> [--input-path <dir>]... [--quiet]"
 }
 
@@ -384,6 +455,269 @@ fn parse_interaction_mode(mode: &str) -> Option<i64> {
         "errorstopmode" | "errorstop" | "3" => 3,
         _ => return None,
     })
+}
+
+fn prepare_auto_packages(
+    src: &str,
+    input_paths: &[String],
+    tlpdb_path: Option<&str>,
+    tl_root: Option<&str>,
+    vendor_dir: Option<&str>,
+    quiet: bool,
+) -> Result<Option<Vec<String>>, String> {
+    let requests = scan_package_requests(src);
+    if requests.is_empty() {
+        return Ok(None);
+    }
+
+    let mut probe_vfs = default_vfs(input_paths);
+    let missing: Vec<(String, RequireKind)> = requests
+        .into_iter()
+        .filter(|(name, kind)| request_is_missing(probe_vfs.as_mut(), name, *kind))
+        .collect();
+    if missing.is_empty() {
+        return Ok(None);
+    }
+
+    let tlpdb_path = tlpdb_path.ok_or_else(|| {
+        "自动取料失败：找不到 texlive.tlpdb 索引；请先运行 `ntex-pkg index`，或传入 --pkg-tlpdb <texlive.tlpdb> 与 --pkg-root <TL根>".to_owned()
+    })?;
+    let tl_root = tl_root.ok_or_else(|| {
+        "自动取料失败：找不到本地 TeX Live 树根；请传入 --pkg-root <TL根>，或设置 NTEX_PKG_ROOT"
+            .to_owned()
+    })?;
+
+    let tlpdb_text = fs::read_to_string(tlpdb_path).map_err(|e| {
+        format!("自动取料失败：读取 TLPDB `{tlpdb_path}` 失败：{e}；请先运行 `ntex-pkg index`")
+    })?;
+    let db = TlPdb::parse(&tlpdb_text)
+        .map_err(|e| format!("自动取料失败：解析 TLPDB `{tlpdb_path}` 失败：{e}"))?;
+    let closure = resolve::closure_for_requires(&db, &missing, host_arch())
+        .map_err(|e| format!("自动取料失败：{e}"))?;
+    if !closure.unresolved.is_empty() {
+        let names: Vec<&str> = closure.unresolved.iter().map(|u| u.dep.as_str()).collect();
+        return Err(format!("自动取料失败：依赖未解析：{}", names.join(", ")));
+    }
+
+    let target = vendor_dir
+        .map(PathBuf::from)
+        .unwrap_or_else(default_auto_pkg_vendor_dir);
+    let target_s = target.to_string_lossy().into_owned();
+    let source = LocalTexLiveSource::new(tl_root.to_owned());
+    let mut local_vfs = ntex_io::LocalVfs;
+    let mut chain = SourceChain::new();
+    chain.push(Box::new(source.clone()));
+    for pkg_name in &closure.packages {
+        let pkg = db.get(pkg_name).ok_or_else(|| {
+            format!("自动取料失败：闭包包 `{pkg_name}` 不在 TLPDB 中，索引可能已损坏")
+        })?;
+        match chain
+            .resolve(pkg, &mut local_vfs)
+            .map_err(|e| format!("自动取料失败：{e}"))?
+        {
+            ResolveOutcome::LocalComplete(_) => {}
+            ResolveOutcome::LocalPartial(status) => {
+                return Err(format!(
+                    "自动取料失败：本地 TeX Live 树缺少包 `{pkg_name}` 的运行面文件：{}",
+                    status.missing.join(", ")
+                ));
+            }
+            ResolveOutcome::Unavailable { .. } | ResolveOutcome::Container { .. } => {
+                return Err(format!("自动取料失败：所有取料源都未提供包 `{pkg_name}`"));
+            }
+        }
+    }
+
+    let plan = vendor::plan(&db, &closure, &source, &target_s, &mut local_vfs)
+        .map_err(|e| format!("自动取料失败：{e}"))?;
+    if !plan.source_missing().is_empty() {
+        let names: Vec<&str> = plan
+            .source_missing()
+            .iter()
+            .map(|f| f.package.as_str())
+            .collect();
+        return Err(format!(
+            "自动取料失败：本地 TeX Live 树缺少宏包文件（{}）",
+            names.join(", ")
+        ));
+    }
+    let report = vendor::apply(&plan, &target_s, &mut local_vfs)
+        .map_err(|e| format!("自动取料失败：{e}"))?;
+    if !quiet {
+        eprintln!(
+            "[auto-pkg] 已物化 {} 个包、{} 个文件到 {}",
+            plan.packages.len(),
+            report.written_files + report.skipped_identical,
+            target.display()
+        );
+    }
+
+    let dirs = package_search_dirs(&plan, &target_s);
+    Ok((!dirs.is_empty()).then_some(dirs))
+}
+
+fn request_is_missing(vfs: &mut dyn Vfs, name: &str, kind: RequireKind) -> bool {
+    candidate_files(name, kind)
+        .iter()
+        .all(|file| !matches!(vfs.read(file), Ok(Some(_))))
+}
+
+fn candidate_files(name: &str, kind: RequireKind) -> Vec<String> {
+    match kind {
+        RequireKind::UsePackage => vec![
+            format!("{name}.sty"),
+            format!("{name}.ltx"),
+            format!("{name}.tex"),
+        ],
+        RequireKind::DocumentClass => vec![format!("{name}.cls")],
+        RequireKind::Input => {
+            if Path::new(name).extension().is_some() {
+                vec![name.to_owned()]
+            } else {
+                vec![format!("{name}.tex")]
+            }
+        }
+        RequireKind::FontDef | RequireKind::Raw => vec![name.to_owned()],
+    }
+}
+
+fn scan_package_requests(src: &str) -> Vec<(String, RequireKind)> {
+    let mut out = Vec::new();
+    let clean = strip_tex_comments(src);
+    let patterns = [
+        ("\\usepackage", RequireKind::UsePackage, true),
+        ("\\RequirePackage", RequireKind::UsePackage, true),
+        ("\\documentclass", RequireKind::DocumentClass, false),
+        ("\\input", RequireKind::Input, false),
+        ("\\include", RequireKind::Input, false),
+    ];
+    for (needle, kind, comma_list) in patterns {
+        let mut rest = clean.as_str();
+        while let Some(pos) = rest.find(needle) {
+            rest = &rest[pos + needle.len()..];
+            let Some((arg, tail)) = scan_latex_argument(rest) else {
+                continue;
+            };
+            rest = tail;
+            if comma_list {
+                for item in arg.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                    out.push((item.to_owned(), kind));
+                }
+            } else if !arg.trim().is_empty() {
+                out.push((arg.trim().to_owned(), kind));
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn scan_latex_argument(mut s: &str) -> Option<(String, &str)> {
+    s = s.trim_start();
+    while s.starts_with('[') {
+        let end = s.find(']')?;
+        s = s[end + 1..].trim_start();
+    }
+    if let Some(rest) = s.strip_prefix('{') {
+        let end = rest.find('}')?;
+        return Some((rest[..end].to_owned(), &rest[end + 1..]));
+    }
+    let end = s
+        .find(|c: char| c.is_whitespace() || c == '\\')
+        .unwrap_or(s.len());
+    (end > 0).then(|| (s[..end].to_owned(), &s[end..]))
+}
+
+fn strip_tex_comments(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    for line in src.lines() {
+        let mut escaped = false;
+        for ch in line.chars() {
+            if ch == '%' && !escaped {
+                break;
+            }
+            out.push(ch);
+            escaped = ch == '\\' && !escaped;
+            if ch != '\\' {
+                escaped = false;
+            }
+        }
+        out.push('\n');
+    }
+    out
+}
+
+fn package_search_dirs(plan: &vendor::VendorPlan, target: &str) -> Vec<String> {
+    let mut dirs = Vec::new();
+    for f in &plan.files {
+        if !matches!(
+            f.state,
+            FileState::Add | FileState::Differ | FileState::Identical
+        ) {
+            continue;
+        }
+        let full = PathBuf::from(target).join(&f.rel_path);
+        let Some(parent) = full.parent() else {
+            continue;
+        };
+        let dir = parent.to_string_lossy().into_owned();
+        if !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    }
+    dirs
+}
+
+fn default_auto_pkg_vendor_dir() -> PathBuf {
+    std::env::temp_dir().join(format!("ntex-auto-pkg-{}", std::process::id()))
+}
+
+fn discover_pkg_tlpdb() -> Option<String> {
+    if let Ok(path) = std::env::var("NTEX_PKG_TLPDB") {
+        if Path::new(&path).exists() {
+            return Some(path);
+        }
+    }
+    discover_pkg_root(None).and_then(|root| {
+        let p = PathBuf::from(root).join("tlpkg/texlive.tlpdb");
+        p.exists().then(|| p.to_string_lossy().into_owned())
+    })
+}
+
+fn discover_pkg_root(tlpdb_path: Option<&str>) -> Option<String> {
+    if let Ok(root) = std::env::var("NTEX_PKG_ROOT") {
+        if Path::new(&root).join("tlpkg/texlive.tlpdb").exists() {
+            return Some(root);
+        }
+    }
+    if let Some(path) = tlpdb_path {
+        let p = Path::new(path);
+        if p.file_name().and_then(|s| s.to_str()) == Some("texlive.tlpdb") {
+            if let Some(root) = p.parent().and_then(Path::parent) {
+                return Some(root.to_string_lossy().into_owned());
+            }
+        }
+    }
+    let mut candidates = Vec::new();
+    if let Ok(home) = std::env::var("HOME") {
+        candidates.push(PathBuf::from(home).join(".TinyTeX"));
+    }
+    if let Ok(rd) = fs::read_dir("/usr/local/texlive") {
+        for entry in rd.flatten() {
+            candidates.push(entry.path());
+        }
+    }
+    candidates.sort();
+    candidates.into_iter().rev().find_map(|root| {
+        root.join("tlpkg/texlive.tlpdb")
+            .exists()
+            .then(|| root.to_string_lossy().into_owned())
+    })
+}
+
+fn host_arch() -> &'static str {
+    "universal-darwin"
 }
 
 fn default_vfs(input_paths: &[String]) -> Box<dyn ntex_io::Vfs> {
