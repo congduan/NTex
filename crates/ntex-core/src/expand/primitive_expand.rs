@@ -180,17 +180,30 @@ impl Expander {
             // 只读——expander 无排版状态，单独出现无操作；\the 查询在 save.rs 返回 0）
             Primitive::PageTotal | Primitive::PageGoal | Primitive::PreDisplaySize => Ok(()),
             // ETRIP 冲刺：\errmessage{...} 报错到转录（plain.tex \error 宏的底层原语）。
-            // tex.web issue_message（L23543）：message/errmessage 同支——
-            // scan_toks(false,true) 后 token_show 全展开构串。此处走与
-            // \message 相同的 expand_to_string（条件机在展开区步进、宏展开、
-            // 幸存不可展开 cs 按 detokenize 语义印名）：旧实现只取字符 token
-            // 丢 cs → 消息里的 \ifx…\else…\fi 整段失效，两个支文本同印
-            // （scrbase \scr@show@key@state@error 的 "missing option value at
-            // unknown option value at `{}'"）。
+            // tex.web issue_message（L23543）：scan_toks(false,true)——实参在
+            // **扫描位**就地展开（xpand 臂每 token 位 get_x_token），undefined
+            // cs 在扫描中即报错丢弃 → 先于消息本体（GT err1.tex 两错序：
+            // Undefined control sequence → Custom failure；旧实现 scan 后经
+            // expand_to_string 展开层静默吞掉坏 cs、只报一错）。条件机在扫描
+            // 位步进、幸存不可展开 cs 按 detokenize 语义印名（scrbase
+            // \scr@show@key@state@error 的 ifx/else/fi 分支文本仍按此印出）。
+            // e-TeX：\errmessage 属 protected 抑制语境（与 \write 同——
+            // expand_region 亦置此位），protected 宏不展开照旧印名。
+            // 消息本体走 tex.web error() 全格式（两行上下文）；errhelp 内容
+            // 仅 errorstopmode 停等打印（use_err_help 语义，GT 实测 nonstop
+            // 转录无 help 行）。
             Primitive::ErrMessage => {
-                let msg = self.scan_group_contents(None)?;
+                self.suppress_expansion += 1;
+                let scanned = self.scan_group_contents_xpand(true);
+                self.suppress_expansion -= 1;
+                let msg = scanned?;
                 let text = self.expand_to_string(&msg)?;
-                self.report_error(&format!("{text}."));
+                let help = if self.params.misc[crate::param::MISC_INTERACTION_MODE] == 3 {
+                    self.errhelp_text()
+                } else {
+                    String::new()
+                };
+                self.write_error_stop_aware(&format!("{text}."), &help);
                 Ok(())
             }
             // ETRIP 冲刺：\meaning<token>（可展开：token 含义文本）

@@ -1860,6 +1860,51 @@ impl Expander {
         self.sink.report_help(text);
     }
 
+    /// M1-13 刀C：报错（无 `<to be read again>` 段）+ interaction 门控 help——
+    /// tex.web error() 的 help 行只在 errorstopmode 停等时打出（TinyTeX 实测：
+    /// nonstopmode 转录无 help 行）。引擎无交互停等，errorstopmode(3) 按
+    /// 「用户在 `? ` 提示后敲 h」模拟成 `? <help>` 块（help 文本接在提示符
+    /// 同行、块尾空行），与 GT errorstopmode 实测逐字对齐。既有
+    /// write_error_help* 调用面的无条件 help 本刀不动，新报错站一律走此门控。
+    fn write_error_stop_aware(&mut self, msg: &str, help: &str) {
+        self.write_error_help_no_read_again(msg, "");
+        if !help.is_empty()
+            && self.params.misc[crate::param::MISC_INTERACTION_MODE] == 3
+        {
+            let _ = self.sink.write16(format!("? {help}\n\n"));
+        }
+    }
+
+    /// M1-13 刀C：`\errhelp` 消费侧——toks 内容按 token_show 语义串化（tex.web
+    /// issue_message 把 err_help toks 经 tokens_to_string 交给 error() 打印，
+    /// 打印不展开：存的是扫描期 token、显示即字面）。字符印字面、幸存 cs 按
+    /// detokenize 语义印名（escape 字符 + 名 + 控制词尾空格）。
+    fn errhelp_text(&self) -> String {
+        let mut s = String::new();
+        for t in &self.errhelp_toks {
+            match t.catcode() {
+                Some(_) => {
+                    if let Some(ch) = t.charcode().and_then(char::from_u32) {
+                        s.push(ch);
+                    }
+                }
+                _ => {
+                    if let Some(ch) = t.active_charcode(&self.intern) {
+                        s.push(ch);
+                    } else if let Some(csid) = t.csid() {
+                        s.push_str(&self.escape_char_str());
+                        let name = self.intern.name(csid);
+                        s.push_str(name);
+                        if name.bytes().next().is_some_and(|c| c.is_ascii_alphabetic()) {
+                            s.push(' ');
+                        }
+                    }
+                }
+            }
+        }
+        s
+    }
+
     /// NTEX_SANITY_CHECK 设施：错误恢复后状态完整性校验。
     /// 在主循环每次迭代开始调用——若存在待校验快照（刚发生过错误恢复），
     /// 对比当前 (组级, 条件栈深) 与错误前：组级偏离 >1 或条件栈偏离 >1 视为

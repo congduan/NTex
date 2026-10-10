@@ -193,6 +193,16 @@ fn interaction_mode_value(p: Primitive) -> Option<i64> {
     })
 }
 
+/// M1-13 刀C：tex.web help6（undefined_control_sequence 的默认 help）——GT
+/// errorstopmode 停等实测逐字（`? ` 提示符由 write_error_stop_aware 添加，
+/// 此处不含）。`\def'ed`/`\hobx` 的反斜杠是字面输出。
+pub(crate) const UNDEFINED_CS_HELP6: &str = "\
+The control sequence at the end of the top line\n\
+of your error message was never \\def'ed. If you have\n\
+misspelled it (e.g., `\\hobx'), type `I' and the correct\n\
+spelling (e.g., `I\\hbox'). Otherwise just continue,\n\
+and I'll forget about whatever was undefined.";
+
 /// 内部参数原语 → [`ParamKind`]（G3：`\advance/\multiply/\divide` 目标判定与
 /// `\the` 读取共用的一张表）。tex.web `do_register_command` 的目标集合是
 /// assign_int/assign_dimen/assign_glue/assign_mu_glue 四个 eqtb 区——`\hsize/

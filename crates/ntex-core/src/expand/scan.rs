@@ -1592,7 +1592,20 @@ impl Expander {
                     continue;
                 }
                 if let Some(csid) = t.csid() {
-                    let expandable = match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
+                    let derefed = self.deref_alias_chain(csid);
+                    // M1-13 刀C：undefined cs 在扫描位报错（tex.web get_x_token →
+                    // expand 的 undefined_cs 站：token 已消费、无 read-again 段，
+                    // 按 \relax 丢弃继续）——消息实参里的坏 cs 先于消息本体报出
+                    // （GT err1.tex 两错序；此前静默收集进串、构串期丢弃）。
+                    // help6 仅 errorstopmode 停等打印（GT nonstop 无 help 行）。
+                    if self.eqtb.slot(derefed) == &EqSlot::Undefined {
+                        self.write_error_stop_aware(
+                            "Undefined control sequence.",
+                            UNDEFINED_CS_HELP6,
+                        );
+                        continue;
+                    }
+                    let expandable = match self.eqtb.slot(derefed).clone() {
                         EqSlot::Macro(m) => !(m.value.protected && self.suppress_expansion > 0),
                         EqSlot::Primitive(p) if p.is_expandable() => true,
                         _ => false,

@@ -1337,7 +1337,14 @@ impl Expander {
     /// catcode 重新扫描（eTeX 语义：等价于从字符串 `\input`）。
     /// 参数为 `<general text>`：先展开可展开项（`\scantokens\expandafter{\1}`）。
     fn exec_scantokens(&mut self) -> Result<()> {
-        let toks = self.scan_group_contents_xpand(true)?;
+        // e-TeX \scantokens 实参收集**不展开**（TinyTeX etex 实测：
+        // `\scantokens{a\def\y{b}\y}` 无错排出 ab——`\def` 是收集态数据，
+        // 重扫段才执行；`\scantokens{\foo}` 的 undefined cs 报在**重扫段**
+        // （上下文 `l.1 \foo` 伪文件行）非收集位。xpand=true 会在收集位
+        // 就地展开/报错，与 e-TeX 相反（M1-13 刀C 在 xpand 位新增 undefined
+        // 报错臂后暴露）。前导 filler（`\scantokens\expandafter{\1}`）仍由
+        // scan_left_brace 展开臂覆盖。
+        let toks = self.scan_group_contents_expanding()?;
         let mut text: Vec<Token> = Vec::new();
         let esc = self.params.misc[34];
         for t in toks {

@@ -1857,4 +1857,5 @@ I changed this one to zero.
     mod tests_break17 { include!("tests_break17.rs"); }
     mod tests_bytecode18 { include!("tests_bytecode18.rs"); }
     mod tests_pdf_image { include!("tests_pdf_image.rs"); }
+    mod tests_errhelp { include!("tests_errhelp.rs"); }
 }
