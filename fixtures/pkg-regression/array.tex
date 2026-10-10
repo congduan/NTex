@@ -1,0 +1,14 @@
+\documentclass{article}
+\usepackage{array}
+\begin{document}
+\section{Array}
+\begin{tabular}{>{\bfseries}l >{\itshape}r @{ : }l}
+\hline
+Name & Value & Unit \\
+Size & 12    & pt   \\
+\hline
+\end{tabular}
+
+The \texttt{>\{\bfseries\}} preamble makes the first column bold and
+the second italic; the \texttt{@\{ : \}} separator inserts a colon.
+\end{document}

@@ -1,0 +1,12 @@
+\documentclass{article}
+\usepackage{etoolbox}
+\newcommand{\greeting}{Hello world}
+\begin{document}
+\section{Etoolbox}
+Before patching: \greeting.
+\patchcmd{\greeting}{world}{TeX}{}{}
+After patching: \greeting.
+\apptocmd{\greeting}{!}{}{}
+After appending: \greeting.
+\ifcsdef{greeting}{The macro is defined.}{The macro is missing.}
+\end{document}

@@ -1,0 +1,13 @@
+\documentclass{article}
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\begin{document}
+\section{Geometry baseline}
+This page uses A4 paper with a 2.5\,cm margin on every side.
+The geometry package computes the type block from the margin option.
+\newgeometry{margin=1.5cm}
+\section{New geometry}
+This page switches to a wider type block with a 1.5\,cm margin.
+\restoregeometry
+\section{Restored}
+The remaining pages return to the original 2.5\,cm margins.
+\end{document}

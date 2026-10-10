@@ -190,6 +190,11 @@ SurveyVfs read() mem 优先（写后读一致）。廿七刀证伪 chardef 假�
    latex_probe 同一堵墙。修复路径 = 既有战役目标（expl3 codepoint 装载段），
    非 fmt 链语义破坏。**影响不变**：fmt 停 v22 期间，新原语作业走无 fmt 慢路径；
    h1 残 6 错 = v22 回落 plain 后的结构宏 Undefined（非本刀域）。
+   **✅ CI 回归集落地（刀D，2026-10-10）**：`scripts/pkg-regression.py` + `fixtures/pkg-regression/`
+   13 包矩阵双跑（ntex --auto-pkg vs pdfTeX GT），PASS 9/13；基线报告
+   `docs/pkg-regression-baseline.md`（重跑逐字节幂等）。非 PASS=geometry 1 错、
+   xcolor 10 错、graphicx 40 错（均出 DVI）、microtype 719 错（无 DVI）；
+   caption 缺包负例验「缺包即报+反查指引」契约 ✅。
 5. 并行线：M1-13 错误恢复通用机制收口、M5 阶段六、M7 `.fmt` v2
    （发行 fmt 载入仍分钟级，产品化前必修）。
 
