@@ -165,6 +165,10 @@ SurveyVfs read() mem 优先（写后读一致）。廿七刀证伪 chardef 假�
    不做）。
 4. **宏包生态闭包**（最大体量项）：geometry/amsmath/hyperref/biblatex/tikz/ctex
    CI 回归集 + ntex-pkg 引擎接线（缺包即报 + 一条命令补）。
+   **✅ 引擎接线（3f09883，2026-10-09 卅一刀）**：`--auto-pkg` 预处理路线——
+   typeset 前 quick-scan 包名单，VFS miss 项走 ntex-pkg resolve→SourceChain
+   （本地 TL 树→tlnet）取料注入；miss 报错含包名+反查指引。实测 enumitem
+   零手工备料自动载入 0 错出 DVI。auto_pkg_cli 集成测试 2 passed。
    **刀 1（b81b587，2026-10-03 第二十一刀）**：booktabs ✅（本体零债）+ multirow ✅
    （`scan_glue` 补 countdef'd cs int_val 落穿臂——`\advance\myskip \mycnt\mydim`
    count 系数×dimen 内部量乘积；tex.web L9094 scan_glue S 分支，无硬报错路径）。
