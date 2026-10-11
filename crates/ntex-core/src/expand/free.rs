@@ -820,6 +820,12 @@ fn is_expandable_prim(p: Primitive) -> bool {
             | Primitive::PdfStrCmp
             | Primitive::PdfFileSize
             | Primitive::PdfUniformDeviate
+            // 刀H：\pdfmatch 可展开（microtype `\ifcase\pdfmatch{...}{...}\relax`
+            // 直接作条件操作数；GT 对拍 `\edef\m{\pdfmatch{ab}{xaby}}` 展开为 1）。
+            // 注意 rpcode/lpcode **不**进此表——GT 同款探针 `\edef\m{\rpcode\font`a}`
+            // 保留字面 token（pdfTeX 把它们做成非可展开读出原语），读取只在
+            // scan_int 内部位（scan.rs scan_something_internal 臂）。
+            | Primitive::PdfMatch
             | Primitive::String_
             | Primitive::InputLineNo
             | Primitive::CurrentGroupLevel

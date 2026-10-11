@@ -199,6 +199,18 @@ SurveyVfs read() mem 优先（写后读一致）。廿七刀证伪 chardef 假�
    format_dimen 舍入 + preamble `\rshift` 泄残流误报；刀F（23c7a2d）：`^^` 置换
    产物缺 reswitch 重分派（microtype `^^Q`/`^^X` 引擎条件编译失效 → 自引用定义
    → edef 栈超限）。
+   **刀H（2026-10-11）：microtype 尾刀——pdfTeX protrusion 原语族注册 ✅**：
+   `\rpcode`/`\lpcode`（凸出量读写，赋值恒全局、**不可展开**——GT p2 edef 保字面
+   实锤；`ProtrusionCodes` 内存表，不入 fmt，KNOWN-SIMPLIFICATIONS 登记）+
+   `\pdfmatch`（可展开，1=匹配/0=不匹配/−1=坏 pattern 布尔语义；POSIX 子集回溯
+   引擎，KNOWN-SIMPLIFICATIONS 登记）+ `\pdffontexpand`（吞参 no-op）。
+   级联修复两处：`scan_font_ident` 补宏展开臂（tex.web §586 get_x_token，
+   microtype `\MT@font` macro 形身份）+ `scan_number_inner` 补 `\fontcharwd` 等
+   整数语境臂（sp 值按整数读）。mt2.tex **1128→2 错**（残留
+   `\MT@protrudechars`/`\MT@adjustspacing` = `\let\pdfprotrudechars`/
+   `\pdfadjustspacing` 整数参数未注册，照实记录 /tmp/bladeH-report.md），DVI 保持，
+   文本层 80.4%→95.7%。fmt 已重生成（FORMAT_VERSION 保持 23，新变体尾部追加）。
+   刀E/F/G 探针 e2t/g4t/g8t 复跑 DVI 逐字节一致。ntex-core 528 绿（基线 514+14 新）。
    13 包矩阵双跑（ntex --auto-pkg vs pdfTeX GT），PASS 9/13；基线报告
    `docs/pkg-regression-baseline.md`（重跑逐字节幂等）。非 PASS=geometry 1 错、
    xcolor 10 错、graphicx 40 错（均出 DVI）、microtype 719 错（无 DVI）；

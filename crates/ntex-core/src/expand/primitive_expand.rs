@@ -131,6 +131,20 @@ impl Expander {
                 );
                 self.emit_tokens(emit_count(v))
             }
+            // 刀H：\pdfmatch{<pattern>}{<subject>} → 1=匹配 / 0=不匹配 /
+            // -1=pattern 非法（GT 对拍 p1/p2 探针；microtype 用作
+            // `\ifcase\pdfmatch{...}{...}\relax` 布尔门）。正则子集见
+            // primitive_pdf_match.rs。
+            Primitive::PdfMatch => {
+                let pat = self.scan_group_contents_xpand(true)?;
+                let subj = self.scan_group_contents_xpand(true)?;
+                let esc = self.params.misc[34];
+                let v = pdf_match_value(
+                    &pdf_detokenize_bytes(&pat, &self.intern, esc, &self.catcodes),
+                    &pdf_detokenize_bytes(&subj, &self.intern, esc, &self.catcodes),
+                );
+                self.emit_tokens(emit_count(v))
+            }
             // \pdffilesize{<file>}：文件字节数；文件不存在展开为空
             // （l3kernel \file_full_name:n 以空返回判定"未找到"，pdfTeX 同语义）
             Primitive::PdfFileSize => {

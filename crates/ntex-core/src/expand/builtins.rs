@@ -6,7 +6,7 @@
 /// Step B 补 PDF 变换栈 \pdfsave/\pdfsetmatrix/\pdfrestore 3 项；
 /// ctex 第二墙补 catcode table 三原语），
 /// 供 `register_builtins` 注册与 `tests.rs` 的一致性测试共用。
-pub(crate) const BUILTINS: [(&str, Primitive); 433] = [
+pub(crate) const BUILTINS: [(&str, Primitive); 437] = [
     ("def", Primitive::Def),
     ("edef", Primitive::Edef),
     ("gdef", Primitive::Gdef),
@@ -566,6 +566,14 @@ pub(crate) const BUILTINS: [(&str, Primitive); 433] = [
     ("pdfdest", Primitive::PdfDest),
     ("pdfstartlink", Primitive::PdfStartLink),
     ("pdfendlink", Primitive::PdfEndLink),
+    // microtype 尾刀（刀H）：字符凸出/字体扩展原语族。rpcode/lpcode 读写
+    // per-font 凸出量（microtype.sty L1037-38 继承链的读写两侧）；pdfmatch
+    // 布尔正则（microtype-pdftex.def L69/86 字体尺寸解析门）；pdffontexpand
+    // 吞参 stub（NTex 无字体扩展引擎）。
+    ("rpcode", Primitive::RpCode),
+    ("lpcode", Primitive::LpCode),
+    ("pdfmatch", Primitive::PdfMatch),
+    ("pdffontexpand", Primitive::PdfFontExpand),
 ];
 
 /// `Primitive → 规范名`（`BUILTINS` 反查；tests.rs

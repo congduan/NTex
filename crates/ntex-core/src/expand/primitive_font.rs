@@ -465,6 +465,42 @@ impl Expander {
         Ok(())
     }
 
+    /// `\rpcode\<font>\<char> = <int>` / `\lpcode\<font>\<char> = <int>`
+    /// （pdfTeX 字符凸出量，刀H；microtype.sty L1037-38 继承链写侧）。
+    ///
+    /// `=` 可选（scan_optional_equals 同 `\count` 族；GT p1 探针无 `=` 直写
+    /// 100 读回 100）。赋值**恒全局**（GT p2 探针：组内写 200、\endgroup 后
+    /// 读仍 200——同 \fontdimen 字体参数族，不进 save stack；仍消费 \global
+    /// 旗标避免前缀泄漏）。存储见 protrusions.rs；排版层消费（真实凸出位移）
+    /// 是后续刀口，本刀只接读写语义。
+    fn exec_protrude_code(&mut self, side: ProtrudeSide) -> Result<()> {
+        let font = self.scan_font_ident()?;
+        let ch = self.scan_number()?;
+        let ch = u32::try_from(ch).map_err(|_| Error::invalid_input("凸出量字符码为负"))?;
+        self.expect_equals()?;
+        let value = self.scan_number()?;
+        let _global = self.is_global();
+        self.protrusions.set(side, font, ch, value);
+        Ok(())
+    }
+
+    /// `\pdffontexpand\<font> <stretch> <shrink> <step> [auto|autoexpand|nofixedligands]`
+    /// ：声明字体可水平扩展（pdfTeX 字体扩展引擎的先决声明）。
+    ///
+    /// NTex 无字体扩展引擎（efcode/stretch/shrink 均不消费）——**吞参 no-op**：
+    /// 不发任何 DVI 事件（声明发生在 \selectfont 伴随路径，hmode 内发 special
+    /// 会污染 DVI 字节流）。microtype-pdftex.def L428 现场尾随 `\relax` 由
+    /// 执行层自然消化。语义简化登记于 KNOWN-SIMPLIFICATIONS。
+    fn exec_pdffontexpand(&mut self) -> Result<()> {
+        let _font = self.scan_font_ident()?;
+        let _stretch = self.scan_number()?;
+        let _shrink = self.scan_number()?;
+        let _step = self.scan_number()?;
+        // pdfTeX 手册关键词仅 `auto`（luatex 的 autoexpand 是 LuaTeX 侧语法）。
+        let _auto = self.scan_keyword(|w| w == "auto")?;
+        Ok(())
+    }
+
     #[allow(dead_code)]
     fn exec_fontdimen_old(&mut self) -> Result<()> {
         let num = self.scan_number()?;
@@ -500,17 +536,46 @@ impl Expander {
     }
 
     /// 扫描字体标识符（TeX `scan_font_ident`）：`\font` 定义的 cs 或 `\nullfont`。
+    ///
+    /// tex.web §586 首步是 `get_x_token`——**宏先展开**再看是否字体 cs：
+    /// microtype 的 `\MT@font` 即 `macro:->\OT1/cmr/m/n/10`（字体选择器 cs
+    /// 藏在宏体里），`\rpcode\MT@font 65=...` / `\fontdimen6\MT@font` 全靠
+    /// 此臂。缺臂时 `\fontdimen\MT@font` 落 "Missing font identifier"。
     fn scan_font_ident(&mut self) -> Result<u32> {
         self.skip_spaces()?;
-        let Some((tok, _ne)) = self.fetch()? else {
-            return self.missing_font_ident();
-        };
-        let Some(csid) = tok.csid() else {
-            // TeX scan_font_ident：非字体 cs 报错后 **放回** token（TRIP L404
-            // `\fontdimen 1000=20\varunit` —— `=` 放回，供错误恢复跳过赋值）。
-            self.unread(tok);
-            return self.missing_font_ident();
-        };
+        loop {
+            let Some((tok, _ne)) = self.fetch()? else {
+                return self.missing_font_ident();
+            };
+            let Some(csid) = tok.csid() else {
+                // TeX scan_font_ident：非字体 cs 报错后 **放回** token（TRIP L404
+                // `\fontdimen 1000=20\varunit` —— `=` 放回，供错误恢复跳过赋值）。
+                self.unread(tok);
+                return self.missing_font_ident();
+            };
+            // 展开位（get_x_token）：宏与可展开原语就地展开后重试。
+            let expandable = match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
+                EqSlot::Macro(_) => true,
+                EqSlot::Primitive(p) if p.is_expandable() => true,
+                _ => false,
+            };
+            if expandable {
+                let mut expansion = Vec::new();
+                self.expand_once((tok, false), &mut expansion)?;
+                if !expansion.is_empty() {
+                    self.push_frame(InputFrame::TokenList {
+                        items: Arc::from(expansion),
+                        pos: 0,
+                    });
+                }
+                continue;
+            }
+            return self.scan_font_ident_slot(csid);
+        }
+    }
+
+    /// scan_font_ident 的槽位分派（展开臂之后；csid 已知非宏）。
+    fn scan_font_ident_slot(&mut self, csid: u32) -> Result<u32> {
         match self.eqtb.slot(csid).clone() {
             EqSlot::Font(f) => Ok(f),
             // TRIP：`\font`（无参数）作当前字体选择器（\textfont1=\font）

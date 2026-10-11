@@ -1857,5 +1857,8 @@ I changed this one to zero.
     mod tests_break17 { include!("tests_break17.rs"); }
     mod tests_bytecode18 { include!("tests_bytecode18.rs"); }
     mod tests_pdf_image { include!("tests_pdf_image.rs"); }
+
+    // 刀H：凸出/字体扩展原语族（rpcode/lpcode/pdfmatch/pdffontexpand）。
+    mod tests_protrusion { include!("tests_protrusion.rs"); }
     mod tests_errhelp { include!("tests_errhelp.rs"); }
 }

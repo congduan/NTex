@@ -125,6 +125,11 @@ define_primitives! {
         PdfStrCmp,
         PdfFileSize,
         PdfUniformDeviate,
+        // 刀H：\pdfmatch 可展开（microtype `\ifcase\pdfmatch{...}{...}\relax` 条件
+        // 操作数 + \edef 收集位都要求就地展开；GT p1 探针 H1-MATCH 实证）。
+        // rpcode/lpcode **不在**本清单——GT p2 探针 H2-EDEF 保留字面 token，
+        // 读取只在 scan_int 内部位（scan.rs scan_something_internal 臂）。
+        PdfMatch,
     ]
     // 变体列表：自 1 起连续编号（0 为 eqtb 槽 Undefined 哨兵）
     Def = 1,
@@ -729,4 +734,12 @@ define_primitives! {
     PdfDest,
     PdfStartLink,
     PdfEndLink,
+    // microtype 尾刀（刀H）：字符凸出/字体扩展原语族。变体仍追加在尾部，
+    // 保持既有 .fmt 原语编号不重排。RpCode/LpCode 真语义（per-font 侧表，
+    // 内存态不进 .fmt——见 protrusions.rs）；PdfMatch 真语义（受限正则子集，
+    // primitive_pdf_match.rs）；PdfFontExpand 吞参 stub（NTex 无字体扩展引擎）。
+    RpCode,
+    LpCode,
+    PdfMatch,
+    PdfFontExpand,
 }

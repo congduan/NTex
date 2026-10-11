@@ -76,6 +76,8 @@ pub(crate) struct ValueExtras {
     pub(crate) mathcodes: HashMap<u32, u32>,
     pub(crate) delcodes: HashMap<u32, u32>,
     pub(crate) fontdimens: FontDimens,
+    /// 刀H：\rpcode/\lpcode 凸出量表（赋值恒全局，与 fontdimens 同族）。
+    pub(crate) protrusions: ProtrusionCodes,
     pub(crate) hyphenchars: HashMap<u32, i64>,
     pub(crate) skewchars: HashMap<u32, i64>,
     /// 字体表（加载记录/外部名/cs 名；`\font` 副作用）。
@@ -160,6 +162,7 @@ impl Expander {
                 mathcodes: self.mathcodes.clone(),
                 delcodes: self.delcodes.clone(),
                 fontdimens: self.fontdimens.clone(),
+                protrusions: self.protrusions.clone(),
                 hyphenchars: self.hyphenchars.clone(),
                 skewchars: self.skewchars.clone(),
                 font_loads: self.font_loads.clone(),
@@ -239,6 +242,7 @@ impl Expander {
         self.mathcodes = x.mathcodes.clone();
         self.delcodes = x.delcodes.clone();
         self.fontdimens.replace_from(&x.fontdimens);
+        self.protrusions.replace_from(&x.protrusions);
         self.hyphenchars = x.hyphenchars.clone();
         self.skewchars = x.skewchars.clone();
         self.font_loads = x.font_loads.clone();

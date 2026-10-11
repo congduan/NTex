@@ -518,6 +518,61 @@ impl Expander {
                     let v = self.fontdimen(font, num);
                     return Ok(if neg { -v } else { v });
                 }
+                // 刀H：\rpcode\<font>\<char> / \lpcode\<font>\<char> → 凸出量
+                // （1/1000 em，未设置读 0）。注意参数序与 \fontdimen 相反：
+                // **字体在前**。GT p2 探针：\rpcode 非可展开（\edef 保留字面）
+                // 但 scan_int 内部位可读（\number/\ifnum 操作数双证）——
+                // tex.web scan_something_internal 的 convert 臂同位。
+                EqSlot::Primitive(Primitive::RpCode | Primitive::LpCode) => {
+                    self.fetch()?; // 消费 \rpcode/\lpcode
+                    let font = self.scan_font_ident()?;
+                    let ch = self.scan_number()?;
+                    let ch = u32::try_from(ch)
+                        .map_err(|_| Error::invalid_input("凸出量字符码为负"))?;
+                    let side = if matches!(
+                        self.eqtb.slot(csid),
+                        EqSlot::Primitive(Primitive::RpCode)
+                    ) {
+                        ProtrudeSide::Right
+                    } else {
+                        ProtrudeSide::Left
+                    };
+                    let v = self.protrusions.get(side, font, ch);
+                    return Ok(if neg { -v } else { v });
+                }
+                // 刀H 连锁：\fontcharwd/ht/dp/ic<font><char> 在**整数**上下文按
+                // sp 值直读（tex.web scan_something_internal 的 dimen→int 降级；
+                // 与 scan_dimen_inner 的尺寸上下文臂同一语义三入口之一）。缺此臂
+                // 时 microtype-pdftex.def L346 `\MT@count=\fontcharwd\MT@font
+                // \MT@char` 落 "Missing number, treated as zero" → 全字符宽 0 →
+                // protrusion 配置整表被 "Ignoring protrusion settings" 抛弃。
+                EqSlot::Primitive(
+                    Primitive::FontCharWd
+                    | Primitive::FontCharHt
+                    | Primitive::FontCharDp
+                    | Primitive::FontCharIc,
+                ) => {
+                    let component = match self.eqtb.slot(csid) {
+                        EqSlot::Primitive(Primitive::FontCharWd) => 0,
+                        EqSlot::Primitive(Primitive::FontCharHt) => 1,
+                        EqSlot::Primitive(Primitive::FontCharDp) => 2,
+                        _ => 3, // FontCharIc
+                    };
+                    self.fetch()?; // 消费 \fontchar*
+                    let font = self.scan_font_ident()?;
+                    let ch = self.scan_number()?;
+                    let Some(ch) = self.fontchar_code(font, ch) else {
+                        return Ok(0);
+                    };
+                    let m = self.font_loader.char_metric(font, ch);
+                    let v = match component {
+                        0 => m.map(|x| x.0).unwrap_or(0),
+                        1 => m.map(|x| x.1).unwrap_or(0),
+                        2 => m.map(|x| x.2).unwrap_or(0),
+                        _ => 0,
+                    };
+                    return Ok(if neg { -v } else { v });
+                }
                 // 内部整数：\hyphenchar<font> / \skewchar<font> → 该字体的断字
                 // 字符/skew 字符。tex.web scan_something_internal 的
                 // `@<Fetch a font integer@>`（L8552-8557）：scan_font_ident 后取

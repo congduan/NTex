@@ -209,6 +209,11 @@ impl Expander {
             // ---- 字体（M3-4，已有助手方法，保留委托） ----
             Primitive::Font => self.exec_font(),
             Primitive::FontDimen => self.exec_fontdimen(),
+            // 刀H：pdfTeX 凸出量赋值臂（读臂在 scan.rs scan_something_internal，
+            // 与 \fontdimen 双位接线同款）；\pdffontexpand 吞参 stub。
+            Primitive::RpCode => self.exec_protrude_code(ProtrudeSide::Right),
+            Primitive::LpCode => self.exec_protrude_code(ProtrudeSide::Left),
+            Primitive::PdfFontExpand => self.exec_pdffontexpand(),
             Primitive::HyphenChar => self.exec_hyphenchar(),
             Primitive::DelCode => self.exec_delcode(),
             Primitive::MathCode => self.exec_mathcode(),

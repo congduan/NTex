@@ -687,6 +687,18 @@ impl Expander {
                 );
                     out.extend(emit_count(v).into_iter().map(|t| (t, false)));
                 }
+                // 刀H：\pdfmatch 在表达式语境同款展开（白名单原语须
+                // expr.rs / primitive_expand.rs 双臂——见 free.rs 注）。
+                EqSlot::Primitive(Primitive::PdfMatch) => {
+                    let pat = self.scan_group_contents_xpand(true)?;
+                    let subj = self.scan_group_contents_xpand(true)?;
+                    let esc = self.params.misc[34];
+                    let v = pdf_match_value(
+                        &pdf_detokenize_bytes(&pat, &self.intern, esc, &self.catcodes),
+                        &pdf_detokenize_bytes(&subj, &self.intern, esc, &self.catcodes),
+                    );
+                    out.extend(emit_count(v).into_iter().map(|t| (t, false)));
+                }
                 EqSlot::Primitive(Primitive::PdfFileSize) => {
                     let name = self.scan_file_name()?;
                     if let Some(bytes) = self
