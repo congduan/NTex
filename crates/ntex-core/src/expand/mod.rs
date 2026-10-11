@@ -857,6 +857,11 @@ pub struct Expander {
     scanner_status: ScannerStatus,
     /// tex.web `warning_index`：报错时指向「正在扫描谁的」cs（宏名）。
     warning_index: Option<u32>,
+    /// tex.web `cur_cs`：最近被主循环取用的 cs（`process_token` 入口记录）。
+    /// 对齐用（init_align 的 `save_cs_ptr`）：preamble 恢复消息的
+    /// `scanning preamble of \X` 指向**调用时**的 cs（TRIP `\^^C` 是
+    /// `\let\^^C=\halign` 别名，报 `\^^C` 而非 `\halign`）。
+    cur_cs: Option<u32>,
     /// 线程看门狗共享状态（挂死诊断；不参与 .fmt 序列化，run 时创建）。
     /// WASM（M8-A）：随看门狗整段门控（单线程环境无诊断线程）。
     #[cfg(not(target_arch = "wasm32"))]
@@ -1126,6 +1131,7 @@ impl Expander {
             eqtb: Eqtb::new(),
             scanner_status: ScannerStatus::Normal,
             warning_index: None,
+            cur_cs: None,
             catcodes: CatcodeTable::new(),
             catcode_tables: Vec::new(),
             sfcodes: [1000; 256],
@@ -1971,10 +1977,35 @@ impl Expander {
         self.write_error_impl(msg, true, Some(help));
     }
 
+    /// 报错 + `<inserted text>` 段 + `<to be read again>` + help 一体输出
+    /// （check_outer_validity defining/aligning 臂的恢复块形态；插入 token
+    /// 已由调用方 unread，read-again 段由输入流 peek 显示它）。
+    fn write_error_insert_help(&mut self, msg: &str, inserted: &str, help: &str) {
+        self.write_error_impl_ins(msg, true, Some(inserted), Some(help));
+    }
+
     /// write_error 实现：read_again=true 时先输出 `<to be read again>` 段
     /// （TRIP 对齐：扫描参数失败时错误恢复后将被读取的 token）。
     fn write_error_impl(&mut self, msg: &str, read_again: bool, help: Option<&str>) {
+        self.write_error_impl_ins(msg, read_again, None, help);
+    }
+
+    /// 带插入段变体：`<inserted text>` 段位于 `! 消息` 与 `<to be read again>`
+    /// 之间（tex.web check_outer_validity 的 defining/aligning 恢复块：
+    /// ins_error 的 inserted token 先于 read-again 上下文显示——trip.log
+    /// L5172-5173 `<inserted text> }` → `<to be read again> \a^^@^^@a`）。
+    fn write_error_impl_ins(
+        &mut self,
+        msg: &str,
+        read_again: bool,
+        inserted: Option<&str>,
+        help: Option<&str>,
+    ) {
         let mut s = format!("! {msg}\n");
+        if let Some(txt) = inserted {
+            s.push_str("<inserted text> \n");
+            s.push_str(txt);
+        }
         // <to be read again>：错误恢复后将被读取的 token（peek 输入流下一个）；
         // 第二行 = 描述宽度（19：`<to be read again> `）空格 + token 直接显示。
         if read_again {
@@ -2456,7 +2487,7 @@ impl Expander {
                         let ifname = Self::if_type_name(self.cur_if_type).to_owned();
                         let ln = self.error_line_no();
                         let _ = self.sink.write16(format!(
-                                    "! Incomplete \\{ifname}; all text was ignored after line {ln}.\n\
+                                    "! Incomplete {ifname}; all text was ignored after line {ln}.\n\
                                      <inserted text>\n                \\fi \n\
                                      <to be read again>\n                   \\{name}\n\
                                      A forbidden control sequence occurred in skipped text.\n\
@@ -2464,10 +2495,14 @@ impl Expander {
                                      the matching `\\fi'. I've inserted a `\\fi'; this might work.\n"
                                 ));
                         // 插入 \fi 闭合全部未决条件帧（对齐 skip_ahead
-                        // 的 outer 恢复臂语义）
+                        // 的 outer 恢复臂语义）。offending token **放回**
+                        // （tex.web back_input，"<to be read again>"）——
+                        // skip 结束后它按常规语境执行；preamble 现场它被
+                        // 再读时走 aligning 的 Forbidden 恢复（align.rs）。
                         self.cond_stack.clear();
                         self.cur_if_type = 0;
                         self.cur_if_branch = 0;
+                        self.unread(tok);
                         return Ok(true);
                     }
                     return Ok(true);
@@ -2543,6 +2578,7 @@ impl Expander {
         // 注意：此处不加 `ended` 拦截——`\end` 收尾时要 flush 延迟写流
         // （`flush_writes` → `expand_to_string` → 本函数），拦截会丢 write
         // 内容。终结由 `process_one` 顶部检查保证。
+        self.cur_cs = tok.csid();
         if self.expand_only {
             return self.process_expand_only(tok);
         }

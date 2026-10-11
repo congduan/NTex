@@ -1980,6 +1980,8 @@ I changed this one to zero.
 
     // ── 按域拆分的测试子模块（R2 纯移动，helper 留主文件走 super::* 链） ──
     mod tests_macro { include!("tests_macro.rs"); }
+    // 刀L：halign preamble 展开臂 + 参数文本/定义体 outer 恢复（TRIP l.363 链）。
+    mod tests_align_l { include!("tests_alignL.rs"); }
     mod tests_scan { include!("tests_scan.rs"); }
     mod tests_expr { include!("tests_expr.rs"); }
     mod tests_cond { include!("tests_cond.rs"); }

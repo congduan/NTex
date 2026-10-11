@@ -796,6 +796,77 @@ impl Expander {
         true
     }
 
+    /// tex.web check_outer_validity 的 **defining/absorbing 臂**（L7184-7200，
+    /// scanner_status=defining/absorbing）：定义体/吸收文本扫描撞上 outer 宏 →
+    /// runaway 显示（定义半成品）+ "Forbidden control sequence found while
+    /// scanning definition/text of \X." + 插入 `}` 收束——**已收集部分即全部**
+    /// （tex.web ins_list 的 `}` 让 scan_toks 的 unbalance 归零 goto found），
+    /// offending token 放回主循环重读执行（tex.web L7175 back_list；GT 实证
+    /// trip.log L5188：`\a^^@^^@a` 重读成宏调用，实参即源内后随 token）。
+    ///
+    /// GT（trip.log L5169-5183，trip.tex l.364 `\def\a^^C1{…\a^^@^^@a…}`：
+    /// l.364/365 两个 runaway 定义皆以此收场）：
+    /// ```text
+    /// Runaway definition?
+    /// ^^C1->\d ^^C1\d \l {##2}\l ^^C1\par
+    /// ! Forbidden control sequence found while scanning definition of \a.
+    /// <inserted text>
+    ///                 }
+    /// <to be read again>
+    ///                    \a^^@^^@a
+    /// l.364 …（l.N 上下文行——NTex 惯例不复制，见 align.rs 同款裁决）
+    /// I suspect you have forgotten a `}', causing me …（help4）
+    /// ```
+    /// 返回 true = 已救济，调用方须以半成品收束扫描（break）。
+    fn forbidden_outer_in_definition(
+        &mut self,
+        tok: Token,
+        csid: Option<u32>,
+        param_text: &[Token],
+        partial_body: &[Token],
+        absorbing: bool,
+    ) -> bool {
+        if !self.is_outer_for_token(tok) {
+            return false;
+        }
+        // ① runaway：defining = 参数文本 + `->` + 体半成品（tex.web token_type
+        //    =macro_def 的 `->` 显示位）；absorbing = 文本半成品。
+        let disp = if absorbing {
+            self.show_toks(partial_body)
+        } else {
+            format!(
+                "{}->{}",
+                self.show_toks(param_text),
+                self.show_toks(partial_body)
+            )
+        };
+        let _ = self.sink.write16(format!("Runaway definition?\n{disp}"));
+        // ② Forbidden 块（offending token 先放回——write_error 的 read-again
+        //    段从输入流 peek 显示它；`}` 插入段同 GT 缩进）。
+        let what = if absorbing { "text" } else { "definition" };
+        let name = match csid {
+            Some(c) => self.cs_display_name(c),
+            None => {
+                if absorbing {
+                    "\\expanded".to_owned()
+                } else {
+                    "\\def".to_owned()
+                }
+            }
+        };
+        let _ = tok.csid(); // offending token 由 read-again 段从输入流 peek 显示
+        self.unread(tok);
+        self.write_error_insert_help(
+            &format!("Forbidden control sequence found while scanning {what} of {name}."),
+            "                }\n",
+            "I suspect you have forgotten a `}', causing me\n\
+             to read past where you wanted me to stop.\n\
+             I'll try to recover; but if the error is serious,\n\
+             you'd better type `E' or `X' now and fix your file.\n",
+        );
+        true
+    }
+
     /// tex.web `@<Tell the user what has run away...@>`（L7184-7200）：**outer 宏
     /// 出现在参数/展开上下文是「可恢复错误」**（`error`，非 `fatal_error`），
     /// 恢复材料按 `scanner_status` 选择（L7206-7223）：`matching`（宏实参扫描）
@@ -884,11 +955,14 @@ impl Expander {
             // 扫描时即展开可展开项、组深含 \begingroup/\endgroup、条件即时求值；
             // 输入耗尽未配平 → "Runaway definition" 转录报告并以 } 收尾（可恢复）。
             self.suppress_expansion += 1;
-            let scanned = self.scan_edef_body(&cs_name, true).map_err(ctx);
+            let scanned = self
+                .scan_edef_body_with_outer(&cs_name, Some(csid), &param_text, true)
+                .map_err(ctx);
             self.suppress_expansion -= 1;
             scanned?
         } else {
-            self.scan_balanced_text(&cs_name).map_err(ctx)?
+            self.scan_balanced_text(&cs_name, Some(csid), &param_text)
+                .map_err(ctx)?
         };
         // TeX scan_toks（macro_def）hash_brace：参数文本以 `#{` 收尾时，`{` 被存为
         // 末参定界符，同时把同一 `{` 追加到宏体 token 列**末尾**。调用时该定界符
@@ -1024,17 +1098,9 @@ impl Expander {
                         .fetch()?
                         .ok_or_else(|| Error::invalid_input("参数文本中 # 后无 token"))?
                         .0;
-                    if let Some(d) = digit_value(next) {
-                        if d == 0 {
-                            return Err(Error::invalid_input("非法参数号 #0"));
-                        }
-                        num = num.max(d);
-                        // 参数文本中 #n → MacroParam token（与宏体中的参数槽一致）
-                        text.push(Token::macro_param(d));
-                    } else if is_parameter_char(next) {
-                        // ## → 字面 #：文本中保留一个 #
-                        text.push(tok);
-                    } else if next.catcode() == Some(Catcode::BeginGroup) {
+                    // tex.web L9364 `if cur_tok<left_brace_limit`（仅 `{` 落此）：
+                    // `#{` 收尾分支。
+                    if next.catcode() == Some(Catcode::BeginGroup) {
                         // TeX scan_toks macro_def hash_brace（tex.web `#{` 分支）：
                         // 参数文本以 `#` 紧接 body 的 `{` 收尾 → `#` 丢弃（非定界符），
                         // 该 `{` **计入**末参定界符（末参 = 分隔实参，定界符末 token
@@ -1048,18 +1114,38 @@ impl Expander {
                         text.push(next);
                         hash_brace = Some(next);
                         break;
-                    } else {
-                        // tex.web scan_toks（L1608 区）第三分支：参数文本中
-                        // `#` 后跟「非数字、非 #、非 {」的 token → 该 `#` 是
-                        // **定界符的一部分**（字面入参数文本），next 放回由
-                        // 正常定界扫描消化。`\def\foo#1#2\bar{…}`（# 后 cs 定
-                        // 界）、amsmath `\gdef\macro@#1#2#3#4\macro@{…}`
-                        // （# 后 cs 定界）都属此类。此前误报「# 后必须跟
-                        // 数字或 #」，amsmath.sty l.2790 载入即炸（\Large/
-                        // \section 连锁）。
-                        text.push(tok);
-                        self.unread(next);
                     }
+                    // tex.web L9364-9378：参数符后的 token 必产出**一个参数槽**，
+                    // 槽号 = 顺序计数 t（非原始数字；GT 匹配即按序配对，打印时
+                    // 数字也是按序重数的——trip.log L5128 `#1#2U3#4…#989{`）：
+                    // ① t 已满 9 → "You already have nine parameters"，`#` 与
+                    //   后随 token 一并吞掉（tex.web `goto continue`，无 store）；
+                    // ② 否则 t 增 1；后随 token 不是「cat12 数字 = t」→
+                    //   "Parameters must be numbered consecutively" + back_error
+                    //   （token 放回，下一轮重读为**字面**——`\lo` 的第二个
+                    //   `#8` 即此：槽 9 + 字面 `8`；`##`/`#0`/`#x` 同此道）。
+                    if num == 9 {
+                        self.write_error_help_no_read_again(
+                            "You already have nine parameters.",
+                            "I'm going to ignore the # sign you just used,\n\
+                             as well as the token that followed it.\n",
+                        );
+                        continue;
+                    }
+                    num += 1;
+                    let digit_ok = matches!(
+                        (next.catcode(), digit_value(next)),
+                        (Some(Catcode::Other), Some(d)) if d == num
+                    );
+                    if !digit_ok {
+                        self.unread(next);
+                        self.write_error_help(
+                            "Parameters must be numbered consecutively.",
+                            "I've inserted the digit you should have used after the #.\n\
+                             Type `1' to delete what you did use.\n",
+                        );
+                    }
+                    text.push(Token::macro_param(num));
                 }
                 _ => text.push(tok),
             }
@@ -1068,7 +1154,14 @@ impl Expander {
     }
 
     /// 扫描平衡花括号内的替换文本；`#n` → 参数槽 token，`##` → 字面 `#`。
-    fn scan_balanced_text(&mut self, def_name: &str) -> Result<Vec<Token>> {
+    /// `def_csid`/`param_text` 仅供 outer 撞体的 runaway 显示与消息名
+    /// （check_outer_validity defining 臂，见 [`Self::forbidden_outer_in_definition`]）。
+    fn scan_balanced_text(
+        &mut self,
+        def_name: &str,
+        def_csid: Option<u32>,
+        param_text: &[Token],
+    ) -> Result<Vec<Token>> {
         let mut out = Vec::new();
         let mut depth = 0usize;
         loop {
@@ -1120,21 +1213,19 @@ impl Expander {
                     }
                 }
                 _ => {
-                    // \outer 禁止出现在 \def/\edef 体（tex.web scan_toks
-                    // macro_def 的 forbidden 检查）——报 Forbidden + 跳过
-                    // （不收入体；TeX 为 Runaway definition + 插入 } 截断，
-                    // 简化先对齐主消息）。展开期不再重复报（体里无 outer）。
-                    if let Some(csid) = tok.csid() {
-                        if matches!(
-                            self.eqtb.slot(csid),
-                            EqSlot::Macro(m) if m.value.outer
-                        ) {
-                            let name = self.cs_display_name(csid);
-                            self.write_error(&format!(
-                                "Forbidden control sequence found while scanning definition of {name}."
-                            ));
-                            continue;
-                        }
+                    // tex.web check_outer_validity（defining 臂）：\outer 宏撞进
+                    // 定义体 → runaway + Forbidden + 插 } 收束（半成品即全身体），
+                    // offending token 放回主循环重读执行。旧实现只报错不收束
+                    // （continue 继续吞源码）：trip.tex l.364/365 两个 runaway
+                    // 定义一路吞到 EOF → 「替换文本未闭合」fatal（刀L 现场）。
+                    if self.forbidden_outer_in_definition(
+                        tok,
+                        def_csid,
+                        param_text,
+                        &out,
+                        false,
+                    ) {
+                        break;
                     }
                     out.push(tok);
                 }
@@ -1165,9 +1256,15 @@ impl Expander {
     ///   Illegal parameter number。expl3-code l.9356-9372 经 `\lowercase`
     ///   构造 catcode 查表时 `#`（cat 6）进入 `\expanded` 实参即依赖此语义
     ///   （latex.ltx --initex 256 条 IPN 的根因，2026-09-08 修复）。
-    fn scan_edef_body(&mut self, def_name: &str, in_definition: bool) -> Result<Vec<Token>> {
+    fn scan_edef_body_with_outer(
+        &mut self,
+        def_name: &str,
+        def_csid: Option<u32>,
+        param_text: &[Token],
+        in_definition: bool,
+    ) -> Result<Vec<Token>> {
         Ok(self
-            .scan_edef_body_pairs(def_name, in_definition)?
+            .scan_edef_body_pairs(def_name, def_csid, param_text, in_definition)?
             .into_iter()
             .map(|(tok, _)| tok)
             .collect())
@@ -1184,6 +1281,8 @@ impl Expander {
     fn scan_edef_body_pairs(
         &mut self,
         def_name: &str,
+        def_csid: Option<u32>,
+        param_text: &[Token],
         in_definition: bool,
     ) -> Result<Vec<(Token, bool)>> {
         let mut out = Vec::new();
@@ -1353,6 +1452,19 @@ impl Expander {
                 // （\prop_to_keyval:N 哨兵消费依赖此）。
                 out.push((tok, false));
                 continue;
+            }
+            // tex.web check_outer_validity（defining/absorbing 臂，先于一切展开
+            // 与条件求值）：\outer 宏撞进 \edef/\xdef 体（或 \expanded 实参）→
+            // runaway + Forbidden + 插 } 收束，半成品即全部（trip.tex l.365
+            // `\xdef\a^^C1{…\a^^@^^@a…}` 的收场道；token 放回主循环重读执行）。
+            if self.forbidden_outer_in_definition(
+                tok,
+                def_csid,
+                param_text,
+                &out.iter().map(|(t, _)| *t).collect::<Vec<_>>(),
+                !in_definition,
+            ) {
+                break 'scan;
             }
             // 条件原语：即时求值（优先级与 process_one 相同）
             if let Some(op) = self.cond_op(tok) {

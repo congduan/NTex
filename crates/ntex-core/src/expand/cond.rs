@@ -338,6 +338,11 @@ impl Expander {
                 });
                 let target = self.cond_stack.len();
                 let n = self.scan_number()?;
+                // tex.web if_case（L9877-9880）：scan_int 后打 `{case N}`
+                // （tracing_commands>1）。TRIP GT 的 `{case 3}` 轨迹线。
+                if self.params.misc[3] > 1 && self.trace_suppress == 0 {
+                    let _ = self.sink.write16(format!("{{case {n}}}"));
+                }
                 // TeX：n<0 时跳过所有 \or 直到 \else（\ifcase-1 → else 分支）
                 self.cur_if_branch = if n == 0 { 1 } else { -1 };
                 // 同 If 臂：按 target-1 下标本帧设置（scan_number 期间嵌套

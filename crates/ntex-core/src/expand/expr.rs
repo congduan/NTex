@@ -1340,7 +1340,7 @@ impl Expander {
         self.suppress_expansion += 1;
         // macro_def=false：不报 IPN，def_name 不再使用（此前传空串使消息
         // 缺 "of \X" 段——现参数 `#` 检查整体关闭）。
-        let scanned = self.scan_edef_body_pairs("", false);
+        let scanned = self.scan_edef_body_pairs("", None, &[], false);
         self.suppress_expansion -= 1;
         scanned
     }

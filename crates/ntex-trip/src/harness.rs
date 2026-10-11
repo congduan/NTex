@@ -39,27 +39,41 @@ pub fn run_test(driver: &dyn EngineDriver, fixtures: &TestFixtures) -> Result<Tr
         });
     }
 
-    let work = tempfile::tempdir().context("创建临时工作目录失败")?;
+    // NTEX_TRIP_WORKDIR=<dir>：钉住工作目录（默认临时目录随测即删）——
+    // pass2 失败时转录/log 产物可离线对照参考件（诊断用，产物不进库）。
+    let work_dir = match std::env::var("NTEX_TRIP_WORKDIR") {
+        Ok(dir) => {
+            let p = std::path::PathBuf::from(dir);
+            let _ = std::fs::remove_dir_all(&p);
+            std::fs::create_dir_all(&p).context("创建 NTEX_TRIP_WORKDIR 失败")?;
+            None // 钉住路径不做 RAII 清理（诊断后手动清）
+        }
+        Err(_) => Some(tempfile::tempdir().context("创建临时工作目录失败")?),
+    };
+    let work_path: std::path::PathBuf = match &work_dir {
+        Some(td) => td.path().to_path_buf(),
+        None => std::path::PathBuf::from(std::env::var("NTEX_TRIP_WORKDIR").unwrap_or_default()),
+    };
     let tex_name = kind.tex_name();
-    fs::copy(fixtures.tex(), work.path().join(tex_name))
+    fs::copy(fixtures.tex(), work_path.join(tex_name))
         .with_context(|| format!("复制 {} 失败：{}", tex_name, fixtures.tex().display()))?;
     // TRIP：trip.tex 内 `\input tripos`（补充测试文件）——一并复制到工作目录。
     let tripos = fixtures.dir().join("tripos.tex");
     if tripos.exists() {
-        fs::copy(&tripos, work.path().join("tripos.tex"))
+        fs::copy(&tripos, work_path.join("tripos.tex"))
             .with_context(|| format!("复制 tripos.tex 失败：{}", tripos.display()))?;
     }
 
     // 测试字体（trip.tfm/etrip.tfm）与源码同目录：让 ntex-font::find_tfm 能找到。
     // 环境变量进程级、只读一次即可（两个 kind 的 fixtures 目录不同，各设置一次）。
     std::env::set_var("NTEX_TFM_DIR", fixtures.dir());
-    let output = run_driver(driver, work.path(), tex_name)?;
+    let output = run_driver(driver, &work_path, tex_name)?;
     match output.status {
         ntex_test_support::DriverStatus::NotImplemented => Ok(TripOutcome::Skipped {
             reason: format!("驱动 {} 未实现", driver.name()),
         }),
         ntex_test_support::DriverStatus::Failure { code } => {
-            let log = read_artifact(work.path(), kind, "log");
+            let log = read_artifact(&work_path, kind, "log");
             Ok(TripOutcome::Fail {
                 log_diff: format!("编译失败（退出码 {code:?}）\n{log}"),
                 typ_diff: String::new(),
@@ -68,7 +82,7 @@ pub fn run_test(driver: &dyn EngineDriver, fixtures: &TestFixtures) -> Result<Tr
         ntex_test_support::DriverStatus::Success => {
             let mut log_diff = String::new();
             let mut typ_diff = String::new();
-            for (name, actual, expected) in compare_artifacts(fixtures, work.path())? {
+            for (name, actual, expected) in compare_artifacts(fixtures, &work_path)? {
                 let d = diff::render_diff(
                     &diff::normalize_log(&expected),
                     &diff::normalize_log(&actual),

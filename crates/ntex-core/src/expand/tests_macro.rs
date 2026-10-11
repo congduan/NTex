@@ -597,10 +597,25 @@ fn outer_forbidden_in_macro_argument() {
 
 #[test]
 fn outer_forbidden_in_edef() {
-    // \edef 展开上下文中 outer 宏 → forbidden
-    let e = expand("\\outer\\def\\x{A}\\edef\\y{\\x}");
-    assert!(e.is_err(), "\\edef 中 outer 宏应报错");
-    assert!(e.unwrap_err().to_string().contains("forbidden"));
+    // \edef 体扫描撞 outer 宏 = check_outer_validity defining 臂：**可恢复**——
+    // runaway + Forbidden + 插 `}` 收束（半成品即全身体），offending token 放回
+    // 重读执行。oracle（TL2026 tex）：`\outer\def\x{A}\edef\y{\x}` →
+    // `Runaway definition?`/`->`/`Forbidden … of \y.`/`<inserted text> }`/
+    // `<to be read again> \x`，作业继续（旧契约 Err 是非忠实实现）。
+    let mut e = Expander::new();
+    let sink = VecSink::default();
+    e.set_sink(Box::new(sink));
+    let r = e.run_source("\\outer\\def\\x{A}\\edef\\y{\\x}");
+    let sink = e.take_sink();
+    let mut sink = sink;
+    let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+    let t = std::mem::take(&mut sink.transcript);
+    assert!(r.is_ok(), "outer 撞 edef 体须可恢复：{t}");
+    assert!(
+        t.contains("! Forbidden control sequence found while scanning definition of \\y."),
+        "{t}"
+    );
+    assert!(t.contains("Runaway definition?\n->"), "{t}");
 }
 
 #[test]

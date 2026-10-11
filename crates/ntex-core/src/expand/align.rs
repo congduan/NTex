@@ -395,7 +395,95 @@ impl Expander {
     /// preamble 单步（tex.web get_preamble_token + u_j/v_j 扫描）。
     /// "The preamble is copied directly"：宏/可展开原语**不展开**（`\span` 后
     /// 一次例外），`\tabskip` 赋值执行，`#` 是 u→v 分界。
+    ///
+    /// 刀L（preamble 展开臂）：两处 tex.web 语义补齐——
+    /// ① 条件跳过区让路：tex.web 里 preamble 扫描与 `pass_text` 在调用栈上
+    ///    互斥（`\span` 触发的 `expand` → `conditional` → `pass_text` 是同步
+    ///    循环，收集器根本不在运行）；NTex 主循环把对齐拦截排在 `is_skipping`
+    ///    之前，不在此让路则 skip 区 token 被模板收集器吞掉、outer 检查永不
+    ///    触发（TRIP l.363 `\span\ifcase3 \lo` 的 `\lo` 被吞，假支一路吃到
+    ///    EOF，preamble 永不收口）。
+    /// ② aligning 的 outer 恢复（check_outer_validity L7171-7206 的
+    ///    `scanner_status=aligning` 臂）：preamble 扫描读到 outer cs →
+    ///    runaway 显示当前模板 + "Forbidden control sequence found while
+    ///    scanning preamble of \X" + 插 frozen `\cr` 与 `}` 恢复
+    ///    （align_state 硬复位 -1000000；offending token 放回再读；当前
+    ///    token 按 spacer 消费不存模板）。TRIP 正是靠这次插入的 `\cr`
+    ///    收掉 preamble、`}` 收掉对齐。
     fn align_preamble_step(&mut self, tok: Token) -> Result<bool> {
+        // ① 跳过区让路（见上）
+        if self.is_skipping() {
+            return Ok(false);
+        }
+        // ② aligning 的 outer 恢复（见上）。恢复后重读序 = 插入的 `\cr`、
+        //    `}`、offending token（tex.web ins_list 在 back_list 之后压入）。
+        if tok.csid().is_some() && self.is_outer_for_token(tok) {
+            let tmpl = {
+                let f = self.align_frames.last().expect("对齐帧在 Preamble 态");
+                match &f.phase {
+                    AlignPhase::Preamble {
+                        cur_u,
+                        cur_v,
+                        seen_hash,
+                        ..
+                    } => {
+                        if *seen_hash {
+                            cur_v.clone()
+                        } else {
+                            cur_u.clone()
+                        }
+                    }
+                    _ => unreachable!("调用方已确保 Preamble"),
+                }
+            };
+            let warn = match self.cur_cs {
+                Some(cs) => self.cs_display_name(cs),
+                None => "\\halign".to_owned(),
+            };
+            // cs_display_name 对单字符非字母名（`\^^C`）不带 escape 前缀；
+            // tex.web print_esc 恒带（GT `scanning preamble of \^^C.`）。
+            let esc = self.escape_char_str();
+            let with_esc = |s: String| {
+                if s.starts_with(&esc) {
+                    s
+                } else {
+                    format!("{esc}{s}")
+                }
+            };
+            let warn = with_esc(warn);
+            let offname =
+                with_esc(self.cs_display_name(tok.csid().expect("is_outer_for_token 已判 csid")));
+            let _ = self.sink.write16(format!(
+                "Runaway preamble?\n{}\n\
+                 ! Forbidden control sequence found while scanning preamble of {warn}.\n\
+                 <inserted text>\n                \\cr }}\n\
+                 <to be read again>\n                   {offname}\n\
+                 I suspect you have forgotten a `}}', causing me\n\
+                 to read past where you wanted me to stop.\n\
+                 I'll try to recover; but if the error is serious,\n\
+                 you'd better type `E' or `X' now and fix your file.\n",
+                self.show_toks(&tmpl)
+            ));
+            // align_state := -1000000（tex.web 恢复臂硬复位）→ brace_depth=0
+            if let Some(AlignFrame {
+                phase: AlignPhase::Preamble { brace_depth, .. },
+                ..
+            }) = self.align_frames.last_mut()
+            {
+                *brace_depth = 0;
+            }
+            self.set_preamble_span_pending(false);
+            let cr_csid = self.intern.intern("cr");
+            self.unread(tok);
+            self.unread(Token::char(Catcode::EndGroup, b'}' as u32));
+            if matches!(self.eqtb.slot(cr_csid), EqSlot::Primitive(Primitive::Cr)) {
+                self.unread(Token::control_sequence(cr_csid));
+            } else {
+                // `\cr` 已被重定义：插入无从落地，退回收对齐
+                self.align_finish()?;
+            }
+            return Ok(true);
+        }
         // 借用拆分：先取决策数据，再分步变更
         let (depth, seen_hash, span_pending) = match &self.align_frames.last().unwrap().phase {
             AlignPhase::Preamble {
@@ -411,6 +499,12 @@ impl Expander {
             if let Some(csid) = tok.csid() {
                 if let Some(op) = self.cond_op(tok) {
                     self.set_preamble_span_pending(false);
+                    // tex.web expand 非宏臂（L7698）：展开位的 if_test 经
+                    // show_cur_cmd_chr 追踪（tracing_commands>1）——GT
+                    // `{internal vertical mode: \ifcase}` 轨迹线。
+                    if self.params.misc[3] > 1 && self.trace_suppress == 0 {
+                        self.trace_token_now(tok);
+                    }
                     self.step_conditional(op, tok)?;
                     return Ok(true);
                 }
