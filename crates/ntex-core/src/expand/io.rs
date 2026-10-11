@@ -24,13 +24,32 @@ impl Expander {
         }
         match content {
             Some(bytes) => {
-                let bytes = Arc::from(bytes);
+                // 刀 N：force_eof 已置位（\endinput 在**文件名扫描内**展开，
+                // tex.web L7825 get_x_token 展开区间）→ 本文件「只读首行即关」
+                // （tex.web：首行 start_input 读入，行尾取下一行时 `)` 关闭）。
+                // 实施在**本帧**：字节真剪到首行行尾 + eof_mark 同点——真剪防
+                // InSpace 跨行续扫把第二行 token 带出去（旧 \endinput 实现同款
+                // 手段，见 tests.rs endinput_stops_at_line_end_even_from_macro_frame
+                // 的现场）；eof_mark 走既有弹帧臂（\everyeof 注入统一）。弹帧时
+                // fetch 的 eof_mark 臂熄灭旗标，主文件（TRIP trip.tex）幸存。
+                let starts = crate::input::line_starts(&bytes);
+                let (bytes, mark) = if self.force_eof {
+                    let cut = (starts
+                        .get(1)
+                        .copied()
+                        .unwrap_or(bytes.len() as u32)
+                        .min(bytes.len() as u32)) as usize;
+                    (Arc::from(&bytes[..cut]) as Arc<[u8]>, Some(cut))
+                } else {
+                    (Arc::from(bytes) as Arc<[u8]>, None)
+                };
+                let line_starts = Arc::from(crate::input::line_starts(&bytes));
                 self.push_frame(InputFrame::Source {
-                    line_starts: Arc::from(crate::input::line_starts(&bytes)),
+                    line_starts,
                     bytes,
                     pos: 0,
                     state: ScanState::LineStart,
-                    eof_mark: None,
+                    eof_mark: mark,
                 });
                 Ok(())
             }
@@ -49,6 +68,20 @@ impl Expander {
 
     /// 扫描文件名：`{...}` 或连续 cat 11/12 字符（空格终止）。
     fn scan_file_name(&mut self) -> Result<String> {
+        // tex.web scan_file_name L10209：`name_in_progress:=true` … 循环出口
+        // `name_in_progress:=false`。more_name 的 input/endinput 展开臂（刀 N）
+        // 据此区分「文件名扫描内的 `\input` → insert_relax」与「展开位的
+        // `\input` → 真开文件」（exec_expandafter 刀 N 臂）。save/restore 型：
+        // 嵌套文件名扫描（`\input a\expandafter…` 链）的内层出口不得清掉外层
+        // 旗标——与 scan_csname 的 `name_in_progress` 同款守卫，但是**两个独立
+        // 旗标**（域不同：文件名 vs csname）。
+        let saved = std::mem::replace(&mut self.file_name_in_progress, true);
+        let r = self.scan_file_name_body();
+        self.file_name_in_progress = saved;
+        r
+    }
+
+    fn scan_file_name_body(&mut self) -> Result<String> {
         self.skip_name_leading_blanks()?;
         let first = self
             .fetch()?
@@ -175,6 +208,57 @@ impl Expander {
             return Ok(true);
         }
         if let Some(csid) = t.csid() {
+            // 刀 N：名字扫描循环顶 get_x_token 对 input/endinput 同样展开
+            // （tex.web L7825：input=104 落 (max_command,call)=(100,111) 展开区间）
+            // - `\endinput`：就地展开 → force_eof:=true（全局一次性旗标，见
+            //   exec_endinput），展开产物为空 → 继续收集下一 token。TRIP l.424
+            //   `\input tripos\endinput\input` 的 GT trace `{\endinput}` 先于
+            //   `(tripos.tex` 打开标记即此——旗标要在文件入栈**前**置位。
+            // - `\input`：tex.web expand 的 input 分支见 name_in_progress 已置位
+            //   （scan_file_name L10209）→ insert_relax（L7815）：`\input` token
+            //   **原样回流** + frozen `\relax` 前插。扫描看到 `\relax`（relax 的
+            //   cur_chr=256>255，非名字字符）回退终止名字；`\input` 幸存到后面，
+            //   待 `\let\input\die` 生效后以 undefined cs 报错（GT
+            //   `! Undefined control sequence. <recently read> \input`——
+            //   **不开文件**，别名后无文件名扫描）。
+            // 别名链须解引用：trip.tex l.419 的 `\let\input\die` 在**两阶段中
+            // 的后段**才生效，而 l.424 现场里 `\input` 可能已被更早的 `\let`
+            // 别名到别处（语义 = 最终含义，与 expand_once 的别名臂一致）。
+            if self.file_name_in_progress {
+                let mut id = csid;
+                let mut hops = 0;
+                while let EqSlot::Alias(next) = self.eqtb.slot(id) {
+                    id = *next;
+                    hops += 1;
+                    if hops > 64 {
+                        break;
+                    }
+                }
+                match self.eqtb.slot(id).clone() {
+                    EqSlot::Primitive(Primitive::EndInput) => {
+                        // 级别 2（\tracingcommands2）：展开入口追踪（GT `{\endinput}`）
+                        if self.params.misc[3] >= 2 {
+                            self.trace_token_now(t);
+                        }
+                        self.exec_endinput()?;
+                        return Ok(true); // 展开产物为空，继续收集
+                    }
+                    EqSlot::Primitive(Primitive::Input) => {
+                        if self.params.misc[3] >= 2 {
+                            self.trace_token_now(t);
+                        }
+                        // insert_relax：unread 后进先出——先放 `\input` 再放
+                        // `\relax`，流序 = [\relax, \input]（tex.web back_input
+                        // 同序）。返回 false = 名字终止（`\relax` 交由后续执行位
+                        // 消费，`\input` 待别名生效后报错）。
+                        self.unread(t);
+                        let relax = self.intern.intern("relax");
+                        self.unread(Token::control_sequence(relax));
+                        return Ok(false);
+                    }
+                    _ => {}
+                }
+            }
             if self.eqtb.slot(csid) == &EqSlot::Primitive(Primitive::JobName) {
                 // 名字扫描里的 `\jobname` 必须用当前作业名（tex.web scan_file_name
                 // 循环顶 get_x_token 会展开 `\jobname`，与普通展开上下文同值）。

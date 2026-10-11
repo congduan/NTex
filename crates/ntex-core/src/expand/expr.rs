@@ -234,6 +234,60 @@ impl Expander {
             });
             return Ok(());
         }
+        // 刀 N：tex.web L7699 `\expandafter` 的第二 token `if cur_cmd>max_command
+        // then expand`——input（104）/endinput 同落 (max_command,call)=(100,111)
+        // 展开区间：
+        // - `\input`：**此刻**就走 start_input——文件名扫描 + 开文件 + 压栈都发生在
+        //   expandafter 内；t1 随后 back_input 到**新文件之上**（TRIP l.424
+        //   `\expandafter\stopinput\input tripos`：`\stopinput` 骑在 tripos 上执行，
+        //   错误上下文 = tripos l.1，GT 同）。
+        // - `\endinput`：就地置 force_eof（全局一次性旗标，exec_endinput）。
+        // 缺此臂时 `\input` 落 expand_once 的不可展开臂原样回流，`\stopinput`
+        // 抢先执行、tripos 永不开（NTex 转录 `{\expandafter}` 直跳 `{\stopinput}`
+        // 即此），endgame 段（trip.tex l.425-442）不可达。
+        // `\noexpand` 冻结位（t2.1）优先：被冻结的 token 不展开（tex.web
+        // frozen_dont_expand 语义，与下方 expand_once 的 item.1 门一致）。
+        if !t2.1 {
+            if let Some(csid) = t2.0.csid() {
+                let mut id = csid;
+                let mut hops = 0;
+                while let EqSlot::Alias(next) = self.eqtb.slot(id) {
+                    id = *next;
+                    hops += 1;
+                    if hops > 64 {
+                        break;
+                    }
+                }
+                match self.eqtb.slot(id).clone() {
+                    EqSlot::Primitive(Primitive::Input) => {
+                        // 级别 2（\tracingcommands2）：展开入口追踪（GT `{\input}`）
+                        if self.params.misc[3] >= 2 {
+                            self.trace_token_now(t2.0);
+                        }
+                        self.exec_input()?;
+                        let seq = vec![t1];
+                        self.push_frame(InputFrame::TokenList {
+                            items: Arc::from(seq),
+                            pos: 0,
+                        });
+                        return Ok(());
+                    }
+                    EqSlot::Primitive(Primitive::EndInput) => {
+                        if self.params.misc[3] >= 2 {
+                            self.trace_token_now(t2.0);
+                        }
+                        self.exec_endinput()?;
+                        let seq = vec![t1];
+                        self.push_frame(InputFrame::TokenList {
+                            items: Arc::from(seq),
+                            pos: 0,
+                        });
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+            }
+        }
         let mut expansion = Vec::new();
         self.expand_once_recovered = false;
         self.expand_once(t2, &mut expansion)?;
@@ -374,6 +428,42 @@ impl Expander {
                             self.drain_open_skip(depth)?;
                         }
                     } else {
+                        // 刀 N：tex.web L7699 `if cur_cmd>max_command then expand`
+                        // ——input/endinput 落展开区间（语义见 exec_expandafter
+                        // 同款臂的完整注解）。f 型展开/嵌套 `\expandafter` 语境
+                        // 同样要在 expandafter 位就地开文件/置 force_eof。
+                        if !b.1 {
+                            if let Some(csid) = b.0.csid() {
+                                let mut id = csid;
+                                let mut hops = 0;
+                                while let EqSlot::Alias(next) = self.eqtb.slot(id) {
+                                    id = *next;
+                                    hops += 1;
+                                    if hops > 64 {
+                                        break;
+                                    }
+                                }
+                                match self.eqtb.slot(id).clone() {
+                                    EqSlot::Primitive(Primitive::Input) => {
+                                        if self.params.misc[3] >= 2 {
+                                            self.trace_token_now(b.0);
+                                        }
+                                        self.exec_input()?;
+                                        out.push(a);
+                                        return Ok(());
+                                    }
+                                    EqSlot::Primitive(Primitive::EndInput) => {
+                                        if self.params.misc[3] >= 2 {
+                                            self.trace_token_now(b.0);
+                                        }
+                                        self.exec_endinput()?;
+                                        out.push(a);
+                                        return Ok(());
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
                         let mut expansion = Vec::new();
                         self.expand_once_recovered = false;
                         self.expand_once(b, &mut expansion)?;

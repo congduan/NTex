@@ -1094,6 +1094,23 @@ pub struct Expander {
     /// pdfTeX `every_eof` 扩展）。expl3 `\__sys_get` 依赖它在 `\input` 结束
     /// 边界回注 `\q_no_value` 探测标记。
     everyeof_toks: Vec<Token>,
+    /// TRIP 刀 N：`\endinput` 的 tex.web 全局一次性旗标（tex.web `force_eof`，
+    /// L7557 声明为**全局**变量、不挂任何帧）。置位后由「下一个到达行尾的
+    /// 文件帧」在取下一行时消费（`print(")"); force_eof:=false;
+    /// end_file_reading`），**当前行剩余 token 照常交付**。此前实现把截断点
+    /// 立即钉在「最近的 Source 帧」并真剪字节——TRIP l.424
+    /// `\input tripos\endinput\input` 现场证伪：`\endinput` 在文件名扫描内
+    /// 展开（more_name 刀 N 臂），此刻 tripos 尚未入栈，「最近 Source 帧」=
+    /// trip.tex 本体 → 按帧局部语义 trip.tex 被剪死在 l.424，endgame
+    /// （l.425-442）永不可达；tex.web 真语义下旗标由 tripos 的**首行行尾**
+    /// 消费，trip.tex 幸存。消费点在 fetch 的 Source 臂。
+    force_eof: bool,
+    /// TRIP 刀 N：tex.web `name_in_progress`（scan_file_name L10209 进出置
+    /// 复位）——文件名扫描期间展开到 `\input` 时不执行 input，走
+    /// insert_relax（L7815：`\input` token 回流 + frozen `\relax` 前插）。
+    /// ⚠ 与 `\csname` 名字扫描的 `name_in_progress` 是两回事（那是 csname 域
+    /// 的旗标，语义不同，不得复用）。
+    file_name_in_progress: bool,
     /// TRIP 补全批次：`\skewchar<font>=<num>` 字体偏斜字符表。
     skewchars: HashMap<u32, i64>,
     /// TRIP 冲刺：当前是否处于数学模式（`$`/`$$` 切换；决定 everymath 注入时机）。
@@ -1231,6 +1248,8 @@ impl Expander {
             errhelp_toks: Vec::new(),
             everydisplay_toks: Vec::new(),
             everyeof_toks: Vec::new(),
+            force_eof: false,
+            file_name_in_progress: false,
             skewchars: HashMap::new(),
             in_math: false,
             pdf_xobjects: Vec::new(),
@@ -3554,6 +3573,7 @@ impl Expander {
                     pos,
                     state,
                     eof_mark,
+                    line_starts,
                     ..
                 } => {
                     // `\endinput` force_eof（tex.web）：扫描越过截断点 =
@@ -3562,6 +3582,11 @@ impl Expander {
                     if let Some(mark) = *eof_mark {
                         if *pos >= mark {
                             self.stack.pop();
+                            // tex.web：文件关闭即消费 force_eof（一次性旗标——
+                            // 哪个文件先到行尾哪个关，其余文件幸存）。TRIP l.424：
+                            // tripos 关闭时旗标熄灭，trip.tex 本体的 l.424 行尾
+                            // 不得再触发。
+                            self.force_eof = false;
                             let toks = std::mem::take(&mut self.everyeof_toks);
                             if !toks.is_empty() {
                                 let seq: Vec<(Token, bool)> =
@@ -3574,6 +3599,39 @@ impl Expander {
                                 return Ok(None);
                             }
                             continue;
+                        }
+                    }
+                    // 刀 N：force_eof 消费点——tex.web @<Read next line of file@>
+                    // （L7566）：旗标置位后**当前行**余下 token 照常交付；行耗尽
+                    // （pos 到达行尾）再取 token 时 `)` 关闭本帧，一次性旗标全局
+                    // 只消费一次。哪个文件先到行尾哪个关——tex.web 语义下
+                    // `\endinput` 之后开的新文件（TRIP l.424 的 tripos）先消费。
+                    // scan_token 一次可跨行取 token，故判定必须在每次取 token
+                    // 之前做；行尾 token（\endlinechar 产物）交付后 pos 恰停在
+                    // 行尾，下一轮 fetch 即中。经 eof_mark 弹帧臂收场（\everyeof
+                    // 注入 + scanner_status 门统一复用）。
+                    if self.force_eof {
+                        let cur_pos = *pos;
+                        // 行归属判据：起点**严格小于** pos 的最后一行是「当前行」
+                        // ——pos 恰在行边界（= 下一行起点）时，上一行已读尽，旗标
+                        // 此刻就要消费（tex.web：读下一行的请求即 `)` 关闭）。
+                        // pos=0（帧首行未读）豁免：tex.web start_input 读入首行，
+                        // 旗标只在**第二次**取行时消费——新文件至少交付首行。
+                        if cur_pos > 0 {
+                            let line_end = {
+                                let idx =
+                                    line_starts.partition_point(|&s| (s as usize) < cur_pos);
+                                if idx < line_starts.len() {
+                                    line_starts[idx] as usize
+                                } else {
+                                    bytes.len()
+                                }
+                            };
+                            if cur_pos >= line_end {
+                                self.force_eof = false;
+                                *eof_mark = Some(cur_pos);
+                                continue;
+                            }
                         }
                     }
                     match scan_token(

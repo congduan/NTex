@@ -26,6 +26,71 @@ use super::*;
     }
 
     #[test]
+    fn expandafter_input_scans_filename_before_first_token() {
+        // 刀 N 回归锁 1（两阶段语义·取 cs 阶段）：tex.web L7699 `\expandafter`
+        // 的第二 token `if cur_cmd>max_command then expand`——input(104) 落
+        // (max_command,call)=(100,111) 展开区间，**文件名扫描+开文件都发生在
+        // expandafter 内**；t1 随后 back_input 骑在新文件之上（t1 先于文件内容
+        // 执行——真 tex oracle 实证：`\expandafter\X\input inner` 内联探测
+        // 输出顺序 X 先于 inner，故判据不用「内容先后」而用「缺文件致命先于
+        // \X 的 \write16」，TRIP l.424 `\expandafter\stopinput\input tripos`
+        // 的 stage 1）。缺臂时 `\input` 落 expand_once 不可展开臂原样回流 →
+        // `\X` 先执行（X-RAN 已发出）→ 而后 `\input` 才扫文件名报缺文件。
+        let mut e = Expander::new();
+        e.set_vfs(Box::new(MemVfs::new()));
+        // 标记 `XRAN` 运行时拼装（`XR\iftrue AN\fi`）：错误上下文会**原文引用
+        // 源行**，字面标记会被自己的引文假阳性命中。
+        let r = e.run_source(
+            "\\def\\X{\\immediate\\write16{XR\\iftrue AN\\fi}}\\expandafter\\X\\input missing\\end",
+        );
+        assert!(r.is_err(), "缺文件应致命（tex.web prompt_file_name 分支）");
+        assert!(
+            !e.transcript().contains("XRAN"),
+            "文件名扫描必须先于 t1 执行（expandafter 展开 \\input）：{}",
+            e.transcript()
+        );
+    }
+
+    #[test]
+    fn endinput_in_filename_scan_closes_new_file_after_first_line() {
+        // 刀 N 回归锁 2（force_eof 全局一次性旗标）：TRIP l.424 骨架
+        // `\input inner\endinput\relax POST`——`\endinput` 在 inner 的**名字
+        // 扫描内**展开（get_x_token 展开区间，此刻 inner 尚未入栈），force_eof
+        // 全局置位；旗标由**新文件首行行尾**消费 → inner 只读 1 行即关，主文件
+        // 后续行幸存。旧帧局部语义把截断钉在「最近的 Source 帧」= 主文件 →
+        // AFTER 蒸发（且 inner 会把 SECOND 也读进来）。
+        let mut vfs = MemVfs::new();
+        vfs.insert("inner.tex", "FIRST\nSECOND\n");
+        let (out, _) = expand_vfs("PRE\\input inner\\endinput\\relax POST\nAFTER\n", vfs).unwrap();
+        assert!(out.contains("FIRST"), "{out}");
+        assert!(!out.contains("SECOND"), "force_eof 须由 inner 首行行尾消费：{out}");
+        assert!(out.contains("AFTER"), "主文件不得被误剪：{out}");
+    }
+
+    #[test]
+    fn let_input_die_two_stage_undefined_after_file_opens() {
+        // 刀 N 回归锁 3（任务锁·`\let\input\die` 两阶段执行语义）：TRIP l.424
+        // 全形最小复现 `\expandafter\stop\input inner\endinput\input`。
+        // stage 1（取 cs 阶段）：expandafter 位 `\input` 真开文件；名字扫描内
+        // `\endinput` 置全局旗标、`\input` 走 insert_relax 回流（tex.web L7815：
+        // `\input` token 原样回流 + frozen `\relax` 前插）。
+        // stage 2（执行体阶段）：`\stop` 骑在 inner 上把 `\input` 别名到未定义
+        // `\die`；inner 只读 1 行即关；回流 `\relax` 无害；幸存的 `\input` 以
+        // undefined cs 报错（GT `! Undefined control sequence.
+        // <recently read> \input`——**不开文件**，无文件名扫描）。
+        let mut vfs = MemVfs::new();
+        vfs.insert("inner.tex", "L1\nL2\n");
+        let (out, _) = expand_vfs(
+            "\\def\\stop{\\let\\input\\die}\\expandafter\\stop\\input inner\\endinput\\input\nTAIL\n",
+            vfs,
+        )
+        .unwrap();
+        assert!(out.contains("L1"), "{out}");
+        assert!(!out.contains("L2"), "force_eof 须由 inner 首行行尾消费：{out}");
+        assert!(out.contains("TAIL"), "主文件不得被误剪：{out}");
+    }
+
+    #[test]
     fn input_missing_file_errors() {
         let vfs = MemVfs::new();
         assert!(expand_vfs("\\input{nope}", vfs).is_err());
@@ -671,3 +736,4 @@ use super::*;
         let vfs = MemVfs::new();
         assert!(expand_vfs("\\write18{echo hi}\\end", vfs).is_err());
     }
+
