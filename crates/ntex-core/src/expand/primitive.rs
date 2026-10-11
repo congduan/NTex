@@ -271,10 +271,56 @@ impl Expander {
         }
     }
 
+    /// `\message`（tex.web issue_message chr=0，与 `\errmessage` 同支）：
+    /// scan_toks(false,**true**)——收集位展开 + 条件就地求值（刀M：此前走
+    /// 非展开 scan_group_contents，消息文本构成与 GT 错位；trip L419 场景
+    /// GT 消息输出 `\a \test`——`\iffalse\fi` 在收集期消解、`\the\tokens`
+    /// 展开后按 token_show 印出）。protected 抑制与 `\errmessage` 同款
+    /// （刀C：protected 宏照旧印名）。构串用 token_show 形态**不再展开**
+    /// （tex.web issue_message 的 token_show：收集已完成全部展开，且
+    /// Vec<Token> 已丢 noexpand 冻结位，expand_to_string 会把 the_toks
+    /// 冻结产物复活再展开——tests_macro::the_toks_frozen_in_message_context）。
     fn exec_message(&mut self) -> Result<()> {
-        let toks = self.scan_group_contents(None)?;
-        let s = self.expand_to_string(&toks)?;
+        self.suppress_expansion += 1;
+        let scanned = self.scan_group_contents_xpand(true);
+        self.suppress_expansion -= 1;
+        let toks = scanned?;
+        let s = self.token_show_string(&toks)?;
         self.sink.message(s)
+    }
+
+    /// token_show 形态构串（不展开）：字符→字面、active→裸字符、已定义
+    /// cs→escape+名（控制词补尾空格）——与 expand_to_string 构串段同规则；
+    /// undefined cs 刀C 起在扫描位报错丢弃，不达此处。
+    fn token_show_string(&self, toks: &[Token]) -> Result<String> {
+        let mut s = String::new();
+        for t in toks {
+            match t.catcode() {
+                Some(_) => {
+                    let ch = t
+                        .charcode()
+                        .and_then(char::from_u32)
+                        .ok_or_else(|| Error::invalid_input("\\message 输出含非法字符"))?;
+                    s.push(ch);
+                }
+                _ => {
+                    if let Some(ch) = t.active_charcode(&self.intern) {
+                        s.push(ch);
+                    } else if t.kind() == TokenKind::ControlSeq {
+                        let csid = t.csid().expect("ControlSeq 必有 csid");
+                        if self.eqtb.slot(csid) != &EqSlot::Undefined {
+                            let name = self.intern.name(csid);
+                            s.push_str(&self.escape_char_str());
+                            s.push_str(name);
+                            if name.bytes().next().is_some_and(|c| c.is_ascii_alphabetic()) {
+                                s.push(' ');
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(s)
     }
 
     /// `\show<token>`：显示下一个 token 的含义（TeX："> \cs=..."，不展开）。

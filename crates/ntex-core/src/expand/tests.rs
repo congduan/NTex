@@ -1995,4 +1995,6 @@ I changed this one to zero.
     // 刀H：凸出/字体扩展原语族（rpcode/lpcode/pdfmatch/pdffontexpand）。
     mod tests_protrusion { include!("tests_protrusion.rs"); }
     mod tests_errhelp { include!("tests_errhelp.rs"); }
+    // 刀M：\message 必选 `{` 位条件就地求值 + 消息文本 xpand 构成（TRIP l.419）。
+    mod tests_message_scan { include!("tests_message_scan.rs"); }
 }

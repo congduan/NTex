@@ -1322,9 +1322,16 @@ impl Expander {
     /// - `\let\bgroup={` 类组定界别名经 [`Self::resolve_group_char`] 归一；
     /// - 返回值**已被消费**，调用方按需放回。
     ///
-    /// 偏差（记录）：tex.web get_x_token 对条件原语（`\ifnum` 等）同样展开；
-    /// 本引擎 `is_expandable()` 白名单不含条件原语（`maybe_eval_cond` 是数字
-    /// 扫描的专用臂），此处条件 token 走"不可展开 → Missing {"恢复路径。
+    /// 条件臂（原偏差已收口）：tex.web get_x_token 对条件原语（if_test/
+    /// fi_or_else 在可展开区 >max_command）同样 expand——filler 位的 `\if…`
+    /// 就地求值（真则继续找 `{`，假则 skip_ahead 吞掉假支直至 `\else`/`\fi`）；
+    /// `\fi`/`\else`/`\or` 闭合本 filler 期间开启的帧，无帧可闭的游离终结符
+    /// 放回调用方（同 scan_int 十进制循环臂）。缺此臂时 trip.tex L419
+    /// `\message\ifx#1 {…}` 的 `\ifx\test␣`（真）未被消解 ⇒ 报
+    /// "! Missing { inserted." 且把 `\ifcase…\def\stopinput{…}` 整段吞进
+    /// 消息文本 → l.424 `\expandafter\stopinput` Undefined 级联 → 尾部
+    /// `\input` 文件名扫描撞 EOF 致命（GT：`{\ifx}{true}` 后零吞消费、
+    /// 无 Missing {，消息输出 `\a \test`）。
     fn fetch_non_filler(&mut self) -> Result<Option<Token>> {
         loop {
             let Some((tok, ne)) = self.fetch()? else {
@@ -1333,6 +1340,22 @@ impl Expander {
             let t = self.resolve_group_char(tok);
             if t.catcode() == Some(Catcode::Space) {
                 continue; // spacer：filler 循环跳过
+            }
+            // 条件臂：\noexpand 冻结位不参与（tex.web noexpand 把下一 token
+            // 折成 \relax，本引擎保持既有"冻结原样返回"路径）。
+            if !ne {
+                if let Some(op) = self.cond_op(t) {
+                    if matches!(op, CondOp::Fi | CondOp::Else | CondOp::Or)
+                        && self.cond_stack.is_empty()
+                    {
+                        // 游离终结符：属调用方语境的未决终结符，原路径返回
+                    } else {
+                        self.step_conditional(op, t)?;
+                        continue;
+                    }
+                } else if self.is_skipping() {
+                    continue; // 真条件死支体 token：丢弃（主循环惰性跳过同款）
+                }
             }
             if let Some(csid) = t.csid() {
                 // 别名链解引用（tex.web get_x_token 直接取 eq_type/eq_value，
