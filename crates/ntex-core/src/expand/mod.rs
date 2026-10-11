@@ -3619,8 +3619,7 @@ impl Expander {
                         // 旗标只在**第二次**取行时消费——新文件至少交付首行。
                         if cur_pos > 0 {
                             let line_end = {
-                                let idx =
-                                    line_starts.partition_point(|&s| (s as usize) < cur_pos);
+                                let idx = line_starts.partition_point(|&s| (s as usize) < cur_pos);
                                 if idx < line_starts.len() {
                                     line_starts[idx] as usize
                                 } else {
