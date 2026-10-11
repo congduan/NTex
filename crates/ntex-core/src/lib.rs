@@ -50,3 +50,7 @@ pub use sink::{
 pub use span::{BytePos, LineCol, SourceId, Span};
 pub use token::{meaning, Token, TokenKind};
 pub use version::{Version, VersionCounter, Versioned};
+
+/// wasm 时钟/线程门禁（源扫描守护测试，见文件头文档）。
+#[cfg(test)]
+mod tests_wasm_clock;

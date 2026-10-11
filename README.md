@@ -18,7 +18,7 @@ single-threaded C interpreter of the 1970s (Web2C) is rewritten into a modern ty
 
 ## Development progress
 
-> Snapshot date 2026-09-26. The **single source of truth for progress is [plan.md](plan.md)**; this table
+> Snapshot date 2026-10-11. The **single source of truth for progress is [plan.md](plan.md)**; this table
 > is only a quick overview, and the bars are rough estimates meant to convey order of magnitude.
 
 **Milestones**:
@@ -26,7 +26,7 @@ single-threaded C interpreter of the 1970s (Web2C) is rewritten into a modern ty
 | Milestone | Progress | Status |
 |---|---|---|
 | M0 Foundation | `██████████` | Done: workspace / CI / differential tooling / benchmark framework |
-| M1 Interpreter core | `████████░░` | Core done: tokens / catcodes / macro expansion / core primitives; TRIP semantic diff not yet zero |
+| M1 Interpreter core | `████████░░` | Core done: tokens / catcodes / macro expansion / core primitives; TRIP endgame unblocked after the five-blade semantic push (J–N); semantic diff not yet zero |
 | M2 Bytecode compiler | `███████░░░` | Dual-track equivalence fully green (100 cases); throughput 1.01x — ≥2x is structurally unreachable → moved to M7 |
 | M3 Typesetting core | `██████████` | Done: nodes / boxes / glue / Knuth-Plass / TFM / page breaking / DVI, byte-identical to real TeX |
 | M4 Math + e-TeX | `████████░░` | Features complete (math state machine / e-TeX / hyphenation); ETRIP wrap-up ongoing |
@@ -34,24 +34,28 @@ single-threaded C interpreter of the 1970s (Web2C) is rewritten into a modern ty
 | M6 Parallelism | `░░░░░░░░░░` | Not started (waiting on M5 side-effect boundaries) |
 | M7 `.fmt` v2 | `░░░░░░░░░░` | Not started (the v1 in-memory snapshot is already usable) |
 | M8 Rendering / output | `████████░░` | Usable: ntex-pdf + software rasterizer / vello GPU + studio / wasm / tauri workbench |
-| M9 Ecosystem push | `███░░░░░░░` | Partial: CJK blades 1/2/3/5 (blade 4 pending), package manager parse / contract / fetch layers ①② |
+| M9 Ecosystem push | `████░░░░░░` | Partial: CJK blades 1–6 all landed, package manager parse / contract / fetch ①② + `--auto-pkg` engine wiring, package CI regression **13/13** |
 
-**Current focus and key numbers** (2026-09-26):
+**Current focus and key numbers** (2026-10-11):
 
-- **Single main line**: the LaTeX/expl3 conformance push — `latex.ltx` body loading stops at an observed
-  **88.4%** (pos=685828, 500 s timeout); this is the main wall and its root cause is still open.
-  `\documentclass{article}` is not working yet.
-- **expl3 official suite**: l3kernel `.lvt` × 187, load endpoint **89.4% of lines / 90.0% of bytes**;
+- **Single main line**: the LaTeX/expl3 conformance push — the `latex.ltx` **main wall has been crossed**;
+  the shipped `latex.fmt` chain works end to end, and `\documentclass{article}` has a **minimal working
+  path** (small2e: 0 errors / 1 page; transformer-standalone: 18 pages / 87 fonts, identical to baseline).
+  What remains is the NFSS long tail and the package-ecosystem closure.
+- **expl3 official suite**: l3kernel `.lvt` × 187, load endpoint **l.38446 (95%+)**;
   real load-time errors reduced 573 → **1** (non-blocking).
+- **Package regression**: the 13-package matrix (geometry / amsmath / booktabs / hyperref / microtype /
+  xcolor / graphicx / …) is **13/13 PASS** (`scripts/pkg-regression.py`; baseline
+  [docs/pkg-regression-baseline.md](docs/pkg-regression-baseline.md)).
 - **Quality gate**: `make check` fully green (`cargo fmt` + clippy `-D warnings` + unit tests
   **800+ passed / 0 failed**).
 - **Measured incremental typesetting** (release, 120-segment document): body edit **4.3x**,
   macro-body edit **1.1x** (target 100x).
 - **Rendering / preview**: the PDF backend, the software rasterizer and vello GPU path, the
   `ntex-studio` live workbench, and the wasm / Tauri frontend workbench are all usable.
-- **Not working yet**: real LaTeX layout (structural macros / NFSS sizes / tables / footnotes /
-  the package ecosystem); on 2026-09-03 the byte-exact TRIP/ETRIP criterion was downgraded to
-  "semantic diff zeroed + spot-checked error blocks".
+- **Not working yet**: long-tail real LaTeX layout (NFSS sizes / table refinements / long-footnote
+  splits / the full package ecosystem); on 2026-09-03 the byte-exact TRIP/ETRIP criterion was downgraded
+  to "semantic diff zeroed + spot-checked error blocks".
 - **Four performance pillars**: state snapshot + CoW (available) / `.fmt` v1 (available, v2 pending) /
   segment-level incrementality (phases 1–5) / arena memory pool (pending).
 

@@ -15,7 +15,7 @@
 
 ## 开发进度
 
-> 快照日期 2026-09-26。**进度唯一事实源是 [plan.md](plan.md)**，本表只是速览；
+> 快照日期 2026-10-11。**进度唯一事实源是 [plan.md](plan.md)**，本表只是速览；
 > 进度条为主观粗估，仅示意量级。
 
 **里程碑**：
@@ -23,7 +23,7 @@
 | 里程碑 | 进度 | 状态 |
 |---|---|---|
 | M0 地基 | `██████████` | 完成：workspace / CI / 差分工具 / 基准框架 |
-| M1 解释器内核 | `████████░░` | 核心完成：Token / catcode / 宏展开 / 核心原语；TRIP semantic diff 未归零 |
+| M1 解释器内核 | `████████░░` | 核心完成：Token / catcode / 宏展开 / 核心原语；TRIP 语义收口五连（刀J~N）后 endgame 打通，semantic diff 未归零 |
 | M2 字节码编译 | `███████░░░` | 双轨等价全绿（100 用例）；吞吐 1.01x，≥2x 结构性不可达 → 转 M7 |
 | M3 排版核心 | `██████████` | 完成：节点/盒子/胶水/Knuth-Plass/TFM/断页/DVI，与真实 TeX 逐字节一致 |
 | M4 数学 + e-TeX | `████████░░` | 功能全落（数学状态机 / e-TeX / 断字）；ETRIP 收尾中 |
@@ -31,20 +31,24 @@
 | M6 并行 | `░░░░░░░░░░` | 未开始（等 M5 副作用边界） |
 | M7 `.fmt` v2 | `░░░░░░░░░░` | 未开始（v1 内存快照已可用） |
 | M8 渲染 / 输出 | `████████░░` | 主体可用：ntex-pdf + 软光栅 / vello GPU + studio / wasm / tauri 工作台 |
-| M9 生态冲刺 | `███░░░░░░░` | 部分：中文刀 1/2/3/5（刀 4 待做）、宏包管理解析 / 契约 / 取料层 ①② |
+| M9 生态冲刺 | `████░░░░░░` | 部分：中文刀 1–6 全落、宏包管理解析 / 契约 / 取料层 ①② + `--auto-pkg` 引擎接线、宏包 CI 回归集 **13/13** |
 
-**当前焦点与关键数字**（2026-09-26）：
+**当前焦点与关键数字**（2026-10-11）：
 
-- **唯一主线**：LaTeX/expl3 兼容战役 —— `latex.ltx` 主体加载实测停点 **88.4%**
-  （pos=685828，500s 超时），为主墙且根因待定；`\documentclass{article}` 尚未打通。
-- **expl3 官方套件口径**：l3kernel `.lvt` × 187，载入终点 **89.4% 行 / 90.0% 字节**；
+- **唯一主线**：LaTeX/expl3 兼容战役 —— `latex.ltx` **主墙已越**，发行 `latex.fmt` 全链可用，
+  `\documentclass{article}` **最小闭环已通**（small2e 0 错 1 页；transformer-standalone
+  18 页 / 87 字体与基线一致）；余 NFSS 长尾与宏包生态闭包。
+- **expl3 官方套件口径**：l3kernel `.lvt` × 187，载入终点 **l.38446（95%+）**，
   载入期真错 573 → **1**（不阻断）。
+- **宏包回归**：13 包矩阵（geometry / amsmath / booktabs / hyperref / microtype / xcolor /
+  graphicx / …）**13/13 PASS**（`scripts/pkg-regression.py`；基线
+  [docs/pkg-regression-baseline.md](docs/pkg-regression-baseline.md)）。
 - **质量门禁**：`make check` 全绿（`cargo fmt` + clippy `-D warnings` + 单元测试
   **800+ passed / 0 failed**）。
 - **增量排版实测**（release，120 段文档）：改正文 **4.3x**、改宏体 **1.1x**（目标 100x）。
 - **渲染 / 预览**：PDF 后端、软光栅与 vello GPU 路径、`ntex-studio` 实时工作台、
   wasm / Tauri 前端工作台均已可用。
-- **尚未打通**：真 LaTeX 版面（结构宏 / NFSS 字号 / 表格 / 脚注 / 宏包生态）；
+- **尚未打通**：真 LaTeX 版面长尾（NFSS 字号 / 表格精化 / 长脚注 split / 宏包生态全量）；
   TRIP/ETRIP 逐字节口径已按 2026-09-03 决策降级为 semantic diff 归零 + 错误块抽查。
 - **四大性能支柱**：状态快照 + CoW（可用）/ `.fmt` v1（可用，v2 待做）/
   段级增量（阶段一~五）/ Arena 内存池（待做）。

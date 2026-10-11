@@ -1318,7 +1318,19 @@ impl Expander {
             }
             Err(_) => (u64::MAX, 0),
         };
-        let prog_start = std::time::Instant::now();
+        // 计时起点**惰性**取：`prog` 关（默认）时永不碰时钟。
+        //
+        // wasm32 上这是硬约束：wasm32-unknown-unknown 的 std 无 OS 时钟，
+        // `Instant::now()` 是 `sys/time/unsupported` 的 panic（"time not
+        // implemented on this platform"），`[profile.release] panic = abort`
+        // 再把它变成无位置信息的裸 trap（浏览器只报 `RuntimeError: Unreachable
+        // code should not be executed (evaluating 'wasm.compile_document(...)')`）。
+        // 现场（2026-10-11）：本条原是无条件 `let prog_start = ...now();`
+        // （e1a5bb33, 2026-09-28，ctex 第九刀）——`\edef`/`\xdef` 是全部 LaTeX
+        // 文档的必经路径，等于 wasm 工作台的 LaTeX 模式一编译就炸；native 有真
+        // 时钟，native 测试与 fuzz 全绿照不出来。诊断开关 `NTEX_EDEF_PROG` 走
+        // `std::env`（wasm 上恒 `Err` → `prog` 恒 false），惰性后 wasm 永不触发。
+        let prog_start = prog.then(std::time::Instant::now);
         // 同 token 连续重复 fetch（≥100 次）= 自我复制展开（quark 活锁）第一现场：
         // 只拍一次 Rust backtrace，指出是谁把这一 token 作为可展开帧推回来的。
         // `NTEX_EREPEAT=1` 才开重复跟踪（默认关：逐步 `tok.clone()` 有实测常数
@@ -1347,7 +1359,9 @@ impl Expander {
                     "[edef-prog] def=\\{} steps={scan_steps} out={} elapsed={:.1}s last_tok={:?} stack={}",
                     def_name,
                     out.len(),
-                    prog_start.elapsed().as_secs_f32(),
+                    // `prog` 为真时恒 `Some`（native 诊断路径）；`None` 分支只为
+                    // 让本行在 wasm 上也类型完备（那里 `prog` 恒 false，永不执行）。
+                    prog_start.map_or(0.0, |t| t.elapsed().as_secs_f32()),
                     self.last_tok,
                     self.debug_stack_summary()
                 );

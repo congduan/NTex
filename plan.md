@@ -30,11 +30,37 @@
 |---|---|---|
 | plain.tex 预载 | ✅ G0–G3 完成 | 1241 行全通；`\newif` 端到端与 pdfTeX 一致；剩 G4（`\lccode/\uccode` 初表）、G5（初表分裂脑收敛） |
 | expl3 全文载入 | ✅ 载入走通 | `[LOAD-DONE]` + DVI 落盘；载入期错误 2492 → **4**（NTex 独有仅 1，不阻断） |
-| latex.ltx 主体加载 | ✅ **主墙已越（口径刷新 2026-10-02）** | 发行 latex.fmt 全链（latex.ltx + expl3 + NFSS 字体）可用；`\documentclass{article}` 文档端到端出 DVI（见下行）。initex 逐行推进口径：fixtures 闭包补齐后 `blocker-track` 最远 **l.36005**（expl3-code 载入段，`扫描到输入末尾`；09-12 旧口径 1147 是缺件伪影），非当前主战场 |
+| latex.ltx 主体加载 | ✅ **主墙已越（口径刷新 2026-10-02）** | 发行 latex.fmt 全链（latex.ltx + expl3 + NFSS 字体）可用；`\documentclass{article}` 文档端到端出 DVI（见下行）。initex 逐行推进口径：fixtures 闭包补齐后 **载入终点 l.38446**（l3text-map 段；10-04 口径 l.36005、09-12 旧口径 1147 为缺件伪影），非当前主战场 |
 | `\documentclass` / article.cls | ✅ 最小闭环已通 | **主控实测（fae2350，2026-10-02）**：small2e **0 错** 1 页、sample2e **0 错**（原 Missing number ×2，第十九刀 `scan_dimen` mu 参数内部量臂 + 正号小数臂清零，b497294 同日先修 `\read` 未开流臂）、testpage `\read` 未开流已对齐 GT（Emergency stop 语义，GT nonstop 同 fatal，销账）；transformer-standalone **18 页/87 字体/49245B 与基线一致**、40 错（hypertext/URL 域字符为主） |
 | 结构宏（`\maketitle`/`\section`）+ NFSS 字体 | 🟡 主体已通 | `\section`/`\maketitle`/`\LaTeX` 徽标/字号代换链已通（09-24/25 现场四连）；余 NFSS 长尾（`\ifdim` size range、`try@simples`）见 §5 P1 |
 
-**最近两刀**（2026-09-17 / 09-18）：
+**近期进展**（2026-10-09 ~ 10-11，新在下）：
+
+1. **expl3 载入闭包补件**（`76d11bb`，10-09）：fixtures 51 件缺件（5 `enc.def` + 41 base `*.fd` +
+   hyphen/zerohyph + utf8 系）补齐后 `latex_probe` `pass1 OK, dumped=true`，载入终点
+   **89.4% → l.38446（95%+）**，残 1 错（`Missing number @38446`）可恢复。
+2. **`--auto-pkg` 引擎接线**（`3f09883`，10-09）：typeset 前 quick-scan 包名单，VFS miss 项走
+   `ntex-pkg` resolve → `SourceChain` 取料注入；缺包报错含包名 + 反查指引。
+   实测 enumitem 零手工备料 0 错出 DVI。
+3. **错误恢复刀A/C**（`0f271ee` / `c0849ed`，10-09~10）：`fetch()` 向扫描语境暴露 Source EOF +
+   定界参数 EOF 恢复臂（插 `\par`、废弃坏宏调用）；`\errhelp` 消费链（interaction 门控 + 组作用域）
+   + `\errmessage`/`\message` 实参展开吞错修复 + error_anchor 跨扫描污染修复。
+4. **宏包 CI 回归集 13/13 全绿**（刀D~I，10-10 ~ 10-11）：`scripts/pkg-regression.py` 13 包矩阵；
+   刀D 首跑 **9/13** → 刀E/F/G（`\ifdim` 谓词展开臂 / `scan_dimen` 循环展开臂 / `^^` 置换 reswitch）**12/13**
+   → 刀H（pdfTeX protrusion 原语族 `\rpcode`/`\lpcode`/`\pdfmatch`/`\pdffontexpand`）
+   → 刀I（`\pdfprotrudechars`/`\pdfadjustspacing`）**13/13 收官**；基线
+   [docs/pkg-regression-baseline.md](docs/pkg-regression-baseline.md)（HEAD `6515add`）。
+5. **TRIP/ETRIP 语义收口五连**（刀J~N，10-11）：`\the parshape` 内部量臂 + pass2 fatal 三连
+   （`b0913c6`）、`\end` 救济语义（`e207209`）、halign preamble 展开臂（`a331a66`）、
+   `\message` 恢复边界（`5179b89`）、`\let` 别名原语两阶段执行语义
+   （`f46432d`，**TRIP endgame 打通**）。
+6. **wasm 裸 trap 根因修复**（2026-10-11，工作区未提交）：`edef` 探针里**无条件** `Instant::now()`
+   （`e1a5bb33` 起）在 wasm32 无 OS 时钟 → `panic = abort` 下成无位置裸 trap；`\edef`/`\xdef`
+   是全部 LaTeX 文档的必经路径 ⇒ 工作台 LaTeX 模式一编译即炸（native 单测 / 深 fuzz 全绿照不出）。
+   修：`prog_start` 改惰性 `prog.then(Instant::now)` + `tests_wasm_clock` 回归锁；
+   KNOWN-SIMPLIFICATIONS §5 已登记（含 fuzz 片段表缺 `\edef`/`\xdef` 的覆盖缺口）。
+
+**历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 
 - **第十八刀** 尾递归鞍具校准 → `make check` 797 → **800 全绿**；pdfTeX 对照证明原否定结论有误；
   **真实主墙仍未越过**（输入栈泄漏与 Call/Ret 均已证伪）。
@@ -124,10 +150,11 @@ SurveyVfs read() mem 优先（写后读一致）。廿七刀证伪 chardef 假�
 | 输出例程战 | ✅ 刀 1–5 全落（`\outputpenalty`/box255/insert 分配/`\newinsert`/页号链） |
 | 格式预载（G 线） | ✅ G0–G3；剩 G4/G5 |
 | M5 增量计算 | 🟡 阶段一~五完成（改正文 4.3x / 改宏体 1.1x）；阶段六待办见 §2 M5 |
-| M9 中文 | 🟡 刀 1/2/3/5 落地（`\char` 扩位 + `\utfinputmode` + 宿主端端到端 + CJK 断点/断字最小宽）；遗留见 §5 P1 |
+| M9 中文 | 🟡 刀 1–6 全落（`\char` 扩位 + `\utfinputmode` + 宿主端端到端 + CJK 断点/断字/标点挤压 + 中文粗斜体）；遗留见 §5 P1 |
+| 宏包生态 | 🟡 `ntex-pkg` 解析/契约/取料①② + `--auto-pkg` 引擎接线；13 包 CI 回归 **13/13**（基线 [docs/pkg-regression-baseline.md](docs/pkg-regression-baseline.md)） |
 | M2 字节码 | 🟡 双轨等价全绿；吞吐 **1.01x**，≥2x 结构性不可达 → 转 M7 `.fmt` v2 |
 | 渲染/预览端 | ✅ PDF 后端 + 软光栅/vello + studio + wasm/tauri 工作台可用；真字形与缩放等遗留见 §2 M8 |
-| 技术债 | 见 §5；明细 [docs/KNOWN-SIMPLIFICATIONS.md](docs/KNOWN-SIMPLIFICATIONS.md)（待做 33 处 / 已修 ✅ 29 处 / 部分 ⚠️ 8 处，按行计，最近维护 2026-09-18） |
+| 技术债 | 见 §5；明细 [docs/KNOWN-SIMPLIFICATIONS.md](docs/KNOWN-SIMPLIFICATIONS.md)（待做 33 处 / 已修 ✅ 29 处 / 部分 ⚠️ 8 处，按行计，最近维护 2026-10-11） |
 
 ### 0.3 KPI 与口径登记
 
@@ -143,7 +170,7 @@ SurveyVfs read() mem 优先（写后读一致）。廿七刀证伪 chardef 假�
 - **EVIDENCE 口径**：任何数字入库须带 commit / 命令 / 样本规模；仪器失真史见
   [docs/tooling-trust.md](docs/tooling-trust.md)（开工定位前先读）。
 
-### 0.4 下一步（按执行序，2026-10-02 口径刷新）
+### 0.4 下一步（按执行序，2026-10-11 口径刷新）
 
 > 主墙 88.4% 已越、`\documentclass` 最小闭环已通（见 §0.1），本节旧序作废重排：
 
@@ -211,11 +238,17 @@ SurveyVfs read() mem 优先（写后读一致）。廿七刀证伪 chardef 假�
    `\pdfadjustspacing` 整数参数未注册，照实记录 /tmp/bladeH-report.md），DVI 保持，
    文本层 80.4%→95.7%。fmt 已重生成（FORMAT_VERSION 保持 23，新变体尾部追加）。
    刀E/F/G 探针 e2t/g4t/g8t 复跑 DVI 逐字节一致。ntex-core 528 绿（基线 514+14 新）。
-   13 包矩阵双跑（ntex --auto-pkg vs pdfTeX GT），PASS 9/13；基线报告
-   `docs/pkg-regression-baseline.md`（重跑逐字节幂等）。非 PASS=geometry 1 错、
-   xcolor 10 错、graphicx 40 错（均出 DVI）、microtype 719 错（无 DVI）；
-   caption 缺包负例验「缺包即报+反查指引」契约 ✅。
-5. 并行线：M1-13 错误恢复通用机制收口、M5 阶段六、M7 `.fmt` v2
+   **13 包矩阵**（ntex --auto-pkg vs pdfTeX GT）三次快照：刀D 首跑 **9/13**（非 PASS=
+   geometry 1 错、xcolor 10 错、graphicx 40 错，均出 DVI；microtype 719 错无 DVI）
+   → 刀E/F/G 后 **12/13** → 刀I **13/13 全绿**。caption 缺包负例验
+   「缺包即报+反查指引」契约 ✅。
+   **✅ 刀I 收官（6515add + bcb3884，2026-10-11）：全矩阵 13/13 PASS** ——
+   microtype `\MT@protrudechars`/`\MT@adjustspacing` 经 `\let` 别名落到新注册的
+   `\pdfprotrudechars`/`\pdfadjustspacing` 整数参数（凸出量 `\rpcode`/`\lpcode` + `\pdfmatch`
+   已在刀H 注册）→ microtype 0 错 / 文本层 96.7%；基线报告
+   `docs/pkg-regression-baseline.md`（HEAD 6515add，重跑逐字节幂等）。
+5. 并行线：M1-13 错误恢复通用机制收口（刀A/C 已落，余 `errorstopmode` 停等 /
+   half_error_line 口径，见 §5 P0）、M5 阶段六、M7 `.fmt` v2
    （发行 fmt 载入仍分钟级，产品化前必修）。
 
 ---
@@ -225,7 +258,7 @@ SurveyVfs read() mem 优先（写后读一致）。廿七刀证伪 chardef 假�
 | # | 里程碑 | 核心交付 | 状态 | 验收标准（Exit Criteria） |
 |---|---|---|---|---|
 | M0 | 地基 | workspace / CI / 基准框架 / TRIP 框架 | ✅ 完成 | 基准脚本与测试框架跑通 |
-| M1 | 解释器内核 | Token + 16 catcode + 宏展开 + 核心原语 | 🟡 核心完成；TRIP 未归零 | **TRIP 通过** |
+| M1 | 解释器内核 | Token + 16 catcode + 宏展开 + 核心原语 | 🟡 核心完成；TRIP endgame 已打通（刀J~N），semantic diff 未归零 | **TRIP 通过** |
 | M2 | 字节码编译 | 字节码 IR + 编译器 + 执行器 | 🟡 双轨全绿；吞吐未达标 | TRIP 仍绿；吞吐 ≥ 解释器 2x（实测 **1.01x 未达，结构性**） |
 | M3 | 排版核心 | 节点/盒子/胶水/Knuth-Plass/TFM/断页/DVI | ✅ 核心完成 | DVI 与真实 TeX 逐字节一致 |
 | M4 | 数学 + e-TeX | 数学模式 / e-TeX 原语 / 断字 / 错误模型 | ✅ 功能完成；ETRIP 收尾中 | **ETRIP 通过**（逐字节口径已降级，见 §2 M4） |
@@ -233,7 +266,7 @@ SurveyVfs read() mem 优先（写后读一致）。廿七刀证伪 chardef 假�
 | M6 | 并行 | 段落级并行展开 / 布局 / 整形 | ⬜ 未开始 | 8 核加速比 ≥ 3x（300 页基准） |
 | M7 | `.fmt` v2 | 三层 fmt + 部分求值 + 项目级 fmt | ⬜ 未开始（v1 已可用） | `latex.ltx` 加载 <200ms；ctex 300 页冷编 <10s |
 | M8 | 渲染 / 输出 | PDF 后端 + GPU 渲染 + WASM 预览 | 🟢 主体可用 | 简单文档 L2 逐字节一致；WASM 增量预览流畅 |
-| M9 | 生态冲刺 | ctex/xeCJK/OpenType/CJK 捷径 | 🟡 中文刀 1–5 落地；宏包管理解析/契约层落地（`ntex-pkg`） | 目标宏包 CI 回归全绿 |
+| M9 | 生态冲刺 | ctex/xeCJK/OpenType/CJK 捷径 | 🟡 中文刀 1–6 落地；宏包管理解析/契约层落地（`ntex-pkg`）+ `--auto-pkg` 接线；13 包 CI 回归 **13/13** | 目标宏包 CI 回归全绿 |
 
 **依赖链**：M0 → M1 → M2 → M3 → M4 → M5 → M6 → M7 → M8 → M9
 （M5 依赖 M2/M3；M7 依赖 M2/M5；M6 可与 M5 部分并行）。
@@ -553,6 +586,10 @@ CLI `ntex-pkg`（`index`/`provide`/`resolve`/`lock`/`check`/`local`/**`vendor`**
       先于 call_macro 触发，刀A 遗留②）。amsmath 载入本体已 0 错（10b88fb 刀A：
       调用点 collapse_tail_conditionals_for_macro_call 偷走定界实参数据 `\fi`）。
 - [ ] **TRIP / ETRIP semantic diff 归零**（−5619/+1412 与 −3051/+2352）+ 错误块抽查
+      **🟡 语义收口五连（刀J~N，2026-10-11）**：`\the parshape` 内部量臂 + TRIP pass2 fatal 三连（`b0913c6`）、
+      `\end` 救济语义（`e207209`）、halign preamble 展开臂 `get_preamble_token`（`a331a66`）、
+      `\message` 恢复边界（`5179b89`）、`\let` 别名原语两阶段执行语义（`f46432d`）
+      → **TRIP endgame 打通**；semantic diff 数字待复测刷新。
 - [ ] ~~`\documentclass` / article.cls → 结构宏 → 真 LaTeX 版面 PDF~~ ✅ 最小闭环已通
       （small2e 0 错 / transformer 18 页与基线一致，2026-10-02 主控实测）；
       余项转宏包生态闭包（§2 M9）

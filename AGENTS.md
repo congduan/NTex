@@ -46,7 +46,7 @@ TeX/LaTeX 源码 → 0.输入层(ntex-io VFS) → 1.TeX VM 求值(ntex-core) →
 | `ntex-core` | **TeX VM**：token（8B tagged union）/ catcode / InternTable / eqtb 版本化 / 展开引擎 / 字节码 IR·编译器·执行器 / 内部参数 / `TokenSink` 事件流；增量层 `src/incremental/`（段级重算 + 可回滚检查点 + 依赖追踪） |
 | `ntex-layout` | **排版器**：主循环（模式状态机）/ 折行 Knuth-Plass / 断页 / 输出例程 / 数学（`typeset/` 目录）/ 断字。`typeset::looks_like_latex` 是 LaTeX 格式自动检测的**单一事实源**（`ntex-dvi` 与 `ntex-studio` 共用；JS 侧 `main.js` 是同口径副本） |
 | `ntex-font` | 字体度量：TFM 解析 + OTF/TTF 度量通道（`FontMetrics` 注册表，PDF 写出的唯一度量来源）+ 缩放 |
-| `ntex-dvi` | DVI 写出器（与真实 TeX 逐字节一致）+ CLI：`--fmt` 快路径、`--generate-fmt`、`\input` 搜索链 |
+| `ntex-dvi` | DVI 写出器（与真实 TeX 逐字节一致）+ CLI：`--fmt` 快路径、`--generate-fmt`、`\input` 搜索链、`--auto-pkg`（排版前 quick-scan 包名单，VFS miss 走 `ntex-pkg` resolve→SourceChain 取料注入） |
 | `ntex-pdf` | DVI → PDF 正式后端（PDF 1.4 写出 + Type1/PFB 字体嵌入） |
 | `ntex-format` | `.fmt` 序列化 / 反序列化（v1 内存快照；v2 mmap 零拷贝待做） |
 | `ntex-io` | VFS 抽象 + LocalVfs / MemVfs（RFC-3 副作用隔离的载体） |
