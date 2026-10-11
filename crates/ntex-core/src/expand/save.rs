@@ -1609,6 +1609,9 @@ fn misc_int_name(idx: usize) -> &'static str {
         // 图片管线 Step A：\pdflastximage（misc 67）
         67 => "pdflastximage",
         68 => "pdfminorversion",
+        // microtype 尾刀（刀 I）：模式开关整数参数（misc 69/70）
+        69 => "pdfprotrudechars",
+        70 => "pdfadjustspacing",
         _ => "?",
     }
 }

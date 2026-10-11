@@ -152,3 +152,55 @@ fn fontcharwd_readable_in_integer_context() {
     assert!(r.is_ok(), "run failed: {r:?}\n{t}");
     assert!(!t.contains("Missing number"), "{t}");
 }
+
+// ── 刀I：\pdfprotrudechars/\pdfadjustspacing 整数参数（misc 69/70）
+//    GT 对拍：pdflatex p1 探针（2026-10-11，/tmp/bladeI：PC:2/AS:1/ALIAS:2） ──
+
+#[test]
+fn pdf_protrudechars_adjustspacing_assign_read() {
+    // GT p1：赋值→读取回环（pdfTeX 模式开关整数参数；默认 0）。
+    // 写读分句（\relax 终结赋值后 \number 才开新语句）。
+    let (out, _) = expand_vfs(
+        concat!(
+            r"\number\pdfprotrudechars|",
+            r"\pdfprotrudechars=2\relax\number\pdfprotrudechars|",
+            r"\pdfadjustspacing=1\relax\number\pdfadjustspacing",
+        ),
+        MemVfs::new(),
+    )
+    .unwrap();
+    assert_eq!(out, "0|2|1");
+}
+
+#[test]
+fn pdf_protrudechars_let_alias_chain() {
+    // microtype-pdftex.def L1334-1335 真形状：`\let\MT@protrudechars\
+    // pdfprotrudechars` 建别名再 `\MT@protrudechars=…` 赋值、`\number` 读。
+    // 未注册时 \let 自未定义 cs 传染（mt2.tex l.3 两错根源），去注册必红。
+    let (out, _) = expand_vfs(
+        concat!(
+            // 裸 INITEX 初表 @=cat12，`\MT@…` 会被切成 cs `\MT`+字面——
+            // 先升 cat11 复现 LaTeX \makeatletter 语境
+            r"\catcode`\@=11 ",
+            r"\let\MT@protrudechars\pdfprotrudechars",
+            r"\let\MT@adjustspacing\pdfadjustspacing",
+            r"\MT@protrudechars=2\relax",
+            r"\MT@adjustspacing=1\relax",
+            r"\number\MT@protrudechars:\number\MT@adjustspacing",
+        ),
+        MemVfs::new(),
+    )
+    .unwrap();
+    assert_eq!(out, "2:1");
+}
+
+#[test]
+fn pdf_spacing_params_registered_not_undefined() {
+    // transcript 侧无 Undefined（lvt 第十一刀教训：错误计数面另一通道）
+    let (r, t) = run_transcript(r"\pdfprotrudechars=2 \pdfadjustspacing=1 ");
+    assert!(r.is_ok(), "run failed: {r:?}\n{t}");
+    assert!(
+        !t.contains("Undefined control sequence"),
+        "两参数须已注册：{t}"
+    );
+}

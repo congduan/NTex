@@ -175,6 +175,10 @@ fn int_param_index(p: Primitive) -> Option<usize> {
         Primitive::CjkBreakMode => crate::param::MISC_CJK_BREAK_MODE,
         // hyperref PDF 原语 stub：\pdfminorversion 可赋可读（DVI 后端暂不消费）。
         Primitive::PdfMinorVersion => crate::param::MISC_PDF_MINOR_VERSION,
+        // microtype 最后 2 错（刀 I）：\pdfprotrudechars/\pdfadjustspacing——
+        // pdfTeX 模式开关整数参数，可赋可读（引擎暂不消费排版效果）。
+        Primitive::PdfProtrudeChars => crate::param::MISC_PDF_PROTRUDE_CHARS,
+        Primitive::PdfAdjustSpacing => crate::param::MISC_PDF_ADJUST_SPACING,
         _ => return None,
     })
 }

@@ -50,7 +50,11 @@ const MAGIC: &[u8; 8] = b"NTEXFMT1";
 ///      （ctex `\cctab_const:Nn \c__ctex_package_cctab` 挂点）。
 /// v23：misc 数组增位（68→69，`\pdfminorversion` 槽）+ 追加 hyperref 依赖
 ///      PDF 原语变体；旧 fmt 的原语编号集合与参数布局不再同构。
-pub const FORMAT_VERSION: u8 = 23;
+/// v24：misc 数组增位（69→71，`\pdfprotrudechars`/`\pdfadjustspacing` 槽，
+///      microtype 最后 2 错刀 I）+ 追加两 pdfTeX 整数参数原语变体——
+///      同 v19 教训：misc 定长序列化长度变必须同步 bump，否则旧快照
+///      在数组读取处无声错配。
+pub const FORMAT_VERSION: u8 = 24;
 
 /// 当前引擎版本号：随 crate 版本进入 `.fmt` 文件头。
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");

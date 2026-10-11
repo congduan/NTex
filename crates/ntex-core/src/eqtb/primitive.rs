@@ -742,4 +742,11 @@ define_primitives! {
     LpCode,
     PdfMatch,
     PdfFontExpand,
+    // microtype 最后 2 错（刀 I）：\pdfprotrudechars/\pdfadjustspacing——pdfTeX
+    // 内部整数参数（misc 69/70，模式开关；NTex 暂无凸出/字距扩展引擎行为，
+    // 只需可赋可读）。microtype-pdftex.def L1334-1335 以 `\let` 建别名后赋值，
+    // 未注册时 `\let` 自未定义 cs 传染报 Undefined。变体仍追加在尾部，
+    // 保持既有 .fmt 原语编号不重排。
+    PdfProtrudeChars,
+    PdfAdjustSpacing,
 }

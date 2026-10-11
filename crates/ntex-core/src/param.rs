@@ -134,7 +134,7 @@ pub enum ParamValue {
 
 /// 内部整数参数总数（TeX/e-TeX 内部整数，ETRIP/TRIP 冲刺；仅存储/回读）。
 /// 下标与 [`crate::expand::int_param_index`] 的映射一致。
-pub const MISC_INTS: usize = 69;
+pub const MISC_INTS: usize = 71;
 
 /// `\pdfoutput` 在 [`Params::misc`] 中的下标。0 选择 DVI 图形驱动；非 0
 /// 让兼容宏包选择 pdfTeX 图片原语（NTex 仍可把最终页面承载为 DVI）。
@@ -157,6 +157,18 @@ pub const MISC_PDF_LAST_XIMAGE: usize = 67;
 /// `\pdfminorversion` 在 [`Params::misc`] 中的下标。pdfTeX 默认 PDF 版本
 /// 随发行变化；DVI 模式下 hyperref 只需要可赋可读，取 5（PDF 1.5）作稳定默认。
 pub const MISC_PDF_MINOR_VERSION: usize = 68;
+
+/// microtype 尾刀（刀 I）：`\pdfprotrudechars` 在 [`Params::misc`] 中的下标。
+/// pdfTeX 字符凸出模式开关：0 = 关、1 = 段落级 remap、2 = character 级。
+/// NTex 暂无凸出引擎行为，但 microtype（microtype-pdftex.def L1334）以
+/// `\let\MT@protrudechars\pdfprotrudechars` 建别名再 `\MT@protrudechars=…`
+/// 赋值——必须可赋可读，`\let` 链才成立。
+pub const MISC_PDF_PROTRUDE_CHARS: usize = 69;
+
+/// microtype 尾刀（刀 I）：`\pdfadjustspacing` 在 [`Params::misc`] 中的下标。
+/// pdfTeX 字距调整档位：0 = 关、1/2 = 以字体扩展量调整 stretch/shrink 的两档。
+/// NTex 暂无字体扩展引擎行为，microtype 同样以 `\let` 别名后赋值（L1335）。
+pub const MISC_PDF_ADJUST_SPACING: usize = 70;
 
 /// `\lefthyphenmin` 在 [`Params::misc`] 中的下标（tex.web `left_hyphen_min_code`
 /// = int_base+51，本地内部整数序号 10）。
@@ -287,6 +299,12 @@ pub fn default_misc() -> [i64; MISC_INTS] {
         0,
         // hyperref PDF 原语 stub：\pdfminorversion（可赋可读；不影响 DVI 输出）
         5,
+        // microtype 尾刀（刀 I）：\pdfprotrudechars（pdfTeX 默认 0 = 关凸出；
+        // NTex 暂无凸出引擎行为，仅可赋可读供 \let 别名链）
+        0,
+        // microtype 尾刀（刀 I）：\pdfadjustspacing（pdfTeX 默认 0 = 关字距调整；
+        // NTex 暂无字体扩展引擎行为，仅可赋可读供 \let 别名链）
+        0,
     ]
 }
 

@@ -122,6 +122,7 @@
 | `expand/protrusions.rs` `ProtrusionCodes` | **凸出表不入 fmt**：`\rpcode`/`\lpcode` 的凸出量表（`(font,char)→i64` × 左右侧）纯内存 HashMap，fmt 生成/加载周期不持久化——`--fmt` 快照中已写的凸出量丢失，fmt 加载后从零起算。pdfTeX 真语义是 per-font 的 `\fontdimen` 风格持久数据。当前主消费方 microtype 在文档导言区写表（同进程同 fmt 生命周期），内存表不失真；fmt VERSION 未动（主控保留决策权） | ⚠️ 已登记（刀H 2026-10-11；跨 fmt 边界持久化待做） |
 | `expand/primitive_pdf_match.rs` | **`\pdfmatch` POSIX 子集引擎**：支持字面/`.`/`[...]`（范围/取反/`]` 首位字面）/`(...)` 分组/`|`/`* + ?`/`^ $` 锚/`\` 标点转义；**不支持** `{m,n}` 计数量词、`[:alpha:]` 字符类、后向引用、`\d\w` 类速记——pattern 解析失败一律返回 −1（与 pdfTeX 对坏 pattern 同值）。回溯式穷举终点枚举（无记忆化，pattern 微型不构成热点）；只取布尔结果不提取子匹配。microtype-pdftex.def 两个真 pattern（`^-*[0-9]+ *$`、dimen 全形）全覆盖，GT p1/p2 三值语义（1/0/−1，可展开）逐位对拍 | ⚠️ 已登记（刀H 2026-10-11；类速记/计数量词待需求出现再补） |
 | `expand/primitive_font.rs` `exec_pdffontexpand` | **`\pdffontexpand` 吞参 no-op**：按 pdfTeX 语法扫 font/stretch/shrink/step + 可选关键词 `auto` 后全部丢弃，不产生任何字体/排版事件（NTex 无字体扩展引擎）。microtype-pdftex.def L428 调用点只求「不报错推进」；expansion 大小调整（adjustspacing 路径）整体依赖 `\pdfadjustspacing` 整数参数（未注册，残留 2 错之一，见 /tmp/bladeH-report.md） | ⚠️ 已登记（刀H 2026-10-11） |
+| `param.rs` misc 69/70 + `expand/free.rs` 两映射 | **`\pdfprotrudechars`/`\pdfadjustspacing` 模式开关 stub**：pdfTeX 语义 protrudechars 0=关/1=remap/2=character 级、adjustspacing 0=关/1/2=字距调整档；NTex 无凸出/字体扩展引擎行为，参数只可赋可读（microtype-pdftex.def L1334-1335 `\let` 别名链的读写两侧）。misc 数组 69→71 扩容同刀入 fmt 快照，FORMAT_VERSION 23→24（v19 教训：定长序列化长度变必须同步 bump） | ✅ 已收口（刀I 2026-10-11；排版效果消费待引擎有 protrusion/字体扩展时接线） |
 
 ---
 
