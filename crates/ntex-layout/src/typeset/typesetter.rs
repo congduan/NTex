@@ -832,43 +832,25 @@ impl Typesetter {
                     return Err(Error::invalid_input("\\shipout 后缺少盒子"));
                 }
             }
-            if !builder.groups.is_empty() {
-                if ended {
-                    // TeX：\end 时组未闭合 → 警告不中断（trip.log L7293）。
-                    // 仅显式 \end 豁免：tex.web final_cleanup 收尾。纯 EOF 时
-                    // 残留本身就是要报告的错误（M4-7），不能反过来当豁免条件
-                    // ——58665be 曾用「数学列表非空」放宽此处，使未闭合数学
-                    // 静默吞掉（math_unclosed/left_without_right 回归）。
-                    let _ = builder.write16(format!(
-                        "(end occurred inside a group at level {})\n",
-                        builder.groups.len()
-                    ));
-                    builder.groups.clear();
-                } else {
-                    let dbg = builder
-                        .groups
-                        .iter()
-                        .map(|g| format!("{:?}", g.kind))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    let m = format!(
-                        "组未闭合（缺少 }}）：groups=[{dbg}] pending_box={:?} pending_kind={:?} math={}",
-                        builder.box_state.pending_box,
-                        builder.box_state.pending_kind,
-                        builder.math_state.math.len()
-                    );
-                    return Err(Error::invalid_input(&m));
-                }
+            // 未闭合组/数学列表：tex.web final_cleanup 救济——
+            // `(end occurred inside a group at level N)` / `(end occurred inside
+            // a math list)` 警告进转录后就地丢弃，作业照常收尾（GT trip.log
+            // 尾部 L7293 同款；刀K）。\end 与纯 EOF（\end 被上游错误恢复吞掉的
+            // TRIP L363 runaway skip / ETRIP \scantokens 现场）都走此臂；M4-7 的
+            // 严格 EOF 守卫仍保留在 incremental 路径与下方 pending_box/shipout
+            // 分支。不得静默：警告必须进转录（58665be 静默放宽的回归教训）。
+            let groups_unclosed = !builder.groups.is_empty();
+            let math_unclosed = !builder.math_state.math.is_empty();
+            if groups_unclosed {
+                let _ = builder.write16(format!(
+                    "(end occurred inside a group at level {})\n",
+                    builder.groups.len()
+                ));
+                builder.groups.clear();
             }
-            if !builder.math_state.math.is_empty() {
-                if ended {
-                    // TeX：\end 时数学列表未闭合 → 同样警告不中断。纯 EOF 的
-                    // 残留按 M4-7 报错（下方 else），不得因「组已清空」豁免。
-                    let _ = builder.write16("(end occurred inside a math list)\n".to_string());
-                    builder.math_state.math.clear();
-                } else {
-                    return Err(Error::invalid_input("数学模式未闭合（缺少 $）"));
-                }
+            if math_unclosed {
+                let _ = builder.write16("(end occurred inside a math list)\n".to_string());
+                builder.math_state.math.clear();
             }
             // 先收尾进行中的段落（tex.web final_end：\end 前 end_graf 收段折行），
             // 再丢弃未闭合盒子/组的残留列表——顺序不能反：先 pop 会把进行中的
@@ -876,9 +858,9 @@ impl Typesetter {
             if builder.mode() == Mode::Horizontal {
                 builder.close_paragraph();
             }
-            if ended {
-                // TeX `\end`：丢弃未闭合盒子/组的内容（tex.web final_end 后
-                // 各列表就地废弃），仅保留主垂直列表。
+            if ended || groups_unclosed || math_unclosed {
+                // TeX `\end`（或 EOF 救济）：丢弃未闭合盒子/组的内容
+                // （tex.web final_end 后各列表就地废弃），仅保留主垂直列表。
                 while builder.lists.len() > 1 {
                     builder.lists.pop();
                     builder.list_modes.pop();

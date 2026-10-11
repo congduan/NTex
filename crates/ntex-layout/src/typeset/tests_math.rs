@@ -361,7 +361,14 @@ use super::*;
 
     #[test]
     fn math_unclosed_message() {
-        assert_math_error(r"$x", "数学模式未闭合（缺少 $）");
+        // 刀K：EOF 残留数学列表按 final_cleanup 救济（转录警告 + 收尾），
+        // 不再以「数学模式未闭合」拒收作业（该守卫仍在 incremental 路径）。
+        let mut ts = Typesetter::with_metrics(metrics);
+        ts.typeset(r"$x").unwrap();
+        assert!(
+            ts.take_transcript().contains("(end occurred inside a math list)"),
+            "残留数学列表应警告收尾"
+        );
     }
 
     #[test]
@@ -383,11 +390,15 @@ use super::*;
     }
 
     #[test]
-    fn math_unclosed_formula_rejected() {
-        let err = typeset(r"$x").unwrap_err();
+    fn math_unclosed_formula_relief() {
+        // 刀K：EOF 残留数学列表走 final_cleanup 救济（警告进转录 + 就地丢弃），
+        // 作业不再拒收；严格拒收仍在 incremental 路径（M4-7 宿主对齐）。
+        let mut ts = Typesetter::with_metrics(metrics);
+        ts.typeset(r"$x").unwrap();
+        let t = ts.take_transcript();
         assert!(
-            err.to_string().contains("数学模式未闭合"),
-            "未闭合公式应报错：{err}"
+            t.contains("(end occurred inside a math list)"),
+            "残留数学列表应警告收尾：{t}"
         );
     }
 
@@ -829,7 +840,15 @@ use super::*;
 
     #[test]
     fn math_left_without_right_rejected() {
-        assert!(typeset(r"$\left(x$").is_err(), "\\left 必须配 \\right");
+        // TeX 恢复式：公式末尾未闭合 \left 报 "Extra } or forgotten \right."
+        // 后继续（math.rs 收尾恢复）；作业不再因残留数学列表拒收（刀K 救济）。
+        let mut ts = Typesetter::with_metrics(metrics);
+        let _ = ts.typeset(r"$\left(x$");
+        let t = ts.take_transcript();
+        assert!(
+            t.contains("Extra } or forgotten \\right."),
+            "转录应含 \\right 恢复：{t}"
+        );
     }
 
     #[test]

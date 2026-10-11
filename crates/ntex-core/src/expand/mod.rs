@@ -1697,9 +1697,10 @@ impl Expander {
     }
 
     /// TeX final_cleanup：未闭合条件 → 可恢复转录消息
-    /// "! Incomplete \ifxxx; all text was ignored after line N."
-    /// （TRIP L363 `\ifcase3` 故意不闭合；\end 与 \endinput/EOF 两个入口
-    /// 都走此路径——tex.web final_cleanup。LIFO 顺序对齐条件栈。）
+    /// "(end occurred when \ifxxx on line N was incomplete)"
+    /// （GT trip.log 尾部 L442/419/413 同款；tex.web final_cleanup 在 \end 后
+    /// 按条件栈 LIFO 逐层弹出的警告。中途中止的 skip/EOF 恢复才用
+    /// "! Incomplete ...; all text was ignored" 形——两形不可混用。）
     fn report_incomplete_conditions(&mut self) {
         if self.cond_stack.is_empty() {
             return;
@@ -1724,8 +1725,8 @@ impl Expander {
         }
         for f in self.cond_stack.iter().rev() {
             let _ = self.sink.write16(format!(
-                "! Incomplete {}; all text was ignored after line {}.\n",
-                Self::if_type_name(f.if_type),
+                "(end occurred when {} on line {} was incomplete)\n",
+                Self::if_type_name(f.if_type).trim_start_matches('\\'),
                 f.line
             ));
         }

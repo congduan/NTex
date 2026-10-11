@@ -2,7 +2,50 @@ use super::*;
 
     #[test]
     fn unclosed_box_group_is_rejected() {
-        assert!(typeset(r"\hbox{a").is_err());
+        // 刀K：EOF 残组走 final_cleanup 救济（警告进转录 + 就地丢弃），
+        // 作业不再拒收（TRIP/ETRIP 现场：\end 被上游错误恢复吞掉时残组只能
+        // 靠救济收尾）。严格拒收仍保留在 incremental 路径与 pending_box 分支。
+        let mut ts = Typesetter::with_metrics(metrics);
+        ts.typeset(r"\hbox{a").unwrap();
+        let t = ts.take_transcript();
+        assert!(
+            t.contains("(end occurred inside a group at level 1)"),
+            "残组应警告收尾：{t}"
+        );
+    }
+
+    #[test]
+    fn end_inside_unclosed_group_and_cond_completes() {
+        // 刀K 回归锁 1：显式 \end 时未闭合组/条件 → final_cleanup 救济
+        // （警告 + 正常收尾），不 fatal。去救济臂必红。
+        let mut ts = Typesetter::with_metrics(metrics);
+        ts.typeset(r"\begingroup\iftrue A\end").unwrap();
+        let t = ts.take_transcript();
+        assert!(
+            t.contains("(end occurred inside a group at level 1)"),
+            "转录：{t}"
+        );
+        assert!(
+            t.contains("(end occurred when iftrue on line 1 was incomplete)"),
+            "转录：{t}"
+        );
+    }
+
+    #[test]
+    fn eof_inside_unclosed_group_and_cond_completes() {
+        // 刀K 回归锁 2：\end 被吞（TRIP L363 runaway skip / ETRIP 现场）→
+        // 纯 EOF 残组/残条件同样救济收尾，不 fatal。去救济臂必红。
+        let mut ts = Typesetter::with_metrics(metrics);
+        ts.typeset(r"\begingroup\iftrue A").unwrap();
+        let t = ts.take_transcript();
+        assert!(
+            t.contains("(end occurred inside a group at level 1)"),
+            "转录：{t}"
+        );
+        assert!(
+            t.contains("(end occurred when iftrue on line 1 was incomplete)"),
+            "转录：{t}"
+        );
     }
 
     #[test]
