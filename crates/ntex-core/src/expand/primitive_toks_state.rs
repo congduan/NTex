@@ -187,13 +187,29 @@ impl Expander {
             }
             // ETRIP 冲刺：\parshape=<n> <indent> <width> ...（段落形状）
             Primitive::Parshape => self.exec_parshape(),
-            // ETRIP 冲刺：\parshapelength/indent/dimen 单独出现（无索引）→
-            // TeX 报 "can't use" 并恢复
+            // ETRIP 冲刺：\parshapelength/indent/dimen 主循环裸用 → 报
+            // "You can't use `\parshapelength' in <mode>." 并恢复。恢复**不扫
+            // 下标**（宿主 etex 实测：`\parshapelength 2` 报错后 `2` 照常排版
+            // 入 hmode；此前报错后 scan_number 会吞掉下标/下一原语——l.701
+            // `\parshapelength \parshapeindent \parshapedimen` 三连报错被吞成
+            // 一处 Missing number，级联污染 l.702 的 `\def\1#1 {...}` 直到
+            // parshape 段 `\edef\2` 撞 `\the` fatal）。下标读取由扫描臂承担
+            // （\ifdim/\the/\dimexpr 等语境不走此分支）。
             Primitive::ParshapeLength
             | Primitive::ParshapeIndent
             | Primitive::ParshapeDimen => {
-                self.report_error("You can't use \\parshape... in vertical mode.");
-                let _ = self.scan_number();
+                let name = match prim {
+                    Primitive::ParshapeIndent => "parshapeindent",
+                    Primitive::ParshapeLength => "parshapelength",
+                    _ => "parshapedimen",
+                };
+                self.write_error_help_no_read_again(
+                    &format!("You can't use `\\{name}' in {}.", self.sink.mode_name()),
+                    "Sorry, but I'm not programmed to handle this case;\n\
+                     I'll just pretend that you didn't ask for it.\n\
+                     If you're in the wrong mode, you might be able to\n\
+                     return to the right one by typing `I}' or `I$' or `I\\par'.\n",
+                );
                 Ok(())
             }
             // ETRIP 冲刺：TeXXeT 方向原语 \beginL/\endL/\beginR/\endR。

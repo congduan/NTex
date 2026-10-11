@@ -348,9 +348,20 @@ impl Expander {
 
     /// `\the` 求值（token 已取出的变体；`\showthe` 复用）。
     fn the_tokens_after(&mut self, tok: Token) -> Result<Vec<Token>> {
-        let csid = tok
-            .csid()
-            .ok_or_else(|| Error::invalid_input("\\the 需要寄存器参数"))?;
+        // tex.web the_toks：`\the` 后不是内部量 → back_error 报
+        // "You can't use `the letter A' after \the."（token 经 print_cmd_chr 描述）
+        // + "I'm forgetting what you said and using zero instead."，取 0 恢复继续。
+        // 此前 Error::invalid_input 直穿引擎 abort——etrip pass2 组态被上游
+        // 条件恢复污染后 `\1H` 的 `\edef\2{\2 H}` 展开到污染体里的 `\the`+字面
+        // 字符，一处本可恢复的错误把整场 run 打成 Engine error fatal。
+        let Some(csid) = tok.csid() else {
+            let desc = crate::token::meaning(tok, &self.intern);
+            let _ = self.sink.write16(format!(
+                "! You can't use `{desc}' after \\the.\n\
+                 I'm forgetting what you said and using zero instead.\n"
+            ));
+            return Ok(emit_count(0));
+        };
         // TeX：`\the` 位置走 get_x_token；宏和可展开原语都先展开（LaTeX
         // `\the\value{section}` 的 `\value` 即宏，展开为 `\c@section` 后才是
         // 内部整数；此前只展开原语，`\section`/`\item`/`\label` 链会在
@@ -820,9 +831,20 @@ impl Expander {
                         .write16("! You can't use `\\relax' after \\the.\nI'm forgetting what you said and using zero instead.\n".to_owned());
                     Ok(emit_count(0))
                 }
-                _ => Err(Error::invalid_input(
-                    "\\the 只支持 \\count\\dimen\\skip\\toks 与内部参数",
-                )),
+                // 其余原语非内部量：tex.web 同 "You can't use `\hbox' after
+                // \the." + 取 0 恢复（此前 invalid_input fatal 直穿引擎）。
+                _ => {
+                    let name = BUILTINS
+                        .iter()
+                        .find(|(_, q)| q == p)
+                        .map(|(n, _)| *n)
+                        .unwrap_or("unknown");
+                    let _ = self.sink.write16(format!(
+                        "! You can't use `\\{name}' after \\the.\n\
+                         I'm forgetting what you said and using zero instead.\n"
+                    ));
+                    Ok(emit_count(0))
+                }
             },
             // \chardef'd cs：\the\x → 字符码
             EqSlot::Char { charcode, .. } => Ok(emit_count(*charcode as i64)),

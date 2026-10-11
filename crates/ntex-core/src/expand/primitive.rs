@@ -641,40 +641,29 @@ impl Expander {
         u32::try_from(ch).ok()
     }
 
-    /// `\fontcharwd/ht/dp/ic<font><char>`：查询字体字符度量分量（sp）并展开为维度。
-    /// 参数非法（字体标识符/字符码越界）→ 报 "! Bad character code." 并恢复
-    /// （TeX 对 `\fontcharwd \fontcharht ...` 裸用同样报错继续）。
-    ///
-    /// 字符码上限按被查字体判定（M9 中文刀 1），闸门见 [`Self::fontchar_code`]。
+    /// `\fontcharwd/ht/dp/ic` 主循环裸用：报 "You can't use `\fontcharwd' in
+    /// <mode>." 并恢复（宿主 etex 实测 vmode/hmode 均按当前模式名报错，**不扫
+    /// 参数**——此前直接 scan_font_ident+scan_number 会把 `\fontcharht` 当字体
+    /// 名吞掉，etrip l.677 `\fontcharwd \fontcharht \fontchardp \fontcharic`
+    /// 四连报错被吞 + 继而吃掉 l.678 `\def\1#1#2{`，`\2` 的 `##1##2` 参数
+    /// 机械化出字面 `#`，级联直到 parshape 段 `\edef\2` 撞 `\the` fatal）。
+    /// 合法读取走扫描臂：`scan_dimen_inner`（`\dimen0=\fontcharwd\f\c`）与
+    /// `the_tokens_after`（`\the\fontcharwd\f\c`），不达此分支。
     fn exec_fontchar_dimen(&mut self, prim: Primitive) -> Result<()> {
-        let component = match prim {
-            Primitive::FontCharWd => 0,
-            Primitive::FontCharHt => 1,
-            Primitive::FontCharDp => 2,
-            _ => 3, // FontCharIc（italic correction：TFM 无此字段，恒 0）
+        let name = match prim {
+            Primitive::FontCharWd => "fontcharwd",
+            Primitive::FontCharHt => "fontcharht",
+            Primitive::FontCharDp => "fontchardp",
+            _ => "fontcharic",
         };
-        let scanned = (|| -> Result<(u32, i64)> {
-            let font = self.scan_font_ident()?;
-            let ch = self.scan_number()?;
-            Ok((font, ch))
-        })();
-        let (font, ch) = match scanned {
-            Ok(v) => v,
-            Err(_) => {
-                self.report_error("Bad character code.");
-                return Ok(());
-            }
-        };
-        let Some(ch) = self.fontchar_code(font, ch) else {
-            return Ok(());
-        };
-        let m = self.font_loader.char_metric(font, ch);
-        let v = match component {
-            0 => m.map(|x| x.0).unwrap_or(0),
-            1 => m.map(|x| x.1).unwrap_or(0),
-            _ => 0,
-        };
-        self.emit_tokens(emit_dimen(v))
+        self.write_error_help_no_read_again(
+            &format!("You can't use `\\{name}' in {}.", self.sink.mode_name()),
+            "Sorry, but I'm not programmed to handle this case;\n\
+             I'll just pretend that you didn't ask for it.\n\
+             If you're in the wrong mode, you might be able to\n\
+             return to the right one by typing `I}' or `I$' or `I\\par'.\n",
+        );
+        Ok(())
     }
 
     /// `\showifs`：显示当前条件嵌套状态（e-TeX 诊断原语；简化格式）。

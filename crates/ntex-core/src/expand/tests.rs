@@ -921,6 +921,138 @@ I changed this one to zero.
     }
 
     #[test]
+    fn the_parshape_internals_read_arm() {
+        // 刀J 回归锁：`\the\parshapelength/indent/dimen` 读取臂
+        // （the_tokens_after 的 ParshapeLength/Indent/Dimen 臂——任务假设
+        // "缺臂" 证伪：臂早已存在，语义=宿主 etex 实测逐值一致）。
+        // parshape=2 1pt 2pt 3pt 4pt → dimen1..4=1/2/3/4pt；越界 n>2n_max：
+        // 奇→末 indent(d3=3pt)、偶→末 length(d4=4pt)；n<=0 → 0pt；
+        // length/indent 越界钳末行。去修复必红。
+        let pre = "\\parshape=2 1pt 2pt 3pt 4pt ";
+        assert_eq!(
+            expand(&format!("{pre}\\the\\parshapedimen4")).unwrap(),
+            "4.0pt"
+        );
+        assert_eq!(
+            expand(&format!("{pre}\\the\\parshapelength2")).unwrap(),
+            "4.0pt"
+        );
+        assert_eq!(
+            expand(&format!("{pre}\\the\\parshapeindent1")).unwrap(),
+            "1.0pt"
+        );
+        assert_eq!(
+            expand(&format!("{pre}\\the\\parshapedimen99")).unwrap(),
+            "3.0pt",
+            "越界奇数→末 indent（etrip l.755 \\parshapedimen99=22pt 同构）"
+        );
+        assert_eq!(
+            expand(&format!("{pre}\\the\\parshapedimen100")).unwrap(),
+            "4.0pt",
+            "越界偶数→末 length（etrip l.756 同构）"
+        );
+        assert_eq!(
+            expand(&format!("{pre}\\the\\parshapedimen0")).unwrap(),
+            "0.0pt"
+        );
+        assert_eq!(
+            expand(&format!("{pre}\\the\\parshapedimen-5")).unwrap(),
+            "0.0pt",
+            "负下标→0pt（etrip l.711-712 同构）"
+        );
+    }
+
+    #[test]
+    fn bare_parshape_family_no_arg_consumption() {
+        // 刀J：主循环裸用 \parshapelength/\parshapeindent/\parshapedimen → 各自
+        // 报 "You can't use `\parshape*′ in <mode>." 且**不吞后续 token**
+        // （宿主 etex 实测：报错后下标照常排版进入 hmode）。此前报错后
+        // scan_number 把下一原语当下标吞掉——etrip l.701 三连报错被吞成一处
+        // Missing number，继而吃掉 l.702 `\def\1#1 {...}`。GT 参照
+        // etrip.log L2257-2279：三条独立错误 + Parshape test 1-4 全 OK。
+        let mut e = Expander::new();
+        e.set_sink(Box::new(VecSink::default()));
+        e.run_source("\\parshapelength \\parshapeindent \\parshapedimen \\relax")
+            .unwrap();
+        let mut sink = e.take_sink();
+        let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+        let t = sink.transcript.clone();
+        for name in ["parshapelength", "parshapeindent", "parshapedimen"] {
+            assert!(
+                t.contains(&format!("You can't use `\\{name}' in ")),
+                "裸用 \\{name} 应报独立模式错：{t:?}"
+            );
+        }
+        assert!(
+            !t.contains("Missing number"),
+            "报错后不得吞参（吞参会引发 Missing number 级联）：{t:?}"
+        );
+    }
+
+    #[test]
+    fn bare_fontchar_family_no_arg_consumption() {
+        // 刀J：主循环裸用 \fontcharwd 族 → 按当前模式名报错、**不扫字体/字符码
+        // 参数**（宿主 etex 实测 vmode/hmode 均报 "You can't use `\fontcharwd'
+        // in <mode>."，`\fontcharht` 留在输入流）。此前直接 scan_font_ident+
+        // scan_number 把 `\fontcharht` 当字体名吞掉——etrip l.677 四连报错被吞
+        // + 吃掉 l.678 `\def\1#1#2{`，`\2` 的 `##1##2` 参数机械化出字面 `#`。
+        // GT 参照 etrip.log L2214-2242：四条独立错误。合法读取走扫描臂
+        // （\dimen0=\fontcharwd\f\c 与 \the\fontcharwd\f\c），不受影响。
+        let mut e = Expander::new();
+        e.set_sink(Box::new(VecSink::default()));
+        e.run_source("\\fontcharwd \\fontcharht \\fontchardp \\fontcharic \\relax")
+            .unwrap();
+        let mut sink = e.take_sink();
+        let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+        let t = sink.transcript.clone();
+        for name in ["fontcharwd", "fontcharht", "fontchardp", "fontcharic"] {
+            assert!(
+                t.contains(&format!("You can't use `\\{name}' in ")),
+                "裸用 \\{name} 应报独立模式错：{t:?}"
+            );
+        }
+        assert!(
+            !t.contains("Missing font identifier") && !t.contains("Missing number"),
+            "报错后不得吞参（吞参把下一原语当字体名/下标）：{t:?}"
+        );
+    }
+
+    #[test]
+    fn iffontchar_bad_char_code_recovers_false() {
+        // 刀J 任务项核对：\iffontchar 非法字符码 → "Bad character code." 报错
+        // 恢复、谓词 false（etrip l.675-676 GT：! Bad character code (-1)/(256)
+        // 后正常续跑；l.674 缺字体名 → Missing font identifier + Missing
+        // number 两报错恢复）。误 fatal/谓词误真均破坏此断言。
+        let mut e = Expander::new();
+        e.set_sink(Box::new(VecSink::default()));
+        e.run_source(
+            "\\iffontchar\\textfont2 -1 T\\else F\\fi\\iffontchar\\font 256 T\\else F\\fi",
+        )
+        .unwrap();
+        let mut sink = e.take_sink();
+        let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+        assert_eq!(sink.transcript.matches("Bad character code.").count(), 2);
+        let out: String = sink
+            .tokens
+            .iter()
+            .filter_map(|t| t.charcode().and_then(char::from_u32))
+            .collect();
+        assert_eq!(out, "FF", "非法字符码谓词应判 false");
+    }
+
+    #[test]
+    fn the_bad_operand_recovers_to_zero() {
+        // 刀J：\the 后非内部量 → "You can't use `the letter A' after \the."
+        // + "I'm forgetting what you said and using zero instead." 取 0 恢复
+        // （宿主 etex 实测 \edef\x{\the A} → x="0"）。此前 invalid_input fatal
+        // 直穿引擎——etrip pass2 污染组态下 `\edef\2{\2 H}` 展开到污染体里的
+        // `\the`+字面 `#` 即整场 Engine error abort。
+        assert_eq!(expand("\\edef\\x{\\the A}\\x").unwrap(), "0");
+        // 非内部量原语兜底臂同语义
+        assert_eq!(expand("\\edef\\x{\\the \\hbox}\\x").unwrap(), "0");
+    }
+
+    #[test]
     fn misc_int_param_expands_macro_in_value() {
         // trip.tex L103 `\tracingoutput\on`：内部整数参数赋值后跟**宏**值——
         // TeX scan_int/get_x_token 展开后赋值。2026-09-03 前 \on 未展开直接
