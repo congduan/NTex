@@ -1776,6 +1776,19 @@ impl Expander {
         0
     }
 
+    /// `\endinput` 行归属判据：**已交付的最后一个字节**（`pos-1`）所在行的
+    /// 0 基行号（`pos == 0` 即帧首、尚无已交付字节 → 第 0 行）。
+    ///
+    /// 同一行内任意 `pos` 同值，且「行尾已交付、pos 恰停在下一行起点」时也
+    /// 仍属**上一行**——故扫描前后比较即可判定「是否越过行尾」：
+    /// - 相等：本轮 token 属本行（含行尾 token 本身）；
+    /// - 变大：扫描器吞掉行尾（InSpace/注释臂 `continue`）后扫到了下一行。
+    fn line_read_index(line_starts: &[u32], pos: usize) -> usize {
+        line_starts
+            .partition_point(|&s| (s as usize) <= pos.saturating_sub(1))
+            .saturating_sub(1)
+    }
+
     /// 行定位（`line_starts` 二分）：返回 (行号, 行起始偏移, 行结束偏移)。
     ///
     /// 行结束偏移不含行尾 `\n`（与逐字节扫描一致）。替代原 `error_context`/
@@ -3601,30 +3614,31 @@ impl Expander {
                             continue;
                         }
                     }
-                    // 刀 N：force_eof 消费点——tex.web @<Read next line of file@>
-                    // （L7566）：旗标置位后**当前行**余下 token 照常交付；行耗尽
-                    // （pos 到达行尾）再取 token 时 `)` 关闭本帧，一次性旗标全局
-                    // 只消费一次。哪个文件先到行尾哪个关——tex.web 语义下
-                    // `\endinput` 之后开的新文件（TRIP l.424 的 tripos）先消费。
-                    // scan_token 一次可跨行取 token，故判定必须在每次取 token
-                    // 之前做；行尾 token（\endlinechar 产物）交付后 pos 恰停在
-                    // 行尾，下一轮 fetch 即中。经 eof_mark 弹帧臂收场（\everyeof
-                    // 注入 + scanner_status 门统一复用）。
+                    // 刀 N：`\endinput` force_eof 消费点——tex.web
+                    // @<Read next line of file@>（L7566）/ @<Finish line@>：
+                    // 旗标置位后**当前行**余下 token 照常交付；一旦要取下一行
+                    // （行尾 / 读尽）即 `print_char(")"); force_eof:=false;
+                    // end_file_reading`——一次性**全局**旗标，哪个文件先到行尾
+                    // 哪个关，其余文件幸存（TRIP l.424：tripos 关闭时旗标熄灭，
+                    // trip.tex 本体 l.424 行尾不得再触发）。三处收口，缺一即
+                    // 泄漏给父帧：
+                    //   ① 取词前 pos 已落在行边界（行尾 token 已交付）→ 关本帧；
+                    //   ② 扫描期**越过行尾**（InSpace/注释臂 `continue` 吞掉行尾
+                    //      后继续扫到下一行）→ 丢弃该 token、关本帧；
+                    //   ③ 自然读尽（`Ok(None)`）→ 关本帧。
+                    // 三者统一经 eof_mark 弹帧臂收场（`\everyeof` 注入 +
+                    // scanner_status 门 + 熄旗标一处复用）。
                     if self.force_eof {
                         let cur_pos = *pos;
-                        // 行归属判据：起点**严格小于** pos 的最后一行是「当前行」
-                        // ——pos 恰在行边界（= 下一行起点）时，上一行已读尽，旗标
-                        // 此刻就要消费（tex.web：读下一行的请求即 `)` 关闭）。
                         // pos=0（帧首行未读）豁免：tex.web start_input 读入首行，
                         // 旗标只在**第二次**取行时消费——新文件至少交付首行。
+                        // 行归属判据见 [`Self::line_read_index`]：pos 恰在行边界
+                        // （= 下一行起点）时 `line_starts[idx] == pos`，即本行读尽。
                         if cur_pos > 0 {
-                            let line_end = {
-                                let idx = line_starts.partition_point(|&s| (s as usize) < cur_pos);
-                                if idx < line_starts.len() {
-                                    line_starts[idx] as usize
-                                } else {
-                                    bytes.len()
-                                }
+                            let idx = Self::line_read_index(line_starts, cur_pos);
+                            let line_end = match line_starts.get(idx + 1) {
+                                Some(&s) => s as usize,
+                                None => bytes.len(),
                             };
                             if cur_pos >= line_end {
                                 self.force_eof = false;
@@ -3633,6 +3647,9 @@ impl Expander {
                             }
                         }
                     }
+                    // ② 越过行尾：记录取词前的行索引，扫描返回后若该索引变大 =
+                    // 扫描器吞掉行尾继续扫到了下一行——本 token 属下一行，不得交付。
+                    let eof_line_before = Self::line_read_index(line_starts, *pos);
                     match scan_token(
                         bytes,
                         pos,
@@ -3647,8 +3664,28 @@ impl Expander {
                         // 的 #1^^M 定界依赖行尾 token 字符码/猫码随参数变化）
                         self.params.endlinechar,
                     ) {
-                        Ok(Some(tok)) => return Ok(Some((tok, false))),
+                        Ok(Some(tok)) => {
+                            if self.force_eof
+                                && Self::line_read_index(line_starts, *pos) != eof_line_before
+                            {
+                                // 丢弃该 token（tex.web 关文件后不会回到本文件，
+                                // 本行余下未读 token 一并作废）——走 eof_mark 臂
+                                // 收场：弹帧 + 熄旗标 + 注入 `\everyeof`。
+                                self.force_eof = false;
+                                *eof_mark = Some(*pos);
+                                continue;
+                            }
+                            return Ok(Some((tok, false)));
+                        }
                         Ok(None) => {
+                            // ③ 自然读尽 = 「取下一行」失败：本帧就是该消费旗标的
+                            // 文件（tex.web：`print_char(")"); force_eof:=false;
+                            // end_file_reading`）。不熄旗标则泄漏给**父帧**，父帧
+                            // 在其下一行边界被 eof_mark 剪死——现场是 LaTeX 类
+                            // 文件 `\input{size10.clo}` 之后整段类定义蒸发
+                            // （size10.clo 末行 `\endinput` + 尾注释，扫描器在
+                            // InSpace 状态一路扫到 EOF，行边界检查从未命中）。
+                            self.force_eof = false;
                             self.stack.pop();
                             // 自然读尽同样注入 `\everyeof`（pdfTeX every_eof
                             // 语义：文件结束边界统一注入，无论正常 EOF 还是

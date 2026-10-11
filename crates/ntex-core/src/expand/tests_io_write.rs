@@ -68,6 +68,45 @@ use super::*;
     }
 
     #[test]
+    fn endinput_on_last_line_does_not_truncate_parent_file() {
+        // 现场（2026-10-11，Tauri 工作台用户报「简单 LaTeX 文档字号不对」）：
+        // LaTeX 类文件 `\input{size10.clo}` 之后**整段类定义蒸发**
+        // （`\chapter`/`\section`/`\maketitle` 全 undefined，标题退化成 cmr10
+        // 正文）——docstrip 生成的 `.clo` 末行是 `\endinput` + 尾注释：
+        // `\endinput` 后扫描器在 InSpace 状态吞掉行尾（不产 token）一路扫到
+        // 文件 EOF，走 `Ok(None)` **自然读尽**臂；该臂只弹帧、不熄一次性旗标
+        // → 旗标泄漏给父帧（类文件），父帧在下一行边界被 eof_mark 剪死。
+        // tex.web：旗标由「下一个取下一行的文件」消费（`print_char(")");
+        // force_eof:=false; end_file_reading`），自然读尽 = 取下一行失败 →
+        // 本帧关、旗标熄（其余文件幸存）。
+        let mut vfs = MemVfs::new();
+        vfs.insert("clo.tex", "CLO\\endinput\n%%\n%% End of file `clo.tex'.\n");
+        vfs.insert("cls.tex", "\\input{clo}\n\\def\\late{LATE}\\late\n");
+        let (out, _) = expand_vfs("\\input{cls}MAIN", vfs).unwrap();
+        assert_eq!(
+            out.split_whitespace().collect::<String>(),
+            "CLOLATEMAIN",
+            "父文件 \\input{{clo}} 之后的行不得被剪（修复前只剩 CLO+MAIN）：{out}"
+        );
+    }
+
+    #[test]
+    fn endinput_drops_token_scanned_past_line_end() {
+        // `\endinput` 落在行中、其后同行只剩空格，目标 token 在**下一行**：
+        // tex.web 行尾即关文件（当前行余下 token 照常交付、下一行不读），而
+        // 扫描器在 InSpace 状态吞掉行尾后**继续扫**（不产 token）——越过行尾
+        // 才拿到的 token 属下一行，不得交付（丢弃 + 关帧）。
+        let mut vfs = MemVfs::new();
+        vfs.insert("c2.tex", "A\\endinput \n\\def\\leak{LEAK}\\leak\n");
+        let (out, _) = expand_vfs("\\input{c2}END", vfs).unwrap();
+        assert!(out.contains('A') && out.contains("END"), "{out}");
+        assert!(
+            !out.contains("LEAK"),
+            "\\endinput 后下一行的 token 不得交付（修复前 \\leak 被执行）：{out}"
+        );
+    }
+
+    #[test]
     fn let_input_die_two_stage_undefined_after_file_opens() {
         // 刀 N 回归锁 3（任务锁·`\let\input\die` 两阶段执行语义）：TRIP l.424
         // 全形最小复现 `\expandafter\stop\input inner\endinput\input`。

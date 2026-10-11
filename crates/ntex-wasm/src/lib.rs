@@ -2180,6 +2180,52 @@ mod tests {
         );
     }
 
+    /// 现场回归（2026-10-11，用户报「Tauri 下简单 LaTeX 文档字号都不对」）：
+    /// `book` 类的结构宏（`\chapter`/`\section`）必须真定义，章/节标题必须走
+    /// `cmbx12` 的大字号档。
+    ///
+    /// 现场：`\documentclass{book}` 载入 `book.cls`（第 121 行 `\input{bk10.clo}`）
+    /// 之后，类文件**整段定义蒸发**——`\chapter`/`\section`/`\subsection`/
+    /// `\maketitle` 全 undefined，`\chapter{First Chapter}` 的实参退化成 cmr10
+    /// 正文（DVI 字体表只剩 cmr10，字号自然不对）。根因是 `\endinput` 的
+    /// force_eof 一次性旗标未在「文件自然读尽」处消费、泄漏给父帧（类文件），
+    /// 见 ntex-core `expand/mod.rs` Source 帧的三处消费点。
+    ///
+    /// 判据取三条互不重叠的观测面：① 转录零 undefined（结构宏已定义）；
+    /// ② `\@chapter` 的 `\typeout`（book.cls l.358）落转录 = 章命令真执行；
+    /// ③ DVI 字体表含 cmbx12（`\Huge\bfseries` 章标题、`\large\bfseries` 节
+    /// 标题的落点——修复前只有 cmr10）。
+    #[test]
+    fn latex_bundle_typesets_book_chapter_headings() {
+        let assets =
+            Arc::new(LatexAssets::from_bundle(&repo_bundle()).expect("发行资产包应能解析"));
+        let compiled = compile_pipeline_assets(
+            "\\documentclass{book}\n\\begin{document}\n\
+             \\chapter{First Chapter}\n\\section{Introduction}\n\
+             This is the first section.\n\\end{document}\n",
+            false,
+            Some(assets),
+        )
+        .expect("book 作业应能编译");
+
+        assert!(
+            !compiled.transcript.contains("! Undefined control sequence"),
+            "book 类的结构宏仍 undefined（类文件被剪）：{}",
+            compiled.transcript
+        );
+        assert!(
+            compiled.transcript.contains("Chapter 1."),
+            "章命令未执行（`\\@chapter` 的 \\typeout 未落转录）：{}",
+            compiled.transcript
+        );
+        assert!(
+            compiled.font_names.iter().any(|n| n == "cmbx12"),
+            "章/节标题应使用 cmbx12（修复前只剩 cmr10 = 用户所见字号不对）：{:?}",
+            compiled.font_names
+        );
+        assert!(!compiled.pages.is_empty(), "应产出至少一页");
+    }
+
     /// NFSS 尺寸切换（`\Large` 等）的字体名污染——**已知引擎缺陷的现场锁**。
     ///
     /// 现场（2026-09-18，native 与 wasm 同病，与本 crate 的 C 档无关）：
