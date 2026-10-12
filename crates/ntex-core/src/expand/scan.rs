@@ -1458,7 +1458,12 @@ impl Expander {
                 let _ = self.sink.write16("Runaway text?\n".to_owned());
                 return Ok(tokens);
             };
-            let t = self.resolve_group_char(fetched);
+            // scan_toks body balancing is based on the token code itself
+            // (`cur_tok` in tex.web), not on the current meaning of a control
+            // sequence. Thus `\let\rb=}` inside a token list is data and must
+            // not terminate the scan; TRIP line 426 relies on this for
+            // `\output{...\rb}`.
+            let t = fetched;
             // outer 宏 forbidden（仅 \toks 类赋值上下文）
             if let Some(name) = forbidden {
                 if let Some(csid) = t.csid() {

@@ -247,6 +247,20 @@ use super::*;
     }
 
     #[test]
+    fn toks_body_group_alias_does_not_close_scan() {
+        // TRIP l.426 shape: `\let\rb=}` appears inside a token-list assignment
+        // body. scan_toks must store the control sequence token as data instead
+        // of treating its current meaning as a closing brace, otherwise the
+        // following literal `}` closes the surrounding group and restores
+        // `\output` too early.
+        assert_eq!(
+            expand("\\let\\rb=}\\toks0={A\\rb B}\\edef\\x{\\the\\toks0}\\meaning\\x")
+                .unwrap(),
+            "macro:->A\\rb B"
+        );
+    }
+
+    #[test]
     fn scan_left_brace_expandable_filler() {
         // tex.web scan_left_brace（L8194-8206）：toks 值扫描的 `{` 入口是
         // get_x_token（可展开 filler）——latex.ltx L727
