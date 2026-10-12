@@ -88,10 +88,11 @@ impl CoreSink for NodeBuilder {
         // 盒子/对齐组：复用盒子路径（对齐组按 vbox 打包）。`\noalign` 组也
         // 开垂直列表（M4-5：材料在组结束时原样入对齐流，tex.web no_align
         // 材料直接进对齐 vlist——见 group_end 的 NoAlign 分支）。
-        // `\insert` 组（tex.web begin_insert_or_adjust 的 push_nest+mode:=-vmode）
+        // `\insert`/`\vadjust` 组（tex.web begin_insert_or_adjust 的
+        // push_nest+mode:=-vmode）
         // 同样走内部垂直列表，但**不是盒子组**——`\shipout`/`\setbox`/`to`/
         // `spread`/位移前缀都不得被它认领。
-        let is_insert = kind == Some(GroupKind::Insert);
+        let is_insert_or_adjust = matches!(kind, Some(GroupKind::Insert | GroupKind::VAdjust));
         let box_kind = match kind {
             Some(GroupKind::HBox | GroupKind::AdjustedHBox) => Some(PendingBox::HBox),
             // 仅显式 \vcenter 保留 VCenter 种类（显式 VBox 组/对齐组不受影响）
@@ -99,11 +100,11 @@ impl CoreSink for NodeBuilder {
             Some(GroupKind::VBox | GroupKind::Align | GroupKind::NoAlign) => {
                 Some(PendingBox::VBox)
             }
-            Some(GroupKind::Insert) => Some(PendingBox::VBox),
+            Some(GroupKind::Insert | GroupKind::VAdjust) => Some(PendingBox::VBox),
             Some(GroupKind::VTop) => Some(PendingBox::VTop),
             _ => None,
         };
-        let box_group = box_kind.is_some() && !is_insert;
+        let box_group = box_kind.is_some() && !is_insert_or_adjust;
         // `\shipout` 目标 = 紧邻的盒子组（内层盒子不消费该标记）
         let ship = if box_group {
             std::mem::take(&mut self.page_state.shipout_next)
@@ -160,7 +161,7 @@ impl CoreSink for NodeBuilder {
             setbox_global,
             spec,
             shift,
-            insert_class: if is_insert {
+            insert_class: if kind == Some(GroupKind::Insert) {
                 std::mem::take(&mut self.box_state.pending_insert_class)
             } else {
                 0
@@ -451,6 +452,13 @@ impl CoreSink for NodeBuilder {
                     split_max_depth,
                     float_cost,
                 });
+            }
+            GroupKind::VAdjust => {
+                let children = self.lists.pop().unwrap_or_default();
+                self.list_modes.pop();
+                let natural = vbox_dimensions(&children);
+                let body = vpack(children, natural.height + natural.depth, inner_boxmaxdepth);
+                self.append(Node::Adjust { body });
             }
             GroupKind::HBox | GroupKind::AdjustedHBox | GroupKind::VBox | GroupKind::VTop => {
                 if let Some(kind) = ctx.box_kind {
@@ -1948,11 +1956,10 @@ impl PageSink for NodeBuilder {
         self.box_state.pending_insert_class = class;
         Ok(())
     }
-    /// `\vadjust{...}`：adjust 节点追加到当前列表（无维度）。
+    /// `\vadjust{...}`：下一个组为 adjust 组，体在内部垂直模式排版。
     fn vadjust(&mut self, toks: Vec<Token>) -> Result<()> {
-        self.append(Node::Adjust {
-            text: toks_to_text(&toks),
-        });
+        debug_assert!(toks.is_empty());
+        self.box_state.pending_kind = Some(GroupKind::VAdjust);
         Ok(())
     }
     /// 输出例程的隐式组：组种类 8（output group，tex.web group_code）。

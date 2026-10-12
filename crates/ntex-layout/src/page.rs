@@ -524,6 +524,11 @@ impl PageBuilder {
                 self.last_is_box = false;
                 Outcome::Continue
             }
+            Node::Adjust { body } => {
+                contrib.remove(0);
+                contrib.splice(0..0, body.children);
+                Outcome::Continue
+            }
             // mark/leaders 等：直接入页（不参与断点与测量）
             _ => {
                 contrib.remove(0);

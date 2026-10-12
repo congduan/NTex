@@ -5,14 +5,6 @@
 // 直接继承 mod.rs 已声明的 use/类型（BoxNode/BoxKind/Node/Fonts/...
 // 全部在作用域内）。
 
-/// 组内字符 token → 文本（insert/adjust 节点内容；cs 等忽略）。
-fn toks_to_text(toks: &[Token]) -> String {
-    toks.iter()
-        .filter_map(|t| t.charcode())
-        .filter_map(char::from_u32)
-        .collect()
-}
-
 /// sp → pt 字符串（tex.web print_scaled：整数 + 最多 5 位小数去尾 0；
 /// 余数 0 显示 `X.0`——如 `4.4`、`1055.44061`、`-1.0`）。
 fn showbox_pt(sp: i64) -> String {
@@ -247,7 +239,12 @@ fn showbox_format_node(
                 showbox_format_node(c, depth + 1, fonts, cs_names, out);
             }
         }
-        Node::Adjust { text } => out.push_str(&format!("{p}\\vadjust {text}\n")),
+        Node::Adjust { body } => {
+            out.push_str(&format!("{p}\\vadjust\n"));
+            for c in &body.children {
+                showbox_format_node(c, depth + 1, fonts, cs_names, out);
+            }
+        }
         // whatsit 分型显示（tex.web short_display：\write / \special 两个名字）
         Node::Whatsit { text, special } => out.push_str(&format!(
             "{p}\\{} {text}\n",

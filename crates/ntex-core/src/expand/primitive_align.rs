@@ -105,10 +105,10 @@ impl Expander {
                 let class = self.scan_register_index()?;
                 self.sink.insert_begin(class)
             }
-            // ETRIP 冲刺：\vadjust{<vertical material>}（adjust 节点；内容只收集不排版）
+            // \vadjust{<vertical material>}（tex.web begin_insert_or_adjust）：
+            // 不在 VM 侧吞 general text，交给排版器开内部垂直组执行组体。
             Primitive::VAdjust => {
-                let toks = self.scan_group_contents(None)?;
-                self.sink.vadjust(toks)
+                self.sink.vadjust(Vec::new())
             }
             // M4-5：\crcr 到达 dispatcher = Misplaced（raw 的 \crcr 由
             // align_on_token 拦截；行边界冗余 \crcr 由 align_peek_next 忽略）

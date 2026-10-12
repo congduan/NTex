@@ -79,7 +79,10 @@ impl NodeBuilder {
                     .get(line_no - 1)
                     .and_then(|&(_, prev_e)| prev_e.checked_sub(1))
                     .and_then(|idx| match children.get(idx) {
-                        Some(Node::Penalty { penalty }) => Some(*penalty),
+                        // 行内强制折行 penalty 只决定 line_break，不应原样升级为页
+                        // 构建器的强制断页 penalty；否则 TRIP 中
+                        // `\penalty-1000000000` 会抢掉前一行 `\vadjust` 的页断点。
+                        Some(Node::Penalty { penalty }) if *penalty > -10_000 => Some(*penalty),
                         _ => None,
                     })
                     .unwrap_or_else(|| {
@@ -145,13 +148,14 @@ impl NodeBuilder {
             }
             // tex.web line_break：hpack 在 adjust_tail≠null 时把行内 ins/mark/
             // adjust 节点剥出（@<Transfer node |p| to the adjustment list@>），
-            // 行盒封装后紧跟其材料——`\insert` 落在段落竖列表里才到得了断页器
-            // （留在行盒内则 shipout 时被跳过，脚注整段蒸发：广度测试 P0 #2）。
+            // 行盒封装后紧跟其材料——`\insert`/`\vadjust` 落在段落竖列表里才到得了
+            // 断页器（留在行盒内则 shipout 时被跳过）。
             let mut adjustments: Vec<Node> = Vec::new();
             let mut line_nodes = Vec::with_capacity(line.len());
             for node in line {
                 match node {
                     n @ Node::Ins { .. } => adjustments.push(n),
+                    Node::Adjust { body } => adjustments.extend(body.children),
                     other => line_nodes.push(other),
                 }
             }

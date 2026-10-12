@@ -361,6 +361,9 @@ enum GroupKind {
     /// `\insert<num>{...}`（tex.web group_code=insert_group=11）：组体在内部
     /// 垂直模式排版，`}` 处 vpack(natural) 后挂 ins_node 到外层列表。
     Insert,
+    /// `\vadjust{...}`（tex.web group_code=adjusted_hbox_group）：组体在内部
+    /// 垂直模式排版，`}` 处挂 adjust_node 到外层水平列表。
+    VAdjust,
 }
 
 /// 对齐组方向（tex.web alignment：\halign 行堆叠 / \valign 列并排）。
@@ -423,6 +426,7 @@ impl GroupKind {
             GroupKind::Math => 9,
             GroupKind::MathLeft => 16,
             GroupKind::Insert => 11,
+            GroupKind::VAdjust => 3,
         }
     }
 
@@ -441,6 +445,7 @@ impl GroupKind {
             GroupKind::Math => "math group",
             GroupKind::MathLeft => "math left group",
             GroupKind::Insert => "insert group",
+            GroupKind::VAdjust => "adjusted hbox group",
         }
     }
 }

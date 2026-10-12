@@ -1878,6 +1878,25 @@ mod tests {
         ts.take_transcript()
     }
 
+    #[test]
+    fn vadjust_penalty_reaches_page_builder() {
+        let mut ts =
+            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+        let _ = ts.typeset_dvi(
+            r"\vsize 1pt\hsize 20pt \output={\showthe\outputpenalty\shipout\box255}
+              A\hfill\vadjust{\special{ADJ}\penalty-5000}\penalty-1000000000 A\par\end",
+        );
+        let vals = showthe_values(&ts.take_transcript(), "outputpenalty");
+        assert!(
+            vals.iter().any(|v| v == "-5000"),
+            "\\vadjust 内的 penalty 必须作为页断点进入 \\outputpenalty：{vals:?}"
+        );
+        assert!(
+            vals.iter().all(|v| v != "-1000000000"),
+            "段内强制折行 penalty 不应抢掉 \\vadjust 的页断点：{vals:?}"
+        );
+    }
+
     // ---------- 输出例程刀 2：box255 寄存器化 ----------
     //
     // tex.web 裁决：box(255) 就是普通盒子寄存器——fire_up

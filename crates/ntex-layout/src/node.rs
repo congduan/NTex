@@ -249,7 +249,8 @@ pub enum Node {
     },
     /// adjust 节点（`\vadjust{<vertical material>}`；无维度）。
     Adjust {
-        text: String,
+        /// 组体排版后的垂直列表；段落折行时剥出并接到对应行盒之后。
+        body: BoxNode,
     },
     /// whatsit 节点（`\write<n>{...}` 与 `\special{...}`；无维度）。
     /// tex.web 里两者同型（write_node/special_node 都归 whatsit），但 shipout
