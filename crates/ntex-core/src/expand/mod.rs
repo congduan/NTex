@@ -2356,7 +2356,7 @@ impl Expander {
         if self.params.misc[DEAD_CYCLES_IDX] >= self.params.misc[MAX_DEAD_CYCLES_IDX] {
             let dead = self.params.misc[DEAD_CYCLES_IDX];
             self.sink
-                .report_error(&format!("Output loop---{dead} consecutive dead cycles"));
+                .report_error(&format!("Output loop---{dead} consecutive dead cycles."));
             self.sink.report_help(
                 "I've concluded that your \\output is awry; it never does a\n\
                  \\shipout, so I'm shipping \\box255 out myself. Next time\n\

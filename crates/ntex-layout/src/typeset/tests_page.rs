@@ -167,7 +167,7 @@ use super::*;
             .expect("死循环保护应转默认输出而非失败");
         let t = ts.take_transcript();
         assert!(
-            t.contains("Output loop---0 consecutive dead cycles"),
+            t.contains("Output loop---0 consecutive dead cycles."),
             "应报 Output loop 错误：{t:?}"
         );
         assert!(
@@ -222,7 +222,7 @@ use super::*;
             .expect("deadcycles gate should force ship instead of looping");
         let t = ts.take_transcript();
         assert!(
-            t.contains("Output loop---3 consecutive dead cycles"),
+            t.contains("Output loop---3 consecutive dead cycles."),
             "grouped empty routine should leave \\deadcycles at 3: {t:?}"
         );
         assert!(
@@ -230,6 +230,31 @@ use super::*;
             "forced default output must bypass the user routine: {t:?}"
         );
         assert!(!pages.is_empty(), "forced default output should ship a page");
+    }
+
+    #[test]
+    fn unvbox_without_shipout_reaches_deadcycles_gate() {
+        let mut ts =
+            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+        let pages = ts
+            .typeset_dvi(concat!(
+                r"\hsize 20000sp \vsize 100000sp \maxdeadcycles=3 ",
+                r"\output={\showthe\deadcycles\unvbox255\end} ",
+                r"A\par\vfil\penalty-10000\end",
+            ))
+            .map(|(p, _)| p)
+            .expect("deadcycles gate should force a default shipout");
+        let t = ts.take_transcript();
+        assert_eq!(
+            showthe_values(&t, "deadcycles"),
+            vec!["1", "2", "3"],
+            "routine should run until the configured gate: {t:?}"
+        );
+        assert!(
+            t.contains("Output loop---3 consecutive dead cycles."),
+            "gate should report the TeX output-loop message: {t:?}"
+        );
+        assert_eq!(pages.len(), 1, "forced default output should ship exactly once");
     }
 
     // ---------- 输出例程刀 5：页号链（\count0 页标签 + DVI bop 计数） ----------
