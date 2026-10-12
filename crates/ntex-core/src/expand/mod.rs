@@ -943,6 +943,8 @@ pub struct Expander {
     /// `\halign{#\cr $x$ \cr}` 之后的 `}` 被当成新行首列凭空开列。
     /// true = 数学作用域，false = VM 组。
     scope_stack: Vec<bool>,
+    /// 与 `scope_stack` 平行：该层 VM 组是否为对齐内部的静默组。数学层恒 false。
+    scope_silent: Vec<bool>,
     /// `\afterassignment`：下一个赋值完成后插入的 token。
     afterassignment: Option<Token>,
     /// 寄存器文件（M1-10）。
@@ -1176,6 +1178,7 @@ impl Expander {
             global_pending: false,
             aftergroup: Vec::new(),
             scope_stack: Vec::new(),
+            scope_silent: Vec::new(),
             afterassignment: None,
             registers: Registers::new(),
             params: Params::default(),
@@ -1437,6 +1440,7 @@ impl Expander {
         // 字体的条目是 fmt 生成期状态，非运行时残渣）
         self.aftergroup.clear();
         self.scope_stack.clear();
+        self.scope_silent.clear();
         self.afterassignment = None;
         self.output_active = false;
         self.output_prev_count = usize::MAX;
@@ -2843,6 +2847,9 @@ impl Expander {
                 // 数学移位（$，cat 3）：peek 下一个 token 判定 `$$`（显示数学），
                 // 交给 sink 按自身模式决定进出（M4-1）。
                 if tok.catcode() == Some(Catcode::MathShift) {
+                    if self.in_math && self.sink.mode_code() != 5 {
+                        self.recover_groups_to_math_scope()?;
+                    }
                     // tex.web init_math 的进出裁决在 **mode**（mmode=收），
                     // 不在旗标——核心 in_math 在 `\[\halign{…$x$…}\]` 一类
                     // 结构里与排版层脱钩（显示数学开过即恒 true，单元首 `$`
@@ -2877,6 +2884,7 @@ impl Expander {
                     // `\aftergroup` 才挂到本层（而非外包盒子/对齐组）。
                     if entering {
                         self.scope_stack.push(true);
+                        self.scope_silent.push(false);
                     }
                     // TRIP 冲刺：进入数学模式时注入 `\everymath`（TeX `$` 处理语义）。
                     //
@@ -2914,8 +2922,10 @@ impl Expander {
                     }
                     // tex.web after_math → unsave：数学作用域先关，其
                     // `\aftergroup` token 随后在外层模式继续处理。
+                    self.recover_groups_to_math_scope()?;
                     let r = self.sink.math_shift(display);
                     self.close_math_scope();
+                    self.close_math_scopes_if_sink_out()?;
                     return r;
                 }
                 // 数学模式普通字符（letter/other，cat 11/12）→ 查 \mathcode 表

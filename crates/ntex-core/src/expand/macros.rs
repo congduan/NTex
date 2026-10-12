@@ -1805,7 +1805,8 @@ impl Expander {
         } else {
             None
         };
-        if !global && self.group_level > 0 {
+        let scoped = !global && self.group_level > 0 && !self.stale_math_scope_only();
+        if scoped {
             self.save_stack.push((
                 self.group_level,
                 SavedValue::Eqtb {
@@ -1832,7 +1833,7 @@ impl Expander {
             }
             _ => return Err(Error::invalid_input("\\let 仅支持控制序列或字符")),
         }
-        self.eq_mark_level(csid, global);
+        self.eq_mark_level(csid, global || !scoped);
         // NTEX_LETDEF_TRACE：let 赋值打点（活锁诊断——beamer.cls 载入期
         // Let/Def 各 11.8 万次增长，抓高频目标 cs 名定位循环体）
         if diag_enabled("NTEX_LETDEF_TRACE") {
@@ -1875,7 +1876,8 @@ impl Expander {
         // 保存 + 层级登记——futurelet 不登记会让"局部值 + 全局层级"破坏
         // unsave 的 retain 守卫（expl3 \@ifnextchar 高频使用）。
         let global = self.is_global();
-        if !global && self.group_level > 0 {
+        let scoped = !global && self.group_level > 0 && !self.stale_math_scope_only();
+        if scoped {
             self.save_stack.push((
                 self.group_level,
                 SavedValue::Eqtb {
@@ -1886,7 +1888,7 @@ impl Expander {
             ));
         }
         self.let_to(csid, t2);
-        self.eq_mark_level(csid, global);
+        self.eq_mark_level(csid, global || !scoped);
         let items: Vec<(Token, bool)> = vec![(t1, false), (t2, false)];
         self.push_frame(InputFrame::TokenList {
             items: Arc::from(items),

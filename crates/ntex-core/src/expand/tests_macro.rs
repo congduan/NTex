@@ -721,6 +721,37 @@ fn global_let_survives_group_after_csname_relax() {
         );
 }
 
+#[test]
+fn math_close_recovers_groups_before_later_let() {
+    let mut e = Expander::new();
+    e.run_source(
+        "$x{y$\\message{G=\\the\\currentgrouplevel}\
+         \\let\\PAR=\\par{\\gdef\\par{\\relax\\PAR}}\\show\\PAR",
+    )
+    .unwrap();
+    let t = e.transcript();
+    assert!(t.contains("! Missing } inserted."), "公式尾应插入缺失右括号：{t}");
+    assert!(t.contains("G=0"), "公式恢复后 VM 组级应回到底层：{t}");
+    assert!(t.contains("> \\PAR=\\par."), "\\PAR 应保持原语 \\par 快照：{t}");
+}
+
+#[test]
+fn local_let_inside_math_group_does_not_leak() {
+    let mut e = Expander::new();
+    e.run_source(
+        "\\def\\BBB{}\
+         {$\\let\\LOCal\\BBB$}\
+         \\ifx\\LOCal\\BBB \\message{LOCAL-EQ-BBB}\\else\\message{LOCAL-DIFF}\\fi",
+    )
+    .unwrap();
+    let t = e.transcript();
+    assert!(t.contains("LOCAL-DIFF"), "数学组内局部 \\let 不应泄漏：{t}");
+    assert!(
+        !t.contains("LOCAL-EQ-BBB"),
+        "数学组内局部 \\let 被误升全局：{t}"
+    );
+}
+
 // ─── \global 前缀与赋值之间的可展开序列（LaTeX 兼容第三刀）─────────────
 // tex.web：前缀只置标志（prefixed_command 的前缀循环），赋值发生在主循环
 // 后续 token——前缀与赋值原语之间可以隔条件、\expandafter 链、宏展开。

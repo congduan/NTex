@@ -684,6 +684,7 @@ pub struct VecSink {
     pub tokens: Vec<Token>,
     /// 终端转录累积（\message/\show/\write16）。
     pub transcript: String,
+    in_math: bool,
 }
 
 impl CoreSink for VecSink {
@@ -705,6 +706,13 @@ impl CoreSink for VecSink {
     }
     fn as_any_ref(&self) -> &dyn std::any::Any {
         self
+    }
+    fn mode_code(&self) -> i64 {
+        if self.in_math {
+            3
+        } else {
+            1
+        }
     }
 }
 
@@ -731,7 +739,16 @@ impl TokenSink for VecSink {}
 // VecSink 是纯展开轨道的收集 sink：数学/字体/盒/对齐/页五域不维护状态，
 // 全部走各子 trait 的默认 no-op 实现（语义与拆分前一致）。
 impl FontSink for VecSink {}
-impl MathSink for VecSink {}
+impl MathSink for VecSink {
+    fn math_shift(&mut self, _display: bool) -> Result<()> {
+        self.in_math = !self.in_math;
+        Ok(())
+    }
+
+    fn math_shift_will_close(&self) -> bool {
+        self.in_math
+    }
+}
 impl BoxSink for VecSink {}
 impl AlignSink for VecSink {}
 impl PageSink for VecSink {}

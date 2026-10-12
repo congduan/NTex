@@ -339,6 +339,7 @@ impl Expander {
     fn begin_silent_group(&mut self) {
         self.group_level += 1;
         self.scope_stack.push(false);
+        self.scope_silent.push(true);
         self.group_cond_depth.push(self.cond_stack.len());
     }
 
@@ -361,6 +362,7 @@ impl Expander {
             .collect();
         self.aftergroup.retain(|(l, _)| *l != scope);
         self.scope_stack.pop();
+        self.scope_silent.pop();
         if !tokens.is_empty() {
             let items: Vec<(Token, bool)> = tokens.into_iter().map(|t| (t, false)).collect();
             self.push_frame(InputFrame::TokenList {

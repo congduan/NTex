@@ -884,6 +884,7 @@ impl Expander {
     fn begin_group(&mut self) -> Result<()> {
         self.group_level += 1;
         self.scope_stack.push(false);
+        self.scope_silent.push(false);
         // 记录组开始时的条件栈深度：组结束时条件必须回到该深度（跨组开条件 → 错误）
         self.group_cond_depth.push(self.cond_stack.len());
         // M3-2：通知 sink 组开始（排版器据此构建盒子内容）；带进入行号
@@ -954,6 +955,7 @@ impl Expander {
             .collect();
         self.aftergroup.retain(|(l, _)| *l != scope);
         self.scope_stack.pop();
+        self.scope_silent.pop();
         if !tokens.is_empty() {
             let items: Vec<(Token, bool)> = tokens.into_iter().map(|t| (t, false)).collect();
             self.push_frame(InputFrame::TokenList {
@@ -984,6 +986,7 @@ impl Expander {
             .collect();
         self.aftergroup.retain(|(l, _)| *l != scope);
         self.scope_stack.pop();
+        self.scope_silent.pop();
         if !tokens.is_empty() {
             let items: Vec<(Token, bool)> = tokens.into_iter().map(|t| (t, false)).collect();
             self.push_frame(InputFrame::TokenList {
@@ -991,6 +994,46 @@ impl Expander {
                 pos: 0,
             });
         }
+    }
+
+    /// 公式闭合 `$` 到来时，TeX 会先把公式内部尚未闭合的普通组用
+    /// 隐式 `}` 收束到 math_shift_group，再执行 after_math。否则这些
+    /// 局部作用域会越过公式尾泄漏，后续赋值（TRIP l.404 `\let\PAR=\par`）
+    /// 被误登记为局部。
+    fn recover_groups_to_math_scope(&mut self) -> Result<()> {
+        if self.scope_stack.last() == Some(&true) {
+            return Ok(());
+        }
+        let Some(math_scope) = self.scope_stack.iter().rposition(|is_math| *is_math) else {
+            return Ok(());
+        };
+        self.write_error("Missing } inserted.");
+        while self.scope_stack.len() > math_scope + 1 {
+            if self.scope_silent.last().copied().unwrap_or(false) {
+                break;
+            } else {
+                self.end_group()?;
+            }
+        }
+        Ok(())
+    }
+
+    fn close_math_scopes_if_sink_out(&mut self) -> Result<()> {
+        while !matches!(self.sink.mode_code(), 3 | 6)
+            && self.scope_stack.iter().any(|is_math| *is_math)
+        {
+            let before = self.scope_stack.len();
+            self.recover_groups_to_math_scope()?;
+            if self.scope_stack.len() == before && self.scope_stack.last() != Some(&true) {
+                break;
+            }
+            self.close_math_scope();
+        }
+        Ok(())
+    }
+
+    fn stale_math_scope_only(&self) -> bool {
+        self.scope_stack.iter().any(|is_math| *is_math) && !matches!(self.sink.mode_code(), 3 | 6)
     }
 
     fn restore(&mut self, v: SavedValue) {
