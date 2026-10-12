@@ -36,7 +36,11 @@ impl Expander {
                 return Ok(());
             }
         }
-        if !global && self.group_level > 0 && self.params.get(kind) != value {
+        // tex.web keeps `dead_cycles` as page-builder state, not a normal eqtb
+        // parameter: even an explicit `\deadcycles=...` inside a group survives
+        // the group. `\maxdeadcycles` remains a normal scoped integer.
+        let always_global = kind == ParamKind::MiscInt(DEAD_CYCLES_IDX);
+        if !global && !always_global && self.group_level > 0 && self.params.get(kind) != value {
             self.save_stack.push((
                 self.group_level,
                 SavedValue::Param {

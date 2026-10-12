@@ -194,6 +194,44 @@ use super::*;
         assert_eq!(showthe_values(&t, "maxdeadcycles"), vec!["100"]);
     }
 
+    #[test]
+    fn deadcycles_assignment_is_global_but_maxdeadcycles_is_scoped() {
+        // tex.web stores dead_cycles as page-builder state, so even an explicit
+        // grouped assignment survives; max_dead_cycles is the normal scoped int.
+        let mut ts = Typesetter::with_metrics(metrics);
+        let _ = ts.typeset_dvi(
+            r"\deadcycles=1 \maxdeadcycles=1 {\deadcycles=2 \maxdeadcycles=2}\showthe\deadcycles\showthe\maxdeadcycles\end",
+        );
+        let t = ts.take_transcript();
+        assert_eq!(showthe_values(&t, "deadcycles"), vec!["2"]);
+        assert_eq!(showthe_values(&t, "maxdeadcycles"), vec!["1"]);
+    }
+
+    #[test]
+    fn grouped_empty_output_can_trip_deadcycles_gate() {
+        let mut ts =
+            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+        let pages = ts
+            .typeset_dvi(concat!(
+                r"\hsize 20000sp \vsize 100000sp \maxdeadcycles=3 ",
+                r"A\par {\output{}\deadcycles=2\penalty-10000} ",
+                r"\output={\showthe\deadcycles\shipout\box255} ",
+                r"B\par\vfil\penalty-10000\end",
+            ))
+            .map(|(p, _)| p)
+            .expect("deadcycles gate should force ship instead of looping");
+        let t = ts.take_transcript();
+        assert!(
+            t.contains("Output loop---3 consecutive dead cycles"),
+            "grouped empty routine should leave \\deadcycles at 3: {t:?}"
+        );
+        assert!(
+            showthe_values(&t, "deadcycles").is_empty(),
+            "forced default output must bypass the user routine: {t:?}"
+        );
+        assert!(!pages.is_empty(), "forced default output should ship a page");
+    }
+
     // ---------- 输出例程刀 5：页号链（\count0 页标签 + DVI bop 计数） ----------
     //
     // tex.web ship_out L12694-12699：`print_char("["); j:=9;
@@ -301,4 +339,3 @@ use super::*;
             "组内 \\count0=9 回滚后应仍为 1：{t:?}"
         );
     }
-

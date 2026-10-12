@@ -116,7 +116,7 @@ impl Expander {
                 let delta = self.scan_number()?;
                 let val = self.params.misc[idx] + delta;
                 let global = self.is_global();
-                if !global && self.group_level > 0 {
+                if !global && idx != DEAD_CYCLES_IDX && self.group_level > 0 {
                     self.save_stack.push((
                         self.group_level,
                         SavedValue::Param {
@@ -242,7 +242,7 @@ impl Expander {
                     val
                 };
                 let global = self.is_global();
-                if !global && self.group_level > 0 {
+                if !global && idx != DEAD_CYCLES_IDX && self.group_level > 0 {
                     self.save_stack.push((
                         self.group_level,
                         SavedValue::Param {
