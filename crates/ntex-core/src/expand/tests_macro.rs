@@ -1898,6 +1898,40 @@ fn align_preamble_span_after_tabskip_closes_condition() {
     );
 }
 
+#[test]
+fn misplaced_alignment_tab_in_math_mode_is_recovered_not_typeset() {
+    // TRIP l.395：plain TeX treats a raw `&` in math mode as a misplaced
+    // alignment tab and ignores it. It must not become an ordinary math char,
+    // or the following malformed recovery path drifts in group/mode state.
+    let (_r, t) = run_transcript(r"$&\showthe\currentgrouplevel$");
+    assert!(
+        t.contains("! Misplaced alignment tab character &."),
+        "math-mode & must take the TeX error-recovery arm: {t}"
+    );
+}
+
+#[test]
+fn misplaced_alignment_tab_char_alias_is_recovered() {
+    let (_r, t) = run_transcript(r"\let\x=& \x");
+    assert!(
+        t.contains("! Misplaced alignment tab character &."),
+        "catcode-4 char aliases must share raw & recovery: {t}"
+    );
+}
+
+#[test]
+fn math_mode_lastbox_and_unhbox_recover_without_changing_mode() {
+    let (_r, t) = run_transcript(r"$\lastbox\unhbox234\accent0\vfill$");
+    assert!(
+        t.contains("! You can't use `\\lastbox' in math mode."),
+        "\\lastbox in math mode must report and return void: {t}"
+    );
+    assert!(
+        t.contains("! Incompatible list can't be unboxed."),
+        "\\unhbox in math mode must take the TeX recovery arm: {t}"
+    );
+}
+
 // ── S4/S5/S6 收口（tex.web 探针对拍；docs/KNOWN-SIMPLIFICATIONS 47-49）──
 // （模式合法性路由两条在 ntex-layout typeset/tests_align.rs：core 单测的
 // VecSink `mode_code` 恒返 1，测不出数学/受限水平路由。）

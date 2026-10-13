@@ -2024,6 +2024,18 @@ impl Expander {
         self.write_error_impl(msg, true, Some(help));
     }
 
+    fn misplaced_alignment_tab(&mut self) {
+        self.write_error_help_no_read_again(
+            "Misplaced alignment tab character &.",
+            "I can't figure out why you would want to use a tab mark\n\
+             here. If you just want an ampersand, the remedy is\n\
+             simple: Just type `I\\&' now. But if some right brace\n\
+             up above has ended a previous alignment prematurely,\n\
+             you're probably due for more error messages, and you\n\
+             might try typing `S' now just to see what is salvageable.\n",
+        );
+    }
+
     /// 报错 + `<inserted text>` 段 + `<to be read again>` + help 一体输出
     /// （check_outer_validity defining/aligning 臂的恢复块形态；插入 token
     /// 已由调用方 unread，read-again 段由输入流 peek 显示它）。
@@ -2688,6 +2700,10 @@ impl Expander {
                                 // 关组 + noalign 组恢复（裁决键=分派时的组级）
                                 self.close_group_and_resume_align()
                             }
+                            Catcode::AlignmentTab => {
+                                self.misplaced_alignment_tab();
+                                Ok(())
+                            }
                             _ => self.sink.token(c),
                         }
                     }
@@ -2969,6 +2985,10 @@ impl Expander {
                         code = self.mathcode_apply_fam(code);
                     }
                     return self.sink.math_char_full(code);
+                }
+                if tok.catcode() == Some(Catcode::AlignmentTab) {
+                    self.misplaced_alignment_tab();
+                    return Ok(());
                 }
                 if std::env::var_os("NTEX_HOOK_TRACE").is_some() {
                     if let Some(ch) = tok.charcode().and_then(char::from_u32) {

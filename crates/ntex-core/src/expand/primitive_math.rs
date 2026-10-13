@@ -111,13 +111,12 @@ impl Expander {
                         "moveright"
                     };
                     let what = "math mode";
-                    self.write_error(&format!("You can't use `\\{name}' in {what}."));
-                    let _ = self.sink.write16(
+                    self.write_error_help_no_read_again(
+                        &format!("You can't use `\\{name}' in {what}."),
                         "Sorry, but I'm not programmed to handle this case;\n\
                          I'll just pretend that you didn't ask for it.\n\
                          If you're in the wrong mode, you might be able to\n\
-                         return to the right one by typing `I}' or `I$' or `I\\par'.\n"
-                            .to_string(),
+                         return to the right one by typing `I}' or `I$' or `I\\par'.\n",
                     );
                     return Ok(());
                 }
