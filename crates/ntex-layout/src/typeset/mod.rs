@@ -1229,6 +1229,34 @@ impl NodeBuilder {
         }
     }
 
+    /// tex.web `resume_after_output`：用户输出例程返回后，页构建器必须继续
+    /// 消化主贡献列表中由例程回投的材料（典型是 `\unvbox255`）。普通 `append`
+    /// 只在追加节点的瞬间跑一次 `feed_one`；若最后一次追加留下了续接材料，
+    /// 没有这个恢复点就会悬在主列表里，后续输出页断流。
+    ///
+    /// 注意这里刻意只检查主列表是否存在，不要求当前 `mode()==Vertical` 或
+    /// `lists.len()==1`：TRIP 末段的输出例程会在错误恢复路径中遇到 `\end`，
+    /// 此时仍有内层列表未清，但 tex.web 的恢复点处理的是主贡献列表。
+    fn resume_after_output_routine(&mut self) {
+        if !(self.page_state.pagination && !self.lists.is_empty()) {
+            return;
+        }
+        let page = &mut self.page_state.page;
+        let insert_regs = &self.page_state.insert_regs;
+        if let Some(p) = page.feed_one(
+            &mut self.lists[0],
+            &self.params,
+            insert_regs,
+            self.page_state.output_defined,
+        ) {
+            self.accept_page(p);
+            self.rotate_marks();
+        }
+        if let Some(t) = self.page_state.page.take_trace() {
+            let _ = self.write16(t);
+        }
+    }
+
     /// u8（0-7）→ 数学类别（TeXbook 附录 B \mathcode 类编号：
     /// 0=Ord 1=Op 2=Bin 3=Rel 4=Open 5=Close 6=Punct 7=Var。
     /// plain.tex 铁证：\sum="1350 → class 1=Op（大算符）、`+`="202B →

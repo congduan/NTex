@@ -103,6 +103,16 @@ impl Expander {
                 if std::env::var_os("NTEX_END_DBG").is_some() {
                     eprintln!("[END] 执行 \\end（栈深 {}）", self.stack.len());
                 }
+                if self.output_active {
+                    self.report_error("You can't use `end' in internal vertical mode.");
+                    self.report_help(
+                        "Sorry, but I'm not programmed to handle this case;\n\
+                         I'll just pretend that you didn't ask for it.\n\
+                         If you're in the wrong mode, you might be able to\n\
+                         return to the right one by typing `I}' or `I$' or `I\\par'.",
+                    );
+                    return Ok(());
+                }
                 self.stack.clear();
                 self.output_active = false;
                 self.ended = true;

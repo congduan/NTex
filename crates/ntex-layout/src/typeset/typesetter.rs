@@ -841,6 +841,7 @@ impl Typesetter {
             // 分支。不得静默：警告必须进转录（58665be 静默放宽的回归教训）。
             let groups_unclosed = !builder.groups.is_empty();
             let math_unclosed = !builder.math_state.math.is_empty();
+            let ended_inside_output = builder.groups.iter().any(|g| g.kind == GroupKind::Output);
             if groups_unclosed {
                 let _ = builder.write16(format!(
                     "(end occurred inside a group at level {})\n",
@@ -851,6 +852,9 @@ impl Typesetter {
             if math_unclosed {
                 let _ = builder.write16("(end occurred inside a math list)\n".to_string());
                 builder.math_state.math.clear();
+            }
+            if ended_inside_output {
+                builder.resume_after_output_routine();
             }
             // 先收尾进行中的段落（tex.web final_end：\end 前 end_graf 收段折行），
             // 再丢弃未闭合盒子/组的残留列表——顺序不能反：先 pop 会把进行中的

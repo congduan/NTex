@@ -257,6 +257,34 @@ use super::*;
         assert_eq!(pages.len(), 1, "forced default output should ship exactly once");
     }
 
+    #[test]
+    fn end_inside_output_routine_is_recoverable() {
+        // TRIP 末段形态：输出例程中 `\unvbox255\end\rb`。`\end` 在输出例程的
+        // internal vertical mode 里是可恢复错误，不能直接清栈结束作业；后续 `\rb`
+        // 仍应被读取，最终由 deadcycles gate 强制 ship box255。
+        let mut ts =
+            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+        let pages = ts
+            .typeset_dvi(concat!(
+                r"\hsize 20000sp \vsize 100000sp \maxdeadcycles=2 ",
+                r"\def\rb{}}",
+                r"\output={\showthe\deadcycles\unvbox255\end\rb} ",
+                r"A\par\vfil\penalty-10000\end",
+            ))
+            .map(|(p, _)| p)
+            .expect("output routine recovery should not become an Engine error");
+        let t = ts.take_transcript();
+        assert!(
+            t.contains("You can't use `end' in internal vertical mode."),
+            "output-routine \\end should be reported as a recoverable mode error: {t:?}"
+        );
+        assert!(
+            t.contains("Output loop---2 consecutive dead cycles."),
+            "recovered routine should still reach the deadcycles gate: {t:?}"
+        );
+        assert_eq!(pages.len(), 1, "forced default output should ship the pending box255");
+    }
+
     // ---------- 输出例程刀 5：页号链（\count0 页标签 + DVI bop 计数） ----------
     //
     // tex.web ship_out L12694-12699：`print_char("["); j:=9;

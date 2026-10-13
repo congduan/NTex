@@ -231,10 +231,10 @@ impl CoreSink for NodeBuilder {
         Ok(())
     }
     fn group_end(&mut self) -> Result<()> {
-        let ctx = self
-            .groups
-            .pop()
-            .ok_or_else(|| Error::internal("group_end 无配对 group_begin"))?;
+        let Some(ctx) = self.groups.pop() else {
+            self.report_error("Extra }, or forgotten \\endgroup.");
+            return Ok(());
+        };
         // \setbox 组作用域：回滚本组（及更深组）内设置的盒子寄存器
         // （TeX 寄存器组级保存——trip L317 组内 \setbox22 → restoring \box22=void）
         let cur_level = self.groups.len();
@@ -482,6 +482,9 @@ impl CoreSink for NodeBuilder {
                         inner_boxmaxdepth,
                     );
                 }
+            }
+            GroupKind::Output => {
+                self.resume_after_output_routine();
             }
             _ => {}
         }
