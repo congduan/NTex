@@ -258,6 +258,29 @@ use super::*;
     }
 
     #[test]
+    fn resumed_contribution_reenters_output_before_outer_input() {
+        // TRIP 末段控制流：`\unvbox255` 把页内容回投后，恢复点必须先让
+        // 回投贡献重新触发输出例程；外层输入里的后续赋值不能抢先污染页标签。
+        let mut ts =
+            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+        let pages = ts
+            .typeset_dvi(concat!(
+                r"\hsize 20000sp \vsize 100000sp \maxdeadcycles=1 ",
+                r"\output={\unvbox255} ",
+                r"A\par\vfil\penalty-10000 ",
+                r"\count0=7 \end",
+            ))
+            .map(|(p, _)| p)
+            .expect("resumed contribution should be handled before final input");
+        let counts = ts.shipped_page_counts();
+        assert_eq!(pages.len(), 1, "deadcycles gate should ship the resumed page");
+        assert_eq!(
+            counts[0][0], 0,
+            "resumed page must ship before the outer \\count0 assignment: {counts:?}"
+        );
+    }
+
+    #[test]
     fn end_inside_output_routine_is_recoverable() {
         // TRIP 末段形态：输出例程中 `\unvbox255\end\rb`。`\end` 在输出例程的
         // internal vertical mode 里是可恢复错误，不能直接清栈结束作业；后续 `\rb`

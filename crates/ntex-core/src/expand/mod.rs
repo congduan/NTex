@@ -963,6 +963,13 @@ pub struct Expander {
     output_toks: Option<TokenArray>,
     /// 输出例程正在执行（防嵌套：例程内再次断页报错）。
     output_active: bool,
+    /// 当前输出例程隐式组的 VM 组层级。若例程体用 `}` 提前关掉该组
+    /// （TRIP 的 `\rb`），例程帧耗尽时不能再额外 `end_group()`。
+    output_group_level: Option<u32>,
+    /// 输出例程 token 帧刚耗尽：本次 `process_one` 只完成例程收尾，不得继续
+    /// 从外层输入偷读一个 token。否则 `resume_after_output` 点火出的续接页会
+    /// 被主输入的后续 token 抢先收尾，TRIP 末段的 deadcycles 重入会断流。
+    output_boundary_yield: bool,
     /// 是否已执行显式 `\end`（finish 收尾对未闭合组/math 按 TeX 语义降级为警告）。
     ended: bool,
     /// 子展开（expand_region）步数累计——护栏计数（主循环 steps 是局部变量，
@@ -1191,6 +1198,8 @@ impl Expander {
             watchdog: None,
             output_toks: None,
             output_active: false,
+            output_group_level: None,
+            output_boundary_yield: false,
             pending_box_arg: false,
             pending_box_arg_mode: 1,
             trace_suppress_defer: false,
@@ -1443,6 +1452,8 @@ impl Expander {
         self.scope_silent.clear();
         self.afterassignment = None;
         self.output_active = false;
+        self.output_group_level = None;
+        self.output_boundary_yield = false;
         self.output_prev_count = usize::MAX;
         self.immediate_pending = false;
         self.read_streams.clear();
@@ -2385,6 +2396,7 @@ impl Expander {
         // 组种类 output_group=8（tex.web group_code，ETRIP L396 \currentgrouptype 检查）
         self.sink.output_routine_begin()?;
         self.begin_group()?;
+        self.output_group_level = Some(self.group_level);
         self.push_frame(InputFrame::OutputRoutine {
             items: Arc::from(items),
             pos: 0,
@@ -2419,6 +2431,7 @@ impl Expander {
     /// `process_one` 的实际 dispatcher；护栏 wrapper 使 handler 内的 fetch 也纳入同一计数。
     fn process_one_inner(&mut self) -> Result<bool> {
         match self.fetch()? {
+            None if std::mem::take(&mut self.output_boundary_yield) => Ok(true),
             None => Ok(false),
             Some((tok, noexpand)) => {
                 // 诊断：记录最近处理的 token（watchdog/单步超时 dump 用；cs 显示真实名字）
@@ -3830,9 +3843,19 @@ impl Expander {
                         // 不在帧弹出时处理——例程末 token 的参数扫描（如 \box255
                         // 数字）会 fetch 到帧外。
                         self.stack.pop();
-                        self.end_group()?;
+                        if self.output_group_level == Some(self.group_level) {
+                            self.end_group()?;
+                        } else {
+                            self.sink.report_error("Unbalanced output routine.");
+                            self.sink.report_help(
+                                "Your sneaky output routine has problematic {'s and/or }'s.\n\
+                                 I can't handle that very well; good luck.",
+                            );
+                        }
                         self.output_active = false;
-                        continue;
+                        self.output_group_level = None;
+                        self.output_boundary_yield = true;
+                        return Ok(None);
                     }
                     let item = items[*pos];
                     *pos += 1;
