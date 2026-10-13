@@ -272,11 +272,24 @@ impl<'a> Writer<'a> {
                     height,
                     depth,
                 } => {
-                    if *height + *depth > 0 && *width > 0 {
+                    // tex.web L12422（@<Output a rule in an hlist@>）：hlist 里
+                    // rule 的 null 高深 = **包含盒**高深（`\vrule` 只定 width，
+                    // 高深由所在行盒/单元格盒给出——表格 `|c|c|` 的竖线即此）。
+                    let h = if *height == ntex_layout::NULL_FLAG {
+                        bx.height
+                    } else {
+                        *height
+                    };
+                    let d = if *depth == ntex_layout::NULL_FLAG {
+                        bx.depth
+                    } else {
+                        *depth
+                    };
+                    if h + d > 0 && *width > 0 {
                         self.synch_h();
-                        self.cur_v = base_line + depth; // 规则底在基线+depth
+                        self.cur_v = base_line + d; // 规则底在基线+depth
                         self.synch_v();
-                        self.set_rule(*height + *depth, *width);
+                        self.set_rule(h + d, *width);
                         self.cur_v = base_line;
                         self.dvi_h += width; // set_rule 自动前进 h
                     }
@@ -806,6 +819,32 @@ mod tests {
         // 无 push/pop（set_rule 的 h 自动前进 w）。测试数据为 sp：h=40+5=45、w=30。
         assert!(dvi.contains(&132), "set_rule 应出现");
         assert!(dvi.windows(9).any(|w| w == [132, 0, 0, 0, 45, 0, 0, 0, 30]));
+    }
+
+    #[test]
+    fn null_rule_dims_resolve_to_enclosing_box() {
+        // tex.web L12422（@<Output a rule in an hlist@>）：hlist 里 rule 的 null
+        // 高深 = **包含盒**高深。现场（2026-10-13）：`\vrule` 的高深在扫描期被
+        // 简化落 0 → 此处 `(h+d>0)` 判空把规则整条跳过 → 表格 `|c|c|` 的竖线
+        // 全部消失、行内竖线不长高。
+        let fonts = vec![cmr_metrics("cmr10")];
+        let page = BoxNode {
+            kind: BoxKind::HBox,
+            width: 30,
+            height: 40,
+            depth: 5,
+            shift: 0,
+            children: vec![Node::Rule {
+                width: 30,
+                height: ntex_layout::NULL_FLAG,
+                depth: ntex_layout::NULL_FLAG,
+            }],
+        };
+        let dvi = write_dvi(&[page], &fonts);
+        assert!(
+            dvi.windows(9).any(|w| w == [132, 0, 0, 0, 45, 0, 0, 0, 30]),
+            "null 高深应按包含盒解析为 h+d=45：{dvi:?}"
+        );
     }
 
     #[test]

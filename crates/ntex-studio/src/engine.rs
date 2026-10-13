@@ -147,6 +147,11 @@ impl Setup {
             if let Some(state) = self.fmt.clone() {
                 ts.import_state(state);
             }
+            // LaTeX fmt 的断字表补种（与 CLI `ntex-dvi` 自动分支同口径）：`.fmt`
+            // 只序列化 core 侧状态，断字表（`PatternTrie`）住排版器跨不进快照 →
+            // 恢复后 `\language=0` 无表、LaTeX 作业全文档不断词（长词溢出右边
+            // 界、Overfull 成片）。见 docs/KNOWN-SIMPLIFICATIONS.md。
+            ts.set_preload_hyphen(true);
             // 内嵌 plain 文件仅作 `\input` 兜底（不预载——fmt 已含全量状态）。
             ts.use_embedded_format();
         } else {

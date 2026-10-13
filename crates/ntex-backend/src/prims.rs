@@ -651,14 +651,28 @@ fn collect_hlist(
                 height,
                 depth,
             } => {
+                // tex.web L12422（@<Output a rule in an hlist@>）：hlist 里 rule
+                // 的 null 高深 = **包含盒**高深（`\vrule` 只定 width；表格
+                // `|c|c|` 的竖线由所在单元格盒给出高深）。预览不经 DVI，这条
+                // 解析必须与 ntex-dvi 出货端同式，否则预览丢竖线。
+                let h = if *height == ntex_layout::NULL_FLAG {
+                    bx.height
+                } else {
+                    *height
+                };
+                let d = if *depth == ntex_layout::NULL_FLAG {
+                    bx.depth
+                } else {
+                    *depth
+                };
                 let x = rx + sp_to_px(cur_h, dpi);
-                let top = ry - sp_to_px(*height, dpi);
+                let top = ry - sp_to_px(h, dpi);
                 RectPrim::push(
                     out,
                     x,
                     top,
                     sp_to_px(*width, dpi),
-                    sp_to_px(height + depth, dpi),
+                    sp_to_px(h + d, dpi),
                     (0, 0, 0),
                 );
                 cur_h += width;
@@ -1256,6 +1270,35 @@ mod tests {
         // 基线 ry = 边距 72 + 页高 2 = 74；rule 顶 = 74 − 高 2 = 72。
         assert!((r.y - 72.0).abs() < 1e-9, "y={}", r.y);
         assert!((r.w - 2.0).abs() < 1e-9 && (r.h - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn collect_page_null_rule_resolves_to_enclosing_box() {
+        // tex.web L12422：hlist 里 rule 的 null 高深 = 包含盒高深。预览不经 DVI
+        // （B 档直接渲染盒树），这条解析必须独立成立——表格 `|c|c|` 的竖线靠它。
+        let page = BoxNode {
+            kind: BoxKind::HBox,
+            width: 2 * 65_536,
+            height: 8 * 65_536,
+            depth: 4 * 65_536,
+            shift: 0,
+            children: vec![Node::Rule {
+                width: 2 * 65_536,
+                height: ntex_layout::NULL_FLAG,
+                depth: ntex_layout::NULL_FLAG,
+            }],
+        };
+        let opts = RenderOptions {
+            dpi: 72.0,
+            ..Default::default()
+        };
+        let prims = collect_page(&page, &[], &opts, &mut GlyphCache::new());
+        assert_eq!(prims.rects.len(), 1, "规则应画出：{:?}", prims.rects);
+        let r = prims.rects[0];
+        // 基线 ry = 边距 72 + 盒高 8 = 80；rule 顶 = 80 − 高 8 = 72，总高 = 8+4 = 12。
+        assert!((r.y - 72.0).abs() < 1e-9, "y={}", r.y);
+        assert!((r.h - 12.0).abs() < 1e-9, "h={}", r.h);
+        assert!((r.w - 2.0).abs() < 1e-9, "w={}", r.w);
     }
 
     #[test]

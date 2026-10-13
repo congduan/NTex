@@ -1062,6 +1062,41 @@ mod incremental_tests {
         );
     }
 
+    /// **LaTeX fmt 的断字表补种（2026-10-13 回归锁）**：`.fmt` 只序列化 core
+    /// 侧状态，断字表（`PatternTrie`）住排版器跨不进快照 → 恢复后
+    /// `\language=0` 无表、长词不断（`facilisissem` 一行溢出右边界、Overfull）。
+    /// [`IncrementalTypesetter::set_preload_hyphen`] 在首段前补种内嵌
+    /// `hyphen.tex` 后应断词、溢出消失。**A/B 对照**（同源同资产，唯一变量是
+    /// 补种开关）——去掉补种（A 段断言）即红。
+    #[test]
+    fn latex_fmt_hyphen_preload_breaks_long_word() {
+        let Some((root, state)) = latex_assets() else {
+            return;
+        };
+        let src = "\\documentclass{book}\n\\begin{document}\n\
+                   \\section{Second Section}\n\
+                   Lorem ipsum dolor sit amet, consectetuer adipiscing elit.\n\
+                   Etiam lobortis facilisissem. Nullam nec mi et neque pharetra sollicitudin.\n\
+                   \\end{document}\n";
+        // A：不补种断字表 —— 长词溢出，期望 Overfull。
+        let mut off = latex_inc(&root, state.clone());
+        let _ = off.compile(src).expect("A 口径编译（无断字表）");
+        let log_off = off.transcript().to_owned();
+        assert!(
+            log_off.contains("Overfull \\hbox"),
+            "A 口径（`\\language=0` 无表）应报 Overfull：\n{log_off}"
+        );
+        // B：补种断字表 —— 应断词，溢出消失。
+        let mut on = latex_inc(&root, state);
+        on.set_preload_hyphen(true);
+        let _ = on.compile(src).expect("B 口径编译（补种断字表）");
+        let log_on = on.transcript().to_owned();
+        assert!(
+            !log_on.contains("Overfull \\hbox"),
+            "B 口径（补种断字表）不应再有 Overfull：\n{log_on}"
+        );
+    }
+
     /// **已知缺陷（2026-09-19，未修）**：fmt 状态下的增量 `edit` 不可用。
     ///
     /// 现场：`import_state(latex.fmt)` 后 `compile` → `edit(k, ..)` 报

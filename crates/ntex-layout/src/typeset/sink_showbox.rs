@@ -165,17 +165,21 @@ fn showbox_format_node(
             height,
             depth,
         } => {
-            // 未定宽度（NULL_FLAG，如 `\leaders\hrule` 引导）显示 `*`（tex.web print_rule_dimen）
-            let w = if *width == ntex_core::NULL_FLAG {
-                "*".to_string()
-            } else {
-                showbox_pt(*width)
+            // 未定维度显示 `*`（tex.web `print_rule_dimen`：三件任一 is_running
+            // 即 `*`）——`\hrule` 的未定宽、`\vrule` 的未定高深都是常态（出货才
+            // 按包含盒解析，见 hlist_out L12422 / vlist_out L12598）。
+            let dim = |v: i64| {
+                if v == ntex_core::NULL_FLAG {
+                    "*".to_string()
+                } else {
+                    showbox_pt(v)
+                }
             };
             out.push_str(&format!(
                 "{p}\\rule({}+{})x{}\n",
-                showbox_pt(*height),
-                showbox_pt(*depth),
-                w
+                dim(*height),
+                dim(*depth),
+                dim(*width)
             ));
         }
         Node::Leaders {

@@ -746,10 +746,25 @@ impl CoreSink for NodeBuilder {
         // null_flag；出货时 `rule_wd:=width(this_box)` 解析为包含盒宽，
         // L12598）。此前简化落 0，DVI/渲染按 width>0 判定跳过不画，
         // `\hrule` 整体消失（resume-plain.tex 节标题横线丢失的根因）。
+        //
+        // `\vrule` 的对称面（2026-10-13）：扫描期 width=0.4pt、height/depth
+        // 留 null_flag，出货时按 hlist_out L12422 解析为**包含盒**高深。
+        // 唯一例外是**垂直模式**：tex.web L21105 的 `vmode+vrule` 走
+        // head_for_vmode 的 `back_input; new_graf`（先开段落，规则最终落
+        // hlist），本引擎宽容地直接落 vlist——那里没有包含盒可解析，按 0
+        // 落节点（保持旧行为，且不把 -2^30 喂进 vpack/page 的纵向归并）。
+        let vertical = self.mode() == Mode::Vertical;
+        let fix = |v: i64| {
+            if vertical && v == ntex_core::NULL_FLAG {
+                0
+            } else {
+                v
+            }
+        };
         self.append(Node::Rule {
             width,
-            height,
-            depth,
+            height: fix(height),
+            depth: fix(depth),
         });
         Ok(())
     }
@@ -2270,7 +2285,9 @@ fn align_fin(params: ntex_core::param::Params, dir: AlignDir, mut ctx: AlignCtx)
                         }
                         // 差额按行内 tabskip 胶水的 stretch/shrink 摊派
                         // （hpack 4 阶语义）
-                        rows.push(Node::Box(crate::node::hpack(&nodes, total)));
+                        let mut row_box = crate::node::hpack(&nodes, total);
+                        resolve_row_rule_dims(&mut row_box);
+                        rows.push(Node::Box(row_box));
                     }
                     AlignItem::Material(ns) => rows.extend(ns),
                 }
@@ -2311,6 +2328,35 @@ fn align_fin(params: ntex_core::param::Params, dir: AlignDir, mut ctx: AlignCtx)
                 out.push(node);
             }
             out
+        }
+    }
+}
+
+/// 对齐行盒里 null 高深规则的**行盒**解析（tex.web `hlist_out` L12422 的
+/// 「包含盒」在 `\halign` 行里就是行盒本身）。
+///
+/// tex.web 的 halign 行是**单层**盒：preamble 项（`|` 生成的 `\vrule`、LaTeX
+/// 每行的 `\@arstrut`）与各单元内容同挂行盒，故行内每个 vrule 都按行盒高深
+/// 出货（表格 `|c|c|` 的竖线 = 12pt = 含 strut 的行高）。本引擎为了列宽摊派
+/// 把每个单元先 `hpack` 成盒（多一层嵌套），单元内的 null 高深规则会退化成
+/// **单元内容盒**高深（6.94444pt = 文本字高），表格右边框随之短一截、还错位。
+///
+/// 此处把行盒直接单元盒的直接子规则就地实体化为行盒高深——与 tex.web 同口径；
+/// 单元内容**自己嵌套**的盒（用户 `\hbox{\vrule}` 等）不在此列，其 null 高深
+/// 仍按各自包含盒在出货端解析（那条路没变）。
+fn resolve_row_rule_dims(row: &mut crate::node::BoxNode) {
+    let (row_h, row_d) = (row.height, row.depth);
+    for child in row.children.iter_mut() {
+        let Node::Box(cell) = child else { continue };
+        for n in cell.children.iter_mut() {
+            if let Node::Rule { height, depth, .. } = n {
+                if *height == ntex_core::NULL_FLAG {
+                    *height = row_h;
+                }
+                if *depth == ntex_core::NULL_FLAG {
+                    *depth = row_d;
+                }
+            }
         }
     }
 }

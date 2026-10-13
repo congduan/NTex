@@ -24,7 +24,7 @@ const state = {
   utf8: true, inflight: false, dirty: false, timer: 0,
   // C 档：LaTeX 资产是否已灌进 wasm（set_bundle 成功），以及本次编译是否开了
   // LaTeX 模式（按源码特征自动判定；两者都真才走 .fmt）。
-  latexAssets: false, latexOn: false,
+  latexAssets: false, latexOn: false, fragment: false,
   // 预览显示缩放：zoom 为「位图像素 → 屏幕 CSS 像素」倍率；autoFit 时
   // 每次重排/窗口变化都重算为适配窗口的倍率（手缩放后自动关闭）。
   zoom: 1, autoFit: true,
@@ -221,35 +221,58 @@ function applyUtf8() {
 
 /* ---------- C 档：LaTeX 资产（.fmt + TeX 文件 + TFM 度量） ---------- */
 
-// LaTeX 源特征：`\documentclass` / `\usepackage` / `\begin{document}` 任一命中即
-// 按 LaTeX 口径编译（前提是资产已就绪）。plain 作业（`\font…\shipout…`）不受影响。
+// LaTeX 源特征：`\documentclass` / `\usepackage` / `\begin{document}` / **任一
+// `\begin{<env>}`·`\end{<env>}` 环境标记** 任一命中即按 LaTeX 口径编译（前提是
+// 资产已就绪）。plain 作业（`\font…\shipout…`）不受影响。
+//
+// 环境标记这一支是**片段口径**（2026-10-13）：编辑器里只粘一段
+// `\begin{center}\begin{tabular}…` 也是 LaTeX 语料——旧规则只认三个整文档特征，
+// 片段被当 plain 排（`\begin` undefined、`&` 成对齐制表符），现场就是"table
+// 渲染成一行乱码"。
 //
 // 检测前先做**注释剥离**（M9 中文刀 6）：`%` 到行尾是 TeX 注释，注释里出现的
 // `\documentclass`（如注释掉的模板头）不应触发切换。`\%`（转义百分号）不开启
 // 注释；`\verb|…|` 与 verbatim 环境内的 `%` 同样不算注释——近似处理：只剥
 // 行注释，verbatin 内特征字符串误报概率极低且后果仅是模式徽标与编译口径。
-const LATEX_SRC_RE = /\\(documentclass|usepackage)\b|\\begin\s*\{\s*document\s*\}/;
+//
+// 与 Rust 侧单一事实源 `ntex-layout/src/typeset/latex_detect.rs::looks_like_latex`
+// 同口径（本文件是容器边界外的唯一副本）；空格变体 `\begin {center}` 两边都不认。
+const LATEX_SRC_RE = /\\(documentclass|usepackage)\b|\\begin\s*\{\s*document\s*\}|\\begin\{[^}\s]|\\end\{[^}\s]/;
+
+// 剥行注释（转义对原样保留两个字符，均不算注释起始）。
+function stripLineComment(rawLine) {
+  let line = '';
+  for (let i = 0; i < rawLine.length; i++) {
+    const ch = rawLine[i];
+    if (ch === '\\' && i + 1 < rawLine.length) {
+      line += rawLine.slice(i, i + 2);
+      i++;
+      continue;
+    }
+    if (ch === '%') break;
+    line += ch;
+  }
+  return line;
+}
 
 function looksLikeLatex(src) {
-  let commentOff = false;
   for (const rawLine of src.split('\n')) {
-    let line = '';
-    for (let i = 0; i < rawLine.length; i++) {
-      const ch = rawLine[i];
-      if (commentOff) break;
-      if (ch === '\\' && i + 1 < rawLine.length) {
-        // 转义对（\%、\\ 等）原样保留两个字符，均不算注释起始
-        line += rawLine.slice(i, i + 2);
-        i++;
-        continue;
-      }
-      if (ch === '%') { commentOff = true; break; }
-      line += ch;
-    }
-    commentOff = false; // 行注释不跨行
-    if (LATEX_SRC_RE.test(line)) return true;
+    if (LATEX_SRC_RE.test(stripLineComment(rawLine))) return true;
   }
   return false;
+}
+
+// 片段补壳（与 Rust `ntex_layout::typeset::wrap_latex_fragment` 同口径）：源码是
+// LaTeX 语料却既无 `\documentclass` 也无 `\begin{document}` 时，补一层最小文档壳
+// `\documentclass{article}\begin{document} … \end{document}`，让粘进来的表格/列表
+// 片段也能出页。前缀拼在**首行行首**、尾壳**另起一行**，故转录里的 `l.N` 与编辑器
+// 行号一列不移。已是完整文档、或根本不是 LaTeX 的源原样返回（plain 不受影响）。
+function wrapLatexFragment(src) {
+  for (const rawLine of src.split('\n')) {
+    const line = stripLineComment(rawLine);
+    if (line.includes('\\documentclass') || line.includes('\\begin{document}')) return src;
+  }
+  return `\\documentclass{article}\\begin{document}${src}${src.endsWith('\n') ? '' : '\n'}\\end{document}\n`;
 }
 
 // 资产来自 Tauri 侧的**只读**命令（crates/ntex-tauri/src/main.rs::
@@ -274,24 +297,30 @@ async function loadLatexAssets() {
 }
 
 // 按源码特征切换引擎模式。只在变化时调 wasm（跨边界调用省着用）。
-// 返回本次是否为 LaTeX 口径，供状态栏显示。
+// 返回 { latex, fragment }：本次是否为 LaTeX 口径、是否为补壳的片段，供状态栏显示。
 function applyMode(src) {
   const latex = state.latexAssets && looksLikeLatex(src);
+  // 片段 = 有 LaTeX 特征但缺 \documentclass/\begin{document}（看 wrapLatexFragment
+  // 是否真要动手，避免"看起来像片段"与"实际补壳"两套判据）。
+  const fragment = latex && wrapLatexFragment(src) !== src;
+  state.fragment = fragment;
   if (latex !== state.latexOn) {
     set_latex_mode(latex);
     state.latexOn = latex;
   }
   const chip = $('mode-chip');
   if (chip) {
-    chip.textContent = latex ? 'LaTeX' : 'plain';
+    chip.textContent = latex ? (fragment ? 'LaTeX · 片段' : 'LaTeX') : 'plain';
     chip.className = `mode ${latex ? 'latex' : 'plain'}`;
     chip.title = state.latexAssets
       ? (latex
-        ? 'LaTeX 口径：套用注入的 latex.fmt（\\documentclass/\\section 可用）'
+        ? (fragment
+          ? 'LaTeX 片段：已补最小文档壳 \\documentclass{article}\\begin{document}…（用户行号不移）'
+          : 'LaTeX 口径：套用注入的 latex.fmt（\\documentclass/\\section 可用）')
         : 'plain 口径：未检测到 LaTeX 特征（\\documentclass 等触发切换）')
       : 'LaTeX 资产未就绪（只能用 plain 子集）';
   }
-  return latex;
+  return { latex, fragment };
 }
 
 async function boot() {
@@ -401,8 +430,11 @@ function compileNow() {
   setStatus('busy', '排版中…');
   const t0 = performance.now();
   try {
-    const mode = applyMode(editor.value);      // LaTeX/plain 由源码特征决定
-    const doc = compile_document(editor.value); // 同步：release wasm 下 demo 量级 ~几十 ms
+    const { latex, fragment } = applyMode(editor.value); // LaTeX/plain 由源码特征决定
+    // LaTeX 片段（无 \documentclass/\begin{document}）补最小文档壳：编辑器里粘一段
+    // `\begin{tabular}` 也能出页。补壳只在首行行首 + 末尾另起一行，转录 l.N 不移。
+    const src = latex ? wrapLatexFragment(editor.value) : editor.value;
+    const doc = compile_document(src); // 同步：release wasm 下 demo 量级 ~几十 ms
     if (!state.exporting) state.doc?.free?.(); // 导出正拿着旧 doc 解析 DVI，别动它
     state.doc = doc;
     // 钳到 [0, page_count-1]：0 页作业会把上界压成 -1，须同时钳下界，
@@ -411,9 +443,10 @@ function compileNow() {
     state.page = Math.max(0, Math.min(state.page, doc.page_count - 1));
     errorBar.hidden = true;
     renderPage();
+    const modeLabel = latex ? (fragment ? 'LaTeX·片段(补 article 壳)' : 'LaTeX') : 'plain';
     setStatus(
       'ok',
-      `${doc.page_count} 页 · ${(performance.now() - t0).toFixed(0)} ms · ${mode ? 'LaTeX' : 'plain'}`,
+      `${doc.page_count} 页 · ${(performance.now() - t0).toFixed(0)} ms · ${modeLabel}`,
     );
     logEl.textContent = doc.transcript || '（转录为空）';
   } catch (e) {

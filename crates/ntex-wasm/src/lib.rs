@@ -589,7 +589,13 @@ fn compile_pipeline_assets(
         ts.import_state(state);
         used_format = true;
     }
-    if !used_format {
+    if used_format {
+        // LaTeX fmt 的断字表补种（与 CLI `ntex-dvi` 自动分支同口径）：`.fmt`
+        // 只序列化 core 侧状态，断字表（`PatternTrie`）住排版器跨不进快照 →
+        // 恢复后 `\language=0` 无表、全文档不断词（Tauri/浏览器工作台此前的
+        // 长词溢出右边界现场）。见 docs/KNOWN-SIMPLIFICATIONS.md。
+        ts.set_preload_hyphen(true);
+    } else {
         ts.set_preload_plain(true);
     }
     // 出错也要收转录：TeX 语义是错误上下文行进 log，作业不止于 stderr。

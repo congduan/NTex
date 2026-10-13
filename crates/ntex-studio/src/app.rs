@@ -230,7 +230,22 @@ impl Studio {
         } else {
             match edited {
                 Some(k) => self.inc.edit(k, &new_segs[k]).map(|o| (Recompile::Edit, o)),
-                None => self.inc.compile(&self.source).map(|o| (Recompile::Full, o)),
+                None => {
+                    // LaTeX 片段（无 `\documentclass`/`\begin{document}`）补最小
+                    // 文档壳——编辑器里粘一段 `\begin{tabular}` 也应当排出来。
+                    // 与 Tauri 前端 `main.js::wrapLatexFragment` 同口径；仅
+                    // LaTeX 口径生效，plain 源原样（`wrap_latex_fragment` 自会
+                    // 返回 None）。补壳只在首行行首 + 末尾另起一行，编辑器的
+                    // 行号（转录 `l.N`）不移。
+                    let wrapped = if self.inc_latex {
+                        ntex_layout::typeset::wrap_latex_fragment(&self.source)
+                    } else {
+                        None
+                    };
+                    self.inc
+                        .compile(wrapped.as_deref().unwrap_or(&self.source))
+                        .map(|o| (Recompile::Full, o))
+                }
             }
             .map_err(|e| e.to_string())
         };
@@ -284,11 +299,16 @@ impl Studio {
     }
 
     /// 当前口径标签（状态栏；对齐 Tauri 前端的 `#mode-chip`）。
+    ///
+    /// LaTeX 片段（`wrap_latex_fragment` 命中）显示 `LaTeX (fragment)`——
+    /// 与 Tauri 前端 `main.js` 的片段徽标同口径，避免"补了壳"这件事静默。
     fn mode_label(&self) -> &'static str {
-        if self.inc_latex {
-            "LaTeX"
-        } else {
+        if !self.inc_latex {
             "plain"
+        } else if ntex_layout::typeset::wrap_latex_fragment(&self.source).is_some() {
+            "LaTeX (fragment)"
+        } else {
+            "LaTeX"
         }
     }
 

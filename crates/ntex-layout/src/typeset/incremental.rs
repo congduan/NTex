@@ -434,6 +434,14 @@ pub struct IncrementalTypesetter {
     /// plain 预载是否已跑过（幂等标记：长驻增量器只跑一次，见
     /// [`Self::run_preload_plain`]）。
     preload_done: bool,
+    /// 断字模式预载开关（与 [`Typesetter::preload_hyphen`] 同语义）：LaTeX
+    /// `.fmt` 只序列化 core 侧状态，断字表（`PatternTrie`）住排版器跨不进快照
+    /// → 恢复 fmt 后 `\language=0` 无表、全文档不断词。`compile` 在首段之前先
+    /// 跑内嵌 [`HYPHEN_TEX`]。默认关。
+    preload_hyphen: bool,
+    /// 断字预载是否已跑过（幂等标记，同 [`Self::preload_done`]：长驻增量器
+    /// 只跑一次，格式切换走"重建增量器"）。
+    preload_hyphen_done: bool,
     /// 内嵌格式 VFS 兜底层是否已包（[`Self::use_embedded_format`] 幂等标记）。
     embedded_vfs_installed: bool,
 }
@@ -456,6 +464,8 @@ impl IncrementalTypesetter {
             utf8_input: false,
             preload_plain: false,
             preload_done: false,
+            preload_hyphen: false,
+            preload_hyphen_done: false,
             embedded_vfs_installed: false,
         }
     }
@@ -503,6 +513,27 @@ impl IncrementalTypesetter {
     /// plain 格式预载是否已开（诊断/测试用）。
     pub fn preload_plain(&self) -> bool {
         self.preload_plain
+    }
+
+    /// 断字模式预载开关（与 [`Typesetter::set_preload_hyphen`] 同语义）：打开的
+    /// `compile` 会在首段之前先跑内嵌 [`HYPHEN_TEX`]（US patterns + 例外词表，
+    /// 落 `\language=0`）。给 **LaTeX fmt 路径**用——`.fmt` 跨不进排版器的断字
+    /// 表，fmt 恢复后 `\language=0` 无表则全文档不断词。开时连同
+    /// [`Self::use_embedded_format`]。
+    ///
+    /// 与 [`Self::set_preload_plain`] 互斥使用（plain.tex 自己 `\input hyphen`，
+    /// 双开会把表登记两遍）。只影响下一次 `compile`（全量重建）；`edit` 不重跑
+    /// 预载——它延续 `compile` 建立的引擎状态。
+    pub fn set_preload_hyphen(&mut self, on: bool) {
+        if on {
+            self.use_embedded_format();
+        }
+        self.preload_hyphen = on;
+    }
+
+    /// 断字模式预载是否已开（诊断/测试用）。
+    pub fn preload_hyphen(&self) -> bool {
+        self.preload_hyphen
     }
 
     /// 加载展开引擎状态快照（`.fmt` v1；与 [`Typesetter::import_state`] 同语义）。
@@ -556,6 +587,18 @@ impl IncrementalTypesetter {
         }
         self.expander.run_source(PLAIN_TEX)?;
         self.preload_done = true;
+        Ok(())
+    }
+
+    /// 断字模式预载（与 [`Typesetter::run_hyphen_preload`] 同语义，但**只跑
+    /// 一次**——理由同 [`Self::run_preload_plain`]：长驻引擎重复执行只会重复
+    /// 登记模式表）。
+    fn run_preload_hyphen(&mut self) -> Result<()> {
+        if !self.preload_hyphen || self.preload_hyphen_done {
+            return Ok(());
+        }
+        self.expander.run_source(HYPHEN_TEX)?;
+        self.preload_hyphen_done = true;
         Ok(())
     }
 
@@ -614,6 +657,9 @@ impl IncrementalTypesetter {
         self.apply_utf8_input();
         self.install_builder();
         self.run_preload_plain()?;
+        // LaTeX fmt 路径的断字表补种（与 `Typesetter` 同序：同属段 0 之前的
+        // 边界状态，且必须在 install_builder 之后——`\patterns` 事件要有 sink）。
+        self.run_preload_hyphen()?;
         self.capture_boundary(0, true);
         for j in 0..n {
             if let Err(e) = self.execute_segment(j) {
@@ -1088,6 +1134,7 @@ impl IncrementalTypesetter {
         rebuilt.fmt_current_font = self.fmt_current_font;
         rebuilt.utf8_input = self.utf8_input;
         rebuilt.preload_plain = self.preload_plain;
+        rebuilt.preload_hyphen = self.preload_hyphen;
         if self.embedded_vfs_installed {
             rebuilt.use_embedded_format();
         }

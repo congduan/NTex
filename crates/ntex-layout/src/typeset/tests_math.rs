@@ -1098,13 +1098,20 @@ use super::*;
     #[test]
     fn math_vrule_dimensions() {
         // 债务表项 2 的验收探针：`$\vrule width 2pt height 10pt$` →
-        // 规则节点按扫描说明的宽高（depth 缺省 0）
+        // 规则节点按扫描说明取宽高；**未说明的 depth 保持 null_flag**
+        // （tex.web scan_rule_spec：`\vrule` 只定 width，height/depth 留 null，
+        // 出货时按 hlist_out L12422 取包含盒高深——2026-10-13 修正：此前按
+        // 简化落 0，表格竖线与行内竖线因此整条消失/短一截）
         let children = math_line_children(r"$\vrule width 2pt height 10pt$");
         assert_eq!(children.len(), 1, "单规则原子：{children:?}");
         let d = children[0].dimensions();
         assert_eq!(d.width, 2 * SP_PER_PT, "宽度 2pt");
         assert_eq!(d.height, 10 * SP_PER_PT, "高度 10pt");
-        assert_eq!(d.depth, 0);
+        assert_eq!(
+            d.depth,
+            ntex_core::NULL_FLAG,
+            "未说明的 depth 应保持 null 哨兵（出货端解析）"
+        );
     }
 
 

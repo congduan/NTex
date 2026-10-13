@@ -99,13 +99,22 @@ impl Expander {
 
     /// 扫描 `\hrule`/`\vrule` 的可选规格：
     /// `height <dimen> depth <dimen> width <dimen>`（任意顺序、可省略）。
-    /// TeX 缺省（tex.web scan_rule_specs）：`\hrule` → height=0.4pt、width=未定；
-    /// `\vrule` → width=0.4pt；未定宽度以 [`crate::NULL_FLAG`] 表达（showbox 显示 `*`）。
+    ///
+    /// TeX 缺省（tex.web `scan_rule_spec` L9120-9139）：先建 `new_rule`
+    /// （**width/height/depth 三件全 null_flag**），再按 cur_cmd 定一件——
+    /// - `\hrule`：`height:=default_rule`(0.4pt)、`depth:=0`，**width 留 null**；
+    /// - `\vrule`：`width:=default_rule`(0.4pt)，**height/depth 都留 null**。
+    ///
+    /// null 只在**出货**时解析（hlist_out L12422 取包含盒高深、vlist_out
+    /// L12598 取包含盒宽），故这里必须原样保留哨兵：`\vrule` 的 null 高深
+    /// 一旦在扫描期落 0，`(rule_ht>0)` 判空就把规则整条跳过——表格
+    /// `|c|c|` 的竖线全部消失（2026-10-13 现场）。
+    ///
     /// 返回 `[height, depth, width]`。
     fn scan_rule_specs(&mut self, prim: Primitive) -> Result<[i64; 3]> {
         let mut specs = match prim {
             Primitive::HRule => [26214, 0, crate::NULL_FLAG], // 0.4pt
-            _ => [0, 0, 26214], // VRule
+            _ => [crate::NULL_FLAG, crate::NULL_FLAG, 26214], // VRule
         };
         for _ in 0..3 {
             let Some(kw) = self.scan_keyword(|w| matches!(w, "height" | "depth" | "width"))?

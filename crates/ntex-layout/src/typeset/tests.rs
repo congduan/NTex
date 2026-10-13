@@ -230,6 +230,47 @@ mod tests {
     /// 无 width 说明的 hrule 保持 null_flag 哨兵（tex.web scan_rule_spec），
     /// 出货端解析为包含盒宽（L12598 `rule_wd:=width(this_box)`）。
     #[test]
+    fn halign_row_null_vrule_resolves_to_row_height() {
+        // 表格 `|c|c|` 的竖线：tex.web 的 halign 行盒是**单层**（preamble 项与
+        // 单元内容同挂行盒），故 hlist_out L12422 的「包含盒」= 行盒（高深含
+        // \@arstrut）。本引擎为列宽摊派把每单元先 hpack 成盒，多一层嵌套，若不
+        // 特地按行盒高深实体化，竖线会退化成**单元内容盒**高深（右边框短一截、
+        // 还错位 3.6pt）。锁 resolve_row_rule_dims 的这一解析。
+        let main = typeset(
+            r"\vbox{\halign{\vrule width 0.4pt \vrule height 8.4pt depth 3.6pt width 0pt\hfil#\hfil\vrule width 0.4pt&\hfil#\hfil\vrule width 0.4pt\cr A&B\cr}}",
+        )
+        .unwrap();
+        let vbox = as_box(&main[0]);
+        let row = as_box(&vbox.children[0]);
+        let mut checked = 0;
+        for child in &row.children {
+            let Node::Box(cell) = child else { continue };
+            for n in &cell.children {
+                if let Node::Rule {
+                    width,
+                    height,
+                    depth,
+                } = n
+                {
+                    if *width == 26214 {
+                        // 0.4pt（26214 sp）
+                        assert_eq!(
+                            (*height, *depth),
+                            (row.height, row.depth),
+                            "0.4pt 竖线应按**行盒**高深解析（不是单元盒）：{n:?}"
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        assert!(checked >= 1, "应至少有一条 0.4pt 竖线：{row:?}");
+        // 行盒高深 = strut（8.4+3.6pt）——即表格行高
+        assert_eq!(row.height, 550502, "行盒高 8.4pt：{row:?}");
+        assert_eq!(row.depth, 235930, "行盒深 3.6pt：{row:?}");
+    }
+
+    #[test]
     fn hrule_in_paragraph_ends_it_and_keeps_null_width() {
         let main = typeset(r"a\hrule height 3pt b").unwrap();
         // 结构：段落盒(a) + 规则 + 段落盒(b……含 parfillskip)

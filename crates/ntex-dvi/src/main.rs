@@ -262,6 +262,12 @@ fn main() -> ExitCode {
             }
         };
         ts.import_state(state);
+        // 显式 `--fmt latex.fmt` 与下面的自动分支同口径：断字表（PatternTrie）
+        // 住排版器跨不进 `.fmt` 快照，缺补种则 `\language=0` 无表、全文档不断词。
+        // 仅 LaTeX fmt 需要；plain/TRIP 系 fmt 保持零影响。
+        if resolved.file_name().and_then(|n| n.to_str()) == Some("latex.fmt") {
+            ts.set_preload_hyphen(true);
+        }
     }
     let auto_pkg_dirs = if auto_pkg {
         match prepare_auto_packages(

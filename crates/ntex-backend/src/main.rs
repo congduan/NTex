@@ -152,6 +152,14 @@ fn main() -> ExitCode {
             }
         };
         ts.import_state(state);
+        // LaTeX fmt 的断字表补种（与 ntex-dvi 自动分支同口径）：`.fmt` 只序列化
+        // core 侧状态，断字表（PatternTrie）住排版器跨不进快照 → 恢复后
+        // `\language=0` 无表、全文档不断词（长词溢出右边界、Overfull 成片）。
+        // 仅 `latex.fmt` 需要；plain/TRIP 系 fmt 保持零影响。
+        // 见 docs/KNOWN-SIMPLIFICATIONS.md。
+        if resolved.file_name().and_then(|n| n.to_str()) == Some("latex.fmt") {
+            ts.set_preload_hyphen(true);
+        }
     } else {
         // 格式预载（G2(a)/G4）：内嵌 plain 兜底 + 启动预载（等价源首行
         // `\input plain`）。缺此则 `\hsize`/`\baselineskip` 等 plain 定义
