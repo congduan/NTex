@@ -1,4 +1,72 @@
 use super::*;
+use crate::sink::{AlignSink, BoxSink, CoreSink, FontSink, IoSink, MathSink, PageSink, TokenSink};
+
+#[derive(Debug, Default)]
+struct MathRecoverSink {
+    transcript: String,
+    in_math: bool,
+}
+
+impl CoreSink for MathRecoverSink {
+    fn token(&mut self, _tok: Token) -> Result<()> {
+        Ok(())
+    }
+
+    fn primitive(&mut self, prim: Primitive) -> Result<()> {
+        if prim == Primitive::Par && self.in_math {
+            self.transcript.push_str("! Missing $ inserted.\n");
+            self.in_math = false;
+        }
+        Ok(())
+    }
+
+    fn mode_code(&self) -> i64 {
+        if self.in_math { 3 } else { 1 }
+    }
+
+    fn transcript(&self) -> &str {
+        &self.transcript
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+
+    fn as_any_ref(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+impl IoSink for MathRecoverSink {
+    fn show(&mut self, text: String) -> Result<()> {
+        self.transcript.push_str(&text);
+        self.transcript.push('\n');
+        Ok(())
+    }
+
+    fn write16(&mut self, text: String) -> Result<()> {
+        self.transcript.push_str(&text);
+        self.transcript.push('\n');
+        Ok(())
+    }
+}
+
+impl MathSink for MathRecoverSink {
+    fn math_shift(&mut self, _display: bool) -> Result<()> {
+        self.in_math = !self.in_math;
+        Ok(())
+    }
+
+    fn math_shift_will_close(&self) -> bool {
+        self.in_math
+    }
+}
+
+impl FontSink for MathRecoverSink {}
+impl BoxSink for MathRecoverSink {}
+impl AlignSink for MathRecoverSink {}
+impl PageSink for MathRecoverSink {}
+impl TokenSink for MathRecoverSink {}
 
 #[test]
 fn simple_def_and_use() {
@@ -733,6 +801,39 @@ fn math_close_recovers_groups_before_later_let() {
     assert!(t.contains("! Missing } inserted."), "公式尾应插入缺失右括号：{t}");
     assert!(t.contains("G=0"), "公式恢复后 VM 组级应回到底层：{t}");
     assert!(t.contains("> \\PAR=\\par."), "\\PAR 应保持原语 \\par 快照：{t}");
+}
+
+#[test]
+fn par_error_recovers_math_groups_before_later_let() {
+    let mut e = Expander::new();
+    e.set_sink(Box::new(MathRecoverSink::default()));
+    e.run_source("$x{\\par\\let\\PAR=\\par}\\show\\PAR")
+        .unwrap();
+    let t = e.transcript();
+    assert!(t.contains("! Missing $ inserted."), "\\par 应触发公式恢复：{t}");
+    assert!(
+        t.contains("! Missing } inserted."),
+        "公式恢复应先收掉残留普通组：{t}"
+    );
+    assert!(
+        t.contains("> \\PAR=\\par."),
+        "\\PAR 不应被迟到的数学组 restore 掉：{t}"
+    );
+}
+
+#[test]
+fn stale_sink_math_without_vm_math_scope_does_not_localize_let() {
+    let mut e = Expander::new();
+    e.set_sink(Box::new(MathRecoverSink {
+        transcript: String::new(),
+        in_math: true,
+    }));
+    e.run_source("{\\let\\PAR=\\par}\\show\\PAR").unwrap();
+    let t = e.transcript();
+    assert!(
+        t.contains("> \\PAR=\\par."),
+        "layout-only stale math mode must not leave a restore entry for \\PAR: {t}"
+    );
 }
 
 #[test]

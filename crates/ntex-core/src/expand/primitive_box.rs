@@ -20,10 +20,12 @@ impl Expander {
                 self.sink.primitive(prim)
             }
             Primitive::Par => {
+                let was_math_mode = matches!(self.sink.mode_code(), 3 | 6);
                 // 传 \par 源码行号给排版器（折行警告 `at lines a--b`）
                 let ln = self.error_context().map(|(n, _)| n as i64).unwrap_or(0);
                 self.sink.paragraph_line(ln)?;
-                self.sink.primitive(prim)
+                self.sink.primitive(prim)?;
+                self.sync_math_scope_after_sink_recovery(was_math_mode)
             }
             // 带参数扫描的排版原语：扫描在 VM 侧完成，结果交给 sink
             Primitive::HSkip | Primitive::VSkip => {
@@ -70,7 +72,11 @@ impl Expander {
                 self.sink.primitive(prim)
             }
             // 段落缩进：直通 sink 由排版器解释
-            Primitive::Indent | Primitive::NoIndent => self.sink.primitive(prim),
+            Primitive::Indent | Primitive::NoIndent => {
+                let was_math_mode = matches!(self.sink.mode_code(), 3 | 6);
+                self.sink.primitive(prim)?;
+                self.sync_math_scope_after_sink_recovery(was_math_mode)
+            }
             // \␣（ex_space）：tex.web 独立命令码（cmd=ex_space≠spacer），不产空格
             // token——此前发 cat10 字符 token 后与真 spacer 在扫描层（数字尾可选
             // 空格站）不可区分，排版层也只能按 spacefactor 折算。直通原语事件，

@@ -1032,8 +1032,21 @@ impl Expander {
         Ok(())
     }
 
+    fn sync_math_scope_after_sink_recovery(&mut self, was_math_mode: bool) -> Result<()> {
+        if !was_math_mode || matches!(self.sink.mode_code(), 3 | 6) {
+            return Ok(());
+        }
+        self.close_math_scopes_if_sink_out()?;
+        if !matches!(self.sink.mode_code(), 3 | 6) {
+            self.in_math = false;
+        }
+        Ok(())
+    }
+
     fn stale_math_scope_only(&self) -> bool {
-        self.scope_stack.iter().any(|is_math| *is_math) && !matches!(self.sink.mode_code(), 3 | 6)
+        let has_math_scope = self.scope_stack.iter().any(|is_math| *is_math);
+        let sink_in_math = matches!(self.sink.mode_code(), 3 | 6);
+        (has_math_scope && !sink_in_math) || (!has_math_scope && sink_in_math)
     }
 
     fn restore(&mut self, v: SavedValue) {
