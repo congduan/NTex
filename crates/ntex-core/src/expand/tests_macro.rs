@@ -2174,6 +2174,64 @@ fn noalign_param_brace_does_not_finish_halign() {
 }
 
 #[test]
+fn align_peek_passes_through_conditionals_to_reach_noalign() {
+    // tex.web：条件在**取词层**求值（get_x_token L7820 → expand，if_test/
+    // fi_or_else 的 cur_cmd 105/106 落 (max_command,call) 展开区间），故
+    // align_peek 的 get_x_token **穿过** `\if…\else\fi` 后直接看到 `\noalign`。
+    // 缺此臂时条件 token 被当显著 token → align_peek 兜底 arm 开了一行 →
+    // 其后的 `\noalign` 抵达分派位报 "Misplaced \noalign"、材料落错列表。
+    // GT 判据（pdfTeX plain `\halign`）：`A\cr\iftrue\else\fi\noalign{…}`
+    // **接受**（NA 出、无错）；`A\cr\relax\noalign{…}` 报 Misplaced。
+    // 现场：LaTeX `\\[1ex]`（`\@argtabularcr` 的 `\ifdim … \cr\else…\fi`）
+    // 后的 `\hline` 被判 Misplaced → 表格底边框整条消失（2026-10-13）。
+    let src = concat!(
+        "\\halign{#\\cr ",
+        "A\\cr ",
+        "\\iftrue \\else \\fi",
+        "\\noalign{\\message{NA-OK}}\\cr",
+        "B\\cr}",
+        "\\message{HALIGN-OK}"
+    );
+    let (_r, t) = run_transcript(src);
+    assert!(
+        !t.contains("Misplaced \\noalign"),
+        "条件之后的 \\noalign 是行边界合法位：{t}"
+    );
+    assert!(t.contains("NA-OK"), "noalign 材料须入流：{t}");
+    assert!(t.contains("HALIGN-OK"), "表格须存活到收尾：{t}");
+
+    // 假支内的 `\noalign` 随假支一并丢弃（不报错、不入流）
+    let src = concat!(
+        "\\halign{#\\cr ",
+        "A\\cr ",
+        "\\iffalse \\noalign{\\message{CN\\iftrue OT\\fi}} \\else \\fi",
+        "\\noalign{\\message{NA-ELSE}}\\cr ",
+        "B\\cr}",
+        "\\message{HALIGN-OK2}"
+    );
+    let (_r, t) = run_transcript(src);
+    // 标记运行期拼装（错误上下文会原文引用源行，字面标记会被自己的引文命中）
+    assert!(!t.contains("CNOT"), "假支 token 不得执行：{t}");
+    assert!(t.contains("NA-ELSE"), "else 后的 noalign 须入流：{t}");
+    assert!(t.contains("HALIGN-OK2"), "表格须存活：{t}");
+
+    // 对照（负向）：行**已开**（`\relax` 起行）后 `\noalign` 仍须报 Misplaced
+    let src = concat!(
+        "\\halign{#\\cr ",
+        "A\\cr ",
+        "\\relax ",
+        "\\noalign{\\message{NA-BAD}}\\cr ",
+        "B\\cr}",
+        "\\message{HALIGN-OK3}"
+    );
+    let (_r, t) = run_transcript(src);
+    assert!(
+        t.contains("Misplaced \\noalign"),
+        "行中 \\noalign 必须仍报 Misplaced（GT 同）：{t}"
+    );
+}
+
+#[test]
 fn noalign_paired_brace_at_row_boundary_keeps_table() {
     // 正常配对 `\noalign{...}`：组闭合后表格继续（行边界 `}` 走组关闭而非
     // align_finish——修复后 close_group_and_resume_align 的正向场景）。

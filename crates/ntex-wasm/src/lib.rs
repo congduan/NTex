@@ -2232,6 +2232,72 @@ mod tests {
         assert!(!compiled.pages.is_empty(), "应产出至少一页");
     }
 
+    /// 现场回归（2026-10-13，用户报「边框渲染有问题，最后一行底部边框没有渲染出来」）：
+    /// LaTeX 表格 `||c c c c||` + `\hline`/`\hline\hline` + `\\[0.5ex]`/`\\[1ex]`
+    /// 的行距写法。
+    ///
+    /// 两个引擎缺陷叠在这一张表上：① `\vrule` 的 null 高深（竖线整条消失）；
+    /// ② `\\[len]`（`\@argtabularcr` 的 `\ifnum0=`{\fi}\ifdim #1>\z@…\cr\else…\fi`）
+    /// 之后紧跟的 `\hline` 被判 `Misplaced \noalign`——tex.web 的条件在取词层
+    /// （`get_x_token`→`expand`）求值，`align_peek` 会**穿过** `\else\fi` 看到
+    /// `\noalign`；NTex 的条件机在主循环，peek 把条件 token 当显著 token 开了新行
+    /// → 材料落错列表 → **底部边框整条消失**。
+    ///
+    /// 判据取盒树里的规则计数（与 `latex` 参考 DVI 的 rule 序列一致：8 条水平线
+    /// —— 顶 1 + `\hline\hline` 2 + 行间 4 + 底 1 —— 与 24 条竖线 —— 6 行 × 4 边界）：
+    /// 水平线在盒树里是 null 宽规则（出货按包含盒宽解析），竖线是 0.4pt 宽规则。
+    #[test]
+    fn latex_bundle_table_rules_match_reference() {
+        fn count_rules(ns: &[ntex_layout::node::Node], hlines: &mut usize, vrules: &mut usize) {
+            use ntex_layout::node::Node;
+            for n in ns {
+                match n {
+                    Node::Rule { width, .. } if *width == ntex_layout::NULL_FLAG => *hlines += 1,
+                    Node::Rule { width, .. } if *width == 26214 => *vrules += 1,
+                    Node::Box(b) => count_rules(&b.children, hlines, vrules),
+                    _ => {}
+                }
+            }
+        }
+        let assets =
+            Arc::new(LatexAssets::from_bundle(&repo_bundle()).expect("发行资产包应能解析"));
+        let table = "\\begin{center}\n\
+             \\begin{tabular}{||c c c c||}\n\
+             \\hline\n\
+             Col1 & Col2 & Col2 & Col3 \\\\ [0.5ex]\n\
+             \\hline\\hline\n\
+             1 & 6 & 87837 & 787 \\\\\n\
+             \\hline\n\
+             2 & 7 & 78 & 5415 \\\\\n\
+             \\hline\n\
+             3 & 545 & 778 & 7507 \\\\\n\
+             \\hline\n\
+             4 & 545 & 18744 & 7560 \\\\\n\
+             \\hline\n\
+             5 & 88 & 788 & 6344 \\\\ [1ex]\n\
+             \\hline\n\
+             \\end{tabular}\n\\end{center}\n";
+        // 工作台口径：片段补壳（本表的 documentclass/document 由壳提供）
+        let source = ntex_layout::typeset::wrap_latex_fragment(table).expect("裸表格片段应被补壳");
+        let compiled =
+            compile_pipeline_assets(&source, false, Some(assets)).expect("表格作业应能编译");
+        assert!(
+            !compiled.transcript.contains("Misplaced \\noalign"),
+            "`\\\\[len]` 之后的 \\hline 不得被判 Misplaced：{}",
+            compiled.transcript
+        );
+        let (mut hlines, mut vrules) = (0, 0);
+        for p in &compiled.pages {
+            count_rules(&p.children, &mut hlines, &mut vrules);
+        }
+        assert_eq!(
+            (hlines, vrules),
+            (8, 24),
+            "规则数与 latex 参考一致（8 水平 / 24 竖直）：hlines={hlines} vrules={vrules}"
+        );
+        assert!(!compiled.pages.is_empty(), "应产出至少一页");
+    }
+
     /// NFSS 尺寸切换（`\Large` 等）的字体名污染——**已知引擎缺陷的现场锁**。
     ///
     /// 现场（2026-09-18，native 与 wasm 同病，与本 crate 的 C 档无关）：

@@ -1199,6 +1199,44 @@ impl Expander {
             if tok.kind() == TokenKind::Char && tok.catcode() == Some(Catcode::Space) {
                 continue;
             }
+            // tex.web：条件原语在**取词层**就地求值——`get_x_token`（L7820）对
+            // `cur_cmd>max_command` 的 token 走 `expand`，而 if_test/fi_or_else
+            // 的 cur_cmd=105/106 正落在 `(max_command,call)=(100,111)` 展开区间
+            // （L7835 `else expand`），故 `align_peek` 的 `get_x_token` **穿过**
+            // `\if…\else…\fi` 才返回下一个显著 token。
+            //
+            // 缺此臂时条件 token 被当"显著 token"交给 align_peek → 按 tex.web
+            // align_peek 的兜底臂 `init_row; init_col` **开了一行**，其后的
+            // `\noalign` 抵达分派位 → "Misplaced \noalign"、材料落错列表。
+            // GT 判据（pdfTeX，plain `\halign`）：`A\cr\iftrue\else\fi\noalign{…}`
+            // **接受**（NA 出、无错）；`A\cr\relax\noalign{…}` 报 Misplaced。
+            // 现场：LaTeX `\\[1ex]` = `\@argtabularcr` 的
+            // `\ifnum0=`{\fi}\ifdim #1>\z@…\cr\else…\fi`——`\cr` 在条件支内，
+            // `\else\fi` 落在行尾，紧随的 `\hline` 于是被判 Misplaced、**表格底
+            // 边框整条消失**（2026-10-13 用户现场）。
+            //
+            // 语义与 `more_name`（文件名扫描，tex.web scan_file_name L10210 的
+            // 循环同走 get_x_token）逐字同款：就地求值 + `drain_open_skip`
+            // 急切消费假支（假支内的 token 连同其中的 `\noalign` 一并丢弃）。
+            if let Some(op) = self.cond_op(tok) {
+                if self.cond_stack.len() > 64 {
+                    // 展开态的嵌套条件再生（l3kernel quark 惯用法同款）：
+                    // 放回并交给调用方兜底，避免条件栈无限加深。
+                    self.unread(tok);
+                    return Ok(Some(tok));
+                }
+                let before = self.cond_stack.len();
+                self.step_conditional(op, tok)?;
+                if !matches!(op, CondOp::Fi) {
+                    let depth = if matches!(op, CondOp::Else | CondOp::Or) {
+                        before.saturating_sub(1)
+                    } else {
+                        before
+                    };
+                    self.drain_open_skip(depth)?;
+                }
+                continue;
+            }
             if let Some(csid) = tok.csid() {
                 match self.eqtb.slot(csid).clone() {
                     EqSlot::Macro(m) => {

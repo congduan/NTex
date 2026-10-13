@@ -88,8 +88,22 @@ impl Pixmap {
     pub const OPAQUE: (u8, u8, u8) = (0, 0, 0);
 
     /// 填充矩形（源坐标可为浮点像素，取覆盖盒，裁剪到页面）。
+    ///
+    /// **亚像素矩形走覆盖率混合**：任一维 < 1px 时按「像素与矩形的重叠面积」
+    /// 作 alpha 混底（src-over）。0.4pt 的规则线在 96dpi 只有 0.53px——旧口径
+    /// 一律 floor/ceil 外扩会把它画成 1–2px 实心，同一条线随落点不同粗细还不
+    /// 一样；`\hline\hline`（`\doublerulesep`=2pt ≈ 2.67px@96dpi）的两条线被
+    /// 撑满后中缝只剩 1px，画布再缩放即并成一条（现场：用户「预期双横线，
+    /// 只显示单横线」）。覆盖率填充把两条线各画成 ~53% 灰、中缝保持纯白，
+    /// 与 vello 后端的 area AA 同口径（两后端对拍也更近）。
+    ///
+    /// ≥1px 的矩形保持原整数外扩口径（既有位图快照/差分零变化）。
     pub fn fill_rect(&mut self, x: f64, y: f64, w: f64, h: f64, color: (u8, u8, u8)) {
         if w <= 0.0 || h <= 0.0 {
+            return;
+        }
+        if w < 1.0 || h < 1.0 {
+            self.fill_rect_coverage(x, y, w, h, color);
             return;
         }
         let x0 = x.floor().max(0.0) as i64;
@@ -273,6 +287,42 @@ impl Pixmap {
         let p = &self.data[idx..idx + 4];
         p[3] == 0 || (p[0] < 250 && p[1] < 250 && p[2] < 250)
     }
+
+    /// 亚像素矩形的覆盖率填充（见 [`Self::fill_rect`]）：alpha = 重叠面积，
+    /// 按 src-over 混到既有像素上（重叠的两条线/与已有内容相交处自然叠深）。
+    fn fill_rect_coverage(&mut self, x: f64, y: f64, w: f64, h: f64, color: (u8, u8, u8)) {
+        let x0 = x.floor().max(0.0) as i64;
+        let y0 = y.floor().max(0.0) as i64;
+        let x1 = ((x + w).ceil() as i64).min(self.width as i64);
+        let y1 = ((y + h).ceil() as i64).min(self.height as i64);
+        let (r, g, b) = color;
+        for py in y0..y1 {
+            let oy = (y + h).min(py as f64 + 1.0) - y.max(py as f64);
+            if oy <= 0.0 {
+                continue;
+            }
+            for px in x0..x1 {
+                let ox = (x + w).min(px as f64 + 1.0) - x.max(px as f64);
+                if ox <= 0.0 {
+                    continue;
+                }
+                let a = (ox * oy).clamp(0.0, 1.0);
+                if a <= 0.0 {
+                    continue;
+                }
+                let idx = (py as usize * self.width as usize + px as usize) * 4;
+                let mix = |dst: u8, src: u8| -> u8 {
+                    (dst as f64 * (1.0 - a) + src as f64 * a)
+                        .round()
+                        .clamp(0.0, 255.0) as u8
+                };
+                self.data[idx] = mix(self.data[idx], r);
+                self.data[idx + 1] = mix(self.data[idx + 1], g);
+                self.data[idx + 2] = mix(self.data[idx + 2], b);
+                self.data[idx + 3] = 255;
+            }
+        }
+    }
 }
 
 /// sp → 像素换算（`1pt = 65536sp`，`px = pt × dpi / 72`）。
@@ -314,6 +364,48 @@ mod tests {
         assert!((sp_to_px(65_536, 72.0) - 1.0).abs() < 1e-12);
         assert!((sp_to_px(65_536, 300.0) - 300.0 / 72.0).abs() < 1e-12);
         assert!((sp_to_px(65_536 * 10, 144.0) - 20.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn sub_pixel_rule_ink_matches_geometric_area() {
+        // 现实几何（用户表格 @96dpi）：0.4pt 线 = 0.533px 宽，`\hline\hline`
+        // 两线相距 `\doublerulesep`=2pt。旧口径 floor/ceil 外扩把 0.53px 画成
+        // 1–2px **实心黑**（总覆盖 2~4 倍于真实面积，两条线粗细还不一致）：
+        // 画布缩小时并成一条粗线——用户现场「预期双横线，只显示单横线」。
+        // 亚像素覆盖率填充下，每条线的总覆盖 ≡ 其几何面积，中缝保持纯白。
+        let ink = |pm: &Pixmap, y: u32| -> f64 {
+            let mut s = 0.0;
+            for x in 0..pm.width() {
+                let i = (y as usize * pm.width() as usize + x as usize) * 4;
+                s += (255.0 - pm.data()[i] as f64) / 255.0;
+            }
+            s / pm.width() as f64
+        };
+        let h = 0.533; // 0.4pt @96dpi
+        let mut pm = Pixmap::new(4, 7);
+        pm.fill(255, 255, 255);
+        pm.fill_rect(0.0, 1.6, 4.0, h, (0, 0, 0));
+        pm.fill_rect(0.0, 4.267, 4.0, h, (0, 0, 0));
+        let a: f64 = (1..=3).map(|y| ink(&pm, y)).sum();
+        let b: f64 = (4..=6).map(|y| ink(&pm, y)).sum();
+        assert!(
+            (a - h).abs() < 0.02,
+            "第一条线总覆盖应等于几何面积 {h}（旧口径外扩成实心 → 2.0）：{a}"
+        );
+        assert!(
+            (b - h).abs() < 0.02,
+            "第二条线总覆盖应等于几何面积 {h}（旧口径外扩成实心）：{b}"
+        );
+        assert!(
+            ink(&pm, 3) < 1e-9,
+            "两线之间的一整行必须纯白：{}",
+            ink(&pm, 3)
+        );
+        // ≥1px 矩形仍走原整数外扩路径（既有位图快照/差分零变化）
+        let mut pm2 = Pixmap::new(4, 4);
+        pm2.fill(255, 255, 255);
+        pm2.fill_rect(0.3, 0.3, 2.0, 1.5, (0, 0, 0));
+        assert_eq!(pm2.data()[0], 0, "≥1px 矩形应为实心（口径不变）");
     }
 
     #[test]
