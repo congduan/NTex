@@ -248,6 +248,13 @@ impl CoreSink for NodeBuilder {
             // 第二例程 `\setbox255\copy255` ——「at end of group, \box255 reverts
             // to former value」tex.web eq_restore 语义）
             self.write_box(idx, old);
+            if idx == PAGE_BOX {
+                // A local assignment such as TRIP's `\setbox255=\copy255` can be
+                // split or unboxed inside the output group and then restored here.
+                // The net effect is that box255 was not consumed; do not let the
+                // transient `\vsplit255` keep reinjecting the same pending page.
+                self.page_state.output_consumed_count = 0;
+            }
         }
         // 数学模式关**非数学模式打开的、非 box 的**组：TeX 报 Missing $ inserted
         // 并先关数学再关组（tex.web：数学模式的组结束 → 插 $ 结束数学；etrip

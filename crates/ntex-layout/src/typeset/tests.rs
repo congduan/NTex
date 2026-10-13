@@ -1897,6 +1897,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn horizontal_fill_in_vmode_keeps_following_penalty_in_paragraph() {
+        let mut ts =
+            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+        let _ = ts.typeset_dvi(
+            r"\vsize 1pt\hsize 20pt \output={\showthe\outputpenalty\shipout\box255}
+              \hfill\vadjust{\penalty-5000}\penalty-1000000000 A\par\end",
+        );
+        let vals = showthe_values(&ts.take_transcript(), "outputpenalty");
+        assert!(
+            vals.iter().any(|v| v == "-5000"),
+            "\\hfill 于垂直模式应先开段，使 \\vadjust penalty 到达页构建器：{vals:?}"
+        );
+        assert!(
+            vals.iter().all(|v| v != "-1000000000"),
+            "\\hfill 开段后，后继段内强制折行 penalty 不得成为页断点：{vals:?}"
+        );
+    }
+
     // ---------- 输出例程刀 2：box255 寄存器化 ----------
     //
     // tex.web 裁决：box(255) 就是普通盒子寄存器——fire_up

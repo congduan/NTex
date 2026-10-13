@@ -30,6 +30,8 @@ impl Expander {
                 let g = self.scan_glue()?;
                 if prim == Primitive::VSkip {
                     self.vertical_command_implicit_par()?;
+                } else if matches!(self.sink.mode_code(), 1 | 4) {
+                    self.sink.par_begin(true)?;
                 }
                 self.sink.glue(g)
             }
@@ -76,9 +78,24 @@ impl Expander {
             // vmode→new_graf 起段）。
             Primitive::ControlSpace => self.sink.primitive(prim),
             // ETRIP 冲刺：无限阶胶水（\hfil/\hfill/\hss/\vfil/\vfill/\vss）
-            Primitive::HFil => self.sink.fill_glue(0),
-            Primitive::HFill => self.sink.fill_glue(1),
-            Primitive::HSS => self.sink.fill_glue(2),
+            Primitive::HFil => {
+                if matches!(self.sink.mode_code(), 1 | 4) {
+                    self.sink.par_begin(true)?;
+                }
+                self.sink.fill_glue(0)
+            }
+            Primitive::HFill => {
+                if matches!(self.sink.mode_code(), 1 | 4) {
+                    self.sink.par_begin(true)?;
+                }
+                self.sink.fill_glue(1)
+            }
+            Primitive::HSS => {
+                if matches!(self.sink.mode_code(), 1 | 4) {
+                    self.sink.par_begin(true)?;
+                }
+                self.sink.fill_glue(2)
+            }
             Primitive::VFil => {
                 self.vertical_command_implicit_par()?;
                 self.sink.fill_glue(3)
@@ -97,7 +114,12 @@ impl Expander {
                 self.sink.fill_glue(6)
             }
             // TRIP 冲刺：\hfilneg（plain.tex：负 1fil hskip；走 fill_glue kind=7）
-            Primitive::HFilNeg => self.sink.fill_glue(7),
+            Primitive::HFilNeg => {
+                if matches!(self.sink.mode_code(), 1 | 4) {
+                    self.sink.par_begin(true)?;
+                }
+                self.sink.fill_glue(7)
+            }
             // TRIP 冲刺：\/（斜体校正，直通 sink）
             Primitive::ItalicCorrection => self.sink.italic_correction(),
             other => Err(Error::internal(format!(

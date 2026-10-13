@@ -2602,6 +2602,13 @@ impl Expander {
                     EqSlot::Primitive(Primitive::NoIndent) => Some((false, false)),
                     EqSlot::Primitive(Primitive::UnHBox)
                     | EqSlot::Primitive(Primitive::UnHCopy) => Some((true, true)),
+                    EqSlot::Primitive(
+                        Primitive::HSkip
+                        | Primitive::HFil
+                        | Primitive::HFill
+                        | Primitive::HSS
+                        | Primitive::HFilNeg,
+                    ) => Some((true, true)),
                     _ => None,
                 }
             }
