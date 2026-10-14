@@ -193,6 +193,31 @@ use super::*;
         assert!(pages.len() >= 2, "应至少产出两页：{pages:?}\n{t}");
     }
 
+    /// held-over insert 回到既有页断点时，断点节点本身已被消费；它后面的
+    /// 段内强制折行 penalty 仍只属于 line_break，不能在重试后升格为
+    /// vertical page penalty。
+    #[test]
+    fn held_over_insert_retry_does_not_replay_paragraph_penalty() {
+        let mut ts = Typesetter::with_metrics(metrics);
+        let _ = ts.typeset_dvi(concat!(
+            r"\vsize=1pt \hsize=20pt \count150=1000 \dimen150=1pt ",
+            r"\output={\showthe\outputpenalty\shipout\box255} ",
+            r"A\hfill\vadjust{\penalty-5000}",
+            r"\insert150{\vskip100pt\floatingpenalty7}",
+            r"\penalty-1000000000 A\par\end"
+        ));
+        let t = ts.take_transcript();
+        let vals = showthe_values(&t, "outputpenalty");
+        assert!(
+            vals.iter().any(|v| v == "-5000"),
+            "insert 重试应回到 \\vadjust 页断点：{vals:?}\n{t}"
+        );
+        assert!(
+            vals.iter().all(|v| v != "-1000000000"),
+            "段内强制折行 penalty 不得在 insert 重试后成为页断点：{vals:?}\n{t}"
+        );
+    }
+
     // ---------- 刀 B：长脚注 split/holdover 前置——plain \vfootnote 通路 ------
     //
     // lf3.tex（长脚注 2 页样张）在 NTex 全军覆没的真根因不在 page.rs 拆分臂

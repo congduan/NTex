@@ -779,11 +779,26 @@ impl PageBuilder {
         self.last_fired_penalty = Some(fired);
         self.fired_penalties.push_back(fired);
         let cut = self.best.unwrap_or(self.page.len());
+        let resume = self.resume_after_break(cut);
         let page = self.package(cut);
-        // 余下节点 [cut..] 拼回贡献列表前端（触发节点之前）
-        contrib.splice(0..0, self.page.drain(cut..));
+        // 余下节点拼回贡献列表前端（触发节点之前）。若最佳断点来自此前
+        // 已压入 page 的 glue/kern/penalty，该断点节点本身已经被 TeX 的
+        // page builder 消费，不能在 insert 重试时再次作为下一页贡献处理。
+        contrib.splice(0..0, self.page.drain(resume..));
         self.start_new_page();
         page
+    }
+
+    fn resume_after_break(&self, cut: usize) -> usize {
+        let Some(node) = self.page.get(cut) else {
+            return cut;
+        };
+        let is_break_node = match (self.best_penalty, node) {
+            (Some(pi), Node::Penalty { penalty }) => *penalty == pi,
+            (None, Node::Glue { .. } | Node::Kern { .. } | Node::Penalty { penalty: 0 }) => true,
+            _ => false,
+        };
+        cut + usize::from(is_break_node)
     }
 
     /// `vpackage(link(page_head), best_size, exactly, max_depth)`（tex.web §161-184）：

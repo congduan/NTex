@@ -198,6 +198,13 @@ impl CoreSink for NodeBuilder {
             if new_mode == Mode::RestrictedHorizontal {
                 self.space_factor = 1000;
             }
+        } else if gkind == GroupKind::Output {
+            // tex.web output routine runs in its own internal vertical list.
+            // NTex may inject it while the interrupted input is still in hmode;
+            // without this nest, output-routine material can close or pollute the
+            // interrupted paragraph, turning later hmode penalties into vmode ones.
+            self.lists.push(Vec::new());
+            self.list_modes.push(Mode::Vertical);
         } else if gkind == GroupKind::Math {
             // 数学组：`{...}`（含脚本/根式/定类字段）压 math 层。
             // `\begingroup`（SemiSimple）等显式组不压 math 层（tex.web math_group 语义）。
@@ -293,7 +300,15 @@ impl CoreSink for NodeBuilder {
         let inner_boxmaxdepth = self.params.boxmaxdepth;
         // 先恢复参数镜像（与 VM 的 save_stack 恢复对齐），随后的缩进/interline 用外层值
         if let Some(prev) = self.param_stack.pop() {
-            self.params = prev;
+            let mut restored = prev;
+            if ctx.kind == GroupKind::Output {
+                // Output routines commonly flip \holdinginserts globally before
+                // returning held-over material. The VM keeps that assignment, but
+                // the layout-side param_stack only has coarse group snapshots, so
+                // preserve the live mirror across the output group boundary.
+                restored.misc[50] = self.params.misc[50];
+            }
+            self.params = restored;
         }
         // `\parshape` 随组恢复（组开始时快照；与参数镜像同序）
         if let Some(p) = self.parshape_stack.pop() {
@@ -484,6 +499,9 @@ impl CoreSink for NodeBuilder {
                 }
             }
             GroupKind::Output => {
+                let nodes = self.lists.pop().unwrap_or_default();
+                self.list_modes.pop();
+                self.lists[0].extend(nodes);
                 self.resume_after_output_routine();
             }
             _ => {}
