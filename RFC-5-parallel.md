@@ -1,10 +1,29 @@
 # RFC-5：M6 多核并行排版 —— 段级投机流水线
 
-状态：草案（实施前评审）
+状态：**实施中**（M6-1 + M6-2 已落地 2026-10-15；M6-3~M6-5 待做，进度见 plan.md §2 M6）
 范围：`crates/ntex-layout` 全量编译路径（M5 增量管线之上），`crates/ntex-core` 只读复用。
 验收总纲（plan.md M6）：8 核、300 页基准文档全量编译加速 ≥3x；并行开启前后
 DVI / 转录 / 终态状态三路输出**逐位一致**；现有全部测试（etrip / 增量 / fuzz
 种子）保持绿。
+
+实施落点（2026-10-15）：
+
+| 切片 | 落点 | 状态 |
+|---|---|---|
+| M6-1 投机执行原语 | `ntex-core/src/expand/checkpoint.rs`（`Expander::fork_isolated`）；`ntex-layout/src/typeset/mod.rs`（`SpecMode` / `spec_taint` / `is_shaped` / `interline_glue_node`） | ✅ |
+| M6-2 窗口调度器（单线程依次投机） | `ntex-layout/src/typeset/speculate.rs`（`SpeculationVfs` / `SegSpecResult` / `speculate_segment` / `run_segments_speculative` / `adopt_spec_result`） | ✅ |
+| 一致性回归锁 | `ntex-layout/src/typeset/speculate_tests.rs`（7 例，含真实 `latex.fmt` 文档） | ✅ |
+| M6-3 rayon 真并行 | 阻塞于 `Send` 化（`Rc`→`Arc`、字体表 `Arc<Mutex>`、trait `+ Send`） | ⬜ |
+| M6-4/M6-5 基准与调优 | `make` 基准管路 + 并行/单线程逐位 diff 进 CI | ⬜ |
+
+实施期的两处**口径收窄**（原设计是"运行时 taint + 黑名单"，实测后加严）：
+
+1. `spec_window_open` 在观测到 `\output` 例程时**整体关闭**投机——LaTeX 文档必然
+   定义 `\output`，故 LaTeX 路径当前投机面为 0（实测 17 段全顺序）。放开需要先验证
+   "采纳路径把例程延迟到 `finish_doc` 补跑"与顺序执行逐位等价。
+2. 静态黑名单扩到了 `\unskip`/`\unpenalty`/`\unkern`/`last*` 族——它们读-改主列表
+   尾部，而列表尾部**不在** `SideEffects` 快照字段里（neutral 判定覆盖不到），
+   只能靠 taint/黑名单显式排除。
 
 ---
 

@@ -654,6 +654,31 @@ const MISC_TRACING_LOSTCHARS: usize = 1;
 /// `Clone`（M5 阶段三）：排版层段边界检查点整体克隆 builder 状态
 /// （[`crate::typeset::IncrementalTypesetter`]）；`shipped` 页面在捕获时由
 /// 捕获方先摘走（页面不随检查点复制，只记数量），故克隆不含已 shipout 页面。
+/// M6 投机执行标记（`NodeBuilder::spec_mode` 的载荷）。
+///
+/// 投机段的 builder 从**窗口起点 S0** 克隆（见 RFC-5 §3.2），主列表里缺窗口内
+/// 前段的行盒——因此段内首个垂直盒的上方胶水不能按本地上下文烘焙（会用到错误
+/// 的深度）。处置：跳过烘焙并记下盒高（[`Self::pending_first_glue`]），由装配器
+/// 在采纳时按**活**上下文补插（[`NodeBuilder::push_interline_glue`] 与顺序路径
+/// 同一函数，参数不同源）。
+///
+/// taint（装配状态读取 / 外部输入）另见 [`NodeBuilder::spec_taint`]：那是一个
+/// `Cell<bool>`，因为这些读取查询多为 `&self` 方法。
+///
+/// 本标记是**执行期开关**，不是文档状态：不进 [`SideEffects`] 快照、不参与
+/// 逐位一致口径（克隆/丢弃随 builder 自然发生）。
+#[derive(Debug, Clone, Copy, Default)]
+struct SpecMode {
+    /// 段内已见过首个垂直盒（首个之后的行间胶水自含：上方深度来自段内前行行盒）。
+    seen_first_box: bool,
+    /// 段首胶水待装配器补插：`Some((at, height))`。
+    ///
+    /// `at` = 该胶水在段贡献流里的落点下标（**首个垂直盒在 `record_main` 中的
+    /// 下标**——顺序执行时胶水就插在盒的紧邻之前，段内更早产出的节点如
+    /// `\parskip`/`\vskip` 都在它前面）；`height` = 首个垂直盒的高度。
+    pending_first_glue: Option<(usize, i64)>,
+}
+
 #[derive(Debug, Clone)]
 struct NodeBuilder {
     /// 列表栈（栈顶 = 当前列表；栈底 = 主垂直列表）。
@@ -741,6 +766,18 @@ struct NodeBuilder {
     /// 重新注入主列表，行盒免重排、页面装配（断页）照常重跑。
     /// 只追加、不参与任何语义分支；`append`/`push_node` 两个入列路径挂钩。
     record_main: Option<Vec<Node>>,
+
+    /// M6 投机执行标记（`None` = 正常顺序执行；见 [`SpecMode`]）。
+    spec_mode: Option<SpecMode>,
+
+    /// M6 投机执行的 taint 标记：投机段触碰了"装配状态读取"（`\lastbox`/
+    /// `\lastnodetype`/marks/页累计量…）或外部输入（VFS 读）——该段结果作废，
+    /// 主线程顺序执行之。
+    ///
+    /// 独立于 [`SpecMode`] 是因为这些查询多为 `&self` 方法（不可变借用下无法
+    /// 改 `Option<SpecMode>`）；`Cell` 使其可从 `&self` 置位。顺序路径无人读取，
+    /// 置位为纯开销（每次一次 `Cell::set`）。
+    spec_taint: std::cell::Cell<bool>,
 
     /// BoxState 域（见 [`BoxState`]）。
     box_state: BoxState,
@@ -1069,6 +1106,8 @@ impl NodeBuilder {
             hyphenchars: HashMap::new(),
             hyph_exceptions: Vec::new(),
             record_main: None,
+            spec_mode: None,
+            spec_taint: std::cell::Cell::new(false),
             box_state: BoxState {
                 pending_box: None,
                 pending_kind: None,
@@ -1671,6 +1710,14 @@ impl NodeBuilder {
     /// `prev_depth:=ignore_depth`，下一个盒子不再补 glue。
     /// 列表里尚无盒子时回退到断页器的 `page.prev_depth`（tex.web 的
     /// contribution list 与当前页共用同一 `prev_depth`）。
+    /// M6 投机执行：标记"触碰装配状态读取"（见 [`Self::spec_taint`]）。
+    ///
+    /// 顺序路径上无人读取该标记，调用是纯开销（一次 `Cell::set`），故各查询点
+    /// 不加条件分支；投机段由 [`IncrementalTypesetter`] 在段末统一读判。
+    fn mark_spec_taint(&self) {
+        self.spec_taint.set(true);
+    }
+
     fn previous_interline_depth(&self) -> Option<i64> {
         let list = self.lists.last()?;
         for n in list.iter().rev() {
@@ -1697,33 +1744,83 @@ impl NodeBuilder {
     fn push_box_inner(&mut self, node: Node) {
         if self.mode() == Mode::Vertical {
             let display_followup = self.math_state.after_display;
-            if let Some(prev_depth) = self.previous_interline_depth() {
-                let height = match &node {
-                    Node::Box(b) => b.height,
-                    _ => 0,
-                };
-                let d = self.params.baselineskip.width - (prev_depth + height);
-                let g = if d < self.params.lineskiplimit {
-                    self.params.lineskip
-                } else {
-                    let mut g = self.params.baselineskip;
-                    g.width = d;
-                    g
-                };
-                self.append(Node::Glue {
-                    name: None,
-                    width: g.width,
-                    stretch: g.stretch,
-                    shrink: g.shrink,
-                    stretch_order: 0,
-                    shrink_order: 0,
-                });
+            // M6 投机执行：段内首个垂直盒的上方胶水依赖窗口内前段的行盒上下文
+            // （投机 builder 从窗口起点 S0 克隆，缺这段行盒）——跳过烘焙并记下
+            // 盒高，由装配器采纳时按活上下文补插（[`SpecMode`]）。
+            let skip_first_glue = match &mut self.spec_mode {
+                Some(spec) if !spec.seen_first_box => {
+                    spec.seen_first_box = true;
+                    let at = self.record_main.as_ref().map_or(0, |v| v.len());
+                    spec.pending_first_glue = Some((
+                        at,
+                        match &node {
+                            Node::Box(b) => b.height,
+                            _ => 0,
+                        },
+                    ));
+                    true
+                }
+                _ => false,
+            };
+            if !skip_first_glue {
+                if let Some(prev_depth) = self.previous_interline_depth() {
+                    let height = match &node {
+                        Node::Box(b) => b.height,
+                        _ => 0,
+                    };
+                    self.push_interline_glue(height, prev_depth);
+                }
             }
             if display_followup {
                 self.math_state.after_display = false;
             }
         }
         self.append(node);
+    }
+
+    /// 行间胶水节点（tex.web `append_to_vlist`）：`d = \baselineskip − (上方深度 +
+    /// 本盒高度)`，`d < \lineskiplimit` 用 `\lineskip`，否则用宽度调整为 d 的
+    /// `\baselineskip`。
+    ///
+    /// 单一事实源：顺序路径（[`Self::push_box_inner`]）与 M6 投机采纳路径
+    /// （装配器补插段首胶水）共用——两处必须逐位同源，否则并行与顺序的 DVI
+    /// 会在段首胶水宽度上分叉。
+    fn interline_glue_node(&self, height: i64, prev_depth: i64) -> Node {
+        let d = self.params.baselineskip.width - (prev_depth + height);
+        let g = if d < self.params.lineskiplimit {
+            self.params.lineskip
+        } else {
+            let mut g = self.params.baselineskip;
+            g.width = d;
+            g
+        };
+        Node::Glue {
+            name: None,
+            width: g.width,
+            stretch: g.stretch,
+            shrink: g.shrink,
+            stretch_order: 0,
+            shrink_order: 0,
+        }
+    }
+
+    /// 行间胶水（顺序路径用）：构造并追加。
+    fn push_interline_glue(&mut self, height: i64, prev_depth: i64) {
+        let g = self.interline_glue_node(height, prev_depth);
+        self.append(g);
+    }
+
+    /// 排版器是否处于"干净段边界"（垂直模式、无进行中段落/盒子/数学/组）。
+    ///
+    /// 单一事实源：M5 的缓存边界判定（[`IncrementalTypesetter::builder_shaped`]）
+    /// 与 M6 投机段的"可缓存 / 窗口可续"判定（[`SpecMode`] 管线）共用。
+    fn is_shaped(&self) -> bool {
+        self.groups.is_empty()
+            && self.lists.len() == 1
+            && self.math_state.math.is_empty()
+            && self.box_state.pending_box.is_none()
+            && self.box_state.pending_kind.is_none()
+            && !self.page_state.shipout_next
     }
 
     /// 插入段落缩进（TeX `new_graf`）：\parindent>0 空盒，<0 kern，=0 无；
@@ -2098,9 +2195,13 @@ include!("sink_showbox.rs");
 // M5 阶段三：端到端增量排版（段贡献缓存 + 页面装配重跑；layout 层段边界检查点）
 include!("incremental.rs");
 
+// M6：段组投机并行（投机执行原语 + 窗口调度器；RFC-5）
+include!("speculate.rs");
+
 // LaTeX 源特征检测（格式自动检测；ntex-dvi / ntex-studio 共用同一实现）
 include!("latex_detect.rs");
 
 include!("incremental_tests.rs");
+include!("speculate_tests.rs");
 
 include!("tests.rs");

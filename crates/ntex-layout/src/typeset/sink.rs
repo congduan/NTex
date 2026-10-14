@@ -1670,6 +1670,10 @@ impl BoxSink for NodeBuilder {
     /// `\lastbox`：摘下当前列表尾的盒子节点（无则无操作）；
     /// 摘下的盒子由下一个 `\box`/`\copy` 取用（见 [`Self::box_register`]）。
     fn lastbox(&mut self) -> Result<()> {
+        // M6：读-改主列表尾部——投机 builder 的尾部是窗口起点 S0 的尾部，与顺序
+        // 执行到本段时的尾部（含窗口内前段产出）不同 → 段作废（`\lastbox` 是
+        // RFC-5 §3.5 装配状态读取黑名单首项）。
+        self.mark_spec_taint();
         let Some(list) = self.lists.last_mut() else {
             return Ok(());
         };
@@ -1692,6 +1696,10 @@ impl BoxSink for NodeBuilder {
     }
     /// `\unskip`：移除当前列表尾部的 glue 节点（无则无操作）。
     fn unskip(&mut self) -> Result<()> {
+        // M6：与 `\lastbox` 同因——"移除哪个节点"取决于窗口内前段的产出，
+        // 投机 builder 的尾部不含它们。段作废（`unskip` 族不属 SideEffects
+        // 快照字段，neutral 判定覆盖不到这条隐式依赖，只能在此显式标记）。
+        self.mark_spec_taint();
         if let Some(list) = self.lists.last_mut() {
             while let Some(Node::Glue { .. } | Node::Leaders { .. }) = list.last() {
                 list.pop();
@@ -1701,6 +1709,7 @@ impl BoxSink for NodeBuilder {
     }
     /// `\unpenalty`：移除当前列表尾部的 penalty 节点（无则无操作）。
     fn unpenalty(&mut self) -> Result<()> {
+        self.mark_spec_taint();
         if let Some(list) = self.lists.last_mut() {
             while let Some(Node::Penalty { .. }) = list.last() {
                 list.pop();
@@ -1710,6 +1719,7 @@ impl BoxSink for NodeBuilder {
     }
     /// `\unkern`：移除当前列表尾部的 kern 节点（无则无操作；TRIP L189）。
     fn unkern(&mut self) -> Result<()> {
+        self.mark_spec_taint();
         if let Some(list) = self.lists.last_mut() {
             while let Some(Node::Kern { .. }) = list.last() {
                 list.pop();
@@ -1725,6 +1735,7 @@ impl BoxSink for NodeBuilder {
     /// [`Self::align_columns`]、对齐列表在 `\cr` 时已取空，读取时补此映射
     /// （不改节点生成；列表已有节点时仍按列表尾报码）。
     fn last_node_type(&self) -> i64 {
+        self.mark_spec_taint();
         if let Some(n) = self.lists.last().and_then(|l| l.last()) {
             return n.node_type_code();
         }
@@ -1735,6 +1746,7 @@ impl BoxSink for NodeBuilder {
     }
     /// `\lastpenalty`：当前列表尾若是 penalty 节点返回其值，否则 0（TeX 语义）。
     fn last_penalty(&self) -> i64 {
+        self.mark_spec_taint();
         match self.lists.last().and_then(|l| l.last()) {
             Some(Node::Penalty { penalty }) => *penalty,
             _ => 0,
@@ -1743,6 +1755,7 @@ impl BoxSink for NodeBuilder {
     /// `\lastskip` 完整胶水量（tex.web L8535）：**只认列表尾节点**——
     /// 尾不是 glue_node 即 zero_glue，不向列表前段回溯。
     fn last_glue(&self) -> Option<Glue> {
+        self.mark_spec_taint();
         match self.lists.last().and_then(|l| l.last()) {
             Some(Node::Glue {
                 width,
@@ -1765,6 +1778,7 @@ impl BoxSink for NodeBuilder {
     /// 取其宽度，否则 0。此前向后回溯到任意 glue 节点，`\ifdim\lastskip=\z@`
     /// （latex.ltx `\sw@slant`）在前文有胶水时误判非零。
     fn last_skip(&self) -> i64 {
+        self.mark_spec_taint();
         match self.lists.last().and_then(|l| l.last()) {
             Some(Node::Glue { width, .. }) => *width,
             _ => 0,
@@ -1773,6 +1787,7 @@ impl BoxSink for NodeBuilder {
     /// e-TeX `\lastkern`：当前列表尾 kern 节点的宽度（tex.web L8535 dimen_val
     /// 臂同款——只看尾节点；非 kern → 0）。
     fn last_kern(&self) -> i64 {
+        self.mark_spec_taint();
         match self.lists.last().and_then(|l| l.last()) {
             Some(Node::Kern { width }) => *width,
             _ => 0,
@@ -1924,6 +1939,9 @@ impl PageSink for NodeBuilder {
         self.page_state.page.take_front_output_penalty()
     }
     fn insert_penalties(&self) -> i64 {
+        // M6：页面构建器的插入物累计——投机 builder 的页状态从 S0 克隆，
+        // 不含窗口内前段对页面的推进（RFC-5 §3.5 黑名单项）。
+        self.mark_spec_taint();
         self.page_state.page.insert_penalties()
     }
     fn take_page_shipped(&mut self) -> bool {
@@ -1960,28 +1978,37 @@ impl PageSink for NodeBuilder {
     }
     // ---- ETRIP 冲刺：e-TeX marks 族查询 ----
     // （注意：轮转在 feed_one 产出页时立即执行，不在查询时修改状态。）
+    //
+    // M6：marks 随断页轮转演化——投机 builder 的 marks 是 S0 时刻的值，不含
+    // 窗口内前段造成的轮转 → 读取即 taint（段作废）。
     fn topmarks(&self, class: i64) -> String {
+        self.mark_spec_taint();
         self.page_state.marks_top.get(&class).cloned().unwrap_or_default()
     }
     fn firstmarks(&self, class: i64) -> String {
+        self.mark_spec_taint();
         self.page_state.marks_first.get(&class).cloned().unwrap_or_default()
     }
     fn botmarks(&self, class: i64) -> String {
+        self.mark_spec_taint();
         self.page_state.marks_bot.get(&class).cloned().unwrap_or_default()
     }
     fn splitfirstmarks(&self, class: i64) -> String {
+        self.mark_spec_taint();
         self.page_state.marks_split_first
             .get(&class)
             .cloned()
             .unwrap_or_default()
     }
     fn splittopmarks(&self, class: i64) -> String {
+        self.mark_spec_taint();
         self.page_state.marks_split_top
             .get(&class)
             .cloned()
             .unwrap_or_default()
     }
     fn splitbotmarks(&self, class: i64) -> String {
+        self.mark_spec_taint();
         self.page_state.marks_split_bot
             .get(&class)
             .cloned()

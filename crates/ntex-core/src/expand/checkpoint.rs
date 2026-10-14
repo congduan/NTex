@@ -292,4 +292,64 @@ impl Expander {
         self.section_label = c.section_label.clone();
         self.debug_expand_caller = c.debug_expand_caller;
     }
+
+    /// 派生一个**独立执行器**（M6 段组投机并行的地基）。
+    ///
+    /// 语义：返回值是"与本实例此刻状态等价"的新引擎，二者之后互不影响——
+    /// 投机执行（[`crate`] 之下的 `ntex-layout` 段组管线）让每个段在自己的
+    /// 执行器上跑，产出与顺序执行逐位相同的段贡献（见 RFC-5 §4 归纳论证）。
+    ///
+    /// 复制面（其余字段由 [`Self::with_bytecode`] 的默认值承担）：
+    /// - **`intern` 表整体克隆**：csid 与主实例逐一对应（注释相同的名字得到
+    ///   相同编号），段内 token 解释与主路径同口径；intern 是追加型表，克隆
+    ///   不影响主实例后续驻留。
+    /// - **运行时状态**：完整检查点（[`Self::capture_checkpoint`] →
+    ///   [`Self::restore_checkpoint`]）——eqtb 槽 + 值状态 + 扩展字段真值 +
+    ///   控制状态（输入栈/组栈/条件栈/悬挂前缀）。
+    /// - **配置与注入设施**：字节码轨道、`\jobname`、`pdf_xobjects`（只追加、
+    ///   与检查点同口径不回滚）、诊断环（按容量重建，不共享句柄）。
+    /// - **扫描细态**（不在检查点内的可变字段）：照抄——段边界干净时它们本就
+    ///   是默认值，照抄使"派生即等价"不依赖调用方的边界假设。
+    ///
+    /// 不复制：sink（调用方随后 [`Self::set_sink`] 装该段自己的 builder）、
+    /// `query_sink`（默认空）、看门狗（[`Self::run`] 每次自行新建）、
+    /// `csname_cache`（查询缓存，可重建）。
+    ///
+    /// `vfs` / `font_loader` **必须由调用方显式给出**——这是 RFC-3 副作用隔离
+    /// 的落点：投机段对文件系统/字体装载的访问要么走哨兵（标记 taint 并作废
+    /// 该段），要么走私有副本（字体表克隆），绝不能触碰主实例的真实后端。
+    pub fn fork_isolated(&self, vfs: Box<dyn Vfs>, font_loader: Box<dyn FontLoader>) -> Self {
+        let mut e = Self::with_bytecode(self.use_bytecode);
+        e.intern = self.intern.clone();
+        e.restore_checkpoint(&self.capture_checkpoint());
+        // 配置与注入设施。
+        e.vfs = vfs;
+        e.font_loader = font_loader;
+        e.job_name = self.job_name.clone();
+        e.pdf_xobjects = self.pdf_xobjects.clone();
+        // 诊断环：同形重建（容量对齐），不共享句柄。
+        e.macro_trace = self
+            .macro_trace
+            .as_ref()
+            .map(|t| VecDeque::with_capacity(t.capacity()));
+        e.handler_trace = self
+            .handler_trace
+            .as_ref()
+            .map(|_| VecDeque::with_capacity(32));
+        e.bc_guard_trace = VecDeque::with_capacity(self.bc_guard_trace.capacity());
+        // 扫描细态（`ControlState` 未覆盖的可变字段）。
+        e.scanner_status = self.scanner_status;
+        e.warning_index = self.warning_index;
+        e.cur_cs = self.cur_cs;
+        e.align_state = self.align_state;
+        e.scope_stack = self.scope_stack.clone();
+        e.scope_silent = self.scope_silent.clone();
+        e.arg_scan_recovered = self.arg_scan_recovered;
+        e.expand_once_recovered = self.expand_once_recovered;
+        e.force_eof = self.force_eof;
+        e.file_name_in_progress = self.file_name_in_progress;
+        e.output_group_level = self.output_group_level;
+        e.output_boundary_yield = self.output_boundary_yield;
+        e
+    }
 }

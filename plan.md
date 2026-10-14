@@ -275,7 +275,7 @@ SurveyVfs read() mem 优先（写后读一致）。廿七刀证伪 chardef 假�
 | M3 | 排版核心 | 节点/盒子/胶水/Knuth-Plass/TFM/断页/DVI | ✅ 核心完成 | DVI 与真实 TeX 逐字节一致 |
 | M4 | 数学 + e-TeX | 数学模式 / e-TeX 原语 / 断字 / 错误模型 | ✅ 功能完成；ETRIP 收尾中 | **ETRIP 通过**（逐字节口径已降级，见 §2 M4） |
 | M5 | 增量计算 | 求值图 / 依赖追踪 / 副作用隔离 / VFS | 🟡 阶段一~五 | 改 1 处仅重算受影响段落（目标 100x；实测 4.3x/1.1x） |
-| M6 | 并行 | 段落级并行展开 / 布局 / 整形 | ⬜ 未开始 | 8 核加速比 ≥ 3x（300 页基准） |
+| M6 | 并行 | 段落级并行展开 / 布局 / 整形 | 🟡 投机原语 + 窗口调度器落地（M6-1/2）；真并行待 `Send` 化 | 8 核加速比 ≥ 3x（300 页基准）；plain 实测采纳率 ≈50%，LaTeX 路径待开（`\output` 例程边界） |
 | M7 | `.fmt` v2 | 三层 fmt + 部分求值 + 项目级 fmt | ⬜ 未开始（v1 已可用） | `latex.ltx` 加载 <200ms；ctex 300 页冷编 <10s |
 | M8 | 渲染 / 输出 | PDF 后端 + GPU 渲染 + WASM 预览 | 🟢 主体可用 | 简单文档 L2 逐字节一致；WASM 增量预览流畅 |
 | M9 | 生态冲刺 | ctex/xeCJK/OpenType/CJK 捷径 | 🟡 中文刀 1–6 落地；宏包管理解析/契约层落地（`ntex-pkg`）+ `--auto-pkg` 接线；13 包 CI 回归 **13/13** | 目标宏包 CI 回归全绿 |
@@ -388,11 +388,47 @@ SurveyVfs read() mem 优先（写后读一致）。廿七刀证伪 chardef 假�
 6. `.aux`/`.toc` 增量；
 7. 内存：现为 O(文档) 量级。
 
-### M6 并行 ⬜
+### M6 并行 🟡（M6-1 + M6-2 已落地）
 
 段落级并行布局（rayon）、展开阶段并行（段边界 + 快照隔离 + 无跨段副作用）、
 字体整形并行（为 M9 HarfBuzz 铺路）、确定性保证（每段独立快照、按段序合并）。
-**暂缓**：等 M5 副作用边界成果落地。验收：8 核 ≥3x 且与单线程逐位一致。
+验收：8 核 ≥3x 且与单线程逐位一致。设计见 [RFC-5-parallel.md](RFC-5-parallel.md)。
+
+**已落地（2026-10-15，投机执行原语 + 窗口调度器）**：
+
+- **投机执行原语**（M6-1）：`Expander::fork_isolated`（`expand/checkpoint.rs`）——派生
+  独立执行器（intern 克隆 + 完整检查点 + 哨兵 VFS + **私有字体表副本**，RFC-3 副作用
+  隔离）；`NodeBuilder` 加投机标记（`typeset/mod.rs`：`SpecMode` 段首胶水延后烘焙、
+  `spec_taint` 装配状态读取 taint、`is_shaped`/`interline_glue_node` 两路共用）。
+- **窗口调度器**（M6-2）：`typeset/speculate.rs`——静态黑名单预过滤（`SPEC_BLACKLIST`，
+  与运行时 taint 双保险）+ 发射/采纳/终止协议 + `SegSpecResult` 双重 neutral 判定。
+  开关：`IncrementalTypesetter::set_speculative` 或 `NTEX_THREADS>1`；**默认关闭 =
+  顺序路径零差异**（回退开关）。
+- **一致性回归锁**：`typeset/speculate_tests.rs` 7 例——neutral / 非 neutral（窗口终止）/
+  taint / `\output` 例程 / 合并段 / 投机缓存与 `edit` 兼容 / 真实 `latex.fmt` 文档；
+  三路输出（页面节点流 + 页号链 + 字体表）+ 转录逐位一致。
+- **实测投机面**：plain 合成文档 49 段执行 / **24 段采纳**（≈50%）；统计打点见
+  `IncrementalStats::adopted` / `spec_rejected`。
+
+**待办（按价值排序）**：
+
+1. 🔴 **`\output` 例程边界（阻塞 LaTeX 路径）**：发行 `latex.fmt` 必定义 `\output`
+   （`\@outputpage`），当前 `spec_window_open` 观测到例程即关闭投机 ⇒ **LaTeX 文档
+   投机面 = 0**（实测）。需验证"采纳路径把例程延迟到 `finish_doc` 补跑"是否逐位
+   等价：一次实验即可判定（临时去掉 `spec_window_open` 的 `output_routine` 条件跑
+   LaTeX 对照）；等价则放开，不等价则实现"采纳注入后立即 `run_pending_output`"。
+2. **真并行（M6-3）**：rayon 工作池 + 结果槽。前置是 `Send` 化改造：
+   - `NodeBuilder.boxes`：`Rc<Vec<...>>` → `Arc<Vec<...>>`；
+   - `Fonts::Tfm(Rc<RefCell<Vec<FontMetrics>>>)` → `Arc<Mutex<...>>`（波及
+     `typeset/sink.rs` 等全部 `borrow()` 调用点与 wasm/studio 的字体注册点）；
+   - `Box<dyn Vfs>` / `Box<dyn FontLoader>` / `Box<dyn TokenSink>` 加 `Send` 约束
+     （另有 7 个 VFS 实现 + wasm `SharedMemVfs` 需逐一核）。
+   当前 M6-2 的窗口内各段是**依次**投机（每段仍独立从 S0 出发，行为与真并行等价），
+   故可先落地正确性，再换执行器。
+3. **窗口宽度自适应 / Amdahl 实测（M6-4/M6-5）**：按段贡献长度定 W、采纳率上报、
+   `make` 基准管路 + "并行 vs 单线程逐位 diff"进 CI。
+4. **taint 面收窄**：现对 `lastbox`/`unskip`/`unpenalty`/`unkern`/`last*`/marks/
+   `insertpenalties` 全量 taint（保守）；可细化到"仅当读取落点在窗口边界时才 taint"。
 
 ### M7 `.fmt` v2 ⬜
 
@@ -636,7 +672,7 @@ CLI `ntex-pkg`（`index`/`provide`/`resolve`/`lock`/`check`/`local`/**`vendor`**
 
 ### P2 —— 未来里程碑
 
-- [ ] M6 并行（等 M5 副作用边界）／ M7 `.fmt` v2 ／ M9 生态清单（见 §2 M9）
+- [ ] M6 并行（`\output` 例程边界 → 真并行 `Send` 化，见 §2 M6）／ M7 `.fmt` v2 ／ M9 生态清单（见 §2 M9）
 
 ---
 

@@ -384,6 +384,14 @@ pub struct IncrementalStats {
     pub executed: usize,
     /// 最近一次 `compile`/`edit` 复用缓存（免执行）的段数。
     pub reused: usize,
+    /// M6：投机窗口里**被采纳**的段数（段贡献直接注入主列表——并行收益来源）。
+    ///
+    /// `adopted` / (`adopted` + `spec_rejected`) = 投机面的命中率；全量编译的
+    /// neutral 段占比 ≈ 该比值的上界（RFC-5 §6 的 Amdahl 输入）。
+    pub adopted: usize,
+    /// M6：投机执行后**作废**（非双重 neutral / taint / 出错）的段数——这些段
+    /// 由主线程顺序执行（窗口终止）。
+    pub spec_rejected: usize,
 }
 
 /// 端到端增量编译结果：已 shipout 页面 + 字体表快照（DVI 输入）。
@@ -445,6 +453,12 @@ pub struct IncrementalTypesetter {
     preload_hyphen_done: bool,
     /// 内嵌格式 VFS 兜底层是否已包（[`Self::use_embedded_format`] 幂等标记）。
     embedded_vfs_installed: bool,
+    /// M6 投机并行开关（见 [`Self::set_speculative`]）。
+    ///
+    /// 默认由环境变量 `NTEX_THREADS` 决定：未设或 `1` = 关闭（顺序路径，
+    /// 逐位零行为差异）；`>1` = 开启投机窗口。宿主也可显式
+    /// [`Self::set_speculative`] 覆盖（测试与工作台用）。
+    spec_enabled: bool,
 }
 
 impl IncrementalTypesetter {
@@ -468,7 +482,26 @@ impl IncrementalTypesetter {
             preload_hyphen: false,
             preload_hyphen_done: false,
             embedded_vfs_installed: false,
+            spec_enabled: std::env::var("NTEX_THREADS")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+                .is_some_and(|n| n > 1),
         }
+    }
+
+    /// M6 投机并行开关（显式覆盖 `NTEX_THREADS` 推断的默认值）。
+    ///
+    /// 关闭时（默认）`compile`/`edit` 走既有顺序路径——**零行为差异、零开销**，
+    /// 也是回退开关。开启后 `compile` 的段执行改走投机窗口（[`Self::run_segments_speculative`]），
+    /// 三条输出（页面 / 页号链 / 转录）与顺序路径逐位一致由协议保证
+    /// （RFC-5 §4 归纳论证 + `spec_tests` 回归锁）。
+    pub fn set_speculative(&mut self, on: bool) {
+        self.spec_enabled = on;
+    }
+
+    /// 投机并行是否已开（诊断/测试用）。
+    pub fn speculative(&self) -> bool {
+        self.spec_enabled
     }
 
     /// UTF-8 输入默认开关（M9 中文刀 3；与 [`Typesetter::set_utf8_input`] 同语义）。
@@ -662,12 +695,17 @@ impl IncrementalTypesetter {
         // 边界状态，且必须在 install_builder 之后——`\patterns` 事件要有 sink）。
         self.run_preload_hyphen()?;
         self.capture_boundary(0, true);
-        for j in 0..n {
-            if let Err(e) = self.execute_segment(j) {
-                // 段执行出错：本轮止于此段，其后各段边界不再反映当前文档状态
-                // ——撤销它们的回滚点（后续 `edit` 退到更早的回滚点重放）。
-                self.invalidate_rollback_after(j);
-                return Err(e);
+        if self.spec_enabled {
+            // M6 投机窗口路径（RFC-5 §3）：输出与下方顺序路径逐位一致。
+            self.run_segments_speculative()?;
+        } else {
+            for j in 0..n {
+                if let Err(e) = self.execute_segment(j) {
+                    // 段执行出错：本轮止于此段，其后各段边界不再反映当前文档状态
+                    // ——撤销它们的回滚点（后续 `edit` 退到更早的回滚点重放）。
+                    self.invalidate_rollback_after(j);
+                    return Err(e);
+                }
             }
         }
         self.finish_doc()
@@ -851,15 +889,10 @@ impl IncrementalTypesetter {
     }
 
     /// 排版器是否处于"干净段边界"（垂直模式、无进行中段落/盒子/数学/组）。
-    /// 复用判定的 shape 条件与 execute_segment 的缓存有效性共用。
+    /// 复用判定的 shape 条件与 execute_segment 的缓存有效性共用；
+    /// 判定体在 [`NodeBuilder::is_shaped`]（M6 投机段共用同一事实源）。
     fn builder_shaped(&mut self) -> bool {
-        let b = sink_builder(&mut self.expander);
-        b.groups.is_empty()
-            && b.lists.len() == 1
-            && b.math_state.math.is_empty()
-            && b.box_state.pending_box.is_none()
-            && b.box_state.pending_kind.is_none()
-            && !b.page_state.shipout_next
+        sink_builder(&mut self.expander).is_shaped()
     }
 
     /// 段 `j` 的缓存复用判定（`Err(原因)` = 不可复用，须照常执行）。
