@@ -50,10 +50,22 @@
    → 刀H（pdfTeX protrusion 原语族 `\rpcode`/`\lpcode`/`\pdfmatch`/`\pdffontexpand`）
    → 刀I（`\pdfprotrudechars`/`\pdfadjustspacing`）**13/13 收官**；基线
    [docs/pkg-regression-baseline.md](docs/pkg-regression-baseline.md)（HEAD `6515add`）。
+   **刀P三轮回归清除（`f094a56`，10-14）**：远端刀Y/Z 合流后全矩阵复测发现 amsmath
+   0→114 锁 FAIL——worktree 逐提交二分定责刀P二轮 `recover_groups_to_math_scope`
+   误伤 align inline math；收窄触发条件后 0 错 PASS，**13/13 维持**（教训：守卫修复
+   必须同时验「漏」与「误伤」两把锁，远端合流后必跑全量回归集）。
 5. **TRIP/ETRIP 语义收口五连**（刀J~N，10-11）：`\the parshape` 内部量臂 + pass2 fatal 三连
    （`b0913c6`）、`\end` 救济语义（`e207209`）、halign preamble 展开臂（`a331a66`）、
    `\message` 恢复边界（`5179b89`）、`\let` 别名原语两阶段执行语义
    （`f46432d`，**TRIP endgame 打通**）。
+   **TRIP endgame 十三连（刀O~X + P三轮，10-12 ~ 10-14，Codex gpt-5.5 接力）**：
+   deadcycles 全局性+超限强制 ship（`e2e767d`）、`\PAR` 组恢复三条路径全清
+   （`03a7b9b`+`f094a56`+`658edad`）、Output loop 门控+诊断（`d78ff29`）、
+   `\output` save/restore 时序（`cfcdb71`）、`\vadjust` penalty 进页材料（`fbd0032`）、
+   段内 penalty 与页断点分离（`0d5d305`，页数 31→9 虚假 ship 全消）、输出例程回投
+   生命周期（`6c58296`，`\end` 例程内可恢复）、断页重启动 yield（`638f65a`）、
+   畸形 math/alignment 恢复组态（`0f15264`）。现状：**9 页/0 Engine error、
+   deadcycles/Output loop 链与 GT 同构**，残差收敛中（GT 16 页）。
 6. **wasm 裸 trap 根因修复**（2026-10-11，工作区未提交）：`edef` 探针里**无条件** `Instant::now()`
    （`e1a5bb33` 起）在 wasm32 无 OS 时钟 → `panic = abort` 下成无位置裸 trap；`\edef`/`\xdef`
    是全部 LaTeX 文档的必经路径 ⇒ 工作台 LaTeX 模式一编译即炸（native 单测 / 深 fuzz 全绿照不出）。
