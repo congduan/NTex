@@ -804,6 +804,25 @@ fn math_close_recovers_groups_before_later_let() {
 }
 
 #[test]
+fn math_recovery_does_not_report_through_align_silent_group() {
+    let mut e = Expander::new();
+    e.scope_stack.push(true);
+    e.scope_silent.push(false);
+    e.scope_stack.push(false);
+    e.scope_silent.push(true);
+
+    e.recover_groups_to_math_scope().unwrap();
+
+    let t = e.transcript();
+    assert!(
+        !t.contains("! Missing } inserted."),
+        "对齐静默组只是 math scope 屏障，不能伪造缺失右括号：{t}"
+    );
+    assert_eq!(e.scope_stack, vec![true, false]);
+    assert_eq!(e.scope_silent, vec![false, true]);
+}
+
+#[test]
 fn par_error_recovers_math_groups_before_later_let() {
     let mut e = Expander::new();
     e.set_sink(Box::new(MathRecoverSink::default()));

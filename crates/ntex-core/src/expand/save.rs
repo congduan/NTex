@@ -1016,11 +1016,15 @@ impl Expander {
         let Some(math_scope) = self.scope_stack.iter().rposition(|is_math| *is_math) else {
             return Ok(());
         };
-        self.write_error("Missing } inserted.");
+        let mut reported = false;
         while self.scope_stack.len() > math_scope + 1 {
             if self.scope_silent.last().copied().unwrap_or(false) {
                 break;
             } else {
+                if !reported {
+                    self.write_error("Missing } inserted.");
+                    reported = true;
+                }
                 self.end_group()?;
             }
         }
@@ -1028,7 +1032,7 @@ impl Expander {
     }
 
     fn close_math_scopes_if_sink_out(&mut self) -> Result<()> {
-        while !matches!(self.sink.mode_code(), 3 | 6)
+        while !self.sink_mode_retains_math_scope()
             && self.scope_stack.iter().any(|is_math| *is_math)
         {
             let before = self.scope_stack.len();
@@ -1042,19 +1046,31 @@ impl Expander {
     }
 
     fn sync_math_scope_after_sink_recovery(&mut self, was_math_mode: bool) -> Result<()> {
-        if !was_math_mode || matches!(self.sink.mode_code(), 3 | 6) {
+        if !was_math_mode || self.sink_mode_retains_math_scope() {
             return Ok(());
         }
         self.close_math_scopes_if_sink_out()?;
-        if !matches!(self.sink.mode_code(), 3 | 6) {
+        if !self.sink_mode_retains_math_scope() {
             self.in_math = false;
         }
         Ok(())
     }
 
+    fn math_scope_has_silent_barrier(&self) -> bool {
+        let Some(math_scope) = self.scope_stack.iter().rposition(|is_math| *is_math) else {
+            return false;
+        };
+        self.scope_silent[math_scope + 1..].iter().any(|silent| *silent)
+    }
+
+    fn sink_mode_retains_math_scope(&self) -> bool {
+        matches!(self.sink.mode_code(), 3 | 6)
+            || (self.sink.mode_code() == 5 && self.math_scope_has_silent_barrier())
+    }
+
     fn stale_math_scope_only(&self) -> bool {
         let has_math_scope = self.scope_stack.iter().any(|is_math| *is_math);
-        let sink_in_math = matches!(self.sink.mode_code(), 3 | 6);
+        let sink_in_math = self.sink_mode_retains_math_scope();
         (has_math_scope && !sink_in_math) || (!has_math_scope && sink_in_math)
     }
 
