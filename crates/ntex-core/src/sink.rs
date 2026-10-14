@@ -524,6 +524,12 @@ pub trait PageSink {
     fn output_break_penalty(&mut self) -> Option<i64> {
         None
     }
+    /// `\insertpenalties`：当前页构建器在插入物 split/holdover 路径上累计的
+    /// 只读整数。完整 TeX 会在 page_ins 状态机中维护；NTex 先暴露页面侧
+    /// 已知值，未接入的 sink 默认为 0。
+    fn insert_penalties(&self) -> i64 {
+        0
+    }
     /// 自上次查询以来是否真正 shipout 过页面（`\shipout\box255` 例程产出，或
     /// 无例程直通）。输出例程刀 1：`dead_cycles` 清零依据（tex.web ship_out
     /// L12707 `dead_cycles:=0`）——查询即取走（take 语义）。

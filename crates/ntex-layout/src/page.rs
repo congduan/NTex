@@ -83,6 +83,13 @@ pub struct PageBuilder {
     /// → `\outputpenalty := inf_penalty`(10000)。输出例程点火前由引擎经
     /// TokenSink 查询写入 [`Primitive::OutputPenalty`](ntex_core::eqtb)。
     best_penalty: Option<i64>,
+    /// held-over insert 前移重试用的非 eject 最佳断点。TRIP 的段内强制断行
+    /// penalty 会以巨大负值进入页材料，但 insert 重试要回到后续 vadjust
+    /// penalty 这类普通断点。
+    best_non_eject: Option<usize>,
+    best_non_eject_penalty: Option<i64>,
+    best_non_eject_cost: i64,
+    best_non_eject_size: i64,
     /// 每次 fire_up 为该页写定的 `\outputpenalty` 值队列（tex.web
     /// `@<Set the value of |output_penalty|@>` 在 fire_up 入口执行，先于
     /// `start_new_page` 重置）。**队列**而非单槽：例程运行期间页构建器照常断页
@@ -130,6 +137,9 @@ pub struct PageBuilder {
     insert_heights: HashMap<usize, i64>,
     /// 当前页已经为哪些 insert 类扣过 `\skip<class>`。
     insert_skips_seen: HashSet<usize>,
+    /// `\insertpenalties` 的页面侧累计值。完整 TeX 在 page_ins 链上统计 split
+    /// 和 held-over insert；这里至少覆盖 held-over 前移重试路径。
+    insert_penalties: i64,
 }
 
 /// `process` 单节点处理结果。
@@ -160,6 +170,10 @@ impl PageBuilder {
             has_box: false,
             best: None,
             best_penalty: None,
+            best_non_eject: None,
+            best_non_eject_penalty: None,
+            best_non_eject_cost: AWFUL_BAD,
+            best_non_eject_size: 0,
             fired_penalties: std::collections::VecDeque::new(),
             last_fired_penalty: None,
             best_cost: AWFUL_BAD,
@@ -174,6 +188,7 @@ impl PageBuilder {
             vsize_live: None,
             insert_heights: HashMap::new(),
             insert_skips_seen: HashSet::new(),
+            insert_penalties: 0,
         }
     }
 
@@ -493,11 +508,13 @@ impl PageBuilder {
                 Outcome::Continue
             }
             Node::Ins {
-                class, ref body, ..
+                class,
+                ref body,
+                float_cost,
+                ..
             } => {
                 if !self.has_box {
-                    contrib.remove(0);
-                    return Outcome::Continue;
+                    self.freeze(params);
                 }
                 let body_height = body.height + body.depth;
                 let already = *self.insert_heights.get(&class).unwrap_or(&0);
@@ -507,14 +524,42 @@ impl PageBuilder {
                 } else {
                     body_height
                 };
-                if accepted_height > 0 {
-                    let mut debit = accepted_height;
-                    let factor = inserts.counts.get(class).copied().unwrap_or(1000);
-                    if factor > 0 {
-                        debit = debit.saturating_mul(factor) / 1000;
+                let mut debit = accepted_height;
+                let factor = inserts.counts.get(class).copied().unwrap_or(1000);
+                if factor > 0 {
+                    debit = debit.saturating_mul(factor) / 1000;
+                }
+                if !self.insert_skips_seen.contains(&class) {
+                    debit += inserts.skips.get(class).map(|g| g.width).unwrap_or(0);
+                }
+                let unsplittable_body = !body
+                    .children
+                    .iter()
+                    .any(|n| matches!(n, Node::Box(_) | Node::Rule { .. }));
+                // tex.web page builder：insert 无法放入当前页时，不是简单丢给后续
+                // penalty；它会把 insert hold over，并在此前已记录的最佳断点处
+                // fire_up，让输出例程回投页面后重试。若当前页还没有断点，只能接纳
+                // 该 insert，等待后续断点触发。
+                if params.misc[50] <= 0
+                    && unsplittable_body
+                    && (accepted_height < body_height
+                        || debit > self.goal.saturating_sub(self.total + self.depth))
+                    && self.best.is_some()
+                {
+                    if self.best_penalty.is_some_and(|p| p <= EJECT_PENALTY)
+                        && self.best_non_eject.is_some()
+                    {
+                        self.best = self.best_non_eject;
+                        self.best_penalty = self.best_non_eject_penalty;
+                        self.best_cost = self.best_non_eject_cost;
+                        self.best_size = self.best_non_eject_size;
                     }
+                    self.insert_penalties = self.insert_penalties.saturating_add(float_cost);
+                    return Outcome::FireUp;
+                }
+                if accepted_height > 0 {
                     if self.insert_skips_seen.insert(class) {
-                        debit += inserts.skips.get(class).map(|g| g.width).unwrap_or(0);
+                        // debit already includes first-insert skip above.
                     }
                     self.goal = self.goal.saturating_sub(debit);
                     self.insert_heights.insert(class, already + accepted_height);
@@ -618,6 +663,12 @@ impl PageBuilder {
             self.best_size = self.goal;
             self.best_cost = c;
         }
+        if pi > EJECT_PENALTY && c <= self.best_non_eject_cost {
+            self.best_non_eject = Some(self.page.len());
+            self.best_non_eject_penalty = if at_penalty { Some(pi) } else { None };
+            self.best_non_eject_size = self.goal;
+            self.best_non_eject_cost = c;
+        }
         if c == AWFUL_BAD || pi <= EJECT_PENALTY {
             Some(Outcome::FireUp)
         } else {
@@ -708,6 +759,11 @@ impl PageBuilder {
     /// 错位到后续页面）。
     pub fn clear_fired_penalties(&mut self) {
         self.fired_penalties.clear();
+    }
+
+    /// 页面构建器当前的 `\insertpenalties` 只读值。
+    pub fn insert_penalties(&self) -> i64 {
+        self.insert_penalties
     }
 
     /// `fire_up`（tex.web §709+）：按最佳断点打包页面、余下退回贡献、重置页面。
@@ -803,12 +859,17 @@ impl PageBuilder {
         self.shrink = 0;
         self.best = None;
         self.best_penalty = None;
+        self.best_non_eject = None;
+        self.best_non_eject_penalty = None;
+        self.best_non_eject_cost = AWFUL_BAD;
+        self.best_non_eject_size = 0;
         self.best_cost = AWFUL_BAD;
         self.best_size = self.goal;
         self.last_is_box = false;
         self.prev_depth = IGNORE_DEPTH;
         self.insert_heights.clear();
         self.insert_skips_seen.clear();
+        self.insert_penalties = 0;
         // \tracingpages：freeze 时输出目标行（tex.web freeze_page_specs）
         if self.tracing {
             self.trace_buf.push_str(&format!(
@@ -830,6 +891,10 @@ impl PageBuilder {
         self.shrink = 0;
         self.best = None;
         self.best_penalty = None;
+        self.best_non_eject = None;
+        self.best_non_eject_penalty = None;
+        self.best_non_eject_cost = AWFUL_BAD;
+        self.best_non_eject_size = 0;
         self.best_cost = AWFUL_BAD;
         self.best_size = 0;
         self.last_is_box = false;

@@ -161,6 +161,38 @@ use super::*;
         assert!(text.contains("FN"), "脚注体应由输出例程回流到页底：{text:?}");
     }
 
+    /// held-over insert：插入物放不进当前页时，页构建器必须回到已有最佳断点
+    /// fire_up，而不是把 insert 留到后续 `\penalty` 才第一次出页。这个顺序会让
+    /// 输出例程先看到自然断点的 `\outputpenalty=10000`，并能读到本次 holdover
+    /// 累计的 `\insertpenalties`。
+    #[test]
+    fn held_over_insert_fires_at_prior_break_and_records_float_cost() {
+        let mut ts = Typesetter::with_metrics(metrics);
+        let (pages, _) = ts
+            .typeset_dvi(concat!(
+                r"\vsize=50pt \hsize=200pt \count150=1000 \dimen150=20pt ",
+                r"\output={\showthe\outputpenalty\showthe\insertpenalties\shipout\box255} ",
+                r"\hbox{A}\vskip0pt",
+                r"\insert150{\vskip100pt\floatingpenalty7}",
+                r"\penalty-333\hbox{B}\end"
+            ))
+            .unwrap();
+        let t = ts.take_transcript();
+        assert!(
+            showthe_values(&t, "outputpenalty")
+                .first()
+                .is_some_and(|v| v == "10000"),
+            "held-over insert 应先在前一自然断点出页，而不是等后续惩罚：{t:?}"
+        );
+        assert!(
+            showthe_values(&t, "insertpenalties")
+                .iter()
+                .any(|v| v == "7"),
+            "held-over insert 的 floatingpenalty 应进入 \\insertpenalties：{t:?}"
+        );
+        assert!(pages.len() >= 2, "应至少产出两页：{pages:?}\n{t}");
+    }
+
     // ---------- 刀 B：长脚注 split/holdover 前置——plain \vfootnote 通路 ------
     //
     // lf3.tex（长脚注 2 页样张）在 NTex 全军覆没的真根因不在 page.rs 拆分臂

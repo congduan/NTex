@@ -1901,6 +1901,9 @@ impl PageSink for NodeBuilder {
         let _ = std::mem::take(&mut self.page_state.output_consumed_count);
         self.page_state.page.take_front_output_penalty()
     }
+    fn insert_penalties(&self) -> i64 {
+        self.page_state.page.insert_penalties()
+    }
     fn take_page_shipped(&mut self) -> bool {
         std::mem::take(&mut self.page_state.page_shipped)
     }

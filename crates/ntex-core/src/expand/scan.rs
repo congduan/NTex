@@ -896,6 +896,11 @@ impl Expander {
                     self.fetch()?;
                     return Ok(0);
                 }
+                EqSlot::Primitive(Primitive::InsertPenalties) => {
+                    self.fetch()?;
+                    let v = self.query_sink_ref().insert_penalties();
+                    return Ok(if neg { -v } else { v });
+                }
                 _ => {}
             }
         }
@@ -2183,6 +2188,11 @@ impl Expander {
             ) {
                 self.fetch()?;
                 return Ok((0, 0));
+            }
+            if let EqSlot::Primitive(Primitive::InsertPenalties) = self.eqtb.slot(csid) {
+                self.fetch()?;
+                let v = self.query_sink_ref().insert_penalties();
+                return Ok((if neg { -v } else { v }, 0));
             }
             // ETRIP/TRIP：\lastskip/\lastkern 作尺寸（sp 值；无则 0）。
             if let EqSlot::Primitive(Primitive::LastSkip) = self.eqtb.slot(csid) {

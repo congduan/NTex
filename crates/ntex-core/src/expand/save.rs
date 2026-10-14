@@ -375,6 +375,12 @@ impl Expander {
             ));
             return Ok(emit_count(0));
         };
+        if matches!(
+            self.eqtb.slot(csid),
+            EqSlot::Primitive(Primitive::InsertPenalties)
+        ) {
+            return Ok(emit_count(self.query_sink_ref().insert_penalties()));
+        }
         // TeX：`\the` 位置走 get_x_token；宏和可展开原语都先展开（LaTeX
         // `\the\value{section}` 的 `\value` 即宏，展开为 `\c@section` 后才是
         // 内部整数；此前只展开原语，`\section`/`\item`/`\label` 链会在
@@ -798,8 +804,10 @@ impl Expander {
                     Primitive::EveryCr => self.everycr_toks.clone(),
                     _ => self.errhelp_toks.clone(),
                 }),
-                // \\the\\insertpenalties：int 只读（expander 无排版状态返回 0）
-                Primitive::InsertPenalties => Ok(emit_count(0)),
+                // \\the\\insertpenalties：页面构建器只读整数；无排版查询 sink 时为 0。
+                Primitive::InsertPenalties => {
+                    Ok(emit_count(self.query_sink_ref().insert_penalties()))
+                }
                 // TRIP 补全批次：\\the\\skewchar<font>：字体偏斜字符（无覆盖 = -1）
                 Primitive::SkewChar => {
                     let font = self.scan_font_ident()?;
