@@ -211,6 +211,7 @@ struct SideEffects {
     boxes: BoxFile,
     box_saves: Vec<(usize, usize, Option<BoxNode>)>,
     output_defined: bool,
+    in_output_group: bool,
     pending_pages: std::collections::VecDeque<BoxNode>,
     write_flush_pending: bool,
     /// 页面 shipout 过（`dead_cycles` 清零依据；输出例程刀 1）。

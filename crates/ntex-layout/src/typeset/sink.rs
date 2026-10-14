@@ -203,6 +203,7 @@ impl CoreSink for NodeBuilder {
             // NTex may inject it while the interrupted input is still in hmode;
             // without this nest, output-routine material can close or pollute the
             // interrupted paragraph, turning later hmode penalties into vmode ones.
+            self.page_state.in_output_group = true;
             self.lists.push(Vec::new());
             self.list_modes.push(Mode::Vertical);
         } else if gkind == GroupKind::Math {
@@ -501,8 +502,12 @@ impl CoreSink for NodeBuilder {
             GroupKind::Output => {
                 let nodes = self.lists.pop().unwrap_or_default();
                 self.list_modes.pop();
+                let returned = !nodes.is_empty();
                 self.lists[0].extend(nodes);
-                self.resume_after_output_routine();
+                self.page_state.in_output_group = false;
+                if returned {
+                    self.resume_after_output_routine();
+                }
             }
             _ => {}
         }
@@ -1567,8 +1572,7 @@ impl BoxSink for NodeBuilder {
     /// `\wd/\ht/\dp<n>=<dimen>`：设置盒子寄存器维度。
     /// 255 → 改待输出页队首（`\dp\@cclv=...` 型改写落在页面上）；void 忽略。
     fn set_box_dim(&mut self, idx: usize, dim: u8, value: i64) -> Result<()> {
-        let idx255 = idx == PAGE_BOX;
-        let slot = if idx255 {
+        let slot = if self.page_box_queue_active(idx) {
             self.page_state.pending_pages.front_mut()
         } else {
             self.boxes_mut().get_mut(idx).and_then(|s| s.as_mut())

@@ -848,6 +848,10 @@ struct PageState {
     /// `\output` 例程是否已定义（true：fire_up 改道 box255 + 待执行）。
     output_defined: bool,
 
+    /// 当前是否正在执行用户输出例程。只有此时 box255 才是 `\box255`
+    /// 页面队列；例程外它仍是普通盒寄存器。
+    in_output_group: bool,
+
     /// 待输出例程处理的页面队列（M3-5-3）：`\output` 定义时 fire_up 产出的页面
     /// 排队，`\box255` 逐页取出，例程反复运行直至队列清空。队列而非单槽——
     /// `close_paragraph` 一次推入多行可能连续产出多页，逐页交错执行例程。
@@ -1090,6 +1094,7 @@ impl NodeBuilder {
                 page_counts: [0; 10],
                 ship_seq: 0,
                 output_defined: false,
+                in_output_group: false,
                 pending_pages: VecDeque::new(),
                 write_flush_pending: false,
                 page_shipped: false,
@@ -1297,9 +1302,18 @@ impl NodeBuilder {
         std::rc::Rc::make_mut(&mut self.box_state.boxes)
     }
 
+    fn page_box_queue_active(&self, idx: usize) -> bool {
+        // box255 是「待输出页队列」的条件：输出例程已定义（`\output` 非
+        // 默认ship）且例程在执行中，或存在挂起的 pending_pages。例程外且无
+        // 挂起页时 `\setbox255`/`\box255` 是普通盒寄存器（TRIP l.441 的
+        // `\setbox254=\box255`、合成探针的例程外 `\setbox255` 都走此臂）。
+        idx == PAGE_BOX
+            && (self.page_state.in_output_group || !self.page_state.pending_pages.is_empty())
+    }
+
     /// 读盒子寄存器（255 → 待输出页队首，见 [PAGE_BOX]）。
     fn box_view(&self, idx: usize) -> Option<&BoxNode> {
-        if idx == PAGE_BOX {
+        if self.page_box_queue_active(idx) {
             self.page_state.pending_pages.front()
         } else {
             self.box_state.boxes.get(idx).and_then(|s| s.as_ref())
@@ -1312,7 +1326,7 @@ impl NodeBuilder {
     /// 不回滚。255 → 弹队首：页被例程消费后不再复活（若入组级日志，例程组的
     /// 回滚会把已消费页塞回队列导致重复输出）。
     fn take_box_at(&mut self, idx: usize) -> Option<BoxNode> {
-        if idx == PAGE_BOX {
+        if self.page_box_queue_active(idx) {
             let taken = self.page_state.pending_pages.pop_front();
             // 页被例程真取走（`\box\@cclv`）= 消费事实（maybe_inject_output 判定用）
             if taken.is_some() {
@@ -1328,7 +1342,7 @@ impl NodeBuilder {
     /// 队列空时压入成为待输出页（tex.web：例程 `\setbox\@cclv\vbox{\box\@cclv\vfil}`
     /// L20914 存回 255，页即被改写；`None` = 清空寄存器）。
     fn write_box(&mut self, idx: usize, value: Option<BoxNode>) {
-        if idx == PAGE_BOX {
+        if self.page_box_queue_active(idx) {
             match value {
                 Some(b) if !self.page_state.pending_pages.is_empty() => {
                     self.page_state.pending_pages[0] = b
@@ -1377,6 +1391,7 @@ impl NodeBuilder {
             boxes: BoxFile(std::rc::Rc::clone(&self.box_state.boxes)),
             box_saves: self.box_state.box_saves.clone(),
             output_defined: self.page_state.output_defined,
+            in_output_group: self.page_state.in_output_group,
             pending_pages: self.page_state.pending_pages.clone(),
             write_flush_pending: self.page_state.write_flush_pending,
             page_shipped: self.page_state.page_shipped,
@@ -1441,6 +1456,7 @@ impl NodeBuilder {
         self.box_state.boxes = std::rc::Rc::clone(&s.boxes.0);
         self.box_state.box_saves = s.box_saves.clone();
         self.page_state.output_defined = s.output_defined;
+        self.page_state.in_output_group = s.in_output_group;
         self.page_state.pending_pages = s.pending_pages.clone();
         self.page_state.write_flush_pending = s.write_flush_pending;
         self.page_state.page_shipped = s.page_shipped;

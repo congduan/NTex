@@ -135,6 +135,32 @@ use super::*;
     }
 
     #[test]
+    fn setbox255_outside_output_does_not_reinject_outputpenalty() {
+        // TRIP L112 形态：输出例程外的 \setbox255 只是普通盒寄存器赋值。
+        // 若把它当作待输出页面排队，会用上一轮 \outputpenalty=-10000
+        // 立刻再点火，凭空 ship 一个空页。
+        let mut ts =
+            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+        let pages = ts
+            .typeset_dvi(concat!(
+                r"\vsize 40000000sp\hsize 20000000sp ",
+                r"\output={\showthe\outputpenalty\shipout\box255} ",
+                r"A\par\vfil\penalty-10000 ",
+                r"\setbox255=\vbox{} ",
+                r"B\end",
+            ))
+            .unwrap()
+            .0;
+        let vals = showthe_values(&ts.take_transcript(), "outputpenalty");
+        assert_eq!(
+            vals,
+            vec!["-10000", "-1073741824"],
+            "例程外 \\setbox255 不得用旧 \\outputpenalty 重新点火：{vals:?}"
+        );
+        assert_eq!(pages.len(), 2, "不应额外 ship 空页：{pages:?}");
+    }
+
+    #[test]
     fn deadcycles_counts_and_resets_per_page() {
         // tex.web fire_up incr(dead_cycles)、ship_out 清零：每页例程内读到的
         // 都是 1（连续死循环数只统计"例程没 ship"的轮次）。
