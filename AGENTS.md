@@ -16,7 +16,7 @@ NTex/
 ├── probes/            最小复现探针（fp-load 载入探针、perf 基准脚本）
 ├── scripts/           辅助脚本：定位仪器（abcheck / logtrace / trace-view / blocker-track）、lvt 跑分、语料探针、字体子集化
 ├── tests/             跨 crate 测试（semantic 语义对照等）
-├── docs/              长期参考文档（仅 3 份 + 归档，见 §4）
+├── docs/              长期参考文档（4 份 + 归档，见 §4）
 ├── reference/         ground truth 参照物（tex.web、pdfTeX 期望输出等）
 ├── screenshots/       文档用截图
 ├── site/              项目站点静态资源
@@ -114,6 +114,7 @@ TeX/LaTeX 源码 → 0.输入层(ntex-io VFS) → 1.TeX VM 求值(ntex-core) →
 | `KNOWN-SIMPLIFICATIONS.md` | **技术债清单**（文件:行 + 状态）。新增任何"简化/no-op/暂不"必须当天登记；修复后标 ✅ + commit。改动前先查表 |
 | `tooling-trust.md` | **定位基础设施与仪器可信度**：七件套用法（`instrument-check`/`abcheck`/JSONL trace/`blocker-track`/`logtrace`/`recovery-check`/`STACK_DUMP`）+ 九次仪器失真事故登记 + 判读纪律。**开工定位前先读**；改诊断原语后必跑 `make instrument-check` |
 | `MATH-STATE-MACHINE.md` | 数学状态机语义规格（`$`/`$$` 分模式语义、组结束、嵌套）+ 修改守则 |
+| `pkg-regression-baseline.md` | 活跃宏包回归基线 |
 | `blocker-history.tsv` | 阻塞点看板数据（`make blocker-track` 读取） |
 | `archive/` | **历史归档**（逐刀战报、勘察全文、跑分基线、一次性评审）。只读不改，需要考古时全文 grep。索引见 `archive/README.md` |
 

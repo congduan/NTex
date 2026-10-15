@@ -111,7 +111,7 @@
    GT 逐点一致（sup +655361、sub +364090 sp）；回归锁
    `ntex-layout::typeset::tests_math::op_limit_switch_controls_script_placement`
    （用 `\mathchardef` 原语构造，不依赖 plain 预载；去 limits 判定必红）。2026-09-26
-   续批补齐 [docs/breadth-2026-09-23.md](docs/breadth-2026-09-23.md) #25/#26：
+   续批补齐 [docs/archive/breadth-2026-09-23.md](docs/archive/breadth-2026-09-23.md) #25/#26：
    display style 分支加回归锁（`\sum` displaylimits 堆叠、`\intop\nolimits` 仍右侧脚本位），
    `make_op` 大算符盒宽纳入 italic correction，裸 `\displaystyle\int` 约 10pt、有下标
    nolimits 时扣回约 5.55557pt。

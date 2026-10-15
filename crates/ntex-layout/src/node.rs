@@ -429,7 +429,7 @@ pub fn hbox_dimensions(children: &[Node]) -> BoxDimensions {
 /// "有下标且非 limits 时算符盒宽减 delta"（tex.web §14695）是同一处语义的两半：
 /// 两半一起补才对齐 GT；单独补一半会把 display 大算符既有的字宽偏差
 /// （12pt 下 `$\displaystyle\int$`：NTex 5.55557pt vs GT 10.00002pt）
-/// 从"互相掩盖"变成"叠加偏离"。见 docs/breadth-2026-09-23.md #26。
+/// 从"互相掩盖"变成"叠加偏离"。见 docs/archive/breadth-2026-09-23.md #26。
 /// vbox 维度计算（tex.web `vpackage` L13175-13211 的自然维度归并）：
 /// `width` = max 子节点 width；纵向用 (x, d) 二元组推进——
 ///
