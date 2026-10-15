@@ -19,6 +19,8 @@ fixtures/etrip/
 # 测试/调试临时产物
 tmp-*.tex
 tmp-*.dvi
+/err*.dvi
+/mathlet*.dvi
 tmp-*.pdf
 /ntex-out.dvi
 /dec-ntex.txt
