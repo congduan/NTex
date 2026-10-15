@@ -45,8 +45,13 @@ impl NodeBuilder {
         }
     }
 
-    fn accept_page(&mut self, p: BoxNode) {
+    fn accept_page(&mut self, p: BoxNode) -> bool {
         let p = self.insert_accumulate(p);
+        let has_material = p.children.iter().any(|n| match n {
+            Node::Glue { .. } | Node::Kern { .. } | Node::Penalty { .. } => false,
+            Node::Box(b) => !b.children.is_empty(),
+            _ => true,
+        });
         if self.page_state.output_defined {
             self.page_state.pending_pages.push_back(p);
         } else {
@@ -54,6 +59,7 @@ impl NodeBuilder {
             self.page_state.page.clear_fired_penalties();
             self.ship_page(p);
         }
+        has_material
     }
 
     /// fire_up 的 insert 计账（tex.web fire_up
@@ -152,9 +158,30 @@ impl NodeBuilder {
     /// 交错执行——页面经 [`Self::accept_page`] 路由（box255+例程 或 直通 shipout）。
     fn eject_one_page(&mut self) -> Result<bool> {
         loop {
-            if self.page_state.page.is_empty() && self.lists[0].is_empty() {
+            if std::env::var("NTEX_EJECT_DBG").is_ok() {
+                eprintln!(
+                    "[EJECT] enter: page_empty={} lists0_len={} flag={}",
+                    self.page_state.page.is_empty(),
+                    self.lists[0].len(),
+                    self.page_state.eject_final_pending
+                );
+                for (i, n) in self.lists[0].iter().enumerate() {
+                    eprintln!("[EJECT] n{i}: {n:?}");
+                }
+            }
+            let residual_material = self.lists[0].iter().any(|n| match n {
+                Node::Glue { .. } | Node::Kern { .. } | Node::Penalty { .. } => false,
+                Node::Box(b) => !b.children.is_empty(),
+                _ => true,
+            });
+            if self.page_state.page.is_empty()
+                && !residual_material
+                && !self.page_state.eject_final_pending
+            {
+                self.lists[0].clear();
                 return Ok(false);
             }
+            self.page_state.eject_final_pending = false;
             // 只在贡献列表已空（全部材料已进页构建器、需要强制断出这最后一页）时
             // 才追加 eject 材料（空盒 + vfill + 强制惩罚）。若贡献列表非空，先让
             // feed_one 消化既有材料——它们往往已以强制惩罚收尾（上一次 fire_up
@@ -187,7 +214,13 @@ impl NodeBuilder {
                 insert_regs,
                 self.page_state.output_defined,
             ) {
-                self.accept_page(p);
+                let has_material = self.accept_page(p);
+                self.page_state.eject_final_pending = false;
+                self.page_state.empty_eject_seen = !has_material;
+                // A held-over insert may be the only thing consumed by this
+                // eject.  Its accumulated page is intentionally empty; the
+                // synthetic eject tail left in the contribution list must not
+                // manufacture a second empty page.
                 // ETRIP 冲刺：断页 marks 轮转（top = 旧 bot，first 清空，bot 保留继承）
                 self.rotate_marks();
                 self.drop_empty_page_discardables();

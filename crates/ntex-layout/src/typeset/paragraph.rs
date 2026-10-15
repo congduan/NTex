@@ -73,6 +73,10 @@ impl NodeBuilder {
         let interline = self.penalty_arrays[0].clone();
         let interline_default = self.params.interlinepenalty;
         let mut last_natural: Option<i64> = None;
+        let old_defer_page_feed = self.page_state.defer_page_feed;
+        if self.page_state.pagination && self.lists.len() == 1 {
+            self.page_state.defer_page_feed = true;
+        }
         for (line_no, &(s, e)) in lines.iter().enumerate() {
             if line_no > 0 {
                 let p = lines
@@ -86,10 +90,20 @@ impl NodeBuilder {
                         _ => None,
                     })
                     .unwrap_or_else(|| {
-                        interline
+                        // tex.web L17443-17457：行间惩罚 = interline 数组值
+                        // + clubpenalty（仅首边界）+ widowpenalty（仅末边界，
+                        // cur_line+2=best_line）。GT probe_cw3 实证：11 行段
+                        // 边界序列 16(=inter5+club11),105(disc),5×7,27(=5+widow22)。
+                        let mut pen = interline
                             .get((line_no - 1).min(interline.len().saturating_sub(1)))
                             .copied()
-                            .unwrap_or(interline_default)
+                            .unwrap_or(interline_default);
+                        if line_no == 1 {
+                            pen += self.params.clubpenalty;
+                        } else if line_no + 1 == lines.len() {
+                            pen += self.params.widowpenalty;
+                        }
+                        pen
                     });
                 self.push_node(Node::Penalty { penalty: p });
             }
@@ -199,11 +213,17 @@ impl NodeBuilder {
             let mut lb = hpack(&line, cur_width);
             lb.shift = cur_indent;
             self.push_box(Node::Box(lb));
-            // 行盒之后紧贴本行的 insert 材料（tex.web line_break 尾部
-            // `link(tail):=link(adjust_head)` 同序）
-            for a in adjustments {
+            // 本行 insert/adjust 材料紧贴本行行盒之后（GT gta/gtb pdftotext
+            // 逐页实证：-5000 页含产生它的行的行盒——vadjust 随折行归属该行，
+            // 断页时材料与行盒同页点火）。此前「挂起到下一行盒后」错位一行：
+            // -5000 落到空页被丢（page_contents<box_there 丢 penalty 臂）。
+            for a in adjustments.drain(..) {
                 self.push_node(a);
             }
+        }
+        self.page_state.defer_page_feed = old_defer_page_feed;
+        if self.page_state.pagination && self.mode() == Mode::Vertical && self.lists.len() == 1 {
+            self.feed_page_builder_once();
         }
         last_natural
     }

@@ -100,6 +100,10 @@ pub struct PageBuilder {
     /// pending_pages 队列一一对应：fire_up 恒入队，弹出由例程的**消费事实**
     /// 驱动（消费几页弹几个，见 [`Self::pop_fired_penalty`]）。
     fired_penalties: std::collections::VecDeque<i64>,
+    /// `\insertpenalties` snapshot paired with each pending page.
+    fired_insert_penalties: std::collections::VecDeque<i64>,
+    /// Snapshot exposed while the corresponding output routine runs.
+    output_insert_penalties: Option<i64>,
     /// 最近一次 fire_up 写定的值（tex.web：`\outputpenalty` 是全局整数，只在
     /// fire_up 写、从不清零）。例程注入的"页"可能不是断页产出——TRIP
     /// `\setbox255\vbox{}` 直接种页（无 fire_up）——此时读最近一次点火值。
@@ -140,6 +144,10 @@ pub struct PageBuilder {
     /// `\insertpenalties` 的页面侧累计值。完整 TeX 在 page_ins 链上统计 split
     /// 和 held-over insert；这里至少覆盖 held-over 前移重试路径。
     insert_penalties: i64,
+    /// 当前页已触发过 vert_break 拆分的 insert 类（tex.web `type(r)=split_up`）：
+    /// 同类再遇溢出走 float_cost 计账照常入页，不重复拆分。
+    split_up_classes: HashSet<usize>,
+    insert_seen: bool,
 }
 
 /// `process` 单节点处理结果。
@@ -175,6 +183,8 @@ impl PageBuilder {
             best_non_eject_cost: AWFUL_BAD,
             best_non_eject_size: 0,
             fired_penalties: std::collections::VecDeque::new(),
+            fired_insert_penalties: std::collections::VecDeque::new(),
+            output_insert_penalties: None,
             last_fired_penalty: None,
             best_cost: AWFUL_BAD,
             best_size: 0,
@@ -189,6 +199,8 @@ impl PageBuilder {
             insert_heights: HashMap::new(),
             insert_skips_seen: HashSet::new(),
             insert_penalties: 0,
+            split_up_classes: HashSet::new(),
+            insert_seen: false,
         }
     }
 
@@ -403,6 +415,7 @@ impl PageBuilder {
                 height,
                 depth,
             } => {
+                self.insert_seen = true;
                 if !self.has_box {
                     self.freeze(params);
                     let w = (params.topskip.width - height).max(0);
@@ -511,6 +524,7 @@ impl PageBuilder {
                 class,
                 ref body,
                 float_cost,
+                split_max_depth,
                 ..
             } => {
                 if !self.has_box {
@@ -532,30 +546,89 @@ impl PageBuilder {
                 if !self.insert_skips_seen.contains(&class) {
                     debit += inserts.skips.get(class).map(|g| g.width).unwrap_or(0);
                 }
-                let unsplittable_body = !body
-                    .children
-                    .iter()
-                    .any(|n| matches!(n, Node::Box(_) | Node::Rule { .. }));
-                // tex.web page builder：insert 无法放入当前页时，不是简单丢给后续
-                // penalty；它会把 insert hold over，并在此前已记录的最佳断点处
-                // fire_up，让输出例程回投页面后重试。若当前页还没有断点，只能接纳
-                // 该 insert，等待后续断点触发。
-                if params.misc[50] <= 0
-                    && unsplittable_body
-                    && (accepted_height < body_height
-                        || debit > self.goal.saturating_sub(self.total + self.depth))
-                    && self.best.is_some()
-                {
-                    if self.best_penalty.is_some_and(|p| p <= EJECT_PENALTY)
-                        && self.best_non_eject.is_some()
-                    {
-                        self.best = self.best_non_eject;
-                        self.best_penalty = self.best_non_eject_penalty;
-                        self.best_cost = self.best_non_eject_cost;
-                        self.best_size = self.best_non_eject_size;
+                // tex.web L19605-19621（build_page 的 ins_node 臂）：
+                // h = count 加权的 insert 体高（L19615 x_over_n(height,1000)*count，
+                // count≤0 → h≤0 → 必 fits）。装得下（h<=delta 且 dimen(n) 不超）
+                // → page_goal−=h 照常吸收；装不下 → split 臂（L19621-19679）。
+                // 注意 split 臂**不依赖既有最佳断点**（此前 best.is_some() 门控是
+                // 私设语义：fire_up 后 best 清 None，新页上的 insert 永远走不进
+                // split → 退化钳制接受 → GT 的 g=-99 负目标页与立断链全部消失）。
+                let delta = self
+                    .goal
+                    .saturating_sub(self.total + self.depth)
+                    .saturating_add(self.shrink);
+                // count≤0（\count n 非正）：h=x_over_n*count≤0 → fits 恒真，
+                // page_goal 不减（h≤0 臂）；w:=max_dimen（split 臂不会走到）。
+                let h = if factor <= 0 {
+                    0
+                } else if factor != 1000 {
+                    body_height.saturating_mul(1000) / factor
+                } else {
+                    body_height
+                };
+                let dimen_ok = max_for_class == 0 || already + body_height <= max_for_class;
+                let fits = (h <= 0 || h <= delta) && dimen_ok;
+                if !fits {
+                    if self.split_up_classes.contains(&class) {
+                        // L19606：split_up 后同类再溢出 → float_cost 计账，照常 contribute。
+                        self.insert_penalties = self.insert_penalties.saturating_add(float_cost);
+                        contrib.remove(0);
+                        self.page.push(node);
+                        self.last_is_box = false;
+                        return Outcome::Continue;
                     }
-                    self.insert_penalties = self.insert_penalties.saturating_add(float_cost);
-                    return Outcome::FireUp;
+                    // L19658-19679：vert_break 在 insert 体 vlist 内找最优断点
+                    // （目标 h=可用高，d=splitmaxdepth）。q=penalty → 记账；q=null
+                    //（无可断点）→ eject_penalty。best_height_plus_depth 换算回
+                    // 页目标扣除（count≠1000 时 x_over_n 反加权）。
+                    let avail = self.goal.saturating_sub(self.total + self.depth);
+                    let mut w = if factor > 0 && factor != 1000 {
+                        avail.saturating_mul(1000) / factor
+                    } else {
+                        avail
+                    };
+                    let w_cap = max_for_class.saturating_sub(already);
+                    if w > w_cap {
+                        w = w_cap;
+                    }
+                    let (split_pen, taken) = vert_break_insert(body, w, split_max_depth);
+                    if self.tracing {
+                        let p_str = match split_pen {
+                            Some(pen) => format!("{}", pen),
+                            None => format!("{}", EJECT_PENALTY),
+                        };
+                        self.trace_buf.push_str(&format!(
+                            "% split{} to {},{} p={}\n",
+                            class,
+                            ntex_core::register::format_dimen(w),
+                            ntex_core::register::format_dimen(taken),
+                            p_str
+                        ));
+                    }
+                    let taken_debit = if factor > 0 && factor != 1000 {
+                        taken.saturating_mul(1000) / factor
+                    } else {
+                        taken
+                    };
+                    // page_goal 扣除本次 split 吸收的量（L19673）。sub 把后续断点
+                    // 的 badness 算到负目标上（b=awful → c=awful → 立断链）。
+                    self.goal = self.goal.saturating_sub(taken_debit);
+                    match split_pen {
+                        Some(pen) => {
+                            self.insert_penalties = self.insert_penalties.saturating_add(pen);
+                        }
+                        None => {
+                            self.insert_penalties =
+                                self.insert_penalties.saturating_add(EJECT_PENALTY);
+                        }
+                    }
+                    self.split_up_classes.insert(class);
+                    self.insert_heights.insert(class, already + taken);
+                    // insert 节点照常入页（例程域决定 box<n> 里留什么；刀B 域）。
+                    contrib.remove(0);
+                    self.page.push(node);
+                    self.last_is_box = false;
+                    return Outcome::Continue;
                 }
                 if accepted_height > 0 {
                     if self.insert_skips_seen.insert(class) {
@@ -609,14 +682,23 @@ impl PageBuilder {
         }
     }
 
-    /// tex.web `precedes_break`：最后节点类型 < math_node（盒子/规则/胶水/kern/
-    /// 空页尾）为合法断点前驱；penalty/mark/insert/whatsit 不可断。
+    /// tex.web `precedes_break`（L3109）：`type(#)<math_node` —— 盒/规则/ins/
+    /// mark/adjust/disc/whatsit（type 0-8）后可断；glue(10)/kern(11)/math(9)/
+    /// penalty(12) 后不可断（连续 glue 只有贴着盒/ins 等的第一个是断点）。
     /// 注意：topskip 不参与（它直接入页，仅手动输出追踪行），避免 \vsize 极小
     /// 时 topskip 成为空页断点候选 → fire_up 空页死循环。
     fn precedes_break(&self) -> bool {
         matches!(
             self.page.last(),
-            None | Some(Node::Box(_) | Node::Rule { .. } | Node::Glue { .. } | Node::Kern { .. })
+            Some(
+                Node::Box(_)
+                    | Node::Rule { .. }
+                    | Node::Ins { .. }
+                    | Node::Mark { .. }
+                    | Node::Adjust { .. }
+                    | Node::Discretionary { .. }
+                    | Node::Whatsit { .. }
+            )
         )
     }
 
@@ -641,17 +723,22 @@ impl PageBuilder {
     /// [`Self::output_break_penalty`]；胶水/kern 断点为 false）。
     fn try_break(&mut self, pi: i64, at_penalty: bool) -> Option<Outcome> {
         let b = self.badness_now();
-        let c = if b < AWFUL_BAD {
+        // tex.web L19561-19562：成本 = b+pi+insert_penalties 三项目和，且
+        // insert_penalties>=10000 时强制 awful_bad（split 后的页立即可断）。
+        let mut c = if b < AWFUL_BAD {
             if pi <= EJECT_PENALTY {
                 pi
             } else if b < INF_BAD {
-                b + pi
+                b + pi + self.insert_penalties
             } else {
                 DEPLORABLE
             }
         } else {
             b
         };
+        if self.insert_penalties >= 10_000 {
+            c = AWFUL_BAD;
+        }
         // \tracingpages：每次断点尝试输出成本行（tex.web `Display the page break cost`）
         if self.tracing {
             self.trace_buf.push_str(&self.trace_break_line(pi, b, c));
@@ -740,7 +827,13 @@ impl PageBuilder {
     /// （如 `\newpage` 的 -10000、`\clearpage` 的 -10001、`\supereject` 的
     /// -20000）；胶水/kern 断点（页满自然断）与无记录 → `inf_penalty`(10000)。
     pub fn take_front_output_penalty(&mut self) -> Option<i64> {
-        self.fired_penalties.pop_front().or(self.last_fired_penalty)
+        let out = self.fired_penalties.pop_front().or(self.last_fired_penalty);
+        self.output_insert_penalties = self.fired_insert_penalties.pop_front();
+        out
+    }
+
+    pub fn insert_seen(&self) -> bool {
+        self.insert_seen
     }
 
     /// 弹出队首页的断点惩罚——**只在例程真消费了该页之后**（[`Self::front_output_penalty`]
@@ -759,11 +852,15 @@ impl PageBuilder {
     /// 错位到后续页面）。
     pub fn clear_fired_penalties(&mut self) {
         self.fired_penalties.clear();
+        self.fired_insert_penalties.clear();
+        self.output_insert_penalties = None;
     }
 
     /// 页面构建器当前的 `\insertpenalties` 只读值。
     pub fn insert_penalties(&self) -> i64 {
-        self.insert_penalties
+        self.output_insert_penalties
+            .or_else(|| self.fired_insert_penalties.front().copied())
+            .unwrap_or(self.insert_penalties)
     }
 
     /// `fire_up`（tex.web §709+）：按最佳断点打包页面、余下退回贡献、重置页面。
@@ -778,6 +875,12 @@ impl PageBuilder {
         let fired = self.best_penalty.unwrap_or(INF_PENALTY);
         self.last_fired_penalty = Some(fired);
         self.fired_penalties.push_back(fired);
+        // tex.web L19752：fire_up 打包时 insert_penalties:=0（「只数本次打包中
+        // hold-over 的 insert」）——vert_break 的 split 罚在 build_page 期累积、
+        // 打包前被清零，例程读到的 \insertpenalties 从 0 起算（GT gtc 实测
+        // INS=[0] 全页）。快照 0 而非累积值，随后照 L19752 复位。
+        self.fired_insert_penalties.push_back(0);
+        self.insert_penalties = 0;
         let cut = self.best.unwrap_or(self.page.len());
         let resume = self.resume_after_break(cut);
         let page = self.package(cut);
@@ -885,6 +988,7 @@ impl PageBuilder {
         self.insert_heights.clear();
         self.insert_skips_seen.clear();
         self.insert_penalties = 0;
+        self.split_up_classes.clear();
         // \tracingpages：freeze 时输出目标行（tex.web freeze_page_specs）
         if self.tracing {
             self.trace_buf.push_str(&format!(
@@ -916,5 +1020,172 @@ impl PageBuilder {
         self.prev_depth = IGNORE_DEPTH;
         self.insert_heights.clear();
         self.insert_skips_seen.clear();
+        self.insert_penalties = 0;
+        self.split_up_classes.clear();
+    }
+}
+
+/// insert 体 vlist 内的 vert_break（tex.web L18914-19007 的 insert-split 子集）。
+/// 在 `body.children` 里找成本最优断点：返回 (断点惩罚, 断点前自然高+深)。
+/// - 盒/规则累积 cur_height；胶水（前驱可断 → pi=0）/kern（后继胶水 → pi=0）/
+///   penalty（pi=罚值）是断点候选；
+/// - badness 目标 = h（可用高），收缩上限 d（splitmaxdepth）；
+/// - `b<=least_cost` 冠军语义（等值也换，末位胜）；pi<=eject 或 b=awful 立停；
+/// - 扫到末尾（p=null 臂）pi=eject_penalty——对应 q=null → 调用方记 eject_penalty；
+///   此时 taken=全体自然高。
+///
+/// 简化（已登记 KNOWN-SIMPLIFICATIONS 级）：无穷阶拉伸按 s=0 → inf_bad 处理
+/// （与页构建器主循环同口径）；whatsit/mark/ins 不入断点。
+fn vert_break_insert(body: &crate::node::BoxNode, h: i64, d: i64) -> (Option<i64>, i64) {
+    let mut cur_height = 0i64;
+    let mut prev_dp = 0i64;
+    let mut least_cost = AWFUL_BAD;
+    let mut best_place: Option<usize> = None;
+    let mut best_penalty: Option<i64> = None;
+    let mut best_hpd = 0i64;
+    let n = body.children.len();
+    // 冠军判定子过程（tex.web L18986-19005）：b<=least_cost 等值也换、
+    // b=awful 或 pi<=eject 立停。供循环内断点与循环后 p=null 臂共用。
+    macro_rules! champion {
+        ($pen:expr, $hpd:expr) => {{
+            let pen: i64 = $pen;
+            let b_raw = if cur_height < h {
+                // 无穷阶拉伸未跟踪（简化，登记 KNOWN-SIMPLIFICATIONS）：
+                // s=0 → badness=inf_bad → b=deplorable（tex.web 同式）
+                INF_BAD
+            } else if cur_height - h > d {
+                AWFUL_BAD
+            } else {
+                crate::linebreak::badness(cur_height - h, d) as i64
+            };
+            let b = if b_raw < AWFUL_BAD {
+                if pen <= EJECT_PENALTY {
+                    pen
+                } else if b_raw < INF_BAD {
+                    b_raw + pen
+                } else {
+                    DEPLORABLE
+                }
+            } else {
+                b_raw
+            };
+            let mut stop = false;
+            if b <= least_cost {
+                least_cost = b;
+                best_place = Some(n); // 占位：有冠军
+                best_penalty = Some(pen);
+                best_hpd = $hpd;
+            }
+            if b == AWFUL_BAD || pen <= EJECT_PENALTY {
+                stop = true;
+            }
+            stop
+        }};
+    }
+    for (i, node) in body.children.iter().enumerate() {
+        // 断点判定（tex.web @<Use node p to update...@> 子集）
+        let pi: Option<i64> = match node {
+            Node::Box(b) => {
+                cur_height += prev_dp + b.height;
+                prev_dp = b.depth;
+                None
+            }
+            Node::Rule { height, depth, .. } => {
+                cur_height += prev_dp + height;
+                prev_dp = *depth;
+                None
+            }
+            Node::Glue { .. } => {
+                // precedes_break(prev_p)：前一节点 type<math_node（盒/规则/ins 等）
+                let prev_breakable = if i == 0 {
+                    false // prev_p=p 入口：初始胶水非合法断点
+                } else {
+                    matches!(
+                        body.children[i - 1],
+                        Node::Box(_)
+                            | Node::Rule { .. }
+                            | Node::Ins { .. }
+                            | Node::Mark { .. }
+                            | Node::Adjust { .. }
+                            | Node::Discretionary { .. }
+                            | Node::Whatsit { .. }
+                    )
+                };
+                if prev_breakable {
+                    Some(0)
+                } else {
+                    // update_heights
+                    if let Node::Glue { width, .. } = node {
+                        cur_height += prev_dp + width;
+                        prev_dp = 0;
+                    }
+                    None
+                }
+            }
+            Node::Kern { width } => {
+                let next_glue = body
+                    .children
+                    .get(i + 1)
+                    .is_some_and(|nx| matches!(nx, Node::Glue { .. }));
+                if i + 1 == n {
+                    // link(p)=null → t:=penalty_node 臂（tex.web L18992）：作为
+                    // penalty(pi=0) 处理后走 p=null 臂。哨兵：不参与本轮冠军，
+                    // 循环后的 p=null 臂以 eject_penalty 再判（同一 cur_height）。
+                    Some(i64::MIN)
+                } else if next_glue {
+                    Some(0)
+                } else {
+                    cur_height += prev_dp + width;
+                    prev_dp = 0;
+                    None
+                }
+            }
+            Node::Penalty { penalty } => Some(*penalty),
+            Node::Mark { .. } | Node::Ins { .. } => None, // goto not_found
+            _ => None,
+        };
+        let is_end = pi == Some(i64::MIN);
+        if let Some(pen) = pi.filter(|_| !is_end) {
+            if pen < INF_PENALTY {
+                let stop = champion!(pen, cur_height + prev_dp);
+                if stop {
+                    // 立停（b=awful 或 pi<=eject）：tex.web goto done，p=null
+                    // 臂不再运行（L18948 在 champion 检查之后）。
+                    return (best_penalty, best_hpd);
+                }
+            }
+        }
+        // not_found 深度钳制（tex.web L18962-18966）：prev_dp>d 时把超出量
+        // 记入 cur_height、prev_dp 压到 d。best_hpd 总和不受影响，但 badness
+        // 只看 cur_height——盒深超 splitmaxdepth（可为负）时 b 会偏离。
+        if prev_dp > d {
+            cur_height += prev_dp - d;
+            prev_dp = d;
+        }
+    }
+    // p=null 臂（tex.web L18947-18948）：扫描耗尽 → 人工 eject 候选**参与
+    // 冠军竞争**（此前 best_place.is_none() 门控是私设语义——内部断点存在时
+    // 跳过末候选，违反 b<=least_cost 等值换冠军纪律）。
+    let pen = EJECT_PENALTY;
+    let b_raw = if cur_height < h {
+        INF_BAD
+    } else if cur_height - h > d {
+        AWFUL_BAD
+    } else {
+        crate::linebreak::badness(cur_height - h, d) as i64
+    };
+    let b = if b_raw < AWFUL_BAD {
+        pen // pen<=eject_penalty → b:=pi
+    } else {
+        b_raw
+    };
+    if b <= least_cost {
+        // q=null 臂：断点惩罚记 None（调用方按 EJECT_PENALTY 记账），
+        // taken = 全体自然高+深。
+        return (None, cur_height + prev_dp);
+    }
+    match best_place {
+        Some(_) => (best_penalty, best_hpd),
+        None => (None, 0),
     }
 }

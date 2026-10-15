@@ -1918,7 +1918,7 @@ impl PageSink for NodeBuilder {
         !self.page_state.pending_pages.is_empty()
     }
     fn take_output_pending(&mut self) -> bool {
-        !self.page_state.pending_pages.is_empty()
+        self.output_pending()
     }
     fn output_pending_count(&self) -> usize {
         self.page_state.pending_pages.len()

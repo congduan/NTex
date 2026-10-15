@@ -1919,6 +1919,7 @@ mod tests {
         ts.take_transcript()
     }
 
+
     #[test]
     fn vadjust_penalty_reaches_page_builder() {
         let mut ts =

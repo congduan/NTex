@@ -1114,8 +1114,15 @@ impl IncrementalTypesetter {
             }
         }
         // 执行 close_paragraph 产出的待执行输出例程，随后 `\end`/EOF 冲页
-        // 交错（冲一页 → 执行例程 → 再冲）。
+        // 交错（冲一页 → 执行例程 → 再冲）。its_all_over 入口一次性裁决
+        // （同 finish：主列表真实材料 → 允许冲页；中间断页不置位）。
         self.expander.run_pending_output()?;
+        {
+            let b = self.builder_mut();
+            if b.has_residual_material() && b.page_state.pagination {
+                b.page_state.eject_final_pending = true;
+            }
+        }
         loop {
             let ejected = {
                 let b = self.builder_mut();

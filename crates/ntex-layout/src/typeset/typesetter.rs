@@ -875,6 +875,23 @@ impl Typesetter {
         self.expander.run_pending_output()?;
         // 3) 输入结束按 `\end` 冲掉残余页面（tex.web `its_all_over`），
         //    与输出例程交错：冲一页 → 执行例程 → 再冲。
+        //    its_all_over 入口一次性裁决（tex.web L20488：`(page_head=page_tail)
+        //    and(head=tail)` 只在 \end 时判一次）：主列表有真实材料（非纯
+        //    glue/kern/penalty——page_head 只由 append_to_vlist 建立）或页面
+        //    非空 → 允许冲页。中间自然断页不置位（曾在每次出页点置位导致
+        //    普通文档多冲页，tests_page glue_break 回归实证）。
+        {
+            let builder = self
+                .expander
+                .sink_mut()
+                .as_any_mut()
+                .downcast_mut::<NodeBuilder>()
+                .ok_or_else(|| Error::internal("typesetter 安装了 NodeBuilder"))?;
+            let residual = builder.has_residual_material();
+            if residual && builder.page_state.pagination {
+                builder.page_state.eject_final_pending = true;
+            }
+        }
         loop {
             let ejected = {
                 let builder = self

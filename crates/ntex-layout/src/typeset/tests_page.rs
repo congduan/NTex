@@ -114,12 +114,25 @@ use super::*;
         ));
         let got = showthe_values(&ts.take_transcript(), "outputpenalty");
         assert!(got.len() >= 2, "应产出多页：{got:?}");
-        // 首页断点读 0（待主线核：极小 \vsize 下首例程注入早于惩罚写定的疑似
-        // 时序差，见 docs/archive/output-routine-survey.md §5.2 勘误附录）；第 2 页起
-        // 与真 TeX 一致：胶水自然断页 = inf_penalty(10000)。
-        for v in &got[1..] {
-            assert_eq!(v, "10000", "胶水自然断页 \\outputpenalty 应为 10000：{got:?}");
+        // GT（pdftex 同构文档实测 26 页 = [150, 10000×21, 150, 10000]）：胶水
+        // 自然断页 = inf_penalty(10000)，但**末段的 widow-150 是合法点火**
+        // （club/widow 实装后 GT 自己也有）——旧锁「第 2 页起全 10000」写于
+        // club/widow 实装前（绿锁≠对，GT 证伪后按真值重钉）。
+        // 断言三件：①首页 club=150（首行边界）；②中间页 ∈ {10000, 150}
+        // （10000=胶水自然断 / 150=widow 段边界，打包粒度决定 widow 落点）；
+        // ③末页=10000（its_all_over eject 页，断点=合成 penalty(0) 前的胶水）。
+        assert_eq!(got[0], "150", "首页应为行间 clubpenalty 断点：{got:?}");
+        for v in &got[1..got.len() - 1] {
+            assert!(
+                v == "10000" || v == "150",
+                "自然断页 \\outputpenalty 应为 10000（widow 段可为 150）：{got:?}"
+            );
         }
+        assert_eq!(
+            got.last(),
+            Some(&"10000".to_string()),
+            "末页应为 eject（inf_penalty）：{got:?}"
+        );
     }
 
     #[test]

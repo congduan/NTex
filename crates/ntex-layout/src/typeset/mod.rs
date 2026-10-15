@@ -855,6 +855,15 @@ struct PageState {
     /// M3-5-2 断页：启用自动分页（`typeset_dvi` 打开；旧 `typeset` 保持切片行为）。
     pagination: bool,
 
+    /// 段落收口期间暂缓顶层 page builder。
+    ///
+    /// tex.web 的 `line_break` 会先把整段折行产物（行盒与其后的
+    /// insert/adjust material）接回 recent contributions；页面构建器随后才
+    /// 看到这一批材料。NTex 的 `append` 平时是流式喂页构建器的，若在
+    /// `close_paragraph` 每落一个行盒就触发，held-over insert 可能抢在本段
+    /// 的 `\vadjust` penalty 之前 fire_up。
+    defer_page_feed: bool,
+
     /// 页面构建器（`pagination` 时把顶层垂直列表拆成页面）。
     page: PageBuilder,
 
@@ -893,6 +902,9 @@ struct PageState {
     /// 排队，`\box255` 逐页取出，例程反复运行直至队列清空。队列而非单槽——
     /// `close_paragraph` 一次推入多行可能连续产出多页，逐页交错执行例程。
     pending_pages: VecDeque<BoxNode>,
+    /// `eject_one_page` 产出页面且仍有贡献材料时，收尾还要再尝试一次最终 eject。
+    eject_final_pending: bool,
+    empty_eject_seen: bool,
 
     /// RFC-3：页面真正输出（`\shipout` 边界）时置位，通知引擎 flush 延迟写流。
     write_flush_pending: bool,
@@ -1068,6 +1080,19 @@ impl NodeBuilder {
         self.params = *p;
     }
 
+    /// 主列表是否含**真实材料**（tex.web its_all_over 的 `head=tail` 判据）：
+    /// 纯 glue/kern/penalty 不算——page_head 只由 append_to_vlist 建立。
+    /// 供 `\end` 收尾一次性裁决（普通断页中间态不调用）。
+    pub fn has_residual_material(&self) -> bool {
+        self.lists.first().is_some_and(|l| {
+            l.iter().any(|n| match n {
+                Node::Glue { .. } | Node::Kern { .. } | Node::Penalty { .. } => false,
+                Node::Box(b) => !b.children.is_empty(),
+                _ => true,
+            })
+        })
+    }
+
     /// 创建构建器；`pagination` 打开 M3-5-2 断页（自动分页 + parskip + 收尾冲页）。
     fn with_pagination(fonts: Fonts, pagination: bool) -> Self {
         // plain 格式 \sfcode 默认（TeXbook p.75）：.,?! = 3000、: = 2000、; = 1500、, = 1250
@@ -1125,6 +1150,7 @@ impl NodeBuilder {
             },
             page_state: PageState {
                 pagination,
+                defer_page_feed: false,
                 page: PageBuilder::new(),
                 insert_regs: InsertRegs::default(),
                 shipout_next: false,
@@ -1135,6 +1161,8 @@ impl NodeBuilder {
                 output_defined: false,
                 in_output_group: false,
                 pending_pages: VecDeque::new(),
+                eject_final_pending: false,
+                empty_eject_seen: false,
                 write_flush_pending: false,
                 page_shipped: false,
                 output_consumed_count: 0,
@@ -1252,24 +1280,32 @@ impl NodeBuilder {
         // M3-5-2：顶层垂直模式追加后运行页面构建器（TeX build_page 的触发点）。
         // 增量（feed_one）：每产出一页即暂停——若定义了输出例程，让引擎在 token
         // 边界执行例程（ship box255）后再继续；未定义时页面直通 shipped。
-        if self.page_state.pagination && self.mode() == Mode::Vertical && self.lists.len() == 1 {
-            // 断点惩罚队列语境：上一页未消费（例程还没跑）= 排队超前
-            let page = &mut self.page_state.page;
-            let insert_regs = &self.page_state.insert_regs;
-            if let Some(p) = page.feed_one(
-                &mut self.lists[0],
-                &self.params,
-                insert_regs,
-                self.page_state.output_defined,
-            ) {
-                self.accept_page(p);
-                // ETRIP 冲刺：断页 marks 轮转（top = 旧 bot，first 清空，bot 保留继承）
-                self.rotate_marks();
-            }
-            // \tracingpages：断页追踪输出到转录（tex.web begin_diagnostic → log）
-            if let Some(t) = self.page_state.page.take_trace() {
-                let _ = self.write16(t);
-            }
+        if self.page_state.pagination
+            && !self.page_state.defer_page_feed
+            && self.mode() == Mode::Vertical
+            && self.lists.len() == 1
+        {
+            self.feed_page_builder_once();
+        }
+    }
+
+    fn feed_page_builder_once(&mut self) {
+        // 断点惩罚队列语境：上一页未消费（例程还没跑）= 排队超前
+        let page = &mut self.page_state.page;
+        let insert_regs = &self.page_state.insert_regs;
+        if let Some(p) = page.feed_one(
+            &mut self.lists[0],
+            &self.params,
+            insert_regs,
+            self.page_state.output_defined,
+        ) {
+            self.accept_page(p);
+            // ETRIP 冲刺：断页 marks 轮转（top = 旧 bot，first 清空，bot 保留继承）
+            self.rotate_marks();
+        }
+        // \tracingpages：断页追踪输出到转录（tex.web begin_diagnostic → log）
+        if let Some(t) = self.page_state.page.take_trace() {
+            let _ = self.write16(t);
         }
     }
 

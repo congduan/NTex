@@ -184,13 +184,17 @@ use super::*;
                 .is_some_and(|v| v == "10000"),
             "held-over insert 应先在前一自然断点出页，而不是等后续惩罚：{t:?}"
         );
+        // GT（pdftex gtd.tex 同构造实测）：INS=[0] 全页——tex.web L19752 在
+        // fire_up 打包期 insert_penalties:=0，vert_break 的 split 罚（含
+        // floatingpenalty 7）在 build_page 期累积、打包前被清零，例程读到
+        // 的 \insertpenalties 从 0 起算。旧锁「应含 7」被 GT 证伪（绿锁≠对），
+        // 按 GT 重钉：全部读数为 0。
+        let ins = showthe_values(&t, "insertpenalties");
         assert!(
-            showthe_values(&t, "insertpenalties")
-                .iter()
-                .any(|v| v == "7"),
-            "held-over insert 的 floatingpenalty 应进入 \\insertpenalties：{t:?}"
+            ins.iter().all(|v| v == "0"),
+            "\\insertpenalties 例程读数应为 0（L19752 打包清零）：{ins:?}\\n{t}"
         );
-        assert!(pages.len() >= 2, "应至少产出两页：{pages:?}\n{t}");
+        assert!(pages.len() >= 2, "应至少产出两页：{pages:?}\\n{t}");
     }
 
     /// held-over insert 回到既有页断点时，断点节点本身已被消费；它后面的
@@ -215,6 +219,83 @@ use super::*;
         assert!(
             vals.iter().all(|v| v != "-1000000000"),
             "段内强制折行 penalty 不得在 insert 重试后成为页断点：{vals:?}\n{t}"
+        );
+    }
+
+    /// TRIP 刀 AD：断页 insert 溢出语义对齐 tex.web（split 成本 + 行间 club/
+    /// widow 惩罚）。GT（tex 3.141592653，/tmp/bladeAD/gt1t.log tracingpages
+    /// 实证）：`[150],[-5000],[-333]`——第一页在行间断点（p=150=
+    /// interline 0 + clubpenalty 150），vadjust 页次之，held-over insert 走
+    /// split 计账后由 -333 强制页收尾。
+    #[test]
+    fn paragraph_vadjust_precedes_following_held_over_insert() {
+        let mut ts = Typesetter::with_metrics(metrics);
+        let _ = ts.typeset_dvi(concat!(
+            r"\vsize=1pt \hsize=20pt \count150=1000 \dimen150=1pt ",
+            r"\output={\showthe\outputpenalty\shipout\box255} ",
+            r"A\hfill\vadjust{\penalty-5000}",
+            r"\penalty-1000000000 A\par",
+            r"\insert150{\vskip100pt\floatingpenalty7}",
+            r"\penalty-333\end"
+        ));
+        let t = ts.take_transcript();
+        let vals = showthe_values(&t, "outputpenalty");
+        // GT 逐字序 = [150, -5000, -333]（pdftex gta.tex 实测，CLI 同对齐）。
+        // in-process 假度量（metrics 函数）折行行数与真字体不同，逐字序在
+        // 单测通道不稳；此处锁语义序：vadjust 先于 -333 强制页、且不抢首行
+        // 行间断点。CLI 通道（ntex-dvi gta.tex）另以逐字序验收。
+        let i5000 = vals
+            .iter()
+            .position(|v| v == "-5000")
+            .unwrap_or_else(|| panic!("应含 vadjust 页 -5000：{vals:?}
+{t}"));
+        let i333 = vals
+            .iter()
+            .position(|v| v == "-333")
+            .unwrap_or_else(|| panic!("应含 -333 强制页：{vals:?}
+{t}"));
+        assert!(i333 > i5000, "-333 强制页应在 vadjust 页之后：{vals:?}
+{t}");
+        // 注：首页是否为 club 150 取决于折行行数（真字体 hfill 处断 = GT
+        // 3 行首页 150；假度量 2 行折行材料随 box1，首页 -5000 语义自洽），
+        // 该相对序由 CLI 通道逐字验收，不在假度量单测断言。
+    }
+
+    /// TRIP 刀 AD：自然断点先行形。GT（/tmp/bladeAD/gt2t.log 实证）：
+    /// `[10000],[10000],[150],[-5000],[10000]`——X 页自然断、insert 溢出
+    /// split 计账后负目标空页立即点火（第二 [10000]）、两行段行间
+    /// [150] 页、vadjust 页、末尾 inf 页。
+    #[test]
+    fn paragraph_vadjust_precedes_pending_natural_insert_retry() {
+        let mut ts = Typesetter::with_metrics(metrics);
+        let _ = ts.typeset_dvi(concat!(
+            r"\vsize=1pt \hsize=20pt \count150=1000 \dimen150=1pt ",
+            r"\output={\showthe\outputpenalty\shipout\box255} ",
+            r"\hbox{X}\vskip0pt",
+            r"\insert150{\vskip100pt\floatingpenalty7}",
+            r"A\hfill\vadjust{\penalty-5000}",
+            r"\penalty-1000000000 A\par\end"
+        ));
+        let t = ts.take_transcript();
+        let vals = showthe_values(&t, "outputpenalty");
+        // GT 逐字序 = [10000, 10000, 150, -5000, 10000]（pdftex gtb.tex 实测，
+        // CLI 同对齐）。in-process 假度量下逐字序不稳，锁语义序：-5000 页在
+        // 末 eject 页之前、末页=inf_penalty、-5000 前有先行断页。
+        let i5000 = vals
+            .iter()
+            .position(|v| v == "-5000")
+            .unwrap_or_else(|| panic!("应含 vadjust 页 -5000：{vals:?}
+{t}"));
+        assert!(
+            i5000 + 1 < vals.len(),
+            "-5000 页后应还有 its_all_over eject 页：{vals:?}
+{t}"
+        );
+        assert_eq!(
+            vals.last(),
+            Some(&"10000".to_string()),
+            "末页应为 eject（inf_penalty）：{vals:?}
+{t}"
         );
     }
 
@@ -290,4 +371,4 @@ use super::*;
         assert_eq!(pages.len(), 1, "组应闭合、断页应出页：{pages:?}");
         assert!(t.contains("FULL"), "组闭合后脚注体应投进 box254：{t:?}");
         assert!(!t.contains("VOID"), "不应走 void 臂：{t:?}");
-    }
+        }
