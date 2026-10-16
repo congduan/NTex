@@ -5,7 +5,7 @@ use super::*;
         // 刀K：EOF 残组走 final_cleanup 救济（警告进转录 + 就地丢弃），
         // 作业不再拒收（TRIP/ETRIP 现场：\end 被上游错误恢复吞掉时残组只能
         // 靠救济收尾）。严格拒收仍保留在 incremental 路径与 pending_box 分支。
-        let mut ts = Typesetter::with_metrics(metrics);
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
         ts.typeset(r"\hbox{a").unwrap();
         let t = ts.take_transcript();
         assert!(
@@ -18,7 +18,7 @@ use super::*;
     fn end_inside_unclosed_group_and_cond_completes() {
         // 刀K 回归锁 1：显式 \end 时未闭合组/条件 → final_cleanup 救济
         // （警告 + 正常收尾），不 fatal。去救济臂必红。
-        let mut ts = Typesetter::with_metrics(metrics);
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
         ts.typeset(r"\begingroup\iftrue A\end").unwrap();
         let t = ts.take_transcript();
         assert!(
@@ -35,7 +35,7 @@ use super::*;
     fn eof_inside_unclosed_group_and_cond_completes() {
         // 刀K 回归锁 2：\end 被吞（TRIP L363 runaway skip / ETRIP 现场）→
         // 纯 EOF 残组/残条件同样救济收尾，不 fatal。去救济臂必红。
-        let mut ts = Typesetter::with_metrics(metrics);
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
         ts.typeset(r"\begingroup\iftrue A").unwrap();
         let t = ts.take_transcript();
         assert!(
@@ -63,7 +63,7 @@ use super::*;
         // tex.web vsplit @<Dispense with trivial cases of void or bad boxes@>：
         // void → 结果 void、静默（改动前此处报 "\vsplit 盒子为空（void）" 硬错）。
         let mut ts =
-            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+            Typesetter::with_metrics(metrics).plain_params().with_space(|_| Glue::new(1000, 500, 300));
         let res = ts.typeset_dvi(concat!(
             r"\output={\shipout\box255} ",
             r"\setbox0=\vsplit255 to 655360sp ",
@@ -89,7 +89,7 @@ use super::*;
         // 只读内部量仍必须查询真实排版 sink。此前 `\the\wd0/\ht0/\dp0`
         // 在该路径恒读 VecSink 默认 0。
         let mut ts =
-            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+            Typesetter::with_metrics(metrics).plain_params().with_space(|_| Glue::new(1000, 500, 300));
         ts.typeset_dvi(
             r"\setbox0=\hbox{abc}\message{WD=[\the\wd0] HT=[\the\ht0] DP=[\the\dp0]}\end",
         )
@@ -108,7 +108,7 @@ use super::*;
         // tex.web vpackage(exactly)），余量留在 255。latex.ltx `\@doclearpage`
         // 的 `\setbox\@tempboxa\vsplit\@cclv to\z@` 走的正是这条路。
         let mut ts =
-            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+            Typesetter::with_metrics(metrics).plain_params().with_space(|_| Glue::new(1000, 500, 300));
         ts.typeset_dvi(concat!(
             r"\vsize 2000000sp\hsize 10000000sp ",
             r"\output={\dimen0=\ht255\showthe\dimen0\dimen1=\wd255\showthe\dimen1",
@@ -147,7 +147,7 @@ use super::*;
         // LaTeX mark 提取用 `\vsplit<box> to \maxdimen` 抽空临时页盒后，
         // 依赖原盒变 void 作为递归终止条件；空 vbox 不等价于 void。
         let mut ts =
-            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+            Typesetter::with_metrics(metrics).plain_params().with_space(|_| Glue::new(1000, 500, 300));
         ts.typeset_dvi(concat!(
             r"\vsize 2000000sp\hsize 10000000sp ",
             r"\output={\setbox0=\vsplit255 to 1073741823sp ",

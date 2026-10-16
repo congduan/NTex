@@ -12,7 +12,7 @@ use super::*;
     /// 6.83331; …` + `.\hbox(...)` 子树；此处 dummy 字体小一个量级）。
     #[test]
     fn insert_body_typeset_and_split_params_preserved() {
-        let mut ts = Typesetter::with_metrics(metrics);
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
         let _ = ts.typeset_dvi(
             r"\splittopskip=10pt plus2fil \splitmaxdepth=1pt \floatingpenalty=200 \setbox0=\vbox{\insert150{\hbox{FN}}}\showbox0\end",
         );
@@ -36,7 +36,7 @@ use super::*;
     /// `box(class)` → `\ifvoid150` 为假。真 TeX：`FULL`。
     #[test]
     fn insert_register_nonvoid_after_page_break() {
-        let mut ts = Typesetter::with_metrics(metrics);
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
         // 真 TeX 探针 2（p4.tex）：\penalty-10000 与 \ifvoid 紧邻时条件在数字
         // 扫描的前瞻位求值（真 TeX 同款：p3.tex 紧邻 → VOID、p4.tex 带空格 →
         // FULL），故探针用空格隔开。
@@ -54,7 +54,7 @@ use super::*;
     /// 体留在行盒里时 box150 恒 void（= P0「脚注文本整段消失」）。
     #[test]
     fn insert_inside_paragraph_reaches_register() {
-        let mut ts = Typesetter::with_metrics(metrics);
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
         let _ = ts.typeset_dvi(
             r"text\insert150{\hbox{A}}tail\par\vfill\penalty-10000 \ifvoid150\message{VOID}\else\message{FULL}\fi\end",
         );
@@ -70,7 +70,7 @@ use super::*;
     /// （fire_up 的 `vpackage(ins_ptr(p))`，卸盒即体内容、无 ins 节点）、150 void。
     #[test]
     fn insert_unvbox_roundtrip_empties_register() {
-        let mut ts = Typesetter::with_metrics(metrics);
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
         let _ = ts.typeset_dvi(
             r"\hbox{X}\insert150{\hbox{A}}\vfill\penalty-10000 \setbox3=\vbox{\unvbox150}\showbox3\ifvoid150\message{VOID}\else\message{FULL}\fi\end",
         );
@@ -105,7 +105,7 @@ use super::*;
             pages[0].children
         );
         // 盒组内不动：ins 节点留在 vbox 0
-        let mut ts = Typesetter::with_metrics(metrics);
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
         let _ = ts.typeset_dvi(r"\setbox0=\vbox{\insert150{\hbox{A}}}\showbox0\end");
         assert!(
             ts.take_transcript().contains(r"\insert150"),
@@ -118,7 +118,7 @@ use super::*;
     /// 放行会写穿页队列。
     #[test]
     fn insert255_redirects_to_zero_with_error() {
-        let mut ts = Typesetter::with_metrics(metrics);
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
         let _ = ts.typeset_dvi(
             r"\hbox{X}\insert255{\hbox{A}}\vfill\penalty-10000 \ifvoid0\message{VOID}\else\message{FULL}\fi\end",
         );
@@ -136,7 +136,7 @@ use super::*;
     /// 把脚注排到页底。
     #[test]
     fn insert_footnote_reaches_page_bottom_and_reserves_space() {
-        let mut ts = Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+        let mut ts = Typesetter::with_metrics(metrics).plain_params().with_space(|_| Glue::new(1000, 500, 300));
         let (pages, _) = ts
             .typeset_dvi(
                 r"\count150=1000 \dimen150=50pt \skip150=12pt
@@ -167,7 +167,7 @@ use super::*;
     /// 累计的 `\insertpenalties`。
     #[test]
     fn held_over_insert_fires_at_prior_break_and_records_float_cost() {
-        let mut ts = Typesetter::with_metrics(metrics);
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
         let (pages, _) = ts
             .typeset_dvi(concat!(
                 r"\vsize=50pt \hsize=200pt \count150=1000 \dimen150=20pt ",
@@ -202,7 +202,7 @@ use super::*;
     /// vertical page penalty。
     #[test]
     fn held_over_insert_retry_does_not_replay_paragraph_penalty() {
-        let mut ts = Typesetter::with_metrics(metrics);
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
         let _ = ts.typeset_dvi(concat!(
             r"\vsize=1pt \hsize=20pt \count150=1000 \dimen150=1pt ",
             r"\output={\showthe\outputpenalty\shipout\box255} ",
@@ -229,7 +229,7 @@ use super::*;
     /// split 计账后由 -333 强制页收尾。
     #[test]
     fn paragraph_vadjust_precedes_following_held_over_insert() {
-        let mut ts = Typesetter::with_metrics(metrics);
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
         let _ = ts.typeset_dvi(concat!(
             r"\vsize=1pt \hsize=20pt \count150=1000 \dimen150=1pt ",
             r"\output={\showthe\outputpenalty\shipout\box255} ",
@@ -267,7 +267,7 @@ use super::*;
     /// [150] 页、vadjust 页、末尾 inf 页。
     #[test]
     fn paragraph_vadjust_precedes_pending_natural_insert_retry() {
-        let mut ts = Typesetter::with_metrics(metrics);
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
         let _ = ts.typeset_dvi(concat!(
             r"\vsize=1pt \hsize=20pt \count150=1000 \dimen150=1pt ",
             r"\output={\showthe\outputpenalty\shipout\box255} ",
@@ -313,7 +313,7 @@ use super::*;
     /// 不报 Missing number（plain.tex `\footstrut` 即 `\vbox to\splittopskip{}`）。
     #[test]
     fn glue_param_in_dimen_context_takes_width() {
-        let mut ts = Typesetter::with_metrics(metrics);
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
         let _ = ts.typeset_dvi(
             r"\splittopskip=7pt \setbox0=\vbox to\splittopskip{\hbox{X}}\ifdim\ht0>6.9pt\message{HTOK}\else\message{HTBAD}\fi\end",
         );
@@ -332,7 +332,7 @@ use super::*;
     /// `\if\bgroup{` 判真。此前一刀切非字符哨兵 → `\ifcat` 恒真 → 误支。
     #[test]
     fn let_to_char_cs_is_a_character_in_if_operands() {
-        let mut ts = Typesetter::with_metrics(metrics);
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
         let _ = ts.typeset_dvi(
             r"\let\bgroup={ \let\next=Z\ifcat\bgroup\noexpand\next\message{CATTRUE}\else\message{CATFALSE}\fi \let\bg={ \if\bg{\message{CHREQ}\fi\end",
         );
@@ -352,7 +352,7 @@ use super::*;
     /// 该测锁的是②的组闭合链 + insert 落页）。
     #[test]
     fn vfootnote_dispatch_closes_insert_group_and_ships_page() {
-        let mut ts = Typesetter::with_metrics(metrics);
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
         let (pages, _) = ts
             .typeset_dvi(
                 r"\catcode`\@=11 \let\bgroup={ \let\egroup=} \def\myfoot{\egroup}%

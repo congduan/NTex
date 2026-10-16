@@ -674,13 +674,15 @@ fn line_demerits(bad: u16, pi: i64, fit: FitClass, prev_fit: FitClass) -> i64 {
     d
 }
 
-/// 折行遍（tex.web first_pass/second_pass）。
+/// 折行遍（tex.web first_pass/second_pass/final_pass）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Pass {
     /// 第一遍：\pretolerance（失败 = active 集空，无兜底）。
     First,
-    /// 第二遍：\tolerance（active 空兜底恢复最近起点，保证强制末点可达）。
+    /// 第二遍：\tolerance（普通 second_pass；不启用 artificial 兜底）。
     Second,
+    /// 最后一遍：`inf_bad` 阈值 + `final_pass`，仅此遍可用 artificial 兜底。
+    Final,
 }
 
 /// 核心 DP：返回（最优断点路径下标序列，最小总 demerits）。
@@ -716,6 +718,9 @@ fn best_path(
         trace.push_str(match pass {
             Pass::First => "@firstpass\n",
             Pass::Second => "@secondpass\n",
+            // tex.web 的 `@secondpass` 在进入 second_pass 时只输出一次；随后的
+            // final_pass 是同一遍的重扫，不能另添追踪标记。
+            Pass::Final => "",
         });
     }
 
@@ -728,7 +733,7 @@ fn best_path(
         //   @<Prepare to deactivate...@>）；否则淘汰（不入 survivors）。
         // - b ≤ inf_bad：active 一律保留；b ≤ threshold 记录候选，超阈值仅
         //   不产生候选（tex.web `goto continue`）——淘汰与记录门槛解耦。
-        let is_final = pass == Pass::Second;
+        let is_final = pass == Pass::Final;
         let mut champion: [Option<(i64, usize, FitClass)>; 4] = [None; 4];
         let mut overfull_fallback: Option<(FitClass, i64, usize, FitClass)> = None;
         let mut survivors: Vec<usize> = Vec::new();
@@ -809,8 +814,12 @@ fn best_path(
                 // 第一遍：active 淘汰殆尽（overfull 行）→ 失败重跑第二遍
                 //（tex.web 主循环 `link(active)=last_active` 停扫 + 非 done 重来）
                 Pass::First => return None,
-                // 第二遍不会到这（单 active 的 overfull 走 artificial 已记录候选）
-                Pass::Second => {}
+                // ordinary second_pass 不开 final_pass 的 artificial 兜底：无解后
+                // 由调用方以 `inf_bad` 进入 final_pass 重扫。
+                Pass::Second => return None,
+                // final_pass 的单 active overfull 会走 artificial；保留该臂以
+                // 维持已有状态机的防御性语义。
+                Pass::Final => {}
             }
         }
         if champion.iter().all(|c| c.is_none()) {
@@ -867,9 +876,9 @@ fn best_path(
 
 /// Knuth-Plass 断行：返回行区间 `(start, end)`（`end` 不含；行内容 = `[start, end)`）。
 ///
-/// 两遍折行（tex.web line_break）：先以 `pretolerance` 尝试第一遍（失败 =
-/// active 集空、内容断不开）；失败且 `pretolerance >= 0` 时第二遍用
-/// `tolerance`（tex.web `\pretolerance=-1` 跳过第一遍直接第二遍）。
+/// 三段折行（tex.web line_break）：先以 `pretolerance` 尝试第一遍；失败后以
+/// `tolerance` 作 ordinary second_pass；仍无解才以 `inf_bad` 作 final_pass。
+/// `\pretolerance=-1` 只跳过第一遍。
 /// `tracing` 时返回 `\tracingparagraphs` 追踪文本（第二返回值）。
 ///
 /// `shape` = `\parshape` 表 `[(indent, width); n]`（空表 = 无形状，逐行 `\hsize`）。
@@ -913,8 +922,8 @@ pub fn knuth_plass(
             }
         }
     }
-    // 第二遍：\tolerance（tex.web second_pass；\pretolerance=-1 时唯一一遍）
-    let (path, _total, t) = best_path(
+    // 第二遍：\tolerance（ordinary second_pass；不启用 artificial 兜底）。
+    if let Some((path, _total, t)) = best_path(
         &breaks,
         hsize,
         tolerance,
@@ -922,8 +931,27 @@ pub fn knuth_plass(
         tracing,
         shape,
         skips,
+    ) {
+        trace.push_str(&t);
+        return (path_to_lines(&breaks, &path), trace);
+    }
+    // `best_path` 的失败形态不携带中途追踪；但进入 ordinary second_pass 的
+    // 标记本身仍须保留。final_pass 续写同一段，不能再打印一次。
+    if tracing {
+        trace.push_str("@secondpass\n");
+    }
+    // final_pass：阈值钳为 inf_bad，且只在此遍打开 tex.web 的 artificial
+    // demerits 兜底。追踪延续 second_pass，不重复打印 @secondpass。
+    let (path, _total, t) = best_path(
+        &breaks,
+        hsize,
+        i64::from(INF_BAD),
+        Pass::Final,
+        tracing,
+        shape,
+        skips,
     )
-    .expect("第二遍必有路径");
+    .expect("final_pass 必有路径");
     trace.push_str(&t);
     (path_to_lines(&breaks, &path), trace)
 }
@@ -1178,8 +1206,8 @@ mod tests {
         .0;
         // 可行处照常成行（[0,2] 收缩可容纳），不可行处 artificial 兜底推进——
         // 只断言不再退化为单条巨行（旧行为 = 1 行）且词序保持。
-        assert_eq!(lines.len(), 3);
-        assert_eq!(lines[0], (0, 3));
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0], (0, 1));
     }
 
     #[test]
@@ -1222,7 +1250,7 @@ mod tests {
         let (lines, _trace) = knuth_plass(&hlist, 100, 200, 100, false, &[], LineSkips::default());
         assert_eq!(
             lines,
-            vec![(0, 5), (6, 19), (20, 21)],
+            vec![(0, 5), (6, 11), (12, 21)],
             "首行应断在 g3（自然宽恰好的断点），而非被 d=0 兜底推过不可断块"
         );
     }
@@ -1474,8 +1502,8 @@ mod tests {
         );
         assert_eq!(
             without,
-            vec![(0, 8)],
-            "无挤压：应急单行（5W 超宽 0.5W）{without:?}"
+            vec![(0, 1), (2, 9)],
+            "无挤压：final_pass 保留禁则后的断点并以两行收束：{without:?}"
         );
         skips.squeeze = true;
         let (with, trace) = knuth_plass(&prepared, hsize, 200, 100, true, &[], skips);

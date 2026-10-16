@@ -19,7 +19,7 @@ mod tests {
         let lines: Vec<&str> = full.lines().collect();
         for end in [29, 30] {
             let src = lines[1..end].join("\n");
-            let mut ts = Typesetter::with_tfm();
+            let mut ts = Typesetter::with_tfm().plain_params();
             match ts.typeset(&src) {
                 Ok(_) => eprintln!("DBG L2..{end}: ok"),
                 Err(e) => {
@@ -35,7 +35,7 @@ mod tests {
             ("on+toksdef", "\\def\\on{1} \\toksdef\\tokens=256"),
         ] {
             let src = format!("{}\n{extra}", lines[1..28].join("\n"));
-            let mut ts = Typesetter::with_tfm();
+            let mut ts = Typesetter::with_tfm().plain_params();
             match ts.typeset(&src) {
                 Ok(_) => eprintln!("DBG [{}] ok", label),
                 Err(e) => eprintln!("DBG [{}] ERR {e}", label),
@@ -47,7 +47,7 @@ mod tests {
             ("skip200-ifdim", "\\skip200=10pt plus5fil\\ifdim\\hsize<\\hsize\\fi lllminus 0 fill"),
             ("skip200-full", "\\skip200 = 10pt plUs5fil\\ifdim\\hsize<\\hsize\\fi lllminus 0 fill"),
         ] {
-            let mut ts = Typesetter::with_tfm();
+            let mut ts = Typesetter::with_tfm().plain_params();
             match ts.typeset(src) {
                 Ok(_) => eprintln!("DBG [L32-{label}] ok"),
                 Err(e) => eprintln!("DBG [L32-{label}] ERR {e}"),
@@ -61,7 +61,10 @@ mod tests {
     }
 
     fn typeset(text: &str) -> Result<Vec<Node>> {
-        Typesetter::with_metrics(metrics).typeset(text)
+        // plain_params()：夹具显式要 plain 数值默认（hsize=6.5in/tolerance=200
+        // 等）——引擎初表已按 INITEX 全零化（刀AE 分层），裸 with_metrics 拿到
+        // 的不再是 plain 版心（锁语义不锁环境）。
+        Typesetter::with_metrics(metrics).plain_params().typeset(text)
     }
 
     fn as_box(n: &Node) -> &BoxNode {
@@ -494,10 +497,10 @@ mod tests {
             !on_t.contains("Overfull"),
             "开后字间可断，不应再报 Overfull：{on_t}"
         );
-        // 断点落在汉字之间（装得下的第 5 字后）：首行 5 个字形、次行 3 个。
-        // 断点处那处字间胶水被**丢弃**（Tex §845：断点自身胶水不入行宽），
-        // 行内其余胶水被拉伸到 hsize——首行胶水宽 3513sp ≈ 0.0536pt，
-        // 正是「自然宽 117021sp → hsize 131072sp」的余量摊到 4 处字间。
+        // 假度量、\hsize=2pt 的 tracingparagraphs 成本账：4+4 的路径是
+        // 196 + 144 = 340（首行 b=4，末行 b=2），优于从第 5 字断开的候选。
+        // 行间 150 penalty 由段后节点产生，不参与这个行内断点的 p=0 成本。
+        // 断点处字间胶水被丢弃（TeX §845）；每个四字行余量由三处胶水拉伸。
         let counts: Vec<usize> = on
             .iter()
             .filter_map(|n| match n {
@@ -510,7 +513,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(counts, vec![5, 3], "断点应落在第 5 个汉字之后：{on:?}");
+        assert_eq!(counts, vec![4, 4], "断点应落在第 4 个汉字之后：{on:?}");
         let Node::Box(first) = &on[0] else {
             panic!("首节点应为行盒：{on:?}");
         };
@@ -525,12 +528,7 @@ mod tests {
             .collect();
         assert_eq!(
             stretched,
-            vec![
-                (3513, 32768),
-                (3513, 32768),
-                (3512, 32768),
-                (3513, 32768)
-            ],
+            vec![(11688, 32768), (11688, 32768), (11688, 32768)],
             "行内字间胶水应被拉伸（每处 stretch 0.5pt）：{on:?}"
         );
     }
@@ -639,7 +637,10 @@ mod tests {
         Glue::new(10 * SP_PER_PT, 5 * SP_PER_PT, 3 * SP_PER_PT)
     }
     fn typeset_spaced(text: &str) -> Result<Vec<Node>> {
-        Typesetter::with_metrics(metrics).with_space(space).typeset(text)
+        Typesetter::with_metrics(metrics)
+            .with_space(space)
+            .plain_params()
+            .typeset(text)
     }
 
     fn spaced_box_children(text: &str) -> Vec<Node> {
@@ -875,15 +876,15 @@ mod tests {
     #[test]
     fn paragraph_wraps_at_hsize() {
         // "ab cd" 总宽 5394sp、\hsize 4000sp：断点胶水不入行（tex.web try_break
-        // 先于胶水累计调用），首行 "ab" 无内部胶水 → badness 10000（demerits 10⁸），
-        // 单行（末行强制断点 d=0）更优 → 只折一行（与 pdfTeX 语义一致）
+        // 先于胶水累计调用）。final_pass 不再把 tolerance 段的不可行断点白送
+        // d=0，因此保留真正的 "ab" / "cd" 两行路径。
         let src = r"\hsize 4000sp ab cd";
         let main = Typesetter::with_metrics(metrics)
             .with_space(|_| Glue::new(1000, 500, 300))
             .typeset(src)
             .unwrap();
         let lines: Vec<&Node> = main.iter().filter(|n| matches!(n, Node::Box(_))).collect();
-        assert_eq!(lines.len(), 1, "断点胶水不含入行时单行更优：{main:?}");
+        assert_eq!(lines.len(), 2, "final_pass 应保留真实的两行成本路径：{main:?}");
     }
 
     #[test]
@@ -907,7 +908,7 @@ mod tests {
     }
 
     fn tfm_chars(src: &str) -> (Vec<u32>, i64, i64, i64) {
-        let mut ts = Typesetter::with_tfm();
+        let mut ts = Typesetter::with_tfm().plain_params();
         let main = ts.typeset(src).unwrap();
         assert_eq!(main.len(), 1);
         let b = as_box(&main[0]);
@@ -934,7 +935,7 @@ mod tests {
 
     /// 行盒 children（\hbox{\cmr ...}；连字/字距/词间距均在此层）。
     fn tfm_line_children(text: &str) -> Vec<Node> {
-        let mut ts = Typesetter::with_tfm();
+        let mut ts = Typesetter::with_tfm().plain_params();
         let main = ts.typeset(text).unwrap();
         assert_eq!(main.len(), 1);
         as_box(&main[0]).children.clone()
@@ -1010,7 +1011,7 @@ mod tests {
             return;
         };
         let g = fm.space_glue();
-        let mut ts = Typesetter::with_tfm();
+        let mut ts = Typesetter::with_tfm().plain_params();
         let main = ts.typeset(r"\font\cmr=cmr10\hbox{\cmr a b}").unwrap();
         let b = as_box(&main[0]);
         assert_eq!(b.children.len(), 3);
@@ -1033,7 +1034,7 @@ mod tests {
     fn tfm_missing_font_errors() {
         // tex.web \\font 失败 = 报错恢复（绑定字体 0，作业继续），不向排版层传 Err。
         // 断言转录含 "not loadable"（错误面在转录，不在 Result）。
-        let mut ts = Typesetter::with_tfm();
+        let mut ts = Typesetter::with_tfm().plain_params();
         let r = ts.typeset(r"\font\x=definitely_not_a_font");
         assert!(r.is_ok(), "\\font 加载失败应恢复而非致命：{:?}", r.err());
         let transcript = ts.take_transcript();
@@ -1049,7 +1050,7 @@ mod tests {
             eprintln!("未找到 cmr10.tfm，跳过");
             return;
         };
-        let mut ts = Typesetter::with_tfm();
+        let mut ts = Typesetter::with_tfm().plain_params();
         ts.typeset(r"\font\cmr=cmr10").unwrap();
         let (_, width, _, _) = tfm_chars_in(&mut ts, r"\cmr a");
         let (w, _, _) = fm.char_metrics(b'a' as u32);
@@ -1087,7 +1088,9 @@ mod tests {
 
     /// 分页排版（fn 指针度量 + 词间距）；返回 \shipout 页面。
     fn paginated(src: &str) -> Result<Vec<BoxNode>> {
-        let mut ts = Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+        let mut ts = Typesetter::with_metrics(metrics)
+            .with_space(|_| Glue::new(1000, 500, 300))
+            .plain_params();
         ts.typeset_dvi(src).map(|(pages, _)| pages)
     }
 
@@ -1132,7 +1135,7 @@ mod tests {
     // ---------- M3 收尾（RFC-3）：VFS 集成 ----------
 
     fn ts_with_vfs() -> (Typesetter, ntex_io::MemVfs) {
-        let mut ts = Typesetter::with_tfm();
+        let mut ts = Typesetter::with_tfm().plain_params();
         let vfs = ntex_io::MemVfs::new();
         ts.set_vfs(Box::new(vfs));
         let mut vfs = ts.take_vfs();
@@ -1221,15 +1224,15 @@ mod tests {
         let preamble = r"\def\emph#1{[#1]}\def\hi{Hi}";
         let doc = r"\emph{Hello} \hi there.";
 
-        let mut ts1 = Typesetter::with_tfm();
+        let mut ts1 = Typesetter::with_tfm().plain_params();
         ts1.typeset_dvi(preamble).unwrap();
         let state = ts1.export_state();
 
-        let mut ts2 = Typesetter::with_tfm();
+        let mut ts2 = Typesetter::with_tfm().plain_params();
         ts2.import_state(state);
         let (pages2, _) = ts2.typeset_dvi(doc).unwrap();
 
-        let mut ts3 = Typesetter::with_tfm();
+        let mut ts3 = Typesetter::with_tfm().plain_params();
         let (pages3, _) = ts3.typeset_dvi(&format!("{preamble} {doc}")).unwrap();
 
         let text_of = |pages: &[BoxNode]| {
@@ -1253,11 +1256,11 @@ mod tests {
         let preamble = r"\font\cmr=cmr10 \cmr \output={\shipout\vbox{\hbox{H}\box255}}";
         let doc = r"Body.";
 
-        let mut ts1 = Typesetter::with_tfm();
+        let mut ts1 = Typesetter::with_tfm().plain_params();
         ts1.typeset_dvi(preamble).unwrap();
         let state = ts1.export_state();
 
-        let mut ts2 = Typesetter::with_tfm();
+        let mut ts2 = Typesetter::with_tfm().plain_params();
         ts2.import_state(state);
         let (pages, _) = ts2.typeset_dvi(doc).unwrap();
 
@@ -1309,8 +1312,10 @@ mod tests {
         assert_eq!(v.height, (145 * SP_PER_PT) / 10, "vcenter 应按轴上移：{v:?}");
         assert_eq!(v.depth, (95 * SP_PER_PT) / 10);
 
-        // 对照：\vbox 不做轴重分
+        // 对照：\vbox 不做轴重分（plain_params 挂 plain 版心/boxmaxdepth，
+        // 与 vcenter 臂同环境对照轴重分差异而非 maxdepth 钳制）
         let main = Typesetter::with_tfm()
+            .plain_params()
             .typeset(r"$\vbox{\hbox{\vrule height 20pt depth 4pt width 2pt}}$")
             .unwrap();
         let children: Vec<&Node> = as_box(&main[0])
@@ -1354,7 +1359,7 @@ mod tests {
     /// 数学行盒 children（TFM 实字体；剥 \mathon/\mathoff 边界标记与行尾
     /// parfillskip）。
     fn math_tfm_children(text: &str) -> Vec<Node> {
-        let mut ts = Typesetter::with_tfm();
+        let mut ts = Typesetter::with_tfm().plain_params();
         let main = ts.typeset(text).unwrap();
         assert_eq!(main.len(), 1);
         let mut children: Vec<Node> = as_box(&main[0])
@@ -1746,15 +1751,16 @@ mod tests {
         // demerits 在空格断点逐断点成行（真实 TeX 同为多条 Overfull 行）；
         // 词本身保持完整不断字。
         let main = typeset_spaced(r"\hsize 10700sp m abcdefgh n").unwrap();
-        assert_eq!(main.len(), 4, "行1(m abcdefgh 过满) + 惩罚/胶 + 行2(n)：{main:?}");
+        assert_eq!(main.len(), 7, "final_pass 应逐空格收束为四行：{main:?}");
         let l1 = as_box(&main[0]);
-        // 行1 = [m, glue, a..h]（10 节点，字母连续不断字）
-        assert_eq!(l1.children.len(), 10, "行1 = m abcdefgh：{l1:?}");
+        // 首行只含 m；长词仍保持完整不断字，落在后续独立 overfull 行。
+        assert_eq!(l1.children.len(), 1, "行1 = m：{l1:?}");
         assert_eq!(as_char(&l1.children[0]), b'm' as u32);
+        let word = as_box(&main[3]);
         for (k, ch) in (b'a'..=b'h').enumerate() {
-            assert_eq!(as_char(&l1.children[k + 2]), ch as u32, "字母不断字");
+            assert_eq!(as_char(&word.children[k]), ch as u32, "字母不断字");
         }
-        let l2 = as_box(&main[3]);
+        let l2 = as_box(&main[6]);
         assert_eq!(as_char(&l2.children[0]), b'n' as u32, "行2 = n");
     }
 
@@ -1909,8 +1915,9 @@ mod tests {
     }
 
     fn probe_transcript(src: &str) -> String {
-        let mut ts =
-            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+        let mut ts = Typesetter::with_metrics(metrics)
+            .with_space(|_| Glue::new(1000, 500, 300))
+            .plain_params();
         // \vsize 取大值（真 TeX 探针同款）：页未满，断页由惩罚/eject 触发，
         // 与真 TeX 对拍（TinyTeX plain 同源探针，§5.2 勘误附录）。
         let _ = ts.typeset_dvi(&format!(
@@ -1922,40 +1929,34 @@ mod tests {
 
     #[test]
     fn vadjust_penalty_reaches_page_builder() {
-        let mut ts =
-            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+        let mut ts = Typesetter::with_metrics(metrics)
+            .with_space(|_| Glue::new(1000, 500, 300))
+            .plain_params();
         let _ = ts.typeset_dvi(
-            r"\vsize 1pt\hsize 20pt \output={\showthe\outputpenalty\shipout\box255}
+            r"\vsize 40000000sp\hsize 20pt \output={\showthe\outputpenalty\shipout\box255}
               A\hfill\vadjust{\special{ADJ}\penalty-5000}\penalty-1000000000 A\par\end",
         );
         let vals = showthe_values(&ts.take_transcript(), "outputpenalty");
-        assert!(
-            vals.iter().any(|v| v == "-5000"),
-            "\\vadjust 内的 penalty 必须作为页断点进入 \\outputpenalty：{vals:?}"
-        );
-        assert!(
-            vals.iter().all(|v| v != "-1000000000"),
-            "段内强制折行 penalty 不应抢掉 \\vadjust 的页断点：{vals:?}"
-        );
+        // pdfTeX INITEX 同形（/tmp/bladeAE/vadjust-large.log）逐字：
+        // PEN=[-1073741824]。段内 -1000000000 强制断点先触发 eject，
+        // \vadjust 的 -5000 从未成为页断点；vadjust 通路另由
+        // probe_transcript 家族（无此硬断页形）验收。
+        assert_eq!(vals, ["-1073741824"]);
     }
 
     #[test]
     fn horizontal_fill_in_vmode_keeps_following_penalty_in_paragraph() {
-        let mut ts =
-            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+        let mut ts = Typesetter::with_metrics(metrics)
+            .with_space(|_| Glue::new(1000, 500, 300))
+            .plain_params();
         let _ = ts.typeset_dvi(
-            r"\vsize 1pt\hsize 20pt \output={\showthe\outputpenalty\shipout\box255}
+            r"\vsize 40000000sp\hsize 20pt \output={\showthe\outputpenalty\shipout\box255}
               \hfill\vadjust{\penalty-5000}\penalty-1000000000 A\par\end",
         );
         let vals = showthe_values(&ts.take_transcript(), "outputpenalty");
-        assert!(
-            vals.iter().any(|v| v == "-5000"),
-            "\\hfill 于垂直模式应先开段，使 \\vadjust penalty 到达页构建器：{vals:?}"
-        );
-        assert!(
-            vals.iter().all(|v| v != "-1000000000"),
-            "\\hfill 开段后，后继段内强制折行 penalty 不得成为页断点：{vals:?}"
-        );
+        // pdfTeX INITEX 同形（/tmp/bladeAE/vadjust-hfill-large.log）逐字：
+        // PEN=[-1073741824]；同样由硬断页的 eject 哨兵结束该页。
+        assert_eq!(vals, ["-1073741824"]);
     }
 
     // ---------- 输出例程刀 2：box255 寄存器化 ----------

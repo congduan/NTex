@@ -6,7 +6,7 @@ use super::*;
         // 每次 shipout 转录 "Completed box being shipped out [页号]" + showbox 树
         // （tex.web ship_out L12687-12691）。2026-09-03 实现——TRIP 语义 diff
         // 大块转录缺失的修复。
-        let mut ts = Typesetter::with_metrics(metrics);
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
         let _ = ts.typeset_dvi(r"\def\on{1}\tracingoutput\on\shipout\hbox{aa}\end");
         let t = ts.take_transcript();
         assert!(
@@ -18,7 +18,7 @@ use super::*;
             "转录应含 showbox 同款盒树：{t:?}"
         );
         // tracingoutput=0（默认）不转录
-        let mut ts2 = Typesetter::with_metrics(metrics);
+        let mut ts2 = Typesetter::with_metrics(metrics).plain_params();
         let _ = ts2.typeset_dvi(r"\shipout\hbox{aa}\end");
         let t2 = ts2.take_transcript();
         assert!(
@@ -107,7 +107,7 @@ use super::*;
         // 页满在胶水处自然断页：断点非惩罚节点 → inf_penalty(10000)
         // （tex.web：`type(best_page_break)<>penalty_node → \outputpenalty:=10000`）。
         let mut ts =
-            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+            Typesetter::with_metrics(metrics).plain_params().with_space(|_| Glue::new(1000, 500, 300));
         let _ = ts.typeset_dvi(&format!(
             r"\vsize 100000sp\hsize 20000sp \output={{\showthe\outputpenalty\shipout\box255}} {}",
             fill_words()
@@ -153,7 +153,7 @@ use super::*;
         // 若把它当作待输出页面排队，会用上一轮 \outputpenalty=-10000
         // 立刻再点火，凭空 ship 一个空页。
         let mut ts =
-            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+            Typesetter::with_metrics(metrics).plain_params().with_space(|_| Glue::new(1000, 500, 300));
         let pages = ts
             .typeset_dvi(concat!(
                 r"\vsize 40000000sp\hsize 20000000sp ",
@@ -178,7 +178,7 @@ use super::*;
         // tex.web fire_up incr(dead_cycles)、ship_out 清零：每页例程内读到的
         // 都是 1（连续死循环数只统计"例程没 ship"的轮次）。
         let mut ts =
-            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+            Typesetter::with_metrics(metrics).plain_params().with_space(|_| Glue::new(1000, 500, 300));
         let _ = ts.typeset_dvi(&format!(
             r"\vsize 100000sp\hsize 20000sp \output={{\showthe\deadcycles\shipout\box255}} {}",
             fill_words()
@@ -195,7 +195,7 @@ use super::*;
         // tex.web fire_up：dead_cycles >= max_dead_cycles → "Output loop---N
         // consecutive dead cycles" 错 + 默认输出（直接 ship box255，例程不跑）。
         let mut ts =
-            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+            Typesetter::with_metrics(metrics).plain_params().with_space(|_| Glue::new(1000, 500, 300));
         let pages = ts
             .typeset_dvi(concat!(
                 r"\vsize 100000sp\hsize 20000sp \maxdeadcycles=0 ",
@@ -226,7 +226,7 @@ use super::*;
     fn deadcycles_is_assignable_internal_int() {
         // \deadcycles/\maxdeadcycles 走内部量语义（可 \the 可赋值；latex.ltx
         // L20608 \maxdeadcycles=100、\enddocument 的 \deadcycles\z@）。
-        let mut ts = Typesetter::with_metrics(metrics);
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
         let _ = ts.typeset_dvi(r"\deadcycles=7 \maxdeadcycles=100 \showthe\deadcycles\showthe\maxdeadcycles\end");
         let t = ts.take_transcript();
         assert_eq!(showthe_values(&t, "deadcycles"), vec!["7"]);
@@ -237,7 +237,7 @@ use super::*;
     fn deadcycles_assignment_is_global_but_maxdeadcycles_is_scoped() {
         // tex.web stores dead_cycles as page-builder state, so even an explicit
         // grouped assignment survives; max_dead_cycles is the normal scoped int.
-        let mut ts = Typesetter::with_metrics(metrics);
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
         let _ = ts.typeset_dvi(
             r"\deadcycles=1 \maxdeadcycles=1 {\deadcycles=2 \maxdeadcycles=2}\showthe\deadcycles\showthe\maxdeadcycles\end",
         );
@@ -249,7 +249,7 @@ use super::*;
     #[test]
     fn grouped_empty_output_can_trip_deadcycles_gate() {
         let mut ts =
-            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+            Typesetter::with_metrics(metrics).plain_params().with_space(|_| Glue::new(1000, 500, 300));
         let pages = ts
             .typeset_dvi(concat!(
                 r"\hsize 20000sp \vsize 100000sp \maxdeadcycles=3 ",
@@ -274,7 +274,7 @@ use super::*;
     #[test]
     fn unvbox_without_shipout_reaches_deadcycles_gate() {
         let mut ts =
-            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+            Typesetter::with_metrics(metrics).plain_params().with_space(|_| Glue::new(1000, 500, 300));
         let pages = ts
             .typeset_dvi(concat!(
                 r"\hsize 20000sp \vsize 100000sp \maxdeadcycles=3 ",
@@ -301,7 +301,7 @@ use super::*;
         // TRIP 末段控制流：`\unvbox255` 把页内容回投后，恢复点必须先让
         // 回投贡献重新触发输出例程；外层输入里的后续赋值不能抢先污染页标签。
         let mut ts =
-            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+            Typesetter::with_metrics(metrics).plain_params().with_space(|_| Glue::new(1000, 500, 300));
         let pages = ts
             .typeset_dvi(concat!(
                 r"\hsize 20000sp \vsize 100000sp \maxdeadcycles=1 ",
@@ -325,7 +325,7 @@ use super::*;
         // internal vertical mode 里是可恢复错误，不能直接清栈结束作业；后续 `\rb`
         // 仍应被读取，最终由 deadcycles gate 强制 ship box255。
         let mut ts =
-            Typesetter::with_metrics(metrics).with_space(|_| Glue::new(1000, 500, 300));
+            Typesetter::with_metrics(metrics).plain_params().with_space(|_| Glue::new(1000, 500, 300));
         let pages = ts
             .typeset_dvi(concat!(
                 r"\hsize 20000sp \vsize 100000sp \maxdeadcycles=2 ",
@@ -378,14 +378,14 @@ use super::*;
     fn count0_feeds_shipout_page_label() {
         // 单页：\count0=5 \count1=7 → 标题行 `... [5.7]`（与 TinyTeX plain 逐字符），
         // 且页级快照随页走（DVI bop 计数取值源）。
-        let mut ts = Typesetter::with_metrics(metrics);
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
         let _ = ts.typeset_dvi(r"\tracingoutput=1 \count0=5 \count1=7 \shipout\hbox{aa}\end");
         let t = ts.take_transcript();
         assert!(
             t.contains("Completed box being shipped out [5.7]"),
             "页标签应为 count0.count1 尾零截断：{t:?}"
         );
-        let mut ts2 = Typesetter::with_metrics(metrics);
+        let mut ts2 = Typesetter::with_metrics(metrics).plain_params();
         let (pages, _) =
             ts2.typeset_dvi(r"\count0=5 \count1=7 \shipout\hbox{aa}\end").unwrap();
         assert_eq!(pages.len(), 1);
@@ -405,7 +405,7 @@ use super::*;
         // （\countdef\pageno=0；例程体在组内，须 \global——真 TeX 同探针
         // 非 global 时两页都是 [5.7]），第二页标签 [6.7]——真 TeX 对拍
         // [5.7]/[6.7]（/tmp/ors-work-k5/k5-p2.tex）。
-        let mut ts = Typesetter::with_metrics(metrics);
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
         let _ = ts.typeset_dvi(
             r"\vsize 40000000sp\hsize 20000000sp \count0=5 \count1=7 \tracingoutput=1
               \output={\shipout\box255 \global\advance\count0 by 1}
@@ -432,7 +432,7 @@ use super::*;
     fn page_label_defaults_to_zero() {
         // 未设 \count（INITEX 初表全零）→ `[0]`：tex.web 全零特例 j 停在 0。
         // 旧实现的 `[0.0.0.0.1]`（ship_seq 占位）即由此纠正。
-        let mut ts = Typesetter::with_metrics(metrics);
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
         let _ = ts.typeset_dvi(r"\tracingoutput=1 \shipout\hbox{aa}\end");
         let t = ts.take_transcript();
         assert!(
@@ -445,7 +445,7 @@ use super::*;
     fn count0_group_rollback_restores_mirror() {
         // 组内赋值组外回滚（tex.web：count 寄存器在 eqtb 内，组结束还原）：
         // 镜像须随引擎还原，否则 shipout 标签读到已回滚的值。
-        let mut ts = Typesetter::with_metrics(metrics);
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
         let _ = ts
             .typeset_dvi(r"\tracingoutput=1 \count0=1 {\count0=9} \shipout\hbox{aa}\end");
         let t = ts.take_transcript();

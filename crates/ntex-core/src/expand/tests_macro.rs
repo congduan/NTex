@@ -1708,12 +1708,12 @@ fn zero_param_macro_delimiter_text_consumed_in_expansion_contexts() {
 #[test]
 fn param_assignment_and_the() {
     // 单位尾 scan_optional_space（get_x_token）就地展开 \the → 打印赋值前
-    // 旧值（INITEX：parindent=0、baselineskip=12pt、lineskip/limit=0；
+    // 旧值（INITEX：parindent/baselineskip/lineskip/limit 均为 0；
     // pdfTeX GT gtf/gf b5-b8 plain 旧值 20/12/1/0 同机制）
     assert_eq!(expand("\\parindent 20pt\\the\\parindent").unwrap(), "0.0pt");
     assert_eq!(
         expand("\\baselineskip 10pt plus 2pt\\the\\baselineskip").unwrap(),
-        "12.0pt"
+        "0.0pt"
     );
     assert_eq!(expand("\\lineskip 3pt\\the\\lineskip").unwrap(), "0.0pt");
     assert_eq!(
@@ -1725,7 +1725,7 @@ fn param_assignment_and_the() {
 #[test]
 fn param_defaults() {
     assert_eq!(expand("\\the\\parindent").unwrap(), "0.0pt");
-    assert_eq!(expand("\\the\\baselineskip").unwrap(), "12.0pt");
+    assert_eq!(expand("\\the\\baselineskip").unwrap(), "0.0pt");
     assert_eq!(expand("\\the\\lineskip").unwrap(), "0.0pt");
     assert_eq!(expand("\\the\\lineskiplimit").unwrap(), "0.0pt");
 }

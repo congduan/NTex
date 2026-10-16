@@ -1446,10 +1446,10 @@ I changed this one to zero.
 
     #[test]
     fn hsize_and_tolerance_assignment() {
-        assert_eq!(expand("\\hsize 100pt\\the\\hsize").unwrap(), "469.75499pt");
+        assert_eq!(expand("\\hsize 100pt\\the\\hsize").unwrap(), "0.0pt");
         assert_eq!(expand("\\tolerance 300\\the\\tolerance").unwrap(), "");
-        // 默认值（TeX initex，A1 修复）：\hsize=6.5in、\tolerance=200
-        assert!(expand("\\the\\tolerance").unwrap().ends_with("200"));
+        // tex.web INITEX：\hsize=0pt、\tolerance=10000；plain.tex 覆盖为 6.5in/200。
+        assert!(expand("\\the\\tolerance").unwrap().ends_with("10000"));
     }
 
     // ---------- M3-4 字体 ----------

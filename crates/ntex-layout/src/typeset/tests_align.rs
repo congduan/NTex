@@ -166,7 +166,7 @@ fn halign_multispan_keeps_group_balance() {
 fn align_mode_route_math_mode_halign_is_illegal() {
     // mmode+halign 无合法位 → report_illegal_case（GT pdftex 同首错；
     // 级联的 #/\cr 各自报错，错误数 GT 4 / NTex 3，登记差）。
-    let mut ts = Typesetter::with_metrics(metrics);
+    let mut ts = Typesetter::with_metrics(metrics).plain_params();
     let _ = ts.typeset(r"$\halign{#\cr b\cr}$");
     let t = ts.take_transcript();
     assert!(
@@ -179,7 +179,7 @@ fn align_mode_route_math_mode_halign_is_illegal() {
 fn align_mode_route_restricted_hmode_off_save() {
     // 受限水平（\hbox 内）的 \halign：mode<0 → off_save，插配对 `}` 并报
     // "Missing } inserted"（GT 错误序：Missing } inserted → Too many }'s.）。
-    let mut ts = Typesetter::with_metrics(metrics);
+    let mut ts = Typesetter::with_metrics(metrics).plain_params();
     let _ = ts.typeset(r"\hbox{\halign{#\cr b\cr}}");
     let t = ts.take_transcript();
     assert!(t.contains("! Missing } inserted."), "off_save 报错：{t}");

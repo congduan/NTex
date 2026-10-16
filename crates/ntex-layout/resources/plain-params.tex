@@ -1,0 +1,115 @@
+%% plain.tex 数值参数预设（刀AE INITEX/plain 分层）。
+%% 逐行摘自 resources/plain.tex L279-375（官方件，TinyTeX 逐字节一致），
+%% 仅取数值赋值段：无宏定义/无字体依赖（\maxdimen 依赖行、\newskip 行除外；
+%% muskip 三寄存器保留——mu glue 扫描无字体依赖，与 NodeBuilder 默认同值）。
+%% 供 Typesetter::plain_params() 在跑不了完整 plain.tex 的无字体通道
+%% （with_metrics 测试夹具）拿到与 plain 格式一致的版心/断点/胶水默认。
+%% 改值必须回 plain.tex 对齐——本文件是摘录不是第二事实源。
+% INITEX makes all parameters zero except where noted.
+
+\pretolerance=100
+\tolerance=200 % INITEX sets this to 10000
+\hbadness=1000
+\vbadness=1000
+\linepenalty=10
+\hyphenpenalty=50
+\exhyphenpenalty=50
+\binoppenalty=700
+\relpenalty=500
+\clubpenalty=150
+\widowpenalty=150
+\displaywidowpenalty=50
+\brokenpenalty=100
+\predisplaypenalty=10000
+% \postdisplaypenalty=0
+% \interlinepenalty=0
+% \floatingpenalty=0, set during \insert
+% \outputpenalty=0, set before TeX enters \output
+\doublehyphendemerits=10000
+\finalhyphendemerits=5000
+\adjdemerits=10000
+% \looseness=0, cleared by TeX after each paragraph
+% \pausing=0
+% \holdinginserts=0
+% \tracingonline=0
+% \tracingmacros=0
+% \tracingstats=0
+% \tracingparagraphs=0
+% \tracingpages=0
+% \tracingoutput=0
+\tracinglostchars=1
+% \tracingcommands=0
+% \tracingrestores=0
+% \language=0
+\uchyph=1
+% \lefthyphenmin=2 \righthyphenmin=3 set below
+% \globaldefs=0
+% \maxdeadcycles=25 % INITEX does this
+% \hangafter=1 % INITEX does this, also TeX after each paragraph
+% \fam=0
+% \mag=1000 % INITEX does this
+% \escapechar=`\\ % INITEX does this
+\defaulthyphenchar=`\-
+\defaultskewchar=-1
+% \endlinechar=`\^^M % INITEX does this
+\newlinechar=-1
+\delimiterfactor=901
+% \time=now % TeX does this at beginning of job
+% \day=now % TeX does this at beginning of job
+% \month=now % TeX does this at beginning of job
+% \year=now % TeX does this at beginning of job
+\showboxbreadth=5
+\showboxdepth=3
+\errorcontextlines=5
+
+\hfuzz=0.1pt
+\vfuzz=0.1pt
+\overfullrule=5pt
+\hsize=6.5in
+\vsize=8.9in
+\maxdepth=4pt
+% \lineskiplimit=0pt, changed by \normalbaselines
+\delimitershortfall=5pt
+\nulldelimiterspace=1.2pt
+\scriptspace=0.5pt
+% \mathsurround=0pt
+% \predisplaysize=0pt, set before TeX enters $$
+% \displaywidth=0pt, set before TeX enters $$
+% \displayindent=0pt, set before TeX enters $$
+\parindent=20pt
+% \hangindent=0pt, zeroed by TeX after each paragraph
+% \hoffset=0pt
+% \voffset=0pt
+
+% \baselineskip=0pt, changed by \normalbaselines
+% \lineskip=0pt, changed by \normalbaselines
+\parskip=0pt plus 1pt
+\abovedisplayskip=12pt plus 3pt minus 9pt
+\abovedisplayshortskip=0pt plus 3pt
+\belowdisplayskip=12pt plus 3pt minus 9pt
+\belowdisplayshortskip=7pt plus 3pt minus 4pt
+% \leftskip=0pt
+% \rightskip=0pt
+\topskip=10pt
+\splittopskip=10pt
+% \tabskip=0pt
+% \spaceskip=0pt
+% \xspaceskip=0pt
+\parfillskip=0pt plus 1fil
+
+\thinmuskip=3mu
+\medmuskip=4mu plus 2mu minus 4mu
+\thickmuskip=5mu plus 5mu
+
+% ---- 夹具口径覆盖（非 plain 原值，仅 for with_metrics 测试通道）----
+% 旧 layout 测试写于旧引擎默认（\parindent=0、行间 glue 12pt）；
+% 摘录恢复 plain 原值（\parindent=20pt、baselineskip 恒 0）后这些期望失锚
+% （显示公式多空段盒 7 vs 5 等）。此两行把夹具通道钉回旧测试口径：
+% \parindent=0pt = 旧引擎默认；\baselineskip=12pt = plain \normalbaselines 展开值。
+% 锁语义不锁环境：真 plain 格式仍由完整 plain.tex 供真值。
+\parindent=0pt
+\baselineskip=12pt
+% \\boxmaxdepth：plain.tex L292 原文 \\boxmaxdepth=\maxdimen（=\dimendef 名，
+% 摘录通道无该名）→ 机械展开为 MAX_DIMEN=1073741823sp 等价值。
+% 缺此行时 INITEX 默认 0 生效，vpack 把一切盒 depth 钳没（刀AE 实测）。
+\boxmaxdepth=1073741823sp

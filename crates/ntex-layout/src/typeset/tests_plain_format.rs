@@ -28,6 +28,18 @@ fn preload_runs_before_user_source_and_allocates() {
 }
 
 #[test]
+fn preload_plain_reestablishes_plain_page_dimensions_from_initex_zeroes() {
+    let mut ts = Typesetter::with_tfm().initex();
+    ts.set_preload_plain(true);
+    ts.typeset(r"\message{H=\the\hsize,V=\the\vsize,M=\the\maxdepth}")
+        .unwrap();
+    let t = ts.take_transcript();
+    assert!(t.contains("H=469.75499pt"), "plain must set hsize: {t:?}");
+    assert!(t.contains("V=643.20255pt"), "plain must set vsize: {t:?}");
+    assert!(t.contains("M=4.0pt"), "plain must set maxdepth: {t:?}");
+}
+
+#[test]
 fn plain_format_builder_form() {
     let mut ts = Typesetter::with_tfm().plain_format();
     ts.typeset(r"\newdimen\bar \bar=3pt \message{D=\the\bar}").unwrap();

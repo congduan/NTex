@@ -25,6 +25,12 @@
 /// plain 格式本体（1241 行；plain.tex 不含 `\dump`，运行期 `\input` 安全）。
 pub const PLAIN_TEX: &str = include_str!("../../resources/plain.tex");
 
+/// plain 数值参数预设（刀AE 分层）：plain.tex 数值赋值段的摘录（无宏定义、
+/// 无字体依赖——排除 `\maxdimen` 依赖行与 `\newskip` 行）。供
+/// [`crate::typeset::Typesetter::plain_params`] 在跑不了完整 plain.tex 的
+/// 无字体通道拿到 plain 版心/断点默认。摘录不是第二事实源，改值回 plain.tex。
+pub const PLAIN_PARAMS_TEX: &str = include_str!("../../resources/plain-params.tex");
+
 /// 默认断字模式表 + 例外词表（plain.tex:1222 `\input hyphen`）。
 pub const HYPHEN_TEX: &str = include_str!("../../resources/hyphen.tex");
 

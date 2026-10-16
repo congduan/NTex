@@ -282,6 +282,9 @@ pub struct Typesetter {
     /// 表线缺失、宏名参数漏成文字）。\providecommand 定义，真宏包载入仍以
     /// 包版为准；plain/INITEX/TRIP 路径不受影响（默认关）。
     preload_compat: bool,
+    /// plain 数值参数预设开关（刀AE 分层）：`plain_params()` 打开——用户源前
+    /// 跑 plain.tex 数值赋值段（无宏定义），供无字体通道拿 plain 版心默认。
+    preload_plain_params: bool,
     /// 内嵌格式 VFS 兜底层是否已包（[`Self::use_embedded_format`] 幂等标记）。
     embedded_vfs_installed: bool,
     /// UTF-8 输入默认开关（M9 中文刀 3）：开则排版入口在用户源之前把
@@ -350,6 +353,7 @@ impl Typesetter {
             preload_plain: false,
             preload_hyphen: false,
             preload_compat: false,
+            preload_plain_params: false,
             utf8_input_default: false,
             pdf_output_default: false,
             cjk_break_mode_default: false,
@@ -604,6 +608,7 @@ impl Typesetter {
             preload_plain: false,
             preload_hyphen: false,
             preload_compat: false,
+            preload_plain_params: false,
             utf8_input_default: false,
             pdf_output_default: false,
             cjk_break_mode_default: false,
@@ -629,6 +634,7 @@ impl Typesetter {
             preload_plain: false,
             preload_hyphen: false,
             preload_compat: false,
+            preload_plain_params: false,
             utf8_input_default: false,
             pdf_output_default: false,
             cjk_break_mode_default: false,
@@ -644,6 +650,7 @@ impl Typesetter {
         self.apply_utf8_input_default();
         self.apply_layout_defaults();
         self.run_plain_preload()?;
+        self.run_plain_params()?;
         self.run_hyphen_preload()?;
         self.run_compat_preload()?;
         self.expander.run_source(text)?;
@@ -660,6 +667,7 @@ impl Typesetter {
         self.apply_utf8_input_default();
         self.apply_layout_defaults();
         self.run_plain_preload()?;
+        self.run_plain_params()?;
         self.run_hyphen_preload()?;
         self.run_compat_preload()?;
         self.expander.feed_source(bytes);
@@ -678,6 +686,30 @@ impl Typesetter {
             return Ok(());
         }
         self.expander.run_source(plain_format::PLAIN_TEX)
+    }
+
+    /// plain 数值参数预设（INITEX/plain 分层刀AE）：在用户源前把 plain.tex
+    /// 「Assign initial values」段的数值赋值跑到 expander——供 `with_metrics`
+    /// 等跑不了完整 plain.tex 的通道（无字体：plain.tex 载入期 `\font\tenrm`
+    /// 即炸）显式 opt-in，让测试夹具拿到与 plain 格式一致的版心/断点默认。
+    ///
+    /// 与 [`Self::set_preload_plain`] 的分工：preload_plain = 完整格式（宏+
+    /// 参数+断字）；plain_params = 只做数值赋值（版心/惩罚/胶水），不定义宏。
+    /// 值逐行摘自 resources/plain.tex L279-380（与 TinyTeX plain.tex 逐字节
+    /// 一致的官方件），勿在此手抄数值——改值回 plain.tex 对齐。
+    pub fn plain_params(mut self) -> Self {
+        self.preload_plain_params = true;
+        self
+    }
+
+    /// plain 数值参数预设执行（[`Self::plain_params`] 开关）：用户源前跑
+    /// [`plain_format::PLAIN_PARAMS_TEX`]（plain.tex 数值赋值段摘录）。
+    /// 出错即失败——与 [`Self::run_plain_preload`] 同纪律。
+    fn run_plain_params(&mut self) -> Result<()> {
+        if !self.preload_plain_params {
+            return Ok(());
+        }
+        self.expander.run_source(plain_format::PLAIN_PARAMS_TEX)
     }
 
     /// 断字模式预载（[`Self::set_preload_hyphen`]）：开关开着才跑。出错即失败
@@ -765,6 +797,7 @@ impl Typesetter {
         self.apply_utf8_input_default();
         self.apply_layout_defaults();
         self.run_plain_preload()?;
+        self.run_plain_params()?;
         self.run_hyphen_preload()?;
         self.run_compat_preload()?;
         self.expander.run_source(text)?;

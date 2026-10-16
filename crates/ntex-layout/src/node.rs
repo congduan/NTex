@@ -513,10 +513,16 @@ pub fn vpack(children: Vec<Node>, height: i64, max_depth: i64) -> BoxNode {
         let dd = (-residual - dh).min(b.depth);
         b.depth -= dd;
     }
-    // tex.web vpackage：自然深度超 max_depth 限制 → 深度钳到限制（超出部分
-    // tex.web 转进高度差额 x，exactly 目标下被 glue set 吸收——简化只钳 depth）
+    // tex.web vpackage L13176-13179：`if d>l then x:=x+d-l; depth(r):=l`——
+    // 深度超出量计入高度差额 x（glue set / height 调整吸收），**不消失**。
+    // 本函数 glue/height 调整已完成，故钳 depth 时把超出量还回高度
+    // （盒总高 h+d 守恒，与 exactly 目标下 tex.web 语义等价）。
+    // 旧简化「只钳不补」在 \\boxmaxdepth=0（INITEX 初表，刀AE 实测）下
+    // 曾把体 depth 静默吞掉——vcenter 中心分割 delta 丢 4pt 实锤。
     if b.depth > max_depth {
+        let excess = b.depth - max_depth;
         b.depth = max_depth;
+        b.height += excess;
     }
     b
 }

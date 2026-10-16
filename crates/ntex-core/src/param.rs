@@ -211,13 +211,13 @@ fn system_date_time() -> [i64; 4] {
     [d, m, y, minutes]
 }
 
-/// 内部整数参数默认值（TeX initex/plain 默认）。
+/// 内部整数参数默认值（TeX INITEX 初表）。
 pub fn default_misc() -> [i64; MISC_INTS] {
     // 日期时间（tex.web date_and_time）：系统时钟 → (日, 月, 年, 分钟)
     let dt = system_date_time();
     [
         0,     // 0 TracingStats
-        1,     // 1 TracingLostChars（initex 默认 1）
+        1,     // 1 TracingLostChars（既有兼容默认）
         0,     // 2 TracingOnline
         0,     // 3 TracingCommands
         0,     // 4 TracingRestores
@@ -226,10 +226,10 @@ pub fn default_misc() -> [i64; MISC_INTS] {
         0,     // 7 TracingIfs
         0,     // 8 TracingScantokens
         0,     // 9 TracingNesting
-        2,     // 10 LeftHyphenMin（plain 默认 2）
-        3,     // 11 RightHyphenMin（plain 默认 3）
-        1000,  // 12 HBadness（plain 默认 1000）
-        100,   // 13 PreTolerance（plain 默认 100）
+        2,     // 10 LeftHyphenMin
+        3,     // 11 RightHyphenMin
+        1000,  // 12 HBadness
+        100,   // 13 PreTolerance
         0,     // 14 ShowBoxDepth
         5,     // 15 ShowBoxBreadth
         0,     // 16 Language
@@ -244,28 +244,28 @@ pub fn default_misc() -> [i64; MISC_INTS] {
         0,     // 25 DeadCycles（输出例程循环计数）
         0,     // 26 TracingMacros
         0,     // 27 TracingOutput
-        100,   // 28 ErrorContextLines（plain 默认 100）
+        100,   // 28 ErrorContextLines
         0,     // 29 TracingParagraphs（折行追踪；plain 默认 0）
         0,     // 30 PageDiscards（e-TeX：保存页面丢弃物；0=不保存）
         0,     // 31 SplitDiscards（e-TeX：保存 vsplit 丢弃物；0=不保存）
-        2,     // 32 LostChars（e-TeX：丢失字符提示级；plain 默认 2 = 计数）
-        901,   // 33 DelimiterFactor（plain 默认 901；delimiter 缩放因子）
+        2,     // 32 LostChars
+        901,   // 33 DelimiterFactor
         92,    // 34 EscapeChar（initex 默认 92 = `\`；控制序列显示用 escape 字符）
-        1000,  // 35 VBadness（plain 默认 1000）
+        1000,  // 35 VBadness
         0,     // 36 GlobalDefs（plain 默认 0）
         0,     // 37 FloatingPenalty（plain 默认 0）
-        10,    // 38 LinePenalty（plain 默认 10）
-        700,   // 39 BinoPenalty（plain 默认 700）
-        500,   // 40 RelPenalty（plain 默认 500）
-        10000, // 41 AdjDemerits（plain 默认 10000）
+        10,    // 38 LinePenalty
+        700,   // 39 BinoPenalty
+        500,   // 40 RelPenalty
+        10000, // 41 AdjDemerits
         0,     // 42 Looseness（plain 默认 0）
         25,    // 43 MaxDeadCycles（plain 默认 25）
         1,     // 44 HangAfter（plain 默认 1）
-        1,     // 45 Uchyph（plain 默认 1）
+        1,     // 45 Uchyph
         -1,    // 46 Fam（plain 默认 -1）
-        50,    // 47 HyphenPenalty（plain 默认 50）
-        10000, // 48 DoubleHyphenDemerits（plain 默认 10000）
-        5000,  // 49 FinalHyphenDemerits（plain 默认 5000）
+        50,    // 47 HyphenPenalty
+        10000, // 48 DoubleHyphenDemerits
+        5000,  // 49 FinalHyphenDemerits
         0,     // 50 HoldingInserts（plain 默认 0）
         0,     // 51 PrevGraf（只读内部量：上一段落行数；plain 默认 0）
         0,     // 52 InsertPenalties（只读内部量：插入惩罚；plain 默认 0）
@@ -319,15 +319,15 @@ pub struct Params {
     pub lineskip: Glue,
     /// `\lineskiplimit`：行间胶水切换阈值。
     pub lineskiplimit: i64,
-    /// `\hsize`：行目标宽度（TeX initex 默认 6.5in）。
+    /// `\hsize`：行目标宽度（TeX INITEX 默认 0pt）。
     pub hsize: i64,
-    /// `\tolerance`：可接受最大 badness（TeX initex 默认 10000）。
+    /// `\tolerance`：可接受最大 badness（TeX INITEX 默认 10000）。
     pub tolerance: i64,
-    /// `\vsize`：页目标高度（plain 默认 643.20255pt）。
+    /// `\vsize`：页目标高度（TeX INITEX 默认 0pt）。
     pub vsize: i64,
-    /// `\topskip`：页首行顶部胶水（plain 默认 10pt）。
+    /// `\topskip`：页首行顶部胶水（TeX INITEX 默认 0pt）。
     pub topskip: Glue,
-    /// `\maxdepth`：页面最后盒子最大深度（plain 默认 4pt）。
+    /// `\maxdepth`：页面最后盒子最大深度（TeX INITEX 默认 0pt）。
     pub maxdepth: i64,
     /// `\parskip`：段落间胶水（plain 默认 0pt plus 1pt）。
     pub parskip: Glue,
@@ -424,36 +424,40 @@ pub struct Params {
 }
 
 impl Default for Params {
-    /// TeX initex/plain 默认值：`\parindent=0`、`\baselineskip=12pt`、
-    /// `\lineskip=0`、`\lineskiplimit=0`、`\hsize=6.5in`、`\tolerance=200`（TeXbook：
-    /// initex 默认 200——A1 修复，此前 10000 使折行 active 集永不淘汰 → O(n²)）、
-    /// `\vsize=643.20255pt`、`\topskip=10pt`、`\maxdepth=4pt`、`\parskip=0pt plus 1pt`。
+    /// TeX INITEX 初表（tex.web L4703/L5233-5236 + 10-15 iniTeX 实测探针）：
+    /// glue/dimen 表全零（`\the\baselineskip`=0.0pt、`\the\parfillskip`=0.0pt、
+    /// `\the\abovedisplayskip`=0.0pt）；整数表仅 `mag=1000、tolerance=10000、
+    /// hangafter=1、maxdeadcycles=25、escapechar='\', endlinechar=13` 非零。
+    /// plain 格式层负责排版默认值（`\hsize=6.5in、\tolerance=200` 等——
+    /// resources/plain.tex L279-380 自带全套）。misc 整数表维持 plain 兼容
+    /// 默认（偏离 INITEX 的保护性分歧，见 KNOWN-SIMPLIFICATIONS）。
     fn default() -> Self {
         Self {
             parindent: 0,
-            baselineskip: Glue::new(12 * SP_PER_PT, 0, 0),
+            baselineskip: Glue::ZERO,
             lineskip: Glue::new(0, 0, 0),
             lineskiplimit: 0,
-            // plain `\hsize=6.5in`：tex.web 精确分数换算 6.5 × 7227/100 =
-            // 30_785_863sp（pdfTeX \the\hsize → "469.75499pt"）；按 4_736_286sp
-            // 常数一步乘除得 30_785_859（"469.75493pt"，差 4sp）
-            hsize: 30_785_863,
-            tolerance: 200,
-            // plain \vsize：643.20255pt × 2^16（TeX 内部存为 scaled 四舍五入）
-            vsize: 42_152_922,
-            topskip: Glue::new(10 * SP_PER_PT, 0, 0),
-            maxdepth: 4 * SP_PER_PT,
-            parskip: Glue::new(0, SP_PER_PT, 0),
-            parfillskip: Glue::new(0, 1, 0), // 1fil（布局侧隐含 fil 阶）
+            hsize: 0,
+            // tex.web L5235：tolerance:=10000（INITEX 唯一非零断点容忍度；
+            // plain.tex L282 自行降为 200）。历史上 A1 曾为旧折行器 O(n²)
+            // 借 200 掩护——分层后由 plain 层供 200，引擎初表对齐 tex.web。
+            tolerance: 10_000,
+            vsize: 0,
+            topskip: Glue::ZERO,
+            maxdepth: 0,
+            parskip: Glue::ZERO,
+            parfillskip: Glue::ZERO,
             xspaceskip: Glue::new(0, 0, 0),
-            // M4-4 显示数学间距（plain：TeXbook p.189）
-            abovedisplayskip: Glue::new(12 * SP_PER_PT, 3 * SP_PER_PT, 9 * SP_PER_PT),
-            belowdisplayskip: Glue::new(12 * SP_PER_PT, 3 * SP_PER_PT, 9 * SP_PER_PT),
-            abovedisplayshortskip: Glue::new(0, 3 * SP_PER_PT, 0),
-            belowdisplayshortskip: Glue::new(7 * SP_PER_PT, 3 * SP_PER_PT, 4 * SP_PER_PT),
-            predisplaypenalty: 10_000,
+            // M4-4 显示数学间距：INITEX 全零（GT 探针 ABV/BLW/ABVS/BLWS=0.0pt）；
+            // plain.tex L360-363 供 12pt plus3pt minus9pt 等。
+            abovedisplayskip: Glue::ZERO,
+            belowdisplayskip: Glue::ZERO,
+            abovedisplayshortskip: Glue::ZERO,
+            belowdisplayshortskip: Glue::ZERO,
+            predisplaypenalty: 0,
             postdisplaypenalty: 0,
-            // ETRIP 第二波：段落/断页参数（plain 默认）
+            // ETRIP 第二波：段落/断页参数（plain 默认；INITEX 口径全零，
+            // plain.tex L287-293 供 150/150/50——暂维持，随 misc 表同批处理）
             leftskip: Glue::ZERO,
             rightskip: Glue::ZERO,
             prevdepth: -1_000 * SP_PER_PT - 1, // < -1000pt = 未定义
@@ -465,14 +469,14 @@ impl Default for Params {
             spaceskip: Glue::ZERO,
             tabskip: Glue::ZERO,
             lastskip: Glue::ZERO,
-            hfuzz: SP_PER_PT / 10,
-            vfuzz: SP_PER_PT / 10,
-            boxmaxdepth: 16_384 * SP_PER_PT,
-            splitmaxdepth: 16_384 * SP_PER_PT,
-            splittopskip: Glue::new(10 * SP_PER_PT, 0, 0),
+            hfuzz: 0,
+            vfuzz: 0,
+            boxmaxdepth: 0,
+            splitmaxdepth: 0,
+            splittopskip: Glue::ZERO,
             emergencystretch: 0,
             displayindent: 0,
-            delimitershortfall: 5 * SP_PER_PT,
+            delimitershortfall: 0,
             mathsurround: 0,
             lastkern: 0,
             pagestretch: Glue::new(0, 0, 0),
@@ -485,9 +489,9 @@ impl Default for Params {
             defaultskewchar: -1,
             mag: 1000,
             // TRIP 冲刺：TeX initex 默认（TeXbook 附录 D）
-            nulldelimiterspace: 78_643, // 1.2pt
-            scriptspace: 32_768,        // 0.5pt
-            overfullrule: 327_680,      // 5pt
+            nulldelimiterspace: 0,
+            scriptspace: 0,
+            overfullrule: 0,
             voffset: 0,
             hoffset: 0,
             pdflinkmargin: 0,
@@ -619,5 +623,42 @@ impl Params {
             // 类型不匹配忽略（VM 侧保证参数种类与值类型匹配）
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn initex_parameter_tables_keep_only_tex_web_engine_initializers() {
+        let p = Params::default();
+        // tex.web L4703: all glue parameters init to zero_glue（GT `\the` 探针
+        // 10-15：baselineskip/parfillskip/abovedisplayskip 全 0.0pt）。
+        assert_eq!(p.baselineskip, Glue::ZERO);
+        assert_eq!(p.topskip, Glue::ZERO);
+        assert_eq!(p.parfillskip, Glue::ZERO);
+        assert_eq!(p.parskip, Glue::ZERO);
+        assert_eq!(p.abovedisplayskip, Glue::ZERO);
+        assert_eq!(p.splittopskip, Glue::ZERO);
+        assert_eq!(p.hsize, 0);
+        assert_eq!(p.vsize, 0);
+        assert_eq!(p.maxdepth, 0);
+        assert_eq!(p.boxmaxdepth, 0);
+        assert_eq!(p.nulldelimiterspace, 0);
+        assert_eq!(p.overfullrule, 0);
+
+        // tex.web L5234-5236 整数表全零，仅这六个引擎初值非零
+        // （GT iniTeX 探针 TOL=10000 实证）。
+        assert_eq!(p.tolerance, 10_000);
+        assert_eq!(p.mag, 1000);
+        assert_eq!(p.misc[34], i64::from(b'\\'));
+        assert_eq!(p.endlinechar, 13);
+        assert_eq!(p.misc[43], 25);
+        assert_eq!(p.misc[44], 1);
+        // plain 兼容默认（保护性分歧，INITEX 应为 0，plain 层同值冗余供给）。
+        assert_eq!(p.misc[10], 2);
+        assert_eq!(p.misc[12], 1000);
+        assert_eq!(p.misc[38], 10);
     }
 }
