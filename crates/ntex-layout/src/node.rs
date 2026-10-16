@@ -617,26 +617,214 @@ fn vpack_adjust_glue(children: &[Node], diff: i64) -> Vec<Node> {
 /// `vsplit`（tex.web §1168）：把 vbox 从顶部切出高为 `height` 的部分。
 /// 返回 (顶部结果, 底部余量)。纵向距离累计：盒子/规则按 h+d、胶水/字距按 width。
 pub fn split_vbox(b: BoxNode, height: i64) -> (BoxNode, BoxNode) {
-    let mut acc = 0i64;
-    let mut split = b.children.len();
-    for (i, c) in b.children.iter().enumerate() {
-        let d = match c {
-            Node::Glue { width, .. } | Node::Kern { width } => *width,
-            Node::Box(bx) => bx.height + bx.depth,
-            Node::Rule {
-                height: h, depth, ..
-            } => h + depth,
-            _ => c.dimensions().total(),
+    // `split_vbox` has no parameter snapshot of `\splitmaxdepth`; the engine's
+    // existing box path has historically used zero here (the iniTeX default),
+    // which also prevents an overfull late breakpoint from masking an earlier
+    // legal one.
+    let split = vert_break(&b, height, 0, false);
+    // `vert_break` returns q, the breakpoint itself.  q is not linked into the
+    // extracted list (tex.web `prune_page_top` owns it), so a breakpoint
+    // penalty/glue/kern cannot leak into the split box.
+    let mut top = b.children[..split.cut].to_vec();
+    // The material immediately before q is page-break discardable too.  It is
+    // neither part of the extracted box nor of the pruned remainder.
+    while top.last().is_some_and(|node| {
+        matches!(
+            node,
+            Node::Glue { .. } | Node::Kern { .. } | Node::Penalty { .. }
+        )
+    }) {
+        top.pop();
+    }
+    let mut rest = b.children[split.cut..].to_vec();
+    prune_vsplit_top(&mut rest);
+    // A malformed/no-break list still needs the historic `vsplit` progress
+    // guarantee used by the page-box path.  Legal TeX breakpoints always take
+    // precedence; this fallback is only q=null.
+    if split.cut == b.children.len()
+        && height < b.height.saturating_add(b.depth)
+        && !b.children.is_empty()
+    {
+        let mut acc = 0;
+        let cut = b
+            .children
+            .iter()
+            .position(|node| {
+                acc += node.dimensions().total();
+                acc >= height
+            })
+            .map_or(b.children.len(), |i| i + 1);
+        top = b.children[..cut].to_vec();
+        rest = b.children[cut..].to_vec();
+        prune_vsplit_top(&mut rest);
+    }
+    (vpack(top, height, i64::MAX), BoxNode::new_vbox(rest))
+}
+
+/// Result of the shared `vert_break` search (tex.web §868).
+///
+/// `cut` is the index of q, the first node of the remainder; `None` penalty
+/// denotes q=null / the artificial eject breakpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct VertBreak {
+    pub penalty: Option<i64>,
+    pub taken: i64,
+    pub cut: usize,
+}
+
+const INF_PENALTY: i64 = 10_000;
+const EJECT_PENALTY: i64 = -INF_PENALTY;
+const INF_BAD: i64 = 10_000;
+const AWFUL_BAD: i64 = (1 << 30) - 1;
+const DEPLORABLE: i64 = 100_000;
+
+/// Find TeX's least-cost vertical breakpoint.  This is shared by insertion
+/// splitting and `\vsplit`, whose difference is only what the caller does
+/// with q afterwards.
+pub(crate) fn vert_break(body: &BoxNode, h: i64, d: i64, eject_at_end: bool) -> VertBreak {
+    let mut cur_height = 0i64;
+    let mut prev_dp = 0i64;
+    let mut least_cost = AWFUL_BAD;
+    let mut best_place = None;
+    let mut best_penalty = None;
+    let mut best_hpd = 0i64;
+    let n = body.children.len();
+    macro_rules! champion {
+        ($pen:expr, $hpd:expr, $place:expr) => {{
+            let pen: i64 = $pen;
+            let b_raw = if cur_height < h {
+                INF_BAD
+            } else if cur_height - h > d {
+                AWFUL_BAD
+            } else {
+                crate::linebreak::badness(cur_height - h, d) as i64
+            };
+            let b = if b_raw < AWFUL_BAD {
+                if pen <= EJECT_PENALTY {
+                    pen
+                } else if b_raw < INF_BAD {
+                    b_raw + pen
+                } else {
+                    DEPLORABLE
+                }
+            } else {
+                b_raw
+            };
+            if b <= least_cost {
+                least_cost = b;
+                best_place = Some($place);
+                best_penalty = Some(pen);
+                best_hpd = $hpd;
+            }
+            b == AWFUL_BAD || pen <= EJECT_PENALTY
+        }};
+    }
+    for (i, node) in body.children.iter().enumerate() {
+        let pi = match node {
+            Node::Box(b) => {
+                cur_height += prev_dp + b.height;
+                prev_dp = b.depth;
+                None
+            }
+            Node::Rule { height, depth, .. } => {
+                cur_height += prev_dp + height;
+                prev_dp = *depth;
+                None
+            }
+            Node::Glue { width, .. } => {
+                let precedes_break = i != 0
+                    && matches!(
+                        body.children[i - 1],
+                        Node::Box(_)
+                            | Node::Rule { .. }
+                            | Node::Ins { .. }
+                            | Node::Mark { .. }
+                            | Node::Adjust { .. }
+                            | Node::Discretionary { .. }
+                            | Node::Whatsit { .. }
+                    );
+                if precedes_break {
+                    Some(0)
+                } else {
+                    cur_height += prev_dp + width;
+                    prev_dp = 0;
+                    None
+                }
+            }
+            Node::Kern { width } => {
+                if i + 1 == n {
+                    Some(i64::MIN)
+                } else if matches!(body.children[i + 1], Node::Glue { .. }) {
+                    Some(0)
+                } else {
+                    cur_height += prev_dp + width;
+                    prev_dp = 0;
+                    None
+                }
+            }
+            Node::Penalty { penalty } => Some(*penalty),
+            Node::Mark { .. } | Node::Ins { .. } => None,
+            _ => None,
         };
-        acc += d;
-        if acc >= height {
-            split = i + 1;
-            break;
+        let is_end = pi == Some(i64::MIN);
+        if let Some(pen) = pi.filter(|_| !is_end) {
+            if pen < INF_PENALTY && champion!(pen, cur_height + prev_dp, i) {
+                return VertBreak {
+                    penalty: best_penalty,
+                    taken: best_hpd,
+                    cut: best_place.unwrap_or(n),
+                };
+            }
+        }
+        if prev_dp > d {
+            cur_height += prev_dp - d;
+            prev_dp = d;
         }
     }
-    let top = b.children[..split].to_vec();
-    let rest = b.children[split..].to_vec();
-    (vpack(top, height, i64::MAX), BoxNode::new_vbox(rest))
+    let b_raw = if cur_height < h {
+        INF_BAD
+    } else if cur_height - h > d {
+        AWFUL_BAD
+    } else {
+        crate::linebreak::badness(cur_height - h, d) as i64
+    };
+    let b = if b_raw < AWFUL_BAD {
+        EJECT_PENALTY
+    } else {
+        b_raw
+    };
+    if eject_at_end && b <= least_cost {
+        VertBreak {
+            penalty: None,
+            taken: cur_height + prev_dp,
+            cut: n,
+        }
+    } else if let Some(cut) = best_place {
+        VertBreak {
+            penalty: best_penalty,
+            taken: best_hpd,
+            cut,
+        }
+    } else {
+        VertBreak {
+            penalty: None,
+            taken: 0,
+            cut: n,
+        }
+    }
+}
+
+/// `prune_page_top(q)` for `\vsplit`: discard q's break material and all
+/// following page-top discardables.  The decision is by node class only.
+fn prune_vsplit_top(nodes: &mut Vec<Node>) {
+    while nodes.first().is_some_and(|node| {
+        matches!(
+            node,
+            Node::Glue { .. } | Node::Kern { .. } | Node::Penalty { .. }
+        )
+    }) {
+        nodes.remove(0);
+    }
 }
 
 /// `hpack`（tex.web §656 "hpackage"）：把水平列表打包成**恰好** `width` 宽的 hbox。
@@ -1044,5 +1232,33 @@ mod tests {
         assert!(Node::Penalty { penalty: 0 }.is_discardable());
         assert!(!char_of(1, 1, 1).is_discardable());
         assert!(!Node::Box(BoxNode::new_hbox(vec![])).is_discardable());
+    }
+
+    #[test]
+    fn vsplit_uses_vert_break_and_prunes_break_material() {
+        // A breakpoint is q itself, rather than the first item after a
+        // size-threshold crossing.  The -101/-100/-1000 group models the
+        // TRIP page-2 shape; its values are deliberately not inspected by the
+        // pruning step.
+        let first = Node::Box(BoxNode::new_hbox(vec![char_of(10, 20, 0)]));
+        let second = Node::Box(BoxNode::new_hbox(vec![char_of(10, 20, 0)]));
+        let input = BoxNode::new_vbox(vec![
+            first.clone(),
+            Node::Penalty { penalty: -101 },
+            Node::Penalty { penalty: -100 },
+            Node::Penalty { penalty: -1000 },
+            Node::Glue {
+                name: None,
+                width: 7,
+                stretch: 0,
+                shrink: 0,
+                stretch_order: 0,
+                shrink_order: 0,
+            },
+            second.clone(),
+        ]);
+        let (top, rest) = split_vbox(input, 20);
+        assert_eq!(top.children, vec![first]);
+        assert_eq!(rest.children, vec![second]);
     }
 }

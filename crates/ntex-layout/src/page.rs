@@ -23,7 +23,7 @@ use std::collections::{HashMap, HashSet};
 use ntex_core::param::Params;
 use ntex_core::register::{Glue, REGISTER_COUNT};
 
-use crate::node::{BoxKind, BoxNode, Node};
+use crate::node::{vert_break, BoxKind, BoxNode, Node};
 
 /// 无穷惩罚 / badness 常量（tex.web §3258、§18983）。
 const INF_PENALTY: i64 = 10_000;
@@ -147,6 +147,10 @@ pub struct PageBuilder {
     /// 当前页已触发过 vert_break 拆分的 insert 类（tex.web `type(r)=split_up`）：
     /// 同类再遇溢出走 float_cost 计账照常入页，不重复拆分。
     split_up_classes: HashSet<usize>,
+    /// `fire_up` 前暂存的 split insert remainder。tex.web 将它挂在 hold_head，
+    /// 仅在当前页打包以后才成为新页材料；若立刻塞回 contribution，同一类的
+    /// `split_up` 快路径会把 remainder 又吸回当前页。
+    held_over_inserts: Vec<Node>,
     insert_seen: bool,
 }
 
@@ -200,6 +204,7 @@ impl PageBuilder {
             insert_skips_seen: HashSet::new(),
             insert_penalties: 0,
             split_up_classes: HashSet::new(),
+            held_over_inserts: Vec::new(),
             insert_seen: false,
         }
     }
@@ -523,6 +528,7 @@ impl PageBuilder {
             Node::Ins {
                 class,
                 ref body,
+                split_top_skip,
                 float_cost,
                 split_max_depth,
                 ..
@@ -591,7 +597,9 @@ impl PageBuilder {
                     if w > w_cap {
                         w = w_cap;
                     }
-                    let (split_pen, taken) = vert_break_insert(body, w, split_max_depth);
+                    let split = vert_break(body, w, split_max_depth, true);
+                    let split_pen = split.penalty;
+                    let taken = split.taken;
                     if self.tracing {
                         let p_str = match split_pen {
                             Some(pen) => format!("{}", pen),
@@ -624,9 +632,62 @@ impl PageBuilder {
                     }
                     self.split_up_classes.insert(class);
                     self.insert_heights.insert(class, already + taken);
-                    // insert 节点照常入页（例程域决定 box<n> 里留什么；刀B 域）。
+                    // `vert_break` 的返回点 q 是**余量的起点**：q 本身是断点
+                    // 节点，不能进入本页的 box<class>（tex.web fire_up 会先把
+                    // q 以前的链接入盒，再以 prune_page_top(q) 构造 holdover）。
+                    // 旧代码只返回高度/罚分，整段 body 被 `insert_accumulate`
+                    // 无条件搬入 box<class>，于是 split 后材料泄进 shipped tree。
+                    let accepted = BoxNode::new_vbox(body.children[..split.cut].to_vec());
+                    let accepted_node = Node::Ins {
+                        class,
+                        body: accepted,
+                        split_top_skip,
+                        split_max_depth,
+                        float_cost,
+                    };
+                    let mut remainder = body.children[split.cut..].to_vec();
+                    // tex.web `prune_page_top(q)`：断点 penalty、页首 glue/kern
+                    // 都不成为 holdover 内容；这只按节点类别，不看罚分数值。
+                    while remainder.first().is_some_and(|n| {
+                        matches!(
+                            n,
+                            Node::Glue { .. } | Node::Kern { .. } | Node::Penalty { .. }
+                        )
+                    }) {
+                        remainder.remove(0);
+                    }
+                    // `prune_page_top` 在首个盒前补 split_top_skip，并以该盒的
+                    // 高度抵消其自然宽度；因此它也是 remainder 的结构，不是页
+                    // 目标的计账项。
+                    if let Some(first) = remainder.first() {
+                        let mut split_glue = split_top_skip;
+                        split_glue.width = (split_glue.width - first.dimensions().height).max(0);
+                        remainder.insert(
+                            0,
+                            Node::Glue {
+                                name: Some("splittopskip"),
+                                width: split_glue.width,
+                                stretch: split_glue.stretch,
+                                shrink: split_glue.shrink,
+                                stretch_order: split_glue.stretch_order,
+                                shrink_order: split_glue.shrink_order,
+                            },
+                        );
+                    }
                     contrib.remove(0);
-                    self.page.push(node);
+                    self.page.push(accepted_node);
+                    // tex.web 的 hold_head 生命周期跨越本次 fire_up：不可马上
+                    // 塞回 contribution，否则 split_up 同类快路径会在**本页**把
+                    // remainder 整段接纳。没有 remainder 时 q=null，不造空 insert。
+                    if !remainder.is_empty() {
+                        self.held_over_inserts.push(Node::Ins {
+                            class,
+                            body: BoxNode::new_vbox(remainder),
+                            split_top_skip,
+                            split_max_depth,
+                            float_cost,
+                        });
+                    }
                     self.last_is_box = false;
                     return Outcome::Continue;
                 }
@@ -889,6 +950,11 @@ impl PageBuilder {
         // page builder 消费，不能在 insert 重试时再次作为下一页贡献处理。
         contrib.splice(0..0, self.page.drain(resume..));
         self.start_new_page();
+        // tex.web 在 start_new_page 后把 hold_head 接回 page_head；这里等价为
+        // 新页贡献的前缀，顺序在触发断点及原有剩余材料之前。
+        if !self.held_over_inserts.is_empty() {
+            contrib.splice(0..0, std::mem::take(&mut self.held_over_inserts));
+        }
         page
     }
 
@@ -1036,7 +1102,20 @@ impl PageBuilder {
 ///
 /// 简化（已登记 KNOWN-SIMPLIFICATIONS 级）：无穷阶拉伸按 s=0 → inf_bad 处理
 /// （与页构建器主循环同口径）；whatsit/mark/ins 不入断点。
-fn vert_break_insert(body: &crate::node::BoxNode, h: i64, d: i64) -> (Option<i64>, i64) {
+// Kept only as the R1 source-history reference while the shared implementation
+// lives in `node::vert_break`; `page` and `vsplit` now execute that one machine.
+#[cfg(any())]
+struct InsertBreak {
+    /// `q` 的 penalty；`None` 代表 q=null 的 eject 分支。
+    penalty: Option<i64>,
+    /// tex.web `best_height_plus_depth`。
+    taken: i64,
+    /// q 的数组下标；q=null 时等于 body 长度。
+    cut: usize,
+}
+
+#[cfg(any())]
+fn vert_break_insert(body: &crate::node::BoxNode, h: i64, d: i64) -> InsertBreak {
     let mut cur_height = 0i64;
     let mut prev_dp = 0i64;
     let mut least_cost = AWFUL_BAD;
@@ -1047,7 +1126,7 @@ fn vert_break_insert(body: &crate::node::BoxNode, h: i64, d: i64) -> (Option<i64
     // 冠军判定子过程（tex.web L18986-19005）：b<=least_cost 等值也换、
     // b=awful 或 pi<=eject 立停。供循环内断点与循环后 p=null 臂共用。
     macro_rules! champion {
-        ($pen:expr, $hpd:expr) => {{
+        ($pen:expr, $hpd:expr, $place:expr) => {{
             let pen: i64 = $pen;
             let b_raw = if cur_height < h {
                 // 无穷阶拉伸未跟踪（简化，登记 KNOWN-SIMPLIFICATIONS）：
@@ -1072,7 +1151,7 @@ fn vert_break_insert(body: &crate::node::BoxNode, h: i64, d: i64) -> (Option<i64
             let mut stop = false;
             if b <= least_cost {
                 least_cost = b;
-                best_place = Some(n); // 占位：有冠军
+                best_place = Some($place);
                 best_penalty = Some(pen);
                 best_hpd = $hpd;
             }
@@ -1147,11 +1226,15 @@ fn vert_break_insert(body: &crate::node::BoxNode, h: i64, d: i64) -> (Option<i64
         let is_end = pi == Some(i64::MIN);
         if let Some(pen) = pi.filter(|_| !is_end) {
             if pen < INF_PENALTY {
-                let stop = champion!(pen, cur_height + prev_dp);
+                let stop = champion!(pen, cur_height + prev_dp, i);
                 if stop {
                     // 立停（b=awful 或 pi<=eject）：tex.web goto done，p=null
                     // 臂不再运行（L18948 在 champion 检查之后）。
-                    return (best_penalty, best_hpd);
+                    return InsertBreak {
+                        penalty: best_penalty,
+                        taken: best_hpd,
+                        cut: best_place.unwrap_or(n),
+                    };
                 }
             }
         }
@@ -1182,10 +1265,22 @@ fn vert_break_insert(body: &crate::node::BoxNode, h: i64, d: i64) -> (Option<i64
     if b <= least_cost {
         // q=null 臂：断点惩罚记 None（调用方按 EJECT_PENALTY 记账），
         // taken = 全体自然高+深。
-        return (None, cur_height + prev_dp);
+        return InsertBreak {
+            penalty: None,
+            taken: cur_height + prev_dp,
+            cut: n,
+        };
     }
     match best_place {
-        Some(_) => (best_penalty, best_hpd),
-        None => (None, 0),
+        Some(cut) => InsertBreak {
+            penalty: best_penalty,
+            taken: best_hpd,
+            cut,
+        },
+        None => InsertBreak {
+            penalty: None,
+            taken: 0,
+            cut: n,
+        },
     }
 }
