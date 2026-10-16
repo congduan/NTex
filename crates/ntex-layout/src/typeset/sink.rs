@@ -2359,15 +2359,15 @@ fn align_fin(params: ntex_core::param::Params, dir: AlignDir, mut ctx: AlignCtx)
                 if let Node::Box(b) = &node {
                     if let Some(pd) = prev_depth {
                         let d = params.baselineskip.width - (pd + b.height);
-                        let g = if d < params.lineskiplimit {
-                            params.lineskip
+                        let (g, name) = if d < params.lineskiplimit {
+                            (params.lineskip, "lineskip")
                         } else {
                             let mut g = params.baselineskip;
                             g.width = d;
-                            g
+                            (g, "baselineskip")
                         };
                         out.push(Node::Glue {
-                            name: None,
+                            name: Some(name),
                             width: g.width,
                             stretch: g.stretch,
                             shrink: g.shrink,

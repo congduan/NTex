@@ -1823,15 +1823,15 @@ impl NodeBuilder {
     /// 会在段首胶水宽度上分叉。
     fn interline_glue_node(&self, height: i64, prev_depth: i64) -> Node {
         let d = self.params.baselineskip.width - (prev_depth + height);
-        let g = if d < self.params.lineskiplimit {
-            self.params.lineskip
+        let (g, name) = if d < self.params.lineskiplimit {
+            (self.params.lineskip, "lineskip")
         } else {
             let mut g = self.params.baselineskip;
             g.width = d;
-            g
+            (g, "baselineskip")
         };
         Node::Glue {
-            name: None,
+            name: Some(name),
             width: g.width,
             stretch: g.stretch,
             shrink: g.shrink,

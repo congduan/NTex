@@ -594,6 +594,13 @@ mod tests {
         let main = typeset(r"\baselineskip 8pt ab\par cd").unwrap();
         assert_eq!(main.len(), 3);
         assert_eq!(as_glue_width(&main[1]), 8 * SP_PER_PT - (1500 + 6000));
+        assert!(matches!(
+            main[1],
+            Node::Glue {
+                name: Some("baselineskip"),
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -603,6 +610,24 @@ mod tests {
         let main = typeset(src).unwrap();
         assert_eq!(main.len(), 3);
         assert_eq!(as_glue_width(&main[1]), 3 * SP_PER_PT);
+        assert!(matches!(
+            main[1],
+            Node::Glue {
+                name: Some("lineskip"),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn showbox_interline_glue_keeps_parameter_name() {
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
+        ts.typeset(r"\setbox0=\vbox{\hbox{a}\hbox{b}}\showbox0\end")
+            .unwrap();
+        assert!(
+            ts.take_transcript().contains(r"\glue(\baselineskip)"),
+            "showbox 的行间胶水必须保留 \\baselineskip 来源名"
+        );
     }
 
     #[test]
