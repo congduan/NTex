@@ -253,6 +253,9 @@ pub struct Typesetter {
     /// `.fmt` 恢复的 `\count0..9`（install_builder 播种页号链镜像用；`.fmt` 的
     /// 寄存器不经 count_changed 事件，install 边界是唯一可取点——输出例程刀 5）。
     fmt_page_counts: [i64; 10],
+    /// `.fmt` 恢复的 insert 三联寄存器。pass2 不会重放 pass1 的赋值事件，
+    /// 故安装 NodeBuilder 时必须播种其页面构建器镜像。
+    fmt_insert_regs: InsertRegs,
     /// .fmt 导入的当前字体（import_state 时 sink 未装，install_builder 同步）。
     fmt_current_font: u32,
     /// .fmt 导入的 `\hyphenchar` 覆盖表（import_state 时 sink 未装，install_builder 同步）。
@@ -347,6 +350,7 @@ impl Typesetter {
             shipped: Vec::new(),
             shipped_counts: Vec::new(),
             fmt_page_counts: [0; 10],
+            fmt_insert_regs: InsertRegs::default(),
             fmt_current_font: 0,
             fmt_hyphenchars: Vec::new(),
             last_current_font: 0,
@@ -557,6 +561,11 @@ impl Typesetter {
             fmt_page_counts[i] = *c;
         }
         self.fmt_page_counts = fmt_page_counts;
+        self.fmt_insert_regs = InsertRegs {
+            counts: state.registers.counts.to_vec(),
+            dimens: state.registers.dimens.to_vec(),
+            skips: state.registers.skips.to_vec(),
+        };
         self.expander.import_state(state);
         // .fmt 不含字体表：按 font_loads 重新加载 TFM（pass1 定义的
         // `\font\trip` 在 pass2 不重跑，字体表需恢复——否则字符悬空字体）
@@ -602,6 +611,7 @@ impl Typesetter {
             shipped: Vec::new(),
             shipped_counts: Vec::new(),
             fmt_page_counts: [0; 10],
+            fmt_insert_regs: InsertRegs::default(),
             fmt_current_font: 0,
             fmt_hyphenchars: Vec::new(),
             last_current_font: 0,
@@ -628,6 +638,7 @@ impl Typesetter {
             shipped: Vec::new(),
             shipped_counts: Vec::new(),
             fmt_page_counts: [0; 10],
+            fmt_insert_regs: InsertRegs::default(),
             fmt_current_font: 0,
             fmt_hyphenchars: Vec::new(),
             last_current_font: 0,
@@ -748,6 +759,7 @@ impl Typesetter {
         // 页号链播种（输出例程刀 5）：.fmt 恢复的 \count0..9 不经 count_changed
         // 事件，镜像须取 fmt 初值（TRIP：pass1 dump 前 \count4 已到 11）
         builder.page_state.page_counts = self.fmt_page_counts;
+        builder.page_state.insert_regs = self.fmt_insert_regs.clone();
         // .fmt 恢复的 \output token 列表在 expander 侧，但新建 NodeBuilder
         // 默认认为输出例程未定义；若不同步，LaTeX 的 \@outputpage 会被绕过。
         builder.page_state.output_defined = self.expander.output_defined();

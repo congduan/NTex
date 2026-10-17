@@ -197,6 +197,23 @@ use super::*;
         assert!(pages.len() >= 2, "应至少产出两页：{pages:?}\\n{t}");
     }
 
+    /// `\count<n>` 是 insertion 高度的缩放因子（tex.web L19614-19617）：
+    /// count=2000 时 100pt insertion 需要 200pt，而不是 50pt。后者会把
+    /// 本应 split 的 insertion 错当作 fits，使后续断点（包括 vadjust）错页。
+    #[test]
+    fn insert_count_scaling_uses_count_over_thousand() {
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
+        let _ = ts.typeset_dvi(
+            r"\tracingpages=1 \vsize=100pt \count100=2000 \dimen100=1000pt
+              \hbox{X}\insert100{\vbox to100pt{}}\vfill\penalty-10000\end",
+        );
+        let t = ts.take_transcript();
+        assert!(
+            t.contains("% split100"),
+            "count=2000 的 100pt insertion 必须在 100pt 页上 split：{t}"
+        );
+    }
+
     /// held-over insert 回到既有页断点时，断点节点本身已被消费；它后面的
     /// 段内强制折行 penalty 仍只属于 line_break，不能在重试后升格为
     /// vertical page penalty。

@@ -568,7 +568,7 @@ impl PageBuilder {
                 let h = if factor <= 0 {
                     0
                 } else if factor != 1000 {
-                    body_height.saturating_mul(1000) / factor
+                    body_height.saturating_mul(factor) / 1000
                 } else {
                     body_height
                 };
@@ -614,7 +614,7 @@ impl PageBuilder {
                         ));
                     }
                     let taken_debit = if factor > 0 && factor != 1000 {
-                        taken.saturating_mul(1000) / factor
+                        taken.saturating_mul(factor) / 1000
                     } else {
                         taken
                     };
