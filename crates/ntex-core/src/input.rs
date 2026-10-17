@@ -349,6 +349,34 @@ pub fn scan_token(
                         // 字符产生，现实文件不可达，见 control-word 续读循环的自然
                         // reswitch。）
                         match catcodes.get(d) {
+                            // `^^` 的结果也可能是 escape（TRIP：先把 DEL 改成
+                            // escape，再以 `^^?trip` 选择字体）。tex.web 的
+                            // `reswitch` 会从这个新 escape 重新扫描控制序列；不能
+                            // 将它降成普通字符，否则后随字母会被当正文。
+                            Catcode::Escape => {
+                                let Some(&first) = bytes.get(*pos) else {
+                                    return Err(Error::invalid_input("输入以 escape 结束"));
+                                };
+                                if catcodes.get(first).is_letter() {
+                                    let start = *pos;
+                                    while *pos < bytes.len()
+                                        && catcodes.get(bytes[*pos]).is_letter()
+                                    {
+                                        *pos += 1;
+                                    }
+                                    let name =
+                                        std::str::from_utf8(&bytes[start..*pos]).map_err(|_| {
+                                            Error::invalid_input("控制词含非 UTF-8 字节")
+                                        })?;
+                                    let csid = intern.intern(name);
+                                    *state = ScanState::InSpace;
+                                    return Ok(Some(Token::control_sequence(csid)));
+                                }
+                                // 控制符号沿下方普通字符路径处理；这里不消费
+                                // 后继字符，避免改变 active/行尾的既有分派。
+                                ch = d as u32;
+                                cat = Catcode::Escape;
+                            }
                             // 注释：吞到物理行尾（含行尾字节，LF 字节身份终止），
                             // 状态回 new_line——与外层 Comment 臂同一语义。
                             Catcode::Comment => {
