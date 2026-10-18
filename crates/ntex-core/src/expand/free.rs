@@ -248,6 +248,7 @@ fn param_kind_of(p: Primitive) -> Option<ParamKind> {
         Primitive::BoxMaxDepth => ParamKind::BoxMaxDepth,
         Primitive::SplitMaxDepth => ParamKind::SplitMaxDepth,
         Primitive::EmergencyStretch => ParamKind::EmergencyStretch,
+        Primitive::DisplayWidth => ParamKind::DisplayWidth,
         Primitive::DisplayIndent => ParamKind::DisplayIndent,
         Primitive::DelimiterShortfall => ParamKind::DelimiterShortfall,
         Primitive::MathSurround => ParamKind::MathSurround,
@@ -730,6 +731,7 @@ fn is_param_prim(p: Primitive) -> bool {
             | Primitive::BoxMaxDepth
             | Primitive::SplitMaxDepth
             | Primitive::EmergencyStretch
+            | Primitive::DisplayWidth
             | Primitive::DisplayIndent
             | Primitive::DelimiterShortfall
             | Primitive::MathSurround

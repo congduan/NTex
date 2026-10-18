@@ -589,6 +589,8 @@ impl CoreSink for NodeBuilder {
                         width: w,
                         stretch: s,
                         shrink: k,
+                        stretch_order: 0,
+                        shrink_order: 0,
                         nonscript: false,
                         mu: false,
                     })?;
@@ -693,6 +695,8 @@ impl CoreSink for NodeBuilder {
                 width: g.width,
                 stretch: g.stretch,
                 shrink: g.shrink,
+                stretch_order: g.stretch_order,
+                shrink_order: g.shrink_order,
                 nonscript: false,
                 mu: false,
             })?;
@@ -719,6 +723,8 @@ impl CoreSink for NodeBuilder {
                 width,
                 stretch: 0,
                 shrink: 0,
+                stretch_order: 0,
+                shrink_order: 0,
                 nonscript: false,
                 mu: false,
             })?;
@@ -739,6 +745,8 @@ impl CoreSink for NodeBuilder {
             width: g.width,
             stretch: g.stretch,
             shrink: g.shrink,
+            stretch_order: g.stretch_order,
+            shrink_order: g.shrink_order,
             nonscript: false,
             mu: true,
         })
@@ -1015,6 +1023,8 @@ impl FontSink for NodeBuilder {
                 width: 0,
                 stretch: 0,
                 shrink: 0,
+                stretch_order: 0,
+                shrink_order: 0,
                 nonscript: false,
                 mu: false,
             });
@@ -1445,7 +1455,12 @@ impl BoxSink for NodeBuilder {
         };
         let in_horizontal =
             matches!(self.mode(), Mode::Horizontal | Mode::RestrictedHorizontal);
-        if horizontal != in_horizontal {
+        // 数学模式没有"水平列表"，却接受 h 方向 fill：tex.web `\hfil` 等是
+        // `hskip` 的特例（`append_glue` 无条件 `tail_append(new_glue)`，mlist
+        // 里就是 glue 节点）；amsmath `multline` 靠模板 `\hfil` 与行首
+        // `\hfilneg` 相消实现首行左齐/末行右齐。v 方向 fill 在数学模式仍无意义。
+        let in_math = matches!(self.mode(), Mode::Math | Mode::DisplayMath);
+        if horizontal != in_horizontal && !(in_math && horizontal) {
             return Ok(()); // 方向不符：忽略
         }
         // `\leaders\hbox{…}\hfill`：fill 胶水也是"proper glue"（tex.web 把
@@ -1467,8 +1482,22 @@ impl BoxSink for NodeBuilder {
         // \vfill 等不是合法数学字段开头（tex.web scan_math othercases；TRIP L396
         // `\accent\x\vfill` 在 \vfill 处报 Missing { inserted）
         self.check_math_field_break()?;
-        if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-            return Ok(()); // 数学模式中 fill 胶水无效果
+        // 数学模式：fill 胶水作为 mlist 的 pt 胶节点（`\hskip` 同款）——
+        // mlist_to_hlist 只换算 mu 胶，pt 胶原样落 hlist（tex.web math_glue）。
+        if in_math {
+            if !horizontal {
+                return Ok(()); // \vfil 等垂直 fill 在数学模式无效果
+            }
+            self.math_push_atom(MathAtom::MSkip {
+                width: 0,
+                stretch,
+                shrink,
+                stretch_order: order,
+                shrink_order: order,
+                nonscript: false,
+                mu: false,
+            })?;
+            return Ok(());
         }
         self.append(Node::Glue {
             name: None,            width: 0,

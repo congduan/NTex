@@ -509,6 +509,7 @@ impl Expander {
                 | Primitive::BoxMaxDepth
                 | Primitive::SplitMaxDepth
                 | Primitive::EmergencyStretch
+                | Primitive::DisplayWidth
                 | Primitive::DisplayIndent
                 | Primitive::DelimiterShortfall
                 | Primitive::MathSurround
@@ -545,6 +546,7 @@ impl Expander {
                         Primitive::BoxMaxDepth => ParamKind::BoxMaxDepth,
                         Primitive::SplitMaxDepth => ParamKind::SplitMaxDepth,
                         Primitive::EmergencyStretch => ParamKind::EmergencyStretch,
+                        Primitive::DisplayWidth => ParamKind::DisplayWidth,
                         Primitive::DisplayIndent => ParamKind::DisplayIndent,
                         Primitive::DelimiterShortfall => ParamKind::DelimiterShortfall,
                         Primitive::MathSurround => ParamKind::MathSurround,
@@ -822,9 +824,9 @@ impl Expander {
                 // scan_left_brace 的 filler 语义下展开时即需读值；NTex 的
                 // \everyjob 赋值暂映射 toks 寄存器 0，读回同源）
                 Primitive::EveryJob => Ok(self.registers.toks(0).to_vec()),
-                // TRIP 补全批次：页面只读内部量（无排版状态返回 0）
-                Primitive::DisplayWidth
-                | Primitive::PageDepth
+                // TRIP 补全批次：页面只读内部量（无排版状态返回 0）。
+                // `\displaywidth` 不在此——它走上面的参数表（tex.web assign_dimen）。
+                Primitive::PageDepth
                 | Primitive::PageFillLStretch
                 | Primitive::PageShrink => Ok(emit_dimen(0)),
                 Primitive::PageStretch
@@ -1624,6 +1626,7 @@ fn param_name(kind: ParamKind) -> &'static str {
         SplitMaxDepth => "splitmaxdepth",
         SplitTopSkip => "splittopskip",
         EmergencyStretch => "emergencystretch",
+        DisplayWidth => "displaywidth",
         DisplayIndent => "displayindent",
         DelimiterShortfall => "delimitershortfall",
         MathSurround => "mathsurround",

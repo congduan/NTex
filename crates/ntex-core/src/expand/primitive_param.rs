@@ -321,11 +321,14 @@ impl Expander {
             }
             // TRIP 冲刺：补充标准尺寸参数（\hfuzz/\vfuzz/\boxmaxdepth/\splitmaxdepth/
             // \emergencystretch/\displayindent/\delimitershortfall/\lastkern/\mathsurround）
+            // + `\displaywidth`（tex.web assign_dimen：引擎在 init_math 写 l:=hsize，
+            // 用户也可显式赋值）。
             Primitive::Hfuzz
             | Primitive::Vfuzz
             | Primitive::BoxMaxDepth
             | Primitive::SplitMaxDepth
             | Primitive::EmergencyStretch
+            | Primitive::DisplayWidth
             | Primitive::DisplayIndent
             | Primitive::DelimiterShortfall
             | Primitive::MathSurround
@@ -337,6 +340,7 @@ impl Expander {
                     Primitive::BoxMaxDepth => ParamKind::BoxMaxDepth,
                     Primitive::SplitMaxDepth => ParamKind::SplitMaxDepth,
                     Primitive::EmergencyStretch => ParamKind::EmergencyStretch,
+                    Primitive::DisplayWidth => ParamKind::DisplayWidth,
                     Primitive::DisplayIndent => ParamKind::DisplayIndent,
                     Primitive::DelimiterShortfall => ParamKind::DelimiterShortfall,
                     Primitive::MathSurround => ParamKind::MathSurround,

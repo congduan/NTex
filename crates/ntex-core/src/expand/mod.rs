@@ -2915,6 +2915,30 @@ impl Expander {
                     };
                     let display = self.next_is_math_shift(consume_for_display)?;
                     self.in_math = entering;
+                    // tex.web init_math `@<Go into display math mode@>`（L21774）：
+                    // `eq_word_define(dimen_base+display_width_code,l)`，其中
+                    // `l:=hsize`（「Calculate the length l and the shift s」的
+                    // 悬挂缩进摊派臂未实现 → l 恒 = hsize、s = 0）。这是**全局**
+                    // 写（不进 save_stack），`$$` 体内宏读 `\displaywidth` 即得行宽。
+                    // 此前该量是"只读内部量、恒按 0 读"，LaTeX `\displaylines`
+                    // 与 amsmath `multline`/`gather` 的 `\hbox to\displaywidth`
+                    // 因此全部排成 0 宽行盒（公式溢出/对齐全错）。
+                    let enters_display = display
+                        && if entering {
+                            self.sink.math_display_allowed()
+                        } else {
+                            // 行内数学内遇 `$$`：sink 报错后转进显示数学；
+                            // 已在 DisplayMath 是**收尾**，不重设。
+                            self.sink.mode_code() == 3
+                        };
+                    if enters_display {
+                        let l = self.params.hsize;
+                        if self.params.displaywidth != l {
+                            self.params.displaywidth = l;
+                            self.sink
+                                .param_changed(ParamKind::DisplayWidth, ParamValue::Dimen(l))?;
+                        }
+                    }
                     // tex.web init_math：`$` 即 `new_save_level(math_shift_group)`
                     // ——数学层是 save group，先入作用域栈，`\everymath` 体里的
                     // `\aftergroup` 才挂到本层（而非外包盒子/对齐组）。

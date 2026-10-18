@@ -258,6 +258,13 @@ enum MathAtom {
         width: i64,
         stretch: i64,
         shrink: i64,
+        /// 胶水阶（tex.web `glue_ord`：0=normal、1=fil、2=fill、3=filll）。
+        /// 必须保留：`\hfil`（+1fil）与 `\hfilneg`（-1fil）在 mlist 里同阶
+        /// 才能相消——amsmath `multline` 的首行左齐/末行右齐靠这个机制
+        /// （阶被压成 normal 时两者变成有限拉伸，行盒只剩模板的 `\hfil`，
+        /// 公式两行都居中）。
+        stretch_order: u8,
+        shrink_order: u8,
         nonscript: bool,
         mu: bool,
     },

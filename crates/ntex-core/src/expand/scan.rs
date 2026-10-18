@@ -845,9 +845,13 @@ impl Expander {
                     return Ok(if neg { -v } else { v });
                 }
                 // TRIP：显示/页面 dimen 内部量在整数上下文按 sp 读取（tex.web
-                // scan_something_internal(int_val)：dimen 转整数；\displayindent 有
-                // 参数存储，其余为只读内部量（expander 无排版状态，暂 0——
-                // 避免 l.252/253 误报 Missing number）。
+                // scan_something_internal(int_val)：dimen 转整数；\displayindent/
+                // \displaywidth 有参数存储（tex.web init_math 写 l:=hsize）。
+                EqSlot::Primitive(Primitive::DisplayWidth) => {
+                    self.fetch()?;
+                    let v = self.params.displaywidth;
+                    return Ok(if neg { -v } else { v });
+                }
                 EqSlot::Primitive(Primitive::DisplayIndent) => {
                     self.fetch()?;
                     let v = self.params.displayindent;
@@ -888,10 +892,7 @@ impl Expander {
                     return Ok(if neg { -v } else { v });
                 }
                 EqSlot::Primitive(
-                    Primitive::DisplayWidth
-                    | Primitive::PreDisplaySize
-                    | Primitive::PageTotal
-                    | Primitive::PageGoal,
+                    Primitive::PreDisplaySize | Primitive::PageTotal | Primitive::PageGoal,
                 ) => {
                     self.fetch()?;
                     return Ok(0);
@@ -2175,15 +2176,14 @@ impl Expander {
                 self.fetch()?;
                 return Ok((if neg { -v } else { v }, 0));
             }
-            // TRIP：只读显示/页面内部量作尺寸（\predisplaysize/\displaywidth/\pagetotal/
-            // \pagegoal）——expander 无排版状态，暂按 0 读，避免 l.253 误报 Missing number。
+            // TRIP：只读显示/页面内部量作尺寸（\predisplaysize/\pagetotal/\pagegoal）
+            // ——expander 无排版状态，暂按 0 读，避免 l.253 误报 Missing number。
+            // （\displaywidth 不在此：它已是有存储的 dimen 参数，走上面的
+            // `param_kind_of` 通用臂。）
             if matches!(
                 self.eqtb.slot(csid),
                 EqSlot::Primitive(
-                    Primitive::DisplayWidth
-                        | Primitive::PreDisplaySize
-                        | Primitive::PageTotal
-                        | Primitive::PageGoal
+                    Primitive::PreDisplaySize | Primitive::PageTotal | Primitive::PageGoal
                 )
             ) {
                 self.fetch()?;

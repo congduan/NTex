@@ -156,9 +156,10 @@ impl Expander {
                 }
                 self.sink.vsplit(idx, to, spread)
             }
-            // TRIP 补全批次：页面只读内部量（\the 查询在 save.rs 返回 0）
-            Primitive::DisplayWidth
-            | Primitive::PageDepth
+            // TRIP 补全批次：页面只读内部量（\the 查询在 save.rs 返回 0）。
+            // `\displaywidth` 不在其中——它是 `assign_dimen` 量（tex.web
+            // 在 init_math 里写 `l:=hsize`），走 dispatch_param/参数表。
+            Primitive::PageDepth
             | Primitive::PageFillLStretch
             | Primitive::PageShrink
             | Primitive::NullFont => Ok(()),

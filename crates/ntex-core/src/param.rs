@@ -83,6 +83,10 @@ pub enum ParamKind {
     SplitTopSkip,
     /// `\emergencystretch`：TRIP 冲刺补充标准参数。
     EmergencyStretch,
+    /// `\displaywidth`：显示公式行宽（tex.web init_math「Calculate the length,
+    /// l, and the shift amount, s」的 `l:=hsize`——进入 `$$` 时由引擎写入；
+    /// `assign_dimen` 语义，用户同样可显式赋值，组内赋值随组回滚）。
+    DisplayWidth,
     /// `\displayindent`：TRIP 冲刺补充标准参数。
     DisplayIndent,
     /// `\delimitershortfall`：TRIP 冲刺补充标准参数。
@@ -383,6 +387,9 @@ pub struct Params {
     pub splittopskip: Glue,
     /// TRIP 冲刺补充：`\emergencystretch`。
     pub emergencystretch: i64,
+    /// `\displaywidth`：显示公式行宽（进入 `$$` 时引擎写 `\hsize`；
+    /// LaTeX `displaylines`/`amsmath multline` 赖此定行盒宽）。
+    pub displaywidth: i64,
     /// TRIP 冲刺补充：`\displayindent`。
     pub displayindent: i64,
     /// TRIP 冲刺补充：`\delimitershortfall`。
@@ -475,6 +482,7 @@ impl Default for Params {
             splitmaxdepth: 0,
             splittopskip: Glue::ZERO,
             emergencystretch: 0,
+            displaywidth: 0,
             displayindent: 0,
             delimitershortfall: 0,
             mathsurround: 0,
@@ -538,6 +546,7 @@ impl Params {
             ParamKind::SplitMaxDepth => ParamValue::Dimen(self.splitmaxdepth),
             ParamKind::SplitTopSkip => ParamValue::Glue(self.splittopskip),
             ParamKind::EmergencyStretch => ParamValue::Dimen(self.emergencystretch),
+            ParamKind::DisplayWidth => ParamValue::Dimen(self.displaywidth),
             ParamKind::DisplayIndent => ParamValue::Dimen(self.displayindent),
             ParamKind::DelimiterShortfall => ParamValue::Dimen(self.delimitershortfall),
             ParamKind::MathSurround => ParamValue::Dimen(self.mathsurround),
@@ -601,6 +610,7 @@ impl Params {
             (ParamKind::SplitMaxDepth, ParamValue::Dimen(v)) => self.splitmaxdepth = v,
             (ParamKind::SplitTopSkip, ParamValue::Glue(v)) => self.splittopskip = v,
             (ParamKind::EmergencyStretch, ParamValue::Dimen(v)) => self.emergencystretch = v,
+            (ParamKind::DisplayWidth, ParamValue::Dimen(v)) => self.displaywidth = v,
             (ParamKind::DisplayIndent, ParamValue::Dimen(v)) => self.displayindent = v,
             (ParamKind::DelimiterShortfall, ParamValue::Dimen(v)) => self.delimitershortfall = v,
             (ParamKind::MathSurround, ParamValue::Dimen(v)) => self.mathsurround = v,

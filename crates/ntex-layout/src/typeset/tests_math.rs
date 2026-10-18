@@ -1190,3 +1190,42 @@ use super::*;
             scripts
         );
     }
+    /// tex.web init_math `@<Go into display math mode@>`（L21774）：
+    /// `display_width := l`（`l:=hsize`）。LaTeX `\displaylines` 与 amsmath
+    /// `multline`/`gather` 的 `\hbox to\displaywidth` 全赖这个值；此前
+    /// `\displaywidth` 按"只读内部量、恒 0"读 → 行盒宽 0、公式溢出。
+    #[test]
+    fn displaywidth_reads_hsize_inside_display() {
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
+        let _ = ts
+            .typeset(r"\hsize 10000sp $$\message{DW=\number\displaywidth}x$$")
+            .unwrap();
+        let tr = ts.take_transcript();
+        assert!(
+            tr.contains("DW=10000"),
+            "display 内 \\displaywidth 应为 \\hsize（10000sp）：{tr}"
+        );
+    }
+
+    /// amsmath `multline` 的对齐机制：单元模板 `\hfil … \hfil` 与行首
+    /// `\hfilneg`（-1fil）在 mlist 里同阶相消 → 首行左齐。胶水阶若被压成
+    /// normal，两者变成有限拉伸不抵消，行内容退回居中。
+    #[test]
+    fn math_hfilneg_cancels_template_hfil() {
+        let main = typeset(r"\hbox to 100pt{$\hfil X\hfilneg$}").unwrap();
+        let hb = as_box(&main[0]);
+        assert_eq!(hb.width, 100 * SP_PER_PT);
+        // 行内数学边界标记 `\mathon` 在最前，其后才是模板/内容节点。
+        assert!(matches!(hb.children[0], Node::MathOn { .. }));
+        match &hb.children[1] {
+            Node::Glue {
+                width,
+                stretch_order,
+                ..
+            } => {
+                assert_eq!(*stretch_order, crate::node::GLUE_ORDER_FIL, "\\hfil 应保留 fil 阶");
+                assert_eq!(*width, 0, "+1fil 与 -1fil 同阶相消，首胶水宽度 0");
+            }
+            other => panic!("预期 Glue，得到 {other:?}"),
+        }
+    }

@@ -467,6 +467,9 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
         splitmaxdepth,
         splittopskip,
         emergencystretch,
+        // `\displaywidth` 是**瞬态量**（每次进入 `$$` 由引擎重写 `\hsize`），
+        // 不进快照——序列化格式因此与既有 v 系列字节布局保持兼容。
+        displaywidth: 0,
         displayindent,
         delimitershortfall,
         lastkern,

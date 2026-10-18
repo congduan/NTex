@@ -128,7 +128,9 @@ impl NodeBuilder {
             // s=\displayindent、d=half(z-公式自然宽)，再按 d+s 与 \predisplaysize 的
             // 比较裁决长/短 display skip（短行 + 窄公式 → 短 skip）。
             let formula_width = hbox_dimensions(&nodes).width;
-            let z = self.params.hsize;
+            // tex.web finish_display：`z:=display_width`（init_math 已写
+            // `\displaywidth:=\hsize`；用户显式改 `\displaywidth` 时以该值为准）。
+            let z = self.params.displaywidth;
             let s = self.params.displayindent;
             // tex.web @<Determine the displacement...@>（L22578）：d=half(z-w)；
             // 有编号且公式离编号太近（d<2e）时公式左移 d=half(z-w-e)。
@@ -318,12 +320,16 @@ impl NodeBuilder {
                 width,
                 stretch,
                 shrink,
+                stretch_order,
+                shrink_order,
                 mu,
                 ..
             } if self.math_state.nonscript_pending => MathAtom::MSkip {
                 width,
                 stretch,
                 shrink,
+                stretch_order,
+                shrink_order,
                 nonscript: true,
                 mu,
             },
@@ -727,6 +733,8 @@ impl NodeBuilder {
                 width,
                 stretch,
                 shrink,
+                stretch_order,
+                shrink_order,
                 nonscript,
                 mu,
             } => {
@@ -745,13 +753,15 @@ impl NodeBuilder {
                     } else {
                         (*width, *stretch, *shrink)
                     };
+                    // 胶水阶透传（tex.web math_glue 保留 glue_ord）：
+                    // `\hfil`/`\hfilneg` 必须同阶相消（multline 对齐）。
                     vec![Node::Glue {
                         name: None,
                         width: w,
                         stretch: st,
                         shrink: sh,
-                        stretch_order: 0,
-                        shrink_order: 0,
+                        stretch_order: *stretch_order,
+                        shrink_order: *shrink_order,
                     }]
                 }
             }
