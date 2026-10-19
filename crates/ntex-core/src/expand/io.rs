@@ -713,18 +713,16 @@ impl Expander {
         self.skip_spaces()?;
         let mut toks = Vec::new();
         let mut depth = 0usize;
-        loop {
-            let Some((t, _)) = self.fetch()? else {
-                // tex.web `file_end` (§362): EOF while `scan_toks` is active
-                // recovers by supplying its closing material.  At this level
-                // that synthetic delimiter is consumed, so the collected text
-                // is complete and the caller can continue its normal
-                // EOF/output-routine path.  This also covers TRIP's output
-                // routine, whose altered catcodes make its unfinished text
-                // reach this scanner without a literal BeginGroup token.
-                // Do not turn either shape into a Rust-level fatal.
-                break;
-            };
+        // tex.web `file_end` (§362): EOF while `scan_toks` is active
+        // recovers by supplying its closing material.  At this level the
+        // synthetic delimiter is consumed, so the collected text is complete
+        // and the caller can continue its normal EOF/output-routine path.
+        // Falling out of the loop on `fetch() == None` (below) implements
+        // that recovery — this also covers TRIP's output routine, whose
+        // altered catcodes make its unfinished text reach this scanner
+        // without a literal BeginGroup token.  Neither shape becomes a
+        // Rust-level fatal.
+        while let Some((t, _)) = self.fetch()? {
             match t.catcode() {
                 Some(Catcode::BeginGroup) => {
                     depth += 1;
