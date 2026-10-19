@@ -71,15 +71,11 @@ impl Expander {
                     ParamKind::MaxDepth
                 };
                 let v = self.scan_dimen()?;
-                // \vsize.pt（内部量 + 单位）：scan_dimen 读 .pt 返回 0——tex.web
-                // 读值不赋值（TRIP L151；若赋值 0 会 push 并污染 \global 钳制值）。
-                // 显式 \vsize=0 走 eq 路径？——scan_dimen 已消费可选 =，此处 0 值
-                // 一律视为读值（\vsize=0pt 罕见，TRIP 无此场景）。
-                if v != 0 {
-                    self.assign_param(kind, ParamValue::Dimen(v))
-                } else {
-                    Ok(())
-                }
+                // tex.web prefixed_command assigns the scanned dimension
+                // unconditionally. TinyTeX confirms `\vsize.pt` assigns 0pt;
+                // the former zero guard came from 9608026 (the separate
+                // group restoration defect is fixed in save.rs).
+                self.assign_param(kind, ParamValue::Dimen(v))
             }
             Primitive::TopSkip
             | Primitive::ParSkip

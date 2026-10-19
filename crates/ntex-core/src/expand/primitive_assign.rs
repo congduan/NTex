@@ -81,12 +81,16 @@ impl Expander {
                 let delta = self.scan_glue()?;
                 let old = self.params.xspaceskip;
                 let global = self.is_global();
+                if global {
+                    self.invalidate_saved_param(ParamKind::XSpaceSkip);
+                }
                 if !global && self.group_level > 0 {
                     self.save_stack.push((
                         self.group_level,
                         SavedValue::Param {
                             kind: ParamKind::XSpaceSkip,
                             prev: self.params.get(ParamKind::XSpaceSkip),
+                            retained: false,
                         },
                     ));
                 }
@@ -116,12 +120,16 @@ impl Expander {
                 let delta = self.scan_number()?;
                 let val = self.params.misc[idx] + delta;
                 let global = self.is_global();
+                if global {
+                    self.invalidate_saved_param(ParamKind::MiscInt(idx));
+                }
                 if !global && idx != DEAD_CYCLES_IDX && self.group_level > 0 {
                     self.save_stack.push((
                         self.group_level,
                         SavedValue::Param {
                             kind: ParamKind::MiscInt(idx),
                             prev: self.params.get(ParamKind::MiscInt(idx)),
+                            retained: false,
                         },
                     ));
                 }
@@ -242,12 +250,16 @@ impl Expander {
                     val
                 };
                 let global = self.is_global();
+                if global {
+                    self.invalidate_saved_param(ParamKind::MiscInt(idx));
+                }
                 if !global && idx != DEAD_CYCLES_IDX && self.group_level > 0 {
                     self.save_stack.push((
                         self.group_level,
                         SavedValue::Param {
                             kind: ParamKind::MiscInt(idx),
                             prev: self.params.get(ParamKind::MiscInt(idx)),
+                            retained: false,
                         },
                     ));
                 }

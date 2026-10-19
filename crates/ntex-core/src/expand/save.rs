@@ -1,10 +1,11 @@
 impl Expander {
     /// 内部参数赋值（组作用域 + sink 镜像通知）。
-    /// 值不变不 push（tex.web：\vsize.pt 等读值场景不产生 restoring——
-    /// TRIP L152 \vsize.pt\global\vsize=16383.99... 若 push 读值，组结束
-    /// restoring 2000 会覆盖 \global 钳制值 16383.99998）。
+    /// 值不变不 push；全局赋值使同槽的旧保存项失效（tex.web retaining）。
     fn assign_param(&mut self, kind: ParamKind, value: ParamValue) -> Result<()> {
         let global = self.is_global();
+        if global {
+            self.invalidate_saved_param(kind);
+        }
         // \interactionmode（MiscInt 19，e-TeX）：全局参数（组内赋值不恢复——
         // etrip.tex L240 `{\interactionmode=3}` 全局生效）；非法值（<0 或 >3）
         // 钳制保持当前（etrip L236-238 \interactionmode=-1/4 后校验 nonstop 通过）。
@@ -46,6 +47,7 @@ impl Expander {
                 SavedValue::Param {
                     kind,
                     prev: self.params.get(kind),
+                    retained: false,
                 },
             ));
         }
@@ -80,6 +82,16 @@ impl Expander {
         }
         self.finish_assignment();
         Ok(())
+    }
+
+    fn invalidate_saved_param(&mut self, kind: ParamKind) {
+        for (_, saved) in &mut self.save_stack {
+            if let SavedValue::Param { kind: old, retained, .. } = saved {
+                if *old == kind {
+                    *retained = true;
+                }
+            }
+        }
     }
 
     /// 扫描 `\hbox`/`\vbox`/`\vtop` 的可选规格：`to <dimen>` 或 `spread <dimen>`。
@@ -1091,12 +1103,24 @@ impl Expander {
         // retain 判定须在恢复前：eqtb 槽当前层级为全局（0）→ 丢弃该陈旧条目
         //（tex.web @<Store save_stack[save_ptr] in eqtb[p], unless eqtb[p]
         // holds a global value@> 的 "retaining" 分支）。
-        let retain = matches!(&v, SavedValue::Eqtb { csid, .. } if self.eqtb.level(*csid) == 0);
+        let retain = match &v {
+            SavedValue::Eqtb { csid, .. } => self.eqtb.level(*csid) == 0,
+            SavedValue::Param { retained, .. } => *retained,
+            _ => false,
+        };
         // \tracingrestores>0：恢复动作输出 `{restoring ...}` / `{retaining ...}`
         //（tex.web restore_trace + show_eqtb）。先用不可变借用构造消息体
         //（值即写回值），再执行恢复，最后写转录。
         let trace = if self.params.misc[4] > 0 {
-            Some(self.restore_trace_body(&v))
+            Some(if let SavedValue::Param { kind, .. } = &v {
+                if retain {
+                    format!("{}={}", self.esc(param_name(*kind)), param_value_display(self.params.get(*kind)))
+                } else {
+                    self.restore_trace_body(&v)
+                }
+            } else {
+                self.restore_trace_body(&v)
+            })
         } else {
             None
         };
@@ -1133,7 +1157,11 @@ impl Expander {
                 Some(c) => self.catcodes.set_codepoint(cp, c),
                 None => self.catcodes.remove_codepoint(cp),
             },
-            SavedValue::Param { kind, prev } => self.params.set(kind, prev),
+            SavedValue::Param { kind, prev, .. } => {
+                if !retain {
+                    self.params.set(kind, prev);
+                }
+            }
             SavedValue::Sfcode { byte, prev } => {
                 self.sfcodes[byte as usize] = prev;
                 let _ = self.sink.sfcode_changed(byte, prev);
@@ -1231,7 +1259,7 @@ impl Expander {
             SavedValue::Catcode { byte, prev } => {
                 format!("{}{}={}", self.esc("catcode"), byte, *prev as u8)
             }
-            SavedValue::Param { kind, prev } => {
+            SavedValue::Param { kind, prev, .. } => {
                 format!(
                     "{}={}",
                     self.esc(param_name(*kind)),

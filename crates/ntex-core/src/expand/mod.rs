@@ -302,6 +302,8 @@ pub(crate) enum SavedValue {
     Param {
         kind: ParamKind,
         prev: ParamValue,
+        /// A later global assignment superseded this saved binding.
+        retained: bool,
     },
     /// `\sfcode`：spacefactor 表项（M3-4 词间距）。
     Sfcode {

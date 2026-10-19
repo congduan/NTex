@@ -71,6 +71,18 @@
    是全部 LaTeX 文档的必经路径 ⇒ 工作台 LaTeX 模式一编译即炸（native 单测 / 深 fuzz 全绿照不出）。
    修：`prog_start` 改惰性 `prog.then(Instant::now)` + `tests_wasm_clock` 回归锁；
    KNOWN-SIMPLIFICATIONS §5 已登记（含 fuzz 片段表缺 `\edef`/`\xdef` 的覆盖缺口）。
+7. **save_stack retaining 语义**（刀N，10-19 ~ 10-20，Codex gpt-5.6-terra 实施
+   + Claude 两轮 review + 主控收口）：tex.web 弹栈 "unless eqtb[p] holds a global
+   value" 分支落地——`SavedValue::Param` 加 retained 旗标，全局赋值标记同槽旧条目
+   失效，restore 时丢弃并转录 `{retaining <当前值>}`；顺带撤销 `\vsize.pt` 零值
+   读值守卫（tex.web 无条件赋值，GT `\vsize.pt`=0.0pt 铁证）。TRIP 现场实证：
+   trip.tex L151 `\global\vsize=16383.99998pt` 此前被组结束冲回 2000pt（断页链
+   全变），修复后 **tripos 从 1 页硬失败 → 13 页 0 错**（GT 12 页，残差 =
+   `apply_layout_defaults` 运行时覆盖快照 misc 槽，下一刀靶）。core 563 +
+   layout 313 全绿（含 4 把 GT 对拍锁）/ clippy 0 / pkg-regression 13/13 /
+   small2e 0 错。残留：寄存器族 retaining 未接、Eqtb 侧 trace 打保存值、
+   「值不变不 push」hack 待随层级模型退役。全文见
+   [docs/archive/save-stack-retaining-2026-10-20.md](docs/archive/save-stack-retaining-2026-10-20.md)。
 
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 

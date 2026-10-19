@@ -16,6 +16,66 @@ fn shipout_transcribes_multi_count_page_without_tracing() {
 }
 
 #[test]
+fn zero_page_dimensions_are_assignments() {
+    // tex.web prefixed_command assigns the scanned dimension even when it is
+    // zero. TinyTeX: `\vsize=10pt \vsize.pt \showthe\vsize` prints 0.0pt.
+    let mut ts = Typesetter::with_metrics(metrics).plain_params();
+    ts.typeset_dvi(
+        r"\vsize=10pt \maxdepth=4pt \vsize.pt \maxdepth=0pt \showthe\vsize \showthe\maxdepth \end",
+    )
+    .unwrap();
+    let transcript = ts.take_transcript();
+    assert_eq!(showthe_values(&transcript, "vsize"), vec!["0.0pt"], "{transcript}");
+    assert_eq!(showthe_values(&transcript, "maxdepth"), vec!["0.0pt"], "{transcript}");
+}
+
+#[test]
+fn global_vsize_retains_value_after_local_zero_assignment() {
+    let mut ts = Typesetter::with_metrics(metrics).plain_params();
+    ts.typeset_dvi(
+        r"\tracingrestores=1 \vsize=10pt {\vsize.pt \global\vsize=16383pt} \showthe\vsize \end",
+    )
+    .unwrap();
+    let transcript = ts.take_transcript();
+    assert_eq!(showthe_values(&transcript, "vsize"), vec!["16383.0pt"], "{transcript}");
+    assert!(transcript.contains("{retaining \\vsize=16383.0pt}"), "{transcript}");
+}
+
+#[test]
+fn global_assignment_inside_nested_group_marks_outer_entry_for_retaining() {
+    // 跨组级标记：外层组的局部条目被内层 `\global` 跨级失效后，组结束
+    // （两层一起关）只剩 retaining。GT（TinyTeX p2 探针）：
+    // `{retaining \vsize=50.0pt}` + `\showthe` 50.0pt。
+    let mut ts = Typesetter::with_metrics(metrics).plain_params();
+    ts.typeset_dvi(
+        r"\tracingrestores=1 \vsize=10pt {\vsize=40pt {\global\vsize=50pt}} \showthe\vsize \end",
+    )
+    .unwrap();
+    let transcript = ts.take_transcript();
+    assert_eq!(showthe_values(&transcript, "vsize"), vec!["50.0pt"], "{transcript}");
+    assert!(transcript.contains("{retaining \\vsize=50.0pt}"), "{transcript}");
+    assert!(!transcript.contains("restoring \\vsize"), "{transcript}");
+}
+
+#[test]
+fn local_assignment_after_global_restores_new_entry_then_retains_old() {
+    // `\global` 之后同组再局部赋值：retaining 判定看当前绑定层级——新条目
+    // retained=false 先弹 restoring，旧条目 retained=true 后弹 retaining。
+    // GT（TinyTeX p3 探针）：`{restoring \vsize=30.0pt}` + `{retaining
+    // \vsize=30.0pt}`，值 30.0pt。
+    let mut ts = Typesetter::with_metrics(metrics).plain_params();
+    ts.typeset_dvi(
+        r"\tracingrestores=1 \vsize=10pt {\vsize=20pt {\global\vsize=30pt \vsize=40pt}} \showthe\vsize \end",
+    )
+    .unwrap();
+    let transcript = ts.take_transcript();
+    assert_eq!(showthe_values(&transcript, "vsize"), vec!["30.0pt"], "{transcript}");
+    let restoring = transcript.find("{restoring \\vsize=30.0pt}").expect("{transcript}");
+    let retaining = transcript.find("{retaining \\vsize=30.0pt}").expect("{transcript}");
+    assert!(restoring < retaining, "{transcript}");
+}
+
+#[test]
 fn shipout_transcribes_zero_count_page_without_tracing() {
     let mut ts = Typesetter::with_metrics(metrics).plain_params();
     ts.typeset_dvi(r"\shipout\hbox{aa}\end").unwrap();

@@ -1586,6 +1586,7 @@ impl NodeBuilder {
     }
 
     #[allow(clippy::type_complexity)]
+    #[allow(clippy::too_many_arguments)]
     fn package_box(
         &mut self,
         kind: PendingBox,
