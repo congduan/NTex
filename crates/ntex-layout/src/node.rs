@@ -684,6 +684,12 @@ const DEPLORABLE: i64 = 100_000;
 pub(crate) fn vert_break(body: &BoxNode, h: i64, d: i64, eject_at_end: bool) -> VertBreak {
     let mut cur_height = 0i64;
     let mut prev_dp = 0i64;
+    // tex.web `active_height[2..6]`: vertical breaking measures natural
+    // height, stretch by order, and normal shrink separately.  In particular,
+    // a preceding `\vfil` makes an underfull candidate have badness zero; it
+    // does not change the natural `best_height_plus_depth` we return.
+    let mut stretch = [0i64; 4];
+    let mut shrink = 0i64;
     let mut least_cost = AWFUL_BAD;
     let mut best_place = None;
     let mut best_penalty = None;
@@ -693,11 +699,15 @@ pub(crate) fn vert_break(body: &BoxNode, h: i64, d: i64, eject_at_end: bool) -> 
         ($pen:expr, $hpd:expr, $place:expr) => {{
             let pen: i64 = $pen;
             let b_raw = if cur_height < h {
-                INF_BAD
-            } else if cur_height - h > d {
+                if stretch[1] != 0 || stretch[2] != 0 || stretch[3] != 0 {
+                    0
+                } else {
+                    crate::linebreak::badness(h - cur_height, stretch[0]) as i64
+                }
+            } else if cur_height - h > shrink {
                 AWFUL_BAD
             } else {
-                crate::linebreak::badness(cur_height - h, d) as i64
+                crate::linebreak::badness(cur_height - h, shrink) as i64
             };
             let b = if b_raw < AWFUL_BAD {
                 if pen <= EJECT_PENALTY {
@@ -720,18 +730,24 @@ pub(crate) fn vert_break(body: &BoxNode, h: i64, d: i64, eject_at_end: bool) -> 
         }};
     }
     for (i, node) in body.children.iter().enumerate() {
-        let pi = match node {
+        let (pi, update_glue) = match node {
             Node::Box(b) => {
                 cur_height += prev_dp + b.height;
                 prev_dp = b.depth;
-                None
+                (None, None)
             }
             Node::Rule { height, depth, .. } => {
                 cur_height += prev_dp + height;
                 prev_dp = *depth;
-                None
+                (None, None)
             }
-            Node::Glue { width, .. } => {
+            Node::Glue {
+                width,
+                stretch: node_stretch,
+                shrink: node_shrink,
+                stretch_order,
+                ..
+            } => {
                 let precedes_break = i != 0
                     && matches!(
                         body.children[i - 1],
@@ -744,27 +760,35 @@ pub(crate) fn vert_break(body: &BoxNode, h: i64, d: i64, eject_at_end: bool) -> 
                             | Node::Whatsit { .. }
                     );
                 if precedes_break {
-                    Some(0)
+                    // tex.web reaches `update_heights` after testing a glue
+                    // breakpoint.  Keep the update payload so the next
+                    // candidate sees this glue's natural/stretch/shrink.
+                    (
+                        Some(0),
+                        Some((*width, *node_stretch, *node_shrink, *stretch_order)),
+                    )
                 } else {
                     cur_height += prev_dp + width;
                     prev_dp = 0;
-                    None
+                    stretch[*stretch_order as usize] += *node_stretch;
+                    shrink += *node_shrink;
+                    (None, None)
                 }
             }
             Node::Kern { width } => {
                 if i + 1 == n {
-                    Some(i64::MIN)
+                    (Some(i64::MIN), None)
                 } else if matches!(body.children[i + 1], Node::Glue { .. }) {
-                    Some(0)
+                    (Some(0), Some((*width, 0, 0, 0)))
                 } else {
                     cur_height += prev_dp + width;
                     prev_dp = 0;
-                    None
+                    (None, None)
                 }
             }
-            Node::Penalty { penalty } => Some(*penalty),
-            Node::Mark { .. } | Node::Ins { .. } => None,
-            _ => None,
+            Node::Penalty { penalty } => (Some(*penalty), None),
+            Node::Mark { .. } | Node::Ins { .. } => (None, None),
+            _ => (None, None),
         };
         let is_end = pi == Some(i64::MIN);
         if let Some(pen) = pi.filter(|_| !is_end) {
@@ -776,17 +800,27 @@ pub(crate) fn vert_break(body: &BoxNode, h: i64, d: i64, eject_at_end: bool) -> 
                 };
             }
         }
+        if let Some((width, node_stretch, node_shrink, stretch_order)) = update_glue {
+            cur_height += prev_dp + width;
+            prev_dp = 0;
+            stretch[stretch_order as usize] += node_stretch;
+            shrink += node_shrink;
+        }
         if prev_dp > d {
             cur_height += prev_dp - d;
             prev_dp = d;
         }
     }
     let b_raw = if cur_height < h {
-        INF_BAD
-    } else if cur_height - h > d {
+        if stretch[1] != 0 || stretch[2] != 0 || stretch[3] != 0 {
+            0
+        } else {
+            crate::linebreak::badness(h - cur_height, stretch[0]) as i64
+        }
+    } else if cur_height - h > shrink {
         AWFUL_BAD
     } else {
-        crate::linebreak::badness(cur_height - h, d) as i64
+        crate::linebreak::badness(cur_height - h, shrink) as i64
     };
     let b = if b_raw < AWFUL_BAD {
         EJECT_PENALTY
@@ -1260,5 +1294,43 @@ mod tests {
         let (top, rest) = split_vbox(input, 20);
         assert_eq!(top.children, vec![first]);
         assert_eq!(rest.children, vec![second]);
+    }
+
+    #[test]
+    fn insertion_vert_break_keeps_taken_unscaled_after_vfil() {
+        // TRIP L122--128: count100=2000 scales page-goal debit only.  The
+        // break machine still traverses this original vlist at w=803pt, and
+        // the first 267.7pt box wins at its -101 penalty because the leading
+        // vfil makes the underfull badness zero.
+        let pt = 65_536;
+        let box_267_7 = || BoxNode {
+            kind: BoxKind::VBox,
+            width: 0,
+            height: 2677 * pt / 10,
+            depth: 0,
+            shift: 0,
+            children: vec![],
+        };
+        let body = BoxNode::new_vbox(vec![
+            Node::Glue {
+                name: None,
+                width: 0,
+                stretch: pt,
+                shrink: 0,
+                stretch_order: GLUE_ORDER_FIL,
+                shrink_order: 0,
+            },
+            Node::Box(box_267_7()),
+            Node::Penalty { penalty: -101 },
+            Node::Box(box_267_7()),
+            Node::Penalty { penalty: -100 },
+            Node::Box(box_267_7()),
+            Node::Penalty { penalty: -1000 },
+        ]);
+
+        let split = vert_break(&body, 803 * pt, -2 * pt, true);
+        assert_eq!(split.penalty, Some(-101));
+        assert_eq!(split.taken, 2677 * pt / 10);
+        assert_eq!(split.cut, 2, "q is the -101 penalty itself");
     }
 }
