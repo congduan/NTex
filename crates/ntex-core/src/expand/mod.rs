@@ -2331,11 +2331,17 @@ impl Expander {
 
     /// 若存在待执行的输出例程，注入其 token 帧并返回 true。
     ///
-    /// 注入前比较队列长度与上一轮注入时的长度：未减少（例程没取用 box255）说明
-    /// 例程不会处理剩余页面（如 `\output={}`）→ 丢弃剩余并停止（TeX：例程不
-    /// ship box255 则页面消失）。丢弃在 token 边界进行，避免例程末 token 的
-    /// 参数扫描（如 `\box255` 的数字）误触"例程结束"。
+    /// 在 token 边界检查例程是否清空 box255；未清空则按 tex.web 报错并
+    /// 丢弃该盒。\end 的续行冲页可再次点火，直到 dead-cycle 门限默认出货。
+    /// 空 `\output={}` 在赋值时已变为未定义，直接走默认出货。
     fn maybe_inject_output(&mut self) -> Result<bool> {
+        // tex.web ship_out clears dead_cycles even when no further page is
+        // pending. Do this before the early return below.
+        if self.sink.take_page_shipped() && self.params.misc[DEAD_CYCLES_IDX] != 0 {
+            self.params.misc[DEAD_CYCLES_IDX] = 0;
+            self.sink
+                .param_changed(ParamKind::MiscInt(DEAD_CYCLES_IDX), ParamValue::Number(0))?;
+        }
         if self.output_toks.is_none() || !self.sink.output_pending() {
             self.output_prev_count = usize::MAX;
             return Ok(false);
@@ -2352,19 +2358,22 @@ impl Expander {
         // 例程运行（见 docs 登记）——两难取主目标。
         let consumed = self.sink.output_consumed();
         if count >= self.output_prev_count && !consumed {
-            // 例程未消费任何待处理页面 → 剩余页面被丢弃（TeX 语义）
+            // tex.web Ensure that box 255 is empty after output: diagnose
+            // and discard the unconsumed page. \end will retry via its_all_over
+            // until the dead-cycle gate ships a page by default.
+            self.sink
+                .report_error("Output routine didn't use all of \\box255.");
+            self.sink.report_help(
+                "Your \\output commands should empty \\box255,\n\
+                 e.g., by saying `\\shipout\\box255'.\n\
+                 Proceed; I'll discard its present contents.",
+            );
             self.sink.discard_pending_pages();
             self.output_prev_count = usize::MAX;
             return Ok(false);
         }
         self.output_prev_count = count;
         // ---- 输出例程刀 1（G1/G4）：tex.web fire_up 的点火侧语义 ----
-        // ship_out 清零（tex.web L12707）：上一例程若真出了页，连续死循环计数归零。
-        if self.sink.take_page_shipped() && self.params.misc[DEAD_CYCLES_IDX] != 0 {
-            self.params.misc[DEAD_CYCLES_IDX] = 0;
-            self.sink
-                .param_changed(ParamKind::MiscInt(DEAD_CYCLES_IDX), ParamValue::Number(0))?;
-        }
         // @<Set the value of |output_penalty|@>：最佳断点是惩罚节点 → 其惩罚值，
         // 否则 inf_penalty。geq_word_define = 全局赋值（不进 save_stack），
         // 例程内 \outputpenalty=... 的覆盖到下一次断页被重写，与 tex.web 一致。

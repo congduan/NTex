@@ -1127,7 +1127,7 @@ impl IncrementalTypesetter {
             let ejected = {
                 let b = self.builder_mut();
                 if b.page_state.pagination {
-                    b.eject_one_page()?
+                    b.eject_one_page(false)?
                 } else {
                     false
                 }

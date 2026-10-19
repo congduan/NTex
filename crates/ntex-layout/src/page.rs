@@ -536,6 +536,15 @@ impl PageBuilder {
                 if !self.has_box {
                     self.freeze(params);
                 }
+                // tex.web: the first insertion of each class contributes its
+                // correction glue before the fit/split decision, including
+                // when the insertion must be split.
+                if self.insert_skips_seen.insert(class) {
+                    let correction = inserts.skips.get(class).copied().unwrap_or(Glue::ZERO);
+                    self.goal = self.goal.saturating_sub(correction.width);
+                    self.stretch[correction.stretch_order as usize] += correction.stretch;
+                    self.shrink += correction.shrink;
+                }
                 let body_height = body.height + body.depth;
                 let already = *self.insert_heights.get(&class).unwrap_or(&0);
                 let max_for_class = inserts.dimens.get(class).copied().unwrap_or(0);
@@ -548,9 +557,6 @@ impl PageBuilder {
                 let factor = inserts.counts.get(class).copied().unwrap_or(1000);
                 if factor > 0 {
                     debit = debit.saturating_mul(factor) / 1000;
-                }
-                if !self.insert_skips_seen.contains(&class) {
-                    debit += inserts.skips.get(class).map(|g| g.width).unwrap_or(0);
                 }
                 // tex.web L19605-19621（build_page 的 ins_node 臂）：
                 // h = count 加权的 insert 体高（L19615 x_over_n(height,1000)*count，
@@ -675,11 +681,17 @@ impl PageBuilder {
                         );
                     }
                     contrib.remove(0);
-                    self.page.push(accepted_node);
+                    if params.misc[50] > 0 {
+                        // fire_up leaves the original insertion node in
+                        // box255 while \holdinginserts is positive.
+                        self.page.push(node);
+                    } else {
+                        self.page.push(accepted_node);
+                    }
                     // tex.web 的 hold_head 生命周期跨越本次 fire_up：不可马上
                     // 塞回 contribution，否则 split_up 同类快路径会在**本页**把
                     // remainder 整段接纳。没有 remainder 时 q=null，不造空 insert。
-                    if !remainder.is_empty() {
+                    if !remainder.is_empty() && params.misc[50] <= 0 {
                         self.held_over_inserts.push(Node::Ins {
                             class,
                             body: BoxNode::new_vbox(remainder),
@@ -692,9 +704,6 @@ impl PageBuilder {
                     return Outcome::Continue;
                 }
                 if accepted_height > 0 {
-                    if self.insert_skips_seen.insert(class) {
-                        // debit already includes first-insert skip above.
-                    }
                     self.goal = self.goal.saturating_sub(debit);
                     self.insert_heights.insert(class, already + accepted_height);
                 }

@@ -72,6 +72,12 @@ impl NodeBuilder {
     /// 寄存器面（tex.web：`box(c)` 就是插入号 c 的累积盒，无需新寄存器文件）。
     /// box(255) 是页队列 → `\insert255` 已在 [`PageSink::insert_begin`] 报错改道 0。
     fn insert_accumulate(&mut self, mut p: BoxNode) -> BoxNode {
+        // tex.web fire_up leaves insertion nodes in box255 while
+        // \holdinginserts is positive; it neither fills box<n> nor builds
+        // held-over insertion nodes in that mode.
+        if self.params.misc[50] > 0 {
+            return p;
+        }
         let mut moved: Vec<(usize, BoxNode)> = Vec::new();
         let mut children = Vec::with_capacity(p.children.len());
         for n in std::mem::take(&mut p.children) {
@@ -156,7 +162,7 @@ impl NodeBuilder {
     ///
     /// 增量版：每调用最多冲出一页（返回是否冲出）；`finish` 与输出例程
     /// 交错执行——页面经 [`Self::accept_page`] 路由（box255+例程 或 直通 shipout）。
-    fn eject_one_page(&mut self) -> Result<bool> {
+    fn eject_one_page(&mut self, retry_dead_cycle: bool) -> Result<bool> {
         loop {
             if std::env::var("NTEX_EJECT_DBG").is_ok() {
                 eprintln!(
@@ -225,6 +231,12 @@ impl NodeBuilder {
                 self.rotate_marks();
                 self.drop_empty_page_discardables();
                 return Ok(true);
+            }
+            // A dead-cycle replay can start with only the discarded break
+            // penalty in the contribution list. Consuming that penalty must
+            // not consume the pending \end retry as well.
+            if retry_dead_cycle && self.lists[0].is_empty() {
+                self.page_state.eject_final_pending = true;
             }
         }
     }

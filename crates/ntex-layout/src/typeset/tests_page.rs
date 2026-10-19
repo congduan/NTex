@@ -42,10 +42,79 @@ use super::*;
     }
 
     #[test]
-    fn output_routine_empty_swallows_pages() {
+    fn empty_output_uses_default_routine() {
         let src = format!(r"\output={{}} {}", fill_words());
         let pages = paginated(&src).unwrap();
-        assert!(pages.is_empty(), "空 \\output 例程应吞掉所有页面");
+        assert_eq!(pages, paginated(&fill_words()).unwrap(), "tex.web assign_toks: 空列表回退默认输出");
+    }
+
+    #[test]
+    fn nonshipping_output_reports_box255_and_retries_end_until_dead_cycle_gate() {
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
+        let pages = ts
+            .typeset_dvi(
+                r"\vsize=100pt \maxdeadcycles=3 \output={\relax} \hbox{x}\vfil\penalty-10000 \end",
+            )
+            .unwrap()
+            .0;
+        let transcript = ts.take_transcript();
+        assert_eq!(
+            transcript.matches("Output routine didn't use all of \\box255.").count(),
+            3,
+            "{transcript}"
+        );
+        assert!(transcript.contains("Output loop---3 consecutive dead cycles."), "{transcript}");
+        assert_eq!(pages.len(), 1);
+    }
+
+    #[test]
+    fn first_insert_correction_glue_reduces_pagegoal() {
+        fn page_height(skip: &str) -> i64 {
+            let mut ts = Typesetter::with_metrics(metrics).plain_params();
+            ts.typeset_dvi(&format!(
+                r"\vsize=100pt \skip200={skip} \count200=1000 \dimen200=1000pt \hbox{{x}}\insert200{{\hbox{{y}}}}\vfil\penalty-10000\end"
+            ))
+            .unwrap()
+            .0[0]
+                .height
+        }
+        // tex.web Create a page insertion node: correction glue is charged
+        // once, before the insertion is fitted or split.
+        assert_eq!(page_height("0pt") - page_height("10pt"), 10 * 65_536);
+    }
+
+    #[test]
+    fn holdinginserts_keeps_insert_out_of_box_register() {
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
+        ts.typeset_dvi(
+            r"\vsize=100pt \holdinginserts=1 \insert200{\hbox{x}}\hbox{y}\vfil\penalty-10000 \ifvoid200\message{BOX=VOID}\else\message{BOX=FILLED}\fi\end",
+        )
+        .unwrap();
+        assert!(ts.take_transcript().contains("BOX=VOID"));
+    }
+
+    #[test]
+    fn holdinginserts_preserves_full_insert_in_page_box() {
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
+        ts.typeset_dvi(
+            r"\vsize=1pt \holdinginserts=1 \count200=1000 \dimen200=0pt \skip200=10pt
+              \output={\showbox255\shipout\box255}
+              \insert200{\hbox{x}\penalty999\hbox{y}}\hbox{z}\vfil\penalty-10000\end",
+        )
+        .unwrap();
+        let transcript = ts.take_transcript();
+        assert!(transcript.contains("..\\penalty 999"), "{transcript}");
+        assert!(transcript.matches("..\\hbox").count() >= 2, "{transcript}");
+    }
+
+    #[test]
+    fn adjusted_hbox_moves_vadjust_to_vertical_list() {
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
+        ts.typeset_dvi(r"\setbox0=\vbox{\hbox{\vadjust{\penalty999}}}\showbox0\end")
+            .unwrap();
+        let transcript = ts.take_transcript();
+        assert!(transcript.contains(".\\penalty 999"), "{transcript}");
+        assert!(!transcript.contains("..\\penalty 999"), "{transcript}");
     }
 
     #[test]
@@ -191,6 +260,21 @@ use super::*;
     }
 
     #[test]
+    fn shipout_of_constructed_box_resets_deadcycles() {
+        let mut ts =
+            Typesetter::with_metrics(metrics).plain_params().with_space(|_| Glue::new(1000, 500, 300));
+        let _ = ts.typeset_dvi(&format!(
+            r"\vsize 100000sp\hsize 20000sp \maxdeadcycles=1 \output={{\showthe\deadcycles\shipout\vbox{{\box255}}}} {}",
+            fill_words()
+        ));
+        let t = ts.take_transcript();
+        let cycles = showthe_values(&t, "deadcycles");
+        assert!(cycles.len() >= 2, "{t}");
+        assert!(cycles.iter().all(|v| v == "1"), "{t}");
+        assert!(!t.contains("Output loop---"), "{t}");
+    }
+
+    #[test]
     fn deadcycles_gate_blocks_routine_and_ships_default() {
         // tex.web fire_up：dead_cycles >= max_dead_cycles → "Output loop---N
         // consecutive dead cycles" 错 + 默认输出（直接 ship box255，例程不跑）。
@@ -247,13 +331,13 @@ use super::*;
     }
 
     #[test]
-    fn grouped_empty_output_can_trip_deadcycles_gate() {
+    fn grouped_nonshipping_output_can_trip_deadcycles_gate() {
         let mut ts =
             Typesetter::with_metrics(metrics).plain_params().with_space(|_| Glue::new(1000, 500, 300));
         let pages = ts
             .typeset_dvi(concat!(
                 r"\hsize 20000sp \vsize 100000sp \maxdeadcycles=3 ",
-                r"A\par {\output{}\deadcycles=2\penalty-10000} ",
+                r"A\par {\output{\relax}\deadcycles=2\penalty-10000} ",
                 r"\output={\showthe\deadcycles\shipout\box255} ",
                 r"B\par\vfil\penalty-10000\end",
             ))
@@ -262,7 +346,7 @@ use super::*;
         let t = ts.take_transcript();
         assert!(
             t.contains("Output loop---3 consecutive dead cycles."),
-            "grouped empty routine should leave \\deadcycles at 3: {t:?}"
+            "grouped nonshipping routine should leave \\deadcycles at 3: {t:?}"
         );
         assert!(
             showthe_values(&t, "deadcycles").is_empty(),

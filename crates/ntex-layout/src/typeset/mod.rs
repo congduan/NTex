@@ -1589,6 +1589,7 @@ impl NodeBuilder {
     fn package_box(
         &mut self,
         kind: PendingBox,
+        adjusted: bool,
         ship: bool,
         leaders: Option<LeadersKind>,
         // `\setbox` 认领对：目标寄存器 + 本赋值的 `\global` 旗标（tex.web
@@ -1597,8 +1598,25 @@ impl NodeBuilder {
         shift: Option<i64>,
         boxmaxdepth: i64,
     ) {
-        let children = self.lists.pop().expect("盒子列表");
+        let mut children = self.lists.pop().expect("盒子列表");
         self.list_modes.pop();
+        // tex.web hpack with adjust_tail: an hbox built directly in vertical
+        // mode returns its insertions, marks and vadjust material to the
+        // surrounding vertical list after the box.
+        let mut adjustments = Vec::new();
+        if adjusted && setbox.is_none() && !ship && leaders.is_none() {
+            children.retain(|node| match node {
+                Node::Adjust { body } => {
+                    adjustments.extend(body.children.iter().cloned());
+                    false
+                }
+                Node::Ins { .. } | Node::Mark { .. } => {
+                    adjustments.push(node.clone());
+                    false
+                }
+                _ => true,
+            });
+        }
         // ETRIP 冲刺：\hbox/\vbox to/spread 规格（目标宽/高）
         let spec = self.box_state.pending_box_spec.take();
         let node = match kind {
@@ -1688,9 +1706,7 @@ impl NodeBuilder {
         }
         if ship {
             if let Node::Box(b) = node {
-                self.trace_shipout(&b);
-                self.push_shipped(b);
-                self.page_state.write_flush_pending = true;
+                self.ship_page(b);
             }
             return;
         }
@@ -1709,6 +1725,9 @@ impl NodeBuilder {
             return;
         }
         self.push_box(node);
+        for adjustment in adjustments {
+            self.append(adjustment);
+        }
     }
 
     /// Append a box in the current mode. Box-producing primitives package through

@@ -491,6 +491,7 @@ impl CoreSink for NodeBuilder {
                     self.box_state.pending_box_spec = ctx.spec;
                     self.package_box(
                         kind,
+                        ctx.kind == GroupKind::AdjustedHBox,
                         ctx.shipout,
                         leaders,
                         ctx.setbox.map(|idx| (idx, ctx.setbox_global)),

@@ -319,8 +319,10 @@ impl Expander {
                 },
             ));
         }
-        self.output_toks = Some(val);
-        let _ = self.sink.output_defined(true);
+        // tex.web assign_toks: an empty token list is undefined_cs/null,
+        // so fire_up uses the default output routine.
+        self.output_toks = (!val.is_empty()).then_some(val);
+        let _ = self.sink.output_defined(self.output_toks.is_some());
         self.finish_assignment();
     }
 

@@ -938,6 +938,10 @@ impl Typesetter {
             }
         }
         loop {
+            // tex.web its_all_over replays \end while a user output routine
+            // has returned without shipping. Each replay contributes an
+            // eject tail, allowing fire_up to reach the dead-cycle gate.
+            let retry_end = ended && self.expander.params_ref().misc[25] > 0;
             let ejected = {
                 let builder = self
                     .expander
@@ -946,7 +950,10 @@ impl Typesetter {
                     .downcast_mut::<NodeBuilder>()
                     .ok_or_else(|| Error::internal("typesetter 安装了 NodeBuilder"))?;
                 if builder.page_state.pagination {
-                    builder.eject_one_page()?
+                    if retry_end {
+                        builder.page_state.eject_final_pending = true;
+                    }
+                    builder.eject_one_page(retry_end)?
                 } else {
                     false
                 }
