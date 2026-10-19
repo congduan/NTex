@@ -1,6 +1,21 @@
 use super::*;
 
     #[test]
+    fn eof_inside_write_text_is_implicitly_closed() {
+        // tex.web `file_end` (§362): source EOF while `scan_toks` owns the
+        // balanced text behaves as if a closing `}` had been inserted.  The
+        // surrounding group is deliberately also left open, matching the small
+        // TRIP-style truncation that previously raised "\\write 文本未闭合".
+        let (r, transcript) = run_transcript("{\\immediate\\write16{s");
+        assert!(r.is_ok(), "EOF in write text must recover: {r:?}");
+        assert!(transcript.contains('s'), "implicit closure must retain text: {transcript}");
+        assert!(
+            !transcript.contains("文本未闭合"),
+            "EOF recovery must not become a fatal write-text error: {transcript}"
+        );
+    }
+
+    #[test]
     fn input_reads_file_from_vfs() {
         let mut vfs = MemVfs::new();
         vfs.insert("ch1.tex", "Chapter One");
@@ -775,4 +790,3 @@ use super::*;
         let vfs = MemVfs::new();
         assert!(expand_vfs("\\write18{echo hi}\\end", vfs).is_err());
     }
-

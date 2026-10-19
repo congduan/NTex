@@ -714,10 +714,17 @@ impl Expander {
         let mut toks = Vec::new();
         let mut depth = 0usize;
         loop {
-            let t = self
-                .fetch()?
-                .ok_or_else(|| Error::invalid_input("\\write 文本未闭合"))?
-                .0;
+            let Some((t, _)) = self.fetch()? else {
+                // tex.web `file_end` (§362): EOF while `scan_toks` is active
+                // recovers by supplying its closing material.  At this level
+                // that synthetic delimiter is consumed, so the collected text
+                // is complete and the caller can continue its normal
+                // EOF/output-routine path.  This also covers TRIP's output
+                // routine, whose altered catcodes make its unfinished text
+                // reach this scanner without a literal BeginGroup token.
+                // Do not turn either shape into a Rust-level fatal.
+                break;
+            };
             match t.catcode() {
                 Some(Catcode::BeginGroup) => {
                     depth += 1;
