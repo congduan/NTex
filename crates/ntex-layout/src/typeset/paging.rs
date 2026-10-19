@@ -118,6 +118,17 @@ impl NodeBuilder {
     fn ship_page(&mut self, p: BoxNode) {
         self.trace_shipout(&p);
         self.push_shipped(p);
+        // tex.web ship_out always prints the page counts, independently of
+        // \tracingoutput. Use the snapshot stored for this exact DVI page.
+        // The transcript is line based, so the opening and closing brackets
+        // are appended together; their terminal flush timing is not exposed.
+        // Speculative builders replay their contributed nodes on the owning
+        // builder; only that committed shipout may enter the transcript.
+        if self.spec_mode.is_none() {
+            if let Some(counts) = self.page_state.shipped_counts.last() {
+                let _ = self.write16(format_page_label(counts));
+            }
+        }
         self.page_state.write_flush_pending = true;
         self.page_state.page_shipped = true;
     }

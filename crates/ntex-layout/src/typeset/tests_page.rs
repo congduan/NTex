@@ -1,5 +1,32 @@
 use super::*;
 
+#[test]
+fn shipout_transcribes_multi_count_page_without_tracing() {
+    let mut ts = Typesetter::with_metrics(metrics).plain_params();
+    ts.typeset_dvi(
+        r"\count0=0 \count1=0 \count2=0 \count3=0 \count4=11 \shipout\hbox{aa}\end",
+    )
+    .unwrap();
+    let transcript = ts.take_transcript();
+    assert_eq!(
+        transcript.lines().filter(|line| *line == "[0.0.0.0.11]").count(),
+        1,
+        "{transcript:?}"
+    );
+}
+
+#[test]
+fn shipout_transcribes_zero_count_page_without_tracing() {
+    let mut ts = Typesetter::with_metrics(metrics).plain_params();
+    ts.typeset_dvi(r"\shipout\hbox{aa}\end").unwrap();
+    let transcript = ts.take_transcript();
+    assert_eq!(
+        transcript.lines().filter(|line| *line == "[0]").count(),
+        1,
+        "{transcript:?}"
+    );
+}
+
     #[test]
     fn tracingoutput_transcribes_shipped_box_tree() {
         // \tracingoutput=1（trip.tex L103 语义，值可经宏：\tracingoutput\on）：
