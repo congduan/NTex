@@ -494,6 +494,10 @@ pub trait AlignSink {
 /// 页域：输出例程战刀 1-5 的全部事件（例程点火/shipout/dead cycles）、
 /// 页号链镜像、e-TeX marks 族与 insert/vadjust 页面材料。
 pub trait PageSink {
+    /// tex.web page_so_far: 0 = pagegoal, 1 = pagetotal.
+    fn page_dimen(&self, _index: u8) -> i64 {
+        0
+    }
     /// `\output` 例程定义状态变化（M3-5-3）：true 时 fire_up 改道 box255 + 待执行，
     /// false 时直通 shipout（默认）。
     fn output_defined(&mut self, _defined: bool) -> Result<()> {

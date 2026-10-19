@@ -1935,6 +1935,9 @@ impl AlignSink for NodeBuilder {
 }
 
 impl PageSink for NodeBuilder {
+    fn page_dimen(&self, index: u8) -> i64 {
+        self.page_state.page.page_dimen(index, self.page_state.in_output_group)
+    }
     fn output_defined(&mut self, defined: bool) -> Result<()> {
         self.page_state.output_defined = defined;
         if !defined {

@@ -2176,16 +2176,16 @@ impl Expander {
                 self.fetch()?;
                 return Ok((if neg { -v } else { v }, 0));
             }
-            // TRIP：只读显示/页面内部量作尺寸（\predisplaysize/\pagetotal/\pagegoal）
-            // ——expander 无排版状态，暂按 0 读，避免 l.253 误报 Missing number。
+            // 只读页面尺寸从排版器 page_so_far 取值；predisplaysize 暂按 0 读。
             // （\displaywidth 不在此：它已是有存储的 dimen 参数，走上面的
             // `param_kind_of` 通用臂。）
-            if matches!(
-                self.eqtb.slot(csid),
-                EqSlot::Primitive(
-                    Primitive::PreDisplaySize | Primitive::PageTotal | Primitive::PageGoal
-                )
-            ) {
+            if let EqSlot::Primitive(p @ (Primitive::PageTotal | Primitive::PageGoal)) = self.eqtb.slot(csid) {
+                let index = if *p == Primitive::PageGoal { 0 } else { 1 };
+                self.fetch()?;
+                let v = self.query_sink_ref().page_dimen(index);
+                return Ok((if neg { -v } else { v }, 0));
+            }
+            if matches!(self.eqtb.slot(csid), EqSlot::Primitive(Primitive::PreDisplaySize)) {
                 self.fetch()?;
                 return Ok((0, 0));
             }

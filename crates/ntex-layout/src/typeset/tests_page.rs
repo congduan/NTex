@@ -68,6 +68,25 @@ use super::*;
     }
 
     #[test]
+    fn pagegoal_reads_empty_and_frozen_page_state() {
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
+        ts.typeset_dvi(r"\vsize=100pt \showthe\pagegoal \hbox{x}\showthe\pagegoal\end")
+            .unwrap();
+        assert_eq!(
+            showthe_values(&ts.take_transcript(), "pagegoal"),
+            vec!["16383.99998pt", "100.0pt"],
+        );
+
+        let mut output = Typesetter::with_metrics(metrics).plain_params();
+        output
+            .typeset_dvi(
+                r"\vsize=100pt \output={\showthe\pagegoal\shipout\box255} \hbox{x}\vfil\penalty-10000\end",
+            )
+            .unwrap();
+        assert_eq!(showthe_values(&output.take_transcript(), "pagegoal"), vec!["100.0pt"]);
+    }
+
+    #[test]
     fn first_insert_correction_glue_reduces_pagegoal() {
         fn page_height(skip: &str) -> i64 {
             let mut ts = Typesetter::with_metrics(metrics).plain_params();

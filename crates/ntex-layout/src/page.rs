@@ -224,6 +224,17 @@ impl PageBuilder {
         !self.has_box
     }
 
+    pub fn page_dimen(&self, index: u8, output_active: bool) -> i64 {
+        if self.is_empty() && !output_active {
+            return if index == 0 { (1 << 30) - 1 } else { 0 };
+        }
+        if index == 0 {
+            self.goal
+        } else {
+            self.total
+        }
+    }
+
     /// 页面是否含**可冲页内容**（tex.web `page_head<>null` 判据）。
     ///
     /// tex.web 的 `page_head` 只在 `append_to_vlist` 加入**盒子/规则**时建立；

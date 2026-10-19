@@ -791,11 +791,12 @@ impl Expander {
                     };
                     Ok(emit_count(v))
                 }
-                // \\the\\pagetotal/\\pagegoal/\\predisplaysize：页面 dimen 只读
-                // （expander 无排版状态返回 0）；\\the\\pagestretch 系：页面 glue 参数
-                Primitive::PageTotal | Primitive::PageGoal | Primitive::PreDisplaySize => {
-                    Ok(emit_dimen(0))
+                // \\the\\pagetotal/\\pagegoal 从排版器取 page_so_far；
+                // \\predisplaysize 仍使用旧的独立读路径。
+                Primitive::PageTotal | Primitive::PageGoal => {
+                    Ok(emit_dimen(self.query_sink_ref().page_dimen(if *p == Primitive::PageGoal { 0 } else { 1 })))
                 }
+                Primitive::PreDisplaySize => Ok(emit_dimen(0)),
                 // \\the\\everypar 等 toks 参数：输出存储的 token 列表
                 Primitive::EveryPar
                 | Primitive::EveryHBox
