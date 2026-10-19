@@ -27,6 +27,25 @@ fn shipout_transcribes_zero_count_page_without_tracing() {
     );
 }
 
+#[test]
+fn tracingoutput_shipout_embeds_label_in_title_without_duplicate_line() {
+    // tex.web L12702/L12706 分支：\tracingoutput>0 时页标记内嵌在
+    // "Completed box being shipped out [...]" 标题里，独立行通道不触发
+    // ——整转录中标签形态每页恰出现一次（trip 通道 log_diff 回归锁）。
+    let mut ts = Typesetter::with_metrics(metrics).plain_params();
+    ts.typeset_dvi(r"\tracingoutput=1 \shipout\hbox{aa}\end").unwrap();
+    let transcript = ts.take_transcript();
+    assert_eq!(
+        transcript.matches("[0]").count(),
+        1,
+        "tracing>0 时标签应只在标题行出现一次：{transcript:?}"
+    );
+    assert!(
+        transcript.contains("Completed box being shipped out [0]"),
+        "标题应内嵌页标记：{transcript:?}"
+    );
+}
+
     #[test]
     fn tracingoutput_transcribes_shipped_box_tree() {
         // \tracingoutput=1（trip.tex L103 语义，值可经宏：\tracingoutput\on）：

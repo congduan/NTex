@@ -124,7 +124,11 @@ impl NodeBuilder {
         // are appended together; their terminal flush timing is not exposed.
         // Speculative builders replay their contributed nodes on the owning
         // builder; only that committed shipout may enter the transcript.
-        if self.spec_mode.is_none() {
+        // With \tracingoutput>0 the label is instead embedded in the
+        // "Completed box being shipped out [...]" title (trace_shipout), so
+        // the standalone line fires only when that title is absent
+        // (tex.web L12702 vs L12706 branching).
+        if self.spec_mode.is_none() && self.params.misc[27] <= 0 {
             if let Some(counts) = self.page_state.shipped_counts.last() {
                 let _ = self.write16(format_page_label(counts));
             }
