@@ -1,0 +1,46 @@
+%%
+%% This is file `jy2zhsf.fd',
+%% generated with the docstrip utility.
+%%
+%% The original source files were:
+%%
+%% ctex-fontset.dtx  (with options: `fd,sf,jy2')
+%% -----------------------------------------------------------------------
+%%   Copyright (C) 2003--2026                                            *
+%%   CTEX.ORG and any individual authors listed elsewhere in this file.  *
+%% -----------------------------------------------------------------------
+%%   This work may be distributed and/or modified under the conditions   *
+%%   of the LaTeX Project Public License (LPPL), either version 1.3c of  *
+%%   this license or (at your option) any later version.                 *
+%%   The latest version of this license is in                            *
+%%                                                                       *
+%%       http://www.latex-project.org/lppl.txt                           *
+%%                                                                       *
+%%   and version 1.3c or later is part of all distributions of LaTeX     *
+%%   version 2008 or later.                                              *
+%%                                                                       *
+%%   This work has the LPPL maintenance status `maintained'.             *
+%% -----------------------------------------------------------------------
+\catcode`\ 10\relax \catcode`\^^I9\relax \catcode`\^^M5\relax
+\def \GetIdInfo $Id: #1.#2 #3 #4-#5-#6 #7$ #8{%
+  \edef \ExplFileDate       {#4/#5/#6}%
+  \edef \ExplFileVersion    {#3}%
+  \edef \ExplFileDescription{#8}}%
+\GetIdInfo $Id: ctex-fontset.dtx 2.6.5 2026-08-11 16:50:29 +0800 79898321 Liam <liamhuang0205@gmail.com>$
+  {Chinese font definition (CTEX)}%
+\catcode`\ 9\relax \catcode`\^^I9\relax \catcode`\^^M9\relax
+\ProvidesFile{jy2zhsf.fd}%
+  [\ExplFileDate\space v\ExplFileVersion\space \ExplFileDescription]
+\DeclareKanjiFamily{JY2}{zhsf}{}
+\DeclareFontShape{JY2}{zhsf}{m}{n}{<-> upzhsans-h}{}
+\DeclareFontShape{JY2}{zhsf}{b}{n}{<-> upzhsansb-h}{}
+\DeclareFontShape{JY2}{zhsf}{bx}{n}{<-> upzhsansb-h}{}
+\DeclareFontShape{JY2}{zhsf}{m}{sl}{<-> upzhsans-h}{}
+\DeclareFontShape{JY2}{zhsf}{b}{sl}{<-> upzhsansb-h}{}
+\DeclareFontShape{JY2}{zhsf}{bx}{sl}{<-> upzhsansb-h}{}
+\DeclareFontShape{JY2}{zhsf}{m}{it}{<-> upzhsans-h}{}
+\DeclareFontShape{JY2}{zhsf}{b}{it}{<-> upzhsansb-h}{}
+\DeclareFontShape{JY2}{zhsf}{bx}{it}{<-> upzhsansb-h}{}
+%% 
+%%
+%% End of file `jy2zhsf.fd'.

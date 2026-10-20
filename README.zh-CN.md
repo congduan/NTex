@@ -91,7 +91,7 @@ TeX/LaTeX 源码
 ## 快速开始
 
 ```bash
-# 质量门禁：fmt + clippy(-D warnings) + 单元测试（提交前必须全绿）
+# 质量门禁：fmt + clippy(-D warnings) + 单元测试 + 默认资产校验（提交前必须全绿）
 make check
 
 # 定位基础设施（开工定位前先读 docs/tooling-trust.md）
@@ -141,7 +141,7 @@ make lvt-fetch / make lvt-run ARGS=--all   # expl3 官方测试套件跑分
 
 ### 测试纪律
 
-- **提交前 `make check` 全绿**（fmt + clippy `-D warnings` + 单元测试）；
+- **提交前 `make check` 全绿**（fmt + clippy `-D warnings` + 单元测试 + 默认资产校验）；
 - 测试金字塔：单元测试（语义锁消息 / 逐位对照）> 差分测试（同一 `.tex` 双引擎 diff）>
   TRIP/ETRIP（一致性硬口径）；M2 双轨等价框架（解释器 vs 字节码）必须保持绿；
 - **`cargo test --release` 会失败**：`[profile.release]` 开了 `panic = "abort"` + `lto` +

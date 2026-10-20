@@ -1,5 +1,14 @@
 //! 临时诊断：fmt 往返后二次运行（模拟驱动 pass 2）。
 
+// NTEX_TFM_DIR 是进程级环境变量，TRIP/ETRIP 不能并行切换不同字体目录。
+static TFM_ENV_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn tfm_env_guard() -> std::sync::MutexGuard<'static, ()> {
+    TFM_ENV_TESTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[test]
 fn fmt_reload_minimal() {
     let mut ts = ntex_layout::Typesetter::with_tfm();
@@ -30,6 +39,7 @@ fn fmt_reload_minimal() {
 /// 第二遍会跳过定义段，后续字符只能从快照恢复该选择。
 #[test]
 fn fmt_reload_preserves_current_font() {
+    let _guard = tfm_env_guard();
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/trip");
     std::env::set_var("NTEX_TFM_DIR", dir);
 
@@ -49,6 +59,7 @@ fn fmt_reload_preserves_current_font() {
 
 #[test]
 fn trip_initex_dump_preserves_selected_font() {
+    let _guard = tfm_env_guard();
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/trip");
     std::env::set_var("NTEX_TFM_DIR", dir);
     let src = std::fs::read(format!("{dir}/trip.tex")).unwrap();
@@ -65,6 +76,7 @@ fn trip_initex_dump_preserves_selected_font() {
 
 #[test]
 fn fmt_reload_then_run_etrip_preamble() {
+    let _guard = tfm_env_guard();
     // 与驱动一致：TFM 目录 + 完整文件 → dump → 载入 → 重跑
     // fixtures 路径按 CARGO_MANIFEST_DIR 定位（硬编码 /Users/... 仅原作者机器可用）
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/etrip");

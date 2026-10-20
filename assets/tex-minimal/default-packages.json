@@ -1,0 +1,39 @@
+{
+  "packages": [
+    "amsthm",
+    "mathtools",
+    "siunitx",
+    "enumitem",
+    "fancyhdr",
+    "titlesec",
+    "setspace",
+    "parskip",
+    "float",
+    "caption",
+    "subcaption",
+    "makecell",
+    "tabularray",
+    "hyperref",
+    "cleveref",
+    "natbib",
+    "biblatex",
+    "listings",
+    "fancyvrb",
+    "minted",
+    "tikz",
+    "pgfplots",
+    "ctex",
+    "xeCJK",
+    "babel",
+    "fontspec",
+    "unicode-math"
+  ],
+  "documentclasses": [
+    "beamer",
+    "ctexart",
+    "standalone"
+  ],
+  "scope": "tex runtime files only; exclude *-dev trees; preserve existing files",
+  "source": "https://mirrors.aliyun.com/CTAN/systems/texlive/tlnet",
+  "tlpdb_sha256": "9d86f54fe054d35b2ece2bfd02991cc665a0e89de63b5b98ab6d1fad2be89dd7"
+}

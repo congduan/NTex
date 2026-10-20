@@ -74,6 +74,9 @@ tests/semantic/work/
 tests/semantic/cases/*.dvi
 *.pdf
 
+# Beamer 运行面图标属于随宏包分发的正式资产。
+!assets/tex-minimal/tex/latex/beamer/*.pdf
+
 # 复现对照证据 PDF —— 上方 *.pdf 全局忽略的例外（证据类产物入库，
 # 见 fixtures/repro/README.md「证据产物」节）
 !fixtures/repro/pdf/*.pdf

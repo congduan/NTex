@@ -1,0 +1,112 @@
+%%
+%% This is file `ctex-fontset-ubuntu.def',
+%% generated with the docstrip utility.
+%%
+%% The original source files were:
+%%
+%% ctex-fontset.dtx  (with options: `fontset,ubuntu')
+%% -----------------------------------------------------------------------
+%%   Copyright (C) 2003--2026                                            *
+%%   CTEX.ORG and any individual authors listed elsewhere in this file.  *
+%% -----------------------------------------------------------------------
+%%   This work may be distributed and/or modified under the conditions   *
+%%   of the LaTeX Project Public License (LPPL), either version 1.3c of  *
+%%   this license or (at your option) any later version.                 *
+%%   The latest version of this license is in                            *
+%%                                                                       *
+%%       http://www.latex-project.org/lppl.txt                           *
+%%                                                                       *
+%%   and version 1.3c or later is part of all distributions of LaTeX     *
+%%   version 2008 or later.                                              *
+%%                                                                       *
+%%   This work has the LPPL maintenance status `maintained'.             *
+%% -----------------------------------------------------------------------
+\GetIdInfo $Id: ctex-fontset.dtx 2.6.5 2026-08-11 16:50:29 +0800 79898321 Liam <liamhuang0205@gmail.com>$
+  {Ubuntu fonts definition (CTEX)}
+\ProvidesExplFile{ctex-fontset-ubuntu.def}
+  {\ExplFileDate}{\ExplFileVersion}{\ExplFileDescription}
+\ctex_fontset_case:nnnn
+  { \ctex_fontset_error:n { ubuntu } }
+  {
+    \ctex_zhmap_case:nnn
+      {
+        \setCJKmainfont { :2:NotoSerifCJK-Regular.ttc }
+          [ BoldFont = :2:NotoSerifCJK-Bold.ttc, ItalicFont = gkai00mp.ttf ]
+        \setCJKsansfont { :2:NotoSansCJK-Regular.ttc  }
+          [ BoldFont = :2:NotoSansCJK-Bold.ttc  ]
+        \setCJKmonofont { :2:NotoSerifCJK-Regular.ttc }
+          [ BoldFont = :2:NotoSerifCJK-Bold.ttc ]
+        \setCJKfamilyfont { zhsong } { :2:NotoSerifCJK-Regular.ttc }
+          [ BoldFont = :2:NotoSerifCJK-Bold.ttc ]
+        \setCJKfamilyfont { zhhei  } { :2:NotoSansCJK-Regular.ttc  }
+          [ BoldFont = :2:NotoSansCJK-Bold.ttc  ]
+        \setCJKfamilyfont { zhfs   } { :2:NotoSerifCJK-Regular.ttc }
+        \setCJKfamilyfont { zhkai  } { gkai00mp.ttf  }
+        \ctex_punct_set:n { ubuntu }
+        \ctex_punct_map_family:nn   { \CJKrmdefault        } { zhsong  }
+        \ctex_punct_map_family:nn   { \CJKsfdefault        } { zhhei   }
+        \ctex_punct_map_family:nn   { \CJKttdefault        } { zhsong  }
+        \ctex_punct_map_family:nn   { zhfs                 } { zhsong  }
+        \ctex_punct_map_itshape:nn  { \CJKrmdefault        } { zhkai   }
+        \ctex_punct_map_bfseries:nn { \CJKsfdefault, zhhei } { zhheib  }
+        \ctex_punct_map_bfseries:nn
+          { \CJKrmdefault, \CJKttdefault, zhsong }
+          { zhsongb }
+      }
+      {
+        \ctex_load_zhmap:nnnn { rm } { zhhei } { zhfs } { ubuntu }
+        \ctex_punct_set:n { ubuntu }
+        \ctex_punct_map_family:nn   { \CJKrmdefault } { zhsong }
+        \ctex_punct_map_family:nn   { \CJKttdefault } { zhsong }
+        \ctex_punct_map_bfseries:nn { \CJKrmdefault } { zhhei  }
+        \ctex_punct_map_itshape:nn  { \CJKrmdefault } { zhkai  }
+      }
+      { \ctex_fontset_error:n { ubuntu } }
+  }
+  {
+    \ctex_set_upmap_unicode:nnn { upserif }
+      { :2:NotoSerifCJK-Regular.ttc } { :2:NotoSerifCJK-Bold.ttc }
+    \ctex_set_upmap_unicode:nnn { upsans  }
+      { :2:NotoSansCJK-Regular.ttc  } { :2:NotoSansCJK-Bold.ttc  }
+    \ctex_set_upmap_unicode:nnn { upmono  }
+      { :2:NotoSerifCJK-Regular.ttc } { }
+    \ctex_set_upmap:nnn { upserifit } { gkai00mp.ttf  } { }
+    \ctex_set_upfamily:nnn { zhsong } { upzhserif   } { upzhserifb }
+    \ctex_set_upfamily:nnn { zhhei  } { upzhsans    } { upzhsansb  }
+    \ctex_set_upfamily:nnn { zhfs   } { upzhmono    } { }
+    \ctex_set_upfamily:nnn { zhkai  } { upzhserifit } { }
+  }
+  {
+    \setCJKmainfont { Noto~Serif~CJK~SC }
+      [ BoldFont = Noto~Serif~CJK~SC~Bold, ItalicFont = AR~PL~KaitiM~GB ]
+    \setCJKsansfont { Noto~Sans~CJK~SC  }
+      [ BoldFont = Noto~Sans~CJK~SC~Bold ]
+    \fontspec_font_if_exist:nTF { LXGWZhuqueFangsong-Regular.ttf }
+      {
+        \setCJKmonofont { LXGWZhuqueFangsong-Regular.ttf }
+        \setCJKfamilyfont { zhfs } { LXGWZhuqueFangsong-Regular.ttf }
+      }
+      {
+        \fontspec_font_if_exist:nTF { FandolFang-Regular.otf }
+          {
+            \setCJKmonofont { FandolFang-Regular.otf }
+            \setCJKfamilyfont { zhfs } { FandolFang-Regular.otf }
+          }
+          {
+            \setCJKmonofont { Noto~Serif~CJK~SC }
+            \setCJKfamilyfont { zhfs } { Noto~Serif~CJK~SC }
+          }
+      }
+    \setCJKfamilyfont { zhsong } { Noto~Serif~CJK~SC }
+      [ BoldFont = Noto~Serif~CJK~SC~Bold ]
+    \setCJKfamilyfont { zhhei  } { Noto~Sans~CJK~SC  }
+      [ BoldFont = Noto~Sans~CJK~SC~Bold ]
+    \setCJKfamilyfont { zhkai  } { AR~PL~KaitiM~GB   }
+  }
+\NewDocumentCommand \songti   { } { \CJKfamily { zhsong  } }
+\NewDocumentCommand \heiti    { } { \CJKfamily { zhhei   } }
+\NewDocumentCommand \fangsong { } { \CJKfamily { zhfs    } }
+\NewDocumentCommand \kaishu   { } { \CJKfamily { zhkai   } }
+%% 
+%%
+%% End of file `ctex-fontset-ubuntu.def'.

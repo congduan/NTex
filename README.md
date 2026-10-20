@@ -102,7 +102,7 @@ architectural vision is in [idea.md](idea.md). Current progress and milestone st
 ## Quick start
 
 ```bash
-# Quality gate: fmt + clippy (-D warnings) + unit tests (must be green before committing)
+# Quality gate: fmt + clippy (-D warnings) + unit tests + default asset checks (green before committing)
 make check
 
 # Diagnostic infrastructure (read docs/tooling-trust.md before starting any debugging work)
@@ -154,7 +154,7 @@ description.
 
 ### Testing discipline
 
-- **`make check` must be green before committing** (fmt + clippy `-D warnings` + unit tests);
+- **`make check` must be green before committing** (fmt + clippy `-D warnings` + unit tests + default asset checks);
 - Testing pyramid: unit tests (locked semantic messages / bit-exact comparisons) > differential tests
   (the same `.tex` diffed across two engines) > TRIP/ETRIP (the hard conformance criterion). The M2
   dual-track equivalence framework (interpreter vs. bytecode) must stay green;

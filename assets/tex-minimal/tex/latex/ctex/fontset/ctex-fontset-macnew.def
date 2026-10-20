@@ -1,0 +1,276 @@
+%%
+%% This is file `ctex-fontset-macnew.def',
+%% generated with the docstrip utility.
+%%
+%% The original source files were:
+%%
+%% ctex-fontset.dtx  (with options: `fontset,macnew')
+%% -----------------------------------------------------------------------
+%%   Copyright (C) 2003--2026                                            *
+%%   CTEX.ORG and any individual authors listed elsewhere in this file.  *
+%% -----------------------------------------------------------------------
+%%   This work may be distributed and/or modified under the conditions   *
+%%   of the LaTeX Project Public License (LPPL), either version 1.3c of  *
+%%   this license or (at your option) any later version.                 *
+%%   The latest version of this license is in                            *
+%%                                                                       *
+%%       http://www.latex-project.org/lppl.txt                           *
+%%                                                                       *
+%%   and version 1.3c or later is part of all distributions of LaTeX     *
+%%   version 2008 or later.                                              *
+%%                                                                       *
+%%   This work has the LPPL maintenance status `maintained'.             *
+%% -----------------------------------------------------------------------
+\GetIdInfo $Id: ctex-fontset.dtx 2.6.5 2026-08-11 16:50:29 +0800 79898321 Liam <liamhuang0205@gmail.com>$
+  {macOS fonts definition for El Capitan or later version (CTEX)}
+\ProvidesExplFile{ctex-fontset-macnew.def}
+  {\ExplFileDate}{\ExplFileVersion}{\ExplFileDescription}
+\ctex_fontset_case:nnnn
+  {
+    \ctex_fontset_error:n { mac }
+    \use_none_delimit_by_q_stop:w
+  }
+  {
+    \ctex_zhmap_case:nnn
+      {
+        \setCJKmainfont { :6:Songti.ttc }
+          [
+            BoldFont       = :1:Songti.ttc,
+            ItalicFont     = :0:Kaiti.ttc,
+            BoldItalicFont = :3:Kaiti.ttc,
+          ]
+        \setCJKsansfont { :2:PingFang.ttc } [ BoldFont = :8:PingFang.ttc ]
+        \setCJKmonofont { STFANGSO.ttf    }
+        \setCJKfamilyfont { zhsong } { :6:Songti.ttc   } [ BoldFont = :1:Songti.ttc   ]
+        \setCJKfamilyfont { zhhei  } { :2:PingFang.ttc } [ BoldFont = :8:PingFang.ttc ]
+        \setCJKfamilyfont { zhkai  } { :0:Kaiti.ttc    } [ BoldFont = :3:Kaiti.ttc    ]
+        \setCJKfamilyfont { zhfs   } { STFANGSO.ttf    }
+        \setCJKfamilyfont { zhli   } { :0:Baoli.ttc    }
+        \setCJKfamilyfont { zhyou  } { :4:Yuanti.ttc   } [ BoldFont = :0:Yuanti.ttc   ]
+        \ctex_punct_set:n { mac }
+        \ctex_punct_map_family:nn   { \CJKrmdefault         } { zhsong  }
+        \ctex_punct_map_family:nn   { \CJKsfdefault         } { zhpf    }
+        \ctex_punct_map_family:nn   { \CJKttdefault         } { zhfs    }
+        \ctex_punct_map_itshape:nn  { \CJKrmdefault         } { zhkai   }
+        \ctex_punct_map_bfseries:nn { \CJKrmdefault, zhsong } { zhsongb }
+        \ctex_punct_map_bfseries:nn { \CJKsfdefault, zhhei  } { zhpfb   }
+        \ctex_punct_map_bfseries:nn { zhyou                 } { zhyoub  }
+      }
+      {
+        \ctex_load_zhmap:nnnn { rm } { zhhei } { zhfs } { mac }
+        \ctex_punct_set:n { mac }
+        \ctex_punct_map_family:nn   { \CJKrmdefault } { zhsong }
+        \ctex_punct_map_family:nn   { \CJKsfdefault } { zhpf   }
+        \ctex_punct_map_bfseries:nn { \CJKrmdefault } { zhpf   }
+        \ctex_punct_map_itshape:nn  { \CJKrmdefault } { zhkai  }
+      }
+      { \ctex_fontset_error:n { macnew } }
+    \use_none_delimit_by_q_stop:w
+  }
+  {
+    \ctex_set_upmap:nnn { upserif   } { :6:Songti.ttc } { :1:Songti.ttc }
+    \ctex_set_upmap:nnn { upserifit } { :0:Kaiti.ttc  } { }
+    \ctex_set_upmap:nnn { upstsl    } { :0:Baoli.ttc  } { }
+    \ctex_set_upmap:nnn { upstht    } { :4:Yuanti.ttc } { }
+    \ctex_set_upmap_unicode:nnn { upsans } { :2:PingFang.ttc } { :8:PingFang.ttc }
+    \ctex_set_upmap_unicode:nnn { upmono } { STFANGSO.ttf    } { }
+    \ctex_set_upfamily:nnn { zhsong } { upzhserif   } { upzhserifb }
+    \ctex_set_upfamily:nnn { zhhei  } { upzhsans    } { upzhsansb  }
+    \ctex_set_upfamily:nnn { zhfs   } { upzhmono    } { }
+    \ctex_set_upfamily:nnn { zhkai  } { upzhserifit } { }
+    \ctex_set_upfamily:nnn { zhli   } { upschrm     } { }
+    \ctex_set_upfamily:nnn { zhyou  } { upschgt     } { }
+    \use_none_delimit_by_q_stop:w
+  }
+  {
+    \bool_new:N \g__ctex_mac_pingfang_bool
+    \sys_if_engine_luatex:F
+      {
+        \fontspec_font_if_exist:nTF { Kaiti~SC }
+          {
+            \setCJKmainfont { Songti~SC~Regular }
+              [
+                BoldFont       = Songti~SC~Bold ,
+                ItalicFont     = Kaiti~SC ,
+                BoldItalicFont = Kaiti~SC~Bold ,
+              ]
+          }
+          {
+            \setCJKmainfont { Songti~SC~Regular }
+              [ BoldFont = Songti~SC~Bold ]
+          }
+        \setCJKfamilyfont { zhsong } { Songti~SC~Regular }
+          [ BoldFont = Songti~SC~Bold ]
+        \setCJKfamilyfont { zhhei  } { Heiti~SC~Light  }
+          [ BoldFont = Heiti~SC~Medium ]
+        \fontspec_font_if_exist:nTF { PingFang~SC }
+          {
+            \setCJKsansfont { PingFang~SC }
+            \setCJKfamilyfont { zhpf } { PingFang~SC }
+            \bool_gset_true:N \g__ctex_mac_pingfang_bool
+          }
+          { \setCJKsansfont { Heiti~SC~Light } [ BoldFont = Heiti~SC~Medium ] }
+        \fontspec_font_if_exist:nTF { STFangsong }
+          {
+            \setCJKmonofont { STFangsong }
+            \setCJKfamilyfont { zhfs } { STFangsong }
+          }
+          { \setCJKmonofont { Heiti~SC~Light } }
+        \fontspec_font_if_exist:nT { Kaiti~SC }
+          {
+            \setCJKfamilyfont { zhkai } { Kaiti~SC }
+              [ BoldFont = Kaiti~SC~Bold ]
+          }
+        \fontspec_font_if_exist:nT { Baoli~SC }
+          { \setCJKfamilyfont { zhli } { Baoli~SC } }
+        \fontspec_font_if_exist:nT { Yuanti~SC~Light }
+          {
+            \setCJKfamilyfont { zhyou } { Yuanti~SC~Light }
+              [ BoldFont = Yuanti~SC~Regular ]
+          }
+        \use_none_delimit_by_q_stop:w
+      }
+  }
+\char_set_catcode_space:n { 32 }
+\lua_now:n
+  {
+    local lfs = require("lfs");
+    local search_bases = {};
+    local asset_roots = {
+      "/System/Library/AssetsV2",
+      "/System/Library/AssetsV2/PreinstalledAssetsV2/InstallWithOs",
+    };
+    for _, root in ipairs(asset_roots) do
+      local ok, iter, obj = pcall(lfs.dir, root);
+      if ok then
+        for d in iter, obj do
+          if d:find("^com_apple_MobileAsset_Font") then
+            table.insert(search_bases, root .. "/" .. d);
+          end;
+        end;
+      end;
+    end;
+    local function find_font_dir(filename)
+      for _, base in ipairs(search_bases) do
+        local ok, iter, obj = pcall(lfs.dir, base);
+        if ok then
+          for entry in iter, obj do
+            if not (entry == "." or entry == "..") then
+              local p = base .. "/" .. entry
+                .. "/AssetData/" .. filename;
+              if lfs.attributes(p, "mode") then
+                return base .. "/" .. entry .. "/AssetData/";
+              end;
+            end;
+          end;
+        end;
+      end;
+      return nil;
+    end;
+    local fonts = {
+      {"PingFang.ttc", "g__ctex_mac_pingfang_dir_tl"},
+      {"Kaiti.ttc",    "g__ctex_mac_kaiti_dir_tl"},
+      {"STFANGSO.ttf", "g__ctex_mac_stfangso_dir_tl"},
+      {"Baoli.ttc",    "g__ctex_mac_baoli_dir_tl"},
+      {"Yuanti.ttc",   "g__ctex_mac_yuanti_dir_tl"},
+    };
+    for _, f in ipairs(fonts) do
+      local dir = find_font_dir(f[1]);
+      token.set_macro(f[2], dir or "", "global");
+    end
+  }
+\char_set_catcode_ignore:n { 32 }
+\tl_if_empty:NTF \g__ctex_mac_kaiti_dir_tl
+  {
+    \setCJKmainfont { Songti~SC~Regular }
+      [ BoldFont = Songti~SC~Bold ]
+  }
+  {
+    \setCJKmainfont { Songti~SC~Regular }
+      [
+        BoldFont       = Songti~SC~Bold ,
+        ItalicFont     = Kaiti.ttc ,
+        ItalicFeatures = { Path = \g__ctex_mac_kaiti_dir_tl , FontIndex = 0 } ,
+        BoldItalicFont = Kaiti.ttc ,
+        BoldItalicFeatures = { Path = \g__ctex_mac_kaiti_dir_tl , FontIndex = 3 } ,
+      ]
+  }
+\setCJKfamilyfont { zhsong } { Songti~SC~Regular }
+  [ BoldFont = Songti~SC~Bold ]
+\setCJKfamilyfont { zhhei  } { Heiti~SC~Light  }
+  [ BoldFont = Heiti~SC~Medium ]
+\tl_if_empty:NTF \g__ctex_mac_pingfang_dir_tl
+  { \setCJKsansfont { Heiti~SC~Light } [ BoldFont = Heiti~SC~Medium ] }
+  {
+    \setCJKsansfont { PingFang.ttc }
+      [
+        Path          = \g__ctex_mac_pingfang_dir_tl ,
+        FontIndex     = 2 ,
+        BoldFont      = PingFang.ttc ,
+        BoldFontIndex = 8 ,
+      ]
+    \setCJKfamilyfont { zhpf } { PingFang.ttc }
+      [ Path = \g__ctex_mac_pingfang_dir_tl , FontIndex = 2 ]
+    \bool_gset_true:N \g__ctex_mac_pingfang_bool
+  }
+\tl_if_empty:NTF \g__ctex_mac_stfangso_dir_tl
+  { \setCJKmonofont { Heiti~SC~Light } }
+  {
+    \setCJKmonofont { STFANGSO.ttf }
+      [ Path = \g__ctex_mac_stfangso_dir_tl ]
+    \setCJKfamilyfont { zhfs } { STFANGSO.ttf }
+      [ Path = \g__ctex_mac_stfangso_dir_tl ]
+  }
+\tl_if_empty:NF \g__ctex_mac_kaiti_dir_tl
+  {
+    \setCJKfamilyfont { zhkai } { Kaiti.ttc }
+      [
+        Path          = \g__ctex_mac_kaiti_dir_tl ,
+        FontIndex     = 0 ,
+        BoldFont      = Kaiti.ttc ,
+        BoldFontIndex = 3 ,
+      ]
+  }
+\tl_if_empty:NF \g__ctex_mac_baoli_dir_tl
+  {
+    \setCJKfamilyfont { zhli } { Baoli.ttc }
+      [ Path = \g__ctex_mac_baoli_dir_tl , FontIndex = 0 ]
+  }
+\tl_if_empty:NF \g__ctex_mac_yuanti_dir_tl
+  {
+    \setCJKfamilyfont { zhyou } { Yuanti.ttc }
+      [
+        Path          = \g__ctex_mac_yuanti_dir_tl ,
+        FontIndex     = 4 ,
+        BoldFont      = Yuanti.ttc ,
+        BoldFontIndex = 0 ,
+      ]
+  }
+\use_none_delimit_by_q_stop:w \q_stop
+\NewDocumentCommand \songti   { } { \CJKfamily { zhsong  } }
+\NewDocumentCommand \heiti    { } { \CJKfamily { zhhei   } }
+\NewDocumentCommand \fangsong { } { \CJKfamily { zhfs    } }
+\NewDocumentCommand \kaishu   { } { \CJKfamily { zhkai   } }
+\NewDocumentCommand \lishu    { } { \CJKfamily { zhli    } }
+\NewDocumentCommand \youyuan  { } { \CJKfamily { zhyou   } }
+\bool_lazy_or:nnTF
+  { \sys_if_engine_pdftex_p: }
+  { \sys_if_engine_uptex_p:  }
+  {
+    \cs_new_eq:NN \yahei    \heiti
+    \cs_new_eq:NN \pingfang \heiti
+  }
+  {
+    \bool_if:NTF \g__ctex_mac_pingfang_bool
+      {
+        \NewDocumentCommand \yahei    { } { \CJKfamily { zhpf } }
+        \NewDocumentCommand \pingfang { } { \CJKfamily { zhpf } }
+      }
+      {
+        \cs_new_eq:NN \yahei    \heiti
+        \cs_new_eq:NN \pingfang \heiti
+      }
+  }
+%% 
+%%
+%% End of file `ctex-fontset-macnew.def'.

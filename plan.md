@@ -121,6 +121,13 @@
     发行 fmt 已真实重建，原文档零错一页、标题和两段正文均可见。验证与归档见
     [tauri-align-blindtext-2026-10-20.md](docs/archive/tauri-align-blindtext-2026-10-20.md)。
 
+14. **默认常用宏文件资产补齐**（10-20）：新增 3,533 个运行文件，覆盖清单中的
+    27 个宏包及 3 个文档类入口；上游依赖容器 SHA-512 与实际发行文件 SHA-256
+    均登记，15 个基础宏文件保留既有版本，默认 fmt/字体不变。实际 Tauri bundle
+    全部 3,932 个主名覆盖，资产校验加入 `make check`。最小 WASM 加载/出页
+    **19 PASS / 10 ERROR / 1 TIMEOUT**，兼容限制与复现范围见
+    [归档](docs/archive/default-tex-assets-2026-10-20.md)。
+
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 
 - **第十八刀** 尾递归鞍具校准 → `make check` 797 → **800 全绿**；pdfTeX 对照证明原否定结论有误；

@@ -3,6 +3,118 @@ ntex-lock 1
 # 身份字段：name / revision / sha512；参考字段：category / size / files
 
 [[pkg]]
+name adjustbox
+category Package
+revision 78101
+size 13776
+sha512 c8879736812d01363af2b64648b0a6dbcd745abbb5f05d3156bfbfcd5376b057b313df4ef33eea0af66a3a7537918cd384fbf60f5984431633981ec699841994
+files 8
+
+[[pkg]]
+name adobemapping
+category Package
+revision 66552
+size 2178116
+sha512 363f7fd337e5a34737608a2bc37521bb526ce726f5c9b5b4d08416e534448306002bc7af1be3f5e6fefcaba16ffc2260c4dea8a486d44dbccad577fb04d6da5b
+files 247
+
+[[pkg]]
+name amscls
+category Package
+revision 77682
+size 32244
+sha512 84f4f0dcd7844ed51c6f2ab5bfb97b78e4beabd77f6f037ba2b853fd048646f746a4b39218a0b36e5f67a63d563046a2c4aa2169c3131577f369927659531792
+files 11
+
+[[pkg]]
+name amsfonts
+category Package
+revision 77682
+size 3626284
+sha512 be514397b9844ae4a4f2e4f8c79d78e8b3b434bacffc18ccde3cbca462bfc49cbf7affd75b70fb013266c00f8f9be8636729ee18ee1274b0241ad74293751450
+files 608
+
+[[pkg]]
+name amsmath
+category Package
+revision 79234
+size 31724
+sha512 5d6768eea6404bcde83f6fdd7025f6f63dfafc633c689a308f1465ffbeb74385daddc4cd2cf4eb6f0152e8a2c9f8ee1cdc94aa8ad796051155a299d355503c4c
+files 9
+
+[[pkg]]
+name arphic
+category Package
+revision 15878
+size 27383316
+sha512 2d4c0f91dd483df95bf91056e4d7cbc28b681fc9f42704cdbff297ceb4f8110affbed879cc8b15061c309764e1fdcce01fd47c2d742df441ed191f83a065538b
+files 1560
+
+[[pkg]]
+name atbegshi
+category Package
+revision 79461
+size 4748
+sha512 35d16e9d0566ec7bf7928fc443f763a942e9e93499dbed4d83416bfa33cf39dd0a6003dfb3f220cac5b28b950bb3224887ffeeab94ba744098b63d23187fd66b
+files 1
+
+[[pkg]]
+name atveryend
+category Package
+revision 79461
+size 1184
+sha512 bf4e066a4b8c3a346471234ba1708a9c770d5ec761bfdd04beadff150b6b2be93bfc9f5756b4213059f65f8dc514d395afa021c1581dc786cc4fab5e0415fd15
+files 1
+
+[[pkg]]
+name auxhook
+category Package
+revision 79461
+size 1684
+sha512 0a81cff4887cad14b89839c85ef3ed7be06eebbe4c105b28b17f58198d04d630ea2351b9bc6bd7a10a5590bf2a1a660cd5d388b45a9180e01d72dbaada53742b
+files 1
+
+[[pkg]]
+name babel
+category Package
+revision 80642
+size 253396
+sha512 ef6598a1deb3476ad9e87785655bdec0554d9c984f5f61d6fa7bf3804d454a6fe9ae6d0432e0e4e7f739b395b32c8f234fbe3c6b1053df3849eeaeebab9ecbb0
+files 1050
+
+[[pkg]]
+name beamer
+category Package
+revision 80053
+size 168604
+sha512 9891fe308fcd19d8445b27f2bd2cde5e3f17c8162ed663954e5bbb336aa92709f2e6d28473c87390a6f398e4f8bb425682f757df0f968e3f7c88261e2ca7b92b
+files 129
+
+[[pkg]]
+name biblatex
+category Package
+revision 80368
+size 260324
+sha512 44c405851a52ad122b05e01c8999bdab5389c6fc77493247c2b202d64ad4a89e70bb140012d3cfa2fe95f739c587d07eaf2f7878113b4d2f07adce8c0f941ffb
+files 117
+
+[[pkg]]
+name bigintcalc
+category Package
+revision 79461
+size 6532
+sha512 e7230b29a08d1ef9d84254eff59c4db1dce1a9afd2a8d70f8e71c14f34a2d8fdd7f87840d2df055fba1821170504a2519bc7d73e719cca33cc03e74e171a62c1
+files 1
+
+[[pkg]]
+name bitset
+category Package
+revision 79461
+size 5736
+sha512 fec1098a0affe5ac333cf813ed2183b7c2975ffd9f1dc281bcc7f9c608592ce5139b40b5b65363378d079b9bb77ae4a837916d6641476f312f681815ad4141fa
+files 1
+
+[[pkg]]
 name blindtext
 category Package
 revision 77682
@@ -11,9 +123,1281 @@ sha512 a661332e727d24e89fd27780cebc5362fa49ca13441bdeba53beec0d3e2374eabdfaaf4cc
 files 1
 
 [[pkg]]
+name bookmark
+category Package
+revision 79461
+size 8400
+sha512 08a45966511441c0118e87163f8ac3b7cb34728e01ad79ee8c57063e06baaa075d3f39f7cb14efc5cb2843b6f8a57d381b077b541f3f855dac281fbfd8dfa12e
+files 7
+
+[[pkg]]
+name caption
+category Package
+revision 79618
+size 61612
+sha512 1d6fc7c2ca079fdeb6c6680d1cd7da86877fc4d4bfbca269fc4ebd58718e210856d52b17bc7599e6c3fb181c41ae8e45302ba86fe056f6c83fdfb513227041fe
+files 29
+
+[[pkg]]
+name catchfile
+category Package
+revision 79461
+size 2752
+sha512 bc23e44c676a7b45a5e7eca5b03ab76544273a3da93dde2d68c4ba631cf0bf23c7f07046f5a84456e71552bbf84c25f6fb17f2666ef400f096f9a1084443e316
+files 1
+
+[[pkg]]
+name chinese-jfm
+category Package
+revision 57758
+size 2492
+sha512 28dc8b70bf5e97a4e31defe09a16805a57054a019fa7908f6dda7ecededd8a37bff3f782d04a7c2fb72ec17ee1695d5a5a68daf3a159092080e5a7d667b4c9e1
+files 3
+
+[[pkg]]
+name cjk
+category Package
+revision 60865
+size 58480
+sha512 b13712912e479dab68cab9027042be8cb11047ebf9c034f532c857e83d28f19dfea5a1748685cfe1847c7372f2d0982f79736525694d937c88962c5262094585
+files 211
+
+[[pkg]]
+name cjkpunct
+category Package
+revision 41119
+size 4060
+sha512 cb44aa3386cd79f05980e5402adcbbf9f8b67fa76bdd5b293063fe9810520edbdf243656cfb54fe17d6ca43d405e6b16e8012eda63bae3cb3d8fc0f7755e2551
+files 2
+
+[[pkg]]
+name cleveref
+category Package
+revision 79618
+size 28488
+sha512 bd41ee9c370a3b2b7211397067970b0826571ef8c662526173f60b5f40c78ab10e771304e50d4e0d4c32413bbb229ba34cad49a04f601faf59af9d44edd8e17e
+files 1
+
+[[pkg]]
+name cm
+category Package
+revision 57963
+size 238064
+sha512 e65b2096ca183ca21d8ff987489223bc98750fcbaf4f9f9a9996f5153a76c5587d1ad77693234d02f80753b8b8cb86fd957514f82065bd7aab9eb64bad9003a3
+files 206
+
+[[pkg]]
+name cns
+category Package
+revision 45677
+size 2985692
+sha512 0b3645da07e0fc9482cfeddd93f949e18dc12b6aa02e5a6c45669f3d5f7f25d5fa7ff4992f40b9b71894e21b5b1855999ba8e1b130be27e8b7001444ed30db0f
+files 274
+
+[[pkg]]
+name collectbox
+category Package
+revision 77682
+size 2888
+sha512 275cce46e172bfd0084266aaf1b26d41ccde54696b54ddbcaf77b5b3e289ddc4e55cbab46297805562934d21b90c64f988ad1e39a13ee440234c63bf8615b1c9
+files 1
+
+[[pkg]]
+name ctablestack
+category Package
+revision 78101
+size 1112
+sha512 0822dee6bf8268f06a67e411ab0718181f132747a6bb700cdc1141e1f620bd733ee545687007881f7ef6294fc297a81272bfbd2561fa271a445fbe414321ea6c
+files 1
+
+[[pkg]]
+name ctex
+category Package
+revision 79993
+size 136228
+sha512 79364716f5edaafe18185b6bd22a66b81bd8bfc8b6e9061496f0844a3ba6bb73dc8534ff7391b2736f5f12c44ffb241e1a7cf3a92656674dff3961284eb114a2
+files 73
+
+[[pkg]]
+name currfile
+category Package
+revision 77682
+size 3876
+sha512 1f6452c0ee5861938ca693ee37f4fc46a61ccbdeb4273a75d416f5d28b421b0eeda3250c385cb2eb806d7d87661876f96582947a4fd1e62cc9497706908368de
+files 2
+
+[[pkg]]
+name dehyph
+category Package
+revision 48599
+size 46556
+sha512 2dc4ee5b4389549c032f3a4d87740ab3c5e296a1ef109a6b673656a82ca4c317ca774f39f61417568b8ccbeac787c4058184fc893d53799bbf0b042ba5aca9a2
+files 4
+
+[[pkg]]
+name dvipdfmx
+category TLCore
+revision 78409
+size 27224
+sha512 96bed8d72f0f5cb4332aa8c5a8c1217e9fb0deb175b241323045986566b3a1135790d8321226ac0b65274bfb18b28e136c6959b466e0dd79fbdd440d2e5b7ed2
+files 8
+
+[[pkg]]
+name dvipdfmx.universal-darwin
+category TLCore
+revision 78429
+size 807288
+sha512 98bebd0d1f38be7edf76763adb61db283000c681bc3aca011a449dafeb47e8ffd77a7df5902218ad0df62c639e6f67a6bc89c4de87f1c38513d7a3b1393ff795
+files 0
+
+[[pkg]]
+name ec
+category Package
+revision 25033
+size 263716
+sha512 a967804b42bcc11e766d5b74de28c54d167625d2b108a34bc5e49351533ddcfe3334e4a7a34966f8d159bbde6a80f84b4d216553ce03fbcfb7a4b6267574538f
+files 1229
+
+[[pkg]]
+name enumitem
+category Package
+revision 79618
+size 13816
+sha512 6bbdd89a92a18e8b59c9a9f1a2da203da7c34a73fefd4974a5b4dcd8c9ab457c20e8555a2f6c01eb55ef722ae8ee4a943dbca41b905d83c8eceba2b87917baa0
+files 1
+
+[[pkg]]
+name epstopdf
+category Package
+revision 71782
+size 14936
+sha512 323b20d556be6e076303045a1484190c08deac0da6a9d31a0a4f24ec96da2f0fd159260b3a5e456500ee15727fff19d1dbc7e8c893adf88571f5ecf656d5afbd
+files 1
+
+[[pkg]]
+name epstopdf-pkg
+category Package
+revision 79461
+size 4212
+sha512 4a5121f3bc7e268b4e3201c2d441052cbc595b372bb49401844d313d24014e0021bef983b2ad1051cbc3ff165c93de0b8160548281e89e67a4abc3a8da5e12ee
+files 2
+
+[[pkg]]
+name epstopdf.universal-darwin
+category Package
+revision 57908
+size 364
+sha512 9c9a2e56d91c80e9f2938f16565017a7db0e828c987a9dd5b56aad28dc3c26d9057d7ea74011b215fcff5857981d75d7b7bdc0a3fecb83c7d3205261beda5c29
+files 0
+
+[[pkg]]
+name etex
+category Package
+revision 77830
+size 11568
+sha512 70b4b5bbdc2b554ca8eb69dc0607e535cc8c068e793592c13ddab4b90caee504856b66c59f6a6e3f9aa83175829e74e136f16cc59e534020068d760cbd5394e4
+files 4
+
+[[pkg]]
+name etexcmds
+category Package
+revision 79461
+size 2476
+sha512 5d9d3fc05a3e097f4cf6bb486fde026e94d539fe3e7c3939468ab00127ce781308a12ab1bf58ffcac6dabe720e2f7176954baa46095b424b3c5b685a64a6ec33
+files 1
+
+[[pkg]]
+name etoolbox
+category Package
+revision 77682
+size 8780
+sha512 0de30a7f0329add368a764d28d5be57b23a5c552e80472d48b5e0c78be6c13c6e032bd09620ad2690198f88dbfcaa723dd22bdbf3054da1b63a8e115f7a45ecb
+files 2
+
+[[pkg]]
+name euenc
+category Package
+revision 19795
+size 3272
+sha512 f5968e42b36d9c3ab7ae17d156283f8fc09f0c725dd1037cae3b232f94af11a8ee84507efd87cab901bdc8a34f0f72d831a078de205e9beec81c574bb65f79fb
+files 14
+
+[[pkg]]
+name everyhook
+category Package
+revision 35675
+size 2080
+sha512 56547973d184de21ff5d6d3eaf1baf9b8cdbcf93307c31fbbcf658350ef0d441509ce359266ea6f962ef9b40b1680b47e4c14a822aa043ab8174ab0610df1665
+files 1
+
+[[pkg]]
+name extractbb
+category Package
+revision 77855
+size 5972
+sha512 64e7435b0e1b8baa7ddfb6a350c1757af7a0c8ee57708c855856f628eadf6784cfd2550bc652c08b7be3318a5cf36a937242b423b98f5393429c3325e9d24f7c
+files 1
+
+[[pkg]]
+name extractbb.universal-darwin
+category Package
+revision 72890
+size 344
+sha512 25268d447e110755df190e46be731648131a9e0c5e22b1d719836215c4f9178a5f699eb4f644646e0e062b01ece1580466e447b48c6dadbdd124ec51dd8d0d8c
+files 0
+
+[[pkg]]
+name fancyhdr
+category Package
+revision 78348
+size 8404
+sha512 2c27b7438d234a18f0128c52d43dce97dbba730db21f03ac61a33340cb2d2bdddd0447407920b51bfa3b3fc935048024ee0b7094fd184b079bb6ea38d76a0c70
+files 4
+
+[[pkg]]
+name fancyvrb
+category Package
+revision 79962
+size 11956
+sha512 ce3477324b29212e55d0575c53384b3a7ccb47569102d1bab5725d73cc3c3d268df3f3cbc015dc4bffa6d4a7178717ecb08ed7d5af6decd4f099476cd102d796
+files 4
+
+[[pkg]]
+name fandol
+category Package
+revision 37889
+size 21582588
+sha512 309b19d6bff9d3e009610d698a73ba191da70cabd57157f274dfca7583a9e9b31fc30ea52b2b2ab3386be7290a680f8eb47dc92381c3da8251b01d8c6a65c3ff
+files 8
+
+[[pkg]]
+name filehook
+category Package
+revision 77682
+size 4956
+sha512 d1b88946c3c719dc65cb59b9f3a1add441aa033b05a446cdb05df42d6525e60ac45c8a09698259126b018819460e5c414d187a0d709da4b123b22fce0a8598a0
+files 8
+
+[[pkg]]
+name filemod
+category Package
+revision 77682
+size 3572
+sha512 490e2ffcda701d109d6c87ae8db40b88099235bb363d517773108b36c5b6ca3669708929e91666b52b440ae82f8f9f152cf306399adfcf25ba7db5bfcdf6bc73
+files 4
+
+[[pkg]]
+name firstaid
+category Package
+revision 79234
+size 4964
+sha512 64baa443979a09b6c5eb7a27c53ed040cd04f146edb2af7f037d9d4ef7d98eb637cbc85f59eaac149bb5f1d2cc4bbf9426f47c93add55f6aa41a104e669c8af8
+files 3
+
+[[pkg]]
+name float
+category Package
+revision 79618
+size 2708
+sha512 6dcc29a7a08c5f6cd0bb7235e3cd59688283909018e516074931d0c2761f9d6e29dfbddb9c97a6a95f3ab08e9dac6338e7a02d152b05be53c5b0de025eebb4e3
+files 1
+
+[[pkg]]
+name fonts-tlwg
+category Package
+revision 79529
+size 5049712
+sha512 c8586fad30d340f19e013b542fb924e5346ed608bac655e2313e1172a10547455b17ec43982fcd20adc7e1b01cd1895ec80801c5a4e278cfc30fe2e6b21745fb
+files 385
+
+[[pkg]]
+name fontspec
+category Package
+revision 79934
+size 27432
+sha512 e3841905e4babb74d2cdb74653cdc424b0ce353c3f9f9f17426654e539445cb763865a7a341dab21966bd3a17cfbfb4ca237f1257882d2901610c88e15e1deeb
+files 5
+
+[[pkg]]
+name fp
+category Package
+revision 79618
+size 19240
+sha512 9399d3696aa91604c3cd80f6140d4670fbfb3b1ceddf2b340513ff1b28f220be06faf03a3e852bc4160b4dcaac24afd2ed3e3377b04b9779c21215811ca7bad2
+files 14
+
+[[pkg]]
+name fvextra
+category Package
+revision 78296
+size 16936
+sha512 71b919cc6ec2d22e2093296fea01f14e412ba6ca3212af508034a1a5d4a592217124c14636e7d8794f3919935bae5f1239a8761ca57904bed6f30e3667b99dff
+files 1
+
+[[pkg]]
+name garuda-c90
+category Package
+revision 60832
+size 3416
+sha512 a806538598cae0365968ab20936631a052dc65f9f6056c39197f7b1c7a5aad717a7a8b72ed2a1af347f8ce91f27d7dcd74b758db8f01fc7810a8d658990bcc28
+files 6
+
+[[pkg]]
+name geometry
+category Package
+revision 78315
+size 8744
+sha512 1c7120b50db68c40ae22b9cbd138189474c9c6e000742b65654097c0d9838aa23d81be3414fb621a7515d083e2d92f6b4d68e0f3a96c2073d10bf756482b6812
+files 1
+
+[[pkg]]
+name gettitlestring
+category Package
+revision 79461
+size 2808
+sha512 b61409ca66ce462be691d0a263e2ea161a8faeab8e6f63dcd2a5bfb8a73ac331795e82af8b8a36b74ba6560edfee2899661b8057ede71dcbc76460c85b272efb
+files 1
+
+[[pkg]]
+name gincltex
+category Package
+revision 78251
+size 1924
+sha512 e9f4d142d048933ff687e281e64aa337a1a7fccc71b0989aeaeea75b568984c35648eadc2fcbd320fd0dad672d11fb7035b0d1f683ed195f5e906046659c241e
+files 1
+
+[[pkg]]
+name glyphlist
+category Package
+revision 54074
+size 24764
+sha512 c050808623d162ffbfba8742c9aee6c92555717eb3ed0a0cfb0e3cd6696c4f6d940aa494582011e6d0becc3c5572ddccac2598ac8d521b58a323768272f9125a
+files 3
+
+[[pkg]]
+name graphics
+category Package
+revision 79234
+size 16040
+sha512 1fce8c76d1cc65eb416c1b40bb8b872ec886384c1a42c02110756ff08d4c5909a3675cf1098499aa9e743eb2f4df18c6487bc0849208bf3ef9efc17dd27cb7ae
+files 21
+
+[[pkg]]
+name graphics-cfg
+category Package
+revision 41448
+size 1160
+sha512 e1015d360b56f63f1b9790daf16e2101e6af995bd1e45288ea604ae94e20196cab22e7e54d318aa79fa386123032a928be70a57154d409321e04f03ecf97ab75
+files 2
+
+[[pkg]]
+name graphics-def
+category Package
+revision 76719
+size 10992
+sha512 5fedc5bd4ac2313c920b23addb5753f6f90ec5def0b9f7e8fa6b31248c01a5246331f0d266d367d806931f61e824925099d9bf61f805f81c21385007f7f832b3
+files 6
+
+[[pkg]]
+name hycolor
+category Package
+revision 79461
+size 4064
+sha512 2da57e41723e7db7d610425d59eb290a1e20b6bcb0052fda9694fcd082f85d7d27e25f076932c1082ab608a7a6dcf2746cbc3fbfe51a0790b06298efdd48a6be
+files 2
+
+[[pkg]]
+name hyperref
+category Package
+revision 80576
+size 89160
+sha512 05dd4e280170c706cfdda6625883f4eafca53b011a96ea2a4f152199e3efdde8085ab4be4e3c6ac1685d41d06606b266f6d5b2c6844f2768af150680b9b5fa56
+files 29
+
+[[pkg]]
+name hyph-utf8
+category Package
+revision 79618
+size 16008
+sha512 8474e12b06d1f0c4cf10932d0d85510de8953b82196eba930fcffbfb28e259a5591186260b3aa85c40185445d73babb7e9d553c21a0bd8cfd99c3eeecc1af927
+files 11
+
+[[pkg]]
+name hyphen-base
+category TLCore
+revision 78076
+size 22644
+sha512 dc110200707c395dd61dcf30ed32b8eb4dd648fbb98eaa897e473ff683fe79af05464028a4b0a4685c9c17ebf61f19c592825f2a778d512ad68e1a57925a033f
+files 10
+
+[[pkg]]
+name iftex
+category Package
+revision 77682
+size 3256
+sha512 76181d60fb7c52af3d87b44a3f3147d45a6fe28030c160ba41c98bcfa8be5cd6c4dc449806530186ba6e52233543ed808e18c248557b1d5b9ce2305a506361d8
+files 6
+
+[[pkg]]
+name infwarerr
+category Package
+revision 79461
+size 2672
+sha512 646b6a43b4fe964192bcfe0b0af7149bcfdefbb1bd6f44806176c07e41fb3be17a6227329745e195649342a371f4044505c829f2075d5efb232ea93e5d535fa2
+files 1
+
+[[pkg]]
+name intcalc
+category Package
+revision 79461
+size 5464
+sha512 94515d10212baead746e1fa1b39baca6146bf42eea09579a5b6c06a3649b08cc37a4dd0f9f4d2e4d1644e04ceaabdee0d26cc6c317e20450c06ddecd0e988bdb
+files 1
+
+[[pkg]]
+name knuth-lib
+category Package
+revision 57963
+size 30508
+sha512 47d50b1966dc5a3adf4921c297d9ed5917035e917098154fc08d1c72ebd0ba70ebfa41735c7ae52c5087d62242bcfa9b0b49914c6da4f392e2d4c56a6d72807d
+files 30
+
+[[pkg]]
+name kpathsea
+category TLCore
+revision 79498
+size 33684
+sha512 46db6b1d08a53e057d95b7f4484b53a78f974ad7f4f35ecfd033add5dbfda987dfe6e00cc99a5866f87a8cb3611d0824d8a465a58d04b429b3e3ecd3f2ebded6
+files 30
+
+[[pkg]]
+name kpathsea.universal-darwin
+category TLCore
+revision 77928
+size 84044
+sha512 5bd611ef8d552f3aa640ae76fb24cc73cfef26341269c8fb3edcd092d24a29e71197e13bc341ec8f2e43c6a8a8363d31f08863d1b474f4914e22aaedfbbe2179
+files 0
+
+[[pkg]]
+name kvdefinekeys
+category Package
+revision 79461
+size 2116
+sha512 31c04dd6f185fdc807b4dc1901a04bdbba306ad4af95669ace38f9809bc15da5e60725993d16af60612797d5f74f1a09c40003a167293756abd4dffdb9afa1d7
+files 1
+
+[[pkg]]
+name kvoptions
+category Package
+revision 79461
+size 7208
+sha512 57b7e13f9750526835a381f58f745ab37c1fff32971deb4185a83df94942a54ad4f5bc949610e548a1e817456fe1339c0160455fd94b99e9c1f1a661fbbb353a
+files 2
+
+[[pkg]]
+name kvsetkeys
+category Package
+revision 79461
+size 3592
+sha512 2ed2a56d262ef1d14ad7de4ce580aa3dc12fa0d9358fabe56e1346617e7c8bd86aaa6e04d6101b3bf7515fbd7b4b48f0b8767f14f70db67c1c058c3af90ecfb1
+files 1
+
+[[pkg]]
+name l3kernel
+category Package
+revision 80334
+size 206716
+sha512 fbf78865f81a7da8884a72ce564fbc73ecde366532c8d46e47cbc4336c83f6264926093f0c48de20bdfbbc576671f543f7bd5e96744ff996a9da63daa49ac9a3
+files 32
+
+[[pkg]]
+name l3kernel-dev
+category Package
+revision 80220
+size 205272
+sha512 b86785f966bd2b289de9a12848dcce0544903c02b064207ee6c0890b3ba0fa05b84066c2b6eb84bdecc368adeec702f7c540120195635b164574e2d2180683ef
+files 31
+
+[[pkg]]
+name l3packages
+category Package
+revision 76637
+size 20448
+sha512 47a7365cb7d3c00ccc6a88917d7500d45cc5c1eb5faa6a6ea9b263dfe43426284fa6f2091a7f20b6a8cc82313ec8248f6137f97853c0a36049ca0f20a13cdc8c
+files 9
+
+[[pkg]]
 name latex
 category Package
 revision 79618
 size 264336
 sha512 04d6380ef7c023f63192749080c15e6e47b873aa151e838a946439f5de4455cce1a872e688cf8a366363d09ddcf03cf6b588f3db0573160486afe9cbe0f514e1
 files 171
+
+[[pkg]]
+name latex-base-dev
+category Package
+revision 80282
+size 264180
+sha512 a56ce0ad5d7f3c311610cda38e0538b930fa046d66ffde43aa4341c5c6223afe760706a305d4fdd99bf06b755536cafe9486b110f77255349b4a60ed6b5274ce
+files 169
+
+[[pkg]]
+name latex-bin
+category TLCore
+revision 80015
+size 604
+sha512 57ed9a48fb17ccb9bdf2edbe533aca8863cf8cf934714df0c5554f591aa3f8d4eadaff14df7ccb6210372d9268623fe52022ab6dab3056ebbffdf6e73768e87c
+files 0
+
+[[pkg]]
+name latex-bin.universal-darwin
+category TLCore
+revision 57908
+size 376
+sha512 45abdf9fec79500491f0f3c5511aa2a8a25521ee9bf648e9f81ea667c194aac2bdf76267e0f4276cfbd70e4b8f3c1f109129c77030138ba43f51f4e6e0d291f8
+files 0
+
+[[pkg]]
+name latex-firstaid-dev
+category Package
+revision 80291
+size 5448
+sha512 8704a3e728634f5a31a8b7580878ad1a504ecaf096c87fb3e97cf843e930816f9e00c7cfc725d42f74d306cc7ca9f79f4baf30f3d7f8a3c4b8c45357cd714f68
+files 5
+
+[[pkg]]
+name latex-fonts
+category Package
+revision 79618
+size 17956
+sha512 64915845acf0218c69802c9602ceb126412cc02cf856f430dd89e915536c318c61f53801db8a888b2eb1d03ef252eb3cd2563612f4ee26891ff261737ceabd1e
+files 51
+
+[[pkg]]
+name latex2pydata
+category Package
+revision 78166
+size 3956
+sha512 0036ab313704873ad0ecb17f5a13a5adc2c289688ded1993bc8486aa96fc0dcc3e4ed2b7f199fb632a703cada0e6dcfee21041fb9399f843652709db104cfe31
+files 1
+
+[[pkg]]
+name latexconfig
+category Package
+revision 68923
+size 2240
+sha512 22e233cad5742691da573249b3f9cd4ea0c6ccf4e31a757837d710ca863e0cccd089106e523e40fb541255f3795d963273ccdf70211f19ff3caecb30d7fefcbe
+files 2
+
+[[pkg]]
+name letltxmacro
+category Package
+revision 79461
+size 2096
+sha512 7deeb4f044579ea2e80886fcedf12630f889ac40ca468c3195c3008d9258ca6212e96b10f3afb2c64c7f96d84291d23f85577415897e72faa5936ef2a82be7ff
+files 1
+
+[[pkg]]
+name lineno
+category Package
+revision 79618
+size 63100
+sha512 316f18f9c432690dd9d0d3cd6031f5d6efb244f878f02fa6b57113683207f669fa945d1df0f618b9f1e1efd26c7daf259687b692fa0342d8704ffaf608685573
+files 5
+
+[[pkg]]
+name listings
+category Package
+revision 77682
+size 151988
+sha512 8426c11e86671f3f7c9e7bea477b56ba36111b562606737785eb96abb8fc26b872da6e78a4ec0c77a79de57fa7686bf664f5e672415b121a7e8296ac702c962e
+files 16
+
+[[pkg]]
+name lm
+category Package
+revision 77682
+size 11944800
+sha512 c4fae36dbf06177583c2dd3431176deca7f6fc1919a2aa9d7dbef89b77f26501e7d323dbda3a72fb3c9644074f8c4aec90d0389d72d87ab4dd38efd99b757d5b
+files 1078
+
+[[pkg]]
+name lm-math
+category Package
+revision 67718
+size 377796
+sha512 2fad475b347824d564525de51ed5bd1cc7ab2fc27fd826a00e86ebabd7d85afce2f7a4c85d9620c9b66d14ea0c813a269a13843a0b27eb7d0ca3e294114aad26
+files 1
+
+[[pkg]]
+name logreq
+category Package
+revision 53003
+size 3212
+sha512 df61c0c6c0b8520f5ec38780d8eb69cfd5fccd21f5120e48eee71e02b004d3da4cc9cb9371a36766852e3ca09a3db86655f1a2639a49741f00134cff1246acd2
+files 2
+
+[[pkg]]
+name ltxcmds
+category Package
+revision 79461
+size 4144
+sha512 e123a338ecffc630d5f2447e4f2fd5df05b1ee06d0a2d7630625b4528b83ae6e4972aa9417d51efbc0a41621611c5020e50d50b62d985991d22dcd08c55441d1
+files 1
+
+[[pkg]]
+name lua-alt-getopt
+category Package
+revision 78415
+size 2004
+sha512 2acee2480197b0cac8cb98f27c1fa37faec6a011ca8159a554bce7c3b72b18d8c708ea63d3553f43ec35181e1da1a9b184e16c3dc7663f574fedcdfab1e9c73b
+files 1
+
+[[pkg]]
+name lua-uni-algos
+category Package
+revision 76195
+size 12332
+sha512 50022083eb3659c994e571d9bd9c9a916b9b47e34c2776e73515afdff0361b49fac8da59c1532a578a5518c70236983be4bbb2412845a30064d421ba3c85bf66
+files 10
+
+[[pkg]]
+name luahbtex
+category TLCore
+revision 77830
+size 460
+sha512 cdf786f2a582cd417901f07f2e07bc7c8d952555d3d6f9eb19499964fdb44cd26cac5f891d47e28fa5c057c02f4015a1d7ad2a062fb846ffa12f09af8711d64e
+files 0
+
+[[pkg]]
+name luahbtex.universal-darwin
+category TLCore
+revision 78048
+size 4678604
+sha512 f90c0853ee68fdbc66fdad22a0f17e767331c34d444be856af316a43f9a60471418551f47d53aba0f63556182a74334b397d866e5311d3683fedf0115957209b
+files 0
+
+[[pkg]]
+name lualatex-math
+category Package
+revision 77682
+size 3340
+sha512 d20188549889ac56c1f3f886f56ca787247a7e323d4d0a1664bd0a95427ef70228e3ae0fe316faacf2107f37c22fe81f7945fdaee4be9ee7613216f95bc73f1e
+files 2
+
+[[pkg]]
+name lualibs
+category Package
+revision 78415
+size 133324
+sha512 d45648849aba192828036b33c5594c03f7071bb619b522fc5e60032824e4edeaadde5d1abda460d0c09acff2cfd63b4e30c1b1b9139369b4b18d8f62b4e0c410
+files 37
+
+[[pkg]]
+name luaotfload
+category Package
+revision 74324
+size 623572
+sha512 4300e5f4b3fe37babb12cc36cc5a130c1a0f246db6e3b8955813c62f41b698e5a08443eb7b41c8afe4fab08184e508838e1a4210206240e53a50b7b66f736bf6
+files 96
+
+[[pkg]]
+name luaotfload.universal-darwin
+category Package
+revision 57908
+size 348
+sha512 4dd3c702670e73d04eea57bf563a015a719461d388c496074cbef47b1bcd728b1e33306363057f100f3d50cc29ce9d3ffa471d2948a6352ee5f6140a8b001935
+files 0
+
+[[pkg]]
+name luatex
+category TLCore
+revision 78218
+size 9844
+sha512 958355b105ff2f603dfd682555aef27c9a7794e6a69f2fce4a6363cc0f835bc884ef60db114b3664e76d26965d41b0516264daf0fcbcdb618022a7a3680f9118
+files 1
+
+[[pkg]]
+name luatex.universal-darwin
+category TLCore
+revision 78048
+size 3041568
+sha512 b02147c01b94a3ef302fd47cd2c8d5d482e089529759d1e4045c3a9c8c6f870b679f914bcbe151476af0c845a85e27768998e3efeb5df8a610747906f67a4978
+files 0
+
+[[pkg]]
+name luatexbase
+category Package
+revision 77682
+size 3496
+sha512 bec9026e8e32b3204df841f3d7ab25135f1c5e112cfc8b24ebea48def74e0ce49e446a4d45332b5e266002b83a096d901dfa78af4b4d86d7f4123986a9ef1edb
+files 9
+
+[[pkg]]
+name luatexja
+category Package
+revision 80679
+size 200960
+sha512 b16aa7b610b70b54675953e59c6518bc492c50e9285972787b6417d271c073136087e180a496469b5dc34c0d088b12bc785cb6372524584cac45a54bf6b50416
+files 98
+
+[[pkg]]
+name makecell
+category Package
+revision 78101
+size 4452
+sha512 4b4a86d0d71d34838f76f35cae3ebdbbd7d1a9604193bd050878bb44b56389ab01a9a3d405592e8aa0b6ffeb39df476c4b50640733d6696cb5ab9d6ce59bedd0
+files 1
+
+[[pkg]]
+name mathtools
+category Package
+revision 78251
+size 20568
+sha512 a321e1279b6cb4ae2b6a751916b289dd5117a368578e9dfd2627d49b4446227ae35438578363a27aed8a6325f01fe1d72abe811562b146dfc156e279045aaa5b
+files 3
+
+[[pkg]]
+name minted
+category Package
+revision 78270
+size 1295096
+sha512 c1052da89e96fa8daa35f6ad3d691897db58b60b6a426455ce1e647c1efe2679e9a6705788bfba4bbb94207a6f5cbe76ff5efc80c699eb4ad23776fabb4f01e6
+files 8
+
+[[pkg]]
+name minted.universal-darwin
+category Package
+revision 72375
+size 344
+sha512 cb2e0f827060aa057ed37b493b19a4f2734b758c949e455b149c713fa8fc9c0106a64647a99fb23c8c2070d1d0267923fbe6ab2b786c738a94a96cb49666c743
+files 0
+
+[[pkg]]
+name mptopdf
+category Package
+revision 80243
+size 37332
+sha512 3ae7dd927813ee0255641b8f7e5beefb33dde5893dbeaa39987476451c419f06d0386d29f3a892f11c92684de1063380927d2dd8a4084773579a398bda858ded
+files 6
+
+[[pkg]]
+name mptopdf.universal-darwin
+category Package
+revision 57908
+size 348
+sha512 e1db87239f7a3bb48c7c65646f4a0da75c369c402a29ba28441eb35610a0a150c8bb2606a9f9273023870838480e6ac1c1469b5d3cf9436f3f2b00704f995453
+files 0
+
+[[pkg]]
+name natbib
+category Package
+revision 79618
+size 16604
+sha512 0527994cc2d6c24595ade08021400126fb9d08abbc19f6e6252d0c56dad3daf7343e92014753b31b064c9cedc452fc2c6cb57b71f213e1ba429e89ce17347c9d
+files 5
+
+[[pkg]]
+name newfloat
+category Package
+revision 79618
+size 6836
+sha512 112f442648f605cf9cb388579363b3cfc13c8134ee4c0a11eeddd3f493a90ce22baceaad1b48c69b5185a39c3b13fed320bec2ac15878d4dff61fce238081256
+files 3
+
+[[pkg]]
+name ninecolors
+category Package
+revision 76924
+size 2644
+sha512 8703a20c8929d711f399c48c5c61b7827c34ac0685942271b556cdeb77b4101c55594a1734107d11fc70228c9950d985a8b27c6e9a967c88f55f4532ee2ee091
+files 1
+
+[[pkg]]
+name norasi-c90
+category Package
+revision 60831
+size 8716
+sha512 5f65927546348815b07c93003a2b0922403d274bfa3d1665d4649c9dbc737df924958c2fd61c1d06cd5e7c1862aff392c8d1e9d827f4ae79e70d9b76467f651d
+files 6
+
+[[pkg]]
+name parskip
+category Package
+revision 77682
+size 2864
+sha512 535db462dffa6bae42ff8934502ee3c3ad662c54dc7b25d96b13302d61a24b0bc9e2783c7654e2cb6ccf83f7cd26ab440b45c2d1cc2a0d8f7a709b48ed278b87
+files 2
+
+[[pkg]]
+name pdfescape
+category Package
+revision 79461
+size 4268
+sha512 25e9c69209cde2be2cbed5afeee2912023883ad245c7b69a817df1b7ce0ff0d9a47bcc4d0d5e9592f6f8b03db612ac5a24616ca86d08bcab9f44723b966ad890
+files 1
+
+[[pkg]]
+name pdftex
+category TLCore
+revision 79618
+size 39624
+sha512 1df1a9eea3632b5ed9ef4ec742b9745a80e0764784affbc872c6a4156f0239945a0c26f9003f1178bff70a09c8cf13735dd42f33c8ab8ebe0cae8e7c91fc5987
+files 10
+
+[[pkg]]
+name pdftex.universal-darwin
+category TLCore
+revision 78096
+size 1738364
+sha512 507a60bf72697230e2a27df5b9ccd7d636a36fb4b3c534be4353a672c924394563691649b04492a2c5aecf001166cf7585452cc6f48bb94a7e7cb23d2fc2d046
+files 0
+
+[[pkg]]
+name pdftexcmds
+category Package
+revision 79461
+size 6336
+sha512 d4179f248170d08fffd6d4d80479c00bfe3cf27c9c2101db02c13a4ff07255a37627861288d6634fdc3bd13dcc2a126f393f279b5aa0a0ebc64bc665874ced92
+files 2
+
+[[pkg]]
+name pgf
+category Package
+revision 79866
+size 719492
+sha512 03b616664e33bbe6dcf54e6cfe86fce58d4e08175c2b1d7dc37d493f61dfd0797ed0abcadafbd591c08c33b117dcee4362f82bf39787fd388dccb2117462dd0a
+files 495
+
+[[pkg]]
+name pgfopts
+category Package
+revision 77682
+size 1936
+sha512 72001c958cdc1287232905ad49db68592fc607bffba126f90176a7253935d9b067b78ddcdb8f7a902d9fb9e4eeb5e05c263e36a790d7ca3bf228af9c6790a33f
+files 1
+
+[[pkg]]
+name pgfplots
+category Package
+revision 80105
+size 531216
+sha512 efb6dd1c6979e69518f0cd0300f43c19af9a1f5105c6e343b7dedc919734b435706fc4f1f6777ba093f96419ea7a2bf08776377d8dc4043801de9a5c0a40db16
+files 109
+
+[[pkg]]
+name plain
+category Package
+revision 75712
+size 29116
+sha512 797e0566127d23302d5713031b7edc0a8dd8041b0911219c1a5d80e91a49ec80b59fbe2f7ed16253b8976a52f045ae0878807a4eab1913314e91de12f9bd26d8
+files 20
+
+[[pkg]]
+name platex
+category Package
+revision 80015
+size 42292
+sha512 30c8b730e095662c5d751296b463417610dedbc34d29320d24eb0517ec14366864dc4cef9295ff5f7eba43a5c88be4dc3d2d07ee8adbe1421396d907971ef252
+files 44
+
+[[pkg]]
+name platex-tools
+category Package
+revision 72097
+size 8284
+sha512 ef0f2f55858364f3d45e94677ba66a90c22bd2095ef78ead503fdc0986e1fbbfb72fac25b2d096c699208f672da63070269bbeacb46255cefda611c8c010004e
+files 11
+
+[[pkg]]
+name platex.universal-darwin
+category Package
+revision 67315
+size 344
+sha512 adaebe1a9fed26cf8227610cfc1ca4cdb9e63f173d86dfccd3ab575f1d32dcc2bd580128625624b90abc260c1c8997849d30c367a8d131d64eb124006f7086dc
+files 0
+
+[[pkg]]
+name ptex
+category Package
+revision 77830
+size 692
+sha512 de69e2b2d8b92cd75d384527396a5c13818e3ad8e892c33f8408bcbae7a329b55fece81f8637912285b338f3a06652ee573bc6824efb2ab84a0d18b9683fe679
+files 0
+
+[[pkg]]
+name ptex-base
+category Package
+revision 64072
+size 10060
+sha512 b937359bde7ade3645edb6435a824ee6af66e51e7cb518694706224e63e4d92391911f01745d331cb92e62c34c085aa5f284babacf6f7ab0a0474cbf06b00859
+files 7
+
+[[pkg]]
+name ptex-fonts
+category Package
+revision 64330
+size 14264
+sha512 d625f45f7211eca1152a16814ce87814cc19eb7d6646d4f66971eb08eeec50bcf91ddcc253f4ffe24418a3e2a989ce10c03a3536730ac286980742cdfa22fe67
+files 132
+
+[[pkg]]
+name ptex.universal-darwin
+category Package
+revision 78048
+size 1905044
+sha512 77a1e3e7a0f8260ce75daf5e750da3570b5905de16a5a4fc37a9a422f98ffcc1273f3470b082c3e0c74e962569d7efb370cd6f7c9b3c8274b7d4aac7ce87ab6d
+files 0
+
+[[pkg]]
+name refcount
+category Package
+revision 79461
+size 3068
+sha512 a3cf2f2dcea4641d19f96cee5631f3c218770f33eb4ffb9560f2c33e1e7911911039680c89aae98807f9509f2fdaa6c76ff8d2e240b1c7e99b99284b5628191c
+files 1
+
+[[pkg]]
+name rerunfilecheck
+category Package
+revision 79461
+size 3156
+sha512 bdca3107b24a51cdc5b8284b25822a6f235723967a5dce8055ed34299b5ce4cb7cbd14f359f11c6ff7dbdce558ccdf5e2626adbd5f36bba83b26e37382b8d598
+files 1
+
+[[pkg]]
+name setspace
+category Package
+revision 77682
+size 7372
+sha512 84ebbfe27f1eb70f76eba8397cd235868ea8a23d692e4b817bf81740e70f9cf273022ed763f2a23bc8a01b4de20c066d86880767426b63da7687cb005e7d456f
+files 1
+
+[[pkg]]
+name siunitx
+category Package
+revision 80609
+size 71148
+sha512 56583598d23f06f12b3ef7611319bb1423b0009ede528621ce1976875c37e0ba154fd9e5cb1a7e7bcc61ffbd97b6834a165efa06f26380de5ac709d4aebe3d05
+files 5
+
+[[pkg]]
+name standalone
+category Package
+revision 77682
+size 12468
+sha512 cef5596a6f8999f0f66245d7a4568d47fb091235df999e9a539e89009e4f67f932e0fa5c0eb69d5bd5c186fd76ca6e4de5e00109e0d6e3c9be54162ed6eefe32
+files 4
+
+[[pkg]]
+name stringenc
+category Package
+revision 79461
+size 23384
+sha512 581007b261584771dcaedefa982511c8e9869a085ae6da15b13fad86ec5b832ea17c96067eaa66c302f1af7624de0b4f3edf402abf54d8993b2d8e32ef73d1b2
+files 41
+
+[[pkg]]
+name svn-prov
+category Package
+revision 79618
+size 2424
+sha512 469cb75a3d37250331e717f591dce665b2d704ec491f6da238bfbcb137da94615ce94edd00c2d699ade97e4f7a50b4d4ca4e78f90b654e8123193f22594026f8
+files 1
+
+[[pkg]]
+name tabularray
+category Package
+revision 78251
+size 49772
+sha512 e5a43ee0bc74212539547282534f9a5a442c0bd68ab01082a350d9c82e6ff7bd5a20cb120d48f5267e03aa075b20b650a3df29dadec3825f2ed19cf1cf7f7883
+files 3
+
+[[pkg]]
+name tex-ini-files
+category Package
+revision 78524
+size 4628
+sha512 bb60c588186061ea9489ca7c2778d0cb2ddc9d6628d39433938596b3a5ba6d688cce7fed1840a7fb281ea3379df897303d6e1bd33cc5d2bc46e7395416739627
+files 15
+
+[[pkg]]
+name texlive-scripts-extra
+category TLCore
+revision 78162
+size 22124
+sha512 1c78c711e8eb7de3302f930e81a2af7b40d75f8aa10a1f543d63a112ebaec39f749d6d2f03d2bb17eab2a7bb4b73335d59f68cd8141e79126fc8802afbaaabd0
+files 19
+
+[[pkg]]
+name texlive-scripts-extra.universal-darwin
+category TLCore
+revision 71749
+size 912
+sha512 07a00a45067dfe0338eb09eda96a6b172a53076c71cd4ff7af5dbefff122ca88d04f101265ff8cfa7b522f8b9a4c727d5faa53639fdc7fdcc3f7fea13e16453b
+files 0
+
+[[pkg]]
+name tipa
+category Package
+revision 79618
+size 2876100
+sha512 6e9290916d8bb72e45d68fb988eb31ffc7dce0a51476af55a7b4d89f5d384c32a65b62d95ab3a0bc960696a0e2a264c05d2215bd2d4f3b3e9a5a09a09c8bdf9c
+files 246
+
+[[pkg]]
+name titlesec
+category Package
+revision 77682
+size 19916
+sha512 28a8326efdce33ae5f957c19488db30c45d332be0c7f8912a3f98cf7025d5ec04eb52024ae18e825d98af7ddaffe985248f4974a0499e81be505945b262065b0
+files 3
+
+[[pkg]]
+name tools
+category Package
+revision 79234
+size 48836
+sha512 9bcf59a34fda40574fedd88583787937d33601fc1f505f12ec30e6ddb2095a5d5c52dd431e6ca354fedcd09cd1311acaed35ea858b429ba631cef7e58262d221
+files 53
+
+[[pkg]]
+name translator
+category Package
+revision 77682
+size 28316
+sha512 c2449e35834a2b42a8c0af1561601abbd19cc30d631cc0d6faa3cdade6c64951d11a181917d5212978e06be11651e46533c8c9c28517414bdcc4718822ec1143
+files 116
+
+[[pkg]]
+name ttfutils
+category TLCore
+revision 77830
+size 108724
+sha512 98a8170607ba98f07cb48a78b51481fba68c2d25e14dc9bb3087b3ee5d26c4122bb0666f59d6381a385a30d35dc587c919a2cfeda6e48e480e401c4ec2ffb03d
+files 16
+
+[[pkg]]
+name ttfutils.universal-darwin
+category TLCore
+revision 77928
+size 833780
+sha512 001afa9f5465ccea471f772b7f5f1be0a25cabd793f02714d982fcc6d953fcae79e651ce819155826f32c1f80766f3a2282d87d73df82bcf0581c36d6e267640
+files 0
+
+[[pkg]]
+name uhc
+category Package
+revision 16791
+size 3600148
+sha512 b5e722e7a72d2efcd89c969c10291779a2885603817374e4318f59b4042b8890df967503016d08a91e30ba8cbbc6f1838843644f06cf44766a7096efdd3bf905
+files 3196
+
+[[pkg]]
+name ulem
+category Package
+revision 78931
+size 6532
+sha512 885857de612d2c43f05bae93653efa52b7ae658b3d1ddd83f5c39afb9a87cfab82872a65c99da1dde539bab02fb04628b80a4214f2b5d749606395493dade86b
+files 1
+
+[[pkg]]
+name unicode-data
+category Package
+revision 80380
+size 323356
+sha512 45f63c930ac35d6072fb51f2575bc5d56df79422b26a26523f03af95b5599bd5867c7ac527d787256fe4df9afa4ae9ff4c4b8a25d30ede1ebec951cdc34be534
+files 18
+
+[[pkg]]
+name unicode-math
+category Package
+revision 78251
+size 42260
+sha512 93fe2940832b0b06aa193b1d1986a3cfa5b24f1d9cb8de6609b4e11236b95858c0dce05ef50021c94764e26fc9b4d02c032461fce45f070bcb5b3ce99f8f43b5
+files 4
+
+[[pkg]]
+name uniquecounter
+category Package
+revision 79461
+size 2300
+sha512 37e18ccc52fbb4c8acb84226af85da37d4ccc0775b5bf52cdac0568841e3c67bb26ee29711c60cbe01cbfc7a295ea584965b80c072c1bb793bc464de04436f90
+files 1
+
+[[pkg]]
+name uplatex
+category Package
+revision 80015
+size 14820
+sha512 d220cf39a668ed5854a859618f025253fbdeaa9fd0676c6830ae9deac08796c97015b5f52c60eae2d929c2dab0d18235837b4ff817999ef841fd91e56e746f60
+files 28
+
+[[pkg]]
+name uplatex.universal-darwin
+category Package
+revision 57908
+size 336
+sha512 210ca820ffd57aff397a96b99fa60870136f0261865f037de5d8522410343ba0a224fc5f3e2f149393f8941ff1aa2e522e49c9b82c26d14460b17e8935cafbba
+files 0
+
+[[pkg]]
+name upquote
+category Package
+revision 77682
+size 1260
+sha512 61b68a05012a7f32a8452cb658b29f54d7322d1046118a9f42e8aa9ea6e3cff49f1a72cb2305ee9467bfaf859aabc7838e4799a83705a78717b83a8a2bc13fa4
+files 1
+
+[[pkg]]
+name uptex
+category Package
+revision 77830
+size 912
+sha512 e518d95cb1f9f7b769c3a030d83f84adb1fe82551c70a4f13d651e4a55dac65183453c6cbe9be77e0fbc03ff6369c5e26eb57936b7a6039ce00dafb1f3d6e8ef
+files 0
+
+[[pkg]]
+name uptex-base
+category Package
+revision 77840
+size 9800
+sha512 3e30ef7f14bb136c8ba3029077502f4c854c6d231e4776a412a0c02926d9475225c54af2d897445506e5cbf719ef37177898798513db5108f5a5c96c10ce10f2
+files 5
+
+[[pkg]]
+name uptex-fonts
+category Package
+revision 74119
+size 168104
+sha512 358149c060042968eb11748e778499c419eb68419a86842a4228c18b95cc1c474095d9ce75885bcf1493242fa11849bd209a7e0c21f4cfdfa09ebc3ebeaf0021
+files 109
+
+[[pkg]]
+name uptex.universal-darwin
+category Package
+revision 78048
+size 2734056
+sha512 c881d0edbf0d60294557469ee638f6aaf1932e672faf08e043f0f8a01164f771135b48a7ffde895d6448fc12d570a2a4327fac62efcf67bd094a1835e7996516
+files 0
+
+[[pkg]]
+name url
+category Package
+revision 77682
+size 5516
+sha512 4d036b664abd4917c9237aaa84bd5f93baa5589fda698543ac31fe18ab686ec25926a127733435a0cb5f4230d0d3be05b392c0395eb57991e3e9f0b93fe4a35a
+files 1
+
+[[pkg]]
+name wadalab
+category Package
+revision 42428
+size 17772744
+sha512 2d603ccfa92e8ef9abe91f5afaf490c7c8476061679f7a54c22879bb90b4d874f9e0e533e25aafb94fee2ff512f689ec96d25ed7ed42d0ae90c5e05985daadeb
+files 1296
+
+[[pkg]]
+name xcjk2uni
+category Package
+revision 54958
+size 200052
+sha512 db0be3360dc3d6373866c9d27900f8dba9353bcf92d219f9f0b82532e2855210230a06b87d1ab6eef7e1f96c54e46884e6827395affb9375120b7cf8d2fbb99b
+files 358
+
+[[pkg]]
+name xcolor
+category Package
+revision 77682
+size 18300
+sha512 3ba03742b310e82e5d51df140ac1322afd46d0e18700e3b827f6d5771fd94ee2d82e3d284c548c8159f1360a8ec0c085c65e33c03dc71fb9f308ad66e4f930aa
+files 5
+
+[[pkg]]
+name xecjk
+category Package
+revision 80059
+size 245112
+sha512 40e4c9c5f2195021cde4859da7b137de0cdf0c96b83f7ddbf724c682e1dd07276cb83bf4004b2b7cb5f90b6033da54940b3c58aeb2ca231b9ce449ee32d3a3d8
+files 14
+
+[[pkg]]
+name xetex
+category TLCore
+revision 80015
+size 7988
+sha512 72d91a2f4b89926d30a2c9e6b230eb71bc4cf300614dfe6287123de2807b06c4e02aeb6a74b3132d5eec6d2a8c96abd289c316a5ec151c2ac718e3d2ecca2589
+files 7
+
+[[pkg]]
+name xetex.universal-darwin
+category TLCore
+revision 77987
+size 15435116
+sha512 c5c2506b85549fcdbf29b75d20d485d09fd81fd21e62b8d842899a5f9143bc87b308955221781cad8b23f957bc4f33849185bebc412e7377038f6efefc852f6f
+files 0
+
+[[pkg]]
+name xetexconfig
+category Package
+revision 45845
+size 532
+sha512 62b130d16ac01845df5acb1a10e487408208b0c4369d58892a83a42609b3dc92589195540154d1e07a9cb528e8e4ca65009dfef236efd53b9cfbce0a942c5b01
+files 1
+
+[[pkg]]
+name xkeyval
+category Package
+revision 77682
+size 9108
+sha512 e4f77650932e1ce95396fdf884dbda84ce3e95bb494825d231ab9e8441392efe3df5e1f5214e741ebf276619ab700fb313ea7304ab0be93121ec89a11377d8a8
+files 9
+
+[[pkg]]
+name xpinyin
+category Package
+revision 80459
+size 398948
+sha512 6f3774574dd71e5d02ad330b84b8743435993dc9d78980b3034b840530ea08b53a2d42ff66bb890d5146e05eac859435318c85dafb63ea821f6fe2833ed8b03d
+files 3
+
+[[pkg]]
+name xunicode
+category Package
+revision 77682
+size 25760
+sha512 6291b65553ff05b9abc52b4a07cc0ff7aeeed3b1cc565fdb27ceefe5a0fcbe438b0d916d30804e8fe31a750018ff2a993597f21810cc45473ad547b6742e903b
+files 1
+
+[[pkg]]
+name zapfding
+category Package
+revision 77161
+size 46940
+sha512 20b91c6136a12eb88b104d1171e1c9d7f09f592f70231404af9eadeee2c29d00e957a4628697649436476fd5385a39843bef0007959897c87a6789af3ab21eb5
+files 9
+
+[[pkg]]
+name zhmetrics
+category Package
+revision 79618
+size 31196
+sha512 351dea4f4a8d09945d5bfac4abf605b06697a6666463bf968068dfc3b034c0cbd137a2856847ef692351162da88f3d9da07eae4b6d25c1930ebaed16c0c8a728
+files 4937
+
+[[pkg]]
+name zhmetrics-uptex
+category Package
+revision 40728
+size 31628
+sha512 1e068a0b402a5c69b44a86d797cb24266b2883c698decd8b8464c99b131d292cc5ac44249ba8e89dc0a414d6f12d73d4c069ffc3081cfa4b9926ca412bfc3dd6
+files 36
+
+[[pkg]]
+name zhnumber
+category Package
+revision 80458
+size 9828
+sha512 0df6b3ca0aa9e503696ea0b60bd92490d522ea5e0fd8d771d14245538c019216642db986bd1c5679233f7304251da1223ca2491a3da093bf0f893d12344df72b
+files 4

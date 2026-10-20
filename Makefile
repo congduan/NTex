@@ -1,7 +1,7 @@
 # NTex 开发常用命令。
-# 质量门禁：`make check` = fmt + lint + test 三件套全绿。
+# 质量门禁：`make check` = fmt + lint + test + 默认宏文件资产校验。
 
-.PHONY: fmt lint test check fixtures fixture-extras trip diff bench tauri-wasm tauri \
+.PHONY: fmt lint test assets-check check fixtures fixture-extras trip diff bench tauri-wasm tauri \
         instrument-check abcheck blocker-track logtrace lvt-run lvt-fetch recovery-check oracle-verify
 
 fmt:
@@ -13,7 +13,10 @@ lint:
 test:
 	cargo test --workspace
 
-check: fmt lint test
+assets-check:
+	python3 scripts/check-default-tex-assets.py
+
+check: fmt lint test assets-check
 
 # 仪器自检（P0 纪律）：诊断原语（\meaning/	he/\number/\romannumeral/\string）
 # 与 pdfTeX 逐字对拍。**失真即回归**——见 docs/tooling-trust.md。

@@ -1,0 +1,2 @@
+# 上游宏文件按校验和原样分发；禁止换行转换，不规范化有 TeX 语义的空白。
+assets/tex-minimal/tex/** -text -whitespace

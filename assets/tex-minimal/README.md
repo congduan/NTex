@@ -62,8 +62,8 @@ tex/generic/atbegshi/
 `\special` 画树线——ntex 引擎把 `\special` 当 whatsit 节点吞掉，故树形连线
 不可视、文本结构完好。
 
-当前 TeX 文件体量约 6.8MB（312 个文件，2026-09-25 book 闭包落盘后），TFM 度量 643 件
-约 1.5MB（`assets/tfm/` 顶层 78 件 + `ec/` 子目录 565 件）。入包时按**主名去重**
+当前 TeX 运行树共 3,996 个文件、53.6MB；TFM 度量仍为 643 件、约 1.5MB
+（`assets/tfm/` 顶层 78 件 + `ec/` 子目录 565 件）。入包时按**主名去重**
 （`tex/latex/base/` 与 `tex/latex/l3kernel/` 有同名副本如 `expl3-code.tex`，wasm 侧
 `MemVfs` 按键覆盖），入包精确条数随闭包演进而变，以打包端实测为准。
 完整文件清单可用：
@@ -87,6 +87,44 @@ ntex-pkg vendor <tlpdb> /tmp/tl-cache assets/tex-minimal --write blindtext
 最小格式的 `tex/latex/base/hyphen.cfg` 加载 US English 断字表，并声明
 `\languagename=english` 与 `\l@english=0`，使查询默认语言的宏包可直接使用。
 这两项属于格式初始化；修改后需真实重生成 `assets/fmt/latex.fmt`。
+
+### 常用宏文件集
+
+默认入口在 [`default-packages.json`](default-packages.json)：27 个宏包入口及
+`beamer` / `ctexart` / `standalone` 三个文档类。覆盖 amsthm、mathtools、siunitx、
+enumitem、fancyhdr、titlesec、setspace、parskip、float、caption/subcaption、
+makecell、tabularray、hyperref、cleveref、natbib、biblatex、listings、fancyvrb、
+minted、TikZ/PGFPlots、ctex、xeCJK、babel、fontspec、unicode-math。
+
+取料仍由 `ntex-pkg` 的 TLPDB 解析和 SHA-512 校验完成。根 `ntex.lock` 固定上游
+容器身份（包括完整 TeX Live 依赖图），[`runtime-assets.tsv`](runtime-assets.tsv)
+固定实际发行路径及 SHA-256；[`runtime-licenses.tsv`](runtime-licenses.tsv)
+记录上游包许可标识与 CTAN 来源。上游文件头保持原样。
+
+发行范围是依赖闭包的 `tex/**` 运行树，排除 `*-dev` 开发格式，不分发外部引擎、
+原生安装程序及字体集合。既有字体资产与 `latex.fmt` 继续使用原版本；15 个既有
+l3kernel/backend 文件与本次上游不同，以 `preserved` 策略保留并同时登记两份哈希。
+其他文件为 `upstream`，与已校验容器中的内容一致。不要直接 vendor 覆盖发行树。
+
+校验及恢复：
+
+```bash
+make assets-check
+# 如已从精确版本的容器 vendor 出暂存树，按清单恢复（校验完成才写入）：
+python3 scripts/check-default-tex-assets.py --restore-from /tmp/vendor-tree
+# 实际 Tauri 打包也应覆盖清单中的全部入口：
+target/debug/ntex-tauri --dump-bundle /tmp/latex.bundle
+python3 scripts/check-default-tex-assets.py --bundle /tmp/latex.bundle
+```
+
+首次取料/暂存时，把 manifest 的 `packages` 作为 ntex-pkg 的包参数，把
+`documentclasses` 逐个转换成 `--documentclass NAME`；`fetch` 后对同一组需求运行
+`vendor --write` 到独立暂存目录。TLPDB 必须与 manifest 中的 SHA-256 对应，锁文件
+也须通过 `ntex-pkg check`，随后以已记录的文件清单恢复发行树。
+
+**资产覆盖与引擎兼容分开验收**：文件已随包不表示引擎已支持外部程序或全部宏语义。
+30 项最小 WASM 加载/出页的实测分类见
+[兼容性记录](../../docs/archive/default-tex-assets-2026-10-20.md)。
 
 ## 默认搜索链
 
