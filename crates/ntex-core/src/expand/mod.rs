@@ -271,23 +271,29 @@ pub(crate) enum SavedValue {
     Count {
         idx: usize,
         prev: i64,
+        /// 后续同槽 `\global` 赋值已使本条目失效（tex.web retaining）。
+        retained: bool,
     },
     Dimen {
         idx: usize,
         prev: i64,
+        retained: bool,
     },
     Skip {
         idx: usize,
         prev: Glue,
+        retained: bool,
     },
     /// `\muskip`：mu 胶量寄存器（ETRIP；1mu = 65536 单位）。
     Muskip {
         idx: usize,
         prev: Glue,
+        retained: bool,
     },
     Toks {
         idx: usize,
         prev: TokenArray,
+        retained: bool,
     },
     Catcode {
         byte: u8,

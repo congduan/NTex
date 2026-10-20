@@ -94,6 +94,85 @@ impl Expander {
         }
     }
 
+    /// 全局寄存器赋值使同槽旧保存项失效（tex.web retaining；与
+    /// [`Self::invalidate_saved_param`] 同构）。
+    fn invalidate_saved_register(&mut self, kind: RegKind, idx: usize) {
+        for (_, saved) in &mut self.save_stack {
+            let hit = match saved {
+                SavedValue::Count { idx: i, .. } if kind == RegKind::Count => i == &idx,
+                SavedValue::Dimen { idx: i, .. } if kind == RegKind::Dimen => i == &idx,
+                SavedValue::Skip { idx: i, .. } if kind == RegKind::Skip => i == &idx,
+                SavedValue::Muskip { idx: i, .. } if kind == RegKind::Muskip => i == &idx,
+                SavedValue::Toks { idx: i, .. } if kind == RegKind::Toks => i == &idx,
+                _ => false,
+            };
+            if hit {
+                if let Some(retained) = match saved {
+                    SavedValue::Count { retained, .. }
+                    | SavedValue::Dimen { retained, .. }
+                    | SavedValue::Skip { retained, .. }
+                    | SavedValue::Muskip { retained, .. }
+                    | SavedValue::Toks { retained, .. } => Some(retained),
+                    _ => None,
+                } {
+                    *retained = true;
+                }
+            }
+        }
+    }
+
+    /// 寄存器赋值压栈（tex.web eq_word_define 同构）：组内局部 → 保存旧值；
+    /// 全局 → 先使同槽旧条目失效（retaining）。
+    fn save_register_for_assign(&mut self, kind: RegKind, idx: usize, global: bool) {
+        if global {
+            self.invalidate_saved_register(kind, idx);
+        }
+        if !global && self.group_level > 0 {
+            match kind {
+                RegKind::Count => self.save_stack.push((
+                    self.group_level,
+                    SavedValue::Count {
+                        idx,
+                        prev: self.registers.count(idx),
+                        retained: false,
+                    },
+                )),
+                RegKind::Dimen => self.save_stack.push((
+                    self.group_level,
+                    SavedValue::Dimen {
+                        idx,
+                        prev: self.registers.dimen(idx),
+                        retained: false,
+                    },
+                )),
+                RegKind::Skip => self.save_stack.push((
+                    self.group_level,
+                    SavedValue::Skip {
+                        idx,
+                        prev: self.registers.skip(idx),
+                        retained: false,
+                    },
+                )),
+                RegKind::Muskip => self.save_stack.push((
+                    self.group_level,
+                    SavedValue::Muskip {
+                        idx,
+                        prev: self.registers.muskip(idx),
+                        retained: false,
+                    },
+                )),
+                RegKind::Toks => self.save_stack.push((
+                    self.group_level,
+                    SavedValue::Toks {
+                        idx,
+                        prev: self.registers.toks(idx),
+                        retained: false,
+                    },
+                )),
+            }
+        }
+    }
+
     /// 扫描 `\hbox`/`\vbox`/`\vtop` 的可选规格：`to <dimen>` 或 `spread <dimen>`。
     /// 返回 `(to, spread)`（单位 sp；无规格 = None/None）。
     fn scan_box_spec(&mut self) -> Result<(Option<i64>, Option<i64>)> {
@@ -207,15 +286,7 @@ impl Expander {
                 &val.to_string(),
             );
         }
-        if !global && self.group_level > 0 {
-            self.save_stack.push((
-                self.group_level,
-                SavedValue::Count {
-                    idx,
-                    prev: self.registers.count(idx),
-                },
-            ));
-        }
+        self.save_register_for_assign(RegKind::Count, idx, global);
         self.registers.set_count(idx, val);
         // 输出例程刀 5（G5 页号链）：count0..9 是 shipout 页标签/DVI bop 计数的
         // 取值源；insert 三联寄存器也经同一事件面送到页面构建器。
@@ -235,15 +306,7 @@ impl Expander {
                 &format_dimen(val),
             );
         }
-        if !global && self.group_level > 0 {
-            self.save_stack.push((
-                self.group_level,
-                SavedValue::Dimen {
-                    idx,
-                    prev: self.registers.dimen(idx),
-                },
-            ));
-        }
+        self.save_register_for_assign(RegKind::Dimen, idx, global);
         self.registers.set_dimen(idx, val);
         let _ = self.sink.dimen_changed(idx, val);
         self.finish_assignment();
@@ -261,15 +324,7 @@ impl Expander {
                 &format_glue(val),
             );
         }
-        if !global && self.group_level > 0 {
-            self.save_stack.push((
-                self.group_level,
-                SavedValue::Skip {
-                    idx,
-                    prev: self.registers.skip(idx),
-                },
-            ));
-        }
+        self.save_register_for_assign(RegKind::Skip, idx, global);
         self.registers.set_skip(idx, val);
         let _ = self.sink.skip_changed(idx, val);
         self.finish_assignment();
@@ -291,30 +346,14 @@ impl Expander {
                 &format_mu_glue(val),
             );
         }
-        if !global && self.group_level > 0 {
-            self.save_stack.push((
-                self.group_level,
-                SavedValue::Muskip {
-                    idx,
-                    prev: self.registers.muskip(idx),
-                },
-            ));
-        }
+        self.save_register_for_assign(RegKind::Muskip, idx, global);
         self.registers.set_muskip(idx, val);
         self.finish_assignment();
     }
 
     fn assign_toks(&mut self, idx: usize, val: TokenArray) {
         let global = self.is_global();
-        if !global && self.group_level > 0 {
-            self.save_stack.push((
-                self.group_level,
-                SavedValue::Toks {
-                    idx,
-                    prev: self.registers.toks(idx),
-                },
-            ));
-        }
+        self.save_register_for_assign(RegKind::Toks, idx, global);
         self.registers.set_toks(idx, val);
         self.finish_assignment();
     }
@@ -1106,20 +1145,56 @@ impl Expander {
         let retain = match &v {
             SavedValue::Eqtb { csid, .. } => self.eqtb.level(*csid) == 0,
             SavedValue::Param { retained, .. } => *retained,
+            SavedValue::Count { retained, .. }
+            | SavedValue::Dimen { retained, .. }
+            | SavedValue::Skip { retained, .. }
+            | SavedValue::Muskip { retained, .. }
+            | SavedValue::Toks { retained, .. } => *retained,
             _ => false,
         };
         // \tracingrestores>0：恢复动作输出 `{restoring ...}` / `{retaining ...}`
         //（tex.web restore_trace + show_eqtb）。先用不可变借用构造消息体
         //（值即写回值），再执行恢复，最后写转录。
         let trace = if self.params.misc[4] > 0 {
-            Some(if let SavedValue::Param { kind, .. } = &v {
-                if retain {
-                    format!("{}={}", self.esc(param_name(*kind)), param_value_display(self.params.get(*kind)))
-                } else {
-                    self.restore_trace_body(&v)
+            Some(match &v {
+                SavedValue::Param { kind, .. } => {
+                    if retain {
+                        format!(
+                            "{}={}",
+                            self.esc(param_name(*kind)),
+                            param_value_display(self.params.get(*kind))
+                        )
+                    } else {
+                        self.restore_trace_body(&v)
+                    }
                 }
-            } else {
-                self.restore_trace_body(&v)
+                // 寄存器 retaining 与 Param 同款：trace 打当前值（GT
+                // `{retaining \count0=7}`，tex.web show_eqtb 读 eqtb 现值）。
+                SavedValue::Count { idx, .. } if retain => {
+                    format!("{}{}={}", self.esc("count"), idx, self.registers.count(*idx))
+                }
+                SavedValue::Dimen { idx, .. } if retain => format!(
+                    "{}{}={}pt",
+                    self.esc("dimen"),
+                    idx,
+                    format_dimen(self.registers.dimen(*idx))
+                ),
+                SavedValue::Skip { idx, .. } if retain => format!(
+                    "{}{}={}",
+                    self.esc("skip"),
+                    idx,
+                    format_glue(self.registers.skip(*idx))
+                ),
+                SavedValue::Muskip { idx, .. } if retain => format!(
+                    "{}{}={}",
+                    self.esc("muskip"),
+                    idx,
+                    format_mu_glue(self.registers.muskip(*idx))
+                ),
+                SavedValue::Toks { idx, .. } if retain => {
+                    format!("{}{}={}", self.esc("toks"), idx, self.show_toks(&self.registers.toks(*idx)))
+                }
+                _ => self.restore_trace_body(&v),
             })
         } else {
             None
@@ -1137,21 +1212,58 @@ impl Expander {
                     self.eqtb.set_level(csid, prev_level);
                 }
             }
-            // 组结束回滚同镜像（tex.web：count 寄存器在 eqtb 内，组结束还原旧值）
-            SavedValue::Count { idx, prev } => {
-                self.registers.set_count(idx, prev);
-                let _ = self.sink.count_changed(idx, prev);
+            // 寄存器族 retaining（tex.web 同款：陈旧保存项不覆盖全局值）。
+            // trace 体在 retain 时也走 restore_trace_body（打**当前值**，
+            // 与 GT `{retaining \count0=7}` 铁证对齐——恢复对象是旧值但实际
+            // 不生效，tex.web show_eqtb 打的是 eqtb 现值）。
+            SavedValue::Count {
+                idx,
+                prev,
+                retained,
+            } => {
+                if !retained {
+                    self.registers.set_count(idx, prev);
+                    let _ = self.sink.count_changed(idx, prev);
+                }
             }
-            SavedValue::Dimen { idx, prev } => {
-                self.registers.set_dimen(idx, prev);
-                let _ = self.sink.dimen_changed(idx, prev);
+            SavedValue::Dimen {
+                idx,
+                prev,
+                retained,
+            } => {
+                if !retained {
+                    self.registers.set_dimen(idx, prev);
+                    let _ = self.sink.dimen_changed(idx, prev);
+                }
             }
-            SavedValue::Skip { idx, prev } => {
-                self.registers.set_skip(idx, prev);
-                let _ = self.sink.skip_changed(idx, prev);
+            SavedValue::Skip {
+                idx,
+                prev,
+                retained,
+            } => {
+                if !retained {
+                    self.registers.set_skip(idx, prev);
+                    let _ = self.sink.skip_changed(idx, prev);
+                }
             }
-            SavedValue::Muskip { idx, prev } => self.registers.set_muskip(idx, prev),
-            SavedValue::Toks { idx, prev } => self.registers.set_toks(idx, prev),
+            SavedValue::Muskip {
+                idx,
+                prev,
+                retained,
+            } => {
+                if !retained {
+                    self.registers.set_muskip(idx, prev);
+                }
+            }
+            SavedValue::Toks {
+                idx,
+                prev,
+                retained,
+            } => {
+                if !retained {
+                    self.registers.set_toks(idx, prev);
+                }
+            }
             SavedValue::Catcode { byte, prev } => self.catcodes.set(byte, prev),
             SavedValue::UnicodeCatcode { cp, prev } => match prev {
                 Some(c) => self.catcodes.set_codepoint(cp, c),
@@ -1243,21 +1355,25 @@ impl Expander {
                     self.slot_display(*csid, prev)
                 )
             }
-            SavedValue::Count { idx, prev } => format!("{}{}={}", self.esc("count"), idx, prev),
-            SavedValue::Dimen { idx, prev } => {
+            SavedValue::Count { idx, prev, .. } => {
+                format!("{}{}={}", self.esc("count"), idx, prev)
+            }
+            SavedValue::Dimen { idx, prev, .. } => {
                 format!("{}{}={}pt", self.esc("dimen"), idx, format_dimen(*prev))
             }
-            SavedValue::Skip { idx, prev } => {
+            SavedValue::Skip { idx, prev, .. } => {
                 format!("{}{}={}", self.esc("skip"), idx, format_glue(*prev))
             }
-            SavedValue::Muskip { idx, prev } => {
-                format!("{}{}={}", self.esc("muskip"), idx, format_mu_glue(*prev))
+            SavedValue::Muskip { idx, prev, .. } => {
+                format!(
+                    "{}{}={}",
+                    self.esc("muskip"),
+                    idx,
+                    format_mu_glue(*prev)
+                )
             }
-            SavedValue::Toks { idx, prev } => {
+            SavedValue::Toks { idx, prev, .. } => {
                 format!("{}{}={}", self.esc("toks"), idx, self.show_toks(prev))
-            }
-            SavedValue::Catcode { byte, prev } => {
-                format!("{}{}={}", self.esc("catcode"), byte, *prev as u8)
             }
             SavedValue::Param { kind, prev, .. } => {
                 format!(
