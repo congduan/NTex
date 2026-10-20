@@ -265,14 +265,18 @@ function looksLikeLatex(src) {
 // 片段补壳（与 Rust `ntex_layout::typeset::wrap_latex_fragment` 同口径）：源码是
 // LaTeX 语料却既无 `\documentclass` 也无 `\begin{document}` 时，补一层最小文档壳
 // `\documentclass{article}\begin{document} … \end{document}`，让粘进来的表格/列表
-// 片段也能出页。前缀拼在**首行行首**、尾壳**另起一行**，故转录里的 `l.N` 与编辑器
+// 片段也能出页；标准 amsmath 环境在壳的前导区自动加载 amsmath。前缀拼在**首行行首**、尾壳**另起一行**，故转录里的 `l.N` 与编辑器
 // 行号一列不移。已是完整文档、或根本不是 LaTeX 的源原样返回（plain 不受影响）。
 function wrapLatexFragment(src) {
   for (const rawLine of src.split('\n')) {
     const line = stripLineComment(rawLine);
     if (line.includes('\\documentclass') || line.includes('\\begin{document}')) return src;
   }
-  return `\\documentclass{article}\\begin{document}${src}${src.endsWith('\n') ? '' : '\n'}\\end{document}\n`;
+  // 与 Rust has_amsmath_environment 的标准环境清单一致；注释不触发加载。
+  const amsmathEnv = /\\begin\{(?:multline\*?|align\*?|alignat\*?|flalign\*?|gather\*?|split|aligned|alignedat|gathered|[pbBvV]?matrix|smallmatrix|cases|subequations|equation\*)\}/;
+  const packages = src.split('\n').some(line => amsmathEnv.test(stripLineComment(line)))
+    ? '\\usepackage{amsmath}' : '';
+  return `\\documentclass{article}${packages}\\begin{document}${src}${src.endsWith('\n') ? '' : '\n'}\\end{document}\n`;
 }
 
 // 资产来自 Tauri 侧的**只读**命令（crates/ntex-tauri/src/main.rs::

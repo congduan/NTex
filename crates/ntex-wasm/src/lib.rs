@@ -2298,6 +2298,26 @@ mod tests {
         assert!(!compiled.pages.is_empty(), "应产出至少一页");
     }
 
+    /// 用户裸 multline* 片段必须和显式加载 amsmath 的整文档输出一致。
+    /// 同时锁住零错误、单页及盒树/DVI 一致，避免只检查编译成功的假绿。
+    #[test]
+    fn latex_bundle_multline_fragment_matches_explicit_document() {
+        let fragment = include_str!("../../../fixtures/repro/repro_multline_fragment.tex");
+        let assets = Arc::new(LatexAssets::from_bundle(&repo_bundle()).expect("发行资产"));
+        let wrapped = ntex_layout::typeset::wrap_latex_fragment(fragment).expect("片段应补壳");
+        let explicit = format!(
+            "\\documentclass{{article}}\\usepackage{{amsmath}}\\begin{{document}}{fragment}\\end{{document}}\n"
+        );
+        let actual =
+            compile_pipeline_assets(&wrapped, false, Some(assets.clone())).expect("补壳后应可编译");
+        let expected =
+            compile_pipeline_assets(&explicit, false, Some(assets)).expect("显式文档应可编译");
+        assert!(!actual.transcript.contains('!'), "{}", actual.transcript);
+        assert_eq!(actual.pages.len(), 1, "应产出一页");
+        assert_eq!(actual.pages, expected.pages, "片段与显式文档的盒树应一致");
+        assert_eq!(actual.dvi, expected.dvi, "DVI 应逐字节一致");
+    }
+
     /// NFSS 尺寸切换（`\Large` 等）的字体名污染——**已知引擎缺陷的现场锁**。
     ///
     /// 现场（2026-09-18，native 与 wasm 同病，与本 crate 的 C 档无关）：

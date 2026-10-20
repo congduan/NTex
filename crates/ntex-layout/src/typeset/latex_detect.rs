@@ -51,6 +51,7 @@ pub fn looks_like_latex(src: &str) -> bool {
 ///
 /// 这是**工作台预览策略**而非引擎语义：`ntex-dvi`/`ntex-wasm` 的原语面照旧
 /// TeX 口径（裸片段报错即报错），只有编辑器形态的前端调用本函数。
+/// 若片段使用标准 amsmath 环境，则在壳的前导区自动加载 amsmath；注释不触发。
 pub fn wrap_latex_fragment(src: &str) -> Option<String> {
     if !looks_like_latex(src) {
         return None;
@@ -72,13 +73,57 @@ pub fn wrap_latex_fragment(src: &str) -> Option<String> {
     // 前缀拼在首行行首（不新增行）、尾壳另起一行（只影响末尾行号之后的行）
     // ——用户源码的 l.N 与编辑器行号恒对齐。
     let mut out = String::with_capacity(src.len() + 48);
-    out.push_str("\\documentclass{article}\\begin{document}");
+    out.push_str("\\documentclass{article}");
+    // 片段没有前导区；amsmath 环境不能只补 article，否则环境未定义并级联丢页。
+    // 只扫描去注释后的环境名，完整文档的宏包选择仍由用户前导区负责。
+    if src
+        .lines()
+        .any(|raw| has_amsmath_environment(&strip_line_comment(raw)))
+    {
+        out.push_str("\\usepackage{amsmath}");
+    }
+    out.push_str("\\begin{document}");
     out.push_str(src);
     if !src.ends_with('\n') {
         out.push('\n');
     }
     out.push_str("\\end{document}\n");
     Some(out)
+}
+
+/// 需要 amsmath 的标准环境（与 Tauri 前端同口径；不猜测自定义环境）。
+fn has_amsmath_environment(line: &str) -> bool {
+    const ENVS: &[&str] = &[
+        "multline",
+        "multline*",
+        "align",
+        "align*",
+        "alignat",
+        "alignat*",
+        "flalign",
+        "flalign*",
+        "gather",
+        "gather*",
+        "split",
+        "aligned",
+        "alignedat",
+        "gathered",
+        "matrix",
+        "pmatrix",
+        "bmatrix",
+        "Bmatrix",
+        "vmatrix",
+        "Vmatrix",
+        "smallmatrix",
+        "cases",
+        "subequations",
+        "equation*",
+    ];
+    line.split("\\begin{").skip(1).any(|after| {
+        after
+            .split_once('}')
+            .is_some_and(|(env, _)| ENVS.contains(&env))
+    })
 }
 
 /// 剥掉行注释（`%` 到行尾；`\%`/`\\` 等转义对原样保留，不开启注释）。
@@ -125,7 +170,9 @@ mod latex_detect_tests {
 
     #[test]
     fn detects_latex_features() {
-        assert!(looks_like_latex("\\documentclass{article}\n\\begin{document}"));
+        assert!(looks_like_latex(
+            "\\documentclass{article}\n\\begin{document}"
+        ));
         assert!(looks_like_latex("\\usepackage{graphicx}"));
         assert!(looks_like_latex("foo\n\\begin{document}\nbar"));
         // 空格变体不命中（TeX 语义里 `\begin {document}` 合法，但三端口径只认
@@ -141,7 +188,9 @@ mod latex_detect_tests {
         assert!(looks_like_latex(
             "\\begin{center}\n\\begin{tabular}{c c c}\n a & b \\\\\n\\end{tabular}\n\\end{center}"
         ));
-        assert!(looks_like_latex("\\begin{itemize}\n\\item x\n\\end{itemize}"));
+        assert!(looks_like_latex(
+            "\\begin{itemize}\n\\item x\n\\end{itemize}"
+        ));
         assert!(looks_like_latex("\\end{document}"));
         // 紧凑写法才命中：`\begin {tabular}` 不命中；空名 `\begin{}` 不命中
         assert!(!looks_like_latex("\\begin {tabular}{c} a \\end {tabular}"));
@@ -166,7 +215,8 @@ mod latex_detect_tests {
 
     #[test]
     fn wraps_fragment_and_keeps_line_numbers() {
-        let frag = "\\begin{center}\n\\begin{tabular}{c}\n cell1 \\\\\n\\end{tabular}\n\\end{center}\n";
+        let frag =
+            "\\begin{center}\n\\begin{tabular}{c}\n cell1 \\\\\n\\end{tabular}\n\\end{center}\n";
         let wrapped = wrap_latex_fragment(frag).expect("片段应补壳");
         assert!(wrapped.starts_with("\\documentclass{article}\\begin{document}"));
         assert!(wrapped.trim_end().ends_with("\\end{document}"));
@@ -183,6 +233,31 @@ mod latex_detect_tests {
                 line
             );
         }
+    }
+
+    #[test]
+    fn math_fragments_load_amsmath_without_shifting_lines() {
+        for env in ["multline*", "multline", "align*", "pmatrix", "equation*"] {
+            let fragment = format!("\\begin{{{env}}}\nx\n\\end{{{env}}}");
+            let wrapped = wrap_latex_fragment(&fragment).expect("数学片段应补壳");
+            assert!(wrapped
+                .starts_with("\\documentclass{article}\\usepackage{amsmath}\\begin{document}"));
+            assert_eq!(wrapped.lines().count(), fragment.lines().count() + 1);
+            assert!(wrapped.contains(&fragment));
+        }
+        for fragment in [
+            "% \\begin{multline*}\n\\begin{center}x\\end{center}",
+            "\\begin{equation}x\\end{equation}",
+            "\\begin{myalign}x\\end{myalign}",
+        ] {
+            assert!(!wrap_latex_fragment(fragment)
+                .expect("片段")
+                .contains("\\usepackage{amsmath}"));
+        }
+        assert!(wrap_latex_fragment(
+            "\\documentclass{article}\n\\begin{multline*}x\\end{multline*}"
+        )
+        .is_none());
     }
 
     #[test]

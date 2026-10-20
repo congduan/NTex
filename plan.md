@@ -110,6 +110,11 @@
     core 563 + layout 318 全绿；未过全本门槛，不提交推送。诊断、原始输出与
     下一步可证伪卡点见 `/tmp/bladeAJ/r14-report.md`。
 
+12. **Tauri 裸 `multline*` 片段修复**（10-20，未提交）：片段补壳按标准数学环境
+    自动加载 `amsmath`（Tauri JS / native studio Rust 同步）；用户原公式实际 WASM
+    从 5 条错误 / 0 页恢复为零错 / 1 页，补壳与显式整文档的盒树和 DVI 完全一致。
+    回归用例：`fixtures/repro/repro_multline_fragment.tex`。
+
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 
 - **第十八刀** 尾递归鞍具校准 → `make check` 797 → **800 全绿**；pdfTeX 对照证明原否定结论有误；

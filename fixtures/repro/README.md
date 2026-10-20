@@ -18,6 +18,7 @@
 
 | 文件 | 问题 | 修复 commit |
 |---|---|---|
+| repro_multline_fragment.tex | 工作台裸数学片段缺 amsmath；由补壳函数编译（wasm 回归锁） | 已修，未提交 |
 | repro_discards.tex / repro_discards2.tex | `\splitdiscards` 数学模式 Missing number ×11（内部量无 `=` 误当赋值） | 9b0bc69 |
 | repro_left.tex | `\left` 组 currentgrouptype 应为 16 | d980920 |
 | repro_mkern_mu.tex | `\mkern-9mu`/`\mskip9mu` 报 Illegal unit（pt 上下文扫 mu） | 3a2cb63 |
