@@ -471,6 +471,7 @@ pub trait AlignSink {
     }
     /// 对齐 preamble 结束（preamble 尾部 `\cr` 后）：给出各列边界的
     /// `\tabskip` 胶水快照（`tabskips.len() == 列数 + 1`，含首尾）。
+    /// 周期 preamble 扩展列时再次发送完整快照；调用方替换旧快照即可。
     /// tex.web：preamble 列表结构为 [glue, alignrecord, glue, ... , glue]。
     fn align_preamble_end(&mut self, _tabskips: Vec<Glue>) -> Result<()> {
         Ok(())

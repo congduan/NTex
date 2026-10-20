@@ -214,3 +214,23 @@ fn valign_packs_columns_with_row_extents_and_tabskip() {
     assert_eq!(row1.width, 4 * SP_PER_PT);
     assert_eq!(row1.height + row1.depth, 14 * SP_PER_PT);
 }
+
+/// amsmath 以两列周期模板生成任意多组公式；周期扩展必须同步排版器列边界。
+/// 用带不同列宽、左右对齐和 tabskip 的显式六列作为等价对照。
+#[test]
+fn periodic_halign_matches_explicit_columns() {
+    let body = concat!(
+        "\\vrule width1pt&\\vrule width2pt&\\vrule width3pt&",
+        "\\vrule width4pt&\\vrule width5pt&\\vrule width6pt\\cr ",
+        "\\vrule width6pt&\\vrule width5pt&\\vrule width4pt&",
+        "\\vrule width3pt&\\vrule width2pt&\\vrule width1pt\\cr}",
+    );
+    let pair = "\\hfil#\\tabskip=0pt&#\\hfil\\tabskip=7pt";
+    let periodic = typeset(&format!("\\tabskip=3pt\\halign{{&{pair}\\cr {body}"))
+        .expect("周期对齐应可排版");
+    let explicit = typeset(&format!(
+        "\\tabskip=3pt\\halign{{{pair}&{pair}&{pair}\\cr {body}"
+    ))
+    .expect("显式对齐应可排版");
+    assert_eq!(periodic, explicit, "周期列的宽度、填充与列间距必须和显式模板一致");
+}

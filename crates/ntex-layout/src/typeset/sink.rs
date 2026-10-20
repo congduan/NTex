@@ -1937,7 +1937,7 @@ impl AlignSink for NodeBuilder {
         ctx.stream.push(AlignItem::Row(cells));
         Ok(())
     }
-    /// M4-5 对齐 preamble 结束：记录列边界 tabskip 快照（len = 列数 + 1）。
+    /// M4-5 对齐 preamble 结束或周期列扩展：替换列边界 tabskip 快照（len = 列数 + 1）。
     fn align_preamble_end(&mut self, tabskips: Vec<ntex_core::Glue>) -> Result<()> {
         if let Some((_, ctx)) = self.align_stack.last_mut() {
             ctx.tabskips = tabskips;

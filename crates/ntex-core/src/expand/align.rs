@@ -1000,7 +1000,7 @@ impl Expander {
                 if self.align_col_will_overflow() {
                     self.align_extra_tab_as_cr()?;
                 } else {
-                    self.align_advance_col(false);
+                    self.align_advance_col(false)?;
                     let peeked = self.align_fetch_significant()?;
                     if let Some(t) = peeked {
                         self.align_init_col(t, false)?;
@@ -1012,7 +1012,7 @@ impl Expander {
                     self.align_extra_tab_as_cr()?;
                 } else {
                     self.align_close_cell(AlignCellEnd::Tab)?;
-                    self.align_advance_col(true);
+                    self.align_advance_col(true)?;
                     let peeked = self.align_fetch_significant()?;
                     if let Some(t) = peeked {
                         self.align_init_col(t, true)?;
@@ -1097,14 +1097,15 @@ impl Expander {
     /// 起始列由 tex.web `cur_span` 记着，且 fin_col 的 span 分支**不**调
     /// `init_span(p)`——故 span 续列不得重置 `span_start`，否则单元收尾时
     /// `span_len = cur_col - span_start + 1` 恒为 1，跨列宽度/列数全丢。
-    fn align_advance_col(&mut self, new_unit: bool) {
+    fn align_advance_col(&mut self, new_unit: bool) -> Result<()> {
         let Some(AlignFrame {
             phase: AlignPhase::Body { cols, tabskips, loop_col, cur_col, span_start, .. },
             ..
         }) = self.align_frames.last_mut()
         else {
-            return;
+            return Ok(());
         };
+        let mut expanded = false;
         let next = *cur_col + 1;
         if next >= cols.len() {
             if let Some((_start, cursor)) = loop_col.as_mut() {
@@ -1114,6 +1115,7 @@ impl Expander {
                 let glue = tabskips.get(src + 1).copied().unwrap_or(Glue::ZERO);
                 cols.push(col);
                 tabskips.push(glue);
+                expanded = true;
                 *cursor += 1;
             }
         }
@@ -1121,6 +1123,13 @@ impl Expander {
         if new_unit {
             *span_start = *cur_col;
         }
+        // tex.web 的排版与展开共享同一条 preamble 链；此处跨 VM/sink 边界，
+        // 周期列追加后须同步快照，否则排版器仍只认原列数，新增列被封成 0 宽。
+        if expanded {
+            let snapshot = tabskips.clone();
+            self.sink.align_preamble_end(snapshot)?;
+        }
+        Ok(())
     }
 
     fn align_set_row_open(&mut self, v: bool) {
