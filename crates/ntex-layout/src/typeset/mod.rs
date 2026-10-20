@@ -1325,7 +1325,7 @@ impl NodeBuilder {
     /// `lists.len()==1`：TRIP 末段的输出例程会在错误恢复路径中遇到 `\end`，
     /// 此时仍有内层列表未清，但 tex.web 的恢复点处理的是主贡献列表。
     fn resume_after_output_routine(&mut self) {
-        if !(self.page_state.pagination && !self.lists.is_empty()) {
+        if !self.page_state.pagination || self.lists.is_empty() {
             return;
         }
         let page = &mut self.page_state.page;

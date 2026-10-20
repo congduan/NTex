@@ -1367,8 +1367,8 @@ mod tests {
     /// `self_bootstrapped_plain_demo_…`）——因为 `project_directory_graphicx_…`
     /// 正开着 `LATEX_MODE`，plain 作业被拐进 LaTeX 格式。
     /// 纪律：**凡改开关或经开关编译的用例**开头取这把锁（列表见各 `let _guard`）；
-    /// 走可注入入口（`compile_pipeline_assets`/`compile_pipeline_with`）的用例
-    /// 不受影响，无需加锁。
+    /// 可注入入口仍会读写项目辅助文件缓存（GENERATED_FILES），也须持锁，
+    /// 否则并行的普通 article 用例会覆盖 graphicx 两遍编译间的 aux。
     static GLOBAL_SWITCH_TESTS: Mutex<()> = Mutex::new(());
 
     /// 取串行化闸门（持锁期 = 用例全程）。锁毒化时取回内部值继续——
@@ -1661,6 +1661,7 @@ mod tests {
     /// 覆盖宿主默认**（后写赢）。
     #[test]
     fn utf8_input_switch_reaches_engine_and_yields_to_source() {
+        let _guard = global_switch_guard();
         let on = compile_pipeline_with("\\message{m=\\the\\utfinputmode}\\end", true)
             .expect("作业应继续");
         assert!(on.transcript.contains("m=1"), "开关开：{}", on.transcript);
@@ -1689,6 +1690,7 @@ mod tests {
     /// 见 `scripts/make-cjk-subset.py`）——保证测试跑的就是前端实际用的那一份。
     #[test]
     fn otf_injection_enables_cjk_typesetting() {
+        let _guard = global_switch_guard();
         assert!(
             set_otf_font("FandolSong-Regular", FANDOL_BYTES),
             "合法 OTF 应注册"
@@ -1765,6 +1767,7 @@ mod tests {
     /// `\ifx\utfinputmode\undefined` 判别 NTex，故这条也顺带锁住该分流。
     #[test]
     fn resume_plain_compiles_clean_under_wasm_font_set() {
+        let _guard = global_switch_guard();
         assert!(set_otf_font("FandolSong-Regular", FANDOL_BYTES));
         let compiled = compile_pipeline_with(RESUME_PLAIN, true).expect("简历示例应能编译");
         assert!(!compiled.pages.is_empty(), "应至少产出一页");
@@ -1789,6 +1792,7 @@ mod tests {
     /// ASCII 码位永不回落（TRIP 硬口径）。
     #[test]
     fn cjk_fallback_typesets_plain_source_without_explicit_font() {
+        let _guard = global_switch_guard();
         assert!(set_otf_font("FandolSong-Regular", FANDOL_BYTES));
         // 回落关闭（默认）：中文落 cmr10 → Missing character（TeX 原语义）。
         *FALLBACK_FONT.lock().unwrap() = None;
@@ -1847,6 +1851,7 @@ mod tests {
     /// 也才说明「打包分发不依赖 TeX Live」这条路的字体来源是闭合的。
     #[test]
     fn pdf_export_embeds_injected_pfb() {
+        let _guard = global_switch_guard();
         let injected = fake_pfb("CMR10Probe");
         assert!(set_pfb_font("cmr10", &injected), "合法 PFB 段头应注册成功");
         assert!(
@@ -1894,6 +1899,7 @@ mod tests {
     /// 的情况下也过——参见 [`Document::used_fonts`] 的说明。
     #[test]
     fn pdf_export_degrades_without_pfb_but_still_writes_pdf() {
+        let _guard = global_switch_guard();
         let name = "manfnt";
         assert!(
             EMBEDDED_TFMS.iter().any(|(n, _)| *n == name),
@@ -2137,6 +2143,7 @@ mod tests {
     /// 4. 确实出页，且 12pt 标题字体 cmbx12 进了 DVI 字体表。
     #[test]
     fn latex_bundle_typesets_article_class() {
+        let _guard = global_switch_guard();
         let assets =
             Arc::new(LatexAssets::from_bundle(&repo_bundle()).expect("发行资产包应能解析"));
         assert!(assets.has_format(), "包里必须带 .fmt 快照");
@@ -2203,6 +2210,7 @@ mod tests {
     /// 标题的落点——修复前只有 cmr10）。
     #[test]
     fn latex_bundle_typesets_book_chapter_headings() {
+        let _guard = global_switch_guard();
         let assets =
             Arc::new(LatexAssets::from_bundle(&repo_bundle()).expect("发行资产包应能解析"));
         let compiled = compile_pipeline_assets(
@@ -2248,6 +2256,7 @@ mod tests {
     /// 水平线在盒树里是 null 宽规则（出货按包含盒宽解析），竖线是 0.4pt 宽规则。
     #[test]
     fn latex_bundle_table_rules_match_reference() {
+        let _guard = global_switch_guard();
         fn count_rules(ns: &[ntex_layout::node::Node], hlines: &mut usize, vrules: &mut usize) {
             use ntex_layout::node::Node;
             for n in ns {
@@ -2302,6 +2311,7 @@ mod tests {
     /// 同时锁住零错误、单页及盒树/DVI 一致，避免只检查编译成功的假绿。
     #[test]
     fn latex_bundle_multline_fragment_matches_explicit_document() {
+        let _guard = global_switch_guard();
         let fragment = include_str!("../../../fixtures/repro/repro_multline_fragment.tex");
         let assets = Arc::new(LatexAssets::from_bundle(&repo_bundle()).expect("发行资产"));
         let wrapped = ntex_layout::typeset::wrap_latex_fragment(fragment).expect("片段应补壳");
@@ -2316,6 +2326,93 @@ mod tests {
         assert_eq!(actual.pages.len(), 1, "应产出一页");
         assert_eq!(actual.pages, expected.pages, "片段与显式文档的盒树应一致");
         assert_eq!(actual.dvi, expected.dvi, "DVI 应逐字节一致");
+    }
+
+    /// 不能用“无错误”代替正文验收：旧 prevdepth 初值偏 1sp 会生成纯页码空白首页。
+    #[test]
+    fn latex_bundle_blindtext_sections_have_visible_first_page() {
+        let _guard = global_switch_guard();
+        fn collect_text(nodes: &[ntex_layout::node::Node], out: &mut String) {
+            use ntex_layout::node::Node;
+            for node in nodes {
+                match node {
+                    Node::Char { charcode, .. } | Node::Ligature { charcode, .. } => {
+                        if let Some(ch) = char::from_u32(*charcode) {
+                            out.push(ch);
+                        }
+                    }
+                    Node::Box(b) => collect_text(&b.children, out),
+                    _ => {}
+                }
+            }
+        }
+        let assets = Arc::new(LatexAssets::from_bundle(&repo_bundle()).expect("发行资产"));
+        assert!(
+            assets.has_tex_file("blindtext.sty"),
+            "发行资产必须包含 blindtext"
+        );
+        let compiled = compile_pipeline_assets(
+            include_str!("../../../fixtures/repro/repro_blindtext_sections.tex"),
+            false,
+            Some(assets),
+        )
+        .expect("原文档应能编译");
+        assert!(
+            !compiled.transcript.contains('!'),
+            "{}",
+            compiled.transcript
+        );
+        assert_eq!(
+            compiled.pages.len(),
+            1,
+            "标题、节标题和正文应在同一页，不得有空白首页"
+        );
+        let mut text = String::new();
+        collect_text(&compiled.pages[0].children, &mut text);
+        for required in [
+            "SectionsandChapters",
+            "Overleaf",
+            "Introduction",
+            "SecondSection",
+        ] {
+            assert!(text.contains(required), "首页缺少 {required}：{text}");
+        }
+        assert_eq!(
+            text.matches("Loremi").count(),
+            4,
+            "两段 blindtext 各含两次 Lorem ipsum"
+        );
+        assert!(
+            text.len() > 1_200,
+            "正文不得消失：只有 {} 个字形",
+            text.len()
+        );
+    }
+
+    /// 三组等式的等号 x 坐标取自 latex 参考 DVI，跨三行分别对齐。
+    #[test]
+    fn latex_bundle_align_three_pairs_match_reference_columns() {
+        let _guard = global_switch_guard();
+        let fragment = include_str!("../../../fixtures/repro/repro_align_three_pairs.tex");
+        let assets = Arc::new(LatexAssets::from_bundle(&repo_bundle()).expect("发行资产"));
+        let source = ntex_layout::typeset::wrap_latex_fragment(fragment).expect("片段补壳");
+        let compiled = compile_pipeline_assets(&source, false, Some(assets)).expect("align 编译");
+        assert!(
+            !compiled.transcript.contains('!'),
+            "{}",
+            compiled.transcript
+        );
+        assert_eq!(compiled.pages.len(), 1);
+        let dvi = ntex_pdf::parse_dvi(&compiled.dvi).expect("DVI 应可解析");
+        let equals: Vec<i64> = dvi.pages[0]
+            .ops
+            .iter()
+            .filter_map(|op| match op {
+                ntex_pdf::DrawOp::Char { code: 61, h, .. } => Some(*h),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(equals, [9_195_940, 15_768_764, 22_005_493].repeat(3));
     }
 
     /// NFSS 尺寸切换（`\Large` 等）的字体名污染——**已知引擎缺陷的现场锁**。
@@ -2336,6 +2433,7 @@ mod tests {
     /// 本锁钉住修复后语义：12pt 正文与 `\Large` 均**零缺字体**，且 cmr12 真载入。
     #[test]
     fn large_size_switch_loads_cmr12_without_pollution() {
+        let _guard = global_switch_guard();
         let assets =
             Arc::new(LatexAssets::from_bundle(&repo_bundle()).expect("发行资产包应能解析"));
         let body = compile_pipeline_assets(
@@ -2381,6 +2479,7 @@ mod tests {
     /// lingmacros/tree-dvips 即此形态）。
     #[test]
     fn missing_latex_package_error_carries_first_error_line() {
+        let _guard = global_switch_guard();
         let assets =
             Arc::new(LatexAssets::from_bundle(&repo_bundle()).expect("发行资产包应能解析"));
         let err = compile_pipeline_assets(
@@ -2401,6 +2500,7 @@ mod tests {
     /// （不出 `Document Class`），**不 panic、不空页**——保证坏资产不致白屏。
     #[test]
     fn latex_assets_without_format_fall_back_to_plain() {
+        let _guard = global_switch_guard();
         let mut bundle = BUNDLE_MAGIC.to_vec();
         bundle.extend_from_slice(&1u32.to_le_bytes());
         push_entry(&mut bundle, 0, "article.cls", b"% stub\n");
@@ -2500,6 +2600,7 @@ mod tests {
     /// 几个开关，污染会打翻别的用例（本文件 516 行注释同款纪律）。
     #[test]
     fn thanks_footnote_mark_uses_shipped_ts1_metrics() {
+        let _guard = global_switch_guard();
         let assets = Arc::new(LatexAssets::from_bundle(&repo_bundle()).expect("资产包应能解析"));
         let mut src = EmbeddedTfmSource {
             latex: Some(assets.clone()),
@@ -2541,6 +2642,7 @@ mod tests {
     /// 这句断言抓住，不需要维护第二份"应该有哪些字体"的手写清单。
     #[test]
     fn workbench_manifest_covers_fonts_used_by_latex_docs() {
+        let _guard = global_switch_guard();
         let assets = Arc::new(LatexAssets::from_bundle(&repo_bundle()).expect("资产包应能解析"));
         let mut probes: Vec<String> = vec![
             // 用户现场 1：数学（cmmi12 + 上标 2 的 cmr8）

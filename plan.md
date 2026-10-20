@@ -115,6 +115,12 @@
     从 5 条错误 / 0 页恢复为零错 / 1 页，补壳与显式整文档的盒树和 DVI 完全一致。
     回归用例：`fixtures/repro/repro_multline_fragment.tex`。
 
+13. **Tauri 多列公式与 blindtext 文档闭环**（10-20）：周期对齐列扩展已修
+    （`169d284`），三组等号横坐标与 LaTeX 参考逐 sp 一致；补齐 blindtext 官方资产，
+    修复行末反斜杠读取、默认语言及 `prevdepth` 初值偏 1sp 引发的空白首页。
+    发行 fmt 已真实重建，原文档零错一页、标题和两段正文均可见。验证与归档见
+    [tauri-align-blindtext-2026-10-20.md](docs/archive/tauri-align-blindtext-2026-10-20.md)。
+
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 
 - **第十八刀** 尾递归鞍具校准 → `make check` 797 → **800 全绿**；pdfTeX 对照证明原否定结论有误；

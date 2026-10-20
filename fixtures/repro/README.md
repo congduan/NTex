@@ -18,6 +18,8 @@
 
 | 文件 | 问题 | 修复 commit |
 |---|---|---|
+| repro_align_three_pairs.tex | 三组 align 等号列宽与列间距；周期列扩展快照未同步 | 169d284 |
+| repro_blindtext_sections.tex | 缺 blindtext、默认语言及 prevdepth 初值偏 1sp 导致空白首页 | 本次提交 |
 | repro_multline_fragment.tex | 工作台裸数学片段缺 amsmath；由补壳函数编译（wasm 回归锁） | 已修，未提交 |
 | repro_discards.tex / repro_discards2.tex | `\splitdiscards` 数学模式 Missing number ×11（内部量无 `=` 误当赋值） | 9b0bc69 |
 | repro_left.tex | `\left` 组 currentgrouptype 应为 16 | d980920 |

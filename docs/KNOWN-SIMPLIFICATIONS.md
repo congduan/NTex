@@ -315,3 +315,13 @@ demo1 六刀 + 输出例程刀 2/3/5 的修复登记；全部已提交，留作�
   回归锁：`math_fragments_load_amsmath_without_shifting_lines`、
   `latex_bundle_multline_fragment_matches_explicit_document`（发行资产、零错、单页、盒树/DVI
   与显式文档一致）；实际 JS + WASM 原片段验证零错出页并目检首行左齐、末行右齐。未提交。
+
+- 2026-10-20：✅ **多列 align 与 blindtext 空白首页**——周期 preamble 扩展的
+  tabskip 快照现同步至排版器（`169d284`），第三列起不再封成零宽。补齐官方
+  `blindtext.sty`（revision/SHA-512 见 `ntex.lock`）；`input.rs` 的 escape 行尾分支
+  改按 `endlinechar` 构造控制序列（默认 `\^^M`）；US English 格式声明默认语言；
+  `param.rs` 的 prevdepth 初值严格对齐 tex.web `ignore_depth=-65536000`，撤掉多减的
+  1sp（LaTeX `\addpenalty` 的精确哨兵比较因此失配，曾产生约 1000pt 假间距）。
+  发行 fmt 已从源码真实重建，格式布局版本不变。原文档零错一页，回归同时检查标题、
+  两节标题与两段正文，避免“无错误但空白”假绿；详见
+  [归档](archive/tauri-align-blindtext-2026-10-20.md)。源码、发行资产与回归锁同批提交。

@@ -194,6 +194,20 @@ pub fn scan_token(
                 let Some(&c0) = bytes.get(*pos) else {
                     return Err(Error::invalid_input("输入以反斜杠结束"));
                 };
+                // tex.web 的输入缓冲在物理行尾放 end_line_char，而不是 OS 的 LF。
+                // escape 分支也须遵守：行末反斜杠默认形成 \^^M（LaTeX 定义为控制空格），
+                // 否则 blindtext 等宏包里的行末反斜杠会变成未定义的 \^^J。
+                if c0 == b'\n' {
+                    *pos += 1;
+                    *state = ScanState::LineStart;
+                    let name = if (0..=255).contains(&endlinechar) {
+                        char::from(endlinechar as u8).to_string()
+                    } else {
+                        // end_line_char_inactive：本行已无字符，scan_cs 返回 null_cs。
+                        String::new()
+                    };
+                    return Ok(Some(Token::control_sequence(intern.intern(&name))));
+                }
                 // 首字符三路解码：^^ 转义（\^^@、\^^? 等）/ UTF-8 多字节
                 // （utf8 模式，M9 中文刀 2：`\中文` 可作控制词/控制符号名）/ 单字节
                 let mut first_cp: u32 = c0 as u32;
@@ -1088,6 +1102,29 @@ mod tests {
             toks.iter().all(|t| !t.is_active()),
             "行尾不得产出 active char token：{toks:?}"
         );
+    }
+
+    #[test]
+    fn escape_at_physical_eol_uses_endlinechar_and_skips_next_indent() {
+        let (tokens, intern) = scan_all_with(CatcodeTable::default(), "\\\n  B");
+        assert_eq!(tokens.len(), 2, "行末控制符之后的下一行缩进应忽略");
+        assert_eq!(intern.name(tokens[0].csid().expect("控制符")), "\r");
+        assert_eq!(tokens[1].charcode(), Some(b'B' as u32));
+        for (endlinechar, name) in [(32, " "), (65, "A"), (-1, ""), (256, "")] {
+            let mut intern = InternTable::new();
+            let token = scan_token(
+                b"\\\n",
+                &mut 0,
+                &CatcodeTable::default(),
+                &mut intern,
+                &mut ScanState::LineStart,
+                false,
+                endlinechar,
+            )
+            .expect("扫描成功")
+            .expect("控制序列");
+            assert_eq!(intern.name(token.csid().expect("控制符")), name);
+        }
     }
 
     #[test]

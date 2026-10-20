@@ -3,6 +3,14 @@ ntex-lock 1
 # 身份字段：name / revision / sha512；参考字段：category / size / files
 
 [[pkg]]
+name blindtext
+category Package
+revision 77682
+size 10500
+sha512 a661332e727d24e89fd27780cebc5362fa49ca13441bdeba53beec0d3e2374eabdfaaf4cc9f5ff0464476196bd20f11ea8bd01ae87d311e1c2cc34e68b3a5ec0
+files 1
+
+[[pkg]]
 name latex
 category Package
 revision 79618

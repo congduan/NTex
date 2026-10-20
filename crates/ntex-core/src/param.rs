@@ -52,7 +52,7 @@ pub enum ParamKind {
     LeftSkip,
     /// `\rightskip`：段落右侧悬挂胶水（plain 默认 0pt）。
     RightSkip,
-    /// `\prevdepth`：上一行 depth（段落开头 interline glue 用；无前一行 = -1000pt < -1000 表示未定义）。
+    /// `\prevdepth`：上一行 depth（段落开头 interline glue 用；无前一行 = -1000pt（tex.web ignore_depth））。
     PrevDepth,
     /// `\interlinepenalty`：行间断页惩罚（plain 默认 0）。
     InterLinePenalty,
@@ -357,7 +357,7 @@ pub struct Params {
     pub leftskip: Glue,
     /// `\rightskip`（plain 默认 0pt）。
     pub rightskip: Glue,
-    /// `\prevdepth`（initex 默认 -1000pt < -1000 = 未定义；单位 sp）。
+    /// `\prevdepth`（initex 默认 -1000pt = ignore_depth；单位 sp）。
     pub prevdepth: i64,
     /// `\interlinepenalty`（plain 默认 0）。
     pub interlinepenalty: i64,
@@ -467,7 +467,7 @@ impl Default for Params {
             // plain.tex L287-293 供 150/150/50——暂维持，随 misc 表同批处理）
             leftskip: Glue::ZERO,
             rightskip: Glue::ZERO,
-            prevdepth: -1_000 * SP_PER_PT - 1, // < -1000pt = 未定义
+            prevdepth: -1_000 * SP_PER_PT, // tex.web ignore_depth，LaTeX 按精确值判断
             interlinepenalty: 0,
             clubpenalty: 150,
             widowpenalty: 150,
@@ -657,6 +657,11 @@ mod tests {
         assert_eq!(p.boxmaxdepth, 0);
         assert_eq!(p.nulldelimiterspace, 0);
         assert_eq!(p.overfullrule, 0);
+        assert_eq!(
+            p.prevdepth,
+            -1_000 * SP_PER_PT,
+            "tex.web ignore_depth 必须逐 sp 一致"
+        );
 
         // tex.web L5234-5236 整数表全零，仅这六个引擎初值非零
         // （GT iniTeX 探针 TOL=10000 实证）。

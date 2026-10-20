@@ -72,6 +72,22 @@ tex/generic/atbegshi/
 find assets/tex-minimal -type f | sort
 ```
 
+### blindtext 运行资产
+
+`tex/latex/blindtext/blindtext.sty` 来自 TeX Live tlnet 的 `blindtext.r77682`
+（上游 [CTAN blindtext](https://ctan.org/pkg/blindtext)，LPPL），保持上游文件原样。
+容器 SHA-512 与 revision 已由 `ntex-pkg fetch` 校验，并写入根 `ntex.lock`；
+运行依赖 `xspace.sty` 已包含于 `tex/latex/tools/`。补件流程：
+
+```bash
+ntex-pkg fetch <tlpdb> https://mirrors.aliyun.com/CTAN/systems/texlive/tlnet /tmp/tl-cache blindtext
+ntex-pkg vendor <tlpdb> /tmp/tl-cache assets/tex-minimal --write blindtext
+```
+
+最小格式的 `tex/latex/base/hyphen.cfg` 加载 US English 断字表，并声明
+`\languagename=english` 与 `\l@english=0`，使查询默认语言的宏包可直接使用。
+这两项属于格式初始化；修改后需真实重生成 `assets/fmt/latex.fmt`。
+
 ## 默认搜索链
 
 `ntex-dvi` 默认按以下顺序查找 `\input` 文件：
