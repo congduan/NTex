@@ -1,6 +1,21 @@
 use super::*;
 
 #[test]
+fn source_eof_does_not_eject_residual_page() {
+    // tex.web invokes its_all_over only for \end/\dump. A bare EOF after a
+    // completed shipout leaves the next page unshipped (tripos.tex endgame).
+    let src = r"\vsize=10pt \hbox{A}\vfil\penalty-10000 \hbox{B}";
+    let mut eof = Typesetter::with_metrics(metrics).plain_params();
+    eof.set_strict_eof_stop(true);
+    let (eof_pages, _) = eof.typeset_dvi(src).unwrap();
+    let mut ended = Typesetter::with_metrics(metrics).plain_params();
+    ended.set_strict_eof_stop(true);
+    let (ended_pages, _) = ended.typeset_dvi(&format!("{src}\\end")).unwrap();
+    assert_eq!(eof_pages.len(), 1);
+    assert_eq!(ended_pages.len(), 2);
+}
+
+#[test]
 fn shipout_transcribes_multi_count_page_without_tracing() {
     let mut ts = Typesetter::with_metrics(metrics).plain_params();
     ts.typeset_dvi(

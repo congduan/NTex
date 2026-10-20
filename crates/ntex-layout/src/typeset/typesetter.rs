@@ -248,6 +248,9 @@ pub struct Typesetter {
     last_transcript: String,
     /// `finish` 收走的 `\shipout` 页面（DVI 统计行：页数）。
     shipped: Vec<BoxNode>,
+    /// CLI TeX jobs must leave residual material unshipped on bare EOF.
+    /// Embedded callers historically accept EOF as an implicit \end.
+    strict_eof_stop: bool,
     /// 与 [`Self::shipped`] 一一对应的各页 `\count0..9` 快照（输出例程刀 5）。
     shipped_counts: Vec<[i64; 10]>,
     /// `.fmt` 恢复的 `\count0..9`（install_builder 播种页号链镜像用；`.fmt` 的
@@ -348,6 +351,7 @@ impl Typesetter {
             },
             last_transcript: String::new(),
             shipped: Vec::new(),
+            strict_eof_stop: false,
             shipped_counts: Vec::new(),
             fmt_page_counts: [0; 10],
             fmt_insert_regs: InsertRegs::default(),
@@ -396,6 +400,11 @@ impl Typesetter {
     pub fn set_interaction_mode(&mut self, mode: i64) {
         self.expander
             .set_misc_int(ntex_core::param::MISC_INTERACTION_MODE, mode.clamp(0, 3));
+    }
+
+    /// Bare EOF is an emergency stop in TeX and must not eject a residual page.
+    pub fn set_strict_eof_stop(&mut self, enabled: bool) {
+        self.strict_eof_stop = enabled;
     }
 
     /// 取回 VFS（测试断言写入内容用）。
@@ -609,6 +618,7 @@ impl Typesetter {
             fonts: Fonts::Tfm(Rc::new(RefCell::new(Vec::new()))),
             last_transcript: String::new(),
             shipped: Vec::new(),
+            strict_eof_stop: false,
             shipped_counts: Vec::new(),
             fmt_page_counts: [0; 10],
             fmt_insert_regs: InsertRegs::default(),
@@ -636,6 +646,7 @@ impl Typesetter {
             fonts: Fonts::Tfm(Rc::new(RefCell::new(Vec::new()))),
             last_transcript: String::new(),
             shipped: Vec::new(),
+            strict_eof_stop: false,
             shipped_counts: Vec::new(),
             fmt_page_counts: [0; 10],
             fmt_insert_regs: InsertRegs::default(),
@@ -856,6 +867,9 @@ impl Typesetter {
         //    （tex.web final_end：`(\end occurred inside a group at level N)`，
         //    trip.log L7293），仅纯 EOF 缺 `\end` 才报错。
         let ended = self.expander.is_ended();
+        if std::env::var_os("NTEX_R8_DIAG").is_some() {
+            eprintln!("[R8] finish ended={ended}");
+        }
         {
             let builder = self
                 .expander
@@ -887,6 +901,9 @@ impl Typesetter {
             let groups_unclosed = !builder.groups.is_empty();
             let math_unclosed = !builder.math_state.math.is_empty();
             let ended_inside_output = builder.groups.iter().any(|g| g.kind == GroupKind::Output);
+            if std::env::var_os("NTEX_R8_DIAG").is_some() {
+                eprintln!("[R8] finish mode={:?} groups={} page_empty={} contrib={} shipped={}", builder.mode(), builder.groups.len(), builder.page_state.page.is_empty(), builder.lists[0].len(), builder.page_state.shipped.len());
+            }
             if groups_unclosed {
                 let _ = builder.write16(format!(
                     "(end occurred inside a group at level {})\n",
@@ -937,11 +954,18 @@ impl Typesetter {
                 builder.page_state.eject_final_pending = true;
             }
         }
-        loop {
+        // tex.web calls its_all_over only for an explicit \end or \dump.
+        // Source EOF (tripos.tex deliberately ends with an open `[`) is an
+        // emergency stop: pages already shipped stay shipped, but residual
+        // page material must not be ejected as one more page.
+        while ended || !self.strict_eof_stop {
             // tex.web its_all_over replays \end while a user output routine
             // has returned without shipping. Each replay contributes an
             // eject tail, allowing fire_up to reach the dead-cycle gate.
             let retry_end = ended && self.expander.params_ref().misc[25] > 0;
+            if std::env::var_os("NTEX_R8_DIAG").is_some() {
+                eprintln!("[R8] its_all_over retry_end={retry_end} dead_cycles={}", self.expander.params_ref().misc[25]);
+            }
             let ejected = {
                 let builder = self
                     .expander

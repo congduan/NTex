@@ -2337,9 +2337,17 @@ impl Expander {
     /// 丢弃该盒。\end 的续行冲页可再次点火，直到 dead-cycle 门限默认出货。
     /// 空 `\output={}` 在赋值时已变为未定义，直接走默认出货。
     fn maybe_inject_output(&mut self) -> Result<bool> {
+        let r8_diag = std::env::var_os("NTEX_R8_DIAG").is_some();
         // tex.web ship_out clears dead_cycles even when no further page is
         // pending. Do this before the early return below.
-        if self.sink.take_page_shipped() && self.params.misc[DEAD_CYCLES_IDX] != 0 {
+        let shipped = self.sink.take_page_shipped();
+        if r8_diag && shipped {
+            eprintln!(
+                "[R8] ship_out dead_cycles={} -> 0",
+                self.params.misc[DEAD_CYCLES_IDX]
+            );
+        }
+        if shipped && self.params.misc[DEAD_CYCLES_IDX] != 0 {
             self.params.misc[DEAD_CYCLES_IDX] = 0;
             self.sink
                 .param_changed(ParamKind::MiscInt(DEAD_CYCLES_IDX), ParamValue::Number(0))?;
@@ -2380,6 +2388,12 @@ impl Expander {
         // 否则 inf_penalty。geq_word_define = 全局赋值（不进 save_stack），
         // 例程内 \outputpenalty=... 的覆盖到下一次断页被重写，与 tex.web 一致。
         let bp = self.sink.output_break_penalty().unwrap_or(INF_PENALTY);
+        if r8_diag {
+            eprintln!(
+                "[R8] fire_up dead_cycles={} max={} break_penalty={} pending={count}",
+                self.params.misc[DEAD_CYCLES_IDX], self.params.misc[MAX_DEAD_CYCLES_IDX], bp
+            );
+        }
         self.params.misc[OUTPUT_PENALTY_IDX] = bp;
         self.sink.param_changed(
             ParamKind::MiscInt(OUTPUT_PENALTY_IDX),
@@ -2388,6 +2402,9 @@ impl Expander {
         // fire_up：dead_cycles >= max_dead_cycles → "Output loop" 错并转默认输出
         // （直接 ship box255），不再点火用户例程——打破"例程永不 ship"死循环。
         if self.params.misc[DEAD_CYCLES_IDX] >= self.params.misc[MAX_DEAD_CYCLES_IDX] {
+            if r8_diag {
+                eprintln!("[R8] branch=default_output");
+            }
             let dead = self.params.misc[DEAD_CYCLES_IDX];
             self.sink
                 .report_error(&format!("Output loop---{dead} consecutive dead cycles."));
@@ -2406,6 +2423,12 @@ impl Expander {
         // @<Fire up the user's output routine and |return|@>：incr(dead_cycles)
         // （例程 ship 时由 take_page_shipped 分支清零）。
         self.params.misc[DEAD_CYCLES_IDX] += 1;
+        if r8_diag {
+            eprintln!(
+                "[R8] branch=user_output dead_cycles={}",
+                self.params.misc[DEAD_CYCLES_IDX]
+            );
+        }
         self.sink.param_changed(
             ParamKind::MiscInt(DEAD_CYCLES_IDX),
             ParamValue::Number(self.params.misc[DEAD_CYCLES_IDX]),

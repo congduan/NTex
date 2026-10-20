@@ -215,6 +215,7 @@ fn main() -> ExitCode {
     }
 
     let mut ts = ntex_layout::typeset::Typesetter::with_tfm();
+    ts.set_strict_eof_stop(true);
     let job_name = PathBuf::from(input)
         .file_stem()
         .and_then(|s| s.to_str())

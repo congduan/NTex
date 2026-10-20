@@ -83,6 +83,11 @@
    small2e 0 错。残留：寄存器族 retaining 未接、Eqtb 侧 trace 打保存值、
    「值不变不 push」hack 待随层级模型退役。全文见
    [docs/archive/save-stack-retaining-2026-10-20.md](docs/archive/save-stack-retaining-2026-10-20.md)。
+8. **刀 AJ R8 WIP（未提交，10-20）**：当前 HEAD 新构建下 tripos 基线实为 13 页、
+   `pagegoal=16383.99998pt`。诊断见裸 EOF 前已 ship 12 页，`finish` 误冲第 13 页；
+   CLI 严格 EOF 门控后为 12 页，core 563 + layout 314 / pkg 13/13 绿，trip.tex 177B。
+   Claude Code review CLI 尚未返回审查结论，未提交推送；卡点与原始输出见
+   `/tmp/bladeAJ/r8-report.md`。
 
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 
