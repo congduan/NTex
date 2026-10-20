@@ -697,6 +697,37 @@ mod tests {
     }
 
     #[test]
+    fn last_items_in_hbox_read_live_tail_for_the_and_scanners() {
+        // pdfTeX plain: 5.0pt, then 327680, then 3.0pt plus 2.0pt.
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
+        let src = r"\hbox{a\kern5pt\showthe\lastkern\penalty\lastkern\showthe\lastpenalty\hskip3pt plus2pt\showthe\lastskip}\end";
+        ts.typeset_dvi(src).unwrap();
+        let t = ts.take_transcript();
+        assert_eq!(showthe_values(&t, "lastkern"), vec!["5.0pt"], "{t}");
+        assert_eq!(showthe_values(&t, "lastpenalty"), vec!["327680"], "{t}");
+        assert_eq!(showthe_values(&t, "lastskip"), vec!["3.0pt plus 2.0pt"], "{t}");
+    }
+
+    #[test]
+    fn last_items_after_page_builder_drains_outer_vlist() {
+        // pdfTeX plain: even a discarded leading kern is remembered; the
+        // subsequent penalty replaces it. Repeat with a nonempty current page.
+        for prefix in ["", r"\hbox{a}"] {
+            let mut ts = Typesetter::with_metrics(metrics).plain_params();
+            let src = format!(r"{prefix}\kern5pt\showthe\lastkern\penalty\lastkern\showthe\lastpenalty\end");
+            ts.typeset_dvi(&src).unwrap();
+            let t = ts.take_transcript();
+            assert_eq!(showthe_values(&t, "lastkern"), vec!["5.0pt"], "{t}");
+            assert_eq!(showthe_values(&t, "lastpenalty"), vec!["327680"], "{t}");
+        }
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
+        ts.typeset_dvi(r"\vskip3pt plus2pt\showthe\lastskip\end")
+            .unwrap();
+        let t = ts.take_transcript();
+        assert_eq!(showthe_values(&t, "lastskip"), vec!["3.0pt plus 2.0pt"], "{t}");
+    }
+
+    #[test]
     fn space_becomes_glue() {
         let children = spaced_box_children(r"\hbox{a b}");
         assert_eq!(children.len(), 3);

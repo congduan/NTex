@@ -88,6 +88,14 @@
    CLI 严格 EOF 门控后为 12 页，core 563 + layout 314 / pkg 13/13 绿，trip.tex 177B。
    Claude Code review CLI 尚未返回审查结论，未提交推送；卡点与原始输出见
    `/tmp/bladeAJ/r8-report.md`。
+9. **刀 AJ R12 WIP（未提交，10-20；起点 `5b49697`）**：修复 `\the` / `\showthe`
+   的 `\lastkern`、`\lastskip` 镜像误读，`scan_int` 通用参数臂抢先命中，以及
+   外层 vmode 贡献列表被页构建器抽空后的 `last_*` 回读。hmode/vmode 双轨探针
+   已与 pdfTeX 的 5.0pt / 327680 对齐；core 563 + layout 316、仪器 13/13、
+   宏包 13/13 全绿，tripos 12 页 750B、构造页 177B。**全本 TRIP 仍 9 页、
+   Missing number 13（GT 16 页、6）**，首个可见前序节点分叉在 L190 的
+   `\unkern` 后（GT `\lastkern=2pt`、NTex 0）；按门禁保留 WIP，不提交推送。
+   原始输出与卡点见 `/tmp/bladeAJ/r12-report.md`。
 
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 

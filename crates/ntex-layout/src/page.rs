@@ -25,6 +25,15 @@ use ntex_core::register::{Glue, REGISTER_COUNT};
 
 use crate::node::{vert_break, BoxKind, BoxNode, Node};
 
+/// tex.web's `last_glue`, `last_kern`, and `last_penalty` for the most
+/// recently processed contribution. Only one node kind is active at a time.
+#[derive(Debug, Clone, Copy)]
+enum LastContribution {
+    Glue(Glue),
+    Kern(i64),
+    Penalty(i64),
+}
+
 /// 无穷惩罚 / badness 常量（tex.web §3258、§18983）。
 const INF_PENALTY: i64 = 10_000;
 const EJECT_PENALTY: i64 = -INF_PENALTY;
@@ -61,6 +70,7 @@ impl Default for InsertRegs {
 pub struct PageBuilder {
     /// 当前页节点（已接收的贡献；`fire_up` 时按最佳断点切片）。
     page: Vec<Node>,
+    last_contribution: Option<LastContribution>,
     /// page_so_far[1]：自然高度。
     total: i64,
     /// page_so_far[2..6]：各阶拉伸 [normal, fil, fill, filll]。
@@ -173,6 +183,7 @@ impl PageBuilder {
     pub fn new() -> Self {
         Self {
             page: Vec::new(),
+            last_contribution: None,
             total: 0,
             stretch: [0; 4],
             shrink: 0,
@@ -212,6 +223,27 @@ impl PageBuilder {
     /// `\vsize` 事件面更新（[NodeBuilder::param_changed] 调用）。
     pub fn note_vsize(&mut self, v: i64) {
         self.vsize_live = Some(v);
+    }
+
+    pub fn last_penalty(&self) -> i64 {
+        match self.last_contribution {
+            Some(LastContribution::Penalty(v)) => v,
+            _ => 0,
+        }
+    }
+
+    pub fn last_kern(&self) -> i64 {
+        match self.last_contribution {
+            Some(LastContribution::Kern(v)) => v,
+            _ => 0,
+        }
+    }
+
+    pub fn last_glue(&self) -> Option<Glue> {
+        match self.last_contribution {
+            Some(LastContribution::Glue(g)) => Some(g),
+            _ => None,
+        }
     }
 
     /// 本轮 feed 生效的断页目标（事件面优先，镜像兜底）。
@@ -357,6 +389,27 @@ impl PageBuilder {
         inserts: &InsertRegs,
     ) -> Outcome {
         let node = contrib[0].clone();
+        // tex.web build_page updates these *before* deciding whether the
+        // contribution enters the page, is discarded, or fires a break.
+        self.last_contribution = match &node {
+            Node::Glue {
+                width,
+                stretch,
+                shrink,
+                stretch_order,
+                shrink_order,
+                ..
+            } => Some(LastContribution::Glue(Glue {
+                width: *width,
+                stretch: *stretch,
+                shrink: *shrink,
+                stretch_order: *stretch_order,
+                shrink_order: *shrink_order,
+            })),
+            Node::Kern { width } => Some(LastContribution::Kern(*width)),
+            Node::Penalty { penalty } => Some(LastContribution::Penalty(*penalty)),
+            _ => None,
+        };
         match node {
             Node::Box(b) => {
                 // LaTeX `\clearpage` 尾部在强制惩罚前放一个 `\vbox{}`；`\end@float`
@@ -1088,6 +1141,7 @@ impl PageBuilder {
     /// `@<Start a new current page@>`（tex.web §373-376）。
     fn start_new_page(&mut self) {
         self.page.clear();
+        self.last_contribution = None;
         self.has_box = false;
         self.depth = 0;
         self.max_depth = 0;

@@ -665,13 +665,14 @@ impl Expander {
                 // `\__cctab_gset:n` 的 `\fontdimen257<font> \tex_endlinechar:D
                 // \c__intarray_sp_dim` 现场级联）。
                 EqSlot::Primitive(p)
-                    if int_param_index(p).is_some()
+                    if !matches!(p, Primitive::LastKern | Primitive::LastSkip)
+                        && (int_param_index(p).is_some()
                         || matches!(
                             param_kind_of(p).map(|k| self.params.get(k)),
                             Some(
                                 ParamValue::Number(_) | ParamValue::Dimen(_) | ParamValue::Glue(_)
                             )
-                        ) =>
+                        )) =>
                 {
                     self.fetch()?; // 消费原语
                     if let Some(idx) = int_param_index(p) {

@@ -1774,16 +1774,19 @@ impl BoxSink for NodeBuilder {
         }
         -1
     }
-    /// `\lastpenalty`：当前列表尾若是 penalty 节点返回其值，否则 0（TeX 语义）。
+    /// `\lastpenalty`：当前列表尾为 penalty 时取值；外层 vmode 列表被
+    /// page builder 抽空后改读它记录的最近贡献。
     fn last_penalty(&self) -> i64 {
         self.mark_spec_taint();
         match self.lists.last().and_then(|l| l.last()) {
             Some(Node::Penalty { penalty }) => *penalty,
+            None if self.mode() == Mode::Vertical && self.lists.len() == 1 =>
+                self.page_state.page.last_penalty(),
             _ => 0,
         }
     }
-    /// `\lastskip` 完整胶水量（tex.web L8535）：**只认列表尾节点**——
-    /// 尾不是 glue_node 即 zero_glue，不向列表前段回溯。
+    /// `\lastskip` 完整胶水量（tex.web L8535）：非空列表只认尾节点；
+    /// 外层 vmode 的空贡献列表回读 page builder 最近贡献。
     fn last_glue(&self) -> Option<Glue> {
         self.mark_spec_taint();
         match self.lists.last().and_then(|l| l.last()) {
@@ -1801,25 +1804,25 @@ impl BoxSink for NodeBuilder {
                 stretch_order: *stretch_order,
                 shrink_order: *shrink_order,
             }),
+            None if self.mode() == Mode::Vertical && self.lists.len() == 1 =>
+                self.page_state.page.last_glue(),
             _ => None,
         }
     }
-    /// e-TeX `\lastskip` 作尺寸（tex.web L8535）：**只看列表尾**——尾是 glue_node
-    /// 取其宽度，否则 0。此前向后回溯到任意 glue 节点，`\ifdim\lastskip=\z@`
+    /// e-TeX `\lastskip` 作尺寸（tex.web L8535）：胶水取宽度，否则 0。
+    /// 此前向后回溯到任意 glue 节点，`\ifdim\lastskip=\z@`
     /// （latex.ltx `\sw@slant`）在前文有胶水时误判非零。
     fn last_skip(&self) -> i64 {
-        self.mark_spec_taint();
-        match self.lists.last().and_then(|l| l.last()) {
-            Some(Node::Glue { width, .. }) => *width,
-            _ => 0,
-        }
+        self.last_glue().map_or(0, |g| g.width)
     }
     /// e-TeX `\lastkern`：当前列表尾 kern 节点的宽度（tex.web L8535 dimen_val
-    /// 臂同款——只看尾节点；非 kern → 0）。
+    /// 臂同款——非空列表只看尾节点；外层 vmode 空列表回读 page builder）。
     fn last_kern(&self) -> i64 {
         self.mark_spec_taint();
         match self.lists.last().and_then(|l| l.last()) {
             Some(Node::Kern { width }) => *width,
+            None if self.mode() == Mode::Vertical && self.lists.len() == 1 =>
+                self.page_state.page.last_kern(),
             _ => 0,
         }
     }

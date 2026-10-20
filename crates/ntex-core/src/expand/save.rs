@@ -555,7 +555,6 @@ impl Expander {
                 | Primitive::HangIndent
                 | Primitive::SpaceSkip
                 | Primitive::TabSkip
-                | Primitive::LastSkip
                 | Primitive::SplitTopSkip
                 | Primitive::Hfuzz
                 | Primitive::Vfuzz
@@ -566,7 +565,6 @@ impl Expander {
                 | Primitive::DisplayIndent
                 | Primitive::DelimiterShortfall
                 | Primitive::MathSurround
-                | Primitive::LastKern
                 | Primitive::Mag => {
                     let kind = match p {
                         Primitive::ParIndent => ParamKind::ParIndent,
@@ -592,7 +590,6 @@ impl Expander {
                         Primitive::HangIndent => ParamKind::HangIndent,
                         Primitive::SpaceSkip => ParamKind::SpaceSkip,
                         Primitive::TabSkip => ParamKind::TabSkip,
-                        Primitive::LastSkip => ParamKind::LastSkip,
                         Primitive::SplitTopSkip => ParamKind::SplitTopSkip,
                         Primitive::Hfuzz => ParamKind::Hfuzz,
                         Primitive::Vfuzz => ParamKind::Vfuzz,
@@ -603,7 +600,6 @@ impl Expander {
                         Primitive::DisplayIndent => ParamKind::DisplayIndent,
                         Primitive::DelimiterShortfall => ParamKind::DelimiterShortfall,
                         Primitive::MathSurround => ParamKind::MathSurround,
-                        Primitive::LastKern => ParamKind::LastKern,
                         Primitive::NullDelimiterSpace => ParamKind::NullDelimiterSpace,
                         Primitive::ScriptSpace => ParamKind::ScriptSpace,
                         Primitive::OverfullRule => ParamKind::OverfullRule,
@@ -618,6 +614,12 @@ impl Expander {
                         ParamValue::Number(v) => emit_count(v),
                     })
                 }
+                // These are list items, not assignable parameter snapshots. In outer
+                // vmode the sink also handles TeX's emptied contribution list.
+                Primitive::LastSkip => Ok(emit_glue(
+                    self.query_sink_ref().last_glue().unwrap_or(Glue::ZERO),
+                )),
+                Primitive::LastKern => Ok(emit_dimen(self.query_sink_ref().last_kern())),
                 // ETRIP 冲刺：TeX/e-TeX 内部整数参数（misc 数组）
                 p if int_param_index(*p).is_some() => {
                     let idx = int_param_index(*p).expect("已检查 is_some");
