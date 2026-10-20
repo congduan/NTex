@@ -1,3 +1,35 @@
+/// Read a literal `\kern` dimension in a discretionary sublist. TeX builds
+/// these sublists in restricted horizontal mode; this covers direct numeric
+/// `pt`/`sp` kerns while the surrounding token-list conversion is still a
+/// restricted implementation.
+fn parse_discretionary_kern(toks: &[Token]) -> Option<(i64, usize)> {
+    let mut i = 0;
+    while toks.get(i)?.charcode() == Some(u32::from(b' ')) {
+        i += 1;
+    }
+    let negative = matches!(toks.get(i)?.charcode(), Some(45));
+    if negative || toks.get(i)?.charcode() == Some(u32::from(b'+')) {
+        i += 1;
+    }
+    let start = i;
+    let mut whole = 0_i64;
+    while let Some(c @ 48..=57) = toks.get(i).and_then(|t| t.charcode()) {
+        whole = whole.checked_mul(10)?.checked_add(i64::from(c - 48))?;
+        i += 1;
+    }
+    if i == start {
+        return None;
+    }
+    let unit = [toks.get(i)?.charcode()?, toks.get(i + 1)?.charcode()?];
+    let scale = match unit {
+        [112, 116] => ntex_core::SP_PER_PT,
+        [115, 112] => 1,
+        _ => return None,
+    };
+    let width = whole.checked_mul(scale)?;
+    Some((if negative { -width } else { width }, i + 2))
+}
+
 impl CoreSink for NodeBuilder {
     // （tokens, take_tokens 走子 trait 默认实现，NodeBuilder 未覆写）
     fn token(&mut self, tok: Token) -> Result<()> {
@@ -821,28 +853,38 @@ impl CoreSink for NodeBuilder {
         Ok(())
     }
     /// `\discretionary{pre}{post}{replace}`：断字节点。组内容 token 中字符
-    /// 转字符节点（当前字体，维度查字体表），其余忽略（简化）。
+    /// 转字符节点，并保留直接写出的 `\kern`（当前字体，维度查字体表）。
     fn discretionary(
         &mut self,
         pre: Vec<Token>,
         post: Vec<Token>,
         replace: Vec<Token>,
+        kern_csid: Option<u32>,
     ) -> Result<()> {
         let conv = |toks: &[Token]| -> Vec<Node> {
-            toks.iter()
-                .filter_map(|t| {
-                    t.charcode().map(|c| {
+            let mut result = Vec::new();
+            let mut i = 0;
+            while i < toks.len() {
+                if kern_csid.is_some() && toks[i].csid() == kern_csid {
+                    if let Some((width, consumed)) = parse_discretionary_kern(&toks[i + 1..]) {
+                        result.push(Node::Kern { width });
+                        i += consumed + 1;
+                        continue;
+                    }
+                }
+                if let Some(c) = toks[i].charcode() {
                         let (w, h, d) = self.fonts.metrics(self.current_font, c);
-                        Node::Char {
+                        result.push(Node::Char {
                             font: self.current_font,
                             charcode: c,
                             width: w,
                             height: h,
                             depth: d,
-                        }
-                    })
-                })
-                .collect()
+                        });
+                }
+                i += 1;
+            }
+            result
         };
         self.append(Node::Discretionary {
             pre: conv(&pre),
@@ -1731,7 +1773,7 @@ impl BoxSink for NodeBuilder {
         // 快照字段，neutral 判定覆盖不到这条隐式依赖，只能在此显式标记）。
         self.mark_spec_taint();
         if let Some(list) = self.lists.last_mut() {
-            while let Some(Node::Glue { .. } | Node::Leaders { .. }) = list.last() {
+            if matches!(list.last(), Some(Node::Glue { .. } | Node::Leaders { .. })) {
                 list.pop();
             }
         }
@@ -1741,7 +1783,7 @@ impl BoxSink for NodeBuilder {
     fn unpenalty(&mut self) -> Result<()> {
         self.mark_spec_taint();
         if let Some(list) = self.lists.last_mut() {
-            while let Some(Node::Penalty { .. }) = list.last() {
+            if matches!(list.last(), Some(Node::Penalty { .. })) {
                 list.pop();
             }
         }
@@ -1751,7 +1793,7 @@ impl BoxSink for NodeBuilder {
     fn unkern(&mut self) -> Result<()> {
         self.mark_spec_taint();
         if let Some(list) = self.lists.last_mut() {
-            while let Some(Node::Kern { .. }) = list.last() {
+            if matches!(list.last(), Some(Node::Kern { .. })) {
                 list.pop();
             }
         }
@@ -1821,6 +1863,10 @@ impl BoxSink for NodeBuilder {
         self.mark_spec_taint();
         match self.lists.last().and_then(|l| l.last()) {
             Some(Node::Kern { width }) => *width,
+            Some(Node::Discretionary { replace, .. }) => match replace.last() {
+                Some(Node::Kern { width }) => *width,
+                _ => 0,
+            },
             None if self.mode() == Mode::Vertical && self.lists.len() == 1 =>
                 self.page_state.page.last_kern(),
             _ => 0,

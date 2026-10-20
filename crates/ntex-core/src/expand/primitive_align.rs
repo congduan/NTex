@@ -95,7 +95,8 @@ impl Expander {
                 let pre = self.scan_group_contents(None)?;
                 let post = self.scan_group_contents(None)?;
                 let replace = self.scan_group_contents(None)?;
-                self.sink.discretionary(pre, post, replace)
+                self.sink
+                    .discretionary(pre, post, replace, self.intern.lookup("kern"))
             }
             // \insert<regnum>{...}（tex.web begin_insert_or_adjust）：类号扫入
             // saved(0)，开 insert_group 后**组体由主循环在内部垂直模式排版**——
@@ -134,7 +135,7 @@ impl Expander {
                 } else {
                     Vec::new()
                 };
-                self.sink.discretionary(pre, Vec::new(), Vec::new())
+                self.sink.discretionary(pre, Vec::new(), Vec::new(), None)
             }
             // M4-5：\omit 到达 dispatcher = 非列首（合法位由 align_init_col
             // 的 peek 消费；tex.web omit case）

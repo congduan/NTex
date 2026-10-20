@@ -107,6 +107,7 @@ pub trait CoreSink {
         _pre: Vec<Token>,
         _post: Vec<Token>,
         _replace: Vec<Token>,
+        _kern_csid: Option<u32>,
     ) -> Result<()> {
         Ok(())
     }

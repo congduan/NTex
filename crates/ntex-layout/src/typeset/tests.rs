@@ -709,6 +709,31 @@ mod tests {
     }
 
     #[test]
+    fn unkern_preserves_discretionary_replacement_kern() {
+        // pdfTeX: `\discretionary replacing 2` contains B + 2pt kern;
+        // delete_last cannot remove a node within its replacement list.
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
+        let src = r"\hbox{A\discretionary{}{}{B\kern2pt}\unkern\showthe\lastkern}\end";
+        let nodes = ts.typeset(src).unwrap();
+        let kids = &as_box(&nodes[0]).children;
+        let Some(Node::Discretionary { replace, .. }) = kids.last() else {
+            panic!("missing discretionary: {kids:?}");
+        };
+        assert!(matches!(replace.last(), Some(Node::Kern { width }) if *width == 2 * SP_PER_PT));
+        assert_eq!(showthe_values(&ts.take_transcript(), "lastkern"), vec!["2.0pt"]);
+    }
+
+    #[test]
+    fn unskip_unpenalty_unkern_remove_only_one_tail_node() {
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
+        ts.typeset_dvi(r"\hbox{A\kern2pt\kern3pt\unkern\showthe\lastkern\penalty12\penalty34\unpenalty\showthe\lastpenalty\hskip2pt\hskip3pt\unskip\showthe\lastskip}\end").unwrap();
+        let t = ts.take_transcript();
+        assert_eq!(showthe_values(&t, "lastkern"), vec!["2.0pt"], "{t}");
+        assert_eq!(showthe_values(&t, "lastpenalty"), vec!["12"], "{t}");
+        assert_eq!(showthe_values(&t, "lastskip"), vec!["2.0pt"], "{t}");
+    }
+
+    #[test]
     fn last_items_after_page_builder_drains_outer_vlist() {
         // pdfTeX plain: even a discarded leading kern is remembered; the
         // subsequent penalty replaces it. Repeat with a nonempty current page.
