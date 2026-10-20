@@ -103,6 +103,12 @@
     **9 页 / Missing number 13**（GT 16/6），L317 `\lastskip` 仍偏差且 L296 的
     数学/组恢复先分叉。按收敛门禁保留 WIP，不提交推送；原始输出与卡点见
     `/tmp/bladeAJ/r13-report.md`。
+11. **刀 AJ R14 WIP（未提交，10-20；起点 `f915563`）**：GT 组栈确认为外层
+    math shift → vtop → 内层 math shift；NTex 在内层 `$$` opening 前把 vtop
+    误作未闭组回收。两版窄探针均到 0 错，但 trip.tex L298 `\ifvmode…\fi`
+    均触发约 11.9s watchdog，已逐版撤销。最终源码仍为 9 页 / Missing number 13，
+    core 563 + layout 318 全绿；未过全本门槛，不提交推送。诊断、原始输出与
+    下一步可证伪卡点见 `/tmp/bladeAJ/r14-report.md`。
 
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 

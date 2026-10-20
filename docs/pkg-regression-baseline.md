@@ -1,6 +1,6 @@
 # 宏包 CI 回归基线（auto-pkg 放量）
 
-- 日期：2026-10-20；HEAD：`7120e17`；二进制：`target/debug/ntex-dvi`（mtime 2026-10-20 01:34）
+- 日期：2026-10-20；HEAD：`f915563`；二进制：`target/debug/ntex-dvi`（mtime 2026-10-20 17:38）
 - 跑法：`scripts/pkg-regression.py`——ntex-dvi `--auto-pkg --pkg-tlpdb ~/.TinyTeX/tlpkg/texlive.tlpdb --pkg-root ~/.TinyTeX` vs pdfTeX GT `-interaction=nonstopmode` 两趟；顺序执行、单文档 timeout 240s；本地 TL 树，无网络依赖。
 - 判定口径：**PASS = ntex-dvi 写出 DVI 且 0 错**（`^!` 行计数）。GT 对照分级报告：GT 也错的构造不算 NTex 缺口。
 - 文本层 = pymupdf 词序列 difflib 相似度（GT PDF vs DVI→dvipdfmx PDF）。
@@ -28,3 +28,4 @@
 ## auto-pkg 缺包负例（契约验收）
 
 - **caption**（TLPDB 无提供者）：✅ 通过——报错含包名+反查指引=`True`、未产 DVI=`True`。
+
