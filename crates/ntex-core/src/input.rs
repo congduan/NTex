@@ -427,9 +427,18 @@ pub fn scan_token(
                 // 注意 `^^M`（cat 5）也在此路径解码为行尾，走同样判定。
                 match cat {
                     Catcode::EndOfLine => {
+                        // Physical LF stands for TeX's appended end_line_char.  The
+                        // line state rules below apply only when that character has
+                        // catcode 5; verbatim makes ^^M active, even after a control
+                        // word left the scanner in skip_blanks.
+                        let end_cat = if (0..=0xFF).contains(&endlinechar) {
+                            Some(catcodes.get(endlinechar as u8))
+                        } else {
+                            None
+                        };
                         // 空行（行首行尾）→ `\par`；否则行尾 → 空格（charcode 用 32：
                         // 定界符匹配——分隔实参 `#5 ` 的定界空格是 char 32，若保留 LF 将失配）
-                        if *state == ScanState::LineStart {
+                        if end_cat == Some(Catcode::EndOfLine) && *state == ScanState::LineStart {
                             let csid = intern.intern("par");
                             return Ok(Some(Token::control_sequence(csid)));
                         }
@@ -438,7 +447,7 @@ pub fn scan_token(
                         // token**，只回 new_line——`\message{x \ny}` 真 TeX 只出一个
                         // 空格（空格 token 已在 mid_line+spacer 臂产出），旧实现再补
                         // 一个行尾空格 token 成两个。
-                        if *state == ScanState::InSpace {
+                        if end_cat == Some(Catcode::EndOfLine) && *state == ScanState::InSpace {
                             *state = ScanState::LineStart;
                             continue;
                         }
@@ -467,7 +476,7 @@ pub fn scan_token(
                             continue;
                         }
                         let elc = endlinechar as u8;
-                        match catcodes.get(elc) {
+                        match end_cat.expect("valid endlinechar") {
                             Catcode::EndOfLine => {
                                 // 行尾字符自身是 cat 5 → 维持空格语义
                                 //（字符码仍用 32：定界空格匹配，历史口径）
@@ -480,6 +489,11 @@ pub fn scan_token(
                                 }
                             }
                             Catcode::Ignored => continue,
+                            Catcode::Active => {
+                                let name = char::from(elc).to_string();
+                                let csid = intern.intern(&format!("\u{0}A{name}"));
+                                return Ok(Some(Token::active_sequence(csid)));
+                            }
                             Catcode::Space => {
                                 // tex.web：cat 10（spacer）一律产出**规范空格
                                 // token**（`cur_chr:=" "`，与字符码无关）——
@@ -1102,6 +1116,17 @@ mod tests {
             toks.iter().all(|t| !t.is_active()),
             "行尾不得产出 active char token：{toks:?}"
         );
+    }
+
+    #[test]
+    fn active_endlinechar_survives_line_start_and_skip_blanks() {
+        let mut catcodes = CatcodeTable::new();
+        catcodes.set(0x0D, Catcode::Active);
+        let (tokens, _) = scan_all_with(catcodes, "\\foo\nx\n");
+        assert_eq!(tokens.len(), 4, "tokens: {tokens:?}");
+        assert!(tokens[1].is_active(), "after control word: {tokens:?}");
+        assert_eq!(tokens[2].charcode(), Some(b'x' as u32));
+        assert!(tokens[3].is_active(), "after text: {tokens:?}");
     }
 
     #[test]
