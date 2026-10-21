@@ -437,6 +437,7 @@ impl CoreSink for NodeBuilder {
                     parent.atoms.push(MathAtom::Classed {
                         class,
                         content: lv.atoms,
+                        limits: 0,
                     });
                     return Ok(());
                 }
@@ -1378,15 +1379,15 @@ impl MathSink for NodeBuilder {
         let Some(level) = self.math_state.math.last_mut() else {
             return Ok(());
         };
-        let after_op = matches!(
-            level.atoms.last(),
-            Some(MathAtom::Char(mc)) if mc.class == MathClass::Op
-        );
+        let after_op = matches!(level.atoms.last(), Some(MathAtom::Char(mc)) if mc.class == MathClass::Op)
+            || matches!(level.atoms.last(), Some(MathAtom::Classed { class: MathClass::Op, .. }));
         if !after_op {
             return self.write16("! Limit controls must follow a math operator.\n".to_owned());
         }
-        if let Some(MathAtom::Char(mc)) = level.atoms.last_mut() {
-            mc.limits = mode;
+        match level.atoms.last_mut() {
+            Some(MathAtom::Char(mc)) => mc.limits = mode,
+            Some(MathAtom::Classed { limits, .. }) => *limits = mode,
+            _ => unreachable!("op_noad checked above"),
         }
         Ok(())
     }

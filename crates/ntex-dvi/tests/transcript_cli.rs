@@ -150,3 +150,33 @@ fn clean_distribution_article_uses_bundled_fmt_and_tex_tree() {
         "发行闭包仍有缺文件：{stderr}"
     );
 }
+
+#[test]
+fn latex_float_before_end_document_is_not_lost() {
+    let d = workdir("float-end");
+    let src = d.join("float.tex");
+    std::fs::write(
+        &src,
+        "\\documentclass{article}\n\\begin{document}\nBefore.\n\\begin{figure}\n\\centering\\fbox{Float content}\n\\caption{A figure}\n\\end{figure}\n\\end{document}\n",
+    )
+    .unwrap();
+    let dvi = d.join("float.dvi");
+    let fmt = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/fmt/latex.fmt");
+    let (stdout, stderr, ok) = run(&[
+        src.as_os_str(),
+        dvi.as_os_str(),
+        OsStr::new("--fmt"),
+        fmt.as_os_str(),
+    ]);
+    assert!(ok && dvi.exists(), "stdout={stdout}\nstderr={stderr}");
+    assert!(!stderr.contains("Float(s) lost"), "{stderr}");
+    assert!(
+        stdout.contains("1 页"),
+        "float document should ship its final page: {stdout}\n{stderr}"
+    );
+    let dvi_bytes = std::fs::read(&dvi).unwrap();
+    assert!(
+        dvi_bytes.windows(5).any(|w| w == b"Float"),
+        "float content was not shipped"
+    );
+}

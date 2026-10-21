@@ -310,6 +310,7 @@ impl NodeBuilder {
                 other => MathAtom::Classed {
                     class,
                     content: vec![other],
+                    limits: 0,
                 },
             };
             return self.math_push_atom_raw(atom);
@@ -370,6 +371,7 @@ impl NodeBuilder {
                 None => MathAtom::Classed {
                     class: MathClass::Ord,
                     content: Vec::new(),
+                    limits: 0,
                 },
             };
             if let MathAtom::Scripts { sub, sup, .. } = &mut base {
@@ -440,10 +442,12 @@ impl NodeBuilder {
                 Some(MathAtom::Classed {
                     class: MathClass::Ord,
                     content,
+                    limits,
                 }) => {
                     return MathAtom::Classed {
                         class: MathClass::Ord,
                         content,
+                        limits,
                     };
                 }
                 Some(other) => {
@@ -455,6 +459,7 @@ impl NodeBuilder {
         MathAtom::Classed {
             class: MathClass::Ord,
             content: atoms,
+            limits: 0,
         }
     }
 
@@ -468,6 +473,7 @@ impl NodeBuilder {
         let mut base = parent.atoms.pop().unwrap_or(MathAtom::Classed {
             class: MathClass::Ord,
             content: Vec::new(),
+            limits: 0,
         });
         if let MathAtom::Scripts { sub, sup, .. } = &mut base {
             if is_sup {
@@ -659,6 +665,33 @@ impl NodeBuilder {
                             stack,
                         );
                     }
+                }
+                if let MathAtom::Classed {
+                    class: MathClass::Op,
+                    limits,
+                    ..
+                } = base.as_ref()
+                {
+                    let op = self.math_atom_nodes(base, style);
+                    let Node::Box(op_box) = &op[0] else {
+                        unreachable!("classed operator yields one box")
+                    };
+                    let stack = match limits {
+                        1 => true,
+                        2 => false,
+                        _ => style.code() < 2,
+                    };
+                    if stack {
+                        return self.stack_op_limits(
+                            op_box.clone(),
+                            op_box.height,
+                            op_box.depth,
+                            sub.as_deref(),
+                            sup.as_deref(),
+                            style,
+                        );
+                    }
+                    return self.make_scripts(op, 0, sub.as_deref(), sup.as_deref(), style);
                 }
                 let mut out = self.math_atom_nodes(base, style);
                 // 斜体修正 delta（tex.web L14855-14866 核字符翻译）：delta :=
@@ -1017,10 +1050,21 @@ impl NodeBuilder {
             // nolimits：普通脚本位（tex.web make_scripts；delta 作上标水平偏移）。
             return self.make_scripts(vec![Node::Box(sigma)], if has_sub { italic } else { 0 }, sub, sup, style);
         }
+        self.stack_op_limits(sigma, h - shift, d + shift, sub, sup, style)
+    }
+
+    /// Shared limit stacking for character and sub-mlist operator nuclei.
+    fn stack_op_limits(
+        &self,
+        sigma: BoxNode,
+        op_h: i64,
+        op_d: i64,
+        sub: Option<&[MathAtom]>,
+        sup: Option<&[MathAtom]>,
+        style: MathStyle,
+    ) -> Vec<Node> {
         let [bos1, bos2, bos3, bos4, bos5] = self.big_op_spacings(style);
-        // op 行盒：Σ 盒 shift 后的实际占位（引擎 hbox_dimensions 不计子盒 shift，手工设）
-        let op_h = h - shift;
-        let op_d = d + shift;
+        let op_box_width = sigma.width;
         // 上下限字阶（tex.web sup_style/sub_style）：降一级、上标保持压性
         let sup_style = style.sup_style();
         let sub_style = style.sub_style();

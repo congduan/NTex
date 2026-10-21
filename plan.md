@@ -139,6 +139,16 @@
     **19 PASS / 10 ERROR / 1 TIMEOUT**，兼容限制与复现范围见
     [归档](docs/archive/default-tex-assets-2026-10-20.md)。
 
+15. **真实文档验收收尾**（10-21）：`\mathop{...}\nolimits` 形成的 `Classed(Op)`
+    现按 tex.web `op_noad` 接受 limit 控制并保留上下限布局 subtype；`figure` 后直接
+    `\end{document}` 的最小复现于当前 HEAD 已零错，新增端到端回归锁。论文原文未改，
+    新构建基线 **42 页/2 错** → 修复后 **42 页/0 错**，`dvipdfmx` 零 image special
+    警告，PDF `/tmp/real-doc/technical-report-ntex-final.pdf`。GT **54 页**；页面文字
+    NTex 常排到 y≈780–799pt、GT 常止于 y≈660–672pt，残差归于纵向断页/输出定位，
+    不能靠数学或浮动体错数解释。core 571 + layout 322、TRIP 构造 177B、tripos
+    12 页/614B/0 错、宏包 13/13 绿。证据与原始输出索引见
+    [docs/archive/real-doc-closure.md](docs/archive/real-doc-closure.md)。
+
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 
 - **第十八刀** 尾递归鞍具校准 → `make check` 797 → **800 全绿**；pdfTeX 对照证明原否定结论有误；

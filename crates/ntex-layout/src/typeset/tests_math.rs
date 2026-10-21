@@ -1154,6 +1154,26 @@ use super::*;
     }
 
     #[test]
+    fn classed_operator_accepts_limit_controls_and_keeps_their_subtype() {
+        // amsmath's operator names use \mathop{...}\nolimits. The nucleus is
+        // a Classed(Op) noad, not a MathChar. tex.web §1184 accepts both.
+        let no_limits = math_line_children(r"$\mathop{X}\nolimits_1^2$");
+        assert_eq!(no_limits.len(), 2, "scripts should sit beside the operator: {no_limits:?}");
+        let limits = math_line_children(r"$\mathop{X}\limits_1^2$");
+        assert_eq!(limits.len(), 1, "limits should stack around the operator: {limits:?}");
+        assert_eq!(as_box(&limits[0]).kind, BoxKind::VBox);
+
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
+        ts.typeset(r"$\mathop{X}\nolimits_1$ $x\nolimits$").unwrap();
+        let transcript = ts.take_transcript();
+        assert_eq!(
+            transcript.matches("Limit controls must follow a math operator").count(),
+            1,
+            "valid classed operator must be accepted, invalid ordinary atom rejected: {transcript}"
+        );
+    }
+
+    #[test]
     fn display_big_op_width_includes_italic_correction() {
         if cmmi10_metrics().is_none() {
             eprintln!("未找到 Computer Modern TFM，跳过");

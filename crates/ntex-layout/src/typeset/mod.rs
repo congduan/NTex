@@ -238,6 +238,8 @@ enum MathAtom {
     Classed {
         class: MathClass,
         content: Vec<MathAtom>,
+        /// op_noad subtype: 0=displaylimits, 1=limits, 2=nolimits.
+        limits: u8,
     },
     /// 重音符原子（`\accent`/`\mathaccent`）：accent 字段 + nucleus 字段
     /// （tex.web math_ac：重音符在前、被重音内容在后）。
