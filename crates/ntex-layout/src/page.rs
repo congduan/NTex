@@ -133,7 +133,7 @@ pub struct PageBuilder {
     /// 其后的强制惩罚照常点火；NTex 为压 `\clearpage` 空白页而暂扣该盒，
     /// 待下一贡献裁决去向。见 [`Self::process`] Box 臂注释。
     held_zero_empty: Option<Node>,
-    /// 持有盒放行旗标：裁决为 -10003 二击标记时置位，Box 臂消费后清除。
+    /// 持有盒放行旗标：浮体二击标记时置位，Box 臂消费后清除。
     keep_zero_empty: bool,
     /// 放行的页首零盒只用于让后继顶部胶水保留，不作为首基线插入 topskip。
     release_zero_without_topskip: bool,
@@ -333,14 +333,15 @@ impl PageBuilder {
             }
             // 持有盒裁决：NTex 的贡献列表在每次入页后即被抽干，tex.web 的
             // 「空盒入页 → 惩罚照常点火」次序在此不可见，只能扣住空盒等下一个
-            // 贡献揭晓身份。`\end@float` 的 -\@Miii(-10003) 是「页已断、
+            // 贡献揭晓身份。`\end@float` 的 -\@Mii(-10002，hmode) 或
+            // -\@Miii(-10003，vmode) 是「页已断、
             // `\@holdpg` 待回流」二击标记 → 放回空盒让惩罚在非空页点火；
             // 其余（`\clearpage` 尾 -\@Mi、`\@emptycol` -\@M）→ 按第二十二刀
             // 语义丢弃持有盒，防空空白页不变量不变。
             if !contrib.is_empty() {
                 if let Some(held) = self.held_zero_empty.take() {
                     let keep = match contrib.first() {
-                        Some(Node::Penalty { penalty: -10003 }) => {
+                        Some(Node::Penalty { penalty: -10002 | -10003 }) => {
                             self.keep_zero_empty = true;
                             true
                         }
@@ -413,18 +414,19 @@ impl PageBuilder {
         match node {
             Node::Box(b) => {
                 // LaTeX `\clearpage` 尾部在强制惩罚前放一个 `\vbox{}`；`\end@float`
-                // 尾部放 `\vbox{}\penalty-\@Miii(-10003)`。真 TeX 不区分两者：空盒
+                // 尾部放 `\vbox{}\penalty\@floatpenalty`（水平模式 -10002，
+                // 垂直模式 -10003）。真 TeX 不区分两者：空盒
                 // 入页使页非空（tex.web 盒分支无条件 `page_contents:=box_there`），
                 // 其后的强制惩罚照常点火——`\clearpage` 由 `\@doclearpage` 例程吞页
                 // 防空白，`\end@float` 靠这记二次点火做 `\unvbox\@holdpg` 回流。
                 //
                 // NTex 无例程语境下第二十二刀（675b50a）把空页零盒丢弃以压
-                // `\clearpage` 空白页。但若空盒被丢，-10003 落在空页被 tex.web
+                // `\clearpage` 空白页。但若空盒被丢，浮体二击惩罚落在空页被 tex.web
                 // L19502 丢惩罚规则吞掉 → 二击永不发生 → `\@specialoutput` 存入
                 // `\@holdpg` 的整页内容永久滞留 = 浮体之前的已排版段落整段蒸发
                 // （transformer-standalone Figure 1 起丢半篇、少 ~8000 字形）。
                 // 故这里**持有待裁决**：扣住空盒，feed_one 下一贡献揭晓身份——
-                // -10003 → 放行入页（二击成立）；其余 → 丢弃（原语义）。
+                // -10002/-10003 → 放行入页（二击成立）；其余 → 丢弃（原语义）。
                 // `eject_one_page` 自造的 `\hbox to \hsize{}` 有宽度，不走此臂，
                 // M5 防空页死循环不变量不变。
                 if !self.has_box && b.is_zero_empty() && !std::mem::take(&mut self.keep_zero_empty)

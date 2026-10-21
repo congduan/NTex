@@ -83,11 +83,11 @@ impl Expander {
             // DVI xxx 落后端，后者写流不进 DVI（tex.web 两套出口）。
             Primitive::Special => {
                 let toks = self.scan_group_contents(None)?;
-                let text: String = toks
-                    .iter()
-                    .filter_map(|t| t.charcode())
-                    .filter_map(char::from_u32)
-                    .collect();
+                // TeX expands a special's general text when it is shipped out.
+                // Resolve it here while the current macro state is available;
+                // merely keeping character tokens strips every control sequence
+                // from graphicx's `pdf:image ...` payload.
+                let text = self.expand_to_string(&toks)?;
                 self.sink.special(text)
             }
             // ETRIP 冲刺：\discretionary{pre}{post}{replace}（断字节点）

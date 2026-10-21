@@ -367,6 +367,17 @@ use super::*;
     }
 
     #[test]
+    fn special_expands_graphicx_fields_and_keeps_spaces() {
+        let mut e = Expander::new();
+        e.set_vfs(Box::new(MemVfs::new()));
+        e.set_sink(Box::new(SpecialCaptureSink::default()));
+        e.run_source(r"\def\size{12pt}\def\sep{ }\special{pdf:image width \size\sep(plot.png)}").unwrap();
+        let sink = e.take_sink();
+        let sink = sink.as_any_ref().downcast_ref::<SpecialCaptureSink>().unwrap();
+        assert_eq!(sink.specials, vec!["pdf:image width 12pt (plot.png)".to_string()]);
+    }
+
+    #[test]
     fn openout_jobname_uses_host_job_name() {
         // latex.ltx L9652 `\immediate\openout\@mainaux\jobname.aux`：名字扫描里的
         // `\jobname` 必须展开成当前作业名，否则 aux **写**路落 texput.aux，而
