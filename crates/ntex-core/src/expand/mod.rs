@@ -3063,12 +3063,16 @@ impl Expander {
                         // 进入公式即 eq_word_define(cur_fam, -1)——每个公式开头
                         // `\fam` 都是 -1（无字族替换），显式 `\fam<n>` 只在公式内生效
                         self.params.misc[46] = -1;
-                        let mut items = self
-                            .everymath
+                        let hook = if enters_display {
+                            &self.everydisplay_toks
+                        } else {
+                            &self.everymath
+                        };
+                        let mut items = hook
                             .iter()
                             .map(|t| (*t, false))
                             .collect::<Vec<_>>();
-                        if items.is_empty() {
+                        if items.is_empty() && !enters_display {
                             if let Some(csid) = self.intern.lookup("check@mathfonts") {
                                 if !matches!(self.eqtb.slot(csid), EqSlot::Undefined) {
                                     items.push((Token::control_sequence(csid), false));

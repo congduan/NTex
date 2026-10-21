@@ -1194,6 +1194,18 @@ use super::*;
     }
 
     #[test]
+    fn display_math_runs_everydisplay_before_equation_body() {
+        // tex.web init_math runs the display hook before the first math token.
+        // amsmath sets \if@display here; split checks it on entry.
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
+        ts.typeset(r"\everydisplay={\message{DISPLAY-HOOK-YES}} \everymath={\message{INLINE-HOOK-RAN}} $$x$$")
+        .unwrap();
+        let transcript = ts.take_transcript();
+        assert!(transcript.contains("DISPLAY-HOOK-YES"), "{transcript}");
+        assert!(!transcript.contains("INLINE-HOOK-RAN"), "{transcript}");
+    }
+
+    #[test]
     fn display_big_op_width_includes_italic_correction() {
         if cmmi10_metrics().is_none() {
             eprintln!("未找到 Computer Modern TFM，跳过");
