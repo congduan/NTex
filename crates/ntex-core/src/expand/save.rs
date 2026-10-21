@@ -1140,10 +1140,13 @@ impl Expander {
             || (self.sink.mode_code() == 5 && self.math_scope_has_silent_barrier())
     }
 
-    fn stale_math_scope_only(&self) -> bool {
-        let has_math_scope = self.scope_stack.iter().any(|is_math| *is_math);
-        let sink_in_math = self.sink_mode_retains_math_scope();
-        (has_math_scope && !sink_in_math) || (!has_math_scope && sink_in_math)
+    /// A sink left in math mode after the VM has closed math cannot own a
+    /// local assignment.  The reverse state is valid: a \vbox inside a math
+    /// display temporarily puts the sink in vertical mode while the VM still
+    /// has a math scope (amsmath's measurement box depends on local \let).
+    fn stale_sink_math_without_vm_scope(&self) -> bool {
+        !self.scope_stack.iter().any(|is_math| *is_math)
+            && self.sink_mode_retains_math_scope()
     }
 
     fn restore(&mut self, v: SavedValue) {

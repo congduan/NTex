@@ -1805,7 +1805,7 @@ impl Expander {
         } else {
             None
         };
-        let scoped = !global && self.group_level > 0 && !self.stale_math_scope_only();
+        let scoped = !global && self.group_level > 0 && !self.stale_sink_math_without_vm_scope();
         if scoped {
             self.save_stack.push((
                 self.group_level,
@@ -1876,7 +1876,7 @@ impl Expander {
         // 保存 + 层级登记——futurelet 不登记会让"局部值 + 全局层级"破坏
         // unsave 的 retain 守卫（expl3 \@ifnextchar 高频使用）。
         let global = self.is_global();
-        let scoped = !global && self.group_level > 0 && !self.stale_math_scope_only();
+        let scoped = !global && self.group_level > 0 && !self.stale_sink_math_without_vm_scope();
         if scoped {
             self.save_stack.push((
                 self.group_level,
