@@ -5,6 +5,7 @@ use crate::sink::{AlignSink, BoxSink, CoreSink, FontSink, IoSink, MathSink, Page
 struct MathRecoverSink {
     transcript: String,
     in_math: bool,
+    math_chars: Vec<u32>,
 }
 
 impl CoreSink for MathRecoverSink {
@@ -60,6 +61,11 @@ impl MathSink for MathRecoverSink {
     fn math_shift_will_close(&self) -> bool {
         self.in_math
     }
+
+    fn math_char_full(&mut self, code: u32) -> Result<()> {
+        self.math_chars.push(code);
+        Ok(())
+    }
 }
 
 impl FontSink for MathRecoverSink {}
@@ -67,6 +73,21 @@ impl BoxSink for MathRecoverSink {}
 impl AlignSink for MathRecoverSink {}
 impl PageSink for MathRecoverSink {}
 impl TokenSink for MathRecoverSink {}
+
+#[test]
+fn mathchardef_uses_actual_math_mode_after_nested_shift() {
+    let mut e = Expander::new();
+    e.set_sink(Box::new(MathRecoverSink {
+        in_math: true,
+        ..Default::default()
+    }));
+    // A nested shift can leave the VM's cached flag stale while the
+    // typesetter has restored the enclosing math list.
+    e.in_math = false;
+    e.run_source(r#"\mathchardef\sum="1350 \sum"#).unwrap();
+    let sink = e.sink.as_any_ref().downcast_ref::<MathRecoverSink>().unwrap();
+    assert_eq!(sink.math_chars, vec![0x1350]);
+}
 
 #[derive(Debug, Default)]
 struct InnerVerticalMathSink {
@@ -935,6 +956,7 @@ fn stale_sink_math_without_vm_math_scope_does_not_localize_let() {
     e.set_sink(Box::new(MathRecoverSink {
         transcript: String::new(),
         in_math: true,
+        math_chars: Vec::new(),
     }));
     e.run_source("{\\let\\PAR=\\par}\\show\\PAR").unwrap();
     let t = e.transcript();

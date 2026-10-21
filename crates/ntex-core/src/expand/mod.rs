@@ -2805,7 +2805,9 @@ impl Expander {
                     // 字符）。数学模式外退回 \char 文本行为（TeX 语义应为
                     // "Missing $ inserted" 报错，ETRIP 后续对齐）。
                     SlotAction::MathChar(code) => {
-                        if self.in_math {
+                        if self.sink.math_code_applies()
+                            && (self.in_math || self.sink.math_shift_will_close())
+                        {
                             self.sink.math_char_full(code)
                         } else {
                             self.sink.token(Token::char(Catcode::Other, code & 0xFF))
@@ -3006,6 +3008,7 @@ impl Expander {
                         // A conditional here must observe that restored mode.
                         self.in_math = false;
                         let r = self.sink.math_shift(true);
+                        self.in_math = self.sink.math_shift_will_close();
                         let matched = self.next_is_math_shift(true, true)?;
                         if !matched {
                             self.write_error("Display math should end with $$.");
@@ -3051,7 +3054,9 @@ impl Expander {
                         self.scope_stack.push(true);
                         self.scope_silent.push(false);
                     }
-                    // TRIP 冲刺：进入数学模式时注入 `\everymath`（TeX `$` 处理语义）。
+                    // tex.web init_math: inline math runs \everymath, while
+                    // display math runs \everydisplay. AMS uses the latter to
+                    // set \if@display before the first token of an equation.
                     //
                     // LaTeX fmt 兼容：发行快照可能来自修复前引擎，`\let\frozen@everymath
                     // \everymath` 没有保住 primitive toks 参数，导致 LaTeX 写入 primitive
@@ -3092,6 +3097,9 @@ impl Expander {
                     // tex.web after_math → unsave：数学作用域先关，其
                     // `\aftergroup` token 随后在外层模式继续处理。
                     let r = self.sink.math_shift(display);
+                    // Closing an inline formula inside a box can restore an
+                    // enclosing display. Follow the actual TeX mode.
+                    self.in_math = self.sink.math_shift_will_close();
                     self.close_math_scope();
                     // A non-math group above an older math scope belongs to
                     // that outer formula (e.g. a vtop in display math).
@@ -3106,7 +3114,7 @@ impl Expander {
                 // $E=mc^2$ 字母默认 fam1（cmmi 斜体，initex 表 0x7100+码），
                 // 此前布局侧硬编码 fam0（cmr 正体）。`^`/`_`（cat 7/8）、空格
                 // （cat 10）、组定界（cat 1/2）不走此路。
-                if self.in_math
+                if (self.in_math || self.sink.math_shift_will_close())
                     && self.sink.math_code_applies()
                     && matches!(tok.catcode(), Some(Catcode::Letter | Catcode::Other))
                 {
