@@ -2923,14 +2923,44 @@ impl Expander {
                 // 数学移位（$，cat 3）：peek 下一个 token 判定 `$$`（显示数学），
                 // 交给 sink 按自身模式决定进出（M4-1）。
                 if tok.catcode() == Some(Catcode::MathShift) {
-                    if self.in_math && self.sink.mode_code() != 5 {
-                        self.recover_groups_to_math_scope()?;
+                    // tex.web dispatches math_shift by the current mode. An
+                    // enclosing display can still be open while a vbox is in
+                    // internal vertical mode; its group must survive this `$`.
+                    if matches!(self.sink.mode_code(), 1 | 4) {
+                        // vmode+math_shift: back_input; new_graf(true). The
+                        // same token is then handled by hmode+math_shift.
+                        self.sink.par_begin(true)?;
+                        // Pure expansion sinks do not implement paragraph
+                        // mode. In that case process the shift here instead
+                        // of replaying it forever in vertical mode.
+                        if !matches!(self.sink.mode_code(), 1 | 4) {
+                            self.unread(tok);
+                            if !self.everypar_toks.is_empty() {
+                                let items = self
+                                    .everypar_toks
+                                    .iter()
+                                    .map(|t| (*t, false))
+                                    .collect::<Vec<_>>();
+                                self.push_frame(InputFrame::TokenList {
+                                    items: Arc::from(items),
+                                    pos: 0,
+                                });
+                            }
+                            return Ok(());
+                        }
                     }
                     // tex.web init_math 的进出裁决在 **mode**（mmode=收），
                     // 不在旗标——核心 in_math 在 `\[\halign{…$x$…}\]` 一类
                     // 结构里与排版层脱钩（显示数学开过即恒 true，单元首 `$`
                     // 被误判为收，everymath 注入错位到第二个 `$` 之后）。
                     let entering = !self.sink.math_shift_will_close();
+                    if !entering && self.scope_stack.last() != Some(&true) {
+                        // A closing shift in actual math mode cannot cross an
+                        // unfinished ordinary group. A box enclosing an inner
+                        // display is in vertical mode here and never enters
+                        // this branch.
+                        self.recover_groups_to_math_scope()?;
+                    }
                     // tex.web init_math：`$$` 进显示数学要求 `mode>0`（垂直/
                     // 普通水平）；受限水平（\hbox/\halign 模板，mode<0）下
                     // peek 到的第二个 `$` 必须 back_input——本 `$` 单独进普通
@@ -2953,7 +2983,23 @@ impl Expander {
                     } else {
                         self.sink.math_close_consumes_dollar()
                     };
-                    let display = self.next_is_math_shift(consume_for_display)?;
+                    if !entering && self.sink.mode_code() == 6 {
+                        // finish_display restores the enclosing mode before
+                        // tex.web's get_x_token check for the second `$`.
+                        // A conditional here must observe that restored mode.
+                        self.in_math = false;
+                        let r = self.sink.math_shift(true);
+                        let matched = self.next_is_math_shift(true, true)?;
+                        if !matched {
+                            self.write_error("Display math should end with $$.");
+                        }
+                        self.close_math_scope();
+                        if self.scope_stack.last() == Some(&true) {
+                            self.close_math_scopes_if_sink_out()?;
+                        }
+                        return r;
+                    }
+                    let display = self.next_is_math_shift(consume_for_display, !entering)?;
                     self.in_math = entering;
                     // tex.web init_math `@<Go into display math mode@>`（L21774）：
                     // `eq_word_define(dimen_base+display_width_code,l)`，其中
@@ -3022,10 +3068,13 @@ impl Expander {
                     }
                     // tex.web after_math → unsave：数学作用域先关，其
                     // `\aftergroup` token 随后在外层模式继续处理。
-                    self.recover_groups_to_math_scope()?;
                     let r = self.sink.math_shift(display);
                     self.close_math_scope();
-                    self.close_math_scopes_if_sink_out()?;
+                    // A non-math group above an older math scope belongs to
+                    // that outer formula (e.g. a vtop in display math).
+                    if self.scope_stack.last() == Some(&true) {
+                        self.close_math_scopes_if_sink_out()?;
+                    }
                     return r;
                 }
                 // 数学模式普通字符（letter/other，cat 11/12）→ 查 \mathcode 表
@@ -3251,18 +3300,46 @@ impl Expander {
     /// `consume_for_display`（tex.web `mode>0`，由调用方按 sink 模式判定）为
     /// true 时——是 → 消费该 `$`（显示数学成立）；否则（含受限水平下 peek
     /// 到 `$`）→ 放回（tex.web init_math `back_input`），返回 false。
-    /// 非 `$` 一律放回。输入耗尽返回 false。
+    /// 显示数学收尾在排版器恢复外层模式后探测，按 get_x_token 展开条件和宏；
+    /// 进入侧只取原 token。非 `$` 一律放回。输入耗尽返回 false。
     ///
-    fn next_is_math_shift(&mut self, consume_for_display: bool) -> Result<bool> {
-        let Some((tok, ne)) = self.fetch()? else {
-            return Ok(false);
-        };
-        let is = tok.catcode() == Some(Catcode::MathShift);
-        if is && consume_for_display {
-            Ok(true)
-        } else {
+    fn next_is_math_shift(&mut self, consume_for_display: bool, closing: bool) -> Result<bool> {
+        loop {
+            let Some((tok, ne)) = self.fetch()? else {
+                return Ok(false);
+            };
+            // tex.web after_math checks the second display delimiter with
+            // get_x_token. In particular, an \ifvmode between the two dollars
+            // can expand to the matching `$` while the display's vertical mode
+            // is still current. init_math, by contrast, uses get_token.
+            if closing && consume_for_display && !ne {
+                if let Some(op) = self.cond_op(tok) {
+                    if !matches!(op, CondOp::Fi | CondOp::Else | CondOp::Or)
+                        || !self.cond_stack.is_empty()
+                    {
+                        self.step_conditional(op, tok)?;
+                        continue;
+                    }
+                } else if self.is_skipping() {
+                    continue;
+                }
+                if let Some(csid) = tok.csid() {
+                    let slot = self.eqtb.slot(self.deref_alias_chain(csid)).clone();
+                    if match slot {
+                        EqSlot::Macro(_) => true,
+                        EqSlot::Primitive(p) => p.is_expandable(),
+                        _ => false,
+                    } {
+                        self.push_expansion(tok, ne)?;
+                        continue;
+                    }
+                }
+            }
+            if tok.catcode() == Some(Catcode::MathShift) && consume_for_display {
+                return Ok(true);
+            }
             self.push_frame(InputFrame::One { tok, noexpand: ne });
-            Ok(false)
+            return Ok(false);
         }
     }
 

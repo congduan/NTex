@@ -68,6 +68,86 @@ impl AlignSink for MathRecoverSink {}
 impl PageSink for MathRecoverSink {}
 impl TokenSink for MathRecoverSink {}
 
+#[derive(Debug, Default)]
+struct InnerVerticalMathSink {
+    mode: i64,
+    transcript: String,
+}
+
+impl CoreSink for InnerVerticalMathSink {
+    fn token(&mut self, _tok: Token) -> Result<()> { Ok(()) }
+    fn primitive(&mut self, _prim: Primitive) -> Result<()> { Ok(()) }
+    fn mode_code(&self) -> i64 { self.mode }
+    fn transcript(&self) -> &str { &self.transcript }
+    fn par_begin(&mut self, _indented: bool) -> Result<()> {
+        self.mode = 2;
+        Ok(())
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any { self }
+    fn as_any_ref(&self) -> &dyn std::any::Any { self }
+}
+impl IoSink for InnerVerticalMathSink {
+    fn write16(&mut self, text: String) -> Result<()> {
+        self.transcript.push_str(&text);
+        Ok(())
+    }
+}
+impl MathSink for InnerVerticalMathSink {
+    fn math_shift(&mut self, display: bool) -> Result<()> {
+        if self.mode == 6 && !display {
+            self.transcript.push_str("! Display math should end with $$.\n");
+        }
+        self.mode = if self.mode == 6 { 4 } else { 3 };
+        Ok(())
+    }
+    fn math_shift_will_close(&self) -> bool { matches!(self.mode, 3 | 6) }
+    fn math_close_consumes_dollar(&self) -> bool { self.mode == 6 }
+}
+impl FontSink for InnerVerticalMathSink {}
+impl BoxSink for InnerVerticalMathSink {}
+impl AlignSink for InnerVerticalMathSink {}
+impl PageSink for InnerVerticalMathSink {}
+impl TokenSink for InnerVerticalMathSink {}
+
+#[test]
+fn math_shift_in_vtop_preserves_enclosing_display_and_box_scopes() {
+    let mut e = Expander::new();
+    // An outer display contains a vtop whose list is in internal vertical
+    // mode. The next `$` belongs to the vtop's new paragraph, not to the
+    // outer display's math_shift_group.
+    e.scope_stack = vec![true, false];
+    e.scope_silent = vec![false, false];
+    e.group_level = 1;
+    e.in_math = true;
+    e.set_sink(Box::new(InnerVerticalMathSink { mode: 4, ..Default::default() }));
+    e.process_token(Token::char(Catcode::MathShift, '$' as u32)).unwrap();
+    assert_eq!(e.scope_stack, vec![true, false]);
+    assert_eq!(e.group_level, 1);
+    assert_eq!(e.sink.mode_code(), 2);
+    e.process_one().unwrap();
+    assert_eq!(e.scope_stack, vec![true, false, true]);
+    assert_eq!(e.group_level, 1);
+    assert_eq!(e.sink.mode_code(), 3);
+}
+
+#[test]
+fn nested_display_closing_condition_sees_restored_vtop_mode() {
+    let mut e = Expander::new();
+    e.scope_stack = vec![true, false, true];
+    e.scope_silent = vec![false, false, false];
+    e.group_level = 1;
+    e.in_math = true;
+    e.set_sink(Box::new(InnerVerticalMathSink { mode: 6, ..Default::default() }));
+    e.feed_source("\\ifvmode$\\fi");
+    e.process_token(Token::char(Catcode::MathShift, '$' as u32)).unwrap();
+    assert_eq!(e.sink.mode_code(), 4);
+    assert_eq!(e.scope_stack, vec![true, false]);
+    assert_eq!(e.group_level, 1);
+    assert!(!e.transcript().contains("Display math should end with $$"));
+    e.process_one().unwrap(); // the unconsumed \fi closes the true conditional
+    assert!(e.cond_stack.is_empty());
+}
+
 #[test]
 fn simple_def_and_use() {
     assert_eq!(expand("\\def\\foo{Hello}\\foo").unwrap(), "Hello");
