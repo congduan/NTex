@@ -149,6 +149,15 @@
     12 页/614B/0 错、宏包 13/13 绿。证据与原始输出索引见
     [docs/archive/real-doc-closure.md](docs/archive/real-doc-closure.md)。
 
+16. **刀 AJ R18 equation 几何修复**（10-21）：`\begin{equation}` 的后续公式因 VM
+    `\displaywidth` 保持 360pt、布局镜像却被组尾恢复为 0，旧入口的“数值未变”守卫
+    跳过同步，导致公式 x0≈17pt、编号插入公式中。现每次进入 display 都同步
+    `\displaywidth`，10 处同款公式与 pdfTeX 的 x0=203.2pt、第二式 x0=325.8pt、
+    编号右缘 x1=484.4pt 一致；真实文档仍 42 页/0 错（GT 54 页）。core 571 +
+    layout 323、tripos 12 页/614B、构造页 177B、宏包 13/13 全绿。编号
+    “x1>500pt”的原验收阈值与 GT 484.4pt 相矛盾，按 GT 版心右缘验收。
+    证据与原始输出见 [R18 战报](docs/archive/blade-aj-r18-report-2026-10-21.md)。
+
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 
 - **第十八刀** 尾递归鞍具校准 → `make check` 797 → **800 全绿**；pdfTeX 对照证明原否定结论有误；

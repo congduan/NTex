@@ -3036,11 +3036,13 @@ impl Expander {
                         };
                     if enters_display {
                         let l = self.params.hsize;
-                        if self.params.displaywidth != l {
-                            self.params.displaywidth = l;
-                            self.sink
-                                .param_changed(ParamKind::DisplayWidth, ParamValue::Dimen(l))?;
-                        }
+                        // The VM's displaywidth is global, but the layout mirror
+                        // can have been restored by a surrounding group. Re-send
+                        // the value on every display entry, even if the VM value
+                        // already equals hsize (tex.web init_math eq_word_define).
+                        self.params.displaywidth = l;
+                        self.sink
+                            .param_changed(ParamKind::DisplayWidth, ParamValue::Dimen(l))?;
                     }
                     // tex.web init_math：`$` 即 `new_save_level(math_shift_group)`
                     // ——数学层是 save group，先入作用域栈，`\everymath` 体里的

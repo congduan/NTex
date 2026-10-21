@@ -949,6 +949,26 @@ use super::*;
     }
 
     #[test]
+    fn displaywidth_stays_live_after_grouped_equation() {
+        // tex.web init_math eq_word_define(display_width, hsize) is global.
+        // A local group around one display must not leave the layout mirror at 0
+        // when the next display enters with the same hsize.
+        let z = 40_000;
+        let main = typeset(r"\hsize 40000sp {$$x\eqno(1)$$} $$x\eqno(2)$$").unwrap();
+        let lines: Vec<&BoxNode> = main.iter().filter_map(|n| match n {
+            Node::Box(b) if b.children.iter().any(|c| matches!(c,
+                Node::Char { charcode, .. } if *charcode == b'x' as u32)) => Some(b),
+            _ => None,
+        }).collect();
+        assert_eq!(lines.len(), 2, "two numbered displays: {main:?}");
+        for line in lines {
+            assert!(line.shift > 0, "formula should start inside display: {line:?}");
+            assert_eq!(line.shift + line.width, z,
+                "eqno right edge must be displaywidth: {line:?}");
+        }
+    }
+
+    #[test]
     fn math_fam_substitution_replaces_var_class_family() {
         let Some(fm) = cmr10_metrics() else {
             eprintln!("未找到 cmr10.tfm，跳过");
