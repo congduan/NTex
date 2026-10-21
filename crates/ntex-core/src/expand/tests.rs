@@ -69,14 +69,23 @@ mod tests {
             }
         }
         for p in Primitive::ALL {
-            assert!(seen.contains(p), "变体 {p:?} 未注册内建名字");
+            // Historical snapshot discriminant: \error is not an engine primitive.
+            if *p != Primitive::Error {
+                assert!(seen.contains(p), "变体 {p:?} 未注册内建名字");
+            }
         }
         assert!(
-            BUILTINS.len() >= Primitive::ALL.len(),
+            BUILTINS.len() + 1 >= Primitive::ALL.len(),
             "注册表少于变体数：{} < {}",
             BUILTINS.len(),
             Primitive::ALL.len()
         );
+    }
+
+    #[test]
+    fn error_is_undefined_until_a_format_defines_it() {
+        assert_eq!(expand("\\ifx\\error\\undefined T\\else F\\fi").unwrap(), "T");
+        assert_eq!(expand("\\def\\error{X}\\error").unwrap(), "X");
     }
 
     #[test]

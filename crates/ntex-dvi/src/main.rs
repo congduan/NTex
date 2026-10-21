@@ -778,20 +778,31 @@ fn default_vfs(input_paths: &[String]) -> Box<dyn ntex_io::Vfs> {
 fn add_tex_tree_paths(out: &mut Vec<PathBuf>, root: PathBuf) {
     out.push(root.clone());
     out.push(root.join("latex/base"));
-    push_children(out, &root.join("latex"));
-    push_children(out, &root.join("generic"));
+    let level1 = children_dirs_sorted(&root.join("latex"))
+        .chain(children_dirs_sorted(&root.join("generic")));
+    let mut level2 = Vec::new();
+    for dir in level1 {
+        out.push(dir.clone());
+        // 两层深（TDS 包内子目录）：pgfplots 的 `sys/pgfplotssysgeneric.code.tex`、
+        // ctex 的 `fontset/`、beamer 的翻译树等都住 depth-2。先收齐再排到一层
+        // 全部之后，保证已有 depth-1 解析优先级完全不变（同名文件冲突集实测
+        // 仅 10 对、全在一层路径内，2026-10-21）。
+        level2.extend(children_dirs_sorted(&dir));
+    }
+    out.extend(level2);
 }
 
-fn push_children(out: &mut Vec<PathBuf>, dir: &Path) {
-    let Ok(rd) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in rd.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            out.push(path);
-        }
-    }
+fn children_dirs_sorted(dir: &Path) -> impl Iterator<Item = PathBuf> {
+    let mut v: Vec<PathBuf> = fs::read_dir(dir)
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.path())
+                .filter(|p| p.is_dir())
+                .collect()
+        })
+        .unwrap_or_default();
+    v.sort();
+    v.into_iter()
 }
 
 fn executable_dir() -> Option<PathBuf> {

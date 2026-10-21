@@ -48,9 +48,10 @@ PACKAGES = [
     "etoolbox",
 ]
 
-# 负例：本机 TLPDB 无提供者的包——验收 auto-pkg「缺包即报 + 反查指引」契约
-# （本矩阵 13 包全被宿主 TinyTeX 树覆盖，取料探测为 no-op，可验收面即此契约）。
-NEGATIVE_PKGS = ["caption"]
+# 负例：本机 TLPDB 与 assets/tex-minimal 均无提供者的包——验收 auto-pkg
+# 「缺包即报 + 反查指引」契约。⚠ 勿用 caption：8e506b2 已把 caption 全家
+# 收进 assets/tex-minimal，负例前提（缺包）失效会假性 FAIL（2026-10-21 实证）。
+NEGATIVE_PKGS = ["footmisc"]
 
 fitz = None  # pymupdf 惰性加载
 

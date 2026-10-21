@@ -565,7 +565,7 @@ define_primitives! {
     VFilNeg,
     // TRIP 冲刺：\hfilneg（plain.tex：负 1fil 的 hskip）
     HFilNeg,
-    // TRIP 冲刺：\error（plain.tex 宏：errmessage；TRIP L402 分支不执行）
+    // 旧格式快照编号保留；\error 不是 TeX 原语，不能在 builtins 注册。
     Error,
     // TRIP 冲刺：\varunit（plain.tex 字体标识符；TRIP L404 `\fontdimen1000=20\varunit`）
     VarUnit,

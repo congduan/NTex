@@ -6,7 +6,7 @@
 /// Step B 补 PDF 变换栈 \pdfsave/\pdfsetmatrix/\pdfrestore 3 项；
 /// ctex 第二墙补 catcode table 三原语），
 /// 供 `register_builtins` 注册与 `tests.rs` 的一致性测试共用。
-pub(crate) const BUILTINS: [(&str, Primitive); 453] = [
+pub(crate) const BUILTINS: [(&str, Primitive); 452] = [
     ("def", Primitive::Def),
     ("edef", Primitive::Edef),
     ("gdef", Primitive::Gdef),
@@ -271,7 +271,6 @@ pub(crate) const BUILTINS: [(&str, Primitive); 453] = [
     // TRIP 冲刺：\hfilneg（plain.tex 宏：负 1fil hskip）
     ("hfilneg", Primitive::HFilNeg),
     // TRIP 冲刺：\error（plain.tex 宏：errmessage）
-    ("error", Primitive::Error),
     // TRIP 冲刺：\varunit（plain.tex 字体标识符；TRIP L404 引用）
     ("varunit", Primitive::VarUnit),
     // TRIP 冲刺：\xspaceskip（plain.tex 胶水参数；TRIP L410 `\advance\xspaceskip`）
