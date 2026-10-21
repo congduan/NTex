@@ -602,6 +602,11 @@ fn scan_package_requests(src: &str) -> Vec<(String, RequireKind)> {
         let mut rest = clean.as_str();
         while let Some(pos) = rest.find(needle) {
             rest = &rest[pos + needle.len()..];
+            // TeX control words consume all following letters.  In particular,
+            // \includegraphics must not be interpreted as \include.
+            if rest.starts_with(|c: char| c.is_ascii_alphabetic() || c == '@') {
+                continue;
+            }
             let Some((arg, tail)) = scan_latex_argument(rest) else {
                 continue;
             };
@@ -618,6 +623,19 @@ fn scan_package_requests(src: &str) -> Vec<(String, RequireKind)> {
     out.sort();
     out.dedup();
     out
+}
+
+#[cfg(test)]
+mod auto_pkg_scan_tests {
+    use super::*;
+
+    #[test]
+    fn includegraphics_is_not_an_include_request() {
+        let requests = scan_package_requests(
+            "\\includegraphics[width=.5\\textwidth]{Figures/plot.png}\n\\include{chapter}\n",
+        );
+        assert_eq!(requests, vec![("chapter".to_owned(), RequireKind::Input)]);
+    }
 }
 
 fn scan_latex_argument(mut s: &str) -> Option<(String, &str)> {

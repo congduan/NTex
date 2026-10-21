@@ -1697,47 +1697,31 @@ impl BoxSink for NodeBuilder {
     /// 不符才报 "! Incompatible list can't be unboxed."（TRIP L396 实为
     /// `\unhcopy3` 在 math 模式遇 vlist，非 voidness）。
     fn unhbox(&mut self, idx: usize, copy: bool) -> Result<()> {
-        let Some(b) = (if copy {
-            self.box_view(idx).cloned()
-        } else {
-            self.take_box_at(idx)
-        }) else {
+        let Some(b) = self.box_view(idx).cloned() else {
             return Ok(());
         };
-        match b.kind {
-            BoxKind::HBox => {
-                for c in b.children {
-                    self.append(c);
-                }
-                Ok(())
-            }
-            BoxKind::VBox => {
-                self.unbox_error_continue();
-                Ok(())
-            }
+        // tex.web unpackage: void returns before checking the mode.  LaTeX's
+        // \leavevmode uses \unhbox\voidb@x even inside math displays.
+        if matches!(self.mode(), Mode::Math | Mode::DisplayMath) || b.kind != BoxKind::HBox {
+            self.unbox_error_continue();
+            return Ok(());
         }
+        if !copy { self.take_box_at(idx); }
+        for c in b.children { self.append(c); }
+        Ok(())
     }
     /// `\unvbox<n>`/`\unvcopy<n>`：vbox 拆开，子节点追加到当前列表。
     fn unvbox(&mut self, idx: usize, copy: bool) -> Result<()> {
-        let Some(b) = (if copy {
-            self.box_view(idx).cloned()
-        } else {
-            self.take_box_at(idx)
-        }) else {
+        let Some(b) = self.box_view(idx).cloned() else {
             return Ok(());
         };
-        match b.kind {
-            BoxKind::VBox => {
-                for c in b.children {
-                    self.append(c);
-                }
-                Ok(())
-            }
-            BoxKind::HBox => {
-                self.unbox_error_continue();
-                Ok(())
-            }
+        if matches!(self.mode(), Mode::Math | Mode::DisplayMath) || b.kind != BoxKind::VBox {
+            self.unbox_error_continue();
+            return Ok(());
         }
+        if !copy { self.take_box_at(idx); }
+        for c in b.children { self.append(c); }
+        Ok(())
     }
     /// `\lastbox`：摘下当前列表尾的盒子节点（无则无操作）；
     /// 摘下的盒子由下一个 `\box`/`\copy` 取用（见 [`Self::box_register`]）。

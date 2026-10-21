@@ -101,28 +101,10 @@ impl Expander {
             }
             Primitive::UnHBox | Primitive::UnHCopy => {
                 let idx = self.scan_register_index()?;
-                if matches!(self.sink.mode_code(), 3 | 6) {
-                    self.write_error_help(
-                        "Incompatible list can't be unboxed.",
-                        "Sorry, Pandora. (You sneaky devil.)\n\
-                         I refuse to unbox an \\hbox in vertical mode or vice versa.\n\
-                         And I can't open any boxes in math mode.\n",
-                    );
-                    return Ok(());
-                }
                 self.sink.unhbox(idx, prim == Primitive::UnHCopy)
             }
             Primitive::UnVBox | Primitive::UnVCopy => {
                 let idx = self.scan_register_index()?;
-                if matches!(self.sink.mode_code(), 3 | 6) {
-                    self.write_error_help(
-                        "Incompatible list can't be unboxed.",
-                        "Sorry, Pandora. (You sneaky devil.)\n\
-                         I refuse to unbox an \\hbox in vertical mode or vice versa.\n\
-                         And I can't open any boxes in math mode.\n",
-                    );
-                    return Ok(());
-                }
                 self.sink.unvbox(idx, prim == Primitive::UnVCopy)
             }
             Primitive::LastBox => {

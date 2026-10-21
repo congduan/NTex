@@ -1,6 +1,15 @@
 use super::*;
 
     #[test]
+    fn math_unbox_checks_void_before_mode_and_preserves_incompatible_box() {
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
+        ts.typeset_dvi(r"\setbox234=\hbox{A}$\unhbox233\unhbox234$\ifvoid234\message{LOST}\else\message{KEPT}\fi\end").unwrap();
+        let t = ts.take_transcript();
+        assert_eq!(t.matches("! Incompatible list can't be unboxed.").count(), 1, "{t}");
+        assert!(t.contains("KEPT"), "incompatible unbox must leave register intact: {t}");
+    }
+
+    #[test]
     fn unclosed_box_group_is_rejected() {
         // 刀K：EOF 残组走 final_cleanup 救济（警告进转录 + 就地丢弃），
         // 作业不再拒收（TRIP/ETRIP 现场：\end 被上游错误恢复吞掉时残组只能

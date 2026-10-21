@@ -2028,15 +2028,15 @@ fn misplaced_alignment_tab_char_alias_is_recovered() {
 }
 
 #[test]
-fn math_mode_lastbox_and_unhbox_recover_without_changing_mode() {
+fn math_mode_lastbox_and_void_unhbox_recover_without_changing_mode() {
     let (_r, t) = run_transcript(r"$\lastbox\unhbox234\accent0\vfill$");
     assert!(
         t.contains("! You can't use `\\lastbox' in math mode."),
         "\\lastbox in math mode must report and return void: {t}"
     );
     assert!(
-        t.contains("! Incompatible list can't be unboxed."),
-        "\\unhbox in math mode must take the TeX recovery arm: {t}"
+        !t.contains("! Incompatible list can't be unboxed."),
+        "tex.web unpackage returns silently for a void box, even in math mode: {t}"
     );
 }
 
