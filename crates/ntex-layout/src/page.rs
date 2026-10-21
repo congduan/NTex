@@ -517,7 +517,7 @@ impl PageBuilder {
                 Outcome::Continue
             }
             Node::Glue {
-                name: None,
+                name,
                 width,
                 stretch,
                 shrink,
@@ -536,13 +536,19 @@ impl PageBuilder {
                 }
                 contrib.remove(0);
                 self.page.push(Node::Glue {
-                    name: None,
+                    name,
                     width,
                     stretch,
                     shrink,
                     stretch_order,
                     shrink_order,
                 });
+                // INITEX 的零页高构造期沿用旧行为：TRIP 在设置 \vsize 前
+                // 就产生带名行间胶水；将它计入 0pt 目标会提前多次 shipout。
+                // 有正页高时，所有胶水都必须参与 page_total。
+                if name.is_some() && self.goal == 0 {
+                    return Outcome::Continue;
+                }
                 // update_heights（tex.web §550）
                 self.total += self.depth + width;
                 self.depth = 0;
@@ -1164,5 +1170,56 @@ impl PageBuilder {
         self.insert_skips_seen.clear();
         self.insert_penalties = 0;
         self.split_up_classes.clear();
+    }
+}
+
+#[cfg(test)]
+mod named_glue_tests {
+    use super::*;
+
+    #[test]
+    fn named_interline_glue_counts_toward_page_goal() {
+        let mut params = Params::default();
+        params.vsize = 35;
+        params.topskip = Glue::ZERO;
+        let line = || {
+            Node::Box(BoxNode {
+                kind: BoxKind::HBox,
+                width: 10,
+                height: 10,
+                depth: 0,
+                shift: 0,
+                children: vec![],
+            })
+        };
+        let baseline = || Node::Glue {
+            name: Some("baselineskip"),
+            width: 5,
+            stretch: 0,
+            shrink: 0,
+            stretch_order: 0,
+            shrink_order: 0,
+        };
+        let mut contrib = vec![
+            line(),
+            baseline(),
+            line(),
+            baseline(),
+            line(),
+            baseline(),
+            line(),
+        ];
+        let mut builder = PageBuilder::new();
+        let page = builder
+            .feed_one(&mut contrib, &params, &InsertRegs::default(), false)
+            .expect("the third line must force a page break");
+        assert_eq!(page.height, 35);
+        assert_eq!(
+            page.children
+                .iter()
+                .filter(|n| matches!(n, Node::Box(_)))
+                .count(),
+            2
+        );
     }
 }

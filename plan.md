@@ -158,6 +158,14 @@
     “x1>500pt”的原验收阈值与 GT 484.4pt 相矛盾，按 GT 版心右缘验收。
     证据与原始输出见 [R18 战报](docs/archive/blade-aj-r18-report-2026-10-21.md)。
 
+17. **刀 AJ R19 纵向版心修复**（10-21）：双引擎确认 `\vsize=\textheight=541.40024pt`
+    本来一致；页构建器却只为无名胶水累计高度，漏算带名 `\baselineskip`，使
+    541pt 的 `pagegoal` 容纳约 700pt 正文。现正页高时统一计入带名胶水，并保留
+    INITEX 零页高构造期的既有 TRIP 行为。真实文档 **42→53 页**（GT 54），
+    页底超 752pt **26→0 页**，最底 y=701.43pt（与 GT 相同），两趟 0 错。
+    无浮体 `article` 探针 10→14 页（GT 14）；公式几何 x0=203.2/x1=484.4
+    不回退。完整验证与原始输出见 [R19 战报](docs/archive/blade-aj-r19-report-2026-10-21.md)。
+
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 
 - **第十八刀** 尾递归鞍具校准 → `make check` 797 → **800 全绿**；pdfTeX 对照证明原否定结论有误；
