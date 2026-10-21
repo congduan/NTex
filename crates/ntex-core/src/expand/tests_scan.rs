@@ -729,6 +729,21 @@ ab5c}").unwrap();
         );
     }
 
+    #[test]
+    fn mkern_muskip_param_keeps_mu_units() {
+        // amsmath's \colon uses \mkern-\thinmuskip. tex.web scan_dimen
+        // accepts the mu parameter in a mu dimension, while \kern is pt.
+        let (r, transcript) = run_transcript(
+            r"\thinmuskip=3mu $a\mkern-\thinmuskip b$ \kern-\thinmuskip",
+        );
+        r.unwrap();
+        assert_eq!(
+            transcript.matches("Incompatible glue units.").count(),
+            1,
+            "only the pt kern should report a unit mismatch: {transcript}"
+        );
+    }
+
     /// 第十九刀：LaTeX `\,` 文本模式链的最小模拟 `\kern+\medmuskip`——
     /// 0 错通排（此前正号 + mu 参数 → "Missing number … +" 级联）。
     #[test]

@@ -2017,9 +2017,9 @@ impl Expander {
                 return Ok((if neg { -v } else { v }, 0));
             }
             // tex.web scan_dimen：内部量臂（scan_something_internal）——
-            // \thinmuskip/\medmuskip/\thickmuskip 参数原语形态。mu 参数在
-            // 尺寸上下文按 1mu=1pt 取数值继续（"! Incompatible glue units."
-            // + help 行，GT plain `\kern+\thinmuskip` 同款）；与 scan_glue_inner
+            // \thinmuskip/\medmuskip/\thickmuskip 参数原语形态。pt 尺寸
+            // 上下文报不兼容并按 1mu=1pt 继续（GT `\kern+\thinmuskip`）；
+            // mu 尺寸上下文直接接受（amsmath `\mkern-\thinmuskip`）。与 scan_glue_inner
             // 的同族臂（下方胶水语境）同语义。LaTeX `\,` =
             // `\tmspace+\thinmuskip{.16667em}` → 文本模式 `\kern+\thinmuskip`
             // 依赖此臂（此前缺臂 → "Missing number … +"）。
@@ -2034,7 +2034,9 @@ impl Expander {
                     _ => 2,
                 };
                 let v = self.registers.muskip(idx).width;
-                self.report_incompatible_glue_units();
+                if !mu {
+                    self.report_incompatible_glue_units();
+                }
                 return Ok((if neg { -v } else { v }, 0));
             }
             // tex.web `<internal dimen>`（scan_dimen 开头 `cur_cmd∈[min_internal,max_internal]`
