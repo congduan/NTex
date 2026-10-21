@@ -30,6 +30,49 @@
 // - 入口由 `primitive.rs` 主 match 委托。
 
 impl Expander {
+    fn exec_pdf_obj(&mut self) -> Result<()> {
+        if self.scan_keyword(|w| w == "reserveobjnum")?.is_some() {
+            self.pdf_last_obj += 1;
+            return Ok(());
+        }
+        if self.scan_keyword(|w| w == "useobjnum")?.is_some() {
+            let id = self.scan_number()?;
+            self.pdf_last_obj = self.pdf_last_obj.max(id);
+        } else {
+            self.pdf_last_obj += 1;
+        }
+        if self.scan_keyword(|w| w == "stream")?.is_some()
+            && self.scan_keyword(|w| w == "attr")?.is_some()
+        {
+            let _ = self.scan_group_contents(None)?;
+        }
+        let _ = self.scan_group_contents(None)?;
+        self.sink.special("PDF-PRIMITIVE-STUB pdfobj".to_owned())
+    }
+
+    fn exec_pdf_xform(&mut self) -> Result<()> {
+        loop {
+            if self.scan_keyword(|w| matches!(w, "attr" | "resources"))?.is_some() {
+                let _ = self.scan_group_contents(None)?;
+            } else { break; }
+        }
+        let _ = self.scan_number()?;
+        self.pdf_last_xform += 1;
+        self.sink.special("PDF-PRIMITIVE-STUB pdfxform".to_owned())
+    }
+
+    fn exec_pdf_literal(&mut self) -> Result<()> {
+        let _ = self.scan_keyword(|w| matches!(w, "direct" | "page"))?;
+        let toks = self.scan_group_contents(None)?;
+        let data = self.expand_to_string(&toks)?;
+        self.sink.special(format!("ntex-pdf-literal {data}"))
+    }
+
+    fn exec_pdf_page_resources(&mut self) -> Result<()> {
+        self.pdf_page_resources = self.scan_group_contents(None)?;
+        Ok(())
+    }
+
     /// `\pdfinfo{...}`：pdfTeX 扫一个 general text 组；NTex DVI 路径只保留
     /// stub 标记。GT 对拍（2026-10-04）：组后 token 立即可见。
     fn exec_pdf_info(&mut self) -> Result<()> {

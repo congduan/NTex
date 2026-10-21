@@ -263,6 +263,16 @@ impl Expander {
             Primitive::PdfDest => self.exec_pdf_dest(),
             Primitive::PdfStartLink => self.exec_pdf_startlink(),
             Primitive::PdfEndLink => self.exec_pdf_endlink(),
+            Primitive::PdfObj => self.exec_pdf_obj(),
+            Primitive::PdfXForm | Primitive::PdfForm => self.exec_pdf_xform(),
+            Primitive::PdfRefXForm | Primitive::PdfRefObj => {
+                let n = self.scan_number()?;
+                self.sink.special(format!("PDF-PRIMITIVE-STUB {prim:?} {n}"))
+            }
+            Primitive::PdfLiteral => self.exec_pdf_literal(),
+            Primitive::PdfSavePos => self.sink.special("PDF-PRIMITIVE-STUB pdfsavepos".to_owned()),
+            Primitive::PdfPageResources => self.exec_pdf_page_resources(),
+            Primitive::PdfImage => self.exec_pdf_ximage(),
             // M4-6 断字
             Primitive::Patterns => self.exec_patterns(),
             Primitive::Hyphenation => self.exec_hyphenation(),

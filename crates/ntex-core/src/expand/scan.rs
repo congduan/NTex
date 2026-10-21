@@ -635,6 +635,15 @@ impl Expander {
                     let v = self.params.misc[PDF_RANDOM_SEED_IDX];
                     return Ok(if neg { -v } else { v });
                 }
+                EqSlot::Primitive(p) if matches!(p, Primitive::PdfLastObj | Primitive::PdfLastXForm | Primitive::PdfLastForm | Primitive::PdfLastXPos | Primitive::PdfLastYPos) => {
+                    self.fetch()?;
+                    let v = match p {
+                        Primitive::PdfLastObj => self.pdf_last_obj,
+                        Primitive::PdfLastXForm | Primitive::PdfLastForm => self.pdf_last_xform,
+                        _ => 0,
+                    };
+                    return Ok(if neg { -v } else { v });
+                }
                 // ETRIP 冲刺：\lccode<char>：字符的小写码（数字上下文读取）
                 EqSlot::Primitive(Primitive::LcCode) => {
                     self.fetch()?; // 消费 \lccode

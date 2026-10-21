@@ -467,6 +467,10 @@ impl Expander {
         }
         match self.eqtb.slot(csid) {
             EqSlot::Primitive(p) => match p {
+                Primitive::PdfLastObj => Ok(emit_count(self.pdf_last_obj)),
+                Primitive::PdfLastXForm | Primitive::PdfLastForm => Ok(emit_count(self.pdf_last_xform)),
+                Primitive::PdfLastXPos | Primitive::PdfLastYPos => Ok(emit_count(0)),
+                Primitive::PdfPageResources => Ok(self.pdf_page_resources.clone()),
                 Primitive::Count => {
                     let idx = self.scan_register_index()?;
                     Ok(emit_count(self.registers.count(idx)))

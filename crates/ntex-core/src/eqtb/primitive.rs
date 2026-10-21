@@ -749,4 +749,8 @@ define_primitives! {
     // 保持既有 .fmt 原语编号不重排。
     PdfProtrudeChars,
     PdfAdjustSpacing,
+    // pgfsys PDF backend primitives; append to preserve serialized numbering.
+    PdfObj, PdfXForm, PdfRefXForm, PdfLastXForm, PdfLastObj, PdfRefObj,
+    PdfLiteral, PdfSavePos, PdfLastXPos, PdfLastYPos, PdfLastForm,
+    PdfPageResources, PdfImage, PdfForm,
 }

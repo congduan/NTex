@@ -133,6 +133,21 @@ fn pdf_minorversion_and_linkmargin_roundtrip() {
 }
 
 #[test]
+fn pdfobj_reserve_and_stream_consume_exact_arguments() {
+    let (out, _) = expand_vfs(
+        r"\pdfobj reserveobjnum\pdfobj reserveobjnum\the\pdflastobj:\immediate\pdfobj useobjnum 1 stream attr{/Type/X}{data}X",
+        MemVfs::new(),
+    ).unwrap();
+    assert_eq!(out, "2:X");
+}
+
+#[test]
+fn pdfliteral_direct_consumes_group_and_preserves_body_text() {
+    let (out, _) = expand_vfs(r"A\pdfliteral direct{0 0 m 1 1 l S}B", MemVfs::new()).unwrap();
+    assert_eq!(out, "AB");
+}
+
+#[test]
 fn pdf_colorstack_push_pop_consumes_group() {
     let (out, _) = expand_vfs(
         r"\pdfcolorstack0 push{red}A\pdfcolorstack0 pop B\pdfcolorstack0 set{blue}C",

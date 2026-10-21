@@ -80,6 +80,9 @@ pub(crate) struct ValueExtras {
     pub(crate) protrusions: ProtrusionCodes,
     pub(crate) hyphenchars: HashMap<u32, i64>,
     pub(crate) skewchars: HashMap<u32, i64>,
+    pub(crate) pdf_last_obj: i64,
+    pub(crate) pdf_last_xform: i64,
+    pub(crate) pdf_page_resources: Vec<Token>,
     /// 字体表（加载记录/外部名/cs 名；`\font` 副作用）。
     pub(crate) font_loads: Vec<Option<FontLoad>>,
     pub(crate) font_names: Vec<Option<String>>,
@@ -165,6 +168,9 @@ impl Expander {
                 protrusions: self.protrusions.clone(),
                 hyphenchars: self.hyphenchars.clone(),
                 skewchars: self.skewchars.clone(),
+                pdf_last_obj: self.pdf_last_obj,
+                pdf_last_xform: self.pdf_last_xform,
+                pdf_page_resources: self.pdf_page_resources.clone(),
                 font_loads: self.font_loads.clone(),
                 font_names: self.font_names.clone(),
                 font_cs_names: self.font_cs_names.clone(),
@@ -245,6 +251,9 @@ impl Expander {
         self.protrusions.replace_from(&x.protrusions);
         self.hyphenchars = x.hyphenchars.clone();
         self.skewchars = x.skewchars.clone();
+        self.pdf_last_obj = x.pdf_last_obj;
+        self.pdf_last_xform = x.pdf_last_xform;
+        self.pdf_page_resources = x.pdf_page_resources.clone();
         self.font_loads = x.font_loads.clone();
         self.font_names = x.font_names.clone();
         self.font_cs_names = x.font_cs_names.clone();

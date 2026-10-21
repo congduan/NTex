@@ -6,7 +6,7 @@
 /// Step B 补 PDF 变换栈 \pdfsave/\pdfsetmatrix/\pdfrestore 3 项；
 /// ctex 第二墙补 catcode table 三原语），
 /// 供 `register_builtins` 注册与 `tests.rs` 的一致性测试共用。
-pub(crate) const BUILTINS: [(&str, Primitive); 439] = [
+pub(crate) const BUILTINS: [(&str, Primitive); 453] = [
     ("def", Primitive::Def),
     ("edef", Primitive::Edef),
     ("gdef", Primitive::Gdef),
@@ -578,6 +578,20 @@ pub(crate) const BUILTINS: [(&str, Primitive); 439] = [
     ("pdfadjustspacing", Primitive::PdfAdjustSpacing),
     ("pdfmatch", Primitive::PdfMatch),
     ("pdffontexpand", Primitive::PdfFontExpand),
+    ("pdfobj", Primitive::PdfObj),
+    ("pdfxform", Primitive::PdfXForm),
+    ("pdfrefxform", Primitive::PdfRefXForm),
+    ("pdflastxform", Primitive::PdfLastXForm),
+    ("pdflastobj", Primitive::PdfLastObj),
+    ("pdfrefobj", Primitive::PdfRefObj),
+    ("pdfliteral", Primitive::PdfLiteral),
+    ("pdfsavepos", Primitive::PdfSavePos),
+    ("pdflastxpos", Primitive::PdfLastXPos),
+    ("pdflastypos", Primitive::PdfLastYPos),
+    ("pdflastform", Primitive::PdfLastForm),
+    ("pdfpageresources", Primitive::PdfPageResources),
+    ("pdfimage", Primitive::PdfImage),
+    ("pdfform", Primitive::PdfForm),
 ];
 
 /// `Primitive → 规范名`（`BUILTINS` 反查；tests.rs

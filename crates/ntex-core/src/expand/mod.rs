@@ -1136,6 +1136,9 @@ pub struct Expander {
     /// 元素 = (宽 sp, 高 sp, 文件名)。**只追加、不可变**——回滚/检查点无需
     /// 覆盖（同一 id 永远指向同一尺寸），故不进 checkpoint/FmtState。
     pdf_xobjects: Vec<(i64, i64, String)>,
+    pdf_last_obj: i64,
+    pdf_last_xform: i64,
+    pdf_page_resources: Vec<Token>,
 }
 
 impl Expander {
@@ -1273,6 +1276,9 @@ impl Expander {
             skewchars: HashMap::new(),
             in_math: false,
             pdf_xobjects: Vec::new(),
+            pdf_last_obj: 0,
+            pdf_last_xform: 0,
+            pdf_page_resources: Vec::new(),
         };
         e.register_builtins();
         e
@@ -1408,6 +1414,14 @@ impl Expander {
             }
         }
         self.eqtb = eqtb;
+        // Existing distributed formats predate the pgfsys PDF primitive family.
+        // Add only absent names after import; never replace a format's definition.
+        for (name, prim) in BUILTINS.iter().skip_while(|(name, _)| *name != "pdfobj") {
+            let csid = self.intern.intern(name);
+            if matches!(self.eqtb.slot(csid), EqSlot::Undefined) {
+                self.eqtb.set_primitive(csid, *prim);
+            }
+        }
         self.seed_latex_catcode_tables_if_missing();
         self.registers = Registers::import(state.registers);
         self.params = state.params;
@@ -1464,6 +1478,9 @@ impl Expander {
         self.output_boundary_yield = false;
         self.output_prev_count = usize::MAX;
         self.immediate_pending = false;
+        self.pdf_last_obj = 0;
+        self.pdf_last_xform = 0;
+        self.pdf_page_resources.clear();
         self.read_streams.clear();
         self.write_streams.clear();
         self.suppress_expansion = 0;
