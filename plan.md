@@ -110,11 +110,16 @@
     core 563 + layout 318 全绿；未过全本门槛，不提交推送。诊断、原始输出与
     下一步可证伪卡点见 `/tmp/bladeAJ/r14-report.md`。
 
-    **刀 AJ R16（10-21）**：保留 R15 的 mode 分派与 vtop 组保护；显示数学收尾先恢复
-    外层模式，再用展开后的 token 检查配对 `$`，使 TRIP L296-298 的 `\ifvmode` 真支
-    与 GT 对齐。全本无挂死，9 页，组错配族 Too many `}` / Missing `}` / Missing `$`
-    分别为 1/2/7（此前 3/4/11）；Missing number 仍 13（GT 6、16 页）。core 566、
-    layout 320、宏包 13/13 全绿；tripos 12 页零错。逐字页序仍待后续收口。
+    **刀 AJ R16 ✅ 收口（`306a250` 已推，10-21，Codex gpt-6-sol 一轮 + 主控收口）**：
+    保留 R15 的 mode 分派与 vtop 组保护；显示数学收尾先恢复外层模式，再用展开后的
+    token 检查配对 `$`，使 TRIP L296-298 的 `\ifvmode` 真支与 GT 对齐。全本无挂死，
+    9 页，组错配族 Too many `}` / Missing `}` / Missing `$` 分别为 1/2/7（此前
+    3/4/11）；Missing number 仍 13（GT 6、16 页）。core 565、layout 320、宏包
+    13/13 全绿；tripos 12 页零错。Claude 外部 review 300s 超时（0B，R14 同型通道
+    故障），按刀 AJ R11 先例主控亲自 review（放行，无必修项），缺席事实记入战报。
+    逐字页序仍待后续收口；**下一刀靶** = Missing number 13→6 主发散源 + tripos
+    页内容空（每页 0B vs GT 21B，`apply_layout_defaults` 覆盖快照 misc 槽链）。
+    战报 [docs/archive/blade-aj-r16-closure-2026-10-21.md](docs/archive/blade-aj-r16-closure-2026-10-21.md)。
 
 12. **Tauri 裸 `multline*` 片段修复**（10-20，未提交）：片段补壳按标准数学环境
     自动加载 `amsmath`（Tauri JS / native studio Rust 同步）；用户原公式实际 WASM
