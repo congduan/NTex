@@ -221,6 +221,34 @@ SurveyVfs read() mem 优先（写后读一致）。廿七刀证伪 chardef 假�
 纯 expl3 场景不现，依赖 latex.ltx 前置语境，另案）。
 剩余 10.6% 行 = codepoint 收尾 / l3text 五段 / l3legacy+l3deprecation / 文件尾 / exgeneric 尾。
 
+### TRIP 残差归因（2026-10-21）
+
+刀 AJ R17（起点 `db10d95`）以新建 release 二进制、20s watchdog 复核：格式构造
+1 页/177B（工作目录含 `trip.tfm`）；加载 R8 快照且不放 `trip.tfm` 时，tripos
+12 页/614B/0 错，全本 9 页/1169B/13 条 Missing number；GT 为 16 页/6 条。
+按**事件而非净数**对齐：4 条同位，NTex 独有 9 条，GT 独有 2 条，故净多 7 条。
+L315 的 J 仍为首个可见前序分叉：GT 是普通字母，NTex 是未定义 active J，处于
+L294–298 故意错配的嵌套显示数学之后；不据此推断一般 catcode 组恢复失效。
+
+| 源行／事件 | NTex 与 GT 的差异及根因归属 | 裁决 |
+|---|---|---|
+| 318 | NTex `\penalty\lastkern` 多报 1 次；GT 正常扫描。L315 的 J 和 `\lastskip` 已先分叉；独立 `\vbox{\kern1pt\penalty\lastkern}` 双引擎均零错，属畸形盒子链后续状态。 | 【TRIP 特有搁置】 |
+| 336（第 1、2 次） | NTex 在 `\expandafter\xx\span` 展开的 `####\cr` / `\tabskip` 对齐恢复中多报 2 次；GT 不报。该宏故意生成非法对齐模板。 | 【TRIP 特有搁置】 |
+| 390 | NTex 对 `\ifdim72p\iftrue t1i\fi n\fi\fi` 多报 1 次；GT 只报 Missing `=` 和 Extra `\fi`，畸形尺寸扫描与条件交错。 | 【TRIP 特有搁置】 |
+| 410 | NTex 对合法 `\advance\xspaceskip by-\xspaceskip` 多报 1 次；GT 正常。`param_kind_of` 漏 `XSpaceSkip`，导致胶水扫描无法读取该内部量；LaTeX `nfssfont.tex` 有同类 `\advance\xspaceskip`。R17 接入通用参数表和 `\the` 回读，已清。 | 【同源必修】✅ |
+| 411 | NTex 对合法 `\spacefactor2000` 多报 1 次；GT 正常。是 L410 扫描错位的连带报错；R17 随前项消失，独立探针 SF=2000。 | 【同源必修】✅ |
+| 428 | NTex 对 ``\catcode`q=7 \catcode`\qqM=0`` 多报 1 次；GT 不报。q 改为上标类后故意触发 `^^`/反引号读时序。 | 【TRIP 特有搁置】 |
+| 429（第 1、2 次） | NTex 在 ``\catcode`\qq1qM=13 \defqqM`` 多报 2 次；GT 只报宏定界失败及非法 `#`，由上一行的特殊 catcode 流级联。 | 【TRIP 特有搁置】 |
+| 106（GT 独有） | GT 在 `\write10{\uppercase{\number{\outputpenalty}}}` 延迟展开时对故意非法的 `\number{` 报 1 次；NTex 不报。该错误为 TRIP 生成文件的畸形输入，`\write` 扩展语义的通用欠账另按 §5 追踪。 | 【GT 特有销账】 |
+| tripos 源行 2（GT 独有） | GT 读生成的 `\uppercase{0{\outputpenalty}}` 时多报 1 次；NTex 未走到同一错误位，属于 TRIP 自写文件/再次输入的畸形链。 | 【GT 特有销账】 |
+
+四条同位为 trip.tex 253、257、298、419。R17 后 Missing number **11 vs 6**
+（NTex = 4 同位 + 7 独有；GT = 4 同位 + 2 独有），全本仍 9 页/1169B，tripos 仍 12 页/614B/0 错；
+core 567 + layout 320 全绿、宏包 13/13、small2e/sample2e 均 0 错。
+**TRIP 专项关闭**：真实 LaTeX 同源项已修；残余 16 页逐字对齐及 tripos 每页内容差异
+降级为长期观测项，不作为返回主线的门禁。详见
+[R17 战报](docs/archive/blade-aj-r17-report-2026-10-21.md)。
+
 ### 0.2 各线状态
 
 | 线 | 状态 |
@@ -244,8 +272,8 @@ SurveyVfs read() mem 优先（写后读一致）。廿七刀证伪 chardef 假�
   待补一次对照说明；在那之前**以 09-19 实测为准**。
 - **corpus 的 LaTeX PASS 是降级渲染**（`\documentclass` 等全 Undefined，只排出裸文字），
   真 LaTeX 结构/字体/版式未通 —— 不要把它读成 LaTeX 可用。
-- **TRIP / ETRIP**：硬口径"逐字节全绿"已按 2026-09-03 决策解绑，改记 M8 L2 观测项
-  （见 §2 M4）。当前收尾口径 = semantic diff 归零 + 错误块抽查。
+- **TRIP / ETRIP**：逐字节全绿已按 2026-09-03 决策解绑；2026-10-21 R17
+  归因后 TRIP 专项关闭，16 页逐字对齐转长期观测（见上节）。ETRIP 仍按自身计划推进。
 - **EVIDENCE 口径**：任何数字入库须带 commit / 命令 / 样本规模；仪器失真史见
   [docs/tooling-trust.md](docs/tooling-trust.md)（开工定位前先读）。
 
@@ -381,7 +409,7 @@ SurveyVfs read() mem 优先（写后读一致）。廿七刀证伪 chardef 假�
 | M1-9 条件原语 / M1-10 寄存器 / M1-11 组作用域 | ✅（M1-11 朴素快照回滚未改 eqtb 版本指针，O(1) 优化未做） |
 | M1-12 模式状态机 | ✅ 由 `ntex-layout::typeset` 承接 |
 | M1-13 错误模型 | 🟡 交互模式 + 上下文行 `l.N` 已做；**错误恢复通用机制（`back_input`/`\errhelp`）待补** ← P0 |
-| M1-14 TRIP 冲刺 | 🟡 `trip.tex` 可全程跑完不 panic；semantic diff **−5619/+1412**，未归零 |
+| M1-14 TRIP 冲刺 | ✅ 专项关闭：tripos 12/12 页零错、全本无挂死；16 页逐字对齐降为长期观测（R17 残差表见 §0） |
 | M1-15 性能基线 | ✅ |
 
 > 历史标注澄清：`\long`（M1-8）/`\chardef`（M1-3）/`\box`、`\muskip`（M1-10）
@@ -700,7 +728,8 @@ CLI `ntex-pkg`（`index`/`provide`/`resolve`/`lock`/`check`/`local`/**`vendor`**
       分歧，刀A 遗留①，2026-10-10 登记）；输入栈超限消息非 GT 逐字（fetch 护栏
       先于 call_macro 触发，刀A 遗留②）。amsmath 载入本体已 0 错（10b88fb 刀A：
       调用点 collapse_tail_conditionals_for_macro_call 偷走定界实参数据 `\fi`）。
-- [ ] **TRIP / ETRIP semantic diff 归零**（−5619/+1412 与 −3051/+2352）+ 错误块抽查
+- [ ] **ETRIP semantic diff 与错误块抽查**（旧基线 −3051/+2352）；TRIP semantic diff
+      与 16 页逐字对齐已由 R17 降为长期观测，不再占主线门禁。
       **🟡 语义收口五连（刀J~N，2026-10-11）**：`\the parshape` 内部量臂 + TRIP pass2 fatal 三连（`b0913c6`）、
       `\end` 救济语义（`e207209`）、halign preamble 展开臂 `get_preamble_token`（`a331a66`）、
       `\message` 恢复边界（`5179b89`）、`\let` 别名原语两阶段执行语义（`f46432d`）

@@ -18,7 +18,7 @@ single-threaded C interpreter of the 1970s (Web2C) is rewritten into a modern ty
 
 ## Development progress
 
-> Snapshot date 2026-10-11. The **single source of truth for progress is [plan.md](plan.md)**; this table
+> Snapshot date 2026-10-21. The **single source of truth for progress is [plan.md](plan.md)**; this table
 > is only a quick overview, and the bars are rough estimates meant to convey order of magnitude.
 
 **Milestones**:
@@ -26,7 +26,7 @@ single-threaded C interpreter of the 1970s (Web2C) is rewritten into a modern ty
 | Milestone | Progress | Status |
 |---|---|---|
 | M0 Foundation | `██████████` | Done: workspace / CI / differential tooling / benchmark framework |
-| M1 Interpreter core | `████████░░` | Core done: tokens / catcodes / macro expansion / core primitives; TRIP endgame unblocked after the five-blade semantic push (J–N); semantic diff not yet zero |
+| M1 Interpreter core | `████████░░` | Core done: tokens / catcodes / macro expansion / core primitives; TRIP focused work closed after residual analysis; full byte alignment remains under long-term observation |
 | M2 Bytecode compiler | `███████░░░` | Dual-track equivalence fully green (100 cases); throughput 1.01x — ≥2x is structurally unreachable → moved to M7 |
 | M3 Typesetting core | `██████████` | Done: nodes / boxes / glue / Knuth-Plass / TFM / page breaking / DVI, byte-identical to real TeX |
 | M4 Math + e-TeX | `████████░░` | Features complete (math state machine / e-TeX / hyphenation); ETRIP wrap-up ongoing |
@@ -36,7 +36,7 @@ single-threaded C interpreter of the 1970s (Web2C) is rewritten into a modern ty
 | M8 Rendering / output | `████████░░` | Usable: ntex-pdf + software rasterizer / vello GPU + studio / wasm / tauri workbench |
 | M9 Ecosystem push | `████░░░░░░` | Partial: CJK blades 1–6 all landed, package manager parse / contract / fetch ①② + `--auto-pkg` engine wiring, package CI regression **13/13** |
 
-**Current focus and key numbers** (2026-10-11):
+**Current focus and key numbers** (2026-10-21):
 
 - **Single main line**: the LaTeX/expl3 conformance push — the `latex.ltx` **main wall has been crossed**;
   the shipped `latex.fmt` chain works end to end, and `\documentclass{article}` has a **minimal working
@@ -54,8 +54,8 @@ single-threaded C interpreter of the 1970s (Web2C) is rewritten into a modern ty
 - **Rendering / preview**: the PDF backend, the software rasterizer and vello GPU path, the
   `ntex-studio` live workbench, and the wasm / Tauri frontend workbench are all usable.
 - **Not working yet**: long-tail real LaTeX layout (NFSS sizes / table refinements / long-footnote
-  splits / the full package ecosystem); on 2026-09-03 the byte-exact TRIP/ETRIP criterion was downgraded
-  to "semantic diff zeroed + spot-checked error blocks".
+  splits / the full package ecosystem). TRIP focused work closed on 2026-10-21: tripos has 12/12 pages
+  with zero errors; full 16-page byte alignment is a long-term observation item. ETRIP remains in progress.
 - **Four performance pillars**: state snapshot + CoW (available) / `.fmt` v1 (available, v2 pending) /
   segment-level incrementality (phases 1–5) / arena memory pool (pending).
 

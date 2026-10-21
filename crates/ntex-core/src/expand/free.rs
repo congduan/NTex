@@ -212,8 +212,7 @@ and I'll forget about whatever was undefined.";
 /// assign_int/assign_dimen/assign_glue/assign_mu_glue 四个 eqtb 区——`\hsize/
 /// \vsize/\voffset` 等页面参数、`\baselineskip/\parskip` 等胶参数、`\tolerance`
 /// 等整数参数都在其列；内部整数（misc 数组）走 [`int_param_index`]，
-/// `\xspaceskip`/`\prevdepth` 在 exec_advance 有专属臂（TRIP L410/L434），
-/// 均不入此表。
+/// `\prevdepth` 在 exec_advance 有专属臂（TRIP L434），不入此表。
 fn param_kind_of(p: Primitive) -> Option<ParamKind> {
     Some(match p {
         Primitive::ParIndent => ParamKind::ParIndent,
@@ -237,6 +236,7 @@ fn param_kind_of(p: Primitive) -> Option<ParamKind> {
         Primitive::RightSkip => ParamKind::RightSkip,
         Primitive::HangIndent => ParamKind::HangIndent,
         Primitive::SpaceSkip => ParamKind::SpaceSkip,
+        Primitive::XSpaceSkip => ParamKind::XSpaceSkip,
         Primitive::TabSkip => ParamKind::TabSkip,
         Primitive::LastSkip => ParamKind::LastSkip,
         Primitive::SplitTopSkip => ParamKind::SplitTopSkip,

@@ -554,6 +554,7 @@ impl Expander {
                 | Primitive::DefaultSkewChar
                 | Primitive::HangIndent
                 | Primitive::SpaceSkip
+                | Primitive::XSpaceSkip
                 | Primitive::TabSkip
                 | Primitive::SplitTopSkip
                 | Primitive::Hfuzz
@@ -589,6 +590,7 @@ impl Expander {
                         Primitive::DefaultSkewChar => ParamKind::DefaultSkewChar,
                         Primitive::HangIndent => ParamKind::HangIndent,
                         Primitive::SpaceSkip => ParamKind::SpaceSkip,
+                        Primitive::XSpaceSkip => ParamKind::XSpaceSkip,
                         Primitive::TabSkip => ParamKind::TabSkip,
                         Primitive::SplitTopSkip => ParamKind::SplitTopSkip,
                         Primitive::Hfuzz => ParamKind::Hfuzz,

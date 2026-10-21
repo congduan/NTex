@@ -75,33 +75,6 @@ impl Expander {
                 self.advance_register(kind, idx)
             }
             EqSlot::Register(kind, idx) => self.advance_register(kind, idx),
-            // TRIP L410：\xspaceskip 胶水参数也可 \advance
-            EqSlot::Primitive(Primitive::XSpaceSkip) => {
-                self.scan_keyword(|w| w == "by")?;
-                let delta = self.scan_glue()?;
-                let old = self.params.xspaceskip;
-                let global = self.is_global();
-                if global {
-                    self.invalidate_saved_param(ParamKind::XSpaceSkip);
-                }
-                if !global && self.group_level > 0 {
-                    self.save_stack.push((
-                        self.group_level,
-                        SavedValue::Param {
-                            kind: ParamKind::XSpaceSkip,
-                            prev: self.params.get(ParamKind::XSpaceSkip),
-                            retained: false,
-                        },
-                    ));
-                }
-                self.params.xspaceskip = add_glue(old, delta);
-                self.sink.param_changed(
-                    ParamKind::XSpaceSkip,
-                    ParamValue::Glue(self.params.xspaceskip),
-                )?;
-                self.finish_assignment();
-                Ok(())
-            }
             // TRIP L434：\advance\prevdepth —— restricted horizontal mode 下
             // prevdepth 不可赋值，TeX 报错恢复（trip.log L6604-6607），不扫描增量。
             EqSlot::Primitive(Primitive::PrevDepth) => {

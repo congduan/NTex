@@ -529,6 +529,25 @@ ab5c}").unwrap();
         );
     }
 
+    #[test]
+    fn xspaceskip_is_full_glue_internal_for_advance_and_readback() {
+        // LaTeX nfssfont.tex advances this parameter; TRIP L410 negates it.
+        let src = concat!(
+            "\\xspaceskip=10pt plus 2pt %\n",
+            "{\\advance\\xspaceskip by-\\xspaceskip %\n",
+            "\\message{X=[\\the\\xspaceskip]}} %\n",
+            "\\message{Y=[\\the\\xspaceskip]}"
+        );
+        let (result, transcript) = run_transcript(src);
+        result.unwrap();
+        assert!(!transcript.contains("Missing number"), "{transcript}");
+        assert!(transcript.contains("X=[0.0pt]"), "{transcript}");
+        assert!(
+            transcript.contains("Y=[10.0pt plus 2.0pt]"),
+            "{transcript}"
+        );
+    }
+
     /// 负系数变体：GT（TinyTeX pdflatex g2.tex，LaTeX `\setlength` 实测）
     /// `\setlength\myskip{-\mycnt\mydim}`（\mycnt=3、\mydim=5pt）→
     /// `-15.0pt`。NTex 单元锁走同语义的直接赋值形态（LaTeX 括号组路径已由
