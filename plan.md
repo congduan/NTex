@@ -176,6 +176,15 @@
     任务给出的 614B/42 页为较早口径。T1/T2 残错及 GT 页数差仍待收口；
     证据与 PDF 见 [终验战报](docs/archive/docfix-closure.md)。
 
+19. **testmath「原始代码泄漏」R20 定性，WIP**（10-21）：抽查的 p17–p35
+    反斜杠源码是官方 `testmath.tex` 刻意展示的示例（`verbatim`、`\cn`）；
+    GT PDF 同样含这些源码。独立最小探针显示 `\pmod`、`\genfrac`、
+    `\boldsymbol` 的 `\meaning` 与 pdfTeX 一致，单页 PDF 渲染出取模、分式和 π，
+    无命令名裸排。重排 testmath 仍为 **39 页/9 错**，GT **41 页/0 错**；
+    两份 PDF 的上述三命令原样文本出现次数均为 2/7/8。原「约 180 处泄漏」
+    指标被 GT 对照证伪，不据此补命令或改定义机制。九条已有错误与页数差
+    另案定位；证据与限制见 [R20 战报](docs/archive/blade-aj-r20-report-2026-10-21.md)。
+
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 
 - **第十八刀** 尾递归鞍具校准 → `make check` 797 → **800 全绿**；pdfTeX 对照证明原否定结论有误；
