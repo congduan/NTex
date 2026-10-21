@@ -578,9 +578,18 @@ fn empty_argument() {
 #[test]
 fn futurelet_captures_next_token() {
     // \futurelet\next\relax a → \next := 字符 'a'（\let 语义），\relax 与 a 照常处理；
-    // 用 \ifx 与另一个 \let 到 'a' 的控制序列比较（\ifx CS vs 裸字符必为假）。
+    // 用 \ifx 与另一个 \let 到 'a' 的控制序列比较。
     let src = "\\futurelet\\next\\relax a\\let\\expected a\\ifx\\next\\expected yes\\else no\\fi";
     assert_eq!(expand(src).unwrap(), "ayes");
+}
+
+#[test]
+fn ifx_character_alias_matches_literal_after_futurelet() {
+    // pgfkeys 用此形判断绝对路径首字符 `/`；\futurelet 得到字符含义后，
+    // \ifx 必须能把控制序列的字符含义与字面字符 token 判为相等。
+    let src = "\\def\\path{/foo}\\def\\check{\\ifx\\peek/yes\\else no\\fi}%
+               \\expandafter\\futurelet\\expandafter\\peek\\expandafter\\check\\path\\relax";
+    assert_eq!(expand(src).unwrap(), "yes/foo");
 }
 
 #[test]

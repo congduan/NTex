@@ -858,7 +858,8 @@ impl Expander {
         }
     }
 
-    /// `\ifx`：字符按 (catcode,char)；控制序列按含义（解析别名）；其余 false。
+    /// `\ifx`：字符按 (catcode,char)；控制序列按含义（解析别名）。
+    /// `\let`/`\futurelet` 得到字符含义的控制序列可与字面字符比较。
     ///
     /// 操作数若带 `\noexpand` 标记（tex.web expand() 的 frozen_dont_expand
     /// 标记被 get_next 读到时，l.7506-7516）：可展开 cs 的含义被替换为
@@ -867,13 +868,20 @@ impl Expander {
     /// 替换）。两侧对称：`\ifx\noexpand\A\noexpand\A` 两键同为 NoExpandRelax
     /// → 真。
     fn ifx_equal(&self, t1: Token, ne1: bool, t2: Token, ne2: bool) -> bool {
-        match (t1.kind(), t2.kind()) {
-            (TokenKind::Char, TokenKind::Char) => t1 == t2,
-            (TokenKind::ControlSeq, TokenKind::ControlSeq) => {
-                self.ifx_meaning(t1, ne1) == self.ifx_meaning(t2, ne2)
-            }
-            _ => false,
+        if !matches!(t1.kind(), TokenKind::Char | TokenKind::ControlSeq)
+            || !matches!(t2.kind(), TokenKind::Char | TokenKind::ControlSeq)
+        {
+            return false;
         }
+        let meaning = |tok: Token, noexpand| match tok.kind() {
+            TokenKind::Char => MeaningKey::Char {
+                catcode: tok.catcode().expect("字符 token 必有 catcode"),
+                charcode: tok.charcode().expect("字符 token 必有 charcode"),
+            },
+            TokenKind::ControlSeq => self.ifx_meaning(tok, noexpand),
+            _ => MeaningKey::Undefined,
+        };
+        meaning(t1, ne1) == meaning(t2, ne2)
     }
 
     /// 操作数的 `\ifx` 含义键（含 `\noexpand` 替换臂，见 [`Self::ifx_equal`]）。
