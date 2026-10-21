@@ -166,6 +166,16 @@
     无浮体 `article` 探针 10→14 页（GT 14）；公式几何 x0=203.2/x1=484.4
     不回退。完整验证与原始输出见 [R19 战报](docs/archive/blade-aj-r19-report-2026-10-21.md)。
 
+18. **LaTeX 官方三文档数学链三签名收口，终验 WIP**（10-21）：`split` 所需
+    `\everydisplay`、数学字符按真实模式成 Op noad、`\mkern-\thinmuskip` 的 mu
+    尺寸扫描分别修复并提交（`777ef95`/`97e8f0e`/`a276f8e`）。T1/T2/T3
+    两遍原文重排为 **45 页/18 错、39 页/9 错、50 页/0 错**（GT 44/41/46 页），
+    三数学签名在 T1/T2 均归零；T1 的 `! OK.` 信息行另计 15，不入错数。
+    core 575 + layout 325、宏包 13/13 全绿，TRIP 构造 177B；tripos
+    12 页/750B、Transformer 53 页/0 错均与本轮起点 a933fe6 实测一致，
+    任务给出的 614B/42 页为较早口径。T1/T2 残错及 GT 页数差仍待收口；
+    证据与 PDF 见 [终验战报](docs/archive/docfix-closure.md)。
+
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 
 - **第十八刀** 尾递归鞍具校准 → `make check` 797 → **800 全绿**；pdfTeX 对照证明原否定结论有误；
