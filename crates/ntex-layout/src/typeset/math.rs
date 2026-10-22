@@ -857,7 +857,13 @@ impl NodeBuilder {
                 }
             }
             MathAtom::Box(b) => vec![Node::Box(b.clone())],
-            MathAtom::Choice(_) => unreachable!("choices spliced before mlist conversion"),
+            // A choice may also be the nucleus of a scripted atom. Such a
+            // choice is reached through math_atom_nodes rather than the
+            // top-level mlist splice above.
+            MathAtom::Choice(branches) => {
+                let index = (style.code() / 2).min(3) as usize;
+                self.math_to_hlist(&branches[index], style)
+            }
             MathAtom::Penalty { penalty } => vec![Node::Penalty { penalty: *penalty }],
             MathAtom::Rule { width, height, depth } => vec![Node::Rule {
                 width: *width,

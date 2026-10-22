@@ -208,8 +208,7 @@ impl Expander {
                 self.sink.math_accent_char(n)
             }
             // tex.web math_char：\mathchar<15-bit> 是完整数学字符原子（数学中
-            // 直接产出 Char——此前 scan_number 即丢）；\delimiter<27-bit> 为
-            // 定界符（Delimited 场景经 \left/\right 扫描；裸用暂简化）
+            // 直接产出 Char）；裸 \delimiter 的高 15 位也是数学字符码。
             Primitive::MathChar => {
                 // tex.web math_char_num 分支与 letter/other 同流到 scan_math 尾部：
                 // 15 位码同样吃 `\fam` 替换（`\fam0 \mathchar"7101 x` → fam0 正体）
@@ -218,8 +217,17 @@ impl Expander {
                 self.sink.math_char_full(n)
             }
             Primitive::Delimiter => {
-                let _ = self.scan_number()?;
-                Ok(())
+                let code = (self.scan_number()? as u32) >> 12;
+                if self.sink.math_code_applies() {
+                    let code = if code >= 0x7000 {
+                        self.mathcode_apply_fam(code)
+                    } else {
+                        code
+                    };
+                    self.sink.math_char_full(code)
+                } else {
+                    Ok(())
+                }
             }
             // \eqno/\leqno：显示数学内（tex.web mmode+eq_no → privileged &&
             // cur_group=math_shift_group → start_eq_no）编号材料改道独立收集，

@@ -1,6 +1,14 @@
 use super::*;
 
     #[test]
+    fn vtop_first_paragraph_has_no_leading_parskip() {
+        let nodes = typeset(r"\parskip=0pt plus1pt \setbox0=\vtop{a}\copy0").unwrap();
+        let b = as_box(nodes.last().unwrap());
+        assert!(matches!(b.children.first(), Some(Node::Box(_))), "{b:?}");
+        assert!(b.height > 0, "vtop takes its first line's height: {b:?}");
+    }
+
+    #[test]
     fn alignment_cell_restores_local_box_but_keeps_global_assignment() {
         fn chars(nodes: &[Node], out: &mut Vec<u32>) {
             for node in nodes {

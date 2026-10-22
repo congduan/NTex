@@ -980,7 +980,12 @@ impl CoreSink for NodeBuilder {
     /// 开段（tex.web `new_graf`）：`\parskip`（空页上被页面构建器丢弃）→
     /// 新水平列表 → spacefactor 复位 → 缩进盒。
     fn par_begin(&mut self, indented: bool) -> Result<()> {
-        if self.page_state.pagination {
+        // TeX discards parskip at the top of an internal vertical list. Keep
+        // the outer contribution list's existing path: speculative segments
+        // observe a snapshot of that list and the page builder discards its
+        // leading glue when appropriate.
+        let internal_top = self.list_modes.len() > 1 && self.lists.last().is_some_and(Vec::is_empty);
+        if self.page_state.pagination && !internal_top {
             let ps = self.params.parskip;
             self.append(Node::Glue {
             name: None,                            width: ps.width,

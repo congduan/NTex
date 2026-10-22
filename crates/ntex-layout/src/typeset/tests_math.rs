@@ -22,6 +22,11 @@ use super::*;
         chars(&scripted, &mut actual);
         assert_eq!(actual, vec![b'x' as u32, b'S' as u32]);
 
+        let direct_script = math_line_children(r"$\mathchoice{D}{T}{S}{s}^2$");
+        actual.clear();
+        chars(&direct_script, &mut actual);
+        assert_eq!(actual, vec![b'T' as u32, b'2' as u32]);
+
         let nested = math_line_children(r"$\mathchoice{D}{\mathchoice{a}{T}{c}{d}}{S}{s}$");
         let mut actual = Vec::new();
         chars(&nested, &mut actual);
@@ -34,6 +39,16 @@ use super::*;
 
         let spaced = math_line_all_children(r"$a\mathchoice{\mathbin+}{\mathbin+}{\mathbin+}{\mathbin+}b$");
         assert_eq!(spaced.len(), 5, "selected Bin branch supplies both math skips: {spaced:?}");
+    }
+
+    #[test]
+    fn bare_delimiter_builds_math_open_and_close_chars() {
+        let nodes = math_line_children(r#"$\delimiter"426830A x\delimiter"526930B$"#);
+        let chars: Vec<u32> = nodes.iter().filter_map(|n| match n {
+            Node::Char { charcode, .. } => Some(*charcode),
+            _ => None,
+        }).collect();
+        assert_eq!(chars, vec![0x68, b'x' as u32, 0x69]);
     }
 
     #[test]
