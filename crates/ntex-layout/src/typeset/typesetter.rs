@@ -675,6 +675,7 @@ impl Typesetter {
         self.run_plain_params()?;
         self.run_hyphen_preload()?;
         self.run_compat_preload()?;
+        self.expander.run_everyjob()?;
         self.expander.run_source(text)?;
         self.finish().map(|out| {
             self.shipped = out.shipped;
@@ -692,6 +693,7 @@ impl Typesetter {
         self.run_plain_params()?;
         self.run_hyphen_preload()?;
         self.run_compat_preload()?;
+        self.expander.run_everyjob()?;
         self.expander.feed_source(bytes);
         self.expander.run()?;
         self.finish().map(|out| {
@@ -823,6 +825,7 @@ impl Typesetter {
         self.run_plain_params()?;
         self.run_hyphen_preload()?;
         self.run_compat_preload()?;
+        self.expander.run_everyjob()?;
         self.expander.run_source(text)?;
         let out = self.finish()?;
         self.shipped = out.shipped.clone();

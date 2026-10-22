@@ -883,11 +883,10 @@ impl Expander {
                 Primitive::EveryMath => Ok(self.everymath.clone()),
                 // TRIP 补全批次：\\the\\everydisplay：显示数学注入 token 列表
                 Primitive::EveryDisplay => Ok(self.everydisplay_toks.clone()),
-                // \the\everyjob：toks 参数读回（latex.ltx L727
-                // `\everyjob\expandafter{\the\everyjob\the\LaTeXReleaseInfo}` 在
-                // scan_left_brace 的 filler 语义下展开时即需读值；NTex 的
-                // \everyjob 赋值暂映射 toks 寄存器 0，读回同源）
-                Primitive::EveryJob => Ok(self.registers.toks(0).to_vec()),
+                // `\everyjob`：专字段（v25 快照序列化；tex.web `\everyjob` 是
+                // 独立 token 表参数非 toks 寄存器——旧 toks0 暂映射不进快照
+                // 导致 LaTeX 作业启动钩子恒空，expl3 sys 常量族缺失连锁）。
+                Primitive::EveryJob => Ok(self.everyjob_toks.clone()),
                 // TRIP 补全批次：页面只读内部量（无排版状态返回 0）。
                 // `\displaywidth` 不在此——它走上面的参数表（tex.web assign_dimen）。
                 Primitive::PageDepth

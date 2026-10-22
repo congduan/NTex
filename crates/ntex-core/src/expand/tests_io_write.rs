@@ -796,8 +796,19 @@ use super::*;
         assert_eq!(out, "Hello");
     }
 
+    /// `\write18` = shell escape 通道：GT pdftex 实测（2026-10-23 /tmp/gt18，
+    /// `pdftex -interaction=nonstopmode`）——无 shell-escape 时**永不 fatal**：
+    /// log 记 `runsystem(echo hi)...disabled (restricted).` 后照常出 1 页 PDF。
+    /// NTex 同语义降级为转录消息（吞参数不执行）；去修复必红 = 恢复 io.rs
+    /// 的 fatal 臂本断言即过（旧行为期望，已按 GT 推翻）。
     #[test]
-    fn write18_shell_escape_rejected() {
-        let vfs = MemVfs::new();
-        assert!(expand_vfs("\\write18{echo hi}\\end", vfs).is_err());
+    fn write18_shell_escape_is_nonfatal_transcript_message() {
+        let mut e = Expander::new();
+        e.set_vfs(Box::new(MemVfs::new()));
+        e.run_source("\\write18{echo hi}\\end").unwrap();
+        assert!(
+            e.transcript().contains("runsystem(echo hi)...disabled"),
+            "转录应含 GT 同构 runsystem disabled 消息：{:?}",
+            e.transcript()
+        );
     }

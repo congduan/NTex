@@ -1309,6 +1309,37 @@ I changed this one to zero.
         (r, std::mem::take(&mut sink.transcript))
     }
 
+    /// v25：`\everyjob` 作业启动钩子——dump 期赋值进快照（v25 字段，非 toks0
+    /// 暂映射），作业启动（`run_everyjob`，tex.web §1322 new_job starts）时
+    /// 在用户源**之前**执行。latex.ltx/expl3 载入链靠它在作业期定义
+    /// `\c_sys_shell_escape_int` 等 sys 常量族（minted 首错
+    /// `Missing number … \c_sys_shell_escape_int` 的根因链）。
+    /// 去修复必红：删 `run_everyjob` 调用 / 恢复 toks0 暂映射，两断言皆炸。
+    #[test]
+    fn everyjob_runs_at_job_start_before_user_source() {
+        // ① 语义序：everyjob 先于用户源执行（latex.ltx L727
+        // `\everyjob\expandafter{\the\everyjob...}` 读回拼接同构）。
+        // ② 执行语义：钩子体真做功（赋值常量 → 用户源可读），非仅「排队」。
+        let mut e = Expander::new();
+        let sink = VecSink::default();
+        e.set_sink(Box::new(sink));
+        e.run_source("\\everyjob{\\def\\shellconfig{42}}").unwrap();
+        e.run_everyjob().unwrap();
+        e.run_source("\\count0=\\shellconfig\\relax").unwrap();
+        let sink = e.take_sink();
+        let mut sink = sink;
+        let sink = sink.as_any_mut().downcast_mut::<VecSink>().unwrap();
+        let transcript = std::mem::take(&mut sink.transcript);
+        assert!(
+            !transcript.contains("! Undefined control sequence"),
+            "everyjob 钩子须在用户源前执行（\\shellconfig 应已定义）：{transcript}"
+        );
+        assert_eq!(e.registers.count(0), 42, "钩子体赋值应已生效");
+        // 空列表（plain/iniTeX）零开销不注入。
+        let mut e2 = Expander::new();
+        e2.run_everyjob().unwrap();
+    }
+
     /// TRIP 冲刺调试（临时）。
     #[test]
     fn dbg_trip_l26_mathchardef() {

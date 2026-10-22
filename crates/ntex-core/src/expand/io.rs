@@ -619,7 +619,20 @@ impl Expander {
     fn exec_write(&mut self) -> Result<()> {
         let n = self.scan_number()?;
         if n == 18 {
-            return Err(Error::invalid_input("\\write18（shell 转义）暂不支持"));
+            // tex.web/pdfTeX：`\write18` = shell escape 通道。无 shell-escape
+            // 时**永不 fatal**——GT pdftex 实测（/tmp/blade30/gt18）：log 记
+            // `runsystem(<cmd>)...disabled` 后作业照常出页；延迟写排在作业末
+            // flush。NTex 无 shell 通道，按同语义降级为转录消息（吞参数不执行），
+            // 旧 fatal 臂是「偏离 GT 的保护性分歧」且未登记（minted 首站炸点，
+            // 检测逻辑 `\ifnum\shellescape>0 \ifeof18 ... \write18...` 直接 fatal）。
+            let _cmds: TokenArray = Arc::from(self.scan_general_text()?);
+            let _immediate = self.take_immediate();
+            // GT 文案对齐：`runsystem(<cmd>)...disabled (restricted).`（<cmd>
+            // 为展开后命令文本；NTex 无 shell 通道恒 disabled）
+            let s = self.expand_to_string(&_cmds)?;
+            self.sink
+                .write16(format!("runsystem({s})...disabled (shell escape not supported)"))?;
+            return Ok(());
         }
         let toks: TokenArray = Arc::from(self.scan_general_text()?);
         // 消费 \immediate 前缀（终端/文件写都须消费，避免污染后续 \write）

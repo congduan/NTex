@@ -482,6 +482,14 @@ pub struct EveryToks {
     pub everycr: Vec<Token>,
     /// `\everydisplay`。
     pub everydisplay: Vec<Token>,
+    /// `\everyjob`：作业启动钩子（tex.web §1322 new_job starts交互）。
+    /// **必入 fmt 快照**——latex.ltx/expl3 载入链把 `\__kernel_sys_everyjob:`
+    /// 追加进 `\everyjob`（expl3.ltx L137-144），钩子内容又由 `\__sys_everyjob:n`
+    /// 攒的 `\g__sys_everyjob_tl` 展开（`\c_sys_jobname_str`/`\c_sys_year_int`/
+    /// `\c_sys_shell_escape_int` 等 sys 常量全靠它在作业启动时定义）。
+    /// 旧实现暂映射 toks 0 而 toks 寄存器不进快照 → 恒空 → minted 等
+    /// 依赖 `\csname c_sys_shell_escape_int\endcsname` 的宏包 Missing number。
+    pub everyjob: Vec<Token>,
     /// `\errhelp`。
     pub errhelp: Vec<Token>,
 }
@@ -1107,6 +1115,9 @@ pub struct Expander {
     errhelp_toks: Vec<Token>,
     /// TRIP 补全批次：`\everydisplay` token 列表（显示数学进入时注入）。
     everydisplay_toks: Vec<Token>,
+    /// `\everyjob` token 列表（作业启动钩子；v25 起进 fmt 快照——
+    /// latex.ltx/expl3 载入链的 `\__kernel_sys_everyjob:` 注入点）。
+    everyjob_toks: Vec<Token>,
     /// pdfTeX/e-TeX：`\everyeof` token 列表——**文件帧读尽时注入**（tex.web
     /// pdfTeX `every_eof` 扩展）。expl3 `\__sys_get` 依赖它在 `\input` 结束
     /// 边界回注 `\q_no_value` 探测标记。
@@ -1270,6 +1281,7 @@ impl Expander {
             everycr_toks: Vec::new(),
             errhelp_toks: Vec::new(),
             everydisplay_toks: Vec::new(),
+            everyjob_toks: Vec::new(),
             everyeof_toks: Vec::new(),
             force_eof: false,
             file_name_in_progress: false,
@@ -1328,6 +1340,7 @@ impl Expander {
                 everyvbox: self.everyvbox_toks.clone(),
                 everycr: self.everycr_toks.clone(),
                 everydisplay: self.everydisplay_toks.clone(),
+                everyjob: self.everyjob_toks.clone(),
                 errhelp: self.errhelp_toks.clone(),
             },
             font_names: self.font_names.clone(),
@@ -1433,6 +1446,7 @@ impl Expander {
         self.everyvbox_toks = state.every_toks.everyvbox;
         self.everycr_toks = state.every_toks.everycr;
         self.everydisplay_toks = state.every_toks.everydisplay;
+        self.everyjob_toks = state.every_toks.everyjob;
         self.errhelp_toks = state.every_toks.errhelp;
         self.font_names = state.font_names;
         self.font_loads = state.font_loads;
@@ -1571,6 +1585,30 @@ impl Expander {
     /// 喂入并运行至输入耗尽。
     pub fn run_source(&mut self, text: &str) -> Result<()> {
         self.feed_source(text);
+        self.run()
+    }
+
+    /// 作业启动钩子执行（tex.web §1322 new_job starts 交互：dump 结束后
+    /// 首次进主循环前，引擎把 `\everyjob` token 列表压回输入流最前）。
+    ///
+    /// 调用时机 = 格式恢复后、用户源前（`Typesetter::{typeset,typeset_bytes,
+    /// typeset_dvi}` 三入口预载完成后各调一次）——latex.ltx/expl3 载入链
+    /// dump 期把 `\__kernel_sys_everyjob:` 追加进 `\everyjob`，expl3 sys
+    /// 常量族（`\c_sys_jobname_str`/`\c_sys_year_int`/`\c_sys_shell_escape_int`
+    /// 等）全靠它在作业启动时定义；旧实现暂映射 toks 0 且从不执行 →
+    /// minted 等宏包 Missing number 连锁。列表为空（plain/iniTeX）时零开销
+    /// 不注入。
+    pub fn run_everyjob(&mut self) -> Result<()> {
+        if self.everyjob_toks.is_empty() {
+            return Ok(());
+        }
+        let toks = self.everyjob_toks.clone();
+        let seq: Vec<(Token, bool)> = toks.into_iter().map(|t| (t, false)).collect();
+        // 压在最前：此时输入栈只有刚 feed 的用户源帧，everyjob 帧先于它出栈
+        self.push_frame(InputFrame::TokenList {
+            items: Arc::from(seq),
+            pos: 0,
+        });
         self.run()
     }
 

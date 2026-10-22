@@ -153,11 +153,13 @@ impl Expander {
                 self.finish_assignment();
                 Ok(())
             }
-            // ETRIP 冲刺：\everyjob=<tokens>（暂映射 toks 寄存器 0）
+            // `\everyjob`：专字段（v25 快照序列化；tex.web `\everyjob` 是
+            // 独立 token 表参数非 toks 寄存器——toks0 暂映射不进快照会让
+            // LaTeX 作业启动钩子恒空，expl3 sys 常量族缺失连锁）。
             Primitive::EveryJob => {
                 self.expect_equals()?;
                 let val = self.scan_group_contents(Some("everyjob"))?;
-                self.assign_toks(0, Arc::from(val));
+                self.everyjob_toks = val;
                 Ok(())
             }
             // pdfTeX/e-TeX：\everyeof=<tokens>（文件帧读尽注入；expl3

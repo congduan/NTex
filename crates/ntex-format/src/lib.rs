@@ -54,7 +54,11 @@ const MAGIC: &[u8; 8] = b"NTEXFMT1";
 ///      microtype 最后 2 错刀 I）+ 追加两 pdfTeX 整数参数原语变体——
 ///      同 v19 教训：misc 定长序列化长度变必须同步 bump，否则旧快照
 ///      在数组读取处无声错配。
-pub const FORMAT_VERSION: u8 = 24;
+/// v25：`\everyjob` 作业启动钩子进快照（此前暂映射 toks 0 而 toks 寄存器
+///      不序列化 → LaTeX 作业启动时 `\__kernel_sys_everyjob:` 不执行，
+///      `\c_sys_shell_escape_int`/`\c_sys_jobname_str`/`\c_sys_year_int` 等
+///      expl3 sys 常量族全缺——minted 首错 Missing number 的根因链）。
+pub const FORMAT_VERSION: u8 = 25;
 
 /// 当前引擎版本号：随 crate 版本进入 `.fmt` 文件头。
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -216,6 +220,9 @@ pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
     write_tokens(w, &state.every_toks.everyvbox)?;
     write_tokens(w, &state.every_toks.everycr)?;
     write_tokens(w, &state.every_toks.everydisplay)?;
+    // v25：`\everyjob` 作业启动钩子（expl3 sys 常量族定义点；旧 toks0
+    // 暂映射不进快照 → LaTeX 作业启动时 `\__kernel_sys_everyjob:` 缺失）
+    write_tokens(w, &state.every_toks.everyjob)?;
     write_tokens(w, &state.every_toks.errhelp)?;
 
     // font_loads（v13：pass2 恢复字体表用；FontId → (外部名, at, scaled)）
@@ -502,6 +509,8 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
         everyvbox: read_tokens(r)?,
         everycr: read_tokens(r)?,
         everydisplay: read_tokens(r)?,
+        // v25：`\everyjob`（与 save 严格同序；everydisplay 之后、errhelp 之前）
+        everyjob: read_tokens(r)?,
         errhelp: read_tokens(r)?,
     };
 
