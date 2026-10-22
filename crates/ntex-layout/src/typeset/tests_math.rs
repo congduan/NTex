@@ -251,6 +251,14 @@ use super::*;
         assert_eq!(transcript.matches("PAR-HIT").count(), 2, "{transcript}");
     }
 
+    #[test]
+    fn consecutive_unbraced_math_accents_do_not_leave_pending_field() {
+        let mut ts = Typesetter::with_tfm().plain_params();
+        ts.typeset(r#"$\mathaccent"7058 X+\mathaccent"7058 x$"#)
+            .unwrap();
+        let transcript = ts.take_transcript();
+        assert!(!transcript.contains("Missing { inserted"), "{transcript}");
+    }
 
     #[test]
     fn math_display_paginated_smoke() {

@@ -286,16 +286,15 @@ impl NodeBuilder {
             });
             return Ok(());
         }
-        // `\accent`/`\mathaccent` 单原子 nucleus 字段：第一个原子充当重音符，
-        // 第二个原子是被重音内容（tex.web math_ac：accent 字段在前）。
+        // `\accent`/`\mathaccent` 单原子 nucleus 字段。重音符编号已由 VM
+        // 扫描；下一个原子就是 nucleus。此前仅在末原子已经是 Accent 时清掉
+        // pending，导致 `\widehat X+\hat x` 的第二个重音误报 Missing {。
         if self.math_state.accent_pending {
-            if let Some(level) = self.math_state.math.last_mut() {
-                if let Some(MathAtom::Accent { nucleus, .. }) = level.atoms.last_mut() {
-                    nucleus.push(atom);
-                    self.math_state.accent_pending = false;
-                    return Ok(());
-                }
-            }
+            self.math_state.accent_pending = false;
+            return self.math_push_atom_raw(MathAtom::Accent {
+                accent: Vec::new(),
+                nucleus: vec![atom],
+            });
         }
         // `\mathbin` 等单原子字段：`\mathbin+`（Char 改类，其余包 Classed）。
         // 单字符是合法字段（tex.web scan_math letter 分支：`\mathord x` 不报错）；
