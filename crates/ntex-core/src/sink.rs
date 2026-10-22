@@ -319,6 +319,10 @@ pub trait MathSink {
     fn math_accent(&mut self, _plain: bool) -> Result<()> {
         Ok(())
     }
+    /// The scanned 15-bit math accent character, after the diagnostic for plain \accent.
+    fn math_accent_char(&mut self, _code: u32) -> Result<()> {
+        Ok(())
+    }
     /// `\underline`：等待字段组（tex.web math_ac——内容收为 Underline 原子）。
     fn math_underline(&mut self) -> Result<()> {
         Ok(())

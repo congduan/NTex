@@ -140,8 +140,9 @@ impl Expander {
             // Please use 后 <to be read again> 是 \\vfill 而非 \\x）。
             Primitive::Accent => {
                 self.sink.math_accent(true)?;
-                let _ = self.scan_number()?;
-                Ok(())
+                let n = self.scan_number()? as u32;
+                let n = if n >= 0x7000 { self.mathcode_apply_fam(n) } else { n };
+                self.sink.math_accent_char(n)
             }
             Primitive::Sqrt => self.sink.math_sqrt(),
             // \vcenter<box>：数学垂直居中盒（tex.web mmode+vcenter L22112：
@@ -201,9 +202,10 @@ impl Expander {
                 })
             }
             Primitive::MathAccent => {
-                let _ = self.scan_number()?;
+                let n = self.scan_number()? as u32;
                 self.sink.math_accent(false)?;
-                Ok(())
+                let n = if n >= 0x7000 { self.mathcode_apply_fam(n) } else { n };
+                self.sink.math_accent_char(n)
             }
             // tex.web math_char：\mathchar<15-bit> 是完整数学字符原子（数学中
             // 直接产出 Char——此前 scan_number 即丢）；\delimiter<27-bit> 为

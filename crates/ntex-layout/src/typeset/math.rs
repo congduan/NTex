@@ -291,10 +291,16 @@ impl NodeBuilder {
         // pending，导致 `\widehat X+\hat x` 的第二个重音误报 Missing {。
         if self.math_state.accent_pending {
             self.math_state.accent_pending = false;
-            return self.math_push_atom_raw(MathAtom::Accent {
-                accent: Vec::new(),
-                nucleus: vec![atom],
-            });
+            if let Some(MathAtom::Accent { nucleus, .. }) = self
+                .math_state
+                .math
+                .last_mut()
+                .and_then(|level| level.atoms.last_mut())
+            {
+                *nucleus = vec![atom];
+                return Ok(());
+            }
+            return self.math_push_atom_raw(atom);
         }
         // `\mathbin` 等单原子字段：`\mathbin+`（Char 改类，其余包 Classed）。
         // 单字符是合法字段（tex.web scan_math letter 分支：`\mathord x` 不报错）；
@@ -756,11 +762,31 @@ impl NodeBuilder {
                 let w = hbox_dimensions(&nodes).width;
                 vec![Node::Box(hpack(&nodes, w))]
             }
-            MathAtom::Accent { accent, nucleus } => self
-                .math_to_hlist(accent, style)
-                .into_iter()
-                .chain(self.math_to_hlist(nucleus, style))
-                .collect(),
+            MathAtom::Accent { accent, nucleus } => {
+                let nucleus_nodes = self.math_to_hlist(nucleus, style.cramped());
+                let nucleus_box = BoxNode::new_hbox(nucleus_nodes);
+                let accent_nodes = self.math_to_hlist(accent, style);
+                if accent_nodes.is_empty() {
+                    return vec![Node::Box(nucleus_box)];
+                }
+                let mut accent_box = BoxNode::new_hbox(accent_nodes);
+                let accent_width = accent_box.width;
+                accent_box.shift = (nucleus_box.width - accent_width) / 2;
+                accent_box.width = 0;
+                let accent_font = match accent.first() {
+                    Some(MathAtom::Char(mc)) => self.math_char_font(mc, style).0,
+                    _ => self.current_font,
+                };
+                let delta = nucleus_box.height.min(self.fonts.x_height(accent_font));
+                let width = nucleus_box.width;
+                let mut box_node = BoxNode::new_vbox(vec![
+                    Node::Box(accent_box),
+                    Node::Kern { width: -delta },
+                    Node::Box(nucleus_box),
+                ]);
+                box_node.width = width;
+                vec![Node::Box(box_node)]
+            },
             MathAtom::MSkip {
                 width,
                 stretch,

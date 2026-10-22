@@ -1,6 +1,15 @@
 use super::*;
 
     #[test]
+    fn global_setbox_cancels_prior_group_restore() {
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
+        ts.typeset(r"\setbox0=\hbox{A}{\setbox0=\hbox{B}\global\setbox0=\hbox{C}}\ifvoid0\message{LOST}\else\message{KEPT}\fi\box0\end").unwrap();
+        let t = ts.take_transcript();
+        assert!(t.contains("KEPT"), "global box must survive group end: {t}");
+        assert!(!t.contains("LOST"), "stale local save must not restore: {t}");
+    }
+
+    #[test]
     fn math_unbox_checks_void_before_mode_and_preserves_incompatible_box() {
         let mut ts = Typesetter::with_metrics(metrics).plain_params();
         ts.typeset_dvi(r"\setbox234=\hbox{A}$\unhbox233\unhbox234$\ifvoid234\message{LOST}\else\message{KEPT}\fi\end").unwrap();

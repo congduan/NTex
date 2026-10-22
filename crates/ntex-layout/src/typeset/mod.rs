@@ -1577,8 +1577,15 @@ impl NodeBuilder {
     /// 存入盒子寄存器（TeX 寄存器组级保存）：组内记录旧值，组结束回滚。
     /// 返回旧值（`\box` 取走语义：读旧值 + 清空由调用方按返回值使用）。
     fn store_box(&mut self, idx: usize, value: Option<BoxNode>) -> Option<BoxNode> {
+        if idx == 0 && std::env::var_os("AVD_BOX_DEBUG").is_some() { eprintln!("AVD_STORE0 global={} level={} saves={}", self.box_state.setbox_global, self.groups.len(), self.box_state.box_saves.iter().filter(|(_, i, _)| *i == 0).count()); }
         let old = self.box_view(idx).cloned();
-        if !self.groups.is_empty() && !self.box_state.setbox_global {
+        if self.box_state.setbox_global {
+            // tex.web eq_word_define: a global assignment cancels every saved
+            // value for this slot, even in groups that have not ended yet.
+            // Otherwise an alignment cell's group restores a stale local box
+            // over amsmath's global \setbox0 holding a split formula.
+            self.box_state.box_saves.retain(|(_, saved_idx, _)| *saved_idx != idx);
+        } else if !self.groups.is_empty() {
             self.box_state
                 .box_saves
                 .push((self.groups.len(), idx, old.clone()));

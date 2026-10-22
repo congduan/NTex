@@ -284,6 +284,7 @@ impl CoreSink for NodeBuilder {
             .is_some_and(|(lvl, _, _)| *lvl > cur_level)
         {
             let (_, idx, old) = self.box_state.box_saves.pop().expect("last 已检查");
+            if idx == 0 && std::env::var_os("AVD_BOX_DEBUG").is_some() { eprintln!("AVD_RESTORE0 level={} old_present={}", cur_level, old.is_some()); }
             // 经 write_box 路由：寄存器 255 的回滚落在页面队列队首（trip.tex
             // 第二例程 `\setbox255\copy255` ——「at end of group, \box255 reverts
             // to former value」tex.web eq_restore 语义）
@@ -446,11 +447,9 @@ impl CoreSink for NodeBuilder {
                     // 与已扫描的重音符字段合并（tex.web math_ac）。
                     let mut lv = level;
                     Self::math_finish_fraction(&mut lv);
-                    let accent = parent.atoms.pop().map_or(Vec::new(), |a| vec![a]);
-                    parent.atoms.push(MathAtom::Accent {
-                        accent,
-                        nucleus: lv.atoms,
-                    });
+                    if let Some(MathAtom::Accent { nucleus, .. }) = parent.atoms.last_mut() {
+                        *nucleus = lv.atoms;
+                    }
                     return Ok(());
                 }
                 None => {
@@ -1407,6 +1406,23 @@ impl MathSink for NodeBuilder {
         self.math_state.accent_pending = matches!(self.mode(), Mode::Math | Mode::DisplayMath);
         Ok(())
     }
+    fn math_accent_char(&mut self, code: u32) -> Result<()> {
+        if self.math_state.accent_pending {
+            let accent = MathAtom::Char(MathChar {
+                class: MathClass::Ord,
+                fam: ((code >> 8) & 15) as u8,
+                charcode: code & 255,
+                limits: 0,
+            });
+            if let Some(level) = self.math_state.math.last_mut() {
+                level.atoms.push(MathAtom::Accent {
+                    accent: vec![accent],
+                    nucleus: Vec::new(),
+                });
+            }
+        }
+        Ok(())
+    }
     /// `\underline`：等待字段组（数学模式；组开收为 Underline 原子）。
     fn math_underline(&mut self) -> Result<()> {
         self.check_math_field_break()?;
@@ -1597,6 +1613,7 @@ impl BoxSink for NodeBuilder {
     /// 否则作为节点追加到当前列表。void 盒子报错（TeX "Box n is void"）。
     /// 寄存器 255 = 待输出例程处理页面的队首（[PAGE_BOX]，tex.web `box(255)`）。
     fn box_register(&mut self, idx: usize) -> Result<()> {
+        if idx == 0 && std::env::var_os("AVD_BOX_DEBUG").is_some() { eprintln!("AVD_READ0 mode={:?} level={} present={}", self.mode(), self.groups.len(), self.box_view(idx).is_some()); }
         // `\setbox5=\box3`：把寄存器 3 移入目标 5（\box3 变 void；tex.web set_box 赋值语义）
         if let Some(target) = self.box_state.setbox_target.take() {
             // `\setbox0=\lastbox`：优先取 \lastbox 摘下的盒子

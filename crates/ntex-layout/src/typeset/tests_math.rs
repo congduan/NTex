@@ -261,6 +261,43 @@ use super::*;
     }
 
     #[test]
+    fn math_accents_emit_centered_glyphs_and_nested_nuclei() {
+        fn chars(nodes: &[Node], out: &mut Vec<u32>) {
+            for node in nodes {
+                match node {
+                    Node::Char { charcode, .. } => out.push(*charcode),
+                    Node::Box(b) => chars(&b.children, out),
+                    _ => {}
+                }
+            }
+        }
+        let setup = r"\font\tenrm=cmr10 \font\teni=cmmi10 \textfont0=\tenrm \textfont1=\teni ";
+        for (formula, accent_codes) in [
+            (r#"$\mathaccent"705E A$"#, vec![b'^' as u32]),
+            (r#"$\mathaccent"707E u$"#, vec![b'~' as u32]),
+            (r#"$\mathaccent"705E {\mathaccent"705E A}$"#, vec![b'^' as u32, b'^' as u32]),
+        ] {
+            let nodes = math_tfm_children(&format!("{setup}{formula}"));
+            let mut glyphs = Vec::new();
+            chars(&nodes, &mut glyphs);
+            for code in accent_codes {
+                assert!(glyphs.iter().filter(|&&glyph| glyph == code).count() >= 1,
+                    "accent {code} missing: {nodes:?}");
+            }
+            if formula.contains(r"{\mathaccent") {
+                assert_eq!(glyphs.iter().filter(|&&glyph| glyph == b'^' as u32).count(), 2,
+                    "nested accents must both survive: {nodes:?}");
+            }
+            let Node::Box(accent) = &nodes[0] else { panic!("accent has no box: {nodes:?}") };
+            assert_eq!(accent.kind, BoxKind::VBox);
+            assert_eq!(accent.children.len(), 3, "accent must overlap its nucleus: {accent:?}");
+            let Node::Box(mark) = &accent.children[0] else { panic!("no mark box") };
+            assert_ne!(mark.shift, 0, "mark must be centered above nucleus: {accent:?}");
+            assert!(accent.width > 0);
+        }
+    }
+
+    #[test]
     fn math_display_paginated_smoke() {
         // 分页模式：显示公式序列（penalty/glue/box/glue/penalty）正常入页
         let pages = paginated(r"$$\hbox{ab}$$").unwrap();
