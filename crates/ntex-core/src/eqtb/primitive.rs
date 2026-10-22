@@ -753,4 +753,9 @@ define_primitives! {
     PdfObj, PdfXForm, PdfRefXForm, PdfLastXForm, PdfLastObj, PdfRefObj,
     PdfLiteral, PdfSavePos, PdfLastXPos, PdfLastYPos, PdfLastForm,
     PdfPageResources, PdfImage, PdfForm,
+    // l3kernel `\shellescape`（expl3-code L907 `\__kernel_primitive:NN
+    // \shellescape \tex_shellescape:D`）。变体追加在尾部，保持既有 .fmt
+    // 原语编号不重排（`#[repr(u16)]` 判别式按序序列化，中部插入=全部错位，
+    // 2026-10-22 R24 首版实锤：最小 article 文件名解析链连环炸）。
+    ShellEscape,
 }

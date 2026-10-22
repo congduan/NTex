@@ -102,6 +102,9 @@ impl Expander {
             Primitive::PdfTeXVersion => self.emit_tokens(emit_count(140)),
             Primitive::PdfTeXRevision => self.emit_tokens(emit_count(25)),
             Primitive::PdfShellEscape => self.emit_tokens(emit_count(0)),
+            // \shellescape：pdfTeX restricted 模式=1（GT 对齐；l3kernel
+            // \c_sys_shell_escape_int 依赖，单独出现可展开为数字）
+            Primitive::ShellEscape => self.emit_tokens(emit_count(1)),
             Primitive::PdfElapsedTime => self.emit_tokens(emit_count(0)),
             Primitive::PdfRandomSeed => {
                 self.emit_tokens(emit_count(self.params.misc[PDF_RANDOM_SEED_IDX]))

@@ -478,15 +478,26 @@ pub fn scan_token(
                         let elc = endlinechar as u8;
                         match end_cat.expect("valid endlinechar") {
                             Catcode::EndOfLine => {
-                                // 行尾字符自身是 cat 5 → 维持空格语义
-                                //（字符码仍用 32：定界空格匹配，历史口径）
-                                match catcodes.get(b' ') {
-                                    Catcode::Ignored => continue,
-                                    Catcode::Space => {
-                                        return Ok(Some(Token::char(Catcode::Space, b' ' as u32)))
-                                    }
-                                    other => return Ok(Some(Token::char(other, b' ' as u32))),
-                                }
+                                // 行尾字符自身是 cat 5（tex.web car_ret）→
+                                // `mid_line+car_ret → @<Finish line, emit a space@>`
+                                //（L7330/L7357）恒发**规范空格 token**（cur_chr:=" "），
+                                // skip_blanks/new_line 态不产 token（L7332 臂与
+                                // new_line+spacer 忽略表，且 LineStart 空行臂已在
+                                // 上方处理）——**与 catcode(32) 无关**：tex.web 的
+                                // 行尾追加的是 chr(endlinechar=13)，不走 cat 32 的
+                                // spacer 通路。此前按 catcodes.get(b' ') 分派，
+                                // `\catcode`\ =12`（fvextra.sty l.965-975 catcode
+                                // trick 块，minted 载入链）把 cat 32 改成 cat-12
+                                // 后行尾泄漏数据字符 token → preamble 报
+                                // `Missing \begin{document}`（GT 无此 token）。
+                                // 字符码仍用 32：定界空格匹配，历史口径。
+                                //
+                                // ⚠ 此臂位状态可证必为 MidLine：LineStart（空行）与
+                                // InSpace（skip_blanks）已被上方守卫消费——**勿再查
+                                // *state**（上方 L462 已置 LineStart，检查恒 false，
+                                // 全部行尾空格 token 消失、下游宏定界串行化连锁，
+                                // 2026-10-22 R23 首版 WIP 即栽在此，mini7 栈溢出实证）。
+                                return Ok(Some(Token::char(Catcode::Space, b' ' as u32)));
                             }
                             Catcode::Ignored => continue,
                             Catcode::Active => {
@@ -1192,5 +1203,28 @@ mod tests {
         assert_eq!(toks[1].charcode(), Some(b'b' as u32));
         assert_eq!(toks[2].catcode(), Some(Catcode::Space));
         assert!(toks.iter().all(|t| !t.is_active()), "tokens: {toks:?}");
+    }
+
+    #[test]
+    fn midline_eol_emits_canonical_space_regardless_of_space_catcode() {
+        // tex.web `mid_line+car_ret → @<Finish line, emit a space@>`（L7330/L7357）
+        // 恒发**规范空格 token**（cur_chr:=" "），不走 catcode(32) 的 spacer 通路——
+        // 行尾语义与 cat 32 的当前 catcode 无关。此前按 catcodes.get(b' ') 分派，
+        // fvextra.sty l.965-975 catcode trick 块（minted 载入链）把 cat 32 改成
+        // cat-12 后行尾泄漏数据字符 token → preamble 报 `Missing \begin{document}`。
+        let mut catcodes = CatcodeTable::new();
+        catcodes.set(32, Catcode::Other);
+        let (toks, _) = scan_all_with(catcodes, "ab\ncd\n");
+        // a b ␣ c d ␣（两处行尾都是规范空格，而非 cat-12 数据字符）
+        assert_eq!(toks.len(), 6, "tokens: {toks:?}");
+        assert_eq!(toks[2].catcode(), Some(Catcode::Space), "行尾 → 规范空格");
+        assert_eq!(toks[2].charcode(), Some(32));
+        assert_eq!(toks[5].catcode(), Some(Catcode::Space), "行尾 → 规范空格");
+        // Ignored cat 32 同理（GT：行尾仍发空格）
+        let mut catcodes = CatcodeTable::new();
+        catcodes.set(32, Catcode::Ignored);
+        let (toks, _) = scan_all_with(catcodes, "ab\n");
+        assert_eq!(toks.len(), 3, "tokens: {toks:?}");
+        assert_eq!(toks[2].catcode(), Some(Catcode::Space));
     }
 }

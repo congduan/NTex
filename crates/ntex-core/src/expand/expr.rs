@@ -743,6 +743,9 @@ impl Expander {
                 EqSlot::Primitive(Primitive::PdfShellEscape) => {
                     out.extend(emit_count(0).into_iter().map(|t| (t, false)));
                 }
+                EqSlot::Primitive(Primitive::ShellEscape) => {
+                    out.extend(emit_count(1).into_iter().map(|t| (t, false)));
+                }
                 EqSlot::Primitive(Primitive::PdfElapsedTime) => {
                     out.extend(emit_count(0).into_iter().map(|t| (t, false)));
                 }

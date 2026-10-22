@@ -671,6 +671,8 @@ impl Expander {
                 Primitive::PdfTeXVersion => Ok(emit_count(140)),
                 Primitive::PdfTeXRevision => Ok(emit_count(25)),
                 Primitive::PdfShellEscape => Ok(emit_count(0)),
+                // \shellescape：pdfTeX restricted 模式=1（GT 对齐）
+                Primitive::ShellEscape => Ok(emit_count(1)),
                 Primitive::PdfElapsedTime => Ok(emit_count(0)),
                 Primitive::PdfRandomSeed => {
                     Ok(emit_count(self.params.misc[PDF_RANDOM_SEED_IDX]))

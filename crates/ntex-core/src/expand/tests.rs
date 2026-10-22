@@ -1962,6 +1962,18 @@ I changed this one to zero.
     }
 
     #[test]
+    fn shellescape_primitive_restricted_mode_value_one() {
+        // \shellescape：pdfTeX 原语（restricted \write18 模式 = 1，log 首行
+        // `restricted \write18 enabled` 即此位）。l3kernel \c_sys_shell_escape_int
+        // （expl3-code L8309-8318 经 \tex_shellescape:D 定义）与 minted/fvextra
+        // 载入链必经——缺注册即 Undefined → Missing number 连锁
+        //（2026-10-22 实锤：13 包宏包回归矩阵全 NO-DVI 栈溢出，根因即此）。
+        // \tex_shellescape:D 是 l3kernel 改名别名，同槽。
+        assert_eq!(expand(r"\number\shellescape").unwrap(), "1");
+        assert_eq!(expand(r"\ifnum\shellescape>0 RES\else NOR\fi").unwrap(), "RES");
+    }
+
+    #[test]
     fn pdfcreationdate_uses_pdf_datetime_format() {
         // D:YYYYMMDDHHMMSSZ'00'（\time 只有分钟精度 → 秒恒 00）
         let out = expand(r"\pdfcreationdate").unwrap();

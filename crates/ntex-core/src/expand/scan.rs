@@ -625,6 +625,12 @@ impl Expander {
                     self.fetch()?;
                     return Ok(0);
                 }
+                // \shellescape：pdfTeX 同名原语（restricted 模式=1，GT 对齐；
+                // l3kernel \c_sys_shell_escape_int 依赖，minted 载入链必经）
+                EqSlot::Primitive(Primitive::ShellEscape) => {
+                    self.fetch()?;
+                    return Ok(if neg { -1 } else { 1 });
+                }
                 EqSlot::Primitive(Primitive::PdfElapsedTime) => {
                     self.fetch()?;
                     return Ok(0);
@@ -2375,6 +2381,7 @@ impl Expander {
                                 | Primitive::PdfTeXVersion
                                 | Primitive::PdfTeXRevision
                                 | Primitive::PdfShellEscape
+                                | Primitive::ShellEscape
                                 | Primitive::PdfElapsedTime
                                 | Primitive::PdfRandomSeed
                                 | Primitive::InputLineNo

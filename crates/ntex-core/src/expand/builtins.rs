@@ -6,7 +6,7 @@
 /// Step B 补 PDF 变换栈 \pdfsave/\pdfsetmatrix/\pdfrestore 3 项；
 /// ctex 第二墙补 catcode table 三原语），
 /// 供 `register_builtins` 注册与 `tests.rs` 的一致性测试共用。
-pub(crate) const BUILTINS: [(&str, Primitive); 452] = [
+pub(crate) const BUILTINS: [(&str, Primitive); 454] = [
     ("def", Primitive::Def),
     ("edef", Primitive::Edef),
     ("gdef", Primitive::Gdef),
@@ -525,6 +525,21 @@ pub(crate) const BUILTINS: [(&str, Primitive); 452] = [
     // 非 0 值可赋但无 PDF 后端承接——偏差记录在报告 §15.3）
     ("pdfoutput", Primitive::PdfOutput),
     ("pdfshellescape", Primitive::PdfShellEscape),
+    // l3kernel `expl3-code.tex L907`：
+    // `\__kernel_primitive:NN \shellescape \tex_shellescape:D`（同 L797
+    // `\pdfshellescape` 别名同一原语）。LaTeX2e 2020+ 载入链必经——
+    // l3kernel `\__sys_everyjob:n` 用 `\tex_shellescape:D` 定义
+    // `\c_sys_shell_escape_int`（L8309-8318），未注册即 Undefined →
+    // minted/fvextra 载入链 Missing number ×2 + `\ifnum` Missing `='。
+    // GT pdfTeX 默认 restricted 模式，log 首行 `restricted \write18
+    // enabled` → 值=1（与 pdfshellescape 的 0「保护性分歧」一并按 GT
+    // 纠正：真 TeX 语义即如此，DVI 输出不受 shell escape 位影响）。
+    ("shellescape", Primitive::ShellEscape),
+    // l3kernel 经 `\__kernel_primitive:NN \shellescape \tex_shellescape:D`
+    // 把原语改名——fmt 快照的 everyjob 钩子（`\c_sys_shell_escape_int`
+    // 定义体）固化的是 `\tex_shellescape:D` token，运行时按此名查 eqtb。
+    // 缺此别名 → `\int_const:Nn` 展开 Undefined → int 恒缺。
+    ("tex_shellescape", Primitive::ShellEscape),
     ("pdfelapsedtime", Primitive::PdfElapsedTime),
     ("pdfrandomseed", Primitive::PdfRandomSeed),
     ("pdfsetrandomseed", Primitive::PdfSetRandomSeed),
