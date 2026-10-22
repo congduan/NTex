@@ -67,16 +67,29 @@ impl Expander {
                 );
                 Ok(())
             }
-            // ETRIP 冲刺：\mathchoice{D}{T}{S}{SS}：收集四个分支（内容不执行）。
+            // \mathchoice{D}{T}{S}{SS}：扫描后把四个组重新送入主循环，
+            // 让各分支在独立数学组中执行，再由排版器保存四份 mlist。
             // TeX 语义（tex.web scan_left_brace + build_choices）：每个分支强制以
             // `{` 开头，非 `{`（含 `}`/单 token）报 "Missing { inserted." 并把
             // token 放回、隐含插入 `{` 后收集到下一个 `}`（TRIP L438
             // `\mathchoice{}a}{A|{}}{\mathchoice}`）。
             Primitive::MathChoice => {
+                let mut branches = Vec::with_capacity(4);
                 for _ in 0..4 {
-                    self.scan_mathchoice_branch()?;
+                    branches.push(self.scan_mathchoice_branch()?);
                 }
-                Ok(())
+                let in_math = self.sink.math_code_applies();
+                self.sink.math_choice_begin()?;
+                if !in_math {
+                    return Ok(());
+                }
+                let mut tokens = Vec::new();
+                for branch in branches {
+                    tokens.push(Token::char(Catcode::BeginGroup, b'{' as u32));
+                    tokens.extend(branch);
+                    tokens.push(Token::char(Catcode::EndGroup, b'}' as u32));
+                }
+                self.emit_tokens(tokens)
             }
             // ETRIP 冲刺：\special{<general text>}：whatsit 节点（内容只收集不排版）。
             // 走 `special()` 通道与延迟 \write 的 whatsit 分型：前者 shipout 经

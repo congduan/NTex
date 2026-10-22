@@ -216,6 +216,11 @@ pub trait FontSink {
 /// 数学域：进出数学模式、样式/分式/定界/根式/类/重音/字段、
 /// 数学字体族与 muskip 参数。
 pub trait MathSink {
+    /// Start four math-choice groups. Each group is executed in math mode and
+    /// retained as an mlist; conversion selects a branch using the local style.
+    fn math_choice_begin(&mut self) -> Result<()> {
+        Ok(())
+    }
     /// 数学移位（`$`，cat 3；M4-1）：进出数学模式。
     /// `display`：VM 检测到连续 `$$`（进入显示数学/结束显示数学用；行内进出忽略）。
     fn math_shift(&mut self, _display: bool) -> Result<()> {

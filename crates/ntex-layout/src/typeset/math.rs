@@ -521,6 +521,7 @@ impl NodeBuilder {
             MathAtom::Underline { .. } | MathAtom::Overline { .. } => Some(MathClass::Ord),
             MathAtom::Box(_) => Some(MathClass::Ord),
             MathAtom::Accent { .. } => Some(MathClass::Ord),
+            MathAtom::Choice(_) => Some(MathClass::Ord),
             MathAtom::MSkip { .. }
             | MathAtom::Style(_)
             | MathAtom::Penalty { .. }
@@ -563,6 +564,16 @@ impl NodeBuilder {
 
     /// 数学列表 → 水平节点（M4-1：spacing 胶水 + 字符 + 上下标盒）。
     fn math_to_hlist(&self, atoms: &[MathAtom], style: MathStyle) -> Vec<Node> {
+        // tex.web mlist_to_hlist first replaces each choice node with the
+        // selected mlist. Splice before resolving Bin/Rel spacing so the
+        // selected branch's first and last atom set their real classes.
+        let flattened;
+        let atoms = if atoms.iter().any(|a| matches!(a, MathAtom::Choice(_))) {
+            flattened = Self::flatten_math_choices(atoms, style);
+            flattened.as_slice()
+        } else {
+            atoms
+        };
         let mut out = Vec::new();
         let mut style = style;
         let eff = Self::effective_classes(atoms);
@@ -628,6 +639,28 @@ impl NodeBuilder {
                 }
             }
         }
+        out
+    }
+
+    fn flatten_math_choices(atoms: &[MathAtom], style: MathStyle) -> Vec<MathAtom> {
+        fn append(atoms: &[MathAtom], style: &mut MathStyle, out: &mut Vec<MathAtom>) {
+            for atom in atoms {
+                match atom {
+                    MathAtom::Choice(branches) => {
+                        let index = (style.code() / 2).min(3) as usize;
+                        append(&branches[index], style, out);
+                    }
+                    MathAtom::Style(next) => {
+                        *style = *next;
+                        out.push(atom.clone());
+                    }
+                    _ => out.push(atom.clone()),
+                }
+            }
+        }
+        let mut out = Vec::new();
+        let mut style = style;
+        append(atoms, &mut style, &mut out);
         out
     }
 
@@ -824,6 +857,7 @@ impl NodeBuilder {
                 }
             }
             MathAtom::Box(b) => vec![Node::Box(b.clone())],
+            MathAtom::Choice(_) => unreachable!("choices spliced before mlist conversion"),
             MathAtom::Penalty { penalty } => vec![Node::Penalty { penalty: *penalty }],
             MathAtom::Rule { width, height, depth } => vec![Node::Rule {
                 width: *width,

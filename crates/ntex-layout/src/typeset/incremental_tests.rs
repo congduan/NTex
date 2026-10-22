@@ -806,6 +806,8 @@ mod incremental_tests {
             stream: vec![],
             cur_cells: vec![],
             cur_col: 1,
+            cell_box_saves: None,
+            cell_group_depth: 0,
             to: Some(5),
             spread: None,
         })];
@@ -875,6 +877,8 @@ mod incremental_tests {
             stream: vec![],
             cur_cells: vec![],
             cur_col: 2,
+            cell_box_saves: None,
+            cell_group_depth: 0,
             to: None,
             spread: None,
         })];

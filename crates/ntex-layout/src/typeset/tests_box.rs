@@ -1,6 +1,28 @@
 use super::*;
 
     #[test]
+    fn alignment_cell_restores_local_box_but_keeps_global_assignment() {
+        fn chars(nodes: &[Node], out: &mut Vec<u32>) {
+            for node in nodes {
+                match node {
+                    Node::Char { charcode, .. } => out.push(*charcode),
+                    Node::Box(b) => chars(&b.children, out),
+                    _ => {}
+                }
+            }
+        }
+        for (source, expected) in [
+            (r"\setbox0=\hbox{A}\halign{#&#\cr \setbox0=\hbox{B}x&\copy0\cr}\end", "xA"),
+            (r"\setbox0=\hbox{A}\halign{#&#\cr \global\setbox0=\hbox{G}x&\copy0\cr}\end", "xG"),
+        ] {
+            let nodes = typeset(source).unwrap();
+            let mut actual = Vec::new();
+            chars(&nodes, &mut actual);
+            assert_eq!(actual, expected.bytes().map(u32::from).collect::<Vec<_>>(), "{source}");
+        }
+    }
+
+    #[test]
     fn global_setbox_cancels_prior_group_restore() {
         let mut ts = Typesetter::with_metrics(metrics).plain_params();
         ts.typeset(r"\setbox0=\hbox{A}{\setbox0=\hbox{B}\global\setbox0=\hbox{C}}\ifvoid0\message{LOST}\else\message{KEPT}\fi\box0\end").unwrap();

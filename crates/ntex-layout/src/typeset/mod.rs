@@ -247,6 +247,8 @@ enum MathAtom {
         accent: Vec<MathAtom>,
         nucleus: Vec<MathAtom>,
     },
+    /// Four independently executed math lists, selected during mlist conversion.
+    Choice(Box<[Vec<MathAtom>; 4]>),
     /// 样式切换（`\displaystyle`/`\textstyle`/`\scriptstyle`/`\scriptscriptstyle`）。
     Style(MathStyle),
     /// 数学断行点（数学模式 `\penalty`；M4-1——tex.web math list 的 penalty 节点）。
@@ -287,6 +289,7 @@ enum MathFieldKind {
     Class(MathClass),
     /// `\accent`/`\mathaccent` 后的组：内容为 nucleus（被重音）字段。
     Accent,
+    Choice,
     /// `\underline` 后的组：内容为底线字段。
     Underline,
     /// `\overline` 后的组：内容为顶线字段。
@@ -306,6 +309,12 @@ struct MathLevel {
     fraction: Option<FractionPending>,
     /// 待定分式的定界符（`\overwithdelims` 等；`math_fraction` 时并入 FractionPending）。
     frac_delims: (Option<u32>, Option<u32>),
+}
+
+#[derive(Debug, Default, Clone)]
+struct MathChoicePending {
+    branches: Vec<Vec<MathAtom>>,
+    awaiting_group: bool,
 }
 
 /// `\over`/`\atop` 中间态：numerator 已收集，当前数学层 atoms 继续收集 denominator。
@@ -394,6 +403,9 @@ struct AlignCtx {
     cur_cells: Vec<AlignCellBox>,
     /// 当前行下一单元的起始列（span 累计）。
     cur_col: usize,
+    /// Box-register assignments made at the implicit alignment-cell group level.
+    cell_box_saves: Option<Vec<(usize, Option<BoxNode>)>>,
+    cell_group_depth: usize,
     /// `to <dimen>` 目标宽/高（fin_align 摊派）；None = 自然。
     to: Option<i64>,
     /// `spread <dimen>` 增量（S7 修复，2026-09-08）：目标 = 最宽行自然宽 + spread。
@@ -955,6 +967,7 @@ struct PageState {
 struct MathState {
     /// 数学列表栈（M4-1）：数学模式期间一层；`{...}` 数学组/脚本字段压层。
     math: Vec<MathLevel>,
+    choices: Vec<MathChoicePending>,
 
     /// 当前数学样式（进入 Math=Text、DisplayMath=Display；`\displaystyle` 等修改）。
     math_style: MathStyle,
@@ -1184,6 +1197,7 @@ impl NodeBuilder {
             },
             math_state: MathState {
                 math: Vec::new(),
+                choices: Vec::new(),
                 math_style: MathStyle::Text,
                 pending_script: None,
                 sqrt_pending: false,
@@ -1577,14 +1591,46 @@ impl NodeBuilder {
     /// 存入盒子寄存器（TeX 寄存器组级保存）：组内记录旧值，组结束回滚。
     /// 返回旧值（`\box` 取走语义：读旧值 + 清空由调用方按返回值使用）。
     fn store_box(&mut self, idx: usize, value: Option<BoxNode>) -> Option<BoxNode> {
-        if idx == 0 && std::env::var_os("AVD_BOX_DEBUG").is_some() { eprintln!("AVD_STORE0 global={} level={} saves={}", self.box_state.setbox_global, self.groups.len(), self.box_state.box_saves.iter().filter(|(_, i, _)| *i == 0).count()); }
+        if idx == 0 && std::env::var_os("AVD_BOX_DEBUG").is_some() {
+            eprintln!(
+                "AVD_STORE0 global={} level={} saves={}",
+                self.box_state.setbox_global,
+                self.groups.len(),
+                self.box_state
+                    .box_saves
+                    .iter()
+                    .filter(|(_, i, _)| *i == 0)
+                    .count()
+            );
+        }
         let old = self.box_view(idx).cloned();
         if self.box_state.setbox_global {
             // tex.web eq_word_define: a global assignment cancels every saved
             // value for this slot, even in groups that have not ended yet.
             // Otherwise an alignment cell's group restores a stale local box
             // over amsmath's global \setbox0 holding a split formula.
-            self.box_state.box_saves.retain(|(_, saved_idx, _)| *saved_idx != idx);
+            self.box_state
+                .box_saves
+                .retain(|(_, saved_idx, _)| *saved_idx != idx);
+            for (_, align) in &mut self.align_stack {
+                if let Some(saves) = &mut align.cell_box_saves {
+                    saves.retain(|(saved_idx, _)| *saved_idx != idx);
+                }
+            }
+        } else if let Some((_, align)) = self.align_stack.last_mut() {
+            if let Some(saves) = &mut align.cell_box_saves {
+                if self.groups.len() == align.cell_group_depth {
+                    saves.push((idx, old.clone()));
+                } else if !self.groups.is_empty() {
+                    self.box_state
+                        .box_saves
+                        .push((self.groups.len(), idx, old.clone()));
+                }
+            } else if !self.groups.is_empty() {
+                self.box_state
+                    .box_saves
+                    .push((self.groups.len(), idx, old.clone()));
+            }
         } else if !self.groups.is_empty() {
             self.box_state
                 .box_saves

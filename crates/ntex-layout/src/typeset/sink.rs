@@ -241,7 +241,10 @@ impl CoreSink for NodeBuilder {
         } else if gkind == GroupKind::Math {
             // 数学组：`{...}`（含脚本/根式/定类字段）压 math 层。
             // `\begingroup`（SemiSimple）等显式组不压 math 层（tex.web math_group 语义）。
-            let field = if let Some(is_sup) = self.math_state.pending_script.take() {
+            let field = if self.math_state.choices.last().is_some_and(|c| c.awaiting_group) {
+                self.math_state.choices.last_mut().unwrap().awaiting_group = false;
+                Some(MathFieldKind::Choice)
+            } else if let Some(is_sup) = self.math_state.pending_script.take() {
                 Some(MathFieldKind::Script(is_sup))
             } else if self.math_state.sqrt_pending {
                 self.math_state.sqrt_pending = false;
@@ -376,6 +379,22 @@ impl CoreSink for NodeBuilder {
                 self.report_error("Extra }, or forgotten \\endgroup.");
                 return Ok(());
             };
+            if level.field == Some(MathFieldKind::Choice) {
+                let mut level = level;
+                Self::math_finish_fraction(&mut level);
+                let choice = self.math_state.choices.last_mut().ok_or_else(|| {
+                    Error::internal("mathchoice 分支无挂起选择")
+                })?;
+                choice.branches.push(level.atoms);
+                if choice.branches.len() == 4 {
+                    let choice = self.math_state.choices.pop().unwrap();
+                    let branches: [Vec<MathAtom>; 4] = choice.branches.try_into().unwrap();
+                    self.math_push_atom(MathAtom::Choice(Box::new(branches)))?;
+                } else {
+                    choice.awaiting_group = true;
+                }
+                return Ok(());
+            }
             let Some(parent) = self.math_state.math.last_mut() else {
                 self.report_error("Extra }, or forgotten \\endgroup.");
                 return Ok(());
@@ -452,6 +471,7 @@ impl CoreSink for NodeBuilder {
                     }
                     return Ok(());
                 }
+                Some(MathFieldKind::Choice) => unreachable!("choice handled above"),
                 None => {
                     // 普通数学组（tex.web math_group）：组内容存为 Ord noad 的
                     // sub_mlist 核（`{` 开组时 tail 是新鲜 Ord noad，故类恒 Ord，
@@ -1085,6 +1105,16 @@ impl FontSink for NodeBuilder {
 }
 
 impl MathSink for NodeBuilder {
+    fn math_choice_begin(&mut self) -> Result<()> {
+        if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
+            return self.math_mode_error("mathchoice");
+        }
+        self.math_state.choices.push(MathChoicePending {
+            branches: Vec::with_capacity(4),
+            awaiting_group: true,
+        });
+        Ok(())
+    }
     /// \mathcode 改道只认**真实列表模式**（tex.web mmode+letter/other）：
     /// 数学内文本盒（`\hbox{…}`/`\mbox`/`\text`）里是正文字符。
     fn math_code_applies(&self) -> bool {
@@ -1920,6 +1950,8 @@ impl AlignSink for NodeBuilder {
                 stream: Vec::new(),
                 cur_cells: Vec::new(),
                 cur_col: 0,
+                cell_box_saves: None,
+                cell_group_depth: 0,
                 to,
                 spread,
             },
@@ -1951,6 +1983,10 @@ impl AlignSink for NodeBuilder {
     /// M4-5 对齐单元开始（tex.web init_span 的 push_nest）：压入单元内容
     /// 列表——\halign 受限水平（v 模板通常以 \hfil 收尾）；\valign 垂直。
     fn align_cell_begin(&mut self) -> Result<()> {
+        if let Some((_, ctx)) = self.align_stack.last_mut() {
+            ctx.cell_box_saves = Some(Vec::new());
+            ctx.cell_group_depth = self.groups.len();
+        }
         self.lists.push(Vec::new());
         let mode = match self.align_stack.last() {
             Some((AlignDir::Valign, _)) => Mode::Vertical,
@@ -1970,6 +2006,13 @@ impl AlignSink for NodeBuilder {
         }
         let nodes = self.lists.pop().unwrap_or_default();
         self.list_modes.pop();
+        if let Some((_, ctx)) = self.align_stack.last_mut() {
+            if let Some(saves) = ctx.cell_box_saves.take() {
+                for (idx, old) in saves.into_iter().rev() {
+                    self.write_box(idx, old);
+                }
+            }
+        }
         let Some((_, ctx)) = &mut self.align_stack.last_mut() else {
             return Ok(());
         };

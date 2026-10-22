@@ -1,6 +1,42 @@
 use super::*;
 
     #[test]
+    fn mathchoice_executes_four_lists_and_selects_current_style() {
+        let inline = math_line_children(r"$a\mathchoice{D}{T}{S}{s}b$");
+        assert_eq!(inline.iter().filter_map(|n| match n {
+            Node::Char { charcode, .. } => Some(*charcode),
+            _ => None,
+        }).collect::<Vec<_>>(), vec![b'a' as u32, b'T' as u32, b'b' as u32]);
+
+        let scripted = math_line_children(r"$x^{\mathchoice{D}{T}{S}{s}}$");
+        fn chars(nodes: &[Node], out: &mut Vec<u32>) {
+            for node in nodes {
+                match node {
+                    Node::Char { charcode, .. } => out.push(*charcode),
+                    Node::Box(b) => chars(&b.children, out),
+                    _ => {}
+                }
+            }
+        }
+        let mut actual = Vec::new();
+        chars(&scripted, &mut actual);
+        assert_eq!(actual, vec![b'x' as u32, b'S' as u32]);
+
+        let nested = math_line_children(r"$\mathchoice{D}{\mathchoice{a}{T}{c}{d}}{S}{s}$");
+        let mut actual = Vec::new();
+        chars(&nested, &mut actual);
+        assert_eq!(actual, vec![b'T' as u32]);
+
+        let effects = math_line_children(r"$\mathchoice{\global\def\chosen{Q}}{}{}{}\chosen$");
+        let mut actual = Vec::new();
+        chars(&effects, &mut actual);
+        assert_eq!(actual, vec![b'Q' as u32]);
+
+        let spaced = math_line_all_children(r"$a\mathchoice{\mathbin+}{\mathbin+}{\mathbin+}{\mathbin+}b$");
+        assert_eq!(spaced.len(), 5, "selected Bin branch supplies both math skips: {spaced:?}");
+    }
+
+    #[test]
     fn math_italic_correction_kern_after_ord_char() {
         if cmmi10_metrics().is_none() {
             eprintln!("未找到 cmmi10.tfm，跳过");
