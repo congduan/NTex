@@ -571,8 +571,10 @@ impl CoreSink for NodeBuilder {
                     Mode::Horizontal => {
                         self.close_paragraph();
                     }
-                    // 垂直模式 \par 无操作；受限水平/数学模式拒绝（TeX 报错恢复，TRIP L210）
-                    Mode::Vertical => {}
+                    // 显示公式之后的显式 \par 终止续排语境。否则跨过定理环境
+                    // 的 \endtrivlist，下一段的 \everypar 被误抑制，amsthm 的
+                    // deferred heading 留下 \@newlist=true，收尾误报 missing \item。
+                    Mode::Vertical => self.math_state.after_display = false,
                     Mode::RestrictedHorizontal => {
                         self.write16(
                             "! You can't use \\par in restricted horizontal mode.\n".to_string(),

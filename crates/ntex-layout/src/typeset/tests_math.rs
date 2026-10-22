@@ -243,6 +243,16 @@ use super::*;
     }
 
     #[test]
+    fn explicit_par_after_display_restarts_everypar() {
+        let mut ts = Typesetter::with_tfm().plain_params();
+        ts.typeset(r"\everypar{\message{PAR-HIT}} a $$x$$\par b\par")
+            .unwrap();
+        let transcript = ts.take_transcript();
+        assert_eq!(transcript.matches("PAR-HIT").count(), 2, "{transcript}");
+    }
+
+
+    #[test]
     fn math_display_paginated_smoke() {
         // 分页模式：显示公式序列（penalty/glue/box/glue/penalty）正常入页
         let pages = paginated(r"$$\hbox{ab}$$").unwrap();
