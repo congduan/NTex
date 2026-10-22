@@ -185,6 +185,18 @@
     指标被 GT 对照证伪，不据此补命令或改定义机制。九条已有错误与页数差
     另案定位；证据与限制见 [R20 战报](docs/archive/blade-aj-r20-report-2026-10-21.md)。
 
+20. **刀 AJ R21：testmath 九错清零、发行 fmt 的 `\error` 冲突解除，官方文档验收仍 WIP**
+    （10-22）：显示公式后的显式 `\par` 复位续排状态，消除 amsthm 定理/proof
+    交界 `missing \item` ×5；无花括号数学重音消费 nucleus，消除 `Missing { inserted`
+    ×4。重建 v24 `latex.fmt` 后 `\error` 在 LaTeX 格式中未定义，amsldoc 的
+    `\newenvironment{error}` 成功。两遍原文：T1 **44 页/2 实质错**（嵌套重音
+    `\macc@nucleus`、索引末尾 multicol 模式），T2 **39 页/0 错**，T3
+    **50 页/0 错**；GT 分别 44/41/46 页、均 0 错。core 577 + layout 327
+    与集成测试全绿，Transformer 真实文档 53 页/0 错、TRIP 构造 177B、
+    tripos 12 页/750B、宏包 13/13 保持。页数差及 T1 两错继续跟进，
+    数学重音字形编号仍未传到布局（见 KNOWN-SIMPLIFICATIONS），
+    [R21 战报](docs/archive/blade-aj-r21-report-2026-10-22.md)含原始输出与 PDF。
+
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 
 - **第十八刀** 尾递归鞍具校准 → `make check` 797 → **800 全绿**；pdfTeX 对照证明原否定结论有误；
