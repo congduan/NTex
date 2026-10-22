@@ -183,16 +183,33 @@ impl Expander {
         self.sink.special("ntex-ctm pop".to_owned())
     }
 
-    /// `\pdfximage⟨attr{..}⟩⟨page n⟩⟨页面盒词⟩{文件}`（pdfTeX §图片包含）。
+    /// `\pdfximage⟨attr{..}⟩⟨page n⟩⟨页面盒词⟩⟨硬边界词⟩{文件}`（pdfTeX §图片包含）。
     ///
     /// 前缀关键字按 pdfTeX 1.40 语法扫描（pdftex.def 实际只发
-    /// `attr{..}`/`page ⟨n⟩`/`cropbox` 族词）：attr 的组内容 Step A 不解读、
-    /// page 与页面盒词只消费——它们影响的是真嵌入（Step B）的子页选择。
+    /// `attr{..}`/`page ⟨n⟩`/`cropbox` 族词；beamer 的 `\\pgfdeclareimage`
+    /// 发 `width ⟨dimen⟩ height ⟨dimen⟩` 硬边界 + `attr{..}`）。attr 的组内容
+    /// Step A 不解读；page 与页面盒词只消费；硬边界（width/height/depth）
+    /// 按 pdfTeX 语义登记——图缩放进给定矩形（保持纵横比，仅给一维按该维
+    /// 精确缩放；depth 把图抬升、盒高相应减小），在 `\pdfrefximage` 合成
+    /// 占位盒时生效。
     fn exec_pdf_ximage(&mut self) -> Result<()> {
+        let mut hard: (i64, i64, i64) = (0, 0, 0);
         loop {
             if self.scan_keyword(|w| w == "attr")?.is_some() {
                 // `attr{/Decode[..] /Group<</S/Transparency..>>}`：整组吃掉。
                 let _ = self.scan_group_contents(None)?;
+                continue;
+            }
+            if self.scan_keyword(|w| w == "width")?.is_some() {
+                hard.0 = self.scan_dimen()?;
+                continue;
+            }
+            if self.scan_keyword(|w| w == "height")?.is_some() {
+                hard.1 = self.scan_dimen()?;
+                continue;
+            }
+            if self.scan_keyword(|w| w == "depth")?.is_some() {
+                hard.2 = self.scan_dimen()?;
                 continue;
             }
             if self.scan_keyword(|w| w == "page")?.is_some() {
@@ -203,7 +220,15 @@ impl Expander {
                 .scan_keyword(|w| {
                     matches!(
                         w,
-                        "mediabox" | "cropbox" | "artbox" | "trimbox" | "boundingbox" | "none"
+                        "mediabox"
+                            | "cropbox"
+                            | "artbox"
+                            | "trimbox"
+                            | "boundingbox"
+                            | "interpolate"
+                            | "keepopen"
+                            | "alwaysreload"
+                            | "none"
                     )
                 })?
                 .is_some()
@@ -228,7 +253,12 @@ impl Expander {
                 "\\pdfximage: 无法识别图片尺寸（PNG IHDR / PDF /MediaBox / EPS %%BoundingBox）：`{name}'"
             )));
         };
-        self.pdf_xobjects.push((w, h, name));
+        self.pdf_xobjects.push(PdfXImage {
+            natural_w: w,
+            natural_h: h,
+            name,
+            hard: if hard == (0, 0, 0) { None } else { Some(hard) },
+        });
         self.params.misc[crate::param::MISC_PDF_LAST_XIMAGE] = self.pdf_xobjects.len() as i64;
         Ok(())
     }
@@ -248,23 +278,29 @@ impl Expander {
     fn exec_pdf_ref_ximage(&mut self) -> Result<()> {
         let id = self.scan_number()?;
         // id 从 1 起（0 = 无图，pdfTeX 同口径）；越界/0 → pdfTeX 同文报错
-        let dims = if id >= 1 {
+        let img = if id >= 1 {
             self.pdf_xobjects.get((id - 1) as usize)
         } else {
             None
         };
-        let Some(&(w, h, _)) = dims else {
+        let Some(img) = img else {
             return Err(Error::invalid_input(format!(
                 "\\pdfrefximage: invalid image id `{id}'"
             )));
         };
-        let name = dims
-            .map(|(_, _, n)| n.clone())
-            .unwrap_or_default();
-        // Step B 载荷：先于占位盒进列表（当前点 = 图锚点）。名字长度前缀
-        // 防文件名含空格断词。
+        // 硬边界（width/height/depth）在占位盒生效（各向异性替换 + depth 切
+        // 总高）；无硬边界 = 自然尺寸、深 0。GT（pdftex 实测八组，见
+        // PdfXImage::placed_box 文档）：`width 14pt depth 2pt` → 盒
+        // [14pt][5pt][2pt]；`width 14pt height 12pt` → [14pt][12pt][0]。
+        let (bw, bh, bd) = img.placed_box();
+        let name = img.name.clone();
+        // Step B 载荷：宽 = 盒宽、盒高/盒深分开给（图底画到基线下盒深处，
+        // GT 渲染探针 /tmp/r21b/gt-pos2.tex：[14][3][2] 盒 → 图高 5pt、
+        // 底边基线下 2pt）。载荷 5 字段 = `ntex-image <宽> <盒高> <盒深>
+        // <名长> <名>`；无硬边界时盒深 0、第三字段为 0（历史两字段口径的
+        // 消费端按旧 4 字段解析仍兼容——见 ntex-pdf/wasm 解析器旧版容错）。
         self.sink
-            .special(format!("ntex-image {w} {h} {} {name}", name.len()))?;
+            .special(format!("ntex-image {bw} {bh} {bd} {} {name}", name.len()))?;
         let mut toks: Vec<(Token, bool)> = Vec::with_capacity(24);
         let mut cs = |name: &str| (Token::control_sequence(self.intern.intern(name)), false);
         let word = |s: &str, out: &mut Vec<(Token, bool)>| {
@@ -280,14 +316,17 @@ impl Expander {
         toks.push(cs("hbox"));
         toks.push((Token::char(Catcode::BeginGroup, b'{' as u32), false));
         toks.push(cs("kern"));
-        dimen(w, &mut toks);
+        dimen(bw, &mut toks);
         toks.push(cs("vrule"));
         word("width", &mut toks);
         dimen(0, &mut toks);
         word("height", &mut toks);
-        dimen(h, &mut toks);
+        // 占位盒 rule 的竖直贡献 = 盒高/盒深分开给（GT：depth 2pt 的盒是
+        // [14pt][5pt][2pt] 而非 [14pt][7pt][2pt]——height 给显示总高会把
+        // depth 双计入总升）。
+        dimen(bh, &mut toks);
         word("depth", &mut toks);
-        dimen(0, &mut toks);
+        dimen(bd, &mut toks);
         toks.push((Token::char(Catcode::EndGroup, b'}' as u32), false));
         self.push_frame(InputFrame::TokenList {
             items: toks.into(),
@@ -355,6 +394,69 @@ impl Expander {
         let is_group = self.resolve_group_char(tok).catcode() == Some(Catcode::BeginGroup);
         self.unread(tok);
         Ok(is_group)
+    }
+}
+
+/// 一个已登记的 PDF xobject 图片：自然尺寸 + 文件名 + 可选硬边界
+/// （pdfTeX `⟨size keywords⟩`：width/height/depth，sp）。
+///
+/// pdfTeX 语义（pdftex 1.40 实测 17 组探针定案，/tmp/r21b/gt*.tex，
+/// 2026-10-22）：硬边界是**混合缩放**——给出的维按字面生效，未给的维按
+/// 同一缩放比等比导出（缩放锚点规则见 [`PdfXImage::placed_box`] 文档）。
+/// 高频组：`width 14 height 12` → [14][12][0]；`height 10` →
+/// [20][10][0]（2:1 图等比宽）；`depth 2` 单独 → 不缩放 [100.375][48.19][2]；
+/// `depth -1` → [100.375][51.19][0]（抬升）；`width 14 height 3 depth 2` →
+/// [14][3][2]（显示总高 = height + depth = 5，depth 不缩放）；\n/// `width 14 depth 99` → [14][0][99]（深不钳）。
+#[derive(Clone, Debug)]
+pub(crate) struct PdfXImage {
+    pub natural_w: i64,
+    pub natural_h: i64,
+    pub name: String,
+    /// (width, height, depth)，0 = 未指定。
+    pub hard: Option<(i64, i64, i64)>,
+}
+
+impl PdfXImage {
+    /// 按 pdfTeX 硬边界规则算占位盒 (宽, 高, 深)（sp）。无硬边界 = 自然尺寸、
+    /// 深 0。
+    ///
+    /// 语义 GT 定案（pdftex 17 组实测，探针 `/tmp/r21b/gt{,d2,e,f,g}.tex`，
+    /// 2026-10-22）：**给出维字面生效、另一维按缩放比等比导出**——
+    /// - `width` 给出 → 盒宽 = width（字面）；缩放总高 `T = width×(自然高/自然宽)`；
+    /// - `height` 给出 → 盒高 = height（字面）；`T = height + depth`；
+    /// - 只给 `depth` → 不缩放（`T` = 自然高）；
+    /// - 未给 `width` 时盒宽 = `T×(自然宽/自然高)`（`height 10pt depth 2pt` 的
+    ///   等比宽按总高 12pt 算，GT BOXHD3=[24][10][2]）；
+    /// - 未给 `height` 时盒高 = `max(0, T − depth)`（负 depth 抬升图、盒高加大；
+    ///   depth 超总高时盒高钳 0、**盒深不钳**——GT BOXBIG=[14][0][99]）；
+    /// - 盒深 = `max(0, depth)`。
+    pub fn placed_box(&self) -> (i64, i64, i64) {
+        let Some((hw, hh, hd)) = self.hard else {
+            return (self.natural_w, self.natural_h, 0);
+        };
+        let w_given = hw != 0;
+        let h_given = hh != 0;
+        // 缩放总高 T：未给 height 的盒高与未给 width 的盒宽都从它导出。
+        let t: f64 = if w_given && !h_given {
+            hw as f64 * self.natural_h as f64 / self.natural_w as f64
+        } else if h_given {
+            (hh + hd) as f64
+        } else {
+            self.natural_h as f64
+        };
+        let w = if w_given {
+            hw
+        } else if h_given {
+            (t * self.natural_w as f64 / self.natural_h as f64).round() as i64
+        } else {
+            self.natural_w
+        };
+        let h = if h_given {
+            hh
+        } else {
+            (t - hd as f64).max(0.0).round() as i64
+        };
+        (w, h, hd.max(0))
     }
 }
 

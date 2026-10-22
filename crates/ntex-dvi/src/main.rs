@@ -625,19 +625,6 @@ fn scan_package_requests(src: &str) -> Vec<(String, RequireKind)> {
     out
 }
 
-#[cfg(test)]
-mod auto_pkg_scan_tests {
-    use super::*;
-
-    #[test]
-    fn includegraphics_is_not_an_include_request() {
-        let requests = scan_package_requests(
-            "\\includegraphics[width=.5\\textwidth]{Figures/plot.png}\n\\include{chapter}\n",
-        );
-        assert_eq!(requests, vec![("chapter".to_owned(), RequireKind::Input)]);
-    }
-}
-
 fn scan_latex_argument(mut s: &str) -> Option<(String, &str)> {
     s = s.trim_start();
     while s.starts_with('[') {
@@ -917,5 +904,18 @@ fn generate_latex_fmt(output: &str, input_paths: &[String], quiet: bool) -> Exit
             eprintln!("写出 {output} 失败：{e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod auto_pkg_scan_tests {
+    use super::*;
+
+    #[test]
+    fn includegraphics_is_not_an_include_request() {
+        let requests = scan_package_requests(
+            "\\includegraphics[width=.5\\textwidth]{Figures/plot.png}\n\\include{chapter}\n",
+        );
+        assert_eq!(requests, vec![("chapter".to_owned(), RequireKind::Input)]);
     }
 }

@@ -90,6 +90,8 @@ struct ImageSpec {
     /// 显示宽/高（sp；核心侧已乘 scale= 等缩放）。
     w_sp: i64,
     h_sp: i64,
+    /// 盒深（sp）：图底画到基线下 d 处（pdfTeX `depth` 关键字语义）。
+    d_sp: i64,
     /// 图源文件名（`\pdfximage` 登记名，随载荷长度前缀携带）。
     name: String,
 }
@@ -105,14 +107,16 @@ struct ImageEntry {
     smask: Option<Vec<u8>>,
 }
 
-/// 解析 `ntex-image <w_sp> <h_sp> <名长> <名>` 载荷；非本协议载荷 → None
-/// （普通 \special 透传忽略，与既有口径一致）。
+/// 解析 `ntex-image <w_sp> <h_sp> <d_sp> <名长> <名>` 载荷；非本协议载荷 → None
+/// （普通 \special 透传忽略，与既有口径一致）。d_sp = 盒深：图底画到基线
+/// 下方 d 处（`\pdfximage depth` 的绘制语义，GT 渲染探针实测定案）。
 fn parse_image_special(payload: &[u8]) -> Option<ImageSpec> {
     let text = std::str::from_utf8(payload).ok()?;
     let rest = text.strip_prefix("ntex-image ")?;
-    let mut it = rest.splitn(3, ' ');
+    let mut it = rest.splitn(4, ' ');
     let w_sp = it.next()?.parse().ok()?;
     let h_sp = it.next()?.parse().ok()?;
+    let d_sp: i64 = it.next()?.parse().ok()?;
     // 名长前缀：名字可含空格，按前缀给出的字节数截取
     let tail = it.next()?;
     let (len_s, name) = tail.split_once(' ')?;
@@ -121,6 +125,7 @@ fn parse_image_special(payload: &[u8]) -> Option<ImageSpec> {
     Some(ImageSpec {
         w_sp,
         h_sp,
+        d_sp,
         name: name.to_owned(),
     })
 }
@@ -234,12 +239,18 @@ pub fn write_pdf(dvi: &Dvi, opts: &PdfOptions) -> io::Result<Vec<u8>> {
                                     page_images[page_i].len()
                                 }
                             };
-                            // whatsit 的 DVI 当前点 = 图左下角（核心侧 \pdfrefximage
-                            // 在占位盒参考点发 special）；图自锚点向右上铺显示宽高
+                            // whatsit 的 DVI 当前点 = 基线参考点（核心侧
+                            // \pdfrefximage 在占位盒参考点发 special）；图底
+                            // 画到基线下盒深 d 处、顶到基线上盒高 h 处（GT
+                            // 渲染探针 gt-pos2：[14][3][2] 盒 → 图高 5pt、
+                            // 底边基线下 2pt）。
                             let x = ORIGIN_PT + *h as f64 / SP_PER_PT;
-                            let y = h_pt - ORIGIN_PT - *v as f64 / SP_PER_PT;
+                            let y = h_pt
+                                - ORIGIN_PT
+                                - *v as f64 / SP_PER_PT
+                                - spec.d_sp as f64 / SP_PER_PT;
                             let wp = spec.w_sp as f64 / SP_PER_PT;
-                            let hp = spec.h_sp as f64 / SP_PER_PT;
+                            let hp = (spec.h_sp + spec.d_sp) as f64 / SP_PER_PT;
                             if wp > 0.0 && hp > 0.0 {
                                 writeln!(
                                     c,

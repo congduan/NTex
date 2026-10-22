@@ -341,7 +341,9 @@ impl PageBuilder {
             if !contrib.is_empty() {
                 if let Some(held) = self.held_zero_empty.take() {
                     let keep = match contrib.first() {
-                        Some(Node::Penalty { penalty: -10002 | -10003 }) => {
+                        Some(Node::Penalty {
+                            penalty: -10002 | -10003,
+                        }) => {
                             self.keep_zero_empty = true;
                             true
                         }
@@ -1179,9 +1181,11 @@ mod named_glue_tests {
 
     #[test]
     fn named_interline_glue_counts_toward_page_goal() {
-        let mut params = Params::default();
-        params.vsize = 35;
-        params.topskip = Glue::ZERO;
+        let params = Params {
+            vsize: 35,
+            topskip: Glue::ZERO,
+            ..Params::default()
+        };
         let line = || {
             Node::Box(BoxNode {
                 kind: BoxKind::HBox,

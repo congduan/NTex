@@ -466,8 +466,9 @@ impl<'a> Writer<'a> {
     ///   \pdfrestore` 落下的变换标记——在此（**重放侧**）维护对角缩放栈，
     ///   不落 DVI（graphicx 的 \Gscale@box 内容盒先排、矩阵域后开，引擎侧
     ///   \pdfrefximage 取不到缩放，只能在盒节点重放时结算）；
-    /// - `ntex-image <w> <h> <名长> <名>`：图片引用——尺寸就地乘当前缩放
-    ///   （scale=0.6 → 0.6×自然尺寸），写成 xxx 载荷给 ntex-pdf；
+    /// - `ntex-image <w> <h> <d> <名长> <名>`：图片引用——尺寸就地乘当前缩放
+    ///   （scale=0.6 → 0.6×自然尺寸），写成 xxx 载荷给 ntex-pdf；d = 盒深
+    ///   （图底画到基线下 d 处的绘制信息，随宽高一起缩放）；
     /// - 其余载荷：原样透传为 xxx（\special 原义）。
     fn special(&mut self, payload: &[u8]) {
         let text = std::str::from_utf8(payload).ok();
@@ -500,19 +501,20 @@ impl<'a> Writer<'a> {
                 return; // 标记只作用于写出器状态，不落 DVI
             }
             Some("ntex-image") => {
-                // `ntex-image <w_sp> <h_sp> <名长> <名>`：前两个数乘缩放
+                // `ntex-image <w_sp> <h_sp> <d_sp> <名长> <名>`：前三个数乘缩放
                 let vals: Vec<i64> = words
                     .by_ref()
-                    .take(2)
+                    .take(3)
                     .filter_map(|s| s.parse().ok())
                     .collect();
                 let rest: Vec<String> = words.collect();
-                if vals.len() == 2 && rest.len() >= 2 {
+                if vals.len() == 3 && rest.len() >= 2 {
                     let (sx, sy) = *self.ctm.last().unwrap_or(&(1.0, 1.0));
                     let out = format!(
-                        "ntex-image {} {} {} {}",
+                        "ntex-image {} {} {} {} {}",
                         (vals[0] as f64 * sx).round() as i64,
                         (vals[1] as f64 * sy).round() as i64,
+                        (vals[2] as f64 * sy).round() as i64,
                         rest[0],
                         rest[1..].join(" ")
                     );

@@ -798,21 +798,25 @@ fn render_page_core(
 struct PreviewImageSpec {
     width_sp: i64,
     height_sp: i64,
+    /// 盒深（sp）：图底画到基线下 d 处（pdfTeX `depth` 语义）。
+    depth_sp: i64,
     name: String,
 }
 
 fn parse_preview_image(payload: &[u8]) -> Option<PreviewImageSpec> {
     let text = std::str::from_utf8(payload).ok()?;
     let rest = text.strip_prefix("ntex-image ")?;
-    let mut fields = rest.splitn(3, ' ');
+    let mut fields = rest.splitn(4, ' ');
     let width_sp = fields.next()?.parse().ok()?;
     let height_sp = fields.next()?.parse().ok()?;
+    let depth_sp: i64 = fields.next()?.parse().ok()?;
     let tail = fields.next()?;
     let (len, name) = tail.split_once(' ')?;
     let len: usize = len.parse().ok()?;
     Some(PreviewImageSpec {
         width_sp,
         height_sp,
+        depth_sp,
         name: name.get(..len)?.to_owned(),
     })
 }
@@ -856,9 +860,10 @@ fn render_project_images(
         let decoded = ntex_pdf::image::decode_png_rgb(&bytes)
             .map_err(|e| format!("预览图片 `{}`：{e}", spec.name))?;
         let width = spec.width_sp as f64 * px_per_sp;
-        let height = spec.height_sp as f64 * px_per_sp;
+        let height = (spec.height_sp + spec.depth_sp) as f64 * px_per_sp;
         let x = margin + *h as f64 * px_per_sp;
-        let y = margin + *v as f64 * px_per_sp - height;
+        // 图底画到基线（DVI 当前点）下盒深处（pdfTeX `depth` 绘制语义）。
+        let y = margin + *v as f64 * px_per_sp - height + spec.depth_sp as f64 * px_per_sp;
         if !pixmap.blit_rgb_scaled(
             x,
             y,

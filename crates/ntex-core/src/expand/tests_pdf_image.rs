@@ -114,12 +114,146 @@ fn pdfrefximage_invalid_id_errors() {
 
 #[test]
 fn pdfximage_skips_attr_page_and_pagebox_keywords() {
-    // pdftex.def 真实调用形（\Gread@@pdftex）：attr 组 + page 数字 + 页面盒词
+    // pdftex.def 真实调用形（\\Gread@@pdftex）：attr 组 + page 数字 + 页面盒词
     let mut vfs = MemVfs::new();
     vfs.insert("t.png", png_bytes(4, 4, None));
     let src = r"\pdfximage attr{/Interpolate true} page 1 cropbox{t.png}\the\pdflastximage";
     let (out, _) = expand_vfs(src, vfs).unwrap();
     assert_eq!(out, "1");
+}
+
+#[test]
+fn pdfximage_hard_bounds_scan_and_scale() {
+    // beamer \pgfdeclareimage 真实调用形：`width 14pt height 12pt attr{..}{名}`——
+    // 硬边界词必须被消费、文件名组完整识别（回归：此前 width/height 落进
+    // 文件名扫描，`height 12pt width 14ptattr {..} {beamericonbook.pdf}` 乱串）。
+    // 盒尺寸验证走 CLI 通道（expand_vfs 的默认 sink 无盒寄存器，\setbox/\wd
+    // 查询不出值），此处锁 placed_box 纯函数与扫描两端。
+    let mut vfs = MemVfs::new();
+    vfs.insert("t.png", png_bytes(100, 50, None));
+    let src = r"\pdfximage width 14pt height 12pt attr {/Interpolate false } {t.png}\the\pdflastximage";
+    let (out, _) = expand_vfs(src, vfs).unwrap();
+    assert_eq!(out, "1");
+    // placed_box：**混合缩放**（GT pdftex 17 组定案，/tmp/r21b/gt*.tex）——
+    // 给出维字面生效、未给维按缩放比等比导出（详见解构 placed_box 文档）。
+    // `width 14 height 12` 两维全给 → 字面直用 [14][12][0]。
+    let img = PdfXImage {
+        natural_w: 100 * 65536,
+        natural_h: 50 * 65536,
+        name: "t.png".into(),
+        hard: Some((14 * 65536, 12 * 65536, 0)),
+    };
+    assert_eq!(img.placed_box(), (14 * 65536, 12 * 65536, 0));
+    // 只给 height → 盒高字面、宽按总高等比导出（GT BOXH：2:1 图
+    // `height 10pt` → [20pt][10pt][0]）。
+    let img2 = PdfXImage {
+        natural_w: 100 * 65536,
+        natural_h: 50 * 65536,
+        name: "t.png".into(),
+        hard: Some((0, 10 * 65536, 0)),
+    };
+    assert_eq!(img2.placed_box(), (20 * 65536, 10 * 65536, 0));
+    // 无硬边界 = 自然尺寸。
+    let img3 = PdfXImage {
+        natural_w: 100 * 65536,
+        natural_h: 50 * 65536,
+        name: "t.png".into(),
+        hard: None,
+    };
+    assert_eq!(img3.placed_box(), (100 * 65536, 50 * 65536, 0));
+}
+
+#[test]
+fn pdfximage_depth_lifts_placeholder_box() {
+    // depth/单维组合语义（GT pdftex 17 组实测，/tmp/r21b/gt{,d2,e,f,g}.tex；
+    // sp 换算 65781.76/65536 = 1.00375：自然高 50.1875px → 50.3757pt）。
+    // 混合缩放模型：给出维字面生效、未给维按缩放比导出；depth 符号参与
+    // 缩放比、显示为 max(0,·)；盒深 = max(0, depth) 不设上钳（GT BOXBIG
+    // [14][0][99]）。
+    let unit = 65781.76_f64;
+    let nat = |w: f64, h: f64| PdfXImage {
+        natural_w: (w * unit).round() as i64,
+        natural_h: (h * unit).round() as i64,
+        name: "t.png".into(),
+        hard: None,
+    };
+    let nh = nat(100.375, 50.1875).natural_h;
+    let nw = nat(100.375, 50.1875).natural_w;
+    let approx = |v: i64, pt: f64| {
+        assert!(
+            (v as f64 / 65536.0 - pt).abs() < 0.01,
+            "{v} vs {pt}pt"
+        );
+    };
+    // depth-only：不缩放、宽高保持自然（GT BOXD=[100.375][48.1875][2]；
+    // 回归：此前早退 [nat][nat][0] 丢 depth）。
+    let d_only = PdfXImage {
+        hard: Some((0, 0, 2 * 65536)),
+        ..nat(100.375, 50.1875)
+    };
+    let (w, h, d) = d_only.placed_box();
+    assert_eq!(w, nw, "{w}");
+    assert_eq!(h, nh - 2 * 65536, "{h}");
+    approx(d, 2.0);
+    // width + depth（GT BOX14=[14][5][2]：等比总高 7pt 切 2pt 盒深）。
+    let wd = PdfXImage {
+        hard: Some((14 * 65536, 0, 2 * 65536)),
+        ..nat(100.375, 50.1875)
+    };
+    let (w, h, d) = wd.placed_box();
+    approx(w, 14.0);
+    approx(h, 5.0);
+    approx(d, 2.0);
+    // height-only：宽按高度等比导出（GT BOXH：2:1 图 height 10pt →
+    // [20][10][0]；回归：此前宽保持自然）。
+    let h_only = PdfXImage {
+        hard: Some((0, 10 * 65536, 0)),
+        ..nat(100.375, 50.1875)
+    };
+    let (w, h, d) = h_only.placed_box();
+    approx(w, 20.0);
+    assert_eq!(h, 10 * 65536, "{h}");
+    assert_eq!(d, 0, "{d}");
+    // height + depth：等比宽按总高 (h+d) 算（GT BOXHD3：height 10 depth 2
+    // → [24][10][2]）；height 字面生效（GT BOXHD：height 3 depth 2 →
+    // [14][3][2]，显示总高 5pt = h+d，depth 不被 height 吞）。
+    let hd = PdfXImage {
+        hard: Some((0, 10 * 65536, 2 * 65536)),
+        ..nat(100.375, 50.1875)
+    };
+    let (w, h, d) = hd.placed_box();
+    approx(w, 24.0);
+    assert_eq!(h, 10 * 65536, "{h}");
+    approx(d, 2.0);
+    // 负 depth：无 height → 盒高 = 自然高 + |d|、深钳 0（GT BOXNEGD
+    // [100.375][51.1875][0]）；有 height → height 字面、负深钳 0
+    //（GT BOXHDN [14][3][0] / BOXHDN-2pt 组 [14][5][0]）。
+    let neg = PdfXImage {
+        hard: Some((0, 0, -65536)),
+        ..nat(100.375, 50.1875)
+    };
+    let (w, h, d) = neg.placed_box();
+    assert_eq!(w, nw, "{w}");
+    assert_eq!(h, nh + 65536, "{h}");
+    assert_eq!(d, 0, "{d}");
+    let neg_h = PdfXImage {
+        hard: Some((14 * 65536, 3 * 65536, -2 * 65536)),
+        ..nat(100.375, 50.1875)
+    };
+    let (w, h, d) = neg_h.placed_box();
+    approx(w, 14.0);
+    assert_eq!(h, 3 * 65536, "{h}");
+    assert_eq!(d, 0, "{d}");
+    // depth ≥ 等比总高：盒高钳 0、**盒深不钳**（GT BOXBIG=[14][0][99]；
+    // 回归：此前 clamp 到自然总高丢边界）。
+    let big = PdfXImage {
+        hard: Some((14 * 65536, 0, 99 * 65536)),
+        ..nat(100.375, 50.1875)
+    };
+    let (w, h, d) = big.placed_box();
+    approx(w, 14.0);
+    assert_eq!(h, 0, "{h}");
+    approx(d, 99.0);
 }
 
 #[test]
