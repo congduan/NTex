@@ -98,23 +98,8 @@ impl Expander {
     /// [`Self::invalidate_saved_param`] 同构）。
     fn invalidate_saved_register(&mut self, kind: RegKind, idx: usize) {
         for (_, saved) in &mut self.save_stack {
-            let hit = match saved {
-                SavedValue::Count { idx: i, .. } if kind == RegKind::Count => i == &idx,
-                SavedValue::Dimen { idx: i, .. } if kind == RegKind::Dimen => i == &idx,
-                SavedValue::Skip { idx: i, .. } if kind == RegKind::Skip => i == &idx,
-                SavedValue::Muskip { idx: i, .. } if kind == RegKind::Muskip => i == &idx,
-                SavedValue::Toks { idx: i, .. } if kind == RegKind::Toks => i == &idx,
-                _ => false,
-            };
-            if hit {
-                if let Some(retained) = match saved {
-                    SavedValue::Count { retained, .. }
-                    | SavedValue::Dimen { retained, .. }
-                    | SavedValue::Skip { retained, .. }
-                    | SavedValue::Muskip { retained, .. }
-                    | SavedValue::Toks { retained, .. } => Some(retained),
-                    _ => None,
-                } {
+            if let SavedValue::Register { kind: old_kind, idx: old_idx, retained, .. } = saved {
+                if *old_kind == kind && *old_idx == idx {
                     *retained = true;
                 }
             }
@@ -128,48 +113,25 @@ impl Expander {
             self.invalidate_saved_register(kind, idx);
         }
         if !global && self.group_level > 0 {
-            match kind {
-                RegKind::Count => self.save_stack.push((
-                    self.group_level,
-                    SavedValue::Count {
-                        idx,
-                        prev: self.registers.count(idx),
-                        retained: false,
-                    },
-                )),
-                RegKind::Dimen => self.save_stack.push((
-                    self.group_level,
-                    SavedValue::Dimen {
-                        idx,
-                        prev: self.registers.dimen(idx),
-                        retained: false,
-                    },
-                )),
-                RegKind::Skip => self.save_stack.push((
-                    self.group_level,
-                    SavedValue::Skip {
-                        idx,
-                        prev: self.registers.skip(idx),
-                        retained: false,
-                    },
-                )),
-                RegKind::Muskip => self.save_stack.push((
-                    self.group_level,
-                    SavedValue::Muskip {
-                        idx,
-                        prev: self.registers.muskip(idx),
-                        retained: false,
-                    },
-                )),
-                RegKind::Toks => self.save_stack.push((
-                    self.group_level,
-                    SavedValue::Toks {
-                        idx,
-                        prev: self.registers.toks(idx),
-                        retained: false,
-                    },
-                )),
-            }
+            self.save_stack.push((
+                self.group_level,
+                SavedValue::Register {
+                    kind,
+                    idx,
+                    prev: self.register_value(kind, idx),
+                    retained: false,
+                },
+            ));
+        }
+    }
+
+    fn register_value(&self, kind: RegKind, idx: usize) -> RegValue {
+        match kind {
+            RegKind::Count => RegValue::Count(self.registers.count(idx)),
+            RegKind::Dimen => RegValue::Dimen(self.registers.dimen(idx)),
+            RegKind::Skip => RegValue::Skip(self.registers.skip(idx)),
+            RegKind::Muskip => RegValue::Muskip(self.registers.muskip(idx)),
+            RegKind::Toks => RegValue::Toks(self.registers.toks(idx)),
         }
     }
 
@@ -1157,11 +1119,7 @@ impl Expander {
         let retain = match &v {
             SavedValue::Eqtb { csid, .. } => self.eqtb.level(*csid) == 0,
             SavedValue::Param { retained, .. } => *retained,
-            SavedValue::Count { retained, .. }
-            | SavedValue::Dimen { retained, .. }
-            | SavedValue::Skip { retained, .. }
-            | SavedValue::Muskip { retained, .. }
-            | SavedValue::Toks { retained, .. } => *retained,
+            SavedValue::Register { retained, .. } => *retained,
             _ => false,
         };
         // \tracingrestores>0：恢复动作输出 `{restoring ...}` / `{retaining ...}`
@@ -1182,30 +1140,8 @@ impl Expander {
                 }
                 // 寄存器 retaining 与 Param 同款：trace 打当前值（GT
                 // `{retaining \count0=7}`，tex.web show_eqtb 读 eqtb 现值）。
-                SavedValue::Count { idx, .. } if retain => {
-                    format!("{}{}={}", self.esc("count"), idx, self.registers.count(*idx))
-                }
-                SavedValue::Dimen { idx, .. } if retain => format!(
-                    "{}{}={}pt",
-                    self.esc("dimen"),
-                    idx,
-                    format_dimen(self.registers.dimen(*idx))
-                ),
-                SavedValue::Skip { idx, .. } if retain => format!(
-                    "{}{}={}",
-                    self.esc("skip"),
-                    idx,
-                    format_glue(self.registers.skip(*idx))
-                ),
-                SavedValue::Muskip { idx, .. } if retain => format!(
-                    "{}{}={}",
-                    self.esc("muskip"),
-                    idx,
-                    format_mu_glue(self.registers.muskip(*idx))
-                ),
-                SavedValue::Toks { idx, .. } if retain => {
-                    format!("{}{}={}", self.esc("toks"), idx, self.show_toks(&self.registers.toks(*idx)))
-                }
+                SavedValue::Register { kind, idx, .. } if retain =>
+                    self.register_trace_body(*kind, *idx, &self.register_value(*kind, *idx)),
                 _ => self.restore_trace_body(&v),
             })
         } else {
@@ -1228,52 +1164,25 @@ impl Expander {
             // trace 体在 retain 时也走 restore_trace_body（打**当前值**，
             // 与 GT `{retaining \count0=7}` 铁证对齐——恢复对象是旧值但实际
             // 不生效，tex.web show_eqtb 打的是 eqtb 现值）。
-            SavedValue::Count {
-                idx,
-                prev,
-                retained,
-            } => {
+            SavedValue::Register { kind, idx, prev, retained } => {
                 if !retained {
-                    self.registers.set_count(idx, prev);
-                    let _ = self.sink.count_changed(idx, prev);
-                }
-            }
-            SavedValue::Dimen {
-                idx,
-                prev,
-                retained,
-            } => {
-                if !retained {
-                    self.registers.set_dimen(idx, prev);
-                    let _ = self.sink.dimen_changed(idx, prev);
-                }
-            }
-            SavedValue::Skip {
-                idx,
-                prev,
-                retained,
-            } => {
-                if !retained {
-                    self.registers.set_skip(idx, prev);
-                    let _ = self.sink.skip_changed(idx, prev);
-                }
-            }
-            SavedValue::Muskip {
-                idx,
-                prev,
-                retained,
-            } => {
-                if !retained {
-                    self.registers.set_muskip(idx, prev);
-                }
-            }
-            SavedValue::Toks {
-                idx,
-                prev,
-                retained,
-            } => {
-                if !retained {
-                    self.registers.set_toks(idx, prev);
+                    match (kind, prev) {
+                        (RegKind::Count, RegValue::Count(v)) => {
+                            self.registers.set_count(idx, v);
+                            let _ = self.sink.count_changed(idx, v);
+                        }
+                        (RegKind::Dimen, RegValue::Dimen(v)) => {
+                            self.registers.set_dimen(idx, v);
+                            let _ = self.sink.dimen_changed(idx, v);
+                        }
+                        (RegKind::Skip, RegValue::Skip(v)) => {
+                            self.registers.set_skip(idx, v);
+                            let _ = self.sink.skip_changed(idx, v);
+                        }
+                        (RegKind::Muskip, RegValue::Muskip(v)) => self.registers.set_muskip(idx, v),
+                        (RegKind::Toks, RegValue::Toks(v)) => self.registers.set_toks(idx, v),
+                        _ => unreachable!("saved register kind/value mismatch"),
+                    }
                 }
             }
             SavedValue::Catcode { byte, prev } => self.catcodes.set(byte, prev),
@@ -1352,6 +1261,18 @@ impl Expander {
         }
     }
 
+    fn register_trace_body(&self, kind: RegKind, idx: usize, value: &RegValue) -> String {
+        let shown = match (kind, value) {
+            (RegKind::Count, RegValue::Count(v)) => v.to_string(),
+            (RegKind::Dimen, RegValue::Dimen(v)) => format!("{}pt", format_dimen(*v)),
+            (RegKind::Skip, RegValue::Skip(v)) => format_glue(*v),
+            (RegKind::Muskip, RegValue::Muskip(v)) => format_mu_glue(*v),
+            (RegKind::Toks, RegValue::Toks(v)) => self.show_toks(v),
+            _ => unreachable!("saved register kind/value mismatch"),
+        };
+        format!("{}{}={shown}", self.esc(reg_kind_name(kind)), idx)
+    }
+
     // ---------- \tracingrestores 跟踪输出（tex.web restore_trace + show_eqtb） ----------
 
     /// 构造 `{restoring ...}` 的消息体（不含花括号与换行；tex.web `show_eqtb` 分区格式）。
@@ -1367,26 +1288,8 @@ impl Expander {
                     self.slot_display(*csid, prev)
                 )
             }
-            SavedValue::Count { idx, prev, .. } => {
-                format!("{}{}={}", self.esc("count"), idx, prev)
-            }
-            SavedValue::Dimen { idx, prev, .. } => {
-                format!("{}{}={}pt", self.esc("dimen"), idx, format_dimen(*prev))
-            }
-            SavedValue::Skip { idx, prev, .. } => {
-                format!("{}{}={}", self.esc("skip"), idx, format_glue(*prev))
-            }
-            SavedValue::Muskip { idx, prev, .. } => {
-                format!(
-                    "{}{}={}",
-                    self.esc("muskip"),
-                    idx,
-                    format_mu_glue(*prev)
-                )
-            }
-            SavedValue::Toks { idx, prev, .. } => {
-                format!("{}{}={}", self.esc("toks"), idx, self.show_toks(prev))
-            }
+            SavedValue::Register { kind, idx, prev, .. } =>
+                self.register_trace_body(*kind, *idx, prev),
             SavedValue::Param { kind, prev, .. } => {
                 format!(
                     "{}={}",

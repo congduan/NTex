@@ -260,6 +260,15 @@ enum Relation {
 /// `Clone`（M5 阶段二）：段级回滚把 [`ControlState::save_stack`] 整体还原到
 /// 段前状态，需要克隆悬挂的保存项。
 #[derive(Debug, Clone)]
+pub(crate) enum RegValue {
+    Count(i64),
+    Dimen(i64),
+    Skip(Glue),
+    Muskip(Glue),
+    Toks(TokenArray),
+}
+
+#[derive(Debug, Clone)]
 pub(crate) enum SavedValue {
     Eqtb {
         csid: u32,
@@ -268,31 +277,11 @@ pub(crate) enum SavedValue {
         /// 0 = 全局（tex.web level_one），1 = 组内局部。
         prev_level: u8,
     },
-    Count {
+    Register {
+        kind: RegKind,
         idx: usize,
-        prev: i64,
+        prev: RegValue,
         /// 后续同槽 `\global` 赋值已使本条目失效（tex.web retaining）。
-        retained: bool,
-    },
-    Dimen {
-        idx: usize,
-        prev: i64,
-        retained: bool,
-    },
-    Skip {
-        idx: usize,
-        prev: Glue,
-        retained: bool,
-    },
-    /// `\muskip`：mu 胶量寄存器（ETRIP；1mu = 65536 单位）。
-    Muskip {
-        idx: usize,
-        prev: Glue,
-        retained: bool,
-    },
-    Toks {
-        idx: usize,
-        prev: TokenArray,
         retained: bool,
     },
     Catcode {
