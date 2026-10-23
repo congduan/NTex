@@ -1,0 +1,8 @@
+% Control: the ordinary iow wrapper finishes, without the critical-message path.
+\documentclass{article}
+\ExplSyntaxOn
+\iow_wrap:nnnN
+  { This is a deliberately long diagnostic message repeated repeated repeated repeated repeated repeated repeated repeated repeated repeated repeated repeated. }
+  { } { } \iow_log:n
+\ExplSyntaxOff
+\begin{document}OK\end{document}
