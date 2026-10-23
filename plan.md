@@ -225,6 +225,7 @@
     宏包 13/13；GT 对拍真 TeX：窄 shift 0.14294 逐位一致、宽 4.45254 vs 4.45255
     （1sp 舍入）。发行 latex.fmt 已重生成 v26 入库。
     见 [战报](docs/archive/math-accent-skew-2026-10-23.md)。
+24. **biblatex 加载与出页闭环**（10-23）：真根因是 `\meaning` 漏印 `\long`，致 etoolbox 的 `\patchcmd\ifthenelse` 重新分词核验失败；修复后 0 错、`Hello.` 出 1 页 DVI/PDF，core 582 + layout 335、宏包 13/13、trip 177B/tripos 12 页 750B、T2 40 页/T3 49 页均守基线；见 [战报](docs/archive/biblatex-closure-2026-10-23.md)。
 
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 

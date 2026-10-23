@@ -394,11 +394,13 @@ impl Expander {
                             .collect();
                         let body = detok_tokens(&m.value.body, &self.intern, &self.catcodes);
                         // 同 meaning_text：protected 前缀（tex.web print_meaning）
-                        let head = if m.value.protected {
-                            "\\protected macro:"
-                        } else {
-                            "macro:"
-                        };
+                        let head = format!(
+                            "{}{}{}{}macro:",
+                            if m.value.protected { "\\protected" } else { "" },
+                            if m.value.params.long { "\\long" } else { "" },
+                            if m.value.outer { "\\outer" } else { "" },
+                            if m.value.protected || m.value.params.long || m.value.outer { " " } else { "" },
+                        );
                         format!("\\{name}={head}{params}->{body}.")
                     }
                     EqSlot::Char { charcode, .. } => {
@@ -552,9 +554,8 @@ impl Expander {
                         // `macro:->`（pdfTeX 为 `macro:if->`）。
                         let params = detok_tokens(&m.value.params.text, &self.intern, &self.catcodes);
                         let body = detok_tokens(&m.value.body, &self.intern, &self.catcodes);
-                        // tex.web print_meaning（e-TeX）：protected 宏前缀
-                        // `\protected`（长貌 `\long` 前缀需 MacroDef 记录 long
-                        // 位，暂缺，维持现状）。expl3 `\cs_generate_variant`
+                        // tex.web print_meaning：前缀按 protected、long、outer 排列。
+                        // expl3 `\cs_generate_variant`
                         // 的变体构造器选型（`\__cs_generate_variant:N`：
                         // meaning 前缀含 "pr" → `\cs_new_protected:Npe`，否则
                         // `\cs_new:Npe`）读的正是此前缀——缺它则全部变体
@@ -562,11 +563,13 @@ impl Expander {
                         // 展开，`\char_generate:nn` 查表守卫 `\exp_not:N \or:`
                         // 残留进 `\c__char_*_tl`，latex.ltx l.9386 触发
                         // Illegal parameter number。
-                        let head = if m.value.protected {
-                            "\\protected macro:"
-                        } else {
-                            "macro:"
-                        };
+                        let head = format!(
+                            "{}{}{}{}macro:",
+                            if m.value.protected { "\\protected" } else { "" },
+                            if m.value.params.long { "\\long" } else { "" },
+                            if m.value.outer { "\\outer" } else { "" },
+                            if m.value.protected || m.value.params.long || m.value.outer { " " } else { "" },
+                        );
                         format!("{head}{params}->{body}")
                     }
                     EqSlot::Char { charcode, .. } => {

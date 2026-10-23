@@ -334,3 +334,10 @@ demo1 六刀 + 输出例程刀 2/3/5 的修复登记；全部已提交，留作�
   biblatex 补丁语义、PGF/minted/beamer 展开、ctex 字体通道、XeTeX/LuaTeX 专用包
   仍受当前引擎能力限制；siunitx 为 12 秒限时未完成（根因未推断）。逐项首错与范围
   见 [兼容性归档](archive/default-tex-assets-2026-10-20.md)，不可把资产已齐记成渲染兼容。
+
+- 2026-10-23：✅ **biblatex 补丁首错已清**——`ifthen.sty` 原本就在发行资产中；
+  `\meaning`/`\show` 漏印宏的 `\long` 前缀，使 etoolbox 重新分词后的宏与原宏
+  `\ifx` 不等，`\patchcmd\ifthenelse` 因而失败。现按 pdfTeX 前缀顺序显示
+  protected/long/outer，槽显示同步修正；最小 biblatex 文档零错出页，
+  PDF 文本含 `Hello.`。引用解析与 `.bbl` 不在本次验收范围；详见
+  [战报](archive/biblatex-closure-2026-10-23.md)。

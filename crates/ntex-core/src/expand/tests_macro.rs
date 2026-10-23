@@ -584,6 +584,18 @@ fn meaning_protected_prefix() {
 }
 
 #[test]
+fn meaning_long_prefix_matches_pdftex_and_preserves_patchability() {
+    assert_eq!(
+        expand("\\long\\def\\f#1{#1}\\meaning\\f").unwrap(),
+        "\\long macro:#1->#1"
+    );
+    assert_eq!(
+        expand("\\protected\\long\\def\\f#1{#1}\\meaning\\f").unwrap(),
+        "\\protected\\long macro:#1->#1"
+    );
+}
+
+#[test]
 fn nested_braces_in_argument() {
     // 实参内层花括号在主流层建立组（不输出），与真实 TeX 一致
     assert_eq!(expand("\\def\\wrap#1{[#1]}\\wrap{a{b}c}").unwrap(), "[abc]");

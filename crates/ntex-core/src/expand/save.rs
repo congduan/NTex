@@ -1375,7 +1375,14 @@ impl Expander {
                 // 此前只渲染 `#n` → 定界符丢失（`\uppercase{\gdef\if@12{}}`
                 // 的 `\meaning\if@` 误报 `macro:->`，pdfTeX 为 `macro:if->`）。
                 let params = self.show_toks(&m.value.params.text);
-                format!("macro:{params}->{}", self.show_toks(&m.value.body))
+                let prefix = format!(
+                    "{}{}{}",
+                    if m.value.protected { "\\protected" } else { "" },
+                    if m.value.params.long { "\\long" } else { "" },
+                    if m.value.outer { "\\outer" } else { "" },
+                );
+                let space = if prefix.is_empty() { "" } else { " " };
+                format!("{prefix}{space}macro:{params}->{}", self.show_toks(&m.value.body))
             }
             // \let 到字符：`char"XX`（print_esc("char") + print_hex）
             EqSlot::Char { charcode, .. } => {
