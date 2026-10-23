@@ -634,7 +634,10 @@ fn scan_package_requests(src: &str) -> Vec<(String, RequireKind)> {
 fn ctex_needs_dvi_output(src: &str) -> bool {
     scan_package_requests(src).iter().any(|(name, kind)| {
         (*kind == RequireKind::DocumentClass
-            && matches!(name.as_str(), "ctexart" | "ctexrep" | "ctexbook" | "ctexbeamer"))
+            && matches!(
+                name.as_str(),
+                "ctexart" | "ctexrep" | "ctexbook" | "ctexbeamer"
+            ))
             || (*kind == RequireKind::UsePackage && name == "ctex")
     })
 }
@@ -949,7 +952,9 @@ mod auto_pkg_scan_tests {
         // GT probe: /tmp/ntex-test-hardening-gt/ctex-fontset-none.log.
         // Narrow known regression: the quick scan sees the class name but does
         // not interpret fontset=none, so it still chooses the DVI branch.
-        assert!(ctex_needs_dvi_output(r"\documentclass[fontset=none]{ctexart}"));
+        assert!(ctex_needs_dvi_output(
+            r"\documentclass[fontset=none]{ctexart}"
+        ));
     }
 
     #[test]

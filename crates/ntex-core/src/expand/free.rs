@@ -926,6 +926,8 @@ fn is_toks_state_prim(p: Primitive) -> bool {
             | Primitive::EndL
             | Primitive::BeginR
             | Primitive::EndR
+            | Primitive::PdfPageAttr
+            | Primitive::PdfPagesAttr
             | Primitive::Dump
             | Primitive::ReadLine
             | Primitive::Wd

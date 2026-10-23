@@ -187,6 +187,35 @@ impl Expander {
                 self.finish_assignment();
                 Ok(())
             }
+            // pdfTeX 内部 toks 参数：\pdfpageattr/\pdfpagesattr（beamer/hyperref
+            // 每页 shipout 拼接页面属性）。RHS 语义同 \every* 族（filler +
+            // 组/toks 引用）；赋值走 set_every_scoped kind 7/8 组局部恢复。
+            Primitive::PdfPageAttr | Primitive::PdfPagesAttr => {
+                self.expect_equals()?;
+                let tok = self
+                    .fetch_non_filler()?
+                    .ok_or_else(|| Error::invalid_input("pdfpageattr 缺少 RHS"))?;
+                let toks = if tok.catcode() == Some(Catcode::BeginGroup) {
+                    self.unread(tok);
+                    self.scan_group_contents(None)?
+                } else if let Some(csid) = tok.csid() {
+                    match self.eqtb.slot(csid).clone() {
+                        EqSlot::Primitive(_) => self.the_tokens_after(tok)?,
+                        EqSlot::Register(RegKind::Toks, idx) => {
+                            self.registers.toks(idx).to_vec()
+                        }
+                        _ => Vec::new(),
+                    }
+                } else {
+                    Vec::new()
+                };
+                match prim {
+                    Primitive::PdfPageAttr => self.set_every_scoped(7, toks),
+                    _ => self.set_every_scoped(8, toks),
+                }
+                self.finish_assignment();
+                Ok(())
+            }
             // ETRIP 冲刺：\parshape=<n> <indent> <width> ...（段落形状）
             Primitive::Parshape => self.exec_parshape(),
             // ETRIP 冲刺：\parshapelength/indent/dimen 主循环裸用 → 报
@@ -275,7 +304,8 @@ impl Expander {
 
 impl Expander {
     /// `\every*` 族字段访问（kind：0=everypar 1=everyhbox 2=everyvbox
-    /// 3=everycr 4=errhelp 5=everydisplay 6=everymath）。
+    /// 3=everycr 4=errhelp 5=everydisplay 6=everymath 7=pdfpageattr
+    /// 8=pdfpagesattr）。
     pub(crate) fn every_field(&self, kind: u8) -> &Vec<Token> {
         match kind {
             0 => &self.everypar_toks,
@@ -284,7 +314,9 @@ impl Expander {
             3 => &self.everycr_toks,
             4 => &self.errhelp_toks,
             5 => &self.everydisplay_toks,
-            _ => &self.everymath,
+            6 => &self.everymath,
+            7 => &self.pdf_page_attr_toks,
+            _ => &self.pdf_pages_attr_toks,
         }
     }
 
@@ -296,7 +328,9 @@ impl Expander {
             3 => &mut self.everycr_toks,
             4 => &mut self.errhelp_toks,
             5 => &mut self.everydisplay_toks,
-            _ => &mut self.everymath,
+            6 => &mut self.everymath,
+            7 => &mut self.pdf_page_attr_toks,
+            _ => &mut self.pdf_pages_attr_toks,
         } = v;
     }
 

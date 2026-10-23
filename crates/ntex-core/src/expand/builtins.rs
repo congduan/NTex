@@ -6,7 +6,7 @@
 /// Step B 补 PDF 变换栈 \pdfsave/\pdfsetmatrix/\pdfrestore 3 项；
 /// ctex 第二墙补 catcode table 三原语），
 /// 供 `register_builtins` 注册与 `tests.rs` 的一致性测试共用。
-pub(crate) const BUILTINS: [(&str, Primitive); 454] = [
+pub(crate) const BUILTINS: [(&str, Primitive); 456] = [
     ("def", Primitive::Def),
     ("edef", Primitive::Edef),
     ("gdef", Primitive::Gdef),
@@ -606,6 +606,10 @@ pub(crate) const BUILTINS: [(&str, Primitive); 454] = [
     ("pdfpageresources", Primitive::PdfPageResources),
     ("pdfimage", Primitive::PdfImage),
     ("pdfform", Primitive::PdfForm),
+    // beamer/hyperref 闭环（2026-10-24）：\\pdfpageattr/\\pdfpagesattr——内部
+    // toks 参数（同 \\pdfpageresources 先例：独立字段存储，非 toks 寄存器槽）。
+    ("pdfpageattr", Primitive::PdfPageAttr),
+    ("pdfpagesattr", Primitive::PdfPagesAttr),
 ];
 
 /// `Primitive → 规范名`（`BUILTINS` 反查；tests.rs

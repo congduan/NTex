@@ -71,6 +71,9 @@ pub(crate) struct ValueExtras {
     pub(crate) everydisplay: Vec<Token>,
     pub(crate) everyeof: Vec<Token>,
     pub(crate) errhelp: Vec<Token>,
+    /// pdfTeX 内部 toks 参数（beamer/hyperref 页面属性）。
+    pub(crate) pdf_page_attr: Vec<Token>,
+    pub(crate) pdf_pages_attr: Vec<Token>,
     pub(crate) lccodes: [i64; 256],
     pub(crate) uccodes: [i64; 256],
     pub(crate) mathcodes: HashMap<u32, u32>,
@@ -160,6 +163,8 @@ impl Expander {
                 everydisplay: self.everydisplay_toks.clone(),
                 everyeof: self.everyeof_toks.clone(),
                 errhelp: self.errhelp_toks.clone(),
+                pdf_page_attr: self.pdf_page_attr_toks.clone(),
+                pdf_pages_attr: self.pdf_pages_attr_toks.clone(),
                 lccodes: self.lccodes,
                 uccodes: self.uccodes,
                 mathcodes: self.mathcodes.clone(),
@@ -243,6 +248,8 @@ impl Expander {
         self.everydisplay_toks = x.everydisplay.clone();
         self.everyeof_toks = x.everyeof.clone();
         self.errhelp_toks = x.errhelp.clone();
+        self.pdf_page_attr_toks = x.pdf_page_attr.clone();
+        self.pdf_pages_attr_toks = x.pdf_pages_attr.clone();
         self.lccodes = x.lccodes;
         self.uccodes = x.uccodes;
         self.mathcodes = x.mathcodes.clone();

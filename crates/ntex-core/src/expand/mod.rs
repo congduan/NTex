@@ -1116,6 +1116,13 @@ pub struct Expander {
     /// pdfTeX `every_eof` 扩展）。expl3 `\__sys_get` 依赖它在 `\input` 结束
     /// 边界回注 `\q_no_value` 探测标记。
     everyeof_toks: Vec<Token>,
+    /// pdfTeX 内部 toks 参数：`\\pdfpageattr`/`\\pdfpagesattr`（beamer/hyperref
+    /// 每页 shipout 拼接页面属性；lscape.sty `/Rotate 90`）。tex.web 里属
+    /// `local_base` 域 toks 槽——与普通 toks 寄存器**隔离**（GT 实测
+    /// `\\toks32765` 互不影响），组局部恢复语义同 `\\every*` 族
+    /// （`set_every_scoped` kind 7/8）。独立字段非寄存器槽。
+    pdf_page_attr_toks: Vec<Token>,
+    pdf_pages_attr_toks: Vec<Token>,
     /// TRIP 刀 N：`\endinput` 的 tex.web 全局一次性旗标（tex.web `force_eof`，
     /// L7557 声明为**全局**变量、不挂任何帧）。置位后由「下一个到达行尾的
     /// 文件帧」在取下一行时消费（`print(")"); force_eof:=false;
@@ -1277,6 +1284,8 @@ impl Expander {
             everydisplay_toks: Vec::new(),
             everyjob_toks: Vec::new(),
             everyeof_toks: Vec::new(),
+            pdf_page_attr_toks: Vec::new(),
+            pdf_pages_attr_toks: Vec::new(),
             force_eof: false,
             file_name_in_progress: false,
             skewchars: HashMap::new(),
@@ -1498,6 +1507,8 @@ impl Expander {
         self.pdf_last_obj = 0;
         self.pdf_last_xform = 0;
         self.pdf_page_resources.clear();
+        self.pdf_page_attr_toks.clear();
+        self.pdf_pages_attr_toks.clear();
         self.read_streams.clear();
         self.write_streams.clear();
         self.suppress_expansion = 0;
@@ -2250,6 +2261,9 @@ impl Expander {
             &self.everycr_toks,
             &self.everydisplay_toks,
             &self.errhelp_toks,
+            // beamer/hyperref 内部 toks 参数（checkpoint ValueExtras 同步携带）
+            &self.pdf_page_attr_toks,
+            &self.pdf_pages_attr_toks,
         ] {
             digest_toks(&mut h, toks);
         }

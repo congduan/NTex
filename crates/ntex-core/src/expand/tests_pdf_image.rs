@@ -328,3 +328,45 @@ fn pdf_dest_and_startlink_consume_common_actions() {
     .unwrap();
     assert_eq!(out, "A BUP");
 }
+
+#[test]
+fn pdfpageattr_roundtrips_as_toks_parameter() {
+    // beamer/hyperref 闭环（2026-10-24）：`\pdfpageattr`/`\pdfpagesattr` 是
+    // pdfTeX 的 toks 型参数。hyperref hpdftex.def 每页 shipout
+    // `\the\pdfpageattr` 读 + `\global\pdfpageattr{…}` 写（L623-652）；
+    // lscape.sty L54 `\pdfpageattr{/Rotate 90}`。注册前 beamer 最小加载
+    // 每页 2 错（Undefined + "You can't use \the with this"）×6 页。
+    // 去修复必红：删 builtins.rs 的 pdfpageattr/pdfpagesattr set_register 即红。
+    // GT 铁证（pdfTeX t4.tex 实测，\immediate\write16 通道）：
+    //   PRE=[/Rotate 90]——首次赋值后 \the 展开，值带 cat10 尾空格；
+    //   toks 赋值不展开替换文本（\global\pdfpageattr{\attr…} 存别名原样，
+    //   ATTR=[\attr /Trans{}>>]）——递归形态 `\global\pdfpageattr{\the\pdfpageattr…}`
+    //   在真 pdfTeX 下 TeX capacity exceeded（input stack 10000），语义即如此。
+    let (r, t) = run_transcript(concat!(
+        r"\pdfpageattr{/Rotate 90} ",
+        // hyperref 同构：读回拼接 + global 重写（先 edef 展开，非递归）
+        r"\edef\attr{\the\pdfpageattr}",
+        r"\global\pdfpageattr{\attr^^J/Trans{}>>}",
+        r"\pdfpagesattr{/CropBox[0 0 100 100]}",
+        r"\message{ATTR=[\the\pdfpageattr]}",
+        r"\message{PAGES=[\the\pdfpagesattr]}",
+    ));
+    assert!(r.is_ok(), "run failed: {r:?}\n{t}");
+    assert!(
+        !t.contains("Undefined control sequence"),
+        "pdfpageattr/pdfpagesattr must be registered: {t}"
+    );
+    assert!(
+        !t.contains("can't use"),
+        "\\the\\pdfpageattr must read as toks: {t}"
+    );
+    // 首次赋值的字面值经 edef 展开后存进 toks，读回不展开（GT 同构）。
+    assert!(
+        t.contains("\\attr") && t.contains("/Trans{}>>"),
+        "toks assignment must store tokens verbatim (GT: ATTR=[\\attr …]): {t}"
+    );
+    assert!(
+        t.contains("PAGES=[/CropBox[0 0 100 100]]"),
+        "pdfpagesattr round-trip lost: {t}"
+    );
+}

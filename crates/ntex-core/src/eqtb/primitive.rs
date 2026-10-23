@@ -758,4 +758,10 @@ define_primitives! {
     // 原语编号不重排（`#[repr(u16)]` 判别式按序序列化，中部插入=全部错位，
     // 2026-10-22 R24 首版实锤：最小 article 文件名解析链连环炸）。
     ShellEscape,
+    // beamer/hyperref 闭环（2026-10-24）：\\pdfpageattr/\\pdfpagesattr——pdfTeX
+    // 的内部 toks 参数（tex.web `local_base` 域 toks 槽，**非**普通 toks 寄存器：
+    // GT 实测 \\toks32765 与 \\pdfpageattr 互相隔离，两名字独立存储）。
+    // 变体追加在尾部，保持既有 .fmt 原语编号不重排。
+    PdfPageAttr,
+    PdfPagesAttr,
 }

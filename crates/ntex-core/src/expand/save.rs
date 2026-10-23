@@ -760,7 +760,7 @@ impl Expander {
                     Ok(emit_dimen(self.query_sink_ref().page_dimen(if *p == Primitive::PageGoal { 0 } else { 1 })))
                 }
                 Primitive::PreDisplaySize => Ok(emit_dimen(0)),
-                // \\the\\everypar 等 toks 参数：输出存储的 token 列表
+                // \the\everypar 等 toks 参数：输出存储的 token 列表
                 Primitive::EveryPar
                 | Primitive::EveryHBox
                 | Primitive::EveryVBox
@@ -772,6 +772,11 @@ impl Expander {
                     Primitive::EveryCr => self.everycr_toks.clone(),
                     _ => self.errhelp_toks.clone(),
                 }),
+                // beamer/hyperref 内部 toks 参数（`\the\pdfpageattr` 读回）。
+                // hyperref hpdftex.def 每页 shipout 拼接：`\global\pdfpageattr{…}`
+                // 写、`\the\pdfpageattr` 读（GT t4 探针 2026-10-24）。
+                Primitive::PdfPageAttr => Ok(self.pdf_page_attr_toks.clone()),
+                Primitive::PdfPagesAttr => Ok(self.pdf_pages_attr_toks.clone()),
                 // \\the\\insertpenalties：页面构建器只读整数；无排版查询 sink 时为 0。
                 Primitive::InsertPenalties => {
                     Ok(emit_count(self.query_sink_ref().insert_penalties()))
@@ -1182,6 +1187,9 @@ impl Expander {
                     3 => &mut self.everycr_toks,
                     4 => &mut self.errhelp_toks,
                     5 => &mut self.everydisplay_toks,
+                    // beamer/hyperref 内部 toks 参数（set_every_scoped kind 7/8）
+                    7 => &mut self.pdf_page_attr_toks,
+                    8 => &mut self.pdf_pages_attr_toks,
                     _ => &mut self.everymath,
                 } = prev;
             }
