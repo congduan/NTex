@@ -375,12 +375,15 @@ use super::*;
             eprintln!("未找到 cmmi10.tfm，跳过");
             return;
         }
-        // pdfTeX GT: /tmp/ntex-test-hardening-gt/accent.log prints
-        // shifted 0.14294pt and 4.45255pt for \hat{a} and \hat{abc}.
-        // PDF text rounds to five decimals; allow one scaled point at each value.
+        // pdfTeX GT: \hat{a}/\hat{abc}/\hat{f}/\hat{A} shift respectively
+        // 0.14294/4.45255/2.15285/2.63893pt. f/A have nonzero skew kern
+        // (141089/172945sp), so they also lock the lig_kern lookup path.
+        // The wide nucleus currently differs from pdfTeX by 1sp in half() rounding.
         let setup = r"\font\tenrm=cmr10 \font\teni=cmmi10 \textfont0=\tenrm \textfont1=\teni \skewchar\teni=127 ";
         for (formula, gt_sp) in [(r#"$\mathaccent"705E a$"#, 9368_i64),
-                                 (r#"$\mathaccent"705E {abc}$"#, 291802_i64)] {
+                                 (r#"$\mathaccent"705E {abc}$"#, 291802_i64),
+                                 (r#"$\mathaccent"705E f$"#, 141089_i64),
+                                 (r#"$\mathaccent"705E A$"#, 172945_i64)] {
             let nodes = math_tfm_children(&format!("{setup}{formula}"));
             let Node::Box(outer) = &nodes[0] else { panic!("no accent box: {nodes:?}") };
             let Node::Box(mark) = &outer.children[0] else { panic!("no accent mark: {outer:?}") };

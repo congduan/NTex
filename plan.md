@@ -230,6 +230,7 @@
 26. **xeCJK 首错勘察**（10-23）：原样探针仍停在 l3 消息包装；独立 8 行探针复现 `\__iow_wrap_next_line:w` EOF，而直接长文本包装通过。首个确定门槛是 `xeCJK.sty:44` 的 XeTeX-only critical 消息，属 XeTeX 系能力边界；消息包装的终止符/展开差异留后刀。见 [战报](docs/archive/xecjk-survey-2026-10-23.md)。
 27. **l3 `\iow_wrap` 扫描中断修复**（10-23）：根因是 `\if`/`\ifcat` 的 `\noexpand` 操作数把 `\let` 字符别名误归 relax/256，导致 `\c_space_token` 与结尾宏误判字符码相等，提前吃掉包装尾哨兵；修复后 critical-wrap 仅有预期的 xeCJK critical 消息，direct-wrap 0 错出 DVI，三探针脚本加断言。core 回归锁和全基线见 [战报](docs/archive/iow-wrap-fix-2026-10-23.md)。
 28. **今日四刀测试补强**（10-23）：新增前缀显示、字符别名边界/分组、ctex 快扫边界与数学重音位移回归锁；core 586、layout 336、仪器 14/14、tripos 12 页/750B 全绿，顶层 `\input` 漏检以 ignored 用例登记；见 [战报](docs/archive/test-hardening-2026-10-23.md)。
+29. **交互旗标与 accent 非零 kern 双靶**（10-23）：修复 `--interaction` 在 `.fmt` 导入前设置而被格式状态覆盖，并把旧 CLI 测试中的未定义 `\error` 改为真实的 `\errmessage`/`\the\interactionmode` 断言；数学重音补 `f/A` 非零 skew kern 用例。core 586、layout 336、CLI 6、仪器 14/14、tripos 12 页/750B/0 错、宏包 13/13 全绿；见 [战报](docs/archive/interactionmode-and-accent-2026-10-23.md)。
 
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 

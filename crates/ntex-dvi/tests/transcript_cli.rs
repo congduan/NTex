@@ -106,7 +106,11 @@ fn quiet_flag_suppresses_transcript() {
 fn interaction_flag_sets_error_mode() {
     let d = workdir("interaction");
     let src = d.join("i.tex");
-    std::fs::write(&src, "\\error\n\\shipout\\hbox{x}\n").unwrap();
+    std::fs::write(
+        &src,
+        "\\message{MODE=\\the\\interactionmode}\\errmessage{boom}\\shipout\\hbox{x}\\end\n",
+    )
+    .unwrap();
     let dvi = d.join("i.dvi");
     let (stdout, stderr, ok) = run(&[
         src.as_os_str(),
@@ -115,8 +119,45 @@ fn interaction_flag_sets_error_mode() {
     ]);
     assert!(ok, "stdout={stdout}\nstderr={stderr}");
     assert!(
-        stderr.contains("This error message was issued in nonstop or batch mode"),
+        stderr.contains("MODE=1") && stderr.contains("! boom."),
         "--interaction=nonstopmode 未落到 \\interactionmode：{stderr:?}"
+    );
+    assert!(
+        !stderr.contains("? "),
+        "nonstopmode 不应进入交互停等：{stderr:?}"
+    );
+
+    let (stdout, stderr, ok) = run(&[
+        src.as_os_str(),
+        dvi.as_os_str(),
+        OsStr::new("--interaction"),
+        OsStr::new("batchmode"),
+    ]);
+    assert!(ok, "stdout={stdout}\nstderr={stderr}");
+    assert!(
+        stderr.contains("MODE=0"),
+        "--interaction batchmode 未落到内部参数：{stderr:?}"
+    );
+}
+
+#[test]
+fn interaction_flag_overrides_loaded_format_mode() {
+    let d = workdir("interaction-fmt");
+    let src = d.join("doc.tex");
+    std::fs::write(&src, "\\documentclass{article}\\begin{document}\\message{FMTMODE=\\the\\interactionmode}Hello.\\end{document}\n").unwrap();
+    let dvi = d.join("doc.dvi");
+    let fmt = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/fmt/latex.fmt");
+    let (stdout, stderr, ok) = run(&[
+        src.as_os_str(),
+        dvi.as_os_str(),
+        OsStr::new("--fmt"),
+        fmt.as_os_str(),
+        OsStr::new("--interaction=nonstopmode"),
+    ]);
+    assert!(ok, "stdout={stdout}\nstderr={stderr}");
+    assert!(
+        stderr.contains("FMTMODE=1"),
+        "fmt 覆盖了 CLI 交互模式：{stderr:?}"
     );
 }
 

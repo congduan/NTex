@@ -223,9 +223,6 @@ fn main() -> ExitCode {
         .unwrap_or("texput")
         .to_string();
     ts.set_job_name(job_name);
-    if let Some(mode) = interaction_mode {
-        ts.set_interaction_mode(mode);
-    }
     install_distribution_tfm_source();
     if let Some(name) = &cjk_fallback {
         ts.set_fallback_font(Some(name.clone()));
@@ -391,6 +388,11 @@ fn main() -> ExitCode {
     if cjk_fallback.is_some() || utf8 {
         ts.set_utf8_input(true);
         ts.set_cjk_break_mode(true);
+    }
+    // 宿主旗标在格式导入之后生效：.fmt 保存的是构建时的模式，不能覆盖
+    // 本次作业的 --interaction。用户源里的显式赋值仍在其后，可再覆盖初值。
+    if let Some(mode) = interaction_mode {
+        ts.set_interaction_mode(mode);
     }
     let outcome = ts.typeset_dvi(&text);
     // G0：转录透传。成功/失败两条路都取（失败时 finish 未走，转录仍在 sink）。
