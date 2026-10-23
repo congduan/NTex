@@ -216,6 +216,15 @@
     （tripos、Transformer、T1/T2/T3）SHA-256 全同。R4 文件拆分留下一刀；Claude 简报尝试超时。
     证据与限制见 [重构战报](docs/archive/refactor-saved-value-2026-10-23.md)。
     R4 已完成，见 [R4 文件拆分战报](docs/archive/refactor-split-r4-2026-10-23.md)。
+23. **数学重音 skew/放大链**（10-23）：tex.web `make_math_accent` 三件语义——TFM
+    list_tag 重音字形渐进放大、lig_kern skew 定位（`xn_over_d` 字阶缩放）、vbox 高度
+    补偿 kern；`\skewchar` 全链路（FontSink 新事件 + 增量镜像 + fmt v25→v26 携带
+    skewchars 覆盖表）。core 581 + layout 335 全绿（新回归锁 0x62/0x63/0x64 链）；
+    trip 177B、tripos 12 页/750B、T1 44 页/1 错、T3 49 页——四份 DVI 与 R4 基线
+    SHA-256 逐字节相等；T2 40 页/0 错 DVI +31B（skew kern 生效，日志逐行一致）；
+    宏包 13/13；GT 对拍真 TeX：窄 shift 0.14294 逐位一致、宽 4.45254 vs 4.45255
+    （1sp 舍入）。发行 latex.fmt 已重生成 v26 入库。
+    见 [战报](docs/archive/math-accent-skew-2026-10-23.md)。
 
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 

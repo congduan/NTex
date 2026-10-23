@@ -17,6 +17,10 @@ impl FontSink for NodeBuilder {
         self.hyphenchars.insert(font, value);
         Ok(())
     }
+    fn skew_char_changed(&mut self, font: u32, value: i64) -> Result<()> {
+        self.skewchars.insert(font, value);
+        Ok(())
+    }
     fn current_font(&self) -> u32 {
         self.current_font.0
     }

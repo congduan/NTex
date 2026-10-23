@@ -263,6 +263,8 @@ pub struct Typesetter {
     fmt_current_font: u32,
     /// .fmt 导入的 `\hyphenchar` 覆盖表（import_state 时 sink 未装，install_builder 同步）。
     fmt_hyphenchars: Vec<(u32, i64)>,
+    /// `.fmt` 恢复的 `\skewchar` 覆盖表（v26；install_builder 时补镜像，同 hyphenchars）。
+    fmt_skewchars: Vec<(u32, i64)>,
     /// finish 收走的当前字体（take_sink 后 NodeBuilder 不可达，export_state 用）。
     last_current_font: u32,
     /// plain 格式预载开关（格式预载 G2(a)）：排版入口在用户源前先跑内嵌
@@ -357,6 +359,7 @@ impl Typesetter {
             fmt_insert_regs: InsertRegs::default(),
             fmt_current_font: 0,
             fmt_hyphenchars: Vec::new(),
+            fmt_skewchars: Vec::new(),
             last_current_font: 0,
             preload_plain: false,
             preload_hyphen: false,
@@ -562,8 +565,10 @@ impl Typesetter {
         let font_loads = state.font_loads.clone();
         let font_cs_names = state.font_cs_names.clone();
         let hyphenchars = state.hyphenchars.clone();
+        let skewchars = state.skewchars.clone();
         self.fmt_current_font = state.current_font;
         self.fmt_hyphenchars = hyphenchars;
+        self.fmt_skewchars = skewchars;
         // 页号链初值（输出例程刀 5）：fmt 恢复的 \count0..9，install_builder 播种
         let mut fmt_page_counts = [0i64; 10];
         for (i, c) in state.registers.counts.iter().take(10).enumerate() {
@@ -624,6 +629,7 @@ impl Typesetter {
             fmt_insert_regs: InsertRegs::default(),
             fmt_current_font: 0,
             fmt_hyphenchars: Vec::new(),
+            fmt_skewchars: Vec::new(),
             last_current_font: 0,
             preload_plain: false,
             preload_hyphen: false,
@@ -652,6 +658,7 @@ impl Typesetter {
             fmt_insert_regs: InsertRegs::default(),
             fmt_current_font: 0,
             fmt_hyphenchars: Vec::new(),
+            fmt_skewchars: Vec::new(),
             last_current_font: 0,
             preload_plain: false,
             preload_hyphen: false,
@@ -780,6 +787,8 @@ impl Typesetter {
         builder.current_font = FontId(self.fmt_current_font);
         // .fmt 恢复的 `\hyphenchar` 覆盖不会经赋值事件重放，安装 builder 时补镜像。
         builder.hyphenchars = self.fmt_hyphenchars.iter().copied().collect();
+        // .fmt 恢复的 `\skewchar` 覆盖同理（v26：数学重音 skew 定位）。
+        builder.skewchars = self.fmt_skewchars.iter().copied().collect();
         // pass2 NodeBuilder 重建：同步数学间距参数（\\thinmuskip 等 muskip 寄存器——
 //  pass1 赋值在 dump 前，pass2 不重跑赋值事件）。muskip_is_mu 同步为全 true：
 // muskip 寄存器 0/1/2（= thinmuskip/medmuskip/thickmuskip）的 width/stretch/shrink

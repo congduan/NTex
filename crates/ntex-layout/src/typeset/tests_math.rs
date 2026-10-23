@@ -322,7 +322,7 @@ use super::*;
                 }
             }
         }
-        let setup = r"\font\tenrm=cmr10 \font\teni=cmmi10 \textfont0=\tenrm \textfont1=\teni ";
+        let setup = r"\font\tenrm=cmr10 \font\teni=cmmi10 \skewchar\teni=127 \textfont0=\tenrm \textfont1=\teni ";
         for (formula, accent_codes) in [
             (r#"$\mathaccent"705E A$"#, vec![b'^' as u32]),
             (r#"$\mathaccent"707E u$"#, vec![b'~' as u32]),
@@ -346,6 +346,27 @@ use super::*;
             assert_ne!(mark.shift, 0, "mark must be centered above nucleus: {accent:?}");
             assert!(accent.width > 0);
         }
+    }
+
+    #[test]
+    fn math_wide_accent_follows_tfm_larger_chain() {
+        if ntex_font::find_tfm("cmex10").is_none() {
+            eprintln!("未找到 cmex10.tfm，跳过");
+            return;
+        }
+        let setup = r"\font\tenrm=cmr10 \font\teni=cmmi10 \font\tenex=cmex10 \textfont0=\tenrm \textfont1=\teni \textfont3=\tenex ";
+        let narrow = math_tfm_children(&format!(r#"{setup}$\mathaccent"0362 a$"#));
+        let wide = math_tfm_children(&format!(r#"{setup}$\mathaccent"0362 {{abc}}$"#));
+        let wider = math_tfm_children(&format!(r#"{setup}$\mathaccent"0362 {{abcde}}$"#));
+        fn mark(nodes: &[Node]) -> u32 {
+            let Node::Box(outer) = &nodes[0] else { panic!("no accent box: {nodes:?}") };
+            let Node::Box(accent) = &outer.children[0] else { panic!("no accent mark: {outer:?}") };
+            let Node::Char { charcode, .. } = &accent.children[0] else { panic!("no accent glyph: {accent:?}") };
+            *charcode
+        }
+        assert_eq!(mark(&narrow), 0x62);
+        assert_eq!(mark(&wide), 0x63, "wide nucleus must select the next TFM glyph");
+        assert_eq!(mark(&wider), 0x64, "still wider nucleus must traverse both list_tag links");
     }
 
     #[test]

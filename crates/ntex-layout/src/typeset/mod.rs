@@ -777,6 +777,7 @@ struct NodeBuilder {
     patterns: PatternTrie,
     /// `\hyphenchar<font>` 覆盖表；未覆盖时回落到字体度量默认值。
     hyphenchars: HashMap<u32, i64>,
+    skewchars: HashMap<u32, i64>,
 
     /// ETRIP 冲刺：断字异常词表（`\hyphenation{...}`）：小写字母 + 允许断点
     /// （0 = 词首、len = 词尾）。断字时优先于模式表。
@@ -1151,6 +1152,7 @@ impl NodeBuilder {
             fonts,
             patterns: PatternTrie::default(),
             hyphenchars: HashMap::new(),
+            skewchars: HashMap::new(),
             hyph_exceptions: Vec::new(),
             record_main: None,
             spec_mode: None,
@@ -1506,6 +1508,7 @@ impl NodeBuilder {
             math_fonts: self.math_state.math_fonts.clone(),
             patterns: self.patterns.clone(),
             hyphenchars: self.hyphenchars.clone(),
+            skewchars: self.skewchars.clone(),
             hyph_exceptions: self.hyph_exceptions.clone(),
             setbox_target: self.box_state.setbox_target,
             setbox_global: self.box_state.setbox_global,
@@ -1571,6 +1574,7 @@ impl NodeBuilder {
         self.math_state.math_fonts = s.math_fonts.clone();
         self.patterns = s.patterns.clone();
         self.hyphenchars = s.hyphenchars.clone();
+        self.skewchars = s.skewchars.clone();
         self.hyph_exceptions = s.hyph_exceptions.clone();
         self.box_state.setbox_target = s.setbox_target;
         self.box_state.setbox_global = s.setbox_global;

@@ -58,7 +58,7 @@ const MAGIC: &[u8; 8] = b"NTEXFMT1";
 ///      不序列化 → LaTeX 作业启动时 `\__kernel_sys_everyjob:` 不执行，
 ///      `\c_sys_shell_escape_int`/`\c_sys_jobname_str`/`\c_sys_year_int` 等
 ///      expl3 sys 常量族全缺——minted 首错 Missing number 的根因链）。
-pub const FORMAT_VERSION: u8 = 25;
+pub const FORMAT_VERSION: u8 = 26;
 
 /// 当前引擎版本号：随 crate 版本进入 `.fmt` 文件头。
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -261,6 +261,14 @@ pub fn save(w: &mut impl Write, state: &FmtState) -> io::Result<()> {
     }
     w.write_all(&(state.hyphenchars.len() as u32).to_le_bytes())?;
     for (f, c) in &state.hyphenchars {
+        w.write_all(&f.to_le_bytes())?;
+        w.write_all(&c.to_le_bytes())?;
+    }
+    // v26：`\\skewchar` 覆盖表（数学重音 skew 定位；plain.tex/fontmath.ltx 在
+    // fmt 生成期赋值，此前随快照丢失 → 恢复后重音横向偏移差 GT）。导出侧按键
+    // 排序（core export_state 已排序），字节确定性同 hyphenchars。
+    w.write_all(&(state.skewchars.len() as u32).to_le_bytes())?;
+    for (f, c) in &state.skewchars {
         w.write_all(&f.to_le_bytes())?;
         w.write_all(&c.to_le_bytes())?;
     }
@@ -573,6 +581,14 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
         let c = read_i64(r)?;
         hyphenchars.push((f, c));
     }
+    // v26：skewchar 覆盖表（段序与 save 对齐——hyphenchars 之后、current_font 之前）
+    let n_sc = read_u32(r)? as usize;
+    let mut skewchars = Vec::with_capacity(n_sc.min(PREALLOC_CAP));
+    for _ in 0..n_sc {
+        let f = read_u32(r)?;
+        let c = read_i64(r)?;
+        skewchars.push((f, c));
+    }
     // current_font（v14）
     let current_font = read_u32(r)?;
 
@@ -629,6 +645,7 @@ pub fn load(r: &mut impl Read) -> io::Result<FmtState> {
         uccodes,
         fontdimens,
         hyphenchars,
+        skewchars,
     })
 }
 
@@ -809,11 +826,18 @@ mod tests {
         let mut state = sample_state();
         // 模拟 fmt 生成期的 intarray 字体：1 号字体 count=257、条目若干
         state.hyphenchars.push((1, 257));
+        state.skewchars.push((1, 127));
+        state.skewchars.push((2, 48));
         state.fontdimens.push((1, 66, 11));
         state.fontdimens.push((1, 257, 13));
         state.fontdimens.push((2, 3, -7));
         let loaded = roundtrip(&state);
         assert_eq!(loaded.hyphenchars, vec![(1, 257)], "hyphenchar 覆盖应还原");
+        assert_eq!(
+            loaded.skewchars,
+            vec![(1, 127), (2, 48)],
+            "skewchar 覆盖应还原"
+        );
         assert_eq!(
             loaded.fontdimens,
             vec![(1, 66, 11), (1, 257, 13), (2, 3, -7)],

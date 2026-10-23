@@ -538,8 +538,13 @@ pub struct FmtState {
     /// `\cctab_select:N` 把 catcode 全抹 0（ctexhook.sty 的
     /// `\cctab_const:Nn \c__ctex_package_cctab` 即挂在此）。
     pub fontdimens: Vec<(u32, u32, i64)>,
-    /// `\hyphenchar` 覆盖表（v22：intarray 模拟字体的 count 存此，同上）。
+    /// `\\hyphenchar` 覆盖表（v22：intarray 模拟字体的 count 存此，同上）。
     pub hyphenchars: Vec<(u32, i64)>,
+    /// `\\skewchar` 覆盖表（v26：数学重音 skew 定位——plain.tex/fontmath.ltx 在
+    /// fmt 生成期给各数学字体赋 `\\skewchar`（如 cmmi10=127），此前快照不带，
+    /// 恢复后 `make_math_accent` 的 skew 恒 0（重音横向偏移差 GT 1.4pt）。
+    /// 导出侧按键排序，字节确定性同 hyphenchars。
+    pub skewchars: Vec<(u32, i64)>,
 }
 
 /// 线程看门狗共享状态（挂死诊断）。
@@ -1348,6 +1353,12 @@ impl Expander {
                 v.sort_unstable();
                 v
             },
+            // v26：同上排序输出（fmt 字节级可复现）。
+            skewchars: {
+                let mut v: Vec<(u32, i64)> = self.skewchars.iter().map(|(&f, &c)| (f, c)).collect();
+                v.sort_unstable();
+                v
+            },
         }
     }
 
@@ -1457,6 +1468,9 @@ impl Expander {
             self.fontdimens.insert(f, n, v);
         }
         self.hyphenchars = state.hyphenchars.iter().copied().collect();
+        // v26：`\\skewchar` 覆盖表随快照恢复（数学重音 skew 定位；fmt 生成期
+        // plain.tex/fontmath.ltx 的赋值不经 pass2 事件重放）。
+        self.skewchars = state.skewchars.iter().copied().collect();
         // 运行时状态重置（新文档起点）
         self.stack.clear();
         self.read_floor = 0;

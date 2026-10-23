@@ -661,6 +661,7 @@ impl Expander {
         let value = self.scan_number()?;
         let _global = self.is_global();
         self.skewchars.insert(font, value);
+        self.sink.skew_char_changed(font, value)?;
         self.finish_assignment();
         Ok(())
     }

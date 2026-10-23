@@ -798,13 +798,54 @@ impl NodeBuilder {
             MathAtom::Accent { accent, nucleus } => {
                 let nucleus_nodes = self.math_to_hlist(nucleus, style.cramped());
                 let nucleus_box = BoxNode::new_hbox(nucleus_nodes);
-                let accent_nodes = self.math_to_hlist(accent, style);
+                let mut accent_nodes = self.math_to_hlist(accent, style);
                 if accent_nodes.is_empty() {
                     return vec![Node::Box(nucleus_box)];
                 }
+                // tex.web make_math_accent: follow the TFM list_tag chain while
+                // each next glyph still fits the width of the accentee.
+                if let Some(MathAtom::Char(mc)) = accent.first() {
+                    let (font, num, den) = self.math_char_font(mc, style);
+                    let mut ch = mc.charcode;
+                    while let Some(next) = self.fonts.next_larger(font, ch) {
+                        if !self.fonts.char_exists(font, next) {
+                            break;
+                        }
+                        let (w, _, _) = self.math_metrics(font, next, num, den);
+                        if w > nucleus_box.width {
+                            break;
+                        }
+                        ch = next;
+                    }
+                    if ch != mc.charcode {
+                        let (width, height, depth) = self.math_metrics(font, ch, num, den);
+                        accent_nodes = vec![Node::Char {
+                            font,
+                            charcode: ch,
+                            width,
+                            height,
+                            depth,
+                        }];
+                    }
+                }
                 let mut accent_box = BoxNode::new_hbox(accent_nodes);
                 let accent_width = accent_box.width;
-                accent_box.shift = (nucleus_box.width - accent_width) / 2;
+                let skew = match nucleus.as_slice() {
+                    [MathAtom::Char(mc)] => {
+                        let (font, num, den) = self.math_char_font(mc, style);
+                        let skew_char = self.skewchars.get(&font.0).copied().unwrap_or(-1);
+                        match (u8::try_from(mc.charcode), u8::try_from(skew_char)) {
+                            (Ok(left), Ok(right)) => match self.fonts.lig_kern(font, left, right) {
+                                Some(LigKern::Kern(k)) if num != den => xn_over_d(k, num, den),
+                                Some(LigKern::Kern(k)) => k,
+                                _ => 0,
+                            },
+                            _ => 0,
+                        }
+                    }
+                    _ => 0,
+                };
+                accent_box.shift = skew + half(nucleus_box.width - accent_width);
                 accent_box.width = 0;
                 let accent_font = match accent.first() {
                     Some(MathAtom::Char(mc)) => self.math_char_font(mc, style).0,
@@ -812,12 +853,20 @@ impl NodeBuilder {
                 };
                 let delta = nucleus_box.height.min(self.fonts.x_height(accent_font));
                 let width = nucleus_box.width;
+                let nucleus_height = nucleus_box.height;
                 let mut box_node = BoxNode::new_vbox(vec![
                     Node::Box(accent_box),
                     Node::Kern { width: -delta },
                     Node::Box(nucleus_box),
                 ]);
                 box_node.width = width;
+                // tex.web: preserve at least the original nucleus height. The
+                // leading kern raises the mark without moving the nucleus.
+                if box_node.height < nucleus_height {
+                    let compensation = nucleus_height - box_node.height;
+                    box_node.children.insert(0, Node::Kern { width: compensation });
+                    box_node.height = nucleus_height;
+                }
                 vec![Node::Box(box_node)]
             },
             MathAtom::MSkip {

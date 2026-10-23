@@ -195,6 +195,10 @@ pub trait FontSink {
     fn hyphen_char_changed(&mut self, _font: u32, _value: i64) -> Result<()> {
         Ok(())
     }
+    /// `\skewchar<font>=<int>` assignment for math accent positioning.
+    fn skew_char_changed(&mut self, _font: u32, _value: i64) -> Result<()> {
+        Ok(())
+    }
     /// 当前字体（TRIP：`\textfont1=\font` 中 `\font` 作当前字体选择器）。
     fn current_font(&self) -> u32 {
         0
