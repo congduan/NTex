@@ -941,4 +941,25 @@ mod auto_pkg_scan_tests {
             "% \\documentclass{ctexart}\n\\documentclass{article}"
         ));
     }
+
+    #[test]
+    fn ctex_fontset_none_currently_still_selects_dvi_branch() {
+        // GT probe: /tmp/ntex-test-hardening-gt/ctex-fontset-none.log.
+        // Narrow known regression: the quick scan sees the class name but does
+        // not interpret fontset=none, so it still chooses the DVI branch.
+        assert!(ctex_needs_dvi_output(r"\documentclass[fontset=none]{ctexart}"));
+    }
+
+    #[test]
+    #[ignore = "quick scan does not follow top-level input; fix in a separate blade"]
+    fn ctex_class_in_top_level_input_should_select_dvi_branch() {
+        // GT probe: /tmp/ntex-test-hardening-gt/ctex-wrapper.log.
+        // Today scan_package_requests only sees Input(body), so this desired
+        // assertion is kept ignored until recursive scanning is implemented.
+        let wrapper = r"\input{body}";
+        let body = r"\documentclass{ctexart}";
+        assert!(scan_package_requests(wrapper).contains(&("body".to_owned(), RequireKind::Input)));
+        assert!(ctex_needs_dvi_output(body));
+        assert!(ctex_needs_dvi_output(wrapper));
+    }
 }

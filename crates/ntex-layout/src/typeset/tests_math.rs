@@ -370,6 +370,26 @@ use super::*;
     }
 
     #[test]
+    fn math_accent_skew_shift_matches_pdftex() {
+        if ntex_font::find_tfm("cmmi10").is_none() {
+            eprintln!("未找到 cmmi10.tfm，跳过");
+            return;
+        }
+        // pdfTeX GT: /tmp/ntex-test-hardening-gt/accent.log prints
+        // shifted 0.14294pt and 4.45255pt for \hat{a} and \hat{abc}.
+        // PDF text rounds to five decimals; allow one scaled point at each value.
+        let setup = r"\font\tenrm=cmr10 \font\teni=cmmi10 \textfont0=\tenrm \textfont1=\teni \skewchar\teni=127 ";
+        for (formula, gt_sp) in [(r#"$\mathaccent"705E a$"#, 9368_i64),
+                                 (r#"$\mathaccent"705E {abc}$"#, 291802_i64)] {
+            let nodes = math_tfm_children(&format!("{setup}{formula}"));
+            let Node::Box(outer) = &nodes[0] else { panic!("no accent box: {nodes:?}") };
+            let Node::Box(mark) = &outer.children[0] else { panic!("no accent mark: {outer:?}") };
+            assert!((mark.shift - gt_sp).abs() <= 1,
+                "{formula}: shift={}sp, pdfTeX={gt_sp}sp ±1sp", mark.shift);
+        }
+    }
+
+    #[test]
     fn math_display_paginated_smoke() {
         // 分页模式：显示公式序列（penalty/glue/box/glue/penalty）正常入页
         let pages = paginated(r"$$\hbox{ab}$$").unwrap();

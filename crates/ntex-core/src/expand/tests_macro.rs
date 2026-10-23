@@ -597,6 +597,24 @@ fn meaning_long_prefix_matches_pdftex_and_preserves_patchability() {
         expand("\\long\\outer\\protected\\def\\f#1{#1}\\meaning\\f").unwrap(),
         "\\protected\\long\\outer macro:#1->#1"
     );
+    // pdfTeX GT: /tmp/ntex-test-hardening-gt/prefix.log, MEANING line;
+    // definition prefix order is canonicalized in the printed meaning.
+    assert_eq!(
+        expand("\\protected\\outer\\long\\def\\f#1{#1}\\meaning\\f").unwrap(),
+        "\\protected\\long\\outer macro:#1->#1"
+    );
+}
+
+#[test]
+fn show_and_tracingassigns_print_all_macro_prefixes() {
+    // pdfTeX GT: /tmp/ntex-test-hardening-gt/prefix.log, show and {into} lines.
+    let (_, show) = run_transcript("\\long\\outer\\protected\\def\\f#1{#1}\\show\\f");
+    assert!(show.contains("\\f=\\protected\\long\\outer macro:#1->#1"), "{show:?}");
+
+    let (_, trace) = run_transcript(
+        "\\tracingassigns=1 \\long\\outer\\protected\\def\\g#1{#1}"
+    );
+    assert!(trace.contains("\\g=\\protected\\long\\outer macro:#1->#1"), "{trace:?}");
 }
 
 #[test]

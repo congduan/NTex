@@ -108,6 +108,45 @@ use super::*;
     }
 
     #[test]
+    fn character_alias_direct_and_noexpand_boundary() {
+        // pdfTeX GT: /tmp/ntex-test-hardening-gt/alias.log, SELF/FROZEN_CHARS/
+        // DIRECT/LITERAL/FROZEN_SELF/CSALIAS. A character alias keeps its character meaning;
+        // an expandable cs alias frozen by noexpand has the relax/257 meaning.
+        assert_eq!(expand(r"\let\bg={ \ifx\bg\bg T\else F\fi").unwrap().trim(), "T");
+        assert_eq!(
+            expand(r"\let\bg={ \let\dot=. \if\noexpand\bg\noexpand\dot T\else F\fi")
+                .unwrap().trim(),
+            "F"
+        );
+        assert_eq!(expand(r"\let\bg={ \if\bg b T\else F\fi").unwrap().trim(), "F");
+        assert_eq!(expand(r"\if{ b T\else F\fi").unwrap().trim(), "F");
+        assert_eq!(
+            expand(r"\def\y{X}\let\x\y \ifcat\noexpand\x\relax T\else F\fi")
+                .unwrap().trim(),
+            "T"
+        );
+        assert_eq!(
+            expand(r"\def\y{X}\let\x\y \expandafter\ifx\noexpand\x\x T\else F\fi")
+                .unwrap().trim(),
+            "F"
+        );
+    }
+
+    #[test]
+    fn character_alias_group_restore_and_global_override() {
+        // pdfTeX GT: /tmp/ntex-test-hardening-gt/alias.log, LOCAL/RESTORED/GLOBAL.
+        // Compare b so the local assignment and global override change the arm.
+        let src = concat!(
+            r"\let\bg={ ",
+            r"\begingroup\let\bg=b\if\bg b T\else F\fi\endgroup ",
+            r"\if\bg b T\else F\fi ",
+            r"\begingroup\global\let\bg=b\endgroup ",
+            r"\if\bg b T\else F\fi"
+        );
+        assert_eq!(expand(src).unwrap().chars().filter(|c| !c.is_whitespace()).collect::<String>(), "TFT");
+    }
+
+    #[test]
     fn ifcat_noexpand_active_char_stays_cat13() {
         // GT pdftex 1.40.29 四例定案（第十二刀）：`\noexpand` 冻结的 active
         // char 在 `\ifcat` 眼里仍是 catcode 13（定义与否无关）；真名 cs 是
@@ -834,6 +873,3 @@ use super::*;
         let src2 = "\\ifnum0%\n  \\ifdefined\\qqneverdefined 1\\fi\n  \\ifdefined\\zzneverdefined 1\\fi\n  >0 T\\else F\\fi";
         assert_eq!(expand(src2).unwrap(), "F");
     }
-
-
-
