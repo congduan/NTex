@@ -984,7 +984,14 @@ impl CoreSink for NodeBuilder {
         // the outer contribution list's existing path: speculative segments
         // observe a snapshot of that list and the page builder discards its
         // leading glue when appropriate.
-        let internal_top = self.list_modes.len() > 1 && self.lists.last().is_some_and(Vec::is_empty);
+        // Alignment cells can temporarily expose their own list as the only
+        // list. A surrounding vbox/vtop group still makes this internal
+        // vertical mode, where TeX omits the first parskip.
+        let in_vertical_box = self.groups.iter().rev().any(|g| {
+            matches!(g.kind, GroupKind::VBox | GroupKind::VTop)
+        });
+        let internal_top = (self.list_modes.len() > 1 || in_vertical_box)
+            && self.lists.last().is_some_and(Vec::is_empty);
         if self.page_state.pagination && !internal_top {
             let ps = self.params.parskip;
             self.append(Node::Glue {

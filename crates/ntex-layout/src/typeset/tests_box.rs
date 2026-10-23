@@ -9,6 +9,22 @@ use super::*;
     }
 
     #[test]
+    fn internal_vtop_with_alignment_cell_list_omits_first_parskip() {
+        // Alignment cells can expose a single local list while retaining the
+        // surrounding vtop group. This reproduces the p{} tabular cell state.
+        let mut b = NodeBuilder::with_pagination(Fonts::Fn {
+            metrics: |_, _| (0, 0, 0),
+            space: |_| Glue::ZERO,
+        }, true);
+        b.box_state.pending_box = Some(PendingBox::VTop);
+        b.group_begin(0).unwrap();
+        b.list_modes.truncate(1);
+        b.lists.truncate(1);
+        b.par_begin(false).unwrap();
+        assert_eq!(b.io_state.nodes_appended, 0, "first parskip must be omitted");
+    }
+
+    #[test]
     fn alignment_cell_restores_local_box_but_keeps_global_assignment() {
         fn chars(nodes: &[Node], out: &mut Vec<u32>) {
             for node in nodes {
