@@ -2305,7 +2305,7 @@ include!("wasm_fonts.rs");
 include!("paragraph.rs");
 include!("paging.rs");
 include!("math.rs");
-include!("sink.rs");
+pub mod sink;
 
 // \showbox 格式化（自由函数，迁自 sink.rs；依赖 mod.rs 已 use 的类型）
 include!("sink_showbox.rs");

@@ -1,3 +1,5 @@
+use super::*;
+
 /// Read a literal `\kern` dimension in a discretionary sublist. TeX builds
 /// these sublists in restricted horizontal mode; this covers direct numeric
 /// `pt`/`sp` kerns while the surrounding token-list conversion is still a
@@ -129,9 +131,7 @@ impl CoreSink for NodeBuilder {
             Some(GroupKind::HBox | GroupKind::AdjustedHBox) => Some(PendingBox::HBox),
             // 仅显式 \vcenter 保留 VCenter 种类（显式 VBox 组/对齐组不受影响）
             Some(GroupKind::VBox) if pb_vcenter => Some(PendingBox::VCenter),
-            Some(GroupKind::VBox | GroupKind::Align | GroupKind::NoAlign) => {
-                Some(PendingBox::VBox)
-            }
+            Some(GroupKind::VBox | GroupKind::Align | GroupKind::NoAlign) => Some(PendingBox::VBox),
             Some(GroupKind::Insert | GroupKind::VAdjust) => Some(PendingBox::VBox),
             Some(GroupKind::VTop) => Some(PendingBox::VTop),
             _ => None,
@@ -241,7 +241,12 @@ impl CoreSink for NodeBuilder {
         } else if gkind == GroupKind::Math {
             // 数学组：`{...}`（含脚本/根式/定类字段）压 math 层。
             // `\begingroup`（SemiSimple）等显式组不压 math 层（tex.web math_group 语义）。
-            let field = if self.math_state.choices.last().is_some_and(|c| c.awaiting_group) {
+            let field = if self
+                .math_state
+                .choices
+                .last()
+                .is_some_and(|c| c.awaiting_group)
+            {
                 self.math_state.choices.last_mut().unwrap().awaiting_group = false;
                 Some(MathFieldKind::Choice)
             } else if let Some(is_sup) = self.math_state.pending_script.take() {
@@ -261,7 +266,10 @@ impl CoreSink for NodeBuilder {
                 self.math_state.overline_pending = false;
                 Some(MathFieldKind::Overline)
             } else {
-                self.math_state.class_pending.take().map(MathFieldKind::Class)
+                self.math_state
+                    .class_pending
+                    .take()
+                    .map(MathFieldKind::Class)
             };
             self.math_state.math.push(MathLevel {
                 atoms: Vec::new(),
@@ -282,12 +290,19 @@ impl CoreSink for NodeBuilder {
         // （TeX 寄存器组级保存——trip L317 组内 \setbox22 → restoring \box22=void）
         let cur_level = self.groups.len();
         while self
-            .box_state.box_saves
+            .box_state
+            .box_saves
             .last()
             .is_some_and(|(lvl, _, _)| *lvl > cur_level)
         {
             let (_, idx, old) = self.box_state.box_saves.pop().expect("last 已检查");
-            if idx == 0 && std::env::var_os("AVD_BOX_DEBUG").is_some() { eprintln!("AVD_RESTORE0 level={} old_present={}", cur_level, old.is_some()); }
+            if idx == 0 && std::env::var_os("AVD_BOX_DEBUG").is_some() {
+                eprintln!(
+                    "AVD_RESTORE0 level={} old_present={}",
+                    cur_level,
+                    old.is_some()
+                );
+            }
             // 经 write_box 路由：寄存器 255 的回滚落在页面队列队首（trip.tex
             // 第二例程 `\setbox255\copy255` ——「at end of group, \box255 reverts
             // to former value」tex.web eq_restore 语义）
@@ -330,7 +345,11 @@ impl CoreSink for NodeBuilder {
             self.close_paragraph();
         }
         // insert_group 收口三参数（tex.web：q/d/f 在 unsave **前**读组内值）
-        let insert_params = (self.params.splittopskip, self.params.splitmaxdepth, self.params.misc[37]);
+        let insert_params = (
+            self.params.splittopskip,
+            self.params.splitmaxdepth,
+            self.params.misc[37],
+        );
         // 盒组封装的 boxmaxdepth 用**组内**值（tex.web：vbox 封装在组恢复前——
         // 与 L635-641 折行用组内 hsize 同理；trip L316 `\vbox to10pt{\boxmaxdepth
         // =-1pt...}` → 恢复后取外层会丢 -1pt 钳制）
@@ -382,9 +401,11 @@ impl CoreSink for NodeBuilder {
             if level.field == Some(MathFieldKind::Choice) {
                 let mut level = level;
                 Self::math_finish_fraction(&mut level);
-                let choice = self.math_state.choices.last_mut().ok_or_else(|| {
-                    Error::internal("mathchoice 分支无挂起选择")
-                })?;
+                let choice = self
+                    .math_state
+                    .choices
+                    .last_mut()
+                    .ok_or_else(|| Error::internal("mathchoice 分支无挂起选择"))?;
                 choice.branches.push(level.atoms);
                 if choice.branches.len() == 4 {
                     let choice = self.math_state.choices.pop().unwrap();
@@ -425,18 +446,14 @@ impl CoreSink for NodeBuilder {
                     // `\underline{...}`：组内容收为 Underline 原子（tex.web math_ac）
                     let mut lv = level;
                     Self::math_finish_fraction(&mut lv);
-                    parent
-                        .atoms
-                        .push(MathAtom::Underline { base: lv.atoms });
+                    parent.atoms.push(MathAtom::Underline { base: lv.atoms });
                     return Ok(());
                 }
                 Some(MathFieldKind::Overline) => {
                     // `\overline{...}`：组内容收为 Overline 原子
                     let mut lv = level;
                     Self::math_finish_fraction(&mut lv);
-                    parent
-                        .atoms
-                        .push(MathAtom::Overline { base: lv.atoms });
+                    parent.atoms.push(MathAtom::Overline { base: lv.atoms });
                     return Ok(());
                 }
                 Some(MathFieldKind::Radical(delim)) => {
@@ -614,7 +631,7 @@ impl CoreSink for NodeBuilder {
                         }
                     }
                 }
-            },
+            }
             Primitive::Indent => match self.mode() {
                 Mode::Vertical => {
                     // 垂直模式 \indent 强制开段并缩进（TeX：new_graf）
@@ -710,7 +727,9 @@ impl CoreSink for NodeBuilder {
                 let mode = self.params.misc[19]; // interactionmode（0=batch 1=nonstop 2=scroll 3=errorstop）
                 self.io_state.transcript.push_str("! OK.\n");
                 if mode >= 2 {
-                    self.io_state.transcript.push_str("(Please type a command or say \\end)\n");
+                    self.io_state
+                        .transcript
+                        .push_str("(Please type a command or say \\end)\n");
                 }
                 if mode == 0 || mode == 1 {
                     self.io_state.transcript.push_str(
@@ -819,13 +838,28 @@ impl CoreSink for NodeBuilder {
         // `\leaders\hrule/\vrule`：rule 作引导内容（tex.web scan_box leader 分支
         // 允许 hrule/vrule；宽度保持 NULL_FLAG，showbox 显示 `x*`）。
         if let Some(kind) = self.box_state.pending_leaders.take() {
-            self.box_state.leaders_box = Some((kind, Node::Rule { width, height, depth }));
+            self.box_state.leaders_box = Some((
+                kind,
+                Node::Rule {
+                    width,
+                    height,
+                    depth,
+                },
+            ));
             return Ok(());
         }
         // 数学模式 `\vrule`：数学列表规则原子（M4-1——此前忽略）
         if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-            let width = if width == ntex_core::NULL_FLAG { 0 } else { width };
-            return self.math_push_atom(MathAtom::Rule { width, height, depth });
+            let width = if width == ntex_core::NULL_FLAG {
+                0
+            } else {
+                width
+            };
+            return self.math_push_atom(MathAtom::Rule {
+                width,
+                height,
+                depth,
+            });
         }
         // 非引导上下文：hrule 未定宽度保持 null 哨兵（tex.web scan_rule_spec
         // L9126 起——`\hrule` 扫描期只定 height=0.4pt/depth=0，width 留
@@ -895,14 +929,14 @@ impl CoreSink for NodeBuilder {
                     }
                 }
                 if let Some(c) = toks[i].charcode() {
-                        let (w, h, d) = self.fonts.metrics(self.current_font, c);
-                        result.push(Node::Char {
-                            font: self.current_font,
-                            charcode: c,
-                            width: w,
-                            height: h,
-                            depth: d,
-                        });
+                    let (w, h, d) = self.fonts.metrics(self.current_font, c);
+                    result.push(Node::Char {
+                        font: self.current_font,
+                        charcode: c,
+                        width: w,
+                        height: h,
+                        depth: d,
+                    });
                 }
                 i += 1;
             }
@@ -987,19 +1021,22 @@ impl CoreSink for NodeBuilder {
         // Alignment cells can temporarily expose their own list as the only
         // list. A surrounding vbox/vtop group still makes this internal
         // vertical mode, where TeX omits the first parskip.
-        let in_vertical_box = self.groups.iter().rev().any(|g| {
-            matches!(g.kind, GroupKind::VBox | GroupKind::VTop)
-        });
+        let in_vertical_box = self
+            .groups
+            .iter()
+            .rev()
+            .any(|g| matches!(g.kind, GroupKind::VBox | GroupKind::VTop));
         let internal_top = (self.list_modes.len() > 1 || in_vertical_box)
             && self.lists.last().is_some_and(Vec::is_empty);
         if self.page_state.pagination && !internal_top {
             let ps = self.params.parskip;
             self.append(Node::Glue {
-            name: None,                            width: ps.width,
-                            stretch: ps.stretch,
-                            shrink: ps.shrink,
-                            stretch_order: ps.stretch_order,
-                            shrink_order: ps.shrink_order,
+                name: None,
+                width: ps.width,
+                stretch: ps.stretch,
+                shrink: ps.shrink,
+                stretch_order: ps.stretch_order,
+                shrink_order: ps.shrink_order,
             });
         }
         self.lists.push(Vec::new());
@@ -1050,1236 +1087,6 @@ impl CoreSink for NodeBuilder {
         self
     }
 }
-
-impl FontSink for NodeBuilder {
-    fn font_selected(&mut self, font: u32) -> Result<()> {
-        // fn 指针模式恒为 FontId(0)；TFM 模式更新当前字体
-        self.current_font = FontId(font);
-        Ok(())
-    }
-    fn font_defined(&mut self, font: u32, cs_name: &str) -> Result<()> {
-        if self.font_cs_names.len() <= font as usize {
-            self.font_cs_names.resize(font as usize + 1, None);
-        }
-        self.font_cs_names[font as usize] = Some(cs_name.to_string());
-        Ok(())
-    }
-    fn hyphen_char_changed(&mut self, font: u32, value: i64) -> Result<()> {
-        self.hyphenchars.insert(font, value);
-        Ok(())
-    }
-    fn current_font(&self) -> u32 {
-        self.current_font.0
-    }
-    /// `\spacefactor` 实时查询（活参数：随字符/句号由排版器调整）。
-    fn space_factor(&self) -> i64 {
-        self.space_factor
-    }
-    /// `\spacefactor=<number>` 赋值（组作用域恢复由 save/restore 处理）。
-    /// TeX 只允许 1..32767：越界 `int_error("Bad space factor")` 报错恢复、不赋值
-    /// （tex.web L23220-23228；TRIP L289 `\showbox0\spacefactor=0`——否则后续
-    ///  `app_space` 中 `xn_over_d(shrink, 1000, sf)` 除零）。
-    fn set_space_factor(&mut self, v: i64) -> Result<()> {
-        if !(1..=32767).contains(&v) {
-            // 参考 log 格式（int_error 带值 + help 行，TRIP L289）
-            let _ = self.write16(format!(
-                "! Bad space factor ({}).\n\
-                 I allow only values in the range 1..32767 here.\n",
-                v
-            ));
-        } else {
-            self.space_factor = v;
-        }
-        Ok(())
-    }
-    /// `\/`：斜体校正（水平模式发 kern / 数学模式斜体校正原子 / 垂直模式报错）。
-    fn italic_correction(&mut self) -> Result<()> {
-        // 数学模式：斜体校正原子（当前无字体斜体校正度量，宽度 0）
-        if matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-            return self.math_push_atom(MathAtom::MSkip {
-                width: 0,
-                stretch: 0,
-                shrink: 0,
-                stretch_order: 0,
-                shrink_order: 0,
-                nonscript: false,
-                mu: false,
-            });
-        }
-        // 垂直模式：TeX 报 "You can't use `\/' in vertical mode"
-        if matches!(self.mode(), Mode::Vertical) {
-            return self.math_mode_error("/");
-        }
-        // 水平/受限水平：斜体校正 kern（无字体度量数据，宽度 0 不输出；TeX 同理）
-        self.append(Node::Kern { width: 0 });
-        Ok(())
-    }
-}
-
-impl MathSink for NodeBuilder {
-    fn math_choice_begin(&mut self) -> Result<()> {
-        if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-            return self.math_mode_error("mathchoice");
-        }
-        self.math_state.choices.push(MathChoicePending {
-            branches: Vec::with_capacity(4),
-            awaiting_group: true,
-        });
-        Ok(())
-    }
-    /// \mathcode 改道只认**真实列表模式**（tex.web mmode+letter/other）：
-    /// 数学内文本盒（`\hbox{…}`/`\mbox`/`\text`）里是正文字符。
-    fn math_code_applies(&self) -> bool {
-        matches!(self.mode(), Mode::Math | Mode::DisplayMath)
-    }
-    /// 数学移位（`$`，cat 3）：VM 已 peek 出 `display`（连续 `$$`）。
-    /// - Math：结束行内公式；
-    /// - DisplayMath：`$$` 结束显示公式，单 `$` 报错（TeX "Display math should end with $$"）；
-    /// - 非数学模式：display → 显示数学（M4-4：收尾段落/开段，公式作垂直元素），否则行内数学。
-    fn math_shift(&mut self, display: bool) -> Result<()> {
-        match self.mode() {
-            Mode::Math => {
-                if display {
-                    // 数学模式内 `$$`（如行内数学未关时紧接的 `$$`）：tex.web
-                    // 报 Missing $ inserted + 结束当前数学 + 开显示数学
-                    // （expander 已消费第二个 `$`，这里连续切换；参考 trip
-                    // L261 前 `$\x` 残留场景）。受限水平（\halign 模板等）下
-                    // 数学内 $$ 结束后续接**普通**数学（tex.web mode<0 语义，
-                    // sink 受限水平分支同款）。
-                    self.report_error("Missing $ inserted.");
-                    self.close_math()?;
-                    if self.mode() == Mode::RestrictedHorizontal {
-                        self.enter_math(Mode::Math)
-                    } else {
-                        self.enter_display_math()
-                    }
-                } else {
-                    self.close_math()
-                }
-            }
-            Mode::DisplayMath => {
-                if display {
-                    self.close_math()
-                } else {
-                    // TeX：单 `$` 结束显示数学 → 报错但恢复（该 `$` 按 `$$` 处理，
-                    // 关闭公式；TRIP L206 `$$\eqno^{}$`）。
-                    self.report_error("Display math should end with $$.");
-                    self.close_math()
-                }
-            }
-            Mode::Vertical => {
-                if display {
-                    // M4-4 显示数学：垂直模式 = TeX new_graf 开段（parskip），公式作段首
-                    // 垂直元素（predisplaypenalty + abovedisplayskip + 公式盒 + 下间距）。
-                    // 垂直列表为空（文档开头）时不加 parskip。
-                    if self.page_state.pagination && !self.lists.last().is_some_and(Vec::is_empty) {
-                        let ps = self.params.parskip;
-                        self.append(Node::Glue {
-            name: None,                            width: ps.width,
-                            stretch: ps.stretch,
-                            shrink: ps.shrink,
-                            stretch_order: ps.stretch_order,
-                            shrink_order: ps.shrink_order,
-                        });
-                    }
-                    // tex.web：垂直模式 `$$` 不是直接进显示——`vmode+math_shift` 先
-                    // `back_input; new_graf(true)`（parskip + 缩进盒开段），init_math
-                    // 才在水平模式见到非空 hlist → line_break 对「只含缩进盒的段落」
-                    // 折行：垂直列表落一个高 0 深 0 的空行盒（与上一行之间按
-                    // \baselineskip-\prevdepth 插行间 glue），w = 缩进盒宽 + 2em
-                    // （`\noindent$$` 无缩进盒 → head=tail 臂 → -max_dimen）。
-                    // 段末公式与上文之间 ~\baselineskip 的空隙 + \predisplaysize
-                    // 语义都由此而来；直接 -max_dimen 会让公式顶到上一行上。
-                    self.lists.push(Vec::new());
-                    self.list_modes.push(Mode::Horizontal);
-                    self.space_factor = 1000; // new_graf：段落开始重置 spacefactor
-                    self.insert_indent();
-                    let last_natural = self.close_paragraph();
-                    self.math_state.predisplay_size = match last_natural {
-                        Some(w) => w + 2 * self.fonts.font_param(self.current_font, 6),
-                        None => -ntex_core::register::MAX_DIMEN,
-                    };
-                    self.enter_display_math()
-                } else {
-                    // 行内数学：开段（TeX new_graf）
-                    if self.page_state.pagination {
-                        let ps = self.params.parskip;
-                        self.append(Node::Glue {
-            name: None,                            width: ps.width,
-                            stretch: ps.stretch,
-                            shrink: ps.shrink,
-                            stretch_order: ps.stretch_order,
-                            shrink_order: ps.shrink_order,
-                        });
-                    }
-                    self.lists.push(Vec::new());
-                    self.list_modes.push(Mode::Horizontal);
-                    self.space_factor = 1000; // new_graf：段落开始重置 spacefactor
-                    self.insert_indent();
-                    self.enter_math(Mode::Math)
-                }
-            }
-            Mode::Horizontal => {
-                if display {
-                    // M4-4 显示数学：TeX $$ 在水平模式先 \par 收尾段落，公式作垂直元素。
-                    // pre_display_size（tex.web §1193）：末行非空 = 2em + 末行可见材料
-                    // 自然宽（close_paragraph 返回值即末行自然宽，\parfillskip 自然宽 0）；
-                    // 列表为空 = -max_dimen。长/短 skip 的裁决在 close_math 退出时做
-                    // （那时公式自然宽才可知）。
-                    let last_natural = self.close_paragraph();
-                    self.math_state.predisplay_size = match last_natural {
-                        Some(w) => w + 2 * self.fonts.font_param(self.current_font, 6),
-                        None => -ntex_core::register::MAX_DIMEN,
-                    };
-                    self.enter_display_math()
-                } else {
-                    self.enter_math(Mode::Math)
-                }
-            }
-            Mode::RestrictedHorizontal => {
-                // tex.web init_math：`$$` 只有在 mode>0 时才进入显示数学（
-                // `if (cur_cmd=math_shift) and (mode>0)`）。受限水平模式的
-                // mode=-hmode<0，故两个 $ 各自进出**普通**数学——不报任何错。
-                // 此前 NTex 自创 "Display math in restricted mode." 并在进入
-                // 行内数学后丢失第二个 $，导致组/模式错位（TRIP L210
-                // `\hbox{$$}$\par}` 之后整段落在受限水平模式）。
-                let _ = display;
-                self.enter_math(Mode::Math)
-            }
-        }
-    }
-    /// tex.web init_math `mode>0`：`$$` 进显示数学仅限垂直/普通水平模式；
-    /// 受限水平（\hbox/\halign 模板）下第二个 `$` 由 VM back_input，`$$`
-    /// 退化为两次独立进出（TRIP L210/L340）。
-    fn math_display_allowed(&self) -> bool {
-        matches!(self.mode(), Mode::Vertical | Mode::Horizontal)
-    }
-    /// 这个 `$` 是收还是开：数学层在栈上（Math/DisplayMath）= 收，否则 = 开。
-    /// 与 `math_shift` 的模式分派同一真源。
-    fn math_shift_will_close(&self) -> bool {
-        matches!(self.mode(), Mode::Math | Mode::DisplayMath)
-    }
-    /// tex.web after_math：只有**显示**数学收尾要求配对 `$`（无则报
-    /// "Display math should end with $$" 照收）；行内数学收尾不 peek——
-    /// 紧随的 `$` 落回水平/垂直模式由 init_math 重新判定。
-    fn math_close_consumes_dollar(&self) -> bool {
-        matches!(self.mode(), Mode::DisplayMath)
-    }
-    /// 数学样式原语：数学模式内 push 样式原子（影响后续字阶与 spacing）。
-    fn math_style(&mut self, style: u8) -> Result<()> {
-        if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-            // tex.web math_style：非数学模式报错恢复（样式忽略）——
-            // 与 math_class 同族（原为"简化忽略"，报错缺失已补）
-            let name = match style {
-                0 => "displaystyle",
-                1 => "textstyle",
-                2 => "scriptstyle",
-                _ => "scriptscriptstyle",
-            };
-            return self.math_mode_error(name);
-        }
-        let s = match style {
-            0 => MathStyle::Display,
-            1 => MathStyle::Text,
-            2 => MathStyle::Script,
-            _ => MathStyle::ScriptScript,
-        };
-        self.math_push_atom(MathAtom::Style(s))
-    }
-    /// `\over`/`\atop`/`\above`：numerator 已收集（当前 math 层），等待 denominator。
-    fn math_fraction(&mut self, thickness: Option<i64>) -> Result<()> {
-        if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-            return self.math_mode_error("over");
-        }
-        let level = self
-            .math_state.math
-            .last_mut()
-            .ok_or_else(|| Error::internal("\\over 无数学层"))?;
-        if level.fraction.is_some() {
-            // TeX 恢复式（参考 trip l.257 `\left.A\over A\abovewithdelims.?\right(`：
-            // 同层已有 fraction 时报 Ambiguous 并**丢弃新 fraction 命令**，
-            // 保持原 fraction——不中断）。
-            self.write16("! Ambiguous; you need another { and }.\n".to_string())?;
-            return Ok(());
-        }
-        if self.math_state.pending_script.is_some() {
-            return Err(Error::invalid_input("\\over 前不能有未挂脚本（Missing { inserted）"));
-        }
-        let num = std::mem::take(&mut level.atoms);
-        let delims = std::mem::take(&mut level.frac_delims);
-        level.fraction = Some(FractionPending { thickness, num, delims });
-        Ok(())
-    }
-    /// `\overwithdelims` 系定界符：tex.web 在 fraction 节点左/右字段（make_fraction
-    /// 包在分式两侧）。存当前数学层，`math_fraction` 打包时并入。
-    fn math_fraction_delims(&mut self, left: Option<u32>, right: Option<u32>) -> Result<()> {
-        if let Some(level) = self.math_state.math.last_mut() {
-            level.frac_delims = (left, right);
-        }
-        Ok(())
-    }
-    /// `\left<delim>`：压一层数学层（定界符记在层上），`\right` 时收为 Delimited。
-    /// 嵌套 `\left...\right` 由层栈天然支持（ETRIP \middle 测试含深层嵌套）。
-    fn math_left(&mut self, delim: Option<u32>) -> Result<()> {
-        if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-            return self.math_mode_error("left");
-        }
-        self.math_state.math.push(MathLevel {
-            left: Some(delim),
-            ..Default::default()
-        });
-        Ok(())
-    }
-    /// `\left`/`\middle` 的 math left group（16）挂起标记：随后的 begin_group 消费。
-    fn math_left_begin(&mut self) -> Result<()> {
-        self.box_state.pending_kind = Some(GroupKind::MathLeft);
-        Ok(())
-    }
-    /// `\right<delim>`：弹最内层 `\left` 层，内容收为 Delimited 原子并入外层。
-    fn math_right(&mut self, delim: Option<u32>) -> Result<()> {
-        if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-            return self.math_mode_error("right");
-        }
-        let mut level = self
-            .math_state.math
-            .pop()
-            .ok_or_else(|| Error::internal("\\right 无数学层"))?;
-        let Some(left) = level.left.take() else {
-            // TeX：\right 前缺 \left → 恢复式 "Extra \right."（不中断；expander
-            // 侧 math_left_depth 保护后 math_right 只接收有配对的情况，但直接
-            // typesetter 路径（测试）仍可达——参考 trip.log L256 双错误恢复）
-            self.write16("! Extra \\right.\n".to_string())?;
-            return Ok(());
-        };
-        // 先收 \left(...\over...\right) 的分式，再包定界符
-        Self::math_finish_fraction(&mut level);
-        let parent = self
-            .math_state.math
-            .last_mut()
-            .ok_or_else(|| Error::internal("\\right 无外层数学层"))?;
-        parent.atoms.push(MathAtom::Delimited {
-            left,
-            body: level.atoms,
-            right: delim,
-        });
-        Ok(())
-    }
-    /// e-TeX `\middle<delim>`：在 \left...\right 体内插入定界符原子（类 Inner）。
-    fn math_middle(&mut self, delim: Option<u32>) -> Result<()> {
-        if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-            return self.math_mode_error("middle");
-        }
-        let level = self
-            .math_state.math
-            .last_mut()
-            .ok_or_else(|| Error::internal("\\middle 无数学层"))?;
-        Self::math_finish_fraction(level);
-        level.atoms.push(MathAtom::Middle(delim));
-        Ok(())
-    }
-    /// `\sqrt`：等待 radicand 字段（下一个原子或组）。
-    fn math_sqrt(&mut self) -> Result<()> {
-        if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-            return self.math_mode_error("sqrt");
-        }
-        // \sqrt 本身不是合法字段开头（tex.web scan_math othercases）
-        self.check_math_field_break()?;
-        self.math_state.sqrt_pending = true;
-        Ok(())
-    }
-    /// `\radical<delimiter><math field>`：根式原子（\sqrt 底层，带定界符号；TRIP L412）。
-    fn math_radical(&mut self, delim: Option<u32>) -> Result<()> {
-        if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-            return self.math_mode_error("radical");
-        }
-        // \radical 不是合法字段开头（tex.web scan_math othercases；TRIP L272
-        // `\mathord \radical` 在此报 Missing { inserted）
-        self.check_math_field_break()?;
-        self.math_state.radical_pending = Some(delim.unwrap_or(0));
-        Ok(())
-    }
-    /// `\mathord` 等：给下一个字段定类。
-    fn math_class(&mut self, class: u8) -> Result<()> {
-        if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-            return self.math_mode_error("mathord");
-        }
-        // \mathord 等不是合法字段开头（tex.web scan_math othercases；连续
-        // `\mathord\mathord x` 第二个在此报 Missing { inserted）
-        self.check_math_field_break()?;
-        // 入参是命令编号（1=Bin/2=Op/7=Inner），须用 class_of_cmd 而非
-        // mathcode 体系的 class_of（两体系 Bin/Op 互换）
-        self.math_state.class_pending = Some(Self::class_of_cmd(class));
-
-        Ok(())
-    }
-    /// `\limits`/`\nolimits`/`\displaylimits`（tex.web math_limit_switch）：
-    /// 改写当前数学层**最后一个原子**（须为 Op 字符原子）的上下限摆放方式。
-    /// mode：0=displaylimits/normal、1=limits、2=nolimits。
-    /// 最后原子不是 Op 时报 tex.web 同名错误（"Limit controls must follow a
-    /// math operator."）；非数学模式无害忽略（单独 `\limits` 的错误口径待
-    /// etrip 校准，见 primitive_math.rs 原注释）。
-    fn math_limit_switch(&mut self, mode: u8) -> Result<()> {
-        let Some(level) = self.math_state.math.last_mut() else {
-            return Ok(());
-        };
-        let after_op = matches!(level.atoms.last(), Some(MathAtom::Char(mc)) if mc.class == MathClass::Op)
-            || matches!(level.atoms.last(), Some(MathAtom::Classed { class: MathClass::Op, .. }));
-        if !after_op {
-            return self.write16("! Limit controls must follow a math operator.\n".to_owned());
-        }
-        match level.atoms.last_mut() {
-            Some(MathAtom::Char(mc)) => mc.limits = mode,
-            Some(MathAtom::Classed { limits, .. }) => *limits = mode,
-            _ => unreachable!("op_noad checked above"),
-        }
-        Ok(())
-    }
-    /// `\accent`（数学模式）：TeX 报错改道为 `\mathaccent`（tex.web math_ac），
-    /// <15-bit number> + nucleus 字段继续扫描（TRIP L396 `\accent\x\vfill`）。
-    /// 水平/受限水平模式的 `\accent` 是合法文本重音——只在数学模式报错改道。
-    fn math_accent(&mut self, plain: bool) -> Result<()> {
-        // \mathaccent 不是合法字段开头（tex.web scan_math othercases）
-        self.check_math_field_break()?;
-        if plain && matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-            self.write16(
-                "! Please use \\mathaccent for accents in math mode.\n".to_string(),
-            )?;
-        }
-        self.math_state.accent_pending = matches!(self.mode(), Mode::Math | Mode::DisplayMath);
-        Ok(())
-    }
-    fn math_accent_char(&mut self, code: u32) -> Result<()> {
-        if self.math_state.accent_pending {
-            let accent = MathAtom::Char(MathChar {
-                class: MathClass::Ord,
-                fam: ((code >> 8) & 15) as u8,
-                charcode: code & 255,
-                limits: 0,
-            });
-            if let Some(level) = self.math_state.math.last_mut() {
-                level.atoms.push(MathAtom::Accent {
-                    accent: vec![accent],
-                    nucleus: Vec::new(),
-                });
-            }
-        }
-        Ok(())
-    }
-    /// `\underline`：等待字段组（数学模式；组开收为 Underline 原子）。
-    fn math_underline(&mut self) -> Result<()> {
-        self.check_math_field_break()?;
-        self.math_state.underline_pending = matches!(self.mode(), Mode::Math | Mode::DisplayMath);
-        Ok(())
-    }
-    /// `\eqno`/`\leqno`（tex.web start_eq_no → after_math）：当前层已收原子
-    /// 是公式 mlist（p），切出去暂存；其后材料进新列表，close_math 时
-    /// hpack natural 成编号盒 a（`leqno=true` → 编号在左）。
-    fn math_eqno(&mut self, leqno: bool) -> Result<()> {
-        let Some(level) = self.math_state.math.last_mut() else {
-            return Ok(());
-        };
-        let atoms = std::mem::take(&mut level.atoms);
-        self.math_state.eqno_formula = Some(atoms);
-        self.math_state.eqno_side = Some(leqno);
-        Ok(())
-    }
-    /// `\mathchar<15-bit>`：完整数学字符原子（tex.web math_char）——
-    /// 数学模式直接产出 Char 原子（class=n>>12&7、fam=n>>8&15、charcode=n&255）；
-    /// 文本模式同 `\char` 输出低 8 位字符。此前 scan_number 即丢。
-    fn math_char_full(&mut self, n: u32) -> Result<()> {
-        if !matches!(self.mode(), Mode::Math | Mode::DisplayMath) {
-            return self.token(ntex_core::Token::char(
-                ntex_core::Catcode::Other,
-                n & 0xFF,
-            ));
-        }
-        let class = Self::class_of(((n >> 12) & 7) as u8);
-        let fam = ((n >> 8) & 0xF) as u8;
-        let charcode = n & 0xFF;
-        self.math_push_atom(MathAtom::Char(MathChar {
-            class,
-            fam,
-            charcode,
-            limits: 0,
-        }))
-    }
-    /// `\overline`：等待字段组（数学模式；组开收为 Overline 原子）。
-    fn math_overline(&mut self) -> Result<()> {
-        self.check_math_field_break()?;
-        self.math_state.overline_pending = matches!(self.mode(), Mode::Math | Mode::DisplayMath);
-        Ok(())
-    }
-    /// 数学字体族分配（`\textfont<fam>=<fontcs>` 等；M4-3）。
-    fn math_font(&mut self, kind: u8, fam: u8, font: u32) -> Result<()> {
-        if let Some(slot) = self.math_state.math_fonts.get_mut(fam as usize) {
-            slot[kind as usize] = Some(FontId(font));
-        }
-        Ok(())
-    }
-    fn muskip_param(&mut self, idx: usize, glue: ntex_core::Glue) -> Result<()> {
-        // \thinmuskip/\medmuskip/\thickmuskip：存 mu 参数（math_to_hlist 读）
-        // 标位 muskip_is_mu[idx] 同时置 true——muskip_param 触发自 expander 端的
-        // `\thinmuskip=<mu glue>` 路径，width/stretch/shrink 始终以 mu 数值存。
-        if idx < 3 {
-            self.math_state.muskip_params[idx] = glue;
-            self.math_state.muskip_is_mu[idx] = true;
-        }
-        Ok(())
-    }
-}
-
-impl BoxSink for NodeBuilder {
-    /// `\setbox<n>=<box>`（ETRIP）：记录目标寄存器；后续封装的盒子存入该槽。
-    fn setbox(&mut self, idx: usize, global: bool) -> Result<()> {
-        self.box_state.setbox_target = Some(idx);
-        self.box_state.setbox_global = global;
-        Ok(())
-    }
-    /// `\hbox to/spread <dimen>`（ETRIP）：记录盒子规格，随下一个盒子组生效。
-    fn box_spec(&mut self, to: Option<i64>, spread: Option<i64>) -> Result<()> {
-        self.box_state.pending_box_spec = Some((to, spread));
-        Ok(())
-    }
-    /// 无限阶胶水（ETRIP）：`\hfil`=0/`\hfill`=1/`\hss`=2/`\vfil`=3/`\vfill`=4/`\vss`=5。
-    /// 方向不符当前模式的原语忽略（TeX 语义：如水平模式中的 `\vfil` 无效）。
-    /// stretch/shrink 按 TeX 存 **1pt = 65536sp**（`0pt plus 1fil` 的 stretch=65536，
-    /// fil 阶下 gs 按比例缩放、布局不变，showbox 显示 `plus 1.0fil` 对齐参考）。
-    fn fill_glue(&mut self, kind: u8) -> Result<()> {
-        let one = ntex_core::register::SP_PER_PT;
-        let (horizontal, stretch, shrink, order) = match kind {
-            0 => (true, one, 0, GLUE_ORDER_FIL),      // \hfil  0pt plus 1fil
-            1 => (true, one, 0, GLUE_ORDER_FILL),     // \hfill 0pt plus 1fill
-            2 => (true, one, one, GLUE_ORDER_FIL),    // \hss   0pt plus 1fil minus 1fil
-            3 => (false, one, 0, GLUE_ORDER_FIL),     // \vfil
-            4 => (false, one, 0, GLUE_ORDER_FILL),    // \vfill
-            5 => (false, one, one, GLUE_ORDER_FIL),   // \vss
-            6 => (false, -one, 0, GLUE_ORDER_FIL),    // \vfilneg（负 1fil）
-            7 => (true, -one, 0, GLUE_ORDER_FIL),     // \hfilneg（负 1fil）
-            _ => return Err(Error::internal("非法 fill 胶水种类")),
-        };
-        let in_horizontal =
-            matches!(self.mode(), Mode::Horizontal | Mode::RestrictedHorizontal);
-        // 数学模式没有"水平列表"，却接受 h 方向 fill：tex.web `\hfil` 等是
-        // `hskip` 的特例（`append_glue` 无条件 `tail_append(new_glue)`，mlist
-        // 里就是 glue 节点）；amsmath `multline` 靠模板 `\hfil` 与行首
-        // `\hfilneg` 相消实现首行左齐/末行右齐。v 方向 fill 在数学模式仍无意义。
-        let in_math = matches!(self.mode(), Mode::Math | Mode::DisplayMath);
-        if horizontal != in_horizontal && !(in_math && horizontal) {
-            return Ok(()); // 方向不符：忽略
-        }
-        // `\leaders\hbox{…}\hfill`：fill 胶水也是"proper glue"（tex.web 把
-        // \hfil/\hfill/\hss 归入 glue 赋值类）。此前漏臂 → 引导盒子挂起不消，
-        // 下一 token 触发 "Leaders not followed by proper glue" 并丢盒，
-        // 目录点线（\@dottedtocline 的 \leaders…\hfill）整行消失。
-        if let Some((ld, box_node)) = self.box_state.leaders_box.take() {
-            self.append(Node::Leaders {
-                kind: ld,
-                inner: Box::new(box_node),
-                width: 0,
-                stretch,
-                shrink,
-                stretch_order: order,
-                shrink_order: 0,
-            });
-            return Ok(());
-        }
-        // \vfill 等不是合法数学字段开头（tex.web scan_math othercases；TRIP L396
-        // `\accent\x\vfill` 在 \vfill 处报 Missing { inserted）
-        self.check_math_field_break()?;
-        // 数学模式：fill 胶水作为 mlist 的 pt 胶节点（`\hskip` 同款）——
-        // mlist_to_hlist 只换算 mu 胶，pt 胶原样落 hlist（tex.web math_glue）。
-        if in_math {
-            if !horizontal {
-                return Ok(()); // \vfil 等垂直 fill 在数学模式无效果
-            }
-            self.math_push_atom(MathAtom::MSkip {
-                width: 0,
-                stretch,
-                shrink,
-                stretch_order: order,
-                shrink_order: order,
-                nonscript: false,
-                mu: false,
-            })?;
-            return Ok(());
-        }
-        self.append(Node::Glue {
-            name: None,            width: 0,
-            stretch,
-            shrink,
-            stretch_order: order,
-            shrink_order: order,
-        });
-        Ok(())
-    }
-    /// `\vsplit<n> to/spread <dimen>`（ETRIP）：拆分盒子寄存器 n 顶部。
-    /// 寄存器 n 保留余量；结果按 `\setbox` 目标路由，否则追加。
-    /// 寄存器 255 = 待输出页队首（[PAGE_BOX]）：latex.ltx `\@doclearpage` 的
-    /// `\vsplit\@cclv to\z@` 从页顶取走 discardables。
-    /// tex.web vsplit @<Dispense with trivial cases...@>：void 盒 → 结果 void、
-    /// 静默（"The extracted box is void if and only if the original box was
-    /// void"）；真 TeX 实测 `\vsplit255 to 10pt` void → `\ifvoid0`=Y、`\ht0`=0、
-    /// 255 保持 void、无错误信息。
-    fn vsplit(&mut self, idx: usize, to: Option<i64>, spread: Option<i64>) -> Result<()> {
-        let Some(b) = self.take_box_at(idx) else {
-            // void 盒：cur_box=null（tex.web）→ `\setbox` 目标存空、裸调用不产节点
-            if let Some(t) = self.box_state.setbox_target.take() {
-                self.store_box(t, None);
-            }
-            return Ok(());
-        };
-        let natural = b.height + b.depth;
-        let target = match (to, spread) {
-            (Some(t), _) => t,
-            (_, Some(s)) => natural + s,
-            _ => natural,
-        };
-        let (result, remainder) = split_vbox(b, target);
-        // 余量写回寄存器：tex.web `box(n):=vpack(q,natural)`；若 q 为空则原盒
-        // 变 void。LaTeX mark 代码依赖 `\vsplit <box> to \maxdimen` 后
-        // `\ifvoid<box>` 为真来终止递归。
-        let remainder = if remainder.children.is_empty() {
-            None
-        } else {
-            Some(remainder)
-        };
-        self.write_box(idx, remainder);
-        if let Some(t) = self.box_state.setbox_target.take() {
-            self.store_box(t, Some(result));
-        } else {
-            self.append(Node::Box(result));
-        }
-        Ok(())
-    }
-    /// `\box<n>`（M3-5-3）：取出盒子寄存器；`\shipout` 前缀时封装为页面，
-    /// 否则作为节点追加到当前列表。void 盒子报错（TeX "Box n is void"）。
-    /// 寄存器 255 = 待输出例程处理页面的队首（[PAGE_BOX]，tex.web `box(255)`）。
-    fn box_register(&mut self, idx: usize) -> Result<()> {
-        if idx == 0 && std::env::var_os("AVD_BOX_DEBUG").is_some() { eprintln!("AVD_READ0 mode={:?} level={} present={}", self.mode(), self.groups.len(), self.box_view(idx).is_some()); }
-        // `\setbox5=\box3`：把寄存器 3 移入目标 5（\box3 变 void；tex.web set_box 赋值语义）
-        if let Some(target) = self.box_state.setbox_target.take() {
-            // `\setbox0=\lastbox`：优先取 \lastbox 摘下的盒子
-            let b = self.box_state.lastbox_hold.take().or_else(|| self.take_box_at(idx));
-            self.store_box(target, b);
-            return Ok(());
-        }
-        // `\box0` 紧跟在 `\lastbox` 后：取摘下的盒子（TeX 语义）
-        let b = self.box_state.lastbox_hold.take().or_else(|| self.take_box_at(idx));
-        let Some(b) = b else {
-            // TeX：\box 取 void 盒子 → 空 hbox 节点（tex.web：仍产生节点；TRIP L104 前 \copy200 void）
-            return self.append_box_or_math_atom(crate::node::BoxNode::new_hbox(Vec::new()));
-        };
-        if self.page_state.shipout_next {
-            self.page_state.shipout_next = false;
-            self.ship_page(b);
-        } else {
-            self.append_box_or_math_atom(b)?;
-        }
-        Ok(())
-    }
-    /// 盒子寄存器种类（0=void、1=hbox、2=vbox）；`\ifvoid`/`\ifhbox`/`\ifvbox` 用。
-    /// 寄存器 255 = 待输出页队首（[PAGE_BOX]）：页面为 vbox → `\ifvbox255`=真、
-    /// 页队列空 → `\ifvoid255`=真（真 TeX 实测：页在 `VB:Y|HB:N|VOID:N`，
-    /// 页尽 `VOID:Y`）。
-    fn box_register_kind(&self, idx: usize) -> i64 {
-        match self.box_view(idx) {
-            None => 0,
-            Some(b) => match b.kind {
-                crate::node::BoxKind::HBox => 1,
-                crate::node::BoxKind::VBox => 2,
-            },
-        }
-    }
-    /// `\wd/\ht/\dp<n>`：盒子寄存器维度（void 为 0）。
-    /// 寄存器 255 = 待输出页队首（[PAGE_BOX]）：latex.ltx `\@specialoutput` 的
-    /// `\@pageht \ht\@holdpg` 型查询与页尺寸记账（`\ht\@cclv`）同语义。
-    fn box_dim(&self, idx: usize, dim: u8) -> i64 {
-        let Some(b) = self.box_view(idx) else {
-            return 0;
-        };
-        match dim {
-            0 => b.width,
-            1 => b.height,
-            _ => b.depth,
-        }
-    }
-    /// `\wd/\ht/\dp<n>=<dimen>`：设置盒子寄存器维度。
-    /// 255 → 改待输出页队首（`\dp\@cclv=...` 型改写落在页面上）；void 忽略。
-    fn set_box_dim(&mut self, idx: usize, dim: u8, value: i64) -> Result<()> {
-        let slot = if self.page_box_queue_active(idx) {
-            self.page_state.pending_pages.front_mut()
-        } else {
-            self.boxes_mut().get_mut(idx).and_then(|s| s.as_mut())
-        };
-        let Some(b) = slot else {
-            // void 盒子无维度可设：忽略（TeX 恢复语义，TRIP halign 模板场景）
-            return Ok(());
-        };
-        match dim {
-            0 => b.width = value,
-            1 => b.height = value,
-            _ => b.depth = value,
-        }
-        Ok(())
-    }
-    /// `\copy<n>`：复制盒子寄存器为节点追加到当前列表（原寄存器保留）。
-    /// 寄存器 255 = 待输出页队首（[PAGE_BOX]）——trip.tex 第二例程
-    /// `\setbox255\copy255` 即复制当前页。
-    fn copy_box(&mut self, idx: usize) -> Result<()> {
-        let b = if let Some(h) = self.box_state.lastbox_hold.take() {
-            // `\copy0` 紧跟在 `\lastbox` 后：复制摘下的盒子
-            h.clone()
-        } else {
-            let Some(b) = self.box_view(idx) else {
-                // TeX：\copy 取 void 盒子 → **空 hbox 节点**（tex.web copy_scan_box：
-                // void → null box，仍产生节点触发 freeze/interline；TRIP L104 `\copy200`）
-                return self.append_box_or_math_atom(crate::node::BoxNode::new_hbox(Vec::new()));
-            };
-            b.clone()
-        };
-        // `\setbox<n>=\copy<m>`：复制结果存入目标寄存器（\copy 不消耗原盒）
-        if let Some(target) = self.box_state.setbox_target.take() {
-            self.store_box(target, Some(b));
-            return Ok(());
-        }
-        // `\shipout\copy<n>`（tex.web scan_box 复制语义；现代 LaTeX shipout 包装
-        // `\tex_shipout:D \box_use:N \l_shipout_box`，`\box_use:N`≡`\copy`——
-        // ship 副本、寄存器保留给 shipout/after 钩子）。不认此臂则页永不 ship：
-        // shipout_next 泄漏毒化后续轮次 → "Output loop---100 consecutive dead cycles"。
-        if self.page_state.shipout_next {
-            self.page_state.shipout_next = false;
-            self.ship_page(b);
-            return Ok(());
-        }
-        self.append_box_or_math_atom(b)
-    }
-    /// `\unhbox<n>`/`\unhcopy<n>`：hbox 拆开，子节点追加到当前列表。
-    /// tex.web unpackage：`if p=null then return`——void 盒**静默无操作**（真
-    /// pdflatex 的 `\unvbox\@begindvibox`（恒 void）不报错为证）；类型/模式
-    /// 不符才报 "! Incompatible list can't be unboxed."（TRIP L396 实为
-    /// `\unhcopy3` 在 math 模式遇 vlist，非 voidness）。
-    fn unhbox(&mut self, idx: usize, copy: bool) -> Result<()> {
-        let Some(b) = self.box_view(idx).cloned() else {
-            return Ok(());
-        };
-        // tex.web unpackage: void returns before checking the mode.  LaTeX's
-        // \leavevmode uses \unhbox\voidb@x even inside math displays.
-        if matches!(self.mode(), Mode::Math | Mode::DisplayMath) || b.kind != BoxKind::HBox {
-            self.unbox_error_continue();
-            return Ok(());
-        }
-        if !copy { self.take_box_at(idx); }
-        for c in b.children { self.append(c); }
-        Ok(())
-    }
-    /// `\unvbox<n>`/`\unvcopy<n>`：vbox 拆开，子节点追加到当前列表。
-    fn unvbox(&mut self, idx: usize, copy: bool) -> Result<()> {
-        let Some(b) = self.box_view(idx).cloned() else {
-            return Ok(());
-        };
-        if matches!(self.mode(), Mode::Math | Mode::DisplayMath) || b.kind != BoxKind::VBox {
-            self.unbox_error_continue();
-            return Ok(());
-        }
-        if !copy { self.take_box_at(idx); }
-        for c in b.children { self.append(c); }
-        Ok(())
-    }
-    /// `\lastbox`：摘下当前列表尾的盒子节点（无则无操作）；
-    /// 摘下的盒子由下一个 `\box`/`\copy` 取用（见 [`Self::box_register`]）。
-    fn lastbox(&mut self) -> Result<()> {
-        // M6：读-改主列表尾部——投机 builder 的尾部是窗口起点 S0 的尾部，与顺序
-        // 执行到本段时的尾部（含窗口内前段产出）不同 → 段作废（`\lastbox` 是
-        // RFC-5 §3.5 装配状态读取黑名单首项）。
-        self.mark_spec_taint();
-        let Some(list) = self.lists.last_mut() else {
-            return Ok(());
-        };
-        if let Some(Node::Box(_)) = list.last() {
-            if let Some(Node::Box(b)) = list.pop() {
-                self.box_state.lastbox_hold = Some(b);
-            }
-        }
-        // `\setbox0=\lastbox`：摘下的盒子存入目标寄存器（tex.web last_box →
-        // cur_box → set_box 赋值语义）；裸 \lastbox 留给后续 \box 消费。
-        // 无盒可摘 → cur_box=null → `\setbox` 目标**清空**（tex.web
-        // `\setbox\thr@@\lastbox` 置 box3 void）——amsmath `\measure@` 的
-        // 列宽循环 `\ifhbox\thr@@ ... \repeat` 依赖此终止；旧实现保持
-        // box3 旧值 → 恒真死循环。
-        if let Some(t) = self.box_state.setbox_target.take() {
-            let b = self.box_state.lastbox_hold.take();
-            self.store_box(t, b);
-        }
-        Ok(())
-    }
-    /// `\unskip`：移除当前列表尾部的 glue 节点（无则无操作）。
-    fn unskip(&mut self) -> Result<()> {
-        // M6：与 `\lastbox` 同因——"移除哪个节点"取决于窗口内前段的产出，
-        // 投机 builder 的尾部不含它们。段作废（`unskip` 族不属 SideEffects
-        // 快照字段，neutral 判定覆盖不到这条隐式依赖，只能在此显式标记）。
-        self.mark_spec_taint();
-        if let Some(list) = self.lists.last_mut() {
-            if matches!(list.last(), Some(Node::Glue { .. } | Node::Leaders { .. })) {
-                list.pop();
-            }
-        }
-        Ok(())
-    }
-    /// `\unpenalty`：移除当前列表尾部的 penalty 节点（无则无操作）。
-    fn unpenalty(&mut self) -> Result<()> {
-        self.mark_spec_taint();
-        if let Some(list) = self.lists.last_mut() {
-            if matches!(list.last(), Some(Node::Penalty { .. })) {
-                list.pop();
-            }
-        }
-        Ok(())
-    }
-    /// `\unkern`：移除当前列表尾部的 kern 节点（无则无操作；TRIP L189）。
-    fn unkern(&mut self) -> Result<()> {
-        self.mark_spec_taint();
-        if let Some(list) = self.lists.last_mut() {
-            if matches!(list.last(), Some(Node::Kern { .. })) {
-                list.pop();
-            }
-        }
-        Ok(())
-    }
-    /// e-TeX `\lastnodetype`：当前列表尾节点类型码（空列表 -1）。
-    ///
-    /// `\noalign{...}` 组内：TeX 把 `\noalign` 材料并入对齐所在的垂直列表，
-    /// 其尾节点是刚 `\cr` 完成的行/列盒——TeX 的 unset node（e-TeX 码 14，
-    /// `\noalign` 只能跟在 `\cr` 后，行盒必已存在）。本引擎行/列盒暂存于
-    /// [`Self::align_columns`]、对齐列表在 `\cr` 时已取空，读取时补此映射
-    /// （不改节点生成；列表已有节点时仍按列表尾报码）。
-    fn last_node_type(&self) -> i64 {
-        self.mark_spec_taint();
-        if let Some(n) = self.lists.last().and_then(|l| l.last()) {
-            return n.node_type_code();
-        }
-        if matches!(self.groups.last().map(|g| g.kind), Some(GroupKind::NoAlign)) {
-            return 14; // unset node（\cr 完成的行/列盒）
-        }
-        -1
-    }
-    /// `\lastpenalty`：当前列表尾为 penalty 时取值；外层 vmode 列表被
-    /// page builder 抽空后改读它记录的最近贡献。
-    fn last_penalty(&self) -> i64 {
-        self.mark_spec_taint();
-        match self.lists.last().and_then(|l| l.last()) {
-            Some(Node::Penalty { penalty }) => *penalty,
-            None if self.mode() == Mode::Vertical && self.lists.len() == 1 =>
-                self.page_state.page.last_penalty(),
-            _ => 0,
-        }
-    }
-    /// `\lastskip` 完整胶水量（tex.web L8535）：非空列表只认尾节点；
-    /// 外层 vmode 的空贡献列表回读 page builder 最近贡献。
-    fn last_glue(&self) -> Option<Glue> {
-        self.mark_spec_taint();
-        match self.lists.last().and_then(|l| l.last()) {
-            Some(Node::Glue {
-                width,
-                stretch,
-                shrink,
-                stretch_order,
-                shrink_order,
-                ..
-            }) => Some(Glue {
-                width: *width,
-                stretch: *stretch,
-                shrink: *shrink,
-                stretch_order: *stretch_order,
-                shrink_order: *shrink_order,
-            }),
-            None if self.mode() == Mode::Vertical && self.lists.len() == 1 =>
-                self.page_state.page.last_glue(),
-            _ => None,
-        }
-    }
-    /// e-TeX `\lastskip` 作尺寸（tex.web L8535）：胶水取宽度，否则 0。
-    /// 此前向后回溯到任意 glue 节点，`\ifdim\lastskip=\z@`
-    /// （latex.ltx `\sw@slant`）在前文有胶水时误判非零。
-    fn last_skip(&self) -> i64 {
-        self.last_glue().map_or(0, |g| g.width)
-    }
-    /// e-TeX `\lastkern`：当前列表尾 kern 节点的宽度（tex.web L8535 dimen_val
-    /// 臂同款——非空列表只看尾节点；外层 vmode 空列表回读 page builder）。
-    fn last_kern(&self) -> i64 {
-        self.mark_spec_taint();
-        match self.lists.last().and_then(|l| l.last()) {
-            Some(Node::Kern { width }) => *width,
-            Some(Node::Discretionary { replace, .. }) => match replace.last() {
-                Some(Node::Kern { width }) => *width,
-                _ => 0,
-            },
-            None if self.mode() == Mode::Vertical && self.lists.len() == 1 =>
-                self.page_state.page.last_kern(),
-            _ => 0,
-        }
-    }
-    /// `\raise`/`\lower<dimen>`：记录盒子参考点位移（下一个封装盒子生效）。
-    fn raise(&mut self, amount: i64) -> Result<()> {
-        self.box_state.pending_shift = Some(amount);
-        Ok(())
-    }
-    /// `\moveleft<dimen>`：记录盒子水平左移（下一个封装盒子生效；TRIP 冲刺简化）。
-    fn move_left(&mut self, amount: i64) -> Result<()> {
-        self.box_state.pending_hshift = Some(-amount);
-        Ok(())
-    }
-    /// `\moveright<dimen>`：记录盒子水平右移（下一个封装盒子生效；TRIP 冲刺简化）。
-    fn move_right(&mut self, amount: i64) -> Result<()> {
-        self.box_state.pending_hshift = Some(amount);
-        Ok(())
-    }
-    /// `\showbox<n>`：把盒子寄存器内容格式化到转录（TeX show_box 风格）。
-    fn showbox(&mut self, idx: usize) -> Result<()> {
-        let Some(b) = self.box_view(idx) else {
-            // TeX：\showbox 空盒 → 显示 void 并恢复（TRIP 中 box 状态差异不致命）
-            let out = format!("> \\box{idx}=\nvoid\n! OK.\n");
-            self.io_state.transcript.push_str(&out);
-            return Ok(());
-        };
-        let mut out = format!("> \\box{idx}=\n");
-        showbox_format_box(b, 0, &self.fonts, &self.font_cs_names, &mut out);
-        out.push_str("! OK.\n");
-        self.io_state.transcript.push_str(&out);
-        Ok(())
-    }
-}
-
-impl AlignSink for NodeBuilder {
-    /// `\valign{`/`\halign{`：下一个组为对齐组（6）。M4-5：建排版上下文
-    /// （两遍法；`to`/`spread` 规格取 box_spec 槽）。
-    fn align_begin(&mut self, is_halign: bool) -> Result<()> {
-        let dir = if is_halign { AlignDir::Halign } else { AlignDir::Valign };
-        let (to, spread) = self.box_state.pending_box_spec.take().unwrap_or((None, None));
-        self.align_stack.push((
-            dir,
-            AlignCtx {
-                tabskips: Vec::new(),
-                stream: Vec::new(),
-                cur_cells: Vec::new(),
-                cur_col: 0,
-                cell_box_saves: None,
-                cell_group_depth: 0,
-                to,
-                spread,
-            },
-        ));
-        self.box_state.pending_kind = Some(GroupKind::Align);
-        Ok(())
-    }
-    /// M4-5 `\cr`（对齐行/列结束，tex.web fin_row）：当前行单元入流
-    /// （原始列表，fin_align 统一封装；空行跳过——tex.web 空行盒高 0）。
-    fn align_row_end(&mut self) -> Result<()> {
-        let Some((_, ctx)) = &mut self.align_stack.last_mut() else {
-            return Ok(());
-        };
-        let cells = std::mem::take(&mut ctx.cur_cells);
-        ctx.cur_col = 0;
-        if cells.is_empty() {
-            return Ok(());
-        }
-        ctx.stream.push(AlignItem::Row(cells));
-        Ok(())
-    }
-    /// M4-5 对齐 preamble 结束或周期列扩展：替换列边界 tabskip 快照（len = 列数 + 1）。
-    fn align_preamble_end(&mut self, tabskips: Vec<ntex_core::Glue>) -> Result<()> {
-        if let Some((_, ctx)) = self.align_stack.last_mut() {
-            ctx.tabskips = tabskips;
-        }
-        Ok(())
-    }
-    /// M4-5 对齐单元开始（tex.web init_span 的 push_nest）：压入单元内容
-    /// 列表——\halign 受限水平（v 模板通常以 \hfil 收尾）；\valign 垂直。
-    fn align_cell_begin(&mut self) -> Result<()> {
-        if let Some((_, ctx)) = self.align_stack.last_mut() {
-            ctx.cell_box_saves = Some(Vec::new());
-            ctx.cell_group_depth = self.groups.len();
-        }
-        self.lists.push(Vec::new());
-        let mode = match self.align_stack.last() {
-            Some((AlignDir::Valign, _)) => Mode::Vertical,
-            _ => Mode::RestrictedHorizontal,
-        };
-        self.list_modes.push(mode);
-        Ok(())
-    }
-    /// M4-5 对齐单元结束（tex.web fin_col 的单元封装时机）：单元列表出栈，
-    /// 原始节点攒入当前行（封装延迟到 fin_align 统一列宽）。`&`（Tab）推进
-    /// 列指针（跨列单元按 span_len 累计）；`\cr`（Cr）的行收集由
-    /// [`Self::align_row_end`] 完成。
-    fn align_cell_end(&mut self, end: ntex_core::sink::AlignCellEnd, span_len: u16) -> Result<()> {
-        // \valign 单元（垂直列表）内开段时先收段
-        if self.mode() == Mode::Horizontal {
-            self.close_paragraph();
-        }
-        let nodes = self.lists.pop().unwrap_or_default();
-        self.list_modes.pop();
-        if let Some((_, ctx)) = self.align_stack.last_mut() {
-            if let Some(saves) = ctx.cell_box_saves.take() {
-                for (idx, old) in saves.into_iter().rev() {
-                    self.write_box(idx, old);
-                }
-            }
-        }
-        let Some((_, ctx)) = &mut self.align_stack.last_mut() else {
-            return Ok(());
-        };
-        let start = ctx.cur_col;
-        ctx.cur_cells.push(AlignCellBox { start_col: start, span_len, nodes });
-        if matches!(end, ntex_core::sink::AlignCellEnd::Tab) {
-            ctx.cur_col += span_len as usize;
-        }
-        Ok(())
-    }
-    /// `\noalign{`：下一个组为无对齐组（7）。
-    fn noalign_begin(&mut self) -> Result<()> {
-        self.box_state.pending_kind = Some(GroupKind::NoAlign);
-        Ok(())
-    }
-}
-
-impl PageSink for NodeBuilder {
-    fn page_dimen(&self, index: u8) -> i64 {
-        self.page_state.page.page_dimen(index, self.page_state.in_output_group)
-    }
-    fn output_defined(&mut self, defined: bool) -> Result<()> {
-        self.page_state.output_defined = defined;
-        if !defined {
-            // 例程恢复未定义：未处理页面无法再经例程产出，直接丢弃（TeX 语义）
-            self.page_state.pending_pages.clear();
-            self.page_state.page.clear_fired_penalties();
-        }
-        Ok(())
-    }
-    fn output_pending(&self) -> bool {
-        !self.page_state.pending_pages.is_empty()
-    }
-    fn take_output_pending(&mut self) -> bool {
-        self.output_pending()
-    }
-    fn output_pending_count(&self) -> usize {
-        self.page_state.pending_pages.len()
-    }
-    fn output_consumed(&mut self) -> bool {
-        self.page_state.output_consumed_count > 0
-    }
-    fn discard_pending_pages(&mut self) {
-        self.page_state.pending_pages.clear();
-        // 队列与断点惩罚一一对应，丢弃页面时同步丢弃惩罚
-        self.page_state.page.clear_fired_penalties();
-    }
-    fn output_break_penalty(&mut self) -> Option<i64> {
-        // 每次注入取走队首页的断点惩罚（take 语义：无新点火不重复读同一值，
-        // 与单槽口径一致）；队空回退最近一次点火值——\setbox255 直接种页没有
-        // fire_up，tex.web 中 \outputpenalty 是只写不清的全局整数
-        let _ = std::mem::take(&mut self.page_state.output_consumed_count);
-        self.page_state.page.take_front_output_penalty()
-    }
-    fn insert_penalties(&self) -> i64 {
-        // M6：页面构建器的插入物累计——投机 builder 的页状态从 S0 克隆，
-        // 不含窗口内前段对页面的推进（RFC-5 §3.5 黑名单项）。
-        self.mark_spec_taint();
-        self.page_state.page.insert_penalties()
-    }
-    fn take_page_shipped(&mut self) -> bool {
-        std::mem::take(&mut self.page_state.page_shipped)
-    }
-    fn default_output_routine(&mut self) {
-        // tex.web @<Perform the default output routine@>：待处理页面不经用户
-        // 例程直接 shipout（dead cycles 分支——`\output` 例程从不 ship 时）。
-        self.page_state.page.clear_fired_penalties();
-        while let Some(p) = self.page_state.pending_pages.pop_front() {
-            self.ship_page(p);
-        }
-    }
-    /// `\count<n>` 赋值镜像（输出例程刀 5 页号链）：shipout 页标签与 DVI bop
-    /// 计数的取值源（tex.web ship_out L12694 直接读 count(j)）。
-    fn count_changed(&mut self, idx: usize, value: i64) -> Result<()> {
-        if let Some(slot) = self.page_state.insert_regs.counts.get_mut(idx) {
-            *slot = value;
-        }
-        self.count_changed(idx, value);
-        Ok(())
-    }
-    fn dimen_changed(&mut self, idx: usize, value: i64) -> Result<()> {
-        if let Some(slot) = self.page_state.insert_regs.dimens.get_mut(idx) {
-            *slot = value;
-        }
-        Ok(())
-    }
-    fn skip_changed(&mut self, idx: usize, value: ntex_core::Glue) -> Result<()> {
-        if let Some(slot) = self.page_state.insert_regs.skips.get_mut(idx) {
-            *slot = value;
-        }
-        Ok(())
-    }
-    // ---- ETRIP 冲刺：e-TeX marks 族查询 ----
-    // （注意：轮转在 feed_one 产出页时立即执行，不在查询时修改状态。）
-    //
-    // M6：marks 随断页轮转演化——投机 builder 的 marks 是 S0 时刻的值，不含
-    // 窗口内前段造成的轮转 → 读取即 taint（段作废）。
-    fn topmarks(&self, class: i64) -> String {
-        self.mark_spec_taint();
-        self.page_state.marks_top.get(&class).cloned().unwrap_or_default()
-    }
-    fn firstmarks(&self, class: i64) -> String {
-        self.mark_spec_taint();
-        self.page_state.marks_first.get(&class).cloned().unwrap_or_default()
-    }
-    fn botmarks(&self, class: i64) -> String {
-        self.mark_spec_taint();
-        self.page_state.marks_bot.get(&class).cloned().unwrap_or_default()
-    }
-    fn splitfirstmarks(&self, class: i64) -> String {
-        self.mark_spec_taint();
-        self.page_state.marks_split_first
-            .get(&class)
-            .cloned()
-            .unwrap_or_default()
-    }
-    fn splittopmarks(&self, class: i64) -> String {
-        self.mark_spec_taint();
-        self.page_state.marks_split_top
-            .get(&class)
-            .cloned()
-            .unwrap_or_default()
-    }
-    fn splitbotmarks(&self, class: i64) -> String {
-        self.mark_spec_taint();
-        self.page_state.marks_split_bot
-            .get(&class)
-            .cloned()
-            .unwrap_or_default()
-    }
-    /// `\insert<num>{`：下一个组为 insert 组（tex.web group_code=insert_group=11）。
-    ///
-    /// tex.web `begin_insert_or_adjust`：`scan_eight_bit_int` → `saved(0):=cur_val`
-    /// → `new_save_level(insert_group); scan_left_brace; normal_paragraph; push_nest;
-    /// mode:=-vmode`——组体由主循环在内部垂直模式照常排版，`}` 处 group_end 的
-    /// Insert 臂 vpack(natural) 后挂 ins_node（体排版在此真正发生，脚注文本因此
-    /// 可回流页底）。`\insert255` 按 tex.web 报错并改道 0（box 255 是页面寄存器）
-    /// ——否则 fire_up 累积会写穿 [`PAGE_BOX`] 页队列。
-    fn insert_begin(&mut self, class: usize) -> Result<()> {
-        let mut class = class;
-        if class == PAGE_BOX {
-            self.report_error("You can't \\insert255.");
-            self.report_help("I'm changing to \\insert0; box 255 is special.");
-            class = 0;
-        }
-        self.box_state.pending_kind = Some(GroupKind::Insert);
-        self.box_state.pending_insert_class = class;
-        Ok(())
-    }
-    /// `\vadjust{...}`：下一个组为 adjust 组，体在内部垂直模式排版。
-    fn vadjust(&mut self, toks: Vec<Token>) -> Result<()> {
-        debug_assert!(toks.is_empty());
-        self.box_state.pending_kind = Some(GroupKind::VAdjust);
-        Ok(())
-    }
-    /// 输出例程的隐式组：组种类 8（output group，tex.web group_code）。
-    fn output_routine_begin(&mut self) -> Result<()> {
-        self.box_state.pending_kind = Some(GroupKind::Output);
-        Ok(())
-    }
-    /// `\mark`/`\marks<n>`：mark 节点追加到当前列表（无维度）。
-    /// 同步更新当前页 marks_first/marks_bot（class=None 映射到 0，即 \mark=\marks0）。
-    fn mark(&mut self, class: Option<i64>, text: String) -> Result<()> {
-        // TeX 语义：\mark 等价于 \marks0（class 0）。
-        let c = class.unwrap_or(0);
-        // marks_first：该 class 在当前页第一次出现时设置。
-        self.page_state.marks_first.entry(c).or_insert_with(|| text.clone());
-        // marks_bot：每次出现都更新（最后一次出现）。
-        self.page_state.marks_bot.insert(c, text.clone());
-        self.append(Node::Mark { class, text });
-        Ok(())
-    }
-    fn take_write_flush_pending(&mut self) -> bool {
-        let v = self.page_state.write_flush_pending;
-        self.page_state.write_flush_pending = false;
-        v
-    }
-}
-
-impl IoSink for NodeBuilder {
-    // （report_error, report_help 走子 trait 默认实现，NodeBuilder 未覆写）
-    /// `\patterns{...}`（M4-6）：解析文本为 Liang trie（后续段落折行按需断字）。
-    fn patterns(&mut self, patterns: Vec<u8>) -> Result<()> {
-        self.patterns = PatternTrie::parse(&patterns);
-        Ok(())
-    }
-    /// `\hyphenation{...}`（ETRIP）：追加异常词表（小写字母 + 允许断点）。
-    fn hyphenation(&mut self, words: Vec<(Vec<u8>, Vec<usize>)>) -> Result<()> {
-        self.hyph_exceptions.extend(words);
-        Ok(())
-    }
-    // ETRIP 冲刺：终端转录（\message/\show/\showthe/\write16）
-    fn message(&mut self, text: String) -> Result<()> {
-        self.io_state.transcript.push_str(&text);
-        Ok(())
-    }
-    fn show(&mut self, text: String) -> Result<()> {
-        self.io_state.transcript.push_str(&text);
-        self.io_state.transcript.push('\n');
-        Ok(())
-    }
-    /// `\showbox<n>`：把盒子寄存器内容格式化到转录（TeX show_box 风格）。
-    fn write16(&mut self, text: String) -> Result<()> {
-        self.io_state.transcript.push_str(&text);
-        self.io_state.transcript.push('\n');
-        Ok(())
-    }
-    /// `\showgroups`：把组上下文栈格式化为转录（诊断用）。
-    fn showgroups(&mut self) -> Result<()> {
-        let mut out = String::from("### begin group\n");
-        for (i, g) in self.groups.iter().enumerate() {
-            out.push_str(&format!("level {i}: {:?} (code {})\n", g.kind, g.kind.code()));
-        }
-        out.push_str("### end group\n");
-        self.io_state.transcript.push_str(&out);
-        Ok(())
-    }
-    /// `\showlists`：把当前列表简化为转录（诊断用；盒子内容递归展示）。
-    fn showlists(&mut self) -> Result<()> {
-        let mut out = String::from("### begin list\n");
-        for (li, list) in self.lists.iter().enumerate() {
-            out.push_str(&format!(
-                "### list {li} (mode {:?}, {} nodes)\n",
-                self.list_modes.get(li),
-                list.len()
-            ));
-            for n in list {
-                showbox_format_node(n, 1, &self.fonts, &self.font_cs_names, &mut out);
-            }
-        }
-        out.push_str("### end list\n");
-        self.io_state.transcript.push_str(&out);
-        Ok(())
-    }
-    /// `\write<n>{...}`（非 \immediate）：whatsit 节点追加到当前列表（无维度）。
-    fn whatsit(&mut self, text: String) -> Result<()> {
-        self.append(Node::Whatsit {
-            text,
-            special: false,
-        });
-        Ok(())
-    }
-    /// `\special{...}`：whatsit 节点（`special: true`——shipout 经 DVI xxx
-    /// 落后端；`\pdfrefximage` 的图片载荷同走此通道）。
-    fn special(&mut self, text: String) -> Result<()> {
-        self.append(Node::Whatsit {
-            text,
-            special: true,
-        });
-        Ok(())
-    }
-}
-
-/// 组合 trait 落名：NodeBuilder 经 `include!` 入 mod.rs，
-/// 排版器以 `Box<dyn TokenSink>` 挂进 Expander。
 impl TokenSink for NodeBuilder {}
 
 /// M4-5 fin_align（tex.web §784-823 简化数学）：两遍法——
@@ -2332,7 +1139,12 @@ fn align_fin(params: ntex_core::param::Params, dir: AlignDir, mut ctx: AlignCtx)
                     let each = diff / sp as i64;
                     let mut rem = diff % sp as i64;
                     for h in row_extents.iter_mut().take(s + sp).skip(s) {
-                        let extra = if rem > 0 { rem -= 1; 1 } else { 0 };
+                        let extra = if rem > 0 {
+                            rem -= 1;
+                            1
+                        } else {
+                            0
+                        };
                         *h += each + extra;
                     }
                 }
@@ -2359,10 +1171,9 @@ fn align_fin(params: ntex_core::param::Params, dir: AlignDir, mut ctx: AlignCtx)
                         let mut nodes: Vec<Node> = vec![align_tabskip_node(ctx.tabskips.first())];
                         for c in cells {
                             let end = (c.start_col + c.span_len as usize).min(n);
-                            let span_h: i64 = (c.start_col..end)
-                                .map(|i| row_extents[i])
-                                .sum::<i64>()
-                                + ((c.start_col + 1)..end).map(glue_w).sum::<i64>();
+                            let span_h: i64 =
+                                (c.start_col..end).map(|i| row_extents[i]).sum::<i64>()
+                                    + ((c.start_col + 1)..end).map(glue_w).sum::<i64>();
                             let mut b = crate::node::vpack(c.nodes, span_h, params.boxmaxdepth);
                             b.width = col_width;
                             nodes.push(Node::Box(b));
@@ -2408,7 +1219,12 @@ fn align_fin(params: ntex_core::param::Params, dir: AlignDir, mut ctx: AlignCtx)
                     let each = diff / sp as i64;
                     let mut rem = diff % sp as i64;
                     for wi in w.iter_mut().take(s + sp).skip(s) {
-                        let extra = if rem > 0 { rem -= 1; 1 } else { 0 };
+                        let extra = if rem > 0 {
+                            rem -= 1;
+                            1
+                        } else {
+                            0
+                        };
                         *wi += each + extra;
                     }
                 }
@@ -2428,23 +1244,17 @@ fn align_fin(params: ntex_core::param::Params, dir: AlignDir, mut ctx: AlignCtx)
                         .iter()
                         .filter_map(|it| match it {
                             AlignItem::Row(cells) => {
-                                let nodes: Vec<Node> = std::iter::once(
-                                    align_tabskip_node(ctx.tabskips.first()),
-                                )
-                                .chain(cells.iter().map(|c| {
-                                    let end =
-                                        (c.start_col + c.span_len as usize).min(n);
-                                    let span_w: i64 = (c.start_col..end)
-                                        .map(|i| w[i])
-                                        .sum::<i64>()
-                                        + ((c.start_col + 1)..end)
-                                            .map(glue_w)
-                                            .sum::<i64>();
-                                    Node::Box(crate::node::hpack(
-                                        &c.nodes, span_w,
-                                    ))
-                                }))
-                                .collect();
+                                let nodes: Vec<Node> =
+                                    std::iter::once(align_tabskip_node(ctx.tabskips.first()))
+                                        .chain(cells.iter().map(|c| {
+                                            let end = (c.start_col + c.span_len as usize).min(n);
+                                            let span_w: i64 = (c.start_col..end)
+                                                .map(|i| w[i])
+                                                .sum::<i64>()
+                                                + ((c.start_col + 1)..end).map(glue_w).sum::<i64>();
+                                            Node::Box(crate::node::hpack(&c.nodes, span_w))
+                                        }))
+                                        .collect();
                                 Some(crate::node::hbox_dimensions(&nodes).width)
                             }
                             AlignItem::Material(_) => None,
@@ -2460,15 +1270,13 @@ fn align_fin(params: ntex_core::param::Params, dir: AlignDir, mut ctx: AlignCtx)
             // `\vbox{\halign{#\cr a\cr b\cr}}` 两行均 5.55557 宽）。旧实现
             // 无规格时各行保持自然宽，amsmath `\measure@` 的 `\wd\@ne`
             // （末行宽 = 全对齐宽）随之塌掉。to/spread 规格优先。
-            let total = target.unwrap_or_else(|| {
-                w.iter().sum::<i64>() + (0..=n).map(glue_w).sum::<i64>()
-            });
+            let total =
+                target.unwrap_or_else(|| w.iter().sum::<i64>() + (0..=n).map(glue_w).sum::<i64>());
             let mut rows: Vec<Node> = Vec::new();
             for item in ctx.stream {
                 match item {
                     AlignItem::Row(cells) => {
-                        let mut nodes: Vec<Node> =
-                            vec![align_tabskip_node(ctx.tabskips.first())];
+                        let mut nodes: Vec<Node> = vec![align_tabskip_node(ctx.tabskips.first())];
                         for c in cells {
                             let end = (c.start_col + c.span_len as usize).min(n);
                             let span_w: i64 = (c.start_col..end).map(|i| w[i]).sum::<i64>()
@@ -2576,3 +1384,10 @@ fn align_tabskip_node(g: Option<&ntex_core::Glue>) -> Node {
         },
     }
 }
+
+mod align;
+mod boxes;
+mod font;
+mod io;
+mod math;
+mod page;
