@@ -54,7 +54,7 @@ impl Expander {
         // e-TeX \tracingassigns（misc 5）：参数赋值追踪（{changing X=old} 在
         // 赋值前（旧 misc5>0 才输出——\tracingassigns=1 本身只有 into）；
         // {into X=new}/{reassigning X=new} 在赋值后）
-        let tracing_assigns = self.params.misc[5] > 0;
+        let tracing_assigns = self.tracing_assigns();
         let old = self.params.get(kind);
         if tracing_assigns && old != value {
             let name = param_name(kind);
@@ -66,7 +66,7 @@ impl Expander {
         }
         self.params.set(kind, value);
         self.sink.param_changed(kind, value)?;
-        if tracing_assigns || self.params.misc[5] > 0 {
+        if tracing_assigns || self.tracing_assigns() {
             let name = param_name(kind);
             if let ParamValue::Number(n) = value {
                 if old == value {
@@ -237,86 +237,67 @@ impl Expander {
 
     /// 扫描寄存器目标：数字下标（`\count0`）或 cs 引用（`\count\foo`，须已分配）。
     fn assign_count(&mut self, idx: usize, val: i64) {
-        let global = self.is_global();
-        // e-TeX \tracingassigns（misc 5）：\count 寄存器赋值追踪
-        if self.params.misc[5] > 0 {
-            self.trace_assign_register(
-                "count",
-                idx,
-                global,
-                &self.registers.count(idx).to_string(),
-                &val.to_string(),
-            );
-        }
-        self.save_register_for_assign(RegKind::Count, idx, global);
-        self.registers.set_count(idx, val);
-        // 输出例程刀 5（G5 页号链）：count0..9 是 shipout 页标签/DVI bop 计数的
-        // 取值源；insert 三联寄存器也经同一事件面送到页面构建器。
-        let _ = self.sink.count_changed(idx, val);
-        self.finish_assignment();
+        self.assign_register(RegKind::Count, idx, RegValue::Count(val));
     }
 
     fn assign_dimen(&mut self, idx: usize, val: i64) {
-        let global = self.is_global();
-        // e-TeX \tracingassigns（misc 5）：\dimen 寄存器赋值追踪
-        if self.params.misc[5] > 0 {
-            self.trace_assign_register(
-                "dimen",
-                idx,
-                global,
-                &format_dimen(self.registers.dimen(idx)),
-                &format_dimen(val),
-            );
-        }
-        self.save_register_for_assign(RegKind::Dimen, idx, global);
-        self.registers.set_dimen(idx, val);
-        let _ = self.sink.dimen_changed(idx, val);
-        self.finish_assignment();
+        self.assign_register(RegKind::Dimen, idx, RegValue::Dimen(val));
     }
 
     fn assign_skip(&mut self, idx: usize, val: Glue) {
-        let global = self.is_global();
-        // e-TeX \tracingassigns（misc 5）：\skip 寄存器赋值追踪
-        if self.params.misc[5] > 0 {
-            self.trace_assign_register(
-                "skip",
-                idx,
-                global,
-                &format_glue(self.registers.skip(idx)),
-                &format_glue(val),
-            );
-        }
-        self.save_register_for_assign(RegKind::Skip, idx, global);
-        self.registers.set_skip(idx, val);
-        let _ = self.sink.skip_changed(idx, val);
-        self.finish_assignment();
+        self.assign_register(RegKind::Skip, idx, RegValue::Skip(val));
     }
 
     fn assign_muskip(&mut self, idx: usize, val: Glue) {
-        // \thinmuskip/\medmuskip/\thickmuskip（0/1/2）：通知排版器数学间距参数
-        if idx < 3 {
-            let _ = self.sink.muskip_param(idx, val);
-        }
-        let global = self.is_global();
-        // e-TeX \tracingassigns（misc 5）：\muskip 寄存器赋值追踪
-        if self.params.misc[5] > 0 {
-            self.trace_assign_register(
-                "muskip",
-                idx,
-                global,
-                &format_mu_glue(self.registers.muskip(idx)),
-                &format_mu_glue(val),
-            );
-        }
-        self.save_register_for_assign(RegKind::Muskip, idx, global);
-        self.registers.set_muskip(idx, val);
-        self.finish_assignment();
+        self.assign_register(RegKind::Muskip, idx, RegValue::Muskip(val));
     }
 
     fn assign_toks(&mut self, idx: usize, val: TokenArray) {
+        self.assign_register(RegKind::Toks, idx, RegValue::Toks(val));
+    }
+
+    /// Five register types share the same scope and assignment lifecycle.
+    fn assign_register(&mut self, kind: RegKind, idx: usize, val: RegValue) {
+        // The math spacing mirror was historically notified before consuming
+        // the global prefix and before updating the register.
+        if let (RegKind::Muskip, RegValue::Muskip(v)) = (kind, &val) {
+            if idx < 3 {
+                let _ = self.sink.muskip_param(idx, *v);
+            }
+        }
         let global = self.is_global();
-        self.save_register_for_assign(RegKind::Toks, idx, global);
-        self.registers.set_toks(idx, val);
+        // Keep toks tracing unchanged here; its missing trace is fixed with a
+        // dedicated regression test and commit.
+        if self.tracing_assigns() && kind != RegKind::Toks {
+            let old = self.register_value(kind, idx);
+            let display = |v: &RegValue| match v {
+                RegValue::Count(n) => n.to_string(),
+                RegValue::Dimen(n) => format_dimen(*n),
+                RegValue::Skip(g) => format_glue(*g),
+                RegValue::Muskip(g) => format_mu_glue(*g),
+                RegValue::Toks(_) => unreachable!("toks tracing is handled separately"),
+            };
+            self.trace_assign_register(reg_kind_name(kind), idx, global, &display(&old), &display(&val));
+        }
+        self.save_register_for_assign(kind, idx, global);
+        match (kind, val) {
+            (RegKind::Count, RegValue::Count(v)) => {
+                self.registers.set_count(idx, v);
+                // count0..9 supply shipout page labels and insert accounting.
+                let _ = self.sink.count_changed(idx, v);
+            }
+            (RegKind::Dimen, RegValue::Dimen(v)) => {
+                self.registers.set_dimen(idx, v);
+                let _ = self.sink.dimen_changed(idx, v);
+            }
+            (RegKind::Skip, RegValue::Skip(v)) => {
+                self.registers.set_skip(idx, v);
+                let _ = self.sink.skip_changed(idx, v);
+            }
+            (RegKind::Muskip, RegValue::Muskip(v)) => self.registers.set_muskip(idx, v),
+            (RegKind::Toks, RegValue::Toks(v)) => self.registers.set_toks(idx, v),
+            _ => unreachable!("register kind/value mismatch"),
+        }
         self.finish_assignment();
     }
 
@@ -1254,7 +1235,7 @@ impl Expander {
         if let Some(body) = trace {
             // \\tracingassigns 开启时组恢复不打 {restoring}（tex.web：恢复走
             // tracingassigns 的 changing/into 语义或静默；参考 etrip 无恢复行）
-            if !body.is_empty() && self.params.misc[5] <= 0 {
+            if !body.is_empty() && !self.tracing_assigns() {
                 let verb = if retain { "retaining" } else { "restoring" };
                 let _ = self.sink.write16(format!("{{{verb} {body}}}\n"));
             }
@@ -1479,7 +1460,7 @@ impl Expander {
         let global = self.is_global();
         // e-TeX \tracingassigns（misc 5）：宏定义追踪（define_macro_scoped 不走
         // set_slot_scoped——这里补钩子）
-        let tracing = self.params.misc[5] > 0;
+        let tracing = self.tracing_assigns();
         let prev = if tracing {
             Some(self.eqtb.slot(csid).clone())
         } else {
@@ -1550,7 +1531,7 @@ impl Expander {
     /// 绑定不得提前引燃。
     fn set_slot_scoped_with(&mut self, csid: u32, slot: EqSlot, global: bool, fire_after: bool) {
         // e-TeX \tracingassigns（misc 5）：赋值追踪（changing/into/reassigning）
-        if self.params.misc[5] > 0 {
+        if self.tracing_assigns() {
             let prev = self.eqtb.slot(csid).clone();
             self.trace_assign(csid, global, &prev, &slot);
         }
@@ -1596,6 +1577,10 @@ impl Expander {
 
     /// e-TeX `\tracingassigns`：寄存器赋值追踪（`\count17=` 的
     /// changing/into/reassigning；tex.web 对寄存器赋值同样打点）。
+    fn tracing_assigns(&self) -> bool {
+        self.params.misc[5] > 0
+    }
+
     fn trace_assign_register(
         &mut self,
         cmd: &str,
@@ -1604,7 +1589,7 @@ impl Expander {
         prev: &str,
         new: &str,
     ) {
-        if self.params.misc[5] <= 0 {
+        if !self.tracing_assigns() {
             return;
         }
         let name = format!("{}{}", self.esc(cmd), idx);
