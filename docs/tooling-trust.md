@@ -24,7 +24,7 @@ NTex 是「错误恢复式引擎」——它会吞掉错误继续跑。这让两
 |---|---|---|---|---|
 | 1 | `corpus-probe` 产物路径 | 假设产物在仓库根，实际 ntex-dvi 保留源文件目录 | 假阴性：全库判 **0/8**（实际都成功） | 已修（路径按 `tex.parent`）+ 三级判定 |
 | 2 | `corpus-probe` 只判存在性 | 宏/格式文件的**空页**也算 PASS | 假阳性：曾报 8/8（实为 5/8+3 EMPTY） | 已修（非白像素 `MIN_INK=200`） |
-| 3 | **`\meaning` 丢定界符** | 只渲染 `#n`，不渲染 `params.text` | **两轮定位跑偏**：§38 断言 → §39 固化 → §41 推翻 | ✅ `make instrument-check`（13 用例）|
+| 3 | **`\meaning` 丢定界符** | 只渲染 `#n`，不渲染 `params.text` | **两轮定位跑偏**：§38 断言 → §39 固化 → §41 推翻 | ✅ `make instrument-check`（14 用例）|
 | 4 | `--no-plain` 语义 | 跳过预载但保留 plain 表，非真 INITEX | `\the\catcode0` 给 12（应 9），init 域对拍失真 | ✅ 已修（`--no-plain` 切 INITEX 表）|
 | 5 | 探针自伤 | 手写探针出错（`\let\else:` 配对、`%` 续行、缺 plain 定义） | 多轮浪费——实测 6 个探针里 3 个是探针自身问题 | ✅ `scripts/abcheck.py`（自动对拍）|
 | 6 | 转录靠手工 grep | 5620 条错误里只能看到「数量最多的那类」 | 首现场判断反复出错（曾以为在 l.21291，实为 **l.301**，早 2 万行）| ✅ `scripts/logtrace.py`（首现场/震中/级联形状）|
@@ -43,12 +43,12 @@ NTex 是「错误恢复式引擎」——它会吞掉错误继续跑。这让两
 make instrument-check
 ```
 
-对拍 13 个诊断原语用例（`\meaning` 的定界符/参数/混合、`\the`、`\number`、
+对拍 14 个诊断原语用例（`\meaning` 的定界符/参数/混合、`\the`、`\number`、
 `\romannumeral`、`\string`、`\catcode` 初表 …）与 `pdfTeX` 输出。**失真即回归**。
 
 - 脚本：`scripts/instrument-check.py`
 - 依赖：`~/.local/bin/pdftex`（TinyTeX）
-- 当前状态：**13/13 一致**
+- 当前状态：**14/14 一致**
 - 何时跑：改了 `meaning_text` / `slot_display` / `show_toks` / `\the` 读回 /
   `\string` 类原语之后；发版前。
 

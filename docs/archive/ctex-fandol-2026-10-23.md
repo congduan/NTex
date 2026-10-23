@@ -4,7 +4,7 @@
 
 开工先 `git fetch origin`，`origin/main=3fd1477595dbd5f80f89b1e406137492a68074dd`，工作树干净；以该 HEAD、`CARGO_TARGET_DIR=/tmp/biblatex-target` 重建 `ntex-dvi`/`ntex-pdf`。先读 `AGENTS.md`、`plan.md` §0.4/第 24 条、`KNOWN-SIMPLIFICATIONS.md`、`tooling-trust.md`，并考古 2026-09-27 ctex 战役记录。历史中文样张用自定义 `\setCJKmainfont`/字体桥，并非 ctex 默认 Fandol 已通过。
 
-初始假说“缺 Fandol OTF 使 ctex 报 unavailable”被源码与 A/B 证伪。`assets/tex-minimal/tex/latex/ctex/fontset/ctex-fontset-fandol.def` 第 32–58 行的第一臂对 **pdfTeX PDF 输出模式**直接调用 `\ctex_fontset_error:n {fandol}`；第二臂对 **pdfTeX DVI 输出模式**走 CJKutf8 + `ctex-zhmap-fandol.tex`。分支判定来自 `ctex.sty` 第 805–815 行的 `\sys_if_engine_pdftex:TF` 和 `\sys_if_output_pdf:TF`。这不是文件查找失败，也不是“ctex 必须 XeTeX”：ctex 上游明确提供 pdfTeX/DVI 兼容臂。`ctex-zhmap-fandol.tex` 自身注明 pdfTeX 不支持 OTF，DVI 时发 `pdf:mapline` special 交 dvipdfmx 载入 Fandol OTF。
+初始假说“缺 Fandol OTF 使 ctex 报 unavailable”被源码与 A/B 证伪。`assets/tex-minimal/tex/latex/ctex/fontset/ctex-fontset-fandol.def` 第 29 行的第一臂对 **pdfTeX PDF 输出模式**直接调用 `\ctex_fontset_error:n {fandol}`；第二臂对 **pdfTeX DVI 输出模式**走 CJKutf8 + `ctex-zhmap-fandol.tex`。分支判定来自 `ctex.sty` 第 805–815 行的 `\sys_if_engine_pdftex:TF` 和 `\sys_if_output_pdf:TF`。这不是文件查找失败，也不是“ctex 必须 XeTeX”：ctex 上游明确提供 pdfTeX/DVI 兼容臂。`ctex-zhmap-fandol.tex` 自身注明 pdfTeX 不支持 OTF，DVI 时发 `pdf:mapline` special 交 dvipdfmx 载入 Fandol OTF。
 
 NTex CLI 自动 LaTeX 路线原将 `\pdfoutput` 置 1，以便 graphics 宏包选 pdfTeX 驱动；尽管最终产物仍是 DVI，ctex 因此选到上游显式报错臂。原样最小探针报 `Critical Class ctexart Error`，后续 8 条 Undefined，DVI 640B。仅在源前加 `\pdfoutput=0` 即 0 条 `!`、1 页 1704B；该手动分支结果与修复后的原样探针 DVI SHA-256 **逐字节相同**（`cbc998951217996e963fd1506309971412feb16086adf718c1686a3990550a11`）。
 

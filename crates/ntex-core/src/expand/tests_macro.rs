@@ -593,6 +593,10 @@ fn meaning_long_prefix_matches_pdftex_and_preserves_patchability() {
         expand("\\protected\\long\\def\\f#1{#1}\\meaning\\f").unwrap(),
         "\\protected\\long macro:#1->#1"
     );
+    assert_eq!(
+        expand("\\long\\outer\\protected\\def\\f#1{#1}\\meaning\\f").unwrap(),
+        "\\protected\\long\\outer macro:#1->#1"
+    );
 }
 
 #[test]

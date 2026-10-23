@@ -10,6 +10,7 @@
 |---|---|---|---|
 | `expand/primitive_pdf_image.rs:33` | hyperref 依赖的 pdfTeX PDF 原语族（`\pdfinfo`/`\pdfcatalog`/`\pdfcolorstack`/`\pdfdest`/`\pdfstartlink`/`\pdfendlink`）只按常见 pdfTeX 参数形态吞参并发 `PDF-PRIMITIVE-STUB` 标记；`\pdfstartlink` action 文法仅覆盖 `user{...}`、`goto name{...}`、`goto num<n>`、`goto page<n>{...}`、`thread` 同 target 族，PDF 后端尚不消费 Catalog/Info/Link/Dest/ColorStack | hyperref 最小 DVI 路径可过；真实 PDF link/catalog/info/color 输出仍缺语义，罕见 action 形态会显式报错而非静默错吞 | ⚠️ 第二十三刀最小实现 |
 | `ntex-pdf/src/pdf.rs`（DVI 字体分类） | 尚不解释 ctex `ctex-zhmap-fandol.tex` 发出的 `pdf:mapline`，也不把 CJKutf8 的 `unisong*.pfb` 虚拟字体映射到 Fandol OTF | ctex 的 pdfTeX/DVI 路线可零错出 DVI；用 `ntex-pdf` 转换时中文文本层乱码，须用 dvipdfmx 才能得到可见且可提取的中文 PDF | ⚠️ 2026-10-23 ctex 刀实证，见 `archive/ctex-fandol-2026-10-23.md` |
+| `ntex-dvi/src/main.rs:635` / `assets/tex-minimal/tex/latex/graphics-cfg/graphics.cfg:12-17,40-41` | ctex 文档为选 Fandol DVI 字体臂而设 misc[63]=0；同一 `\pdfoutput` 信号使 `graphics.cfg` 选 `dvips.def`，其扩展名表不含 PNG | `ctexart` 等文档的 `\includegraphics{img.png}` 会尝试 `img.xbb` 并报 BoundingBox 错；显式 `fontset=none` 也被顶层类名扫描降到此路径。可用 NTex 自有 `graphics.cfg` 固定选 `pdftex.def`，将图片驱动与 `\pdfoutput` 信号解耦 | ⚠️ 2026-10-23 ctex review 实测，待修 |
 
 ## 1. 数学原语（存在性测试/消费参数——最高风险区）
 
@@ -161,6 +162,7 @@ demo1 六刀 + 输出例程刀 2/3/5 的修复登记；全部已提交，留作�
 | 预载路径 | 预载后空文档经 `\plainoutput` 收尾冲出一页空页 | corpus 内宏/格式文件（无 `\bye`）页数与真 TeX（0 页）不一致 | 待做（survey #1） |
 | `\lccode/\uccode` 初表 | 预载前初表全 0，未按 INITEX 初值（`a..z`/`A..Z` = 自身）播种 | 预载失败回落时 `\lowercase` 行为偏差 | 待做（survey #2） |
 | `expand/macros.rs` 实参扫描 | `\char`/`\number`/`\romannumeral` 在**实参位置**取不到数字时**不报** `! Missing number, treated as zero.`（pdfTeX 报）| 错误报告面缺失（排版结果不变，影响诊断保真与 TRIP 口径）| 待做（archive/latex-feasibility.md §A1.octies；回归锁 `tests_scan.rs` `arg_scan_does_not_expand`）|
+| `expand/primitive.rs:397,566` / `expand/save.rs:1378` | `\meaning`、`\show` 与槽显示的宏前缀硬编码反斜杠，未走 `\escapechar` 通道；tex.web 用 `print_esc` 输出前缀 | `\escapechar=-1` 时真 TeX 的 `long macro:` 等前缀无反斜杠，NTex 仍印 `\long macro:` | ⚠️ 2026-10-23 biblatex review 实测，待修 |
 | `expand/primitive.rs` `meaning_text` / `save.rs` `slot_display` | 宏的 `\meaning` **只渲染 `#n` 而丢参数文本定界符**（pdfTeX `\meaning\if@` = `macro:if->`，NTex 误报 `macro:->`）——曾把 §38/§39 的根因误判为 `\uppercase` 语义问题 | `\meaning` 输出失真；误导诊断（非功能缺陷） | ✅ 已修（2026-09-11，改渲染 `params.text`，tex.web `print_meaning` 的 `token_show(参数文本)`；测试 `tests_scan.rs` `uppercase_param_text`） |
 | `expand/scan.rs` | `scan_glue` 胶水上下文不认 dimen 寄存器别名（`\skip_const:Nn \c_zero_skip{\c_zero_dim}` 致命） | latex.ltx l.13899 停点 | ✅ 已修（226c177，`RegKind::Dimen` 臂） |
 | `scripts/corpus-probe.py` | 产物路径按仓库根找（`REPO/<stem>.dvi`），但 ntex-dvi/ntex-pdf 默认输出**保留源文件目录**（`<输入去扩展名>.dvi/.pdf`）→ 全库误判 FAIL | KPI 假阴性（曾把实际成功的 `plain/*.tex` 全判 0/8） | ✅ 已修（2026-09-11，路径按 `tex.parent` 取 + 清理同步） |

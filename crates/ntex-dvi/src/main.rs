@@ -632,7 +632,7 @@ fn scan_package_requests(src: &str) -> Vec<(String, RequireKind)> {
 fn ctex_needs_dvi_output(src: &str) -> bool {
     scan_package_requests(src).iter().any(|(name, kind)| {
         (*kind == RequireKind::DocumentClass
-            && matches!(name.as_str(), "ctexart" | "ctexrep" | "ctexbook"))
+            && matches!(name.as_str(), "ctexart" | "ctexrep" | "ctexbook" | "ctexbeamer"))
             || (*kind == RequireKind::UsePackage && name == "ctex")
     })
 }
@@ -935,6 +935,7 @@ mod auto_pkg_scan_tests {
     fn ctex_classes_select_dvi_fontset_branch() {
         assert!(ctex_needs_dvi_output("\\documentclass{ctexart}"));
         assert!(ctex_needs_dvi_output("\\documentclass[UTF8]{ctexrep}"));
+        assert!(ctex_needs_dvi_output("\\documentclass{ctexbeamer}"));
         assert!(ctex_needs_dvi_output("\\usepackage{geometry,ctex}"));
         assert!(!ctex_needs_dvi_output(
             "% \\documentclass{ctexart}\n\\documentclass{article}"

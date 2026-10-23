@@ -79,6 +79,14 @@ CASES: list[tuple[str, str, str, str]] = [
         r"I=(macro:[^\s]*)", "plain",
     ),
     (
+        "meaning-macro-prefixes",
+        r"""\long\outer\protected\def\f#1{#1}
+\message{I=\meaning\f;}
+\show\f
+\end""",
+        r"(?s)I=(.*?);.*?> \\f=(.*?macro:)", "plain",
+    ),
+    (
         "meaning-undefined",
         r"""\message{I=\meaning\zzzundef}
 \end""",
@@ -187,7 +195,7 @@ def grab(text: str, rx: str) -> str | None:
     """从输出里捞信号（先按行滤噪，再跨整段找第一个匹配）。"""
     cleaned = "\n".join(l for l in text.splitlines() if not NOISE.match(l))
     m = re.search(rx, cleaned)
-    return m.group(1).strip() if m else None
+    return " | ".join(group.strip() for group in m.groups()) if m else None
 
 
 def main() -> int:
