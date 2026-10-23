@@ -213,7 +213,7 @@ and I'll forget about whatever was undefined.";
 /// \vsize/\voffset` 等页面参数、`\baselineskip/\parskip` 等胶参数、`\tolerance`
 /// 等整数参数都在其列；内部整数（misc 数组）走 [`int_param_index`]，
 /// `\prevdepth` 在 exec_advance 有专属臂（TRIP L434），不入此表。
-fn param_kind_of(p: Primitive) -> Option<ParamKind> {
+pub(crate) fn param_kind_of(p: Primitive) -> Option<ParamKind> {
     Some(match p {
         Primitive::ParIndent => ParamKind::ParIndent,
         Primitive::LineSkipLimit => ParamKind::LineSkipLimit,
