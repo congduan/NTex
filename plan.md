@@ -207,6 +207,15 @@
     T1 44 页/1 错，T2 40 页/0 错。TS1 尖括号字体通道与 22 对最终复核仍待续，
     诊断现场 `/tmp/avd-group3/WIP.md`。
 
+22. **代码健康重构：SavedValue 与赋值路径**（10-23）：R1 五种寄存器保存项合并、R2 五个
+    `assign_*` 共用流水线并将 `\tracingassigns` 收为 helper、R3 参数映射单一事实源；
+    `\toks` tracing 的唯一行为变更单独提交并有转录测试。四步 core 580→581、layout 334
+    全绿；TRIP 构造 177B、tripos 750B/12 页/0 错、Transformer 53 页/0 错、宏包
+    13/13、T1 44 页/1 错、T2 40 页/0 错、T3 49 页/0 错；公式 x0=203.2pt、
+    编号 x1=484.4pt，页底越线 0 页。与 `a4b4815` 同目录对拍的五份 DVI
+    （tripos、Transformer、T1/T2/T3）SHA-256 全同。R4 文件拆分留下一刀；Claude 简报尝试超时。
+    证据与限制见 [重构战报](docs/archive/refactor-saved-value-2026-10-23.md)。
+
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 
 - **第十八刀** 尾递归鞍具校准 → `make check` 797 → **800 全绿**；pdfTeX 对照证明原否定结论有误；
