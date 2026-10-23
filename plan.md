@@ -215,6 +215,7 @@
     编号 x1=484.4pt，页底越线 0 页。与 `a4b4815` 同目录对拍的五份 DVI
     （tripos、Transformer、T1/T2/T3）SHA-256 全同。R4 文件拆分留下一刀；Claude 简报尝试超时。
     证据与限制见 [重构战报](docs/archive/refactor-saved-value-2026-10-23.md)。
+    R4 已完成，见 [R4 文件拆分战报](docs/archive/refactor-split-r4-2026-10-23.md)。
 
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 
