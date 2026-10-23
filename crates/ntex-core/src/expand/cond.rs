@@ -1001,7 +1001,8 @@ impl Expander {
                 //     哨兵 → 判 T → 全体 `\DeclareRobustCommand` 产物走 active
                 //     char 的 auxi 误路（若incsname 体、`foo␣` 星形 csname 缺失
                 //     → NFSS 定义群 80 条静默丢失）。
-                //   - 真名 cs → relax/256 哨兵（下方 `(None, None)`）。
+                //   - 带字符含义的 \let 别名 → 原字符；其余真名 cs →
+                //     relax/256 哨兵（下方 `(None, None)`）。
                 if noexpand {
                     if tok.is_active() {
                         let chr = self
@@ -1012,6 +1013,14 @@ impl Expander {
                             .map(|c| c as u32)
                             .unwrap_or(256);
                         return Ok((Some(chr), Some(Catcode::Active)));
+                    }
+                    // \noexpand only freezes expandable meanings. A control
+                    // sequence let to a character (notably expl3's
+                    // \c_space_token) still supplies that character to \if
+                    // and \ifcat. Treating it as the relax/256 sentinel makes
+                    // \if\noexpand\c_space_token\noexpand\some_macro true.
+                    if let Some(EqSlot::Char { catcode, charcode }) = self.resolve_slot(csid) {
+                        return Ok((Some(charcode), Some(catcode)));
                     }
                     return Ok((None, None));
                 }

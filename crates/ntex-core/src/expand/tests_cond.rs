@@ -82,6 +82,32 @@ use super::*;
     }
 
     #[test]
+    fn noexpand_char_alias_keeps_character_in_if_operands() {
+        // pdfTeX GT: \let\bg={ gives a character meaning. \noexpand does not
+        // turn that unexpandable meaning into the relax/256 sentinel. expl3's
+        // \c_space_token uses the same mechanism in \iow_wrap's line ending.
+        let setup = "\\let\\bg={\\let\\dot=.\\def\\mac{x}";
+        assert_eq!(
+            expand(&format!("{setup}\\if\\noexpand\\bg\\noexpand\\mac T\\else F\\fi"))
+                .unwrap()
+                .trim(),
+            "F"
+        );
+        assert_eq!(
+            expand(&format!("{setup}\\ifcat\\noexpand\\bg\\noexpand\\mac T\\else F\\fi"))
+                .unwrap()
+                .trim(),
+            "F"
+        );
+        assert_eq!(
+            expand(&format!("{setup}\\if\\noexpand\\dot. T\\else F\\fi"))
+                .unwrap()
+                .trim(),
+            "T"
+        );
+    }
+
+    #[test]
     fn ifcat_noexpand_active_char_stays_cat13() {
         // GT pdftex 1.40.29 四例定案（第十二刀）：`\noexpand` 冻结的 active
         // char 在 `\ifcat` 眼里仍是 catcode 13（定义与否无关）；真名 cs 是

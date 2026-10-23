@@ -228,6 +228,7 @@
 24. **biblatex 加载与出页闭环**（10-23）：真根因是 `\meaning` 漏印 `\long`，致 etoolbox 的 `\patchcmd\ifthenelse` 重新分词核验失败；修复后 0 错、`Hello.` 出 1 页 DVI/PDF，core 582 + layout 335、宏包 13/13、trip 177B/tripos 12 页 750B、T2 40 页/T3 49 页均守基线；见 [战报](docs/archive/biblatex-closure-2026-10-23.md)。
 25. **ctex/ctexart Fandol native DVI 闭环**（10-23）：`unavailable` 真因是 CLI 把 `\pdfoutput=1` 信号送给只写 DVI 的引擎，ctex 上游在 pdfTeX PDF 模式显式拒绝 Fandol；对 ctex 自动选其 pdfTeX/DVI 分支后，原样中文探针 0 错出 1 页 DVI，dvipdfmx PDF 文本层含“中文测试”；core 582 + layout 335、宏包 13/13、trip 177B/tripos 12 页 750B、T2 40 页/T3 49 页守基线。仓库 `ntex-pdf` 的 CJK mapline 和自包含 Fandol 资产仍待续；见 [战报](docs/archive/ctex-fandol-2026-10-23.md)。
 26. **xeCJK 首错勘察**（10-23）：原样探针仍停在 l3 消息包装；独立 8 行探针复现 `\__iow_wrap_next_line:w` EOF，而直接长文本包装通过。首个确定门槛是 `xeCJK.sty:44` 的 XeTeX-only critical 消息，属 XeTeX 系能力边界；消息包装的终止符/展开差异留后刀。见 [战报](docs/archive/xecjk-survey-2026-10-23.md)。
+27. **l3 `\iow_wrap` 扫描中断修复**（10-23）：根因是 `\if`/`\ifcat` 的 `\noexpand` 操作数把 `\let` 字符别名误归 relax/256，导致 `\c_space_token` 与结尾宏误判字符码相等，提前吃掉包装尾哨兵；修复后 critical-wrap 仅有预期的 xeCJK critical 消息，direct-wrap 0 错出 DVI，三探针脚本加断言。core 回归锁和全基线见 [战报](docs/archive/iow-wrap-fix-2026-10-23.md)。
 
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 

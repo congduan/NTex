@@ -22,5 +22,26 @@ for name in xecjk-minimal xecjk-critical-wrap xecjk-direct-wrap; do
     "$(grep -c '^!' "$out_dir/$name.log" || true)" \
     "$(test -s "$out_dir/$name.dvi" && echo yes || echo no)"
   grep -m 2 '^!' "$out_dir/$name.log" || true
+  case "$name" in
+    xecjk-minimal)
+      if [[ "$rc" == 124 ]] || ! grep -Fq '! Critical Package xeCJK Error:' "$out_dir/$name.log"; then
+        echo 'FAIL: xeCJK must reach its XeTeX capability diagnostic' >&2
+        exit 1
+      fi
+      ;;
+    xecjk-critical-wrap)
+      if [[ "$rc" != 1 ]] || [[ $(grep -c '^!' "$out_dir/$name.log" || true) != 1 ]] \
+        || ! grep -Fq '! Critical Package xeCJK Error: The xeCJK package requires XeTeX to function.' "$out_dir/$name.log"; then
+        echo 'FAIL: critical-wrap must report only the intended critical message' >&2
+        exit 1
+      fi
+      ;;
+    xecjk-direct-wrap)
+      if [[ "$rc" != 0 ]] || grep -q '^!' "$out_dir/$name.log" || [[ ! -s "$out_dir/$name.dvi" ]]; then
+        echo 'FAIL: direct-wrap must finish with zero errors and a DVI' >&2
+        exit 1
+      fi
+      ;;
+  esac
 done
 printf 'Logs and DVI files: %s\n' "$out_dir"
