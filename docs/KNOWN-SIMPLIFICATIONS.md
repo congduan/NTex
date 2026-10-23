@@ -9,6 +9,7 @@
 | 位置 | 现状 | 影响 | 状态 |
 |---|---|---|---|
 | `expand/primitive_pdf_image.rs:33` | hyperref 依赖的 pdfTeX PDF 原语族（`\pdfinfo`/`\pdfcatalog`/`\pdfcolorstack`/`\pdfdest`/`\pdfstartlink`/`\pdfendlink`）只按常见 pdfTeX 参数形态吞参并发 `PDF-PRIMITIVE-STUB` 标记；`\pdfstartlink` action 文法仅覆盖 `user{...}`、`goto name{...}`、`goto num<n>`、`goto page<n>{...}`、`thread` 同 target 族，PDF 后端尚不消费 Catalog/Info/Link/Dest/ColorStack | hyperref 最小 DVI 路径可过；真实 PDF link/catalog/info/color 输出仍缺语义，罕见 action 形态会显式报错而非静默错吞 | ⚠️ 第二十三刀最小实现 |
+| `ntex-pdf/src/pdf.rs`（DVI 字体分类） | 尚不解释 ctex `ctex-zhmap-fandol.tex` 发出的 `pdf:mapline`，也不把 CJKutf8 的 `unisong*.pfb` 虚拟字体映射到 Fandol OTF | ctex 的 pdfTeX/DVI 路线可零错出 DVI；用 `ntex-pdf` 转换时中文文本层乱码，须用 dvipdfmx 才能得到可见且可提取的中文 PDF | ⚠️ 2026-10-23 ctex 刀实证，见 `archive/ctex-fandol-2026-10-23.md` |
 
 ## 1. 数学原语（存在性测试/消费参数——最高风险区）
 

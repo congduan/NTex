@@ -226,6 +226,7 @@
     （1sp 舍入）。发行 latex.fmt 已重生成 v26 入库。
     见 [战报](docs/archive/math-accent-skew-2026-10-23.md)。
 24. **biblatex 加载与出页闭环**（10-23）：真根因是 `\meaning` 漏印 `\long`，致 etoolbox 的 `\patchcmd\ifthenelse` 重新分词核验失败；修复后 0 错、`Hello.` 出 1 页 DVI/PDF，core 582 + layout 335、宏包 13/13、trip 177B/tripos 12 页 750B、T2 40 页/T3 49 页均守基线；见 [战报](docs/archive/biblatex-closure-2026-10-23.md)。
+25. **ctex/ctexart Fandol native DVI 闭环**（10-23）：`unavailable` 真因是 CLI 把 `\pdfoutput=1` 信号送给只写 DVI 的引擎，ctex 上游在 pdfTeX PDF 模式显式拒绝 Fandol；对 ctex 自动选其 pdfTeX/DVI 分支后，原样中文探针 0 错出 1 页 DVI，dvipdfmx PDF 文本层含“中文测试”；core 582 + layout 335、宏包 13/13、trip 177B/tripos 12 页 750B、T2 40 页/T3 49 页守基线。仓库 `ntex-pdf` 的 CJK mapline 和自包含 Fandol 资产仍待续；见 [战报](docs/archive/ctex-fandol-2026-10-23.md)。
 
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 

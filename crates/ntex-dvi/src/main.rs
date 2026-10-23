@@ -326,14 +326,18 @@ fn main() -> ExitCode {
                             // 故在 fmt 载入后、用户源前补种子。plain/iniTeX 作业
                             // 不经过此分支，\pdfoutput 默认 0 的 pdfTeX 原义不变。
                             // NTex 实际仍输出 DVI：该参数只作驱动选择信号。
-                            state.params.misc[63] = 1;
+                            // ctex 的 Fandol fontset 在 pdfTeX PDF 模式显式报
+                            // unavailable；DVI 模式则以 CJKutf8 + zhmap 出字。
+                            // 本 CLI 始终写 DVI，故对 ctex 选其 DVI 字体分支。
+                            let pdf_output = !ctex_needs_dvi_output(&text);
+                            state.params.misc[63] = i64::from(pdf_output);
                             ts.import_state(state);
                             // 0e0b01d 后 Typesetter 侧 pdf_output_default 默认关，
                             // apply_layout_defaults 会用镜像默认覆盖 import 的
                             // misc[63]=1 → graphics.cfg 选回 dvips.def，PNG 判
-                            // 「找不到」。CLI LaTeX 作业与 pdflatex 同义，显式
-                            // 打开（源内 \pdfoutput 赋值仍可写覆盖）。
-                            ts.set_pdf_output(true);
+                            // 「找不到」。显式同步上面的驱动选择信号；源内
+                            // \pdfoutput 赋值仍可写覆盖。
+                            ts.set_pdf_output(pdf_output);
                             // 真 latex.fmt 在格式生成期载入断字表（lthyphen.dtx）；
                             // NTex 的 .fmt 只序列化 core 侧状态，断字表（PatternTrie）
                             // 住排版器跨不进快照 → fmt 恢复后 \language=0 无表、
@@ -623,6 +627,14 @@ fn scan_package_requests(src: &str) -> Vec<(String, RequireKind)> {
     out.sort();
     out.dedup();
     out
+}
+
+fn ctex_needs_dvi_output(src: &str) -> bool {
+    scan_package_requests(src).iter().any(|(name, kind)| {
+        (*kind == RequireKind::DocumentClass
+            && matches!(name.as_str(), "ctexart" | "ctexrep" | "ctexbook"))
+            || (*kind == RequireKind::UsePackage && name == "ctex")
+    })
 }
 
 fn scan_latex_argument(mut s: &str) -> Option<(String, &str)> {
@@ -917,5 +929,15 @@ mod auto_pkg_scan_tests {
             "\\includegraphics[width=.5\\textwidth]{Figures/plot.png}\n\\include{chapter}\n",
         );
         assert_eq!(requests, vec![("chapter".to_owned(), RequireKind::Input)]);
+    }
+
+    #[test]
+    fn ctex_classes_select_dvi_fontset_branch() {
+        assert!(ctex_needs_dvi_output("\\documentclass{ctexart}"));
+        assert!(ctex_needs_dvi_output("\\documentclass[UTF8]{ctexrep}"));
+        assert!(ctex_needs_dvi_output("\\usepackage{geometry,ctex}"));
+        assert!(!ctex_needs_dvi_output(
+            "% \\documentclass{ctexart}\n\\documentclass{article}"
+        ));
     }
 }
