@@ -1262,6 +1262,17 @@ I changed this one to zero.
     }
 
     #[test]
+    fn toks_assignment_emits_tracingassigns_line() {
+        let (result, transcript) = run_transcript(
+            "\\tracingassigns=1 \\toks17={AB} \\toks17={AB} \\global\\toks17={CD}",
+        );
+        result.unwrap();
+        assert!(transcript.contains("{into \\toks17=AB}"), "{transcript}");
+        assert!(transcript.contains("{reassigning \\toks17=AB}"), "{transcript}");
+        assert!(transcript.contains("{into \\toks17=CD}"), "{transcript}");
+    }
+
+    #[test]
     fn begingroup_endgroup_primitives() {
         let src = "\\def\\a{X}\\begingroup\\def\\a{Y}\\a\\endgroup\\a";
         assert_eq!(expand(src).unwrap(), "YX");

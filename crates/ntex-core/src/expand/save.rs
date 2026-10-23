@@ -266,18 +266,18 @@ impl Expander {
             }
         }
         let global = self.is_global();
-        // Keep toks tracing unchanged here; its missing trace is fixed with a
-        // dedicated regression test and commit.
-        if self.tracing_assigns() && kind != RegKind::Toks {
+        if self.tracing_assigns() {
             let old = self.register_value(kind, idx);
             let display = |v: &RegValue| match v {
                 RegValue::Count(n) => n.to_string(),
                 RegValue::Dimen(n) => format_dimen(*n),
                 RegValue::Skip(g) => format_glue(*g),
                 RegValue::Muskip(g) => format_mu_glue(*g),
-                RegValue::Toks(_) => unreachable!("toks tracing is handled separately"),
+                RegValue::Toks(t) => self.show_toks(t),
             };
-            self.trace_assign_register(reg_kind_name(kind), idx, global, &display(&old), &display(&val));
+            let old_display = display(&old);
+            let new_display = display(&val);
+            self.trace_assign_register(reg_kind_name(kind), idx, global, &old_display, &new_display);
         }
         self.save_register_for_assign(kind, idx, global);
         match (kind, val) {
