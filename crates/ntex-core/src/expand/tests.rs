@@ -240,6 +240,20 @@ mod tests {
     }
 
     #[test]
+    fn dimen_unit_keyword_accepts_expanded_other_letter() {
+        // tex.web scan_keyword compares cur_chr, regardless of catcode.
+        // PGF's parser can supply the final 't' of "pt" through a macro whose
+        // replacement token has catcode Other.
+        assert_eq!(
+            expand(
+                "\\let\\c=\\catcode \\c116=12 \\def\\q{t}\\c116=11 \\dimen0=16.25082p\\q \\dimen1=16.25082pt \\ifdim\\dimen0=\\dimen1 T\\else F\\fi"
+            )
+            .unwrap(),
+            "T"
+        );
+    }
+
+    #[test]
     fn advance_register_arithmetic() {
         // etrip.tex 91 行惯用法：\count20=0 \advance\count20 1
         assert_eq!(
