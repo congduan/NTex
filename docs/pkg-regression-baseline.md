@@ -1,6 +1,6 @@
 # 宏包 CI 回归基线（auto-pkg 放量）
 
-- 日期：2026-10-24；HEAD：`7181e74`；二进制：`target/debug/ntex-dvi`（mtime 2026-10-24 12:29）
+- 日期：2026-10-24；HEAD：`1d3a110`；二进制：`target/debug/ntex-dvi`（mtime 2026-10-24 20:01）
 - 跑法：`scripts/pkg-regression.py`——ntex-dvi `--auto-pkg --pkg-tlpdb ~/.TinyTeX/tlpkg/texlive.tlpdb --pkg-root ~/.TinyTeX` vs pdfTeX GT `-interaction=nonstopmode` 两趟；顺序执行、单文档 timeout 240s；本地 TL 树，无网络依赖。
 - 判定口径：**PASS = ntex-dvi 写出 DVI 且 0 错**（`^!` 行计数）。GT 对照分级报告：GT 也错的构造不算 NTex 缺口。
 - 文本层 = pymupdf 词序列 difflib 相似度（GT PDF vs DVI→dvipdfmx PDF）。
@@ -15,7 +15,7 @@
 | booktabs | 0 | 有 | 1 | 0 | 1 | 100.0% | — | **PASS** | （源已在路径） |
 | multirow | 0 | 有 | 1 | 0 | 1 | 100.0% | — | **PASS** | （源已在路径） |
 | enumitem | 0 | 有 | 1 | 0 | 1 | 100.0% | — | **PASS** | （源已在路径） |
-| hyperref | 0 | 有 | 1 | 0 | 1 | 93.0% | — | **PASS** | （源已在路径） |
+| hyperref | 0 | 有 | 1 | 0 | 1 | 100.0% | — | **PASS** | （源已在路径） |
 | microtype | 0 | 有 | 1 | 0 | 1 | 96.7% | — | **PASS** | （源已在路径） |
 | array | 0 | 有 | 1 | 0 | 1 | 96.8% | — | **PASS** | （源已在路径） |
 | xcolor | 0 | 有 | 1 | 0 | 1 | 100.0% | — | **PASS** | （源已在路径） |

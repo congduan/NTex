@@ -130,6 +130,34 @@ fn parse_image_special(payload: &[u8]) -> Option<ImageSpec> {
     })
 }
 
+/// `\pdfliteral` 载荷协议（核心侧 `exec_pdf_literal` 发出）：
+/// - `ntex-pdf-literal <data>`——origin 模式（默认）：以 DVI 当前点锚
+///   `q 1 0 0 1 x y cm … Q` 平移域包裹（GT 铁证：pdftex 内容流
+///   `1 0 0 1 99.397 759.927 cm …`——字面量坐标相对当前点）；
+/// - `ntex-pdf-literal-direct <data>` / `ntex-pdf-literal-page <data>`——
+///   原样写内容流（page 模式的页级隔离未实现，见 KNOWN-SIMPLIFICATIONS）。
+///
+/// 非 pdfliteral 载荷 → None（图片通道另行解析）。
+fn parse_literal_special(payload: &[u8]) -> Option<(LiteralMode, &str)> {
+    let text = std::str::from_utf8(payload).ok()?;
+    if let Some(rest) = text.strip_prefix("ntex-pdf-literal-direct ") {
+        return Some((LiteralMode::Direct, rest));
+    }
+    if let Some(rest) = text.strip_prefix("ntex-pdf-literal-page ") {
+        return Some((LiteralMode::Page, rest));
+    }
+    let rest = text.strip_prefix("ntex-pdf-literal ")?;
+    Some((LiteralMode::Origin, rest))
+}
+
+/// `\pdfliteral` 三模式（origin 默认，与核心侧扫描顺序一致）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum LiteralMode {
+    Origin,
+    Direct,
+    Page,
+}
+
 /// 按名取回并解码图片（全局去重：同文件只解码一次）。找不到/不支持 → Err
 /// （调用方降级跳图 + 警告，不 panic）。
 fn ensure_image(
@@ -226,6 +254,23 @@ pub fn write_pdf(dvi: &Dvi, opts: &PdfOptions) -> io::Result<Vec<u8>> {
                 DrawOp::Special { h, v, payload } => {
                     emit_line(&mut c, dvi, &run, &forms, &mut used)?;
                     run.clear();
+                    // \pdfliteral 通道（origin 默认）：字面量坐标相对 DVI
+                    // 当前点，origin 模式用 `q 1 0 0 1 x y cm … Q` 平移域
+                    // 包裹（GT 铁证：pdftex 内容流
+                    // `1 0 0 1 99.397 759.927 cm …`）；direct/page 原样写流。
+                    if let Some((mode, data)) = parse_literal_special(payload) {
+                        let x = ORIGIN_PT + *h as f64 / SP_PER_PT;
+                        let y = h_pt - ORIGIN_PT - *v as f64 / SP_PER_PT;
+                        match mode {
+                            LiteralMode::Origin => {
+                                writeln!(c, "q 1 0 0 1 {:.4} {:.4} cm\n{} Q", x, y, data)?;
+                            }
+                            LiteralMode::Direct | LiteralMode::Page => {
+                                writeln!(c, "{}", data)?;
+                            }
+                        }
+                        continue;
+                    }
                     let Some(spec) = parse_image_special(payload) else {
                         continue; // 非图片载荷：透传忽略（xxx 原口径）
                     };
@@ -1179,6 +1224,31 @@ mod tests {
         // 第二行基线 = 页高 - v = 20 - 10 = 10pt
         assert!(s.contains("Tm [("), "{s}");
         let _ = w_t;
+    }
+
+    /// \pdfliteral 载荷解析：origin（默认，含 origin 关键字显式态）/ direct /
+    /// page 三标签；非 literal 载荷 → None。
+    #[test]
+    fn parse_literal_special_modes() {
+        assert_eq!(
+            parse_literal_special(b"ntex-pdf-literal 1 0 0 RG"),
+            Some((LiteralMode::Origin, "1 0 0 RG"))
+        );
+        assert_eq!(
+            parse_literal_special(b"ntex-pdf-literal-direct 0 0 m"),
+            Some((LiteralMode::Direct, "0 0 m"))
+        );
+        assert_eq!(
+            parse_literal_special(b"ntex-pdf-literal-page q Q"),
+            Some((LiteralMode::Page, "q Q"))
+        );
+        // 正文数据恰好以 direct 开头也必须落 origin 域（歧义防护）
+        assert_eq!(
+            parse_literal_special(b"ntex-pdf-literal direct stray"),
+            Some((LiteralMode::Origin, "direct stray"))
+        );
+        assert_eq!(parse_literal_special(b"ntex-image foo.png"), None);
+        assert_eq!(parse_literal_special(b"PDF-PRIMITIVE-STUB pdfxform"), None);
     }
 
     /// DVI 原点偏移：DVI (0,0) 应画到页面 (1in,1in)（自页左/自页顶），

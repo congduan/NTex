@@ -378,6 +378,75 @@ use super::*;
     }
 
     #[test]
+    fn pdfliteral_modes_produce_tagged_payloads() {
+        // 三模式载荷协议（渲染端 ntex-pdf parse_literal_special 消费）：
+        // origin（默认）/ direct / page 各带独立标签防「正文数据恰以
+        // direct 开头」歧义。GT 铁证（/tmp/lit1 gt1.tex pdftex 内容流）：
+        // origin 模式字面量以 DVI 当前点为锚平移域包裹。
+        let run = |src: &str| {
+            let mut e = Expander::new();
+            e.set_vfs(Box::new(MemVfs::new()));
+            e.set_sink(Box::new(SpecialCaptureSink::default()));
+            e.run_source(src).unwrap();
+            let sink = e.take_sink();
+            let sink = sink
+                .as_any_ref()
+                .downcast_ref::<SpecialCaptureSink>()
+                .unwrap();
+            sink.specials.clone()
+        };
+        assert_eq!(
+            run(r"\pdfliteral{0.5 0 0 RG}"),
+            vec!["ntex-pdf-literal 0.5 0 0 RG".to_string()]
+        );
+        assert_eq!(
+            run(r"\pdfliteral origin{1 0 0 RG}"),
+            vec!["ntex-pdf-literal 1 0 0 RG".to_string()]
+        );
+        assert_eq!(
+            run(r"\pdfliteral direct{0 0 m 30 0 l S}"),
+            vec!["ntex-pdf-literal-direct 0 0 m 30 0 l S".to_string()]
+        );
+        assert_eq!(
+            run(r"\pdfliteral page{q Q}"),
+            vec!["ntex-pdf-literal-page q Q".to_string()]
+        );
+    }
+
+    #[test]
+    fn pdfcatalog_swallows_openaction_clause() {
+        // hyperref \PDF@SetupDoc 真实调用形（hpdftex.def L535）：\pdfcatalog{...}
+        // 紧跟 `openaction goto page⟨int⟩{view}`——漏吞让残流被排版成正文
+        // （beamer 最小文档 PDF 文本层泄漏实锤）。
+        let run = |src: &str| {
+            let mut e = Expander::new();
+            e.set_vfs(Box::new(MemVfs::new()));
+            e.set_sink(Box::new(SpecialCaptureSink::default()));
+            e.run_source(src).unwrap();
+            let sink = e.take_sink();
+            let sink = sink
+                .as_any_ref()
+                .downcast_ref::<SpecialCaptureSink>()
+                .unwrap();
+            (sink.specials.clone(), sink.inner.tokens().to_vec())
+        };
+        let (specials, _body) =
+            run(r"\pdfcatalog{/PageMode /UseNone} openaction goto page 1{/Fit}");
+        assert_eq!(
+            specials,
+            vec!["PDF-PRIMITIVE-STUB pdfcatalog".to_string()],
+            "openaction 子句须整段吞掉且只发一条 stub special"
+        );
+        // openaction 的视图组 {/Fit} 不得泄成正文 token（body 只含组外残留）
+        // ——若曾泄流，这里 tokens 会含字母 F/i/t 的排版输出。
+        assert!(
+            !_body.iter().any(|t| t.charcode() == Some('F' as u32)),
+            "openaction 实参泄流：{:?}",
+            _body
+        );
+    }
+
+    #[test]
     fn openout_jobname_uses_host_job_name() {
         // latex.ltx L9652 `\immediate\openout\@mainaux\jobname.aux`：名字扫描里的
         // `\jobname` 必须展开成当前作业名，否则 aux **写**路落 texput.aux，而

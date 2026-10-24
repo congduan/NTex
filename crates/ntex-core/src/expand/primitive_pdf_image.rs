@@ -61,11 +61,31 @@ impl Expander {
         self.sink.special("PDF-PRIMITIVE-STUB pdfxform".to_owned())
     }
 
+    /// `\pdfliteral[ origin | page | direct ]⟨general text⟩`（pdfTeX 手册
+    /// §pdfliteral：三关键字互斥，origin 为默认）。
+    ///
+    /// 载荷模式标记（渲染端 `ntex-pdf` `parse_literal_special` 消费）：
+    /// - origin（默认）：`ntex-pdf-literal <data>`——渲染时以 DVI 当前点锚
+    ///   `q 1 0 0 1 x y cm … Q` 平移域包裹（GT 铁证：pdftex 内容流
+    ///   `1 0 0 1 99.397 759.927 cm / 0.5 0 0 RG / 1 0 0 1 -99.397 … cm`）；
+    /// - direct / page：`ntex-pdf-literal-direct|page <data>`——独立标签防
+    ///   「正文数据恰好以 direct 开头」歧义，渲染时原样写内容流。
+    ///   page 模式的「页级隔离」暂不实现（简化：与 direct 同为就地写流），
+    ///   登记在 docs/KNOWN-SIMPLIFICATIONS.md。
     fn exec_pdf_literal(&mut self) -> Result<()> {
-        let _ = self.scan_keyword(|w| matches!(w, "direct" | "page"))?;
+        let mode = if self.scan_keyword(|w| w == "origin")?.is_some() {
+            ""
+        } else if self.scan_keyword(|w| w == "page")?.is_some() {
+            "-page"
+        } else if self.scan_keyword(|w| w == "direct")?.is_some() {
+            "-direct"
+        } else {
+            ""
+        };
         let toks = self.scan_group_contents(None)?;
         let data = self.expand_to_string(&toks)?;
-        self.sink.special(format!("ntex-pdf-literal {data}"))
+        self.sink
+            .special(format!("ntex-pdf-literal{mode} {data}"))
     }
 
     fn exec_pdf_page_resources(&mut self) -> Result<()> {
@@ -80,9 +100,32 @@ impl Expander {
         self.sink.special("PDF-PRIMITIVE-STUB pdfinfo".to_owned())
     }
 
-    /// `\pdfcatalog{...}`：同 `\pdfinfo`，吞一个字典组。
+    /// `\pdfcatalog⟨general text⟩[ openaction ⟨action spec⟩ ]`（pdfTeX 手册）。
+    ///
+    /// 组后可选 `openaction` 子句（hyperref `\PDF@SetupDoc` 实证：hpdftex.def
+    /// L535 `openaction goto page\@pdfstartpage{\@pdfstartview}` 紧跟
+    /// `\pdfcatalog{...}`）。pdfTeX 语义 = 吞参数产文档级 /OpenAction；
+    /// NTex 只登记不产 PDF 对象，但**必须完整吞参**——漏吞让 `openaction
+    /// goto page1{/Fit}` 残流被排版成正文（beamer 最小文档 PDF 文本层泄漏
+    /// 实锤，GT pdflatex 同文档无此文本）。动作规格：`goto page⟨int⟩⟨group⟩`、
+    /// `goto name⟨general text⟩` 等，这里按关键字+实参统一吞掉。
     fn exec_pdf_catalog(&mut self) -> Result<()> {
         let _ = self.scan_group_contents(None)?;
+        if self.scan_keyword(|w| w == "openaction")?.is_some() {
+            let _ = self.scan_keyword(|w| w == "goto")?.is_some();
+            // 关键字只扫一次并按命中分支吞实参——重复 scan_keyword 同一词
+            // 第二次必不命中（第一次已消费），曾把 `goto page 1{/Fit}` 的
+            // 数字实参漏给组扫描器（Missing { inserted，hyperref 实测回归）。
+            if self.scan_keyword(|w| w == "page")?.is_some() {
+                let _ = self.scan_number()?;
+                let _ = self.scan_group_contents(None)?;
+            } else {
+                // goto name{...} 与未知动作形态：一律按组实参吞
+                //（clippy identical-blocks：name 臂与兜底同为 scan_group_contents）
+                let _ = self.scan_keyword(|w| w == "name")?.is_some();
+                let _ = self.scan_group_contents(None)?;
+            }
+        }
         self.sink
             .special("PDF-PRIMITIVE-STUB pdfcatalog".to_owned())
     }
