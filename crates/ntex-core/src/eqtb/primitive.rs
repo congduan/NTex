@@ -130,6 +130,13 @@ define_primitives! {
         // rpcode/lpcode **不在**本清单——GT p2 探针 H2-EDEF 保留字面 token，
         // 读取只在 scan_int 内部位（scan.rs scan_something_internal 臂）。
         PdfMatch,
+        // minted/pdftexcmds 闭环（2026-10-25）：`\pdfmdfivesum{<text>}` /
+        // `\pdfmdfivesum file <name>`——pdfTeX 可展开摘要原语，32 字符大写
+        // hex；实参展开后取字节，file 变体取文件字节摘要（文件不存在 → 空）。
+        // l3kernel L830/L903 探测 `\pdfmdfivesum` 后别名 `\tex_mdfivesum:D`，
+        // 缺注册时 minted 的 `\pdf@filemdfivesum` 链 30 错（`\tex_mdfivesum:D`
+        // Undefined 族）。
+        PdfMdfiveSum,
     ]
     // 变体列表：自 1 起连续编号（0 为 eqtb 槽 Undefined 哨兵）
     Def = 1,
@@ -764,4 +771,8 @@ define_primitives! {
     // 变体追加在尾部，保持既有 .fmt 原语编号不重排。
     PdfPageAttr,
     PdfPagesAttr,
+    // minted/pdftexcmds 闭环（2026-10-25）：`\pdfmdfivesum`——pdfTeX 可展开
+    // 摘要原语（primitive_pdf_mdfive.rs 真语义）。变体追加在尾部，保持既有
+    // .fmt 原语编号不重排。
+    PdfMdfiveSum,
 }

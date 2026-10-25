@@ -832,6 +832,11 @@ fn is_expandable_prim(p: Primitive) -> bool {
             // 保留字面 token（pdfTeX 把它们做成非可展开读出原语），读取只在
             // scan_int 内部位（scan.rs scan_something_internal 臂）。
             | Primitive::PdfMatch
+            // minted 闭环：`\pdfmdfivesum` 可展开（`\edef` 摘要缓存键 +
+            // l3kernel `\str_mdfive_hash:n` 直接展开语境）。explore_once
+            // 与 dispatch_expandable 双分支都要有——见 PdfMatch 注释的
+            // 「可展开 → 展开后重试」空转教训。
+            | Primitive::PdfMdfiveSum
             | Primitive::String_
             | Primitive::InputLineNo
             | Primitive::CurrentGroupLevel

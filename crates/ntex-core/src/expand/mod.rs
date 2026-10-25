@@ -2393,6 +2393,9 @@ include!("primitive_pdf_image.rs");
 // 刀H：\pdfmatch 的 POSIX 子集回溯引擎（microtype 字体尺寸解析门）。
 include!("primitive_pdf_match.rs");
 
+// minted/pdftexcmds 闭环（2026-10-25）：\pdfmdfivesum 的 RFC 1321 MD5 实现。
+include!("primitive_pdf_mdfive.rs");
+
 // ---------- 方法分片：primitive_font.rs（字体家族：从 primitive.rs 拆出） ----------
 include!("primitive_font.rs");
 

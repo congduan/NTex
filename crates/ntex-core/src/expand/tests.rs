@@ -1949,6 +1949,35 @@ I changed this one to zero.
     }
 
     #[test]
+    fn pdfmdfivesum_text_form_matches_gt_vectors() {
+        // GT（pdflatex 健康通道 2026-10-25 实测）：`\pdfmdfivesum{abc}` →
+        // 900150983CD24FB0D6963F7D28E17F72（RFC 1321 向量大写 hex）；实参
+        // 先全展开再取字节（`\def\zz{World}\pdfmdfivesum{Hello \zz}` 与
+        // GT 同值 D1A7FB5E…）；`\edef` 摘要缓存键依赖就地展开（free.rs
+        // is_expandable_prim 白名单）。
+        assert_eq!(
+            expand(r"\pdfmdfivesum{abc}").unwrap(),
+            "900150983CD24FB0D6963F7D28E17F72"
+        );
+        assert_eq!(
+            expand(r"\pdfmdfivesum{}").unwrap(),
+            "D41D8CD98F00B204E9800998ECF8427E"
+        );
+        // GT（pdflatex 健康通道 2026-10-25 实测，gt6/nt6 文件式探针
+        // `\def\zz{World}\n\message{EXP=[\pdfmdfivesum{Hello \zz}]}`）：
+        // 双侧同值 B10A8DB164E0754105B7A99BE72E3FE5 = md5("Hello World")——
+        // 实参先全展开再取字节。⚠ 早前内联形态探针采到 D1A7FB5E 是错误
+        // 恢复噪声（\def 在 \message 实参扫描位不执行，GT 同病），勿引用。
+        assert_eq!(expand(r"\def\zz{World}\pdfmdfivesum{Hello \zz}").unwrap(), "B10A8DB164E0754105B7A99BE72E3FE5");
+        assert_eq!(
+            expand(r"\edef\tmp{\pdfmdfivesum{abc}}\tmp").unwrap(),
+            "900150983CD24FB0D6963F7D28E17F72"
+        );
+        // l3kernel L830/L903 探测 `\pdfmdfivesum` 后别名 `\tex_mdfivesum:D`。
+        assert_eq!(expand(r"\ifdefined\pdfmdfivesum T\else F\fi").unwrap(), "T");
+    }
+
+    #[test]
     fn pdfstrcmp_compares_byte_strings() {
         assert_eq!(expand(r"\ifnum\pdfstrcmp{abc}{abd}=0 E\else \pdfstrcmp{abc}{abd}\fi").unwrap(), "-1");
         assert_eq!(expand(r"\pdfstrcmp{abc}{abc}").unwrap(), "0");
@@ -1989,6 +2018,25 @@ I changed this one to zero.
         )
         .unwrap();
         assert_eq!(out, "|10");
+    }
+
+    #[test]
+    fn pdfmdfivesum_file_form_reads_vfs_and_empty_for_missing() {
+        // file 形取文件字节摘要；缺文件 → 空展开（l3kernel \file_mdfive_hash:n
+        // 以空返回判定"未找到"）。GT（pdflatex 2026-10-25）：md5("0123456789")
+        // 大写 hex；对照 \pdffilesize 测试形态（同类原语 VFS 单测标准）。
+        let mut vfs = MemVfs::new();
+        vfs.insert("data.bin", "0123456789");
+        let (out, _) = expand_vfs(
+            "\\def\\fs{\\pdfmdfivesum file{data.bin}}\\pdfmdfivesum file{missing.bin}|\\fs",
+            vfs,
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            // md5("0123456789")（GT：printf '0123456789' | md5sum 大写）：
+            "|781E5E245D69B566979B86E28D23F2C7"
+        );
     }
 
     #[test]

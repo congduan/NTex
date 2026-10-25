@@ -234,6 +234,18 @@
 30. **beamer 最小闭环：`\pdfpageattr`/`\pdfpagesattr` toks 参数**（10-24）：beamer 经 hyperref 链每页 shipout 触发 `\pdfpageattr`，注册前每页 2 错（Undefined + `\the` 误用）。实现为 Expander 独立字段（GT 实锤与 `\toks32765` 隔离，非寄存器槽），赋值臂走 `set_every_scoped` kind 7/8 组局部恢复；GT 实锤 toks 赋值不展开（递归 `\the\pdfpageattr` 形态真 pdfTeX 也 capacity exceeded——上轮遗留锁期望错按 GT 修正）。**关键教训：fmt 快照是 eqtb 权威源，「单测绿 + plain 绿 + fmt 红」= 快照陈旧非注册缺失，重生成发行 fmt（9097042B）入库后全通**。发行资产树口径 beamer 最小文档 0 错 / 22493B DVI / PDF 文本层 `Hello beamer.`。core 587 + layout 336、宏包 13/13、trip 177B/tripos 12 页 750B（`--no-plain` 姿势再证）；WASM 资产包通道复现环境缺失，审计表 beamer 行升级待下轮复测。**⚠ 上一轮工作树在方案重构中途被打断（BUILTINS 长度没改=编译崩+赋值臂缺失），战报早期验证数字出自中间态不可信；cron 接管轮补齐三处后全链亲测收口**。见 [战报](docs/archive/beamer-pdfpageattr-closure-2026-10-24.md)。
 31. **`\pdfliteral` 三模式 + `\pdfcatalog` openaction 吞参**（10-24）：`\pdfliteral` 升级 origin/direct/page 三模式（origin 按 pdftex 内容流铁证以 DVI 当前点锚 `q 1 0 0 1 x y cm … Q` 包裹，三标签载荷防歧义），`\pdfcatalog` 补 openaction 子句完整吞参（关键字只扫一次按命中分支吞实参——重复 scan_keyword 同词第二次必不命中，曾漏数字实参成 Missing { 回归）。hyperref 真实文档 PDF 文本层不再泄漏 `openaction goto page 1{/Fit}`，宏包回归 hyperref 相似度 93.0%→**100.0%**。page 模式页级隔离未实现（KNOWN-SIMPLIFICATIONS 登记）。review 通道 124 超时登记不可用，主控亲自 review（发现并补登记 1 项简化声明缺失）。core 590 + layout 336、clippy 0、宏包 13/13、trip 177B/tripos 12 页 750B SHA `574045fb` 与基线逐字节相等、beamer 最小文档 0 错。见 [战报](docs/archive/pdfliteral-catalog-closure-2026-10-24.md)。
 
+32. **`\pdfmdfivesum` 原语 + pdftexcmds/minted 探测链闭环**（10-25）：cron 前轮 Codex
+    WIP 主控接管收口——pdfTeX 可展开摘要原语真语义（RFC 1321 直译零依赖；
+    text 形实参全展开取字节、`file{name}` 花括号形取文件摘要、缺文件空展开），
+    四处接线与 `\pdfstrcmp` 同族同构（枚举尾部追加 `.fmt` 序号安全 + 发行
+    latex.fmt 重生成入库）。pdftexcmds 0 错载入探测 native 后走原生分支，
+    text/file 双形值与 pdflatex GT 逐字一致。core 593 + layout 336、clippy 0、
+    宏包 13/13、trip 177B/tripos 12 页 750B、small2e 0 错全绿；Claude 定向
+    review「可继续」（本轮通道正常），建议项 file 形 VFS 单测已补（GT 实测值）。
+    语法陷阱（真 pdfTeX file 形必须花括号，裸名 GT 同报 Missing {）与
+    「0 错 ≠ 链路通」（探针忘 makeatletter 时 `\pdf@...` 被切碎仍 0 错）
+    见 [战报](docs/archive/pdfmdfivesum-pdftexcmds-2026-10-25.md)。
+
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 
 - **第十八刀** 尾递归鞍具校准 → `make check` 797 → **800 全绿**；pdfTeX 对照证明原否定结论有误；

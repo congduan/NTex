@@ -6,7 +6,7 @@
 /// Step B 补 PDF 变换栈 \pdfsave/\pdfsetmatrix/\pdfrestore 3 项；
 /// ctex 第二墙补 catcode table 三原语），
 /// 供 `register_builtins` 注册与 `tests.rs` 的一致性测试共用。
-pub(crate) const BUILTINS: [(&str, Primitive); 456] = [
+pub(crate) const BUILTINS: [(&str, Primitive); 457] = [
     ("def", Primitive::Def),
     ("edef", Primitive::Edef),
     ("gdef", Primitive::Gdef),
@@ -591,6 +591,9 @@ pub(crate) const BUILTINS: [(&str, Primitive); 456] = [
     ("pdfprotrudechars", Primitive::PdfProtrudeChars),
     ("pdfadjustspacing", Primitive::PdfAdjustSpacing),
     ("pdfmatch", Primitive::PdfMatch),
+    // minted/pdftexcmds 闭环（2026-10-25）：\pdfmdfivesum——l3kernel
+    // L830/L903 探测后别名 \tex_mdfivesum:D；minted 缓存键全链消费。
+    ("pdfmdfivesum", Primitive::PdfMdfiveSum),
     ("pdffontexpand", Primitive::PdfFontExpand),
     ("pdfobj", Primitive::PdfObj),
     ("pdfxform", Primitive::PdfXForm),

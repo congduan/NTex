@@ -158,6 +158,35 @@ impl Expander {
                     Err(e) => Err(Error::io("VFS 读取", &name, e)),
                 }
             }
+            // minted/pdftexcmds 闭环（2026-10-25）：`\pdfmdfivesum{<text>}` /
+            // `\pdfmdfivesum file <name>` → 32 字符大写 hex MD5。GT 语义
+            // （pdflatex 健康通道 gt9/gta 探针实测）：实参展开后取字节摘要、
+            // 单相直接产出（早期「两段式」判读出自 undefined-cs 错误恢复
+            // 垃圾，已废弃）；file 变体文件不存在 → 空展开。
+            Primitive::PdfMdfiveSum => {
+                let is_file = self
+                    .scan_keyword(|kw| kw == "file")?
+                    .is_some();
+                if is_file {
+                    let name = self.scan_file_name()?;
+                    match self.vfs.read(&name) {
+                        Ok(Some(bytes)) => {
+                            self.emit_tokens(pdf_text_tokens(&md5_hex_upper(&bytes)))
+                        }
+                        Ok(None) => Ok(()),
+                        Err(e) => Err(Error::io("VFS 读取", &name, e)),
+                    }
+                } else {
+                    let toks = self.scan_group_contents_xpand(true)?;
+                    let text = pdf_detokenize_bytes(
+                        &toks,
+                        &self.intern,
+                        self.params.misc[34],
+                        &self.catcodes,
+                    );
+                    self.emit_tokens(pdf_text_tokens(&md5_hex_upper(&text)))
+                }
+            }
             // \pdfuniformdeviate<n>：0 ≤ r < n（n ≤ 0 → 0）。确定性 LCG 推进
             // misc 64 种子（真 pdfTeX 为随机源；确定性可复现——偏差见报告 §15.3）
             Primitive::PdfUniformDeviate => {

@@ -806,6 +806,33 @@ impl Expander {
                         );
                     }
                 }
+                // minted 闭环（2026-10-25）：`\pdfmdfivesum` 展开位语义——
+                // 语义与 dispatch_expandable 臂同源（file 前缀探测 + 摘要
+                // hex emit）。双臂缺一即「可展开 → 展开后重试」空转。
+                EqSlot::Primitive(Primitive::PdfMdfiveSum) => {
+                    let is_file = self.scan_keyword(|kw| kw == "file")?.is_some();
+                    if is_file {
+                        let name = self.scan_file_name()?;
+                        if let Some(bytes) = self
+                            .vfs
+                            .read(&name)
+                            .map_err(|e| Error::io("VFS 读取", &name, e))?
+                        {
+                            let hex = md5_hex_upper(&bytes);
+                            out.extend(pdf_text_tokens(&hex).into_iter().map(|t| (t, false)));
+                        }
+                    } else {
+                        let toks = self.scan_group_contents_xpand(true)?;
+                        let text = pdf_detokenize_bytes(
+                            &toks,
+                            &self.intern,
+                            self.params.misc[34],
+                            &self.catcodes,
+                        );
+                        let hex = md5_hex_upper(&text);
+                        out.extend(pdf_text_tokens(&hex).into_iter().map(|t| (t, false)));
+                    }
+                }
                 EqSlot::Primitive(Primitive::PdfUniformDeviate) => {
                     let n = self.scan_number()?;
                     let state = self.params.misc[PDF_RANDOM_SEED_IDX] as u32;
