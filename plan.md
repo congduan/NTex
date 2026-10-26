@@ -260,6 +260,31 @@
     兼容面/工程面），4 条注释与文档债备注已随手清。见
     [战报](docs/archive/pdfliteral-origin-ctm-2026-10-26.md)。
 
+34. **standalone.cls 闭环 + `\pdffilemoddate` 原语 + 资产审计矩阵入库**（10-26）：cron 前轮
+    WIP 主控接管收口——pdfTeX 可展开文件时间原语（`D:YYYYMMDDHHMMSS` 串，Hinnant
+    civil-from-days 零依赖），三展开位 + `is_expandable_prim` 白名单 + BUILTINS 457→458
+    （枚举尾部追加，fmt 已重生成入库）。**接管补刀 = CLI VFS 链 `file_mtime` 断链**：
+    trait 新方法走默认实现，`SearchPathVfs`/`KpsewhichVfs` 两层包装均未转发，CLI 探针
+    恒空展开（单测通道 LocalVfs 直读照不出——「trait 加默认实现的新方法，包装器必须
+    显式转发并在 CLI 通道 e2e」教训入库）；补转发后 CLI 返回真值。已登记偏差（KNOWN-
+    SIMPLIFICATIONS 10-26 条）：GT 输出本地时区（`+08'00'`）vs NTex UTC + `Z`——
+    filemod/standalone 只按位比对数字段，偏移段不参与比较语义，无害；WASM MemVfs
+    恒空展开（确定性换真实时间）。**验收：standalone 最小文档 0 错 1 页，DVI→PDF
+    与 GT pdflatex 逐像素 md5 相同**；core 595（+1 锚点锁）+ io 8（+1 链路锁）+
+    layout 336、clippy 0、宏包 13/13、trip 177B/tripos 12 页 750B MD5 逐字节相同、
+    small2e 双通道（自动检测 + `--fmt` 快路径）双 0 错。**新工具 `scripts/asset-load-audit.sh`
+    入库**（CLI 通道 30 项资产审计矩阵）：现状 **27 PASS / 3 ENGINE-GATE（xeCJK/
+    fontspec/unicode-math，XeTeX 系 by-design）/ 0 ERROR / 0 TIMEOUT**——对照
+    8e506b2 WASM 基线 19/10/1，近四刀（pdfmdfivesum/pdfliteral 族/pdfpageattr/
+    本刀）连带清偿 minted/tikz/pgfplots/beamer/standalone/biblatex 全部 ERROR。
+    见 [战报](docs/archive/standalone-pdffilemoddate-2026-10-26.md)。
+    **10-27 收口勘误**：①上轮入库 fmt 系中间态二进制产物（早于 primitive/builtins
+    最终编辑，缺第 458 builtin 名，新二进制报「未知原语编号」）——本轮 HEAD 二进制
+    重生成入库，教训「fmt 重生成必须是 WIP 收口最后一步」入战报；②Claude Code
+    定向 review 通过（3 low 非阻塞，措辞两处已改，2 笔技术债登记）；③复测全链绿
+    （core 597/tripos MD5 逐字节相同/宏包 13/13/审计 27+3/0）；④asset-load-audit.sh
+    相对二进制路径 bug 顺手修。
+
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 
 - **第十八刀** 尾递归鞍具校准 → `make check` 797 → **800 全绿**；pdfTeX 对照证明原否定结论有误；

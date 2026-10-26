@@ -806,6 +806,18 @@ impl Expander {
                         );
                     }
                 }
+                // standalone 闭环（2026-10-26）：`\pdffilemoddate` 展开位——
+                // 语义与 dispatch_expandable 臂同源（缺文件空展开）。
+                EqSlot::Primitive(Primitive::PdfFileModDate) => {
+                    let name = self.scan_file_name()?;
+                    if let Some(secs) = self
+                        .vfs
+                        .file_mtime(&name)
+                        .map_err(|e| Error::io("VFS 读取", &name, e))?
+                    {
+                        out.extend(pdf_file_moddate_tokens(secs).into_iter().map(|t| (t, false)));
+                    }
+                }
                 // minted 闭环（2026-10-25）：`\pdfmdfivesum` 展开位语义——
                 // 语义与 dispatch_expandable 臂同源（file 前缀探测 + 摘要
                 // hex emit）。双臂缺一即「可展开 → 展开后重试」空转。

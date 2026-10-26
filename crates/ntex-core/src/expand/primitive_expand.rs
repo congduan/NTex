@@ -158,6 +158,17 @@ impl Expander {
                     Err(e) => Err(Error::io("VFS 读取", &name, e)),
                 }
             }
+            // standalone.cls/filemod 闭环（2026-10-26）：`\pdffilemoddate{<file>}`
+            // → PDF 时间串（UTC + Z，GT 偏差见 free.rs 函数注）；文件不存在 →
+            // 空展开（GT MISS=[] 实测，pdfTeX 同语义）。
+            Primitive::PdfFileModDate => {
+                let name = self.scan_file_name()?;
+                match self.vfs.file_mtime(&name) {
+                    Ok(Some(secs)) => self.emit_tokens(pdf_file_moddate_tokens(secs)),
+                    Ok(None) => Ok(()),
+                    Err(e) => Err(Error::io("VFS 读取", &name, e)),
+                }
+            }
             // minted/pdftexcmds 闭环（2026-10-25）：`\pdfmdfivesum{<text>}` /
             // `\pdfmdfivesum file <name>` → 32 字符大写 hex MD5。GT 语义
             // （pdflatex 健康通道 gt9/gta 探针实测）：实参展开后取字节摘要、

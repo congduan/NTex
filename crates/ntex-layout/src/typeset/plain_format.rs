@@ -83,7 +83,57 @@ impl ntex_io::Vfs for EmbeddedFormatVfs {
         self.inner.append(path, bytes)
     }
 
+    /// mtime 必须转发：本层包在 CLI VFS 链最外层（格式装载后
+    /// `EmbeddedFormatVfs(KpsewhichVfs(SearchPathVfs(LocalVfs)))`），漏转发
+    /// 时 `\pdffilemoddate` 在 CLI 通道恒空展开——trait 默认实现的静默 None
+    /// 只会被单测通道（直用 LocalVfs）照不出来。2026-10-26 standalone 刀
+    /// e2e 实测补上（同刀 io.rs 两层锁照不出第三层的教训，故在此补链路锁）。
+    fn file_mtime(&mut self, path: &str) -> std::io::Result<Option<u64>> {
+        self.inner.file_mtime(path)
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ntex_io::Vfs as _;
+
+    /// 链路锁（2026-10-26 standalone 刀）：`EmbeddedFormatVfs` 必须转发
+    /// `file_mtime`——本层包在 CLI VFS 链最外层，漏转发时 `\pdffilemoddate`
+    /// 在 CLI 通道恒空展开（e2e 假绿真根因）；trait 默认 None 是静默失败，
+    /// 单测通道直用 LocalVfs 照不出。去转发必红（本轮 TEMP-DISABLED 实测红）。
+    #[derive(Debug)]
+    struct MtimeInner(u64);
+    impl ntex_io::Vfs for MtimeInner {
+        fn read(&mut self, _: &str) -> std::io::Result<Option<Vec<u8>>> {
+            Ok(None)
+        }
+        fn write(&mut self, _: &str, _: &[u8]) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn append(&mut self, _: &str, _: &[u8]) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn file_mtime(&mut self, _: &str) -> std::io::Result<Option<u64>> {
+            Ok(Some(self.0))
+        }
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
+    }
+
+    #[test]
+    fn embedded_format_vfs_forwards_file_mtime() {
+        let mut wrapped = EmbeddedFormatVfs::new(Box::new(MtimeInner(1_760_000_000)));
+        // 内嵌表命中的名字（plain.tex）也必须走 inner mtime 转发，不短路成 None。
+        assert_eq!(
+            wrapped.file_mtime("plain.tex").unwrap(),
+            Some(1_760_000_000)
+        );
+        assert_eq!(wrapped.file_mtime("any.tex").unwrap(), Some(1_760_000_000));
     }
 }

@@ -137,6 +137,11 @@ define_primitives! {
         // 缺注册时 minted 的 `\pdf@filemdfivesum` 链 30 错（`\tex_mdfivesum:D`
         // Undefined 族）。
         PdfMdfiveSum,
+        // standalone 闭环（2026-10-26）：`\pdffilemoddate`——带参可展开
+        // 文件时间串（filemod.sty expandafter 拆参 / standalone.cls edef
+        // 比对两语境都要就地展开）。explore_once 与 dispatch_expandable
+        // 双分支都要有（「可展开 → 展开后重试」空转教训）。
+        PdfFileModDate,
     ]
     // 变体列表：自 1 起连续编号（0 为 eqtb 槽 Undefined 哨兵）
     Def = 1,
@@ -775,4 +780,12 @@ define_primitives! {
     // 摘要原语（primitive_pdf_mdfive.rs 真语义）。变体追加在尾部，保持既有
     // .fmt 原语编号不重排。
     PdfMdfiveSum,
+    // standalone.cls 闭环（2026-10-26）：`\pdffilemoddate{<file>}`——pdfTeX
+    // 可展开文件时间原语，返回 PDF 日期串 `D:YYYYMMDDHHMMSS+hh'mm'`（本地
+    // 时区偏移；GT pdflatex 实测）。NTex 输出 UTC + `Z`（VFS 只供 epoch 秒，
+    // 无时区；混用外部本地日期串不保证一致，偏差登记 KNOWN-SIMPLIFICATIONS）。
+    // 文件不存在 → 空展开（GT MISS=[] 实测；`\iffilemod@direct` 探测
+    // `\pdffilemoddate` 在场性，缺注册即 `filemod` PackageError）。
+    // 变体追加在尾部，保持既有 .fmt 原语编号不重排。
+    PdfFileModDate,
 }

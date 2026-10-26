@@ -1754,6 +1754,43 @@ I changed this one to zero.
         Ok((out, vfs.clone()))
     }
 
+    /// 固定 mtime 的测试 VFS：`\pdffilemoddate` 日期锚点锁（LocalVfs 真
+    /// mtime 需宿主文件系统注入，MemVfs 无时间概念恒空展开）。
+    #[derive(Debug, Default)]
+    struct MtimeVfs {
+        mtimes: std::collections::BTreeMap<&'static str, u64>,
+    }
+
+    impl ntex_io::Vfs for MtimeVfs {
+        fn read(&mut self, _path: &str) -> std::io::Result<Option<Vec<u8>>> {
+            Ok(None)
+        }
+        fn write(&mut self, _path: &str, _bytes: &[u8]) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn append(&mut self, _path: &str, _bytes: &[u8]) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
+        fn file_mtime(&mut self, path: &str) -> std::io::Result<Option<u64>> {
+            Ok(self.mtimes.get(path).copied())
+        }
+    }
+
+    /// 运行源码（任意 Vfs 后端），只返回输出字符串（不需回收 VFS 的用例）。
+    fn expand_vfs_erased(src: &str, vfs: Box<dyn ntex_io::Vfs>) -> Result<String> {
+        let mut e = Expander::new();
+        e.set_vfs(vfs);
+        e.run_source(src)?;
+        Ok(e
+            .output()
+            .iter()
+            .map(|t| t.charcode().and_then(char::from_u32).unwrap_or('\u{FFFD}'))
+            .collect())
+    }
+
     #[test]
     fn showtokens_displays_expanded_list() {
         let mut e = Expander::new();
@@ -2037,6 +2074,85 @@ I changed this one to zero.
             // md5("0123456789")（GT：printf '0123456789' | md5sum 大写）：
             "|781E5E245D69B566979B86E28D23F2C7"
         );
+    }
+
+    #[test]
+    fn pdfhorigin_vorigin_internal_dimens_preset_and_writable() {
+        // preview.sty tightpage 通道（prtightpage.def shipout 收尾
+        // `\global\pdfvorigin\dimen@` / `\global\pdfhorigin-…`）硬依赖。初值 =
+        // pdftexconfig.tex `1 true in`（4736287sp；真 pdfTeX GT：
+        // `\the\pdfhorigin` → 72.26999pt 实测）。format_dimen 舍入后 72.27pt。
+        assert_eq!(expand(r"\the\pdfhorigin").unwrap(), "72.27pt");
+        assert_eq!(expand(r"\the\pdfvorigin").unwrap(), "72.27pt");
+        // 可写可读（preview 的 \global 赋值形态；负偏移合法）：
+        assert_eq!(
+            expand(concat!(
+                r"\global\pdfvorigin 12.5pt ",
+                r"\global\pdfhorigin=-3pt ",
+                r"\the\pdfvorigin|\the\pdfhorigin"
+            ))
+            .unwrap(),
+            "12.5pt|-3.0pt"
+        );
+    }
+
+    #[test]
+    fn pdffilemoddate_epoch_anchor_and_missing_file_empty() {
+        // standalone.cls/filemod 闭环（2026-10-26）。格式锚点（Howard Hinnant
+        // civil-from-days，UTC）：
+        //   epoch 0          → D:19700101000000Z
+        //   951782400        → D:20000229000000Z（闰年 2/29）
+        //   1769904000       → D:20260201000000Z
+        // 缺文件 → 空展开（GT MISS=[] pdflatex 实测；MemVfs 默认无时间 →
+        // 空展开，filemod.sty 走 fallback 臂不炸）。
+        // LocalVfs 返回真 mtime，日期锚点用固定 MtimeVfs
+        // 语义锁在展开路径——时区偏差见 free.rs pdf_file_moddate_tokens 注。
+        let mut vfs = MtimeVfs::default();
+        vfs.mtimes.insert("a.tex", 0);
+        vfs.mtimes.insert("b.tex", 951_782_400);
+        vfs.mtimes.insert("c.tex", 1_769_904_000);
+        let out = expand_vfs_erased(
+            concat!(
+                "\\pdffilemoddate{a.tex}|\\pdffilemoddate{b.tex}|",
+                "\\pdffilemoddate{c.tex}|\\pdffilemoddate{missing.tex}"
+            ),
+            Box::new(vfs),
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            "D:19700101000000Z|D:20000229000000Z|D:20260201000000Z|"
+        );
+        // \edef 语境就地展开（standalone.cls L909 比对链依赖）：
+        let mut vfs2 = MtimeVfs::default();
+        vfs2.mtimes.insert("a.tex", 951_782_400);
+        let out2 = expand_vfs_erased(
+            "\\edef\\t{\\pdffilemoddate{a.tex}}\\t",
+            Box::new(vfs2),
+        )
+        .unwrap();
+        assert_eq!(out2, "D:20000229000000Z");
+        // 在场性探测（filemod.sty \iffilemod@direct）：已注册 → defined。
+        assert_eq!(expand(r"\ifdefined\pdffilemoddate T\else F\fi").unwrap(), "T");
+    }
+
+    #[test]
+    fn pdffilemoddate_expandafter_and_edef_boundaries() {
+        // filemod 的 expandafter 定界拆参；每个入口均锁 epoch 0 与缺文件。
+        for source in [
+            r"\def\name{a.tex}\def\parse#1\relax{[#1]}\expandafter\parse\pdffilemoddate{\name}\relax\expandafter\parse\pdffilemoddate{missing.tex}\relax",
+            r"\edef\t{[\pdffilemoddate{a.tex}][\pdffilemoddate{missing.tex}]}\t",
+        ] {
+            let mut vfs = MtimeVfs::default();
+            vfs.mtimes.insert("a.tex", 0);
+            assert_eq!(expand_vfs_erased(source, Box::new(vfs)).unwrap(), "[D:19700101000000Z][]");
+        }
+        let mut e = Expander::new();
+        let mut vfs = MtimeVfs::default();
+        vfs.mtimes.insert("a.tex", 0);
+        e.set_vfs(Box::new(vfs));
+        e.run_source(r"\pdffilemoddate{a.tex}").unwrap();
+        assert!(e.output().iter().all(|t| t.catcode() == Some(Catcode::Other)));
     }
 
     #[test]

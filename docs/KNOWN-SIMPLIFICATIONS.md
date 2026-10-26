@@ -345,3 +345,25 @@ demo1 六刀 + 输出例程刀 2/3/5 的修复登记；全部已提交，留作�
   protected/long/outer，槽显示同步修正；最小 biblatex 文档零错出页，
   PDF 文本含 `Hello.`。引用解析与 `.bbl` 不在本次验收范围；详见
   [战报](archive/biblatex-closure-2026-10-23.md)。
+
+- 2026-10-26：✅ **standalone.cls 加载闭环 + `\pdffilemoddate`（时间串偏差登记）**——
+  新原语 `\pdffilemoddate{<file>}`（pdfTeX 可展开文件时间，dispatch_expandable /
+  expand_once 双展开位 + `is_expandable_prim` 白名单 + BUILTINS 457→458，fmt 已重生成
+  入库；`\the` 位有意不加——带参原语非内部量，与同族 `PdfFileSize` 一致）。
+  **已登记偏差**：真 pdfTeX 输出本地时区偏移（GT `D:20261026140627+08'00'` 实测），
+  NTex 输出 UTC + `Z`（`D:20261026182401Z`，无 `'00'` 尾段；LocalVfs 只供 epoch 秒，
+  无时区）——filemod.sty /
+  standalone.cls 只按位解析数字段做前后 `\ifx` 相等比对，偏移段不参与比较语义，无害。
+  **WASM 侧确定性偏差**：`MemVfs`/默认 `file_mtime` 返回 `None` → 恒空展开（确定性
+  换真实时间）。CLI 链 `KpsewhichVfs(SearchPathVfs(LocalVfs))` 三层均已转发
+  `file_mtime`（SearchPath 按读路径同序解析；Kpsewhich 落空后走同一 kpsewhich 定位）。
+  验收：standalone 最小文档 0 错 1 页，DVI→PDF 渲染与 GT pdflatex 逐像素 md5 相同
+  （54.38×8.86pt 版面一致）；core 597 / io / layout 全绿。
+- 2026-10-27：**两笔 review 登记（Claude 定向 review，pdffilemoddate 刀）**——
+  ① `\pdfcreationdate` 输出 `…Z'00'`（free.rs 带 `'00'` 尾段）而 `\pdffilemoddate`
+  输出 `…Z`（无尾段）——同族日期串形态不一致，真 pdfTeX 两者都带偏移段；现有
+  消费方（filemod 按位取数字段）不受影响，同族混用消费方出现时须统一。②
+  `expand/mod.rs` 陈旧 fmt 补种守卫（pdfhorigin/pdfvorigin，约 L1452）以
+  `dimen(idx)==0` 判「陈旧」——自定义 fmt 若合法存了显式 0 值，每次装载被静默
+  改回 1in；真陈旧信号应是「槽 Undefined」（守卫前半已用对），补种宜挂「槽刚
+  创建」条件。触发面窄（自定义 fmt + 显式零值），未修，留待该域下刀。

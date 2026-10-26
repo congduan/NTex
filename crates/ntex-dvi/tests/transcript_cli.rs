@@ -221,3 +221,47 @@ fn latex_float_before_end_document_is_not_lost() {
         "float content was not shipped"
     );
 }
+
+#[test]
+fn shipped_fmt_expands_pdffilemoddate_through_filemod() {
+    // 发行快照必须注册新原语；真实宏包链同时检验 edef 与 expandafter 拆参。
+    let d = workdir("filemod-fmt");
+    let stamp = d.join("stamp.tex");
+    std::fs::write(&stamp, b"stamp").unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&stamp)
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH))
+        .unwrap();
+    std::fs::write(
+        d.join("probe.tex"),
+        r"\documentclass{standalone}
+\usepackage{filemod}
+\edef\date{\pdffilemoddate{stamp.tex}}
+\typeout{MODDATE=[\date]}
+\typeout{FILEMOD=[\filemodnumdate{stamp.tex}]}
+\typeout{MISSING=[\pdffilemoddate{missing.tex}]}
+\begin{document}Standalone closure.\end{document}",
+    )
+    .unwrap();
+    let fmt = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/fmt/latex.fmt");
+    let (stdout, stderr, ok) = run_clean(
+        &[
+            OsStr::new("probe.tex"),
+            OsStr::new("--fmt"),
+            fmt.as_os_str(),
+        ],
+        &d,
+    );
+    assert!(ok && d.join("probe.dvi").exists(), "{stdout}\n{stderr}");
+    assert!(!stderr.lines().any(|l| l.starts_with('!')), "{stderr}");
+    assert!(stdout.contains("1 页"), "{stdout}\n{stderr}");
+    for expected in [
+        "MODDATE=[D:19700101000000Z]",
+        "FILEMOD=[19700101]",
+        "MISSING=[]",
+    ] {
+        assert!(stderr.contains(expected), "missing {expected}: {stderr}");
+    }
+}

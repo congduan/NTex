@@ -1446,6 +1446,19 @@ impl Expander {
         }
         self.seed_latex_catcode_tables_if_missing();
         self.registers = Registers::import(state.registers);
+        // pdfTeX 内部 dimen 初表兜底（pdftexconfig.tex 1 true in）：fmt 快照可能
+        // 早于原语注册（陈旧快照），初值随引擎入口补种。`\global` 赋值照常覆盖。
+        // 补偿 shim 模式先例：数学入口补注入 \check@mathfonts（3d4865e）。
+        for (name, idx) in [("pdfhorigin", 32765usize), ("pdfvorigin", 32764)] {
+            let csid = self.intern.intern(name);
+            if matches!(self.eqtb.slot(csid), EqSlot::Undefined) {
+                self.eqtb
+                    .set_register(csid, crate::register::RegKind::Dimen, idx);
+            }
+            if self.registers.dimen(idx) == 0 {
+                self.registers.set_dimen(idx, 4_736_287);
+            }
+        }
         self.params = state.params;
         self.output_toks = state.output_toks;
         // `\every*` 族：`\everypar` 段首触发链依赖快照恢复（LaTeX 段落钩子机器）

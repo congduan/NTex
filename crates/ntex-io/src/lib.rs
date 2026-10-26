@@ -32,6 +32,16 @@ pub trait Vfs: std::fmt::Debug + std::any::Any {
     fn create_dir_all(&mut self, _path: &str) -> io::Result<()> {
         Ok(())
     }
+    /// 文件修改时间（Unix epoch 秒）；不存在或后端无时间概念返回 `None`。
+    ///
+    /// 消费方：`\pdffilemoddate`（filemod 宏包 / standalone.cls 的 `\input@path`
+    /// 重编译比对链）。`None` → 该原语空展开（GT 同语义：pdfTeX 对不存在文件
+    /// 返回空串）。**默认 `None`**：[`MemVfs`] 无时间概念（内容可随时改写），
+    /// WASM 侧 `\pdffilemoddate` 恒空展开——确定性换真实时间，偏差登记
+    /// KNOWN-SIMPLIFICATIONS。
+    fn file_mtime(&mut self, _path: &str) -> io::Result<Option<u64>> {
+        Ok(None)
+    }
     /// 类型擦除互转（测试断言写入内容用）。
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }
@@ -63,6 +73,18 @@ impl Vfs for LocalVfs {
 
     fn create_dir_all(&mut self, path: &str) -> io::Result<()> {
         std::fs::create_dir_all(path)
+    }
+
+    fn file_mtime(&mut self, path: &str) -> io::Result<Option<u64>> {
+        match std::fs::metadata(path) {
+            Ok(md) => Ok(md
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
@@ -193,25 +215,55 @@ impl KpsewhichVfs {
     }
 }
 
+impl KpsewhichVfs {
+    /// kpsewhich 定位：返回 PATH 上 `kpsewhich` 找到的真实文件路径。
+    /// 无 kpsewhich / 未命中 → `None`（read 与 file_mtime 共用）。
+    fn locate(&self, path: &str) -> Option<String> {
+        let out = std::process::Command::new("kpsewhich")
+            .arg(path)
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let p = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        if p.is_empty() {
+            None
+        } else {
+            Some(p)
+        }
+    }
+}
+
 impl Vfs for KpsewhichVfs {
     fn read(&mut self, path: &str) -> io::Result<Option<Vec<u8>>> {
         if let Some(bytes) = self.inner.read(path)? {
             return Ok(Some(bytes));
         }
-        let out = match std::process::Command::new("kpsewhich").arg(path).output() {
-            Ok(out) if out.status.success() => out,
-            _ => return Ok(None),
-        };
-        let found = String::from_utf8_lossy(&out.stdout);
-        let p = found.trim();
-        if p.is_empty() {
+        let Some(p) = self.locate(path) else {
             return Ok(None);
-        }
-        match std::fs::read(p) {
+        };
+        match std::fs::read(&p) {
             Ok(bytes) => Ok(Some(bytes)),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e),
         }
+    }
+
+    /// mtime 先问 inner，落空后走同一 kpsewhich 定位链（`\pdffilemoddate`
+    /// 对 TeX 树内文件也要能取到真实时间）。
+    fn file_mtime(&mut self, path: &str) -> io::Result<Option<u64>> {
+        if let Some(t) = self.inner.file_mtime(path)? {
+            return Ok(Some(t));
+        }
+        let Some(p) = self.locate(path) else {
+            return Ok(None);
+        };
+        Ok(std::fs::metadata(&p)
+            .ok()
+            .and_then(|md| md.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs()))
     }
 
     fn write(&mut self, path: &str, bytes: &[u8]) -> io::Result<()> {
@@ -230,6 +282,28 @@ impl Vfs for KpsewhichVfs {
 impl Vfs for SearchPathVfs {
     fn read(&mut self, path: &str) -> io::Result<Option<Vec<u8>>> {
         Ok(self.resolve(path)?.map(|(_, bytes)| bytes))
+    }
+
+    /// mtime 与 read 同一解析序：先原名（cwd），再各搜索路径前缀，
+    /// 第一个命中者的 mtime。全落空 → `None`。
+    fn file_mtime(&mut self, path: &str) -> io::Result<Option<u64>> {
+        if let Some(t) = self.inner.file_mtime(path)? {
+            return Ok(Some(t));
+        }
+        if path.starts_with('/') {
+            return Ok(None);
+        }
+        for prefix in &self.paths {
+            let joined = if prefix.is_empty() || prefix.ends_with('/') {
+                format!("{prefix}{path}")
+            } else {
+                format!("{prefix}/{path}")
+            };
+            if let Some(t) = self.inner.file_mtime(&joined)? {
+                return Ok(Some(t));
+            }
+        }
+        Ok(None)
     }
 
     fn write(&mut self, path: &str, bytes: &[u8]) -> io::Result<()> {
@@ -275,6 +349,48 @@ mod tests {
         let mut v = LocalVfs;
         let r = v.read("/nonexistent/ntex-io-test-file.txt");
         assert!(matches!(r, Ok(None)), "{r:?}");
+    }
+
+    #[test]
+    fn file_mtime_forwards_through_search_path_and_kpsewhich_chain() {
+        // `\pdffilemoddate` 消费链（2026-10-26）：CLI 的 VFS 是
+        // KpsewhichVfs(SearchPathVfs(LocalVfs))——两层包装都必须转发
+        // file_mtime，否则 CLI 端恒空展开（首轮 e2e 实测 MODDATE=[] 假绿）。
+        let dir = std::env::temp_dir().join(format!("ntex-io-mtimetest-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("probe.tex"), b"x").unwrap();
+        let epoch_before = std::fs::metadata(dir.join("probe.tex"))
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // 1) LocalVfs 直读：存在 → Some；不存在 → None（NotFound 不报错）。
+        let mut local = LocalVfs;
+        let t = local
+            .file_mtime(dir.join("probe.tex").to_str().unwrap())
+            .unwrap();
+        assert!(t.is_some());
+        assert!(t.unwrap() >= epoch_before);
+        assert_eq!(local.file_mtime("no-such-ntex-io-file.tex").unwrap(), None);
+
+        // 2) SearchPathVfs 按前缀解析取 mtime（原名落空 → 前缀命中）。
+        let mut sp = SearchPathVfs::new(Box::new(LocalVfs));
+        sp.push_path(dir.to_string_lossy().into_owned());
+        let t2 = sp.file_mtime("probe.tex").unwrap();
+        assert_eq!(
+            t2, t,
+            "SearchPathVfs 前缀命中应返回与 LocalVfs 直读相同的 mtime"
+        );
+
+        // 3) KpsewhichVfs 转发 inner（有 inner 命中时不触 kpsewhich 子进程）。
+        let mut kp = KpsewhichVfs::new(Box::new(sp));
+        assert_eq!(kp.file_mtime("probe.tex").unwrap(), t);
+        assert_eq!(kp.file_mtime("no-such-ntex-io-file.tex").unwrap(), None);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

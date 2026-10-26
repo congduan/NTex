@@ -335,6 +335,35 @@ fn pdf_creation_date_tokens(day: i64, month: i64, year: i64, minutes: i64) -> Ve
     ))
 }
 
+/// `\pdffilemoddate` → `D:YYYYMMDDHHMMSSZ`（pdfTeX PDF 时间串格式）。
+///
+/// standalone.cls 闭环（2026-10-26）。GT（pdflatex 实测）：`D:20261026140627+08'00'`
+/// ——真 pdfTeX 输出**本地时区偏移**；NTex 输出 UTC + `Z`（VFS 只供 epoch 秒，
+/// 无时区概念）。同一时区内前后比较可用；混用外部本地日期字符串时不保证一致。
+/// epoch 秒 → 公历用 Howard Hinnant civil-from-days（与 `system_date_time`
+/// 同族算法，无外部依赖）。
+pub(crate) fn pdf_file_moddate_tokens(epoch_secs: u64) -> Vec<Token> {
+    let secs = i128::from(epoch_secs);
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    pdf_text_tokens(&format!(
+        "D:{y:04}{m:02}{d:02}{:02}{:02}{:02}Z",
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    ))
+}
+
 /// `\pdfstrcmp`：两 token 串的字符串比较（detokenize 同规则转字节）→ -1/0/1。
 fn pdf_strcmp_value(
     a: &[Token],
@@ -837,6 +866,12 @@ fn is_expandable_prim(p: Primitive) -> bool {
             // 与 dispatch_expandable 双分支都要有——见 PdfMatch 注释的
             // 「可展开 → 展开后重试」空转教训。
             | Primitive::PdfMdfiveSum
+            // standalone 闭环：`\pdffilemoddate{<file>}` 可展开（standalone.cls
+            // L909 `\edef\filemodbefore{...filemoddate...}` 在 edef 语境直接
+            // 展开；filemod.sty `\expandafter\filemod@parse\pdffilemoddate{#2}`
+            // 要求展开后由定界宏拆参）。explore_once 与 dispatch_expandable
+            // 双分支都要有——「可展开 → 展开后重试」空转教训同上。
+            | Primitive::PdfFileModDate
             | Primitive::String_
             | Primitive::InputLineNo
             | Primitive::CurrentGroupLevel

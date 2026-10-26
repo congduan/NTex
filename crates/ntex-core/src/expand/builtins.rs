@@ -6,7 +6,7 @@
 /// Step B 补 PDF 变换栈 \pdfsave/\pdfsetmatrix/\pdfrestore 3 项；
 /// ctex 第二墙补 catcode table 三原语），
 /// 供 `register_builtins` 注册与 `tests.rs` 的一致性测试共用。
-pub(crate) const BUILTINS: [(&str, Primitive); 457] = [
+pub(crate) const BUILTINS: [(&str, Primitive); 458] = [
     ("def", Primitive::Def),
     ("edef", Primitive::Edef),
     ("gdef", Primitive::Gdef),
@@ -552,6 +552,10 @@ pub(crate) const BUILTINS: [(&str, Primitive); 457] = [
     // \pdffilesize 缺失则 \file_full_name:n 的存在性探测瘫痪
     ("pdffilesize", Primitive::PdfFileSize),
     ("pdfcreationdate", Primitive::PdfCreationDate),
+    // standalone.cls/filemod 闭环（2026-10-26）：`\pdffilemoddate{<file>}`——
+    // pdfTeX 可展开文件时间原语（standalone.cls L909 重编译比对链 +
+    // filemod.sty `\ifx\pdffilemoddate\@undefined` 探测分支）。
+    ("pdffilemoddate", Primitive::PdfFileModDate),
     // M9 中文刀 2：源文件输入编码开关（0=bytes 默认，1=UTF-8 解码；
     // 只影响字节→token 入口，TRIP/ETRIP 的 8-bit 口径零影响）
     ("utfinputmode", Primitive::UtfInputMode),
@@ -651,6 +655,18 @@ impl Expander {
             let csid = self.intern.intern(name);
             self.eqtb
                 .set_register(csid, crate::register::RegKind::Dimen, idx);
+        }
+        // \pdfhorigin/\pdfvorigin——pdfTeX 内部 dimen（同族第三对；pdftexconfig.tex
+        // 初表 1 true in）。preview.sty tightpage 通道（prtightpage.def）在 shipout
+        // 收尾 `\global\pdfvorigin\dimen@` / `\global\pdfhorigin-…` 硬使用——未注册
+        // 即 Undefined → shipout 盒作废（standalone/preview 文档 0 页假象）。初值
+        // 1 true in = 4736287sp（72.27pt @ mag 1000），进 fmt 快照（export 全量
+        // dimens 数组），无需 codec 变更；重生成 fmt 后值随快照分发。
+        for (name, idx) in [("pdfhorigin", 32765usize), ("pdfvorigin", 32764)] {
+            let csid = self.intern.intern(name);
+            self.eqtb
+                .set_register(csid, crate::register::RegKind::Dimen, idx);
+            self.registers.set_dimen(idx, 4_736_287);
         }
     }
 }
