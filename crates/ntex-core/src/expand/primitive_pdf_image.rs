@@ -65,9 +65,10 @@ impl Expander {
     /// §pdfliteral：三关键字互斥，origin 为默认）。
     ///
     /// 载荷模式标记（渲染端 `ntex-pdf` `parse_literal_special` 消费）：
-    /// - origin（默认）：`ntex-pdf-literal <data>`——渲染时以 DVI 当前点锚
-    ///   `q 1 0 0 1 x y cm … Q` 平移域包裹（GT 铁证：pdftex 内容流
-    ///   `1 0 0 1 99.397 759.927 cm / 0.5 0 0 RG / 1 0 0 1 -99.397 … cm`）；
+    /// - origin（默认）：`ntex-pdf-literal <data>`——渲染时写**裸**
+    ///   `1 0 0 1 dx dy cm` 锚（不包 q/Q；GT 铁证：pdfTeX 内容流
+    ///   `1 0 0 1 99.397 759.927 cm / 0.5 0 0 RG / 1 0 0 1 -99.397 … cm`），
+    ///   平移跨 literal 持久累积、绝对坐标操作前累计取负复位；
     /// - direct / page：`ntex-pdf-literal-direct|page <data>`——独立标签防
     ///   「正文数据恰好以 direct 开头」歧义，渲染时原样写内容流。
     ///   page 模式的「页级隔离」暂不实现（简化：与 direct 同为就地写流），

@@ -131,9 +131,15 @@ fn parse_image_special(payload: &[u8]) -> Option<ImageSpec> {
 }
 
 /// `\pdfliteral` 载荷协议（核心侧 `exec_pdf_literal` 发出）：
-/// - `ntex-pdf-literal <data>`——origin 模式（默认）：以 DVI 当前点锚
-///   `q 1 0 0 1 x y cm … Q` 平移域包裹（GT 铁证：pdftex 内容流
-///   `1 0 0 1 99.397 759.927 cm …`——字面量坐标相对当前点）；
+/// - `ntex-pdf-literal <data>`——origin 模式（默认）：写**裸**
+///   `dx dy cm`（不包 q/Q；GT 铁证：真 pdfTeX 内容流
+///   `1 0 0 1 99.397 759.927 cm`，且连续 literal 的 dx/dy 相对**上次
+///   锚点**增量——平移在内容流里跨 literal 持久累积，tikz 路径
+///   m/l/S 分处多个 literal 靠这个 CTM 连续性拼成一条路径；曾有实现
+///   每个 literal 包 `q cm … Q`，`Q` 弹栈把未完结的路径一并丢弃，
+///   tikz 线条全部消失）。文本/规则/图片等绝对坐标操作前以
+///   `1 0 0 1 -Σx -Σy cm` 复位累积（GT 铁证：文本块前
+///   `1 0 0 1 -166.147 -707.125 cm`，值 = 各锚点 dx 之和取负）；
 /// - `ntex-pdf-literal-direct <data>` / `ntex-pdf-literal-page <data>`——
 ///   原样写内容流（page 模式的页级隔离未实现，见 KNOWN-SIMPLIFICATIONS）。
 ///
@@ -217,6 +223,11 @@ pub fn write_pdf(dvi: &Dvi, opts: &PdfOptions) -> io::Result<Vec<u8>> {
     let mut page_images: Vec<Vec<usize>> = vec![Vec::new(); dvi.pages.len()];
     for (page_i, page) in dvi.pages.iter().enumerate() {
         let mut c = Vec::new();
+        // origin 模式 `\pdfliteral` 的跨 literal 平移累积（页初值 0）：
+        // GT 语义 = 内容流 CTM 平移在连续 literal 间持久（各 literal 的
+        // cm 相对上次锚点增量），绝对坐标操作前用累计取负复位。
+        let mut acc_x_pt = 0.0f64;
+        let mut acc_y_pt = 0.0f64;
         // 当前行 run：连续、同字体、同基线的字符（(font, code, x_pt, y_pt)；
         // code 全宽 u32，Unicode 字体的码位可达 0x10FFFF）
         let mut run: Vec<(u32, u32, f64, f64)> = Vec::new();
@@ -233,6 +244,13 @@ pub fn write_pdf(dvi: &Dvi, opts: &PdfOptions) -> io::Result<Vec<u8>> {
                         }
                         _ => {}
                     }
+                    if run.is_empty() && (acc_x_pt != 0.0 || acc_y_pt != 0.0) {
+                        // 复位 origin literal 累积的 CTM 平移（GT：文本块前
+                        // `1 0 0 1 -Σx -Σy cm`），再进 BT 绝对定位。
+                        writeln!(c, "1 0 0 1 {:.4} {:.4} cm", -acc_x_pt, -acc_y_pt)?;
+                        acc_x_pt = 0.0;
+                        acc_y_pt = 0.0;
+                    }
                     run.push((*font, *code, x, y));
                 }
                 DrawOp::Rule {
@@ -248,6 +266,11 @@ pub fn write_pdf(dvi: &Dvi, opts: &PdfOptions) -> io::Result<Vec<u8>> {
                     let y = h_pt - ORIGIN_PT - *v as f64 / SP_PER_PT;
                     let hgt = *height as f64 / SP_PER_PT;
                     if w > 0.0 && hgt > 0.0 {
+                        if acc_x_pt != 0.0 || acc_y_pt != 0.0 {
+                            writeln!(c, "1 0 0 1 {:.4} {:.4} cm", -acc_x_pt, -acc_y_pt)?;
+                            acc_x_pt = 0.0;
+                            acc_y_pt = 0.0;
+                        }
                         writeln!(c, "{:.4} {:.4} {:.4} {:.4} re f", x, y, w, hgt)?;
                     }
                 }
@@ -255,17 +278,41 @@ pub fn write_pdf(dvi: &Dvi, opts: &PdfOptions) -> io::Result<Vec<u8>> {
                     emit_line(&mut c, dvi, &run, &forms, &mut used)?;
                     run.clear();
                     // \pdfliteral 通道（origin 默认）：字面量坐标相对 DVI
-                    // 当前点，origin 模式用 `q 1 0 0 1 x y cm … Q` 平移域
-                    // 包裹（GT 铁证：pdftex 内容流
-                    // `1 0 0 1 99.397 759.927 cm …`）；direct/page 原样写流。
+                    // 当前点，origin 模式写裸 `1 0 0 1 dx dy cm` 锚（不包
+                    // q/Q，跨 literal 平移持久累积，见下方实现注释与
+                    // docs/archive/pdfliteral-origin-ctm-2026-10-26.md）；
+                    // direct/page 原样写流（写前复位累积平移）。
                     if let Some((mode, data)) = parse_literal_special(payload) {
                         let x = ORIGIN_PT + *h as f64 / SP_PER_PT;
                         let y = h_pt - ORIGIN_PT - *v as f64 / SP_PER_PT;
                         match mode {
                             LiteralMode::Origin => {
-                                writeln!(c, "q 1 0 0 1 {:.4} {:.4} cm\n{} Q", x, y, data)?;
+                                // GT 语义（真 pdfTeX 内容流实采，tikz 最小
+                                // 探针 lit-min.tex 逐字对拍）：origin literal
+                                // 写**裸 cm，不包 q/Q**——平移在内容流里跨
+                                // literal 持久累积（tikz 把 q/路径/S/Q 拆进
+                                // 多个 literal，靠这个连续性拼成一条路径）。
+                                // 同一 DVI 当前点上的连续 literal **只锚
+                                // 一次**（GT 在 m/l/S 三个 literal 间无重复
+                                // cm——位置未变不重写）；dx/dy 相对**上次
+                                // 锚点**增量。绝对坐标操作（字符/规则/图片）
+                                // 前用累计取负复位（GT：
+                                // `1 0 0 1 -Σx -Σy cm`）。
+                                if x != acc_x_pt || y != acc_y_pt {
+                                    let dx = x - acc_x_pt;
+                                    let dy = y - acc_y_pt;
+                                    writeln!(c, "1 0 0 1 {:.4} {:.4} cm", dx, dy)?;
+                                    acc_x_pt = x;
+                                    acc_y_pt = y;
+                                }
+                                writeln!(c, "{}", data)?;
                             }
                             LiteralMode::Direct | LiteralMode::Page => {
+                                if acc_x_pt != 0.0 || acc_y_pt != 0.0 {
+                                    writeln!(c, "1 0 0 1 {:.4} {:.4} cm", -acc_x_pt, -acc_y_pt)?;
+                                    acc_x_pt = 0.0;
+                                    acc_y_pt = 0.0;
+                                }
                                 writeln!(c, "{}", data)?;
                             }
                         }
@@ -297,6 +344,11 @@ pub fn write_pdf(dvi: &Dvi, opts: &PdfOptions) -> io::Result<Vec<u8>> {
                             let wp = spec.w_sp as f64 / SP_PER_PT;
                             let hp = (spec.h_sp + spec.d_sp) as f64 / SP_PER_PT;
                             if wp > 0.0 && hp > 0.0 {
+                                if acc_x_pt != 0.0 || acc_y_pt != 0.0 {
+                                    writeln!(c, "1 0 0 1 {:.4} {:.4} cm", -acc_x_pt, -acc_y_pt)?;
+                                    acc_x_pt = 0.0;
+                                    acc_y_pt = 0.0;
+                                }
                                 writeln!(
                                     c,
                                     "q {wp:.4} 0 0 {hp:.4} {x:.4} {y:.4} cm /Im{local} Do Q"
@@ -314,6 +366,12 @@ pub fn write_pdf(dvi: &Dvi, opts: &PdfOptions) -> io::Result<Vec<u8>> {
             }
         }
         emit_line(&mut c, dvi, &run, &forms, &mut used)?;
+        if acc_x_pt != 0.0 || acc_y_pt != 0.0 {
+            // 页尾防御性复位（acc 按页声明、每页内容流 gstate 本就独立，
+            // 此行正常情况下为空操作——仅在页尾恰好挂着 literal 平移时
+            // 保证内容流自洽收束）。
+            writeln!(c, "1 0 0 1 {:.4} {:.4} cm", -acc_x_pt, -acc_y_pt)?;
+        }
         contents.push(c);
     }
 
@@ -1249,6 +1307,90 @@ mod tests {
         );
         assert_eq!(parse_literal_special(b"ntex-image foo.png"), None);
         assert_eq!(parse_literal_special(b"PDF-PRIMITIVE-STUB pdfxform"), None);
+    }
+
+    /// origin 模式 `\\pdfliteral` 内容流语义（GT 铁证：pdfTeX 跑 tikz 最小
+    /// 探针 lit-min.tex 的实采内容流）：
+    /// ① 位置变化时写一次锚 `1 0 0 1 dx dy cm`（dx/dy 相对上次锚点增量）；
+    /// ② 同一当前点上的连续 literal **不重复写 cm**（tikz 的 q/m/l/S/Q
+    ///    拆进多个 literal，靠裸流拼成一条路径）；
+    /// ③ 绝对坐标操作（字符 BT / 规则 re / 图片 Do）前写累计取负复位
+    ///    `1 0 0 1 -Σx -Σy cm`；
+    /// ④ 全程不包 q/Q（曾有实现每个 literal 包 `q cm … Q`，Q 弹栈丢弃
+    ///    未完结路径——tikz 线条全部消失）。
+    #[test]
+    fn origin_literal_writes_bare_cm_with_accumulating_translation() {
+        let Some(mut dvi) = test_dvi() else {
+            eprintln!("未找到 cmr10.tfm，跳过");
+            return;
+        };
+        const SP: f64 = SP_PER_PT;
+        // 模拟 tikz 序列：锚点(100,50)pt 上连续 3 个 literal（同点），
+        // 然后一个字符（绝对坐标，触发复位），再一个新锚点 literal。
+        dvi.pages = vec![Page {
+            ops: vec![
+                DrawOp::Special {
+                    h: (100.0 * SP) as i64,
+                    v: (50.0 * SP) as i64,
+                    payload: b"ntex-pdf-literal 0.39851 w".to_vec(),
+                },
+                DrawOp::Special {
+                    h: (100.0 * SP) as i64,
+                    v: (50.0 * SP) as i64,
+                    payload: b"ntex-pdf-literal 0.0 0.0 m".to_vec(),
+                },
+                DrawOp::Special {
+                    h: (100.0 * SP) as i64,
+                    v: (50.0 * SP) as i64,
+                    payload: b"ntex-pdf-literal 28.34645 28.34645 l S".to_vec(),
+                },
+                DrawOp::Char {
+                    font: 0,
+                    code: u32::from(b'T'),
+                    h: 0,
+                    v: 0,
+                },
+                DrawOp::Special {
+                    h: (30.0 * SP) as i64,
+                    v: (20.0 * SP) as i64,
+                    payload: b"ntex-pdf-literal n".to_vec(),
+                },
+            ],
+        }];
+        let pdf = write_pdf(&dvi, &PdfOptions::default()).unwrap();
+        let s = String::from_utf8_lossy(&pdf);
+        // ①+②：三个同点 literal 只锚一次（无零平移 `1 0 0 1 0 0 cm` 噪声行）
+        assert!(
+            !s.contains("1 0 0 1 0.0000 0.0000 cm"),
+            "同点 literal 不应重锚：{s}"
+        );
+        // 锚一次：x=100+72(1in)、y=792-72-50（y 轴翻转），dx/dy 相对 acc(0,0)
+        assert!(
+            s.contains("1 0 0 1 172.0000 670.0000 cm\n0.39851 w"),
+            "首锚应为增量 cm：{s}"
+        );
+        // ②：m/l/S 三个 literal 之间无重复锚——裸流连成一条路径，
+        // 复位行（负值累计取负）紧随 `l S`，中间无任何正锚
+        let run = s
+            .split_once("0.39851 w")
+            .map(|(_, r)| r)
+            .unwrap_or_default();
+        assert!(run.contains("0.0 0.0 m"), "{run}");
+        assert!(run.contains("28.34645 28.34645 l S"), "{run}");
+        assert!(
+            run.contains("28.34645 28.34645 l S\n1 0 0 1 -172.0000 -670.0000 cm"),
+            "复位行应紧随 l S（中间无重复锚）：{run}"
+        );
+        // ③：字符（绝对坐标）前复位（累计取负）
+        assert!(
+            s.contains("1 0 0 1 -172.0000 -670.0000 cm\nBT"),
+            "绝对坐标操作前应复位累计平移：{s}"
+        );
+        // 新锚点（30,20）：相对 acc(0,0)（复位后）增量
+        assert!(
+            s.contains("1 0 0 1 102.0000 700.0000 cm\nn"),
+            "二次锚应为增量 cm：{s}"
+        );
     }
 
     /// DVI 原点偏移：DVI (0,0) 应画到页面 (1in,1in)（自页左/自页顶），

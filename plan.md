@@ -246,6 +246,20 @@
     「0 错 ≠ 链路通」（探针忘 makeatletter 时 `\pdf@...` 被切碎仍 0 错）
     见 [战报](docs/archive/pdfmdfivesum-pdftexcmds-2026-10-25.md)。
 
+33. **`\pdfliteral` origin 模式 CTM 累积语义对齐 pdfTeX**（10-26）：cron 前轮 WIP
+    主控接管收口——旧实现每 literal 包 `q 1 0 0 1 x y cm … Q`，`Q` 弹栈丢弃
+    未完结路径致 **tikz 线条全部消失**；真 pdfTeX 语义 = 裸 `cm` 锚不包 q/Q、
+    平移跨 literal 持久累积（dx/dy 相对上次锚点增量）、同点连续 literal 只锚
+    一次、绝对坐标操作前累计取负复位。页级 acc 累积器实现 + 回归锁
+    `origin_literal_writes_bare_cm_with_accumulating_translation`（锚一次/无
+    重复锚/复位取负/二次锚增量四断言）。端到端：real-tikz 8 项 drawing 逐点
+    同形、唯一恒定偏移 (0.40,0.26)pt（排版侧画布锚点微差）、PNG 墨迹像素
+    GT 2472 = NTex 2407。ntex-pdf 35（+1 回归锁）+ core 594 + layout 336、
+    clippy 0、tripos 12 页 750B SHA `574045fb` 逐字节相等、宏包 13/13。
+    Claude 定向 review「可继续」5/5（状态机不变量/浮点精度链/q-Q 平衡/
+    兼容面/工程面），4 条注释与文档债备注已随手清。见
+    [战报](docs/archive/pdfliteral-origin-ctm-2026-10-26.md)。
+
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 
 - **第十八刀** 尾递归鞍具校准 → `make check` 797 → **800 全绿**；pdfTeX 对照证明原否定结论有误；
