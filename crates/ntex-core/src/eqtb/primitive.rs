@@ -788,4 +788,12 @@ define_primitives! {
     // `\pdffilemoddate` 在场性，缺注册即 `filemod` PackageError）。
     // 变体追加在尾部，保持既有 .fmt 原语编号不重排。
     PdfFileModDate,
+    // amsldoc 二跑闭环（2026-10-27）：`\pdfoutline`——pdfTeX 书签原语
+    //（hyperref `\BOOKMARK` 链经 hpdftex.def L1811 `\Hy@OutlineName` 发射
+    // `\pdfoutline goto name{..}count..{..}`，**goto 在前 count 在后**，
+    // 关键字序与手册形式 `[attr][count]<action>{title}` 相反——消费器按
+    // 弹性序扫描，两形态都收）。DVI 无 outline 对象：按参数形态吞参 +
+    // PDF-PRIMITIVE-STUB 标记（与 pdfdest/pdfstartlink 同纪律，不收 token
+    // 进正文流）。变体追加在尾部，保持既有 .fmt 原语编号不重排。
+    PdfOutline,
 }

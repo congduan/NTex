@@ -263,6 +263,9 @@ impl Expander {
             Primitive::PdfDest => self.exec_pdf_dest(),
             Primitive::PdfStartLink => self.exec_pdf_startlink(),
             Primitive::PdfEndLink => self.exec_pdf_endlink(),
+            // amsldoc 二跑闭环：\pdfoutline 书签原语（吞参 stub，
+            // 参数形态见 primitive_pdf_image.rs exec_pdf_outline）
+            Primitive::PdfOutline => self.exec_pdf_outline(),
             Primitive::PdfObj => self.exec_pdf_obj(),
             Primitive::PdfXForm | Primitive::PdfForm => self.exec_pdf_xform(),
             Primitive::PdfRefXForm | Primitive::PdfRefObj => {

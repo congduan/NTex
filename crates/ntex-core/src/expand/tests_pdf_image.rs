@@ -329,6 +329,112 @@ fn pdf_dest_and_startlink_consume_common_actions() {
     assert_eq!(out, "A BUP");
 }
 
+/// 本模块私有的 special 记录 sink（tests_io_write 的 SpecialCaptureSink
+/// 是其模块私有，此处按同款形状复制；只为本测试的载荷断言服务）。
+#[derive(Debug, Default)]
+struct OutlineCaptureSink {
+    inner: VecSink,
+    specials: Vec<String>,
+}
+
+impl crate::sink::CoreSink for OutlineCaptureSink {
+    fn token(&mut self, tok: Token) -> Result<()> {
+        self.inner.token(tok)
+    }
+    fn transcript(&self) -> &str {
+        self.inner.transcript()
+    }
+    fn tokens(&self) -> &[Token] {
+        self.inner.tokens()
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+    fn as_any_ref(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+impl crate::sink::IoSink for OutlineCaptureSink {
+    fn message(&mut self, text: String) -> Result<()> {
+        self.inner.message(text)
+    }
+    fn show(&mut self, text: String) -> Result<()> {
+        self.inner.show(text)
+    }
+    fn write16(&mut self, text: String) -> Result<()> {
+        self.inner.write16(text)
+    }
+    fn special(&mut self, text: String) -> Result<()> {
+        self.specials.push(text);
+        Ok(())
+    }
+}
+
+impl crate::sink::FontSink for OutlineCaptureSink {}
+impl crate::sink::MathSink for OutlineCaptureSink {}
+impl crate::sink::BoxSink for OutlineCaptureSink {}
+impl crate::sink::AlignSink for OutlineCaptureSink {}
+impl crate::sink::PageSink for OutlineCaptureSink {}
+impl crate::sink::TokenSink for OutlineCaptureSink {}
+
+#[test]
+fn pdfoutline_consumes_flexible_keyword_order_and_emits_stub() {
+    // amsldoc 二跑闭环（2026-10-27）：\pdfoutline 书签原语。
+    // hyperref 实际发射序（hpdftex.def L1811 \Hy@OutlineName：
+    // `\pdfoutline goto name{#2}count#3{#4}`）与手册序
+    // `[attr][count]<action>{title}` **相反**——goto 在前、count 在后，
+    // 关键字循环必须弹性序两形态都收。
+    // 去注册必红（2026-10-27 A/B 实测）：注释 builtins.rs 的
+    // ("pdfoutline", …) 行后 VecSink 通道静默跳过未定义 cs，
+    // 残流 goto/name/count 系 token 涌进 out → 断言 ABCD 失配炸此测。
+    let (out, _) = expand_vfs(
+        concat!(
+            r"\pdfoutline goto name{chapter.1}count-1{Introduction}A",
+            r"\pdfoutline attr{/C[0 0 1]}count 0 goto name{section.2}{Two}B",
+            r"\pdfoutline user{/A<<>>}{Plain}C",
+            r"\pdfoutline goto page 2{/Fit}count0{Page2}D",
+        ),
+        MemVfs::new(),
+    )
+    .unwrap();
+    // 全部参数（name/attr/count/user/page 目标/title）都被吞：正文流
+    // 只剩四个哨兵字符——title/目标组零泄漏进 token 流。
+    assert_eq!(out, "ABCD");
+}
+
+#[test]
+fn pdfoutline_emits_one_stub_special_per_call() {
+    // 载荷断言：每次调用恰一条 `PDF-PRIMITIVE-STUB pdfoutline`
+    //（与 pdfdest/pdfstartlink 同纪律：吞参 + 标记，不产正文 token）。
+    // 坑：concat! 拼成单行，% 会吞掉同行剩余——调用间**不能**用 % 分隔。
+    let mut e = Expander::new();
+    e.set_vfs(Box::new(MemVfs::new()));
+    e.set_sink(Box::new(OutlineCaptureSink::default()));
+    e.run_source(concat!(
+        r"\pdfoutline goto name{chapter.1}count-1{Introduction}",
+        r"\pdfoutline count2 goto num 7{Num Target}",
+        r"\pdfoutline user{user action}{Plain}",
+    ))
+    .unwrap();
+    let sink = e.take_sink();
+    let sink = sink
+        .as_any_ref()
+        .downcast_ref::<OutlineCaptureSink>()
+        .unwrap();
+    assert_eq!(
+        sink.specials,
+        vec!["PDF-PRIMITIVE-STUB pdfoutline".to_string(); 3],
+        "specials={:?}",
+        sink.specials
+    );
+    assert!(
+        sink.inner.tokens.is_empty(),
+        "pdfoutline 不得向正文流发 token：{:?}",
+        sink.inner.tokens
+    );
+}
+
 #[test]
 fn pdfpageattr_roundtrips_as_toks_parameter() {
     // beamer/hyperref 闭环（2026-10-24）：`\pdfpageattr`/`\pdfpagesattr` 是

@@ -6,7 +6,7 @@
 /// Step B 补 PDF 变换栈 \pdfsave/\pdfsetmatrix/\pdfrestore 3 项；
 /// ctex 第二墙补 catcode table 三原语），
 /// 供 `register_builtins` 注册与 `tests.rs` 的一致性测试共用。
-pub(crate) const BUILTINS: [(&str, Primitive); 458] = [
+pub(crate) const BUILTINS: [(&str, Primitive); 459] = [
     ("def", Primitive::Def),
     ("edef", Primitive::Edef),
     ("gdef", Primitive::Gdef),
@@ -617,6 +617,11 @@ pub(crate) const BUILTINS: [(&str, Primitive); 458] = [
     // toks 参数（同 \\pdfpageresources 先例：独立字段存储，非 toks 寄存器槽）。
     ("pdfpageattr", Primitive::PdfPageAttr),
     ("pdfpagesattr", Primitive::PdfPagesAttr),
+    // amsldoc 二跑闭环（2026-10-27）：\pdfoutline——hyperref \BOOKMARK 链
+    // （hpdftex.def L1811 \Hy@OutlineName）发射的书签原语；未注册时每次
+    // \BOOKMARK 一条 Undefined（amsldoc 二跑 57 错全此一源）。吞参 stub，
+    // 参数形态见 primitive_pdf_image.rs exec_pdf_outline。
+    ("pdfoutline", Primitive::PdfOutline),
 ];
 
 /// `Primitive → 规范名`（`BUILTINS` 反查；tests.rs

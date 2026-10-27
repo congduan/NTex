@@ -196,6 +196,43 @@ impl Expander {
             .special("PDF-PRIMITIVE-STUB pdfendlink".to_owned())
     }
 
+    /// `\pdfoutline [attr ⟨general text⟩] [count ⟨number⟩] ⟨action⟩ {⟨title⟩}`
+    ///（pdfTeX 手册 §outlines）。
+    ///
+    /// hyperref 实际发射序与手册**相反**（hpdftex.def L1811 `\Hy@OutlineName`：
+    /// `\pdfoutline goto name{#2}count#3{#4}`——goto 在前、count 在后），所以
+    /// attr/count/action 不按固定序而按弹性关键字循环扫描，两形态都收。
+    /// action 与 `\pdfstartlink` 同构（goto/user × file/name/num/page），复用
+    /// `consume_pdf_link_target`；循环退出后的下一个组固定为 title 文本。
+    /// DVI 无 outline 对象：只发 stub 标记，不收 token 进正文流。
+    fn exec_pdf_outline(&mut self) -> Result<()> {
+        loop {
+            if self.scan_keyword(|w| w == "attr")?.is_some() {
+                let _ = self.scan_group_contents(None)?;
+                continue;
+            }
+            if self.scan_keyword(|w| w == "count")?.is_some() {
+                let _ = self.scan_number()?;
+                continue;
+            }
+            if self.scan_keyword(|w| w == "user")?.is_some() {
+                let _ = self.scan_group_contents(None)?;
+                continue;
+            }
+            if self
+                .scan_keyword(|w| matches!(w, "goto" | "thread"))?
+                .is_some()
+            {
+                self.consume_pdf_link_target()?;
+                continue;
+            }
+            break;
+        }
+        let _ = self.scan_group_contents(None)?; // {title}
+        self.sink
+            .special("PDF-PRIMITIVE-STUB pdfoutline".to_owned())
+    }
+
     /// `\pdfsave`：变换域开括号。以 `ntex-ctm` 标记 whatsit 落进当前列表——
     /// **不是**引擎侧状态：graphicx 的 \Gscale@box 先排内容盒（`\pdfrefximage`
     /// 在此执行、CTM 尚未生效）后开矩阵域再 `\copy` 重放，所以缩放语义只能
