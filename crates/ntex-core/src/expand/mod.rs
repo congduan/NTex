@@ -1449,14 +1449,17 @@ impl Expander {
         // pdfTeX 内部 dimen 初表兜底（pdftexconfig.tex 1 true in）：fmt 快照可能
         // 早于原语注册（陈旧快照），初值随引擎入口补种。`\global` 赋值照常覆盖。
         // 补偿 shim 模式先例：数学入口补注入 \check@mathfonts（3d4865e）。
+        // 判据只用「槽本次装载前是 Undefined」（= 本次刚补注册）——fmt 自带定义
+        // 时槽已是 Register，哪怕值是合法的显式 0 也一律不动（用 dimen==0 当
+        // 陈旧信号会静默改写用户 `\pdfhorigin=0pt` 后 dump 的 fmt）。
         for (name, idx) in [("pdfhorigin", 32765usize), ("pdfvorigin", 32764)] {
             let csid = self.intern.intern(name);
             if matches!(self.eqtb.slot(csid), EqSlot::Undefined) {
                 self.eqtb
                     .set_register(csid, crate::register::RegKind::Dimen, idx);
-            }
-            if self.registers.dimen(idx) == 0 {
-                self.registers.set_dimen(idx, 4_736_287);
+                if self.registers.dimen(idx) == 0 {
+                    self.registers.set_dimen(idx, 4_736_287);
+                }
             }
         }
         self.params = state.params;

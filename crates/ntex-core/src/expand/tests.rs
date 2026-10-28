@@ -2097,6 +2097,70 @@ I changed this one to zero.
     }
 
     #[test]
+    fn fmt_import_keeps_explicit_zero_pdfhorigin() {
+        // 锁 a：fmt 自带定义（含合法显式 0）不得被陈旧 fmt 补种守卫改回 1in。
+        // 现场：用户 `\pdfhorigin=0pt \pdfvorigin=0pt` 后 dump 的 fmt，装载时
+        // 旧守卫以 `dimen(idx) == 0` 判「初值丢失」→ 静默覆写 4_736_287sp。
+        let mut e = Expander::new();
+        e.run_source(r"\global\pdfhorigin=0pt \global\pdfvorigin=0pt")
+            .unwrap();
+        let state = e.export_state();
+        assert_eq!(state.registers.dimens[32765], 0, "dump 前 pdfhorigin 已显式 0");
+        assert_eq!(state.registers.dimens[32764], 0, "dump 前 pdfvorigin 已显式 0");
+
+        let mut e2 = Expander::new();
+        e2.import_state(state);
+        e2.run_source(r"\the\pdfhorigin|\the\pdfvorigin").unwrap();
+        let out: String = e2
+            .output()
+            .iter()
+            .map(|t| t.charcode().and_then(char::from_u32).unwrap_or('\u{FFFD}'))
+            .collect();
+        assert_eq!(out, "0.0pt|0.0pt", "fmt 显式 0 必须存活（不得补种 1in）");
+    }
+
+    #[test]
+    fn fmt_import_seeds_pdfhorigin_only_when_slot_absent() {
+        // 锁 b：旧发行 fmt（早于 pdfTeX 原语注册）不含 pdfhorigin/pdfvorigin →
+        // 装载后槽 Undefined、dimen 恒 0；补注册 + 补种 pdftexconfig 的 1in
+        // （4_736_287sp），`\the` 显示 72.27pt。
+        let mut state = Expander::new().export_state();
+        for (name, idx) in [("pdfhorigin", 32765usize), ("pdfvorigin", 32764)] {
+            let csid = state
+                .intern_names
+                .iter()
+                .position(|n| n == name)
+                .unwrap_or_else(|| panic!("{name} 未驻留")) as u32;
+            state.eqtb[csid as usize] = EqSlot::Undefined;
+            state.registers.dimens[idx] = 0;
+        }
+
+        let mut e = Expander::new();
+        e.import_state(state);
+        let out = e
+            .run_source(r"\the\pdfhorigin|\the\pdfvorigin")
+            .map(|_| {
+                e.output()
+                    .iter()
+                    .map(|t| t.charcode().and_then(char::from_u32).unwrap_or('\u{FFFD}'))
+                    .collect::<String>()
+            })
+            .unwrap();
+        assert_eq!(out, "72.27pt|72.27pt", "陈旧 fmt 缺失原语须补种 1in");
+        // 补注册确已发生（槽从 Undefined 变寄存器引用）
+        for name in ["pdfhorigin", "pdfvorigin"] {
+            let csid = e.intern.intern(name);
+            assert!(
+                matches!(
+                    e.eqtb.slot(csid),
+                    EqSlot::Register(crate::register::RegKind::Dimen, _)
+                ),
+                "{name} 装载后应为 dimen 寄存器引用"
+            );
+        }
+    }
+
+    #[test]
     fn pdffilemoddate_epoch_anchor_and_missing_file_empty() {
         // standalone.cls/filemod 闭环（2026-10-26）。格式锚点（Howard Hinnant
         // civil-from-days，UTC）：
