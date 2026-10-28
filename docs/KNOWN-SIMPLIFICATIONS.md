@@ -362,7 +362,11 @@ demo1 六刀 + 输出例程刀 2/3/5 的修复登记；全部已提交，留作�
 - 2026-10-27：**两笔 review 登记（Claude 定向 review，pdffilemoddate 刀）**——
   ① `\pdfcreationdate` 输出 `…Z'00'`（free.rs 带 `'00'` 尾段）而 `\pdffilemoddate`
   输出 `…Z`（无尾段）——同族日期串形态不一致，真 pdfTeX 两者都带偏移段；现有
-  消费方（filemod 按位取数字段）不受影响，同族混用消费方出现时须统一。②
+  消费方（filemod 按位取数字段）不受影响，同族混用消费方出现时须统一。
+  **→ ✅ 已修（2026-10-28，本刀）**：`\pdfcreationdate` 去掉 `'00'` 尾段，两串
+  统一为 `D:<14 位数字>Z`（均 UTC）；锁 `pdf_date_strings_share_utc_shape`
+  同构断言 + 原 `pdfcreationdate` 长度/收尾断言更新；core 602 绿 / clippy 0 /
+  探针输出 `CR=[D:…Z]` `FM=[D:…Z]` / standalone 最小文档 0 错 1 页。②
   `expand/mod.rs` 陈旧 fmt 补种守卫（pdfhorigin/pdfvorigin，约 L1452）以
   `dimen(idx)==0` 判「陈旧」——自定义 fmt 若合法存了显式 0 值，每次装载被静默
   改回 1in；真陈旧信号应是「槽 Undefined」（守卫前半已用对），补种宜挂「槽刚

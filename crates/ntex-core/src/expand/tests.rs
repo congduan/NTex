@@ -2259,11 +2259,35 @@ I changed this one to zero.
 
     #[test]
     fn pdfcreationdate_uses_pdf_datetime_format() {
-        // D:YYYYMMDDHHMMSSZ'00'（\time 只有分钟精度 → 秒恒 00）
+        // D:YYYYMMDDHHMMSSZ（\time 只有分钟精度 → 秒恒 00）。2026-10-28 与
+        // \pdffilemoddate 统一：都写 UTC + `Z`，不再带真 pdfTeX 的 `'00'` 尾段。
         let out = expand(r"\pdfcreationdate").unwrap();
         assert!(out.starts_with("D:2"), "创建日期应为 2xxx 年：{out}");
-        assert!(out.ends_with("Z'00'"), "PDF 日期串收尾：{out}");
-        assert_eq!(out.len(), 21, "D: + 14 位 + Z'00'：{out}");
+        assert!(out.ends_with('Z'), "PDF 日期串收尾：{out}");
+        assert_eq!(out.len(), 17, "D: + 14 位 + Z：{out}");
+    }
+
+    #[test]
+    fn pdf_date_strings_share_utc_shape() {
+        // 同族形态锁（2026-10-28）：\pdfcreationdate 与 \pdffilemoddate 同构——
+        // 均为 D:<14 位数字>Z，无时区偏移尾段（`'00'`）。
+        let creation = expand(r"\pdfcreationdate").unwrap();
+        let mut vfs = MtimeVfs::default();
+        vfs.mtimes.insert("a.tex", 0);
+        let moddate = expand_vfs_erased(r"\pdffilemoddate{a.tex}", Box::new(vfs)).unwrap();
+        for (name, s) in [
+            ("pdfcreationdate", creation.as_str()),
+            ("pdffilemoddate", moddate.as_str()),
+        ] {
+            assert!(s.starts_with("D:"), "{name} 前缀：{s}");
+            assert!(s.ends_with('Z'), "{name} 收尾：{s}");
+            assert_eq!(s.len(), 17, "{name} 长度（D:+14 位+Z）：{s}");
+            assert!(!s.contains('\''), "{name} 不应带偏移尾段：{s}");
+            assert!(
+                s[2..16].bytes().all(|b| b.is_ascii_digit()),
+                "{name} 数字段：{s}"
+            );
+        }
     }
 
     #[test]

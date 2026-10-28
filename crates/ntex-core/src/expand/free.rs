@@ -322,24 +322,30 @@ fn pdf_banner_tokens() -> Vec<Token> {
     pdf_text_tokens(PDF_BANNER)
 }
 
-/// `\pdfcreationdate` → `D:YYYYMMDDHHMMSSZ'00'`（pdfTeX PDF 时间串格式）。
+/// `\pdfcreationdate` → `D:YYYYMMDDHHMMSSZ`（UTC，无 `'00'` 尾段）。
 ///
 /// 从 TeX 日期参数（\day/\month/\year/\time，misc 53-56）取值：引擎内已按
 /// 系统时钟初始化。`\time` 只有分钟精度，秒恒写 `00`（偏差见报告 §15.3）。
+///
+/// 形态与 [`pdf_file_moddate_tokens`] 统一（2026-10-28）：两者都写 UTC + `Z`、
+/// 都不带时区偏移尾段。真 pdfTeX 的 `\pdfcreationdate` 带本地偏移（如
+/// `+08'00'`），但本引擎日期参数本身已是 UTC（无时区概念），偏移段若保留
+/// `'00'` 只会与同族 `\pdffilemoddate` 形态分叉。
 fn pdf_creation_date_tokens(day: i64, month: i64, year: i64, minutes: i64) -> Vec<Token> {
     let hour = minutes / 60;
     let min = minutes % 60;
     let year = year.clamp(0, 9999);
     pdf_text_tokens(&format!(
-        "D:{year:04}{month:02}{day:02}{hour:02}{min:02}00Z'00'"
+        "D:{year:04}{month:02}{day:02}{hour:02}{min:02}00Z"
     ))
 }
 
-/// `\pdffilemoddate` → `D:YYYYMMDDHHMMSSZ`（pdfTeX PDF 时间串格式）。
+/// `\pdffilemoddate` → `D:YYYYMMDDHHMMSSZ`（UTC，无 `'00'` 尾段）。
 ///
 /// standalone.cls 闭环（2026-10-26）。GT（pdflatex 实测）：`D:20261026140627+08'00'`
 /// ——真 pdfTeX 输出**本地时区偏移**；NTex 输出 UTC + `Z`（VFS 只供 epoch 秒，
 /// 无时区概念）。同一时区内前后比较可用；混用外部本地日期字符串时不保证一致。
+/// 形态与 [`pdf_creation_date_tokens`] 统一（2026-10-28，同族同构）。
 /// epoch 秒 → 公历用 Howard Hinnant civil-from-days（与 `system_date_time`
 /// 同族算法，无外部依赖）。
 pub(crate) fn pdf_file_moddate_tokens(epoch_secs: u64) -> Vec<Token> {
