@@ -462,8 +462,14 @@ fn expandafter_executes_scantokens_before_argument_scan() {
     // expl3 rescan builds `\expandafter\macro ... \scantokens{...}` chains:
     // \scantokens must participate in expansion so the re-scanned stream and
     // \everyeof marker are available before the macro scans its delimited arg.
+    // GT（2026-10-28，pdflatex -interaction=nonstopmode，eo2.tex 探针）：
+    // `\edef\res{\expandafter\grab\scantokens{AB}}` → `\meaning\res` =
+    // `macro:->[AB ]`——e-TeX 伪文件末行自动附加 endlinechar（cat5 → 规范
+    // 空格 token，tex.web @<Finish line, emit a space@>），进 `\grab` 的
+    // `#1!` 定界实参。旧期望 `[AB]`（无空格）是伪文件不追加行尾字符时代
+    // 的引擎行为，非 GT 值。
     let src = "\\def\\grab#1!{[#1]}\\everyeof{!}\\expandafter\\grab\\scantokens{AB}";
-    assert_eq!(expand(src).unwrap(), "[AB]");
+    assert_eq!(expand(src).unwrap(), "[AB ]");
 }
 
 #[test]

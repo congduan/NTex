@@ -1498,6 +1498,15 @@ impl Expander {
             .iter()
             .filter_map(|t| t.charcode().and_then(|c| u8::try_from(c).ok()))
             .collect();
+        // e-TeX 伪文件行模型（tex.web pseudo_start，etex.tex L373-377 注释）：
+        // 每行文本（含末行）自动附加 end_line_char 后入 buffer——`\endlinechar`
+        // 的 catcode 在重扫段按当前表分派（active ^^M 定界正是消费点，
+        // fvextra `\FVExtraRetokenizeVArg` 的 `#1^^C^^M` 链 GT 实证 `GOT=[abc]`）。
+        // NTex 伪文件行按内嵌 LF 切行，不自动追加——这里显式补一个换行字节，
+        // 走 input.rs 物理行尾臂（该臂按 `\endlinechar` 当前值与 catcode 分派，
+        // endlinechar<0 时不产 token，与 end_line_char_inactive 语义一致）。
+        let mut bytes = bytes;
+        bytes.push(b'\n');
         let bytes = Arc::from(bytes);
         self.push_frame(InputFrame::Source {
             line_starts: Arc::from(crate::input::line_starts(&bytes)),
