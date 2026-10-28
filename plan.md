@@ -402,7 +402,7 @@ core 567 + layout 320 全绿、宏包 13/13、small2e/sample2e 均 0 错。
 | 主线：LaTeX/expl3 兼容 | ✅ 主墙已越（2026-10-02 口径刷新）；`\documentclass` 最小闭环已通；余长尾见 §0.1/§5 |
 | 输出例程战 | ✅ 刀 1–5 全落（`\outputpenalty`/box255/insert 分配/`\newinsert`/页号链） |
 | 格式预载（G 线） | ✅ G0–G3；剩 G4/G5 |
-| M5 增量计算 | 🟡 阶段一~五完成（改正文 4.3x / 改宏体 1.1x）；阶段六待办见 §2 M5 |
+| M5 增量计算 | 🟡 阶段一~五完成 + 阶段六第一刀（改正文 0.5x / 改宏体 0.4x，见 §2 M5 阶段六注） |
 | M9 中文 | 🟡 刀 1–6 全落（`\char` 扩位 + `\utfinputmode` + 宿主端端到端 + CJK 断点/断字/标点挤压 + 中文粗斜体）；遗留见 §5 P1 |
 | 宏包生态 | 🟡 `ntex-pkg` 解析/契约/取料①② + `--auto-pkg` 引擎接线；13 包 CI 回归 **13/13**（基线 [docs/pkg-regression-baseline.md](docs/pkg-regression-baseline.md)） |
 | M2 字节码 | 🟡 双轨等价全绿；吞吐 **1.01x**，≥2x 结构性不可达 → 转 M7 `.fmt` v2 |
