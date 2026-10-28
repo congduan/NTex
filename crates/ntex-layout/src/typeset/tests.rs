@@ -1574,7 +1574,7 @@ mod tests {
             space: |_| Glue::ZERO,
         });
         b.patterns(b".ach4 hy3phen5ation".to_vec()).unwrap();
-        assert_eq!(b.patterns.count, 2);
+        assert_eq!(b.patterns.count(), 2);
         // hy3phen5ation → hy-phen-ation（断点 2, 6）；.ach4 对 machine 无奇数 gap
         assert_eq!(b.patterns.hyphenate(b"hyphenation"), vec![2, 6]);
         assert_eq!(b.patterns.hyphenate(b"machine"), Vec::<usize>::new());

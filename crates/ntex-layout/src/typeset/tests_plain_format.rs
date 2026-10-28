@@ -94,7 +94,7 @@ fn embedded_hyphen_patterns_reach_builder_via_event() {
         .downcast_mut::<NodeBuilder>()
         .expect("sink 应为 NodeBuilder")
         .patterns
-        .count;
+        .count();
     assert!(count > 4000, "hyphen.tex 模式应已入 trie：{count}");
 }
 
@@ -117,7 +117,7 @@ fn preload_hyphen_loads_patterns_without_plain() {
         .downcast_mut::<NodeBuilder>()
         .expect("sink 应为 NodeBuilder")
         .patterns
-        .count;
+        .count();
     assert!(count > 4000, "hyphen.tex 模式应已入 trie：{count}");
 
     // 默认关：INITEX/TRIP 语义零影响（真 TRIP 断字表为空，自动补表会改断行）。
@@ -133,7 +133,7 @@ fn preload_hyphen_loads_patterns_without_plain() {
         .downcast_mut::<NodeBuilder>()
         .expect("sink 应为 NodeBuilder")
         .patterns
-        .count;
+        .count();
     assert_eq!(count, 0, "默认不补种断字表");
 }
 
@@ -152,7 +152,7 @@ fn embedded_hyphen_tex_parses_into_pattern_trie() {
     let start = body.find("\\patterns{").expect("hyphen.tex 应含 \\patterns") + "\\patterns{".len();
     let end = start + body[start..].find('}').expect("patterns 块应有闭花括号");
     let trie = crate::hyphen::PatternTrie::parse(&body.as_bytes()[start..end]);
-    assert!(trie.count > 4000, "4447 条模式应全部入 trie：{}", trie.count);
+    assert!(trie.count() > 4000, "4447 条模式应全部入 trie：{}", trie.count());
 }
 
 

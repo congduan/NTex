@@ -10,6 +10,7 @@
 //! 词界限制（`.`）暂不参与断点过滤（ETRIP 校准阶段补）。
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// 模式 trie 节点：字母 → 子节点。
 /// `PartialEq`（M5 阶段四）：排版副作用字段比较（缓存复用判定 Gate）需要。
@@ -26,11 +27,42 @@ pub struct TrieNode {
 
 /// Liang 模式表（`\patterns` 解析结果）。
 /// `PartialEq`（M5 阶段四）：排版副作用字段比较（缓存复用判定 Gate）需要。
-#[derive(Debug, Clone, Default, PartialEq)]
+///
+/// **M5 阶段六（检查点捕获成本刀）**：内核改 [`std::sync::Arc`] 共享——
+/// 断字模式表在文档生命周期内几乎不变（plain 预载/`\patterns{...}` 各一次，
+/// 数千条 pattern 的递归 HashMap 树整份克隆/逐节点深比较 ~ms 级），而 M5
+/// 增量管线每段边界对 `SideEffects.patterns` 做 捕获+还原+比较 三次拷贝，
+/// 曾是复用路径 0.5x（增量比全量慢一倍）的最大单项开销。`Clone`/`PartialEq`
+/// 退化为引用计数/指针比较（先 `Arc::ptr_eq` 后内容比较防孤儿 trie 误判）；
+/// 写路径仅 [`Self::parse`] 整表重建（`\patterns` 事件），无 interior mutability
+/// ——克隆后不存在共享突变面，读路径方法直达 `inner`（`is_empty`/`hyphenate`/
+/// `count`），语义与旧实现逐位一致。选 `Arc` 而非 `Rc`（对照 BoxFile 选 `Rc`，
+/// incremental.rs）：为 M6 Send 化预留（`NodeBuilder` 整体仍 `!Send`，原子计数
+/// 开销每段边界一次，可忽略）。
+#[derive(Debug, Clone, Default)]
 pub struct PatternTrie {
+    inner: Arc<TrieInner>,
+}
+
+#[derive(Debug, Default, PartialEq)]
+struct TrieInner {
     root: TrieNode,
     /// 模式总数（诊断用）。
-    pub count: usize,
+    count: usize,
+}
+
+/// 保持向后兼容的公开字段访问（`trie.count` 在测试/诊断中使用）。
+impl PatternTrie {
+    /// 模式总数（诊断用）。
+    pub fn count(&self) -> usize {
+        self.inner.count
+    }
+}
+
+impl PartialEq for PatternTrie {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner) || self.inner == other.inner
+    }
 }
 
 /// 解析单条模式 → (字母序列, gaps)；`gaps[i]` = 第 i 个字母**前**的 gap
@@ -54,28 +86,30 @@ fn parse_pattern(p: &[u8]) -> (Vec<u8>, Vec<u8>) {
 impl PatternTrie {
     /// 是否已加载模式（空表跳过断字）。
     pub fn is_empty(&self) -> bool {
-        self.count == 0
+        self.inner.count == 0
     }
 
     /// 解析 `\patterns{...}` 的模式表（空格/换行分隔多条）。
     pub fn parse(patterns: &[u8]) -> Self {
-        let mut trie = PatternTrie::default();
+        let mut trie = TrieInner::default();
         for pat in patterns.split(|&b| b == b' ' || b == b'\n' || b == b'\r') {
             if pat.is_empty() {
                 continue;
             }
-            trie.insert(pat);
+            Self::insert(&mut trie, pat);
         }
-        trie
+        PatternTrie {
+            inner: Arc::new(trie),
+        }
     }
 
-    /// 插入单条模式到 trie。
-    fn insert(&mut self, pat: &[u8]) {
+    /// 插入单条模式到 trie（仅 [`Self::parse`] 构建期使用）。
+    fn insert(trie: &mut TrieInner, pat: &[u8]) {
         let (letters, gaps) = parse_pattern(pat);
         if letters.is_empty() {
             return;
         }
-        let mut node = &mut self.root;
+        let mut node = &mut trie.root;
         let n = letters.len();
         for (i, ch) in letters.iter().enumerate() {
             node = node.next.entry(*ch).or_default();
@@ -86,7 +120,7 @@ impl PatternTrie {
                 node.terminal_gap = node.terminal_gap.max(gaps[n]);
             }
         }
-        self.count += 1;
+        trie.count += 1;
     }
 
     /// 计算单词的断点位置（返回断点处字母下标：断在 `breaks[i]` 字母之后，
@@ -97,8 +131,9 @@ impl PatternTrie {
         }
         // marks[j] = 位置 j（第 j 个字母前）的 gap 最大数字
         let mut marks = vec![0u8; word.len() + 1];
+        let root = &self.inner.root;
         for start in 0..word.len() {
-            let mut node = &self.root;
+            let mut node = root;
             let mut j = start;
             loop {
                 if j >= word.len() {
@@ -129,7 +164,7 @@ mod tests {
     #[test]
     fn parse_digit_after_letter_gap() {
         let t = PatternTrie::parse(b"ab5c");
-        assert_eq!(t.count, 1);
+        assert_eq!(t.count(), 1);
         // ab5c：5 在 b 后 → b 与 c 之间 gap=5 → 断点 2
         assert_eq!(t.hyphenate(b"abc"), vec![2]);
         assert_eq!(t.hyphenate(b"xabcx"), vec![3]);
@@ -178,6 +213,22 @@ mod tests {
     fn no_matches_no_breaks() {
         let t = PatternTrie::parse(b"xy5z");
         assert_eq!(t.hyphenate(b"abcdef"), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn clone_shares_and_eq_covers_orphan_branch() {
+        // M5 阶段六：克隆 = Arc 引用计数（ptr_eq 分支），快照/活侧共享后
+        // 复用判定走 O(1) 指针比较。
+        let t = PatternTrie::parse(b"ab5c");
+        let c = t.clone();
+        assert_eq!(t, c, "克隆共享同一 Arc（ptr_eq 短路）");
+        assert_eq!(c.hyphenate(b"abcd"), t.hyphenate(b"abcd"));
+        assert_eq!(c.count(), t.count());
+        // 孤儿分支：同内容两次独立 parse（不同 Arc）→ 内容比较判等；
+        // 异内容判不等。
+        let orphan = PatternTrie::parse(b"ab5c");
+        assert_eq!(t, orphan, "同内容孤儿 trie 判等（内容比较回退）");
+        assert_ne!(t, PatternTrie::parse(b"xy5z"), "异内容判不等");
     }
 
     #[test]

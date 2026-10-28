@@ -984,7 +984,8 @@ mod incremental_tests {
         assert!(b.math_state.nonscript_pending);
         assert_eq!(b.math_state.math_fonts[0], [Some(FontId(1)); 3]);
         assert!(!b.patterns.is_empty());
-        assert_eq!(b.patterns.count, PatternTrie::parse(b"ab1c").count);
+        // 内容级锁（review 建议）：count 都是 1 区分不开 A/B，直接比 trie。
+        assert_eq!(b.patterns, PatternTrie::parse(b"ab1c"));
         assert_eq!(b.hyph_exceptions, vec![(b"abc".to_vec(), vec![0, 2])]);
         assert_eq!(b.box_state.setbox_target, Some(4));
         assert!(b.box_state.setbox_global);
