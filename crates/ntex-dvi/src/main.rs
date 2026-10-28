@@ -970,3 +970,43 @@ mod auto_pkg_scan_tests {
         assert!(ctex_needs_dvi_output(wrapper));
     }
 }
+
+#[cfg(test)]
+mod graphics_cfg_tests {
+    use std::path::PathBuf;
+
+    fn graphics_cfg() -> String {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/tex-minimal/tex/latex/graphics-cfg/graphics.cfg");
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("读取 {} 失败：{e}", path.display()))
+    }
+
+    #[test]
+    fn graphics_cfg_pins_pdftex_driver_without_pdfoutput_probe() {
+        let cfg = graphics_cfg();
+        assert!(cfg.contains("\\def\\Gin@driver{pdftex.def}"));
+        assert!(cfg.contains("\\ExecuteOptions{pdftex}"));
+        // ctex 的 misc[63]=0（Fandol DVI 字体臂）不得再把图片驱动带回
+        // dvips.def：驱动选择与 \pdfoutput 判定解耦。
+        assert!(
+            !cfg.contains("\\ifnum\\pdfoutput"),
+            "graphics.cfg 不得再按 \\pdfoutput 选驱动"
+        );
+        // 资产写盘纪律：不得出现双反斜杠毒（\\endinput 等）。
+        assert!(!cfg.contains("\\\\"), "graphics.cfg 含双反斜杠");
+    }
+
+    #[test]
+    fn graphics_cfg_neutralizes_injected_driver_options() {
+        let cfg = graphics_cfg();
+        // ctexbackend.cfg 把 dvipdfmx 塞进 \@classoptionslist，会在
+        // \ProcessOptions 里覆盖 \Gin@driver；这些选项必须被重声明为空操作。
+        for opt in ["dvips", "dvipdfmx", "xetex", "luatex"] {
+            assert!(
+                cfg.contains(&format!("\\DeclareOption{{{opt}}}{{}}")),
+                "缺少 {opt} 驱动选项空操作"
+            );
+        }
+    }
+}
