@@ -395,6 +395,18 @@ core 567 + layout 320 全绿、宏包 13/13、small2e/sample2e 均 0 错。
 降级为长期观测项，不作为返回主线的门禁。详见
 [R17 战报](docs/archive/blade-aj-r17-report-2026-10-21.md)。
 
+**✅ 2026-10-28 收敛诊断刀（队列①收尾，零代码改动）**：当前 HEAD `49bba04` 复测
+—— trip.tex 全本（**正确姿势 = `--no-plain --dump` 两步**；plain 预载进快照会
+产出「9 错无页面」假形态）137 错/9 页/2492B vs GT 8 错/16 页/2920B；剩余 11 条
+Missing number 与 R17 归因表逐条吻合，全部为 TRIP 折磨构造（`\setbox=` 缺号/
+`\mathchardef A`/`\span` 模板/`^^M` catcode 游戏），**与真实文档不同源四重实证**
+（small2e/sample2e 双 0 错、宏包 13/13、资产审计 27 PASS+3 GATE/0 ERROR、
+官方三文档 R21 后 2/0/0 错）；tripos 12 页/750B/0 错与基线逐字节一致。
+**裁决：TRIP 专项维持关闭**，够用阈值（tripos 12/12 + 无挂死）复核成立；
+重开入口（若日后需要）= L315 `J` active 分叉 + ini 段 7 条报错路径补齐，
+均不满足「真实文档同时改善」门槛。详见
+[诊断战报](docs/archive/trip-convergence-diagnosis-2026-10-28.md)。
+
 ### 0.2 各线状态
 
 | 线 | 状态 |
