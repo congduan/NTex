@@ -57,6 +57,7 @@ pub(super) fn load_font_into_table(
                 kern_values: Vec::new(),
                 lig_kern_index: Vec::new(),
                 next_larger: Vec::new(),
+                extensible: Vec::new(),
                 font_params: Vec::new(),
                 // tex.web L11210：建字体时 hyphen_char := default_hyphen_char（45）
                 hyphenchar: 45,

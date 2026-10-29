@@ -1611,6 +1611,7 @@ mod tests {
             kern_values: Vec::new(),
             lig_kern_index: Vec::new(),
             next_larger: Vec::new(),
+            extensible: Vec::new(),
             font_params: Vec::new(),
         };
         fm.unicode_native = true;
@@ -1859,6 +1860,7 @@ mod tests {
             kern_values: Vec::new(),
             lig_kern_index: Vec::new(),
             next_larger: Vec::new(),
+            extensible: Vec::new(),
             font_params: Vec::new(),
         };
         // 设计字号 10pt 下的宽度（sp）：汉字全角 1 em；'A' 取 3/8 em（375000sp）
@@ -1957,6 +1959,7 @@ mod tests {
             kern_values: Vec::new(),
             lig_kern_index: Vec::new(),
             next_larger: Vec::new(),
+            extensible: Vec::new(),
             font_params: Vec::new(),
         };
         fm.unicode_native = true;

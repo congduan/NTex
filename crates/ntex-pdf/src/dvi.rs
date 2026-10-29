@@ -712,6 +712,7 @@ mod tests {
             kern_values: Vec::new(),
             lig_kern_index: Vec::new(),
             next_larger: Vec::new(),
+            extensible: Vec::new(),
             font_params: Vec::new(),
         };
         fm.name = "fandol-probe".into();
@@ -788,6 +789,7 @@ mod tests {
                 kern_values: Vec::new(),
                 lig_kern_index: Vec::new(),
                 next_larger: Vec::new(),
+                extensible: Vec::new(),
                 font_params: Vec::new(),
             };
             for c in *b"abc" {

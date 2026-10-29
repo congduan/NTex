@@ -44,6 +44,17 @@ struct CharInfoEntry {
     lig_kern: Option<u16>,
     /// tag=2：更大变体字符码（list_tag，Op 大算符放大取字形来源）
     larger: Option<u8>,
+    /// tag=3：extensible recipe 表索引。
+    extensible: Option<u8>,
+}
+
+/// TFM extension 表的一项（tex.web `ext_top/mid/bot/rep`）。0 表示该可选部件缺席。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExtensibleRecipe {
+    pub top: u8,
+    pub mid: u8,
+    pub bot: u8,
+    pub rep: u8,
 }
 
 /// lig/kern 程序步（TFM lig_kern 表的一个 32 位字；tex.web §10583-10605）。
@@ -108,10 +119,6 @@ impl<'a> Reader<'a> {
         let b = self.take(4)?;
         Ok(u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
     }
-
-    fn skip(&mut self, n: usize) -> Result<()> {
-        self.take(n).map(|_| ())
-    }
 }
 
 /// 解析后的字体度量（维度已按设计字号换算为 sp）。
@@ -149,6 +156,8 @@ pub struct FontMetrics {
     /// tex.web make_op display 大算符放大 / var_delimiter 定界符放大用；
     /// cmex10：char 80 (text Σ) → 88 (display Σ) 等）。无变体为 None。
     pub next_larger: Vec<Option<u8>>,
+    /// charcode → tag=3 的扩展拼装配方；字符码与字阶缩放无关。
+    pub extensible: Vec<Option<ExtensibleRecipe>>,
     /// 全量字体参数（fontdimen；`font_params[i-1]` = TFM 参数 i，已缩放）。
     /// 数学字体用：参数 8+（sup/sub 高度、分式间距、delimiter 等）。
     pub font_params: Vec<i64>,
@@ -297,6 +306,7 @@ impl FontMetrics {
             kern_values: self.kern_values.iter().map(|&v| scale(v)).collect(),
             lig_kern_index: self.lig_kern_index.clone(),
             next_larger: self.next_larger.clone(),
+            extensible: self.extensible.clone(),
             font_params: self.font_params.iter().map(|&v| scale(v)).collect(),
             hyphenchar: self.hyphenchar,
             unicode_native: self.unicode_native,
@@ -386,6 +396,7 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
             italic_index: ((w >> 10) & 0x3F) as usize,
             lig_kern: (tag == 1).then_some(remainder),
             larger: (tag == 2).then_some(remainder as u8),
+            extensible: (tag == 3).then_some(remainder as u8),
         });
     }
 
@@ -410,8 +421,18 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
         .iter()
         .map(|&v| scale(v))
         .collect::<Vec<_>>();
-    // 跳过可扩展表（M4 起用）
-    r.skip(ne as usize * 4)?;
+    // extension 表：每项按 top/mid/bot/rep 四个字符码排列。
+    let recipes = (0..ne)
+        .map(|_| {
+            let word = r.u32()?;
+            Ok(ExtensibleRecipe {
+                top: (word >> 24) as u8,
+                mid: (word >> 16) as u8,
+                bot: (word >> 8) as u8,
+                rep: word as u8,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
     // 参数表（fix_word）
     let params = read_words(&mut r, np)?;
 
@@ -420,6 +441,7 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
     let mut char_italic = vec![0i64; 256];
     let mut lig_kern_index = vec![None; 256];
     let mut next_larger = vec![None; 256];
+    let mut extensible = vec![None; 256];
     for (i, e) in char_info.iter().enumerate() {
         let charcode = bc as usize + i;
         if charcode < chars.len() {
@@ -430,6 +452,9 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
             char_italic[charcode] = italics.get(e.italic_index).map(|&v| scale(v)).unwrap_or(0);
             lig_kern_index[charcode] = e.lig_kern;
             next_larger[charcode] = e.larger;
+            extensible[charcode] = e
+                .extensible
+                .and_then(|idx| recipes.get(idx as usize).copied());
         }
     }
     // 参数：TeX 参数 1=slant 2=space 3=space_stretch 4=space_shrink
@@ -454,6 +479,7 @@ pub fn parse_tfm(bytes: &[u8]) -> Result<FontMetrics> {
         kern_values,
         lig_kern_index,
         next_larger,
+        extensible,
         font_params,
         hyphenchar: 45,
         // TFM 是 8-bit 编码向量字体：永远走 `chars` 槽表（0..=255）
@@ -795,6 +821,32 @@ mod tests {
     }
 
     #[test]
+    fn cmex10_extensible_recipe_from_tfm_table() {
+        let bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/tfm/cmex10.tfm"
+        ))
+        .expect("仓库发行资产 cmex10.tfm");
+        let fm = parse_tfm(&bytes).expect("解析 cmex10.tfm");
+        // TFM 原文：char 0 的 list_tag → 16→18→32→48，char 48 的
+        // ext_tag remainder=2；extension[2] 四字节为 30 00 40 42 (hex)。
+        assert_eq!(fm.next_larger[0], Some(16));
+        assert_eq!(fm.next_larger[16], Some(18));
+        assert_eq!(fm.next_larger[18], Some(32));
+        assert_eq!(fm.next_larger[32], Some(48));
+        assert_eq!(
+            fm.extensible[48],
+            Some(ExtensibleRecipe {
+                top: 48,
+                mid: 0,
+                bot: 64,
+                rep: 66,
+            })
+        );
+        assert_eq!(fm.scaled_by(2, 1).extensible[48], fm.extensible[48]);
+    }
+
+    #[test]
     fn lig_kern_reports_retained_left_and_right_forms() {
         let fm = FontMetrics {
             design_size_sp: 10 * 65_536,
@@ -831,6 +883,7 @@ mod tests {
                 v
             },
             next_larger: vec![None; 256],
+            extensible: Vec::new(),
             font_params: Vec::new(),
             hyphenchar: 45,
             unicode_native: false,

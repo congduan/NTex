@@ -390,6 +390,7 @@ pub fn build_metrics(data: Vec<u8>, name: &str) -> Result<FontMetrics> {
         kern_values: Vec::new(),
         lig_kern_index: Vec::new(),
         next_larger: Vec::new(),
+        extensible: Vec::new(),
         // 1-based TFM 参数序：1=slant 2=space 3=stretch 4=shrink 5=x_height 6=quad
         font_params: vec![
             0,

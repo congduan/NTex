@@ -712,16 +712,15 @@ use super::*;
             eprintln!("未找到 cmmi10.tfm，跳过");
             return;
         }
-        // 码 0x270362（plain.tex \root 用的根号槽字形）的 large=(fam 3, 0x62)。
-        // radicand 高深 12pt 压过 small 变体（cmsy10 'p' h+d=7.73pt）→ 取 large。
+        // large=(fam 3, 0x70) 沿 cmex10 char list 逐级放大。
         let src = format!(
-            "{}$\\radical\"270362{{\\vrule height 9pt depth 3pt}}$",
+            "{}$\\radical\"270370{{\\vrule height 9pt depth 3pt}}$",
             mathsy_fonts()
         );
         let kids = math_tfm_children(&src);
         assert_eq!(kids.len(), 1);
         let (ch, over) = radical_parts(&kids[0]);
-        assert_eq!(ch, 0x62, "大变体 = 码低 12 位的 fam/char：{kids:?}");
+        assert_eq!(ch, 0x71, "大变体沿 TFM char list 放大：{kids:?}");
         let base = as_box(&over.children[3]);
         assert_eq!(base.children.len(), 1, "radicand = 规则原子");
         assert!(matches!(base.children[0], Node::Rule { .. }));
@@ -749,9 +748,51 @@ use super::*;
         assert_eq!(children.len(), 1, "\\left(\\right) 应封装为单个 hbox");
         let b = as_box(&children[0]);
         assert_eq!(b.children.len(), 3, "盒内 = 定界符 + body + 定界符");
-        assert_eq!(as_char(&b.children[0]), b'(' as u32);
+        assert_eq!(as_char(&as_box(&b.children[0]).children[0]), b'(' as u32);
         assert_eq!(as_char(&b.children[1]), b'x' as u32);
-        assert_eq!(as_char(&b.children[2]), b')' as u32);
+        assert_eq!(as_char(&as_box(&b.children[2]).children[0]), b')' as u32);
+    }
+
+    #[test]
+    fn math_left_delimiter_uses_extensible_recipe_for_tall_body() {
+        let fm = ntex_font::parse_tfm(&std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"), "/../../assets/tfm/cmex10.tfm"
+        )).expect("cmex10.tfm")).expect("解析 cmex10.tfm");
+        let setup = r#"\font\tenrm=cmr10 \font\tenex=cmex10 \textfont0=\tenrm \textfont3=\tenex \delcode`(="028300 "#;
+        let body_height = 20 * 65_536;
+        let body_depth = 20 * 65_536;
+        let nodes = math_tfm_children(&format!(
+            r"{setup}$\left(\vrule height 20pt depth 20pt\right.$"
+        ));
+        let outer = as_box(&nodes[0]);
+        let delim = as_box(&outer.children[0]);
+        assert_eq!(delim.kind, BoxKind::VBox, "应按 TFM recipe 拼装：{delim:?}");
+        let recipe = fm.extensible[48].expect("char list 末端的 recipe");
+        let pieces: Vec<u32> = delim.children.iter().map(|n| {
+            as_char(&as_box(n).children[0])
+        }).collect();
+        assert_eq!(pieces.first(), Some(&(recipe.top as u32)));
+        assert_eq!(pieces.last(), Some(&(recipe.bot as u32)));
+        assert!(pieces[1..pieces.len()-1].iter().all(|&ch| ch == recipe.rep as u32));
+        assert!(delim.height + delim.depth >= body_height + body_depth);
+
+        // 带 mid 的 recipe（cmex10 char 56）：mid 只出现一次，rep 在两侧等数。
+        let brace_setup = r#"\font\tenrm=cmr10 \font\tenex=cmex10 \textfont0=\tenrm \textfont3=\tenex \delcode`[="05B338 "#;
+        let brace_nodes = math_tfm_children(&format!(
+            r"{brace_setup}$\left[\vrule height 20pt depth 20pt\right.$"
+        ));
+        let brace = as_box(&as_box(&brace_nodes[0]).children[0]);
+        assert_eq!(brace.kind, BoxKind::VBox);
+        let brace_recipe = fm.extensible[56].expect("带 mid 的 recipe");
+        let brace_pieces: Vec<u32> = brace.children.iter()
+            .map(|n| as_char(&as_box(n).children[0])).collect();
+        let middle = brace_pieces.iter().position(|&ch| ch == brace_recipe.mid as u32)
+            .expect("中部字形");
+        assert_eq!(brace_pieces[0], brace_recipe.top as u32);
+        assert_eq!(*brace_pieces.last().unwrap(), brace_recipe.bot as u32);
+        assert_eq!(middle - 1, brace_pieces.len() - middle - 2);
+        assert!(brace_pieces[1..middle].iter().all(|&ch| ch == brace_recipe.rep as u32));
+        assert!(brace_pieces[middle+1..brace_pieces.len()-1].iter().all(|&ch| ch == brace_recipe.rep as u32));
     }
 
     #[test]

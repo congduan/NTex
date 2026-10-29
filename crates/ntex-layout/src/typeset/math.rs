@@ -11,6 +11,26 @@ impl Fonts {
                 .unwrap_or(0),
         }
     }
+
+    fn delimiter_exists(&self, font: FontId, charcode: u32) -> bool {
+        match self {
+            Fonts::Fn { .. } => true,
+            Fonts::Tfm(table) => table
+                .borrow()
+                .get(font.0 as usize)
+                .is_some_and(|fm| fm.char_exists(charcode)),
+        }
+    }
+
+    fn extensible_recipe(&self, font: FontId, charcode: u32) -> Option<ntex_font::tfm::ExtensibleRecipe> {
+        match self {
+            Fonts::Fn { .. } => None,
+            Fonts::Tfm(table) => table
+                .borrow()
+                .get(font.0 as usize)
+                .and_then(|fm| fm.extensible.get(charcode as usize).copied().flatten()),
+        }
+    }
 }
 
 /// tex.web `half(x)`：奇数取 (x+1) div 2（Pascal div 向零截断），偶数取 x div 2。
@@ -1281,60 +1301,115 @@ impl NodeBuilder {
         vpack(children, dims.height + dims.depth, i64::MAX)
     }
 
-    /// tex.web var_delimiter（L13880 起）按定界符码取根号变体：码拆
-    /// small=(fam 2,'p')/large=(fam 3,'p')（\sqrt 默认码 = plain.tex
-    /// `\radical"270370`），small 取 fam 的当前字阶字体，h+d ≥ v 即停，
-    /// 不足则落到 large（tex.web best-so-far：large_attempt 后必返回某变体，
-    /// 单字形近似——字阶内 char list 逐级放大与 extensible 拼接仍属 M4-3）。
-    /// 码 0（或两变体均 (fam 0, char 0)，即 tex.web `(z<>0)or(x<>min_quarterword)`
-    /// 排除位）走 null 分支：空盒宽 \nulldelimiterspace（L14108-14112）。
+    /// 根号与普通定界符共用 tex.web `var_delimiter` 选形。
     fn radical_delimiter(&self, delim: u32, kind: usize, v: i64) -> BoxNode {
-        let small_fam = ((delim >> 20) & 0xF) as usize;
-        let small_char = (delim >> 12) & 0xFF;
-        let large_fam = ((delim >> 8) & 0xF) as usize;
-        let large_char = delim & 0xFF;
-        let mut best: Option<(FontId, u32, i64, i64, i64)> = None;
-        for (fam, ch) in [(small_fam, small_char), (large_fam, large_char)] {
-            if fam == 0 && ch == 0 {
-                continue; // null delimiter 域
-            }
-            if let Some(f) = self
-                .math_state
-                .math_fonts
-                .get(fam)
-                .and_then(|s| s.get(kind).copied().flatten())
-            {
-                let (w, h, d) = self.math_metrics(f, ch, 1, 1);
-                if h + d >= v {
-                    return Self::delim_char_box(f, ch, w, h, d);
-                }
-                best = Some((f, ch, w, h, d));
-            }
-        }
-        if let Some((f, ch, w, h, d)) = best {
-            return Self::delim_char_box(f, ch, w, h, d);
-        }
-        // null 分支：宽 \nulldelimiterspace 的空盒（同 make_fraction 的外壳）
-        BoxNode {
-            kind: BoxKind::HBox,
-            width: self.params.nulldelimiterspace,
-            height: 0,
-            depth: 0,
-            shift: 0,
-            children: Vec::new(),
-        }
+        self.var_delimiter(delim, kind, v)
     }
 
-    /// var_delimiter char_box（tex.web L13958）：单字形盒，宽含斜体修正，
-    /// 高深取字形度量。
-    fn delim_char_box(f: FontId, ch: u32, w: i64, h: i64, d: i64) -> BoxNode {
-        BoxNode::new_hbox(vec![Node::Char {
+    /// tex.web `char_box`：单字形盒宽包含 italic correction。
+    fn delim_char_box(&self, f: FontId, ch: u32) -> BoxNode {
+        let (w, h, d) = self.fonts.metrics(f, ch);
+        let mut b = BoxNode::new_hbox(vec![Node::Char {
             font: f,
             charcode: ch,
             width: w,
             height: h,
             depth: d,
-        }])
+        }]);
+        b.width += self.fonts.char_italic(f, ch);
+        b.height = h;
+        b.depth = d;
+        b
+    }
+
+    /// tex.web `make_extensible`：自然 vbox，top 在上，mid 居中，两侧各 n 个 rep。
+    fn extensible_box(&self, f: FontId, r: ntex_font::tfm::ExtensibleRecipe, needed: i64) -> BoxNode {
+        let extent = |ch: u8| {
+            let (_, h, d) = self.fonts.metrics(f, ch as u32);
+            h + d
+        };
+        let rep = extent(r.rep);
+        let mut total = [r.top, r.mid, r.bot]
+            .into_iter()
+            .filter(|&ch| ch != 0)
+            .map(extent)
+            .sum::<i64>();
+        let mut copies = 0usize;
+        if rep > 0 {
+            let step = rep * if r.mid == 0 { 1 } else { 2 };
+            while total < needed {
+                total += step;
+                copies += 1;
+            }
+        }
+        let mut children = Vec::with_capacity(3 + copies * if r.mid == 0 { 1 } else { 2 });
+        let mut add = |ch: u8| children.push(Node::Box(self.delim_char_box(f, ch as u32)));
+        if r.top != 0 { add(r.top); }
+        for _ in 0..copies { add(r.rep); }
+        if r.mid != 0 {
+            add(r.mid);
+            for _ in 0..copies { add(r.rep); }
+        }
+        if r.bot != 0 { add(r.bot); }
+        let mut b = BoxNode::new_vbox(children);
+        b.width = self.delim_char_box(f, r.rep as u32).width;
+        b.depth = total - b.height;
+        b
+    }
+
+    /// tex.web `var_delimiter`：small/large 字体族内按字阶倒查，沿 list_tag
+    /// 逐级试字；ext_tag 立即选中，普通字形保存最高的 best-so-far。
+    fn var_delimiter(&self, code: u32, kind: usize, needed: i64) -> BoxNode {
+        let mut best: Option<(FontId, u32, i64)> = None;
+        let variants = [
+            (((code >> 20) & 0xF) as usize, (code >> 12) & 0xFF),
+            (((code >> 8) & 0xF) as usize, code & 0xFF),
+        ];
+        'search: for (fam, first) in variants {
+            if fam == 0 && first == 0 { continue; }
+            for size in (0..=kind).rev() {
+                let Some(font) = self.math_state.math_fonts
+                    .get(fam).and_then(|s| s.get(size).copied().flatten()) else { continue; };
+                let mut ch = first;
+                let mut seen = [false; 256];
+                loop {
+                    if ch >= 256 || seen[ch as usize] || !self.fonts.delimiter_exists(font, ch) { break; }
+                    seen[ch as usize] = true;
+                    if self.fonts.extensible_recipe(font, ch).is_some() {
+                        best = Some((font, ch, 0));
+                        break 'search;
+                    }
+                    let (_, h, d) = self.fonts.metrics(font, ch);
+                    let extent = h + d;
+                    if extent > best.map_or(0, |(_, _, old)| old) {
+                        best = Some((font, ch, extent));
+                        if extent >= needed { break 'search; }
+                    }
+                    let Some(next) = self.fonts.next_larger(font, ch) else { break; };
+                    ch = next;
+                }
+            }
+        }
+        let mut b = match best {
+            Some((f, ch, _)) => match self.fonts.extensible_recipe(f, ch) {
+                Some(recipe) => self.extensible_box(f, recipe, needed),
+                None => self.delim_char_box(f, ch),
+            },
+            // Fn 注入度量的测试/轻量排版器没有 math_fonts 表；沿既有
+            // current_font 回退保留普通定界符。真正的 null code 仍为空盒。
+            None if code != 0 && matches!(self.fonts, Fonts::Fn { .. }) => {
+                let small = (code >> 12) & 0xFF;
+                let ch = if ((code >> 20) & 0xF) == 0 && small == 0 { code & 0xFF } else { small };
+                self.delim_char_box(self.current_font, ch)
+            },
+            None => BoxNode { kind: BoxKind::HBox, width: self.params.nulldelimiterspace,
+                height: 0, depth: 0, shift: 0, children: Vec::new() },
+        };
+        let axis = self.math_state.math_fonts.get(2)
+            .and_then(|s| s.get(kind).copied().flatten())
+            .map_or(0, |f| self.fonts.font_param(f, 22));
+        b.shift = half(b.height - b.depth) - axis;
+        b
     }
 
     /// 定界符字符节点（当前字体 + 字阶缩放；M4-3 换 cmex10 变体伸缩）。
@@ -1342,52 +1417,12 @@ impl NodeBuilder {
         self.delim_nodes_sized(d, style, None)
     }
 
-    /// tex.web var_delimiter（L1184）的两档近似（不含 cmex 扩展拼接）：
-    /// 27 位定界码拆 small（fam=(d>>20)&0xF、char=(d>>12)&0xFF）/
-    /// large（fam=(d/256) mod 16、char=d mod 256）；needed=Some(内容高+深) 时
-    /// small 字形不够高即取 large（`\binom`/`\left(\frac..` 落 cmex 大字，
-    /// `\left(x` 落正文字体小括号）。needed=None 维持小字形。
     fn delim_nodes_sized(&self, d: u32, style: MathStyle, needed: Option<i64>) -> Vec<Node> {
-        let kind = style.size_kind();
-        let pick = |s: &Self, fam: u32, ch: u32| -> Option<(FontId, u32, i64, i64, i64)> {
-            let font = s
-                .math_state
-                .math_fonts
-                .get(fam as usize)
-                .and_then(|t| t.get(kind).copied().flatten())?;
-            let (w, h, dd) = s.fonts.metrics(font, ch);
-            if w == 0 && h == 0 && dd == 0 {
-                return None;
-            }
-            Some((font, ch, w, h, dd))
-        };
-        // tex.web var_delimiter 拆位：small_fam=(d div @'4000000) mod 16（>>20）、
-        // small_char=(d div @'10000) mod 256（>>12）、large_fam=(d div 256) mod 16、
-        // large_char=d mod 256（如 `(`="028300 → small(fam2,"() large(fam3,")）
-        let small_fam = (d >> 20) & 0xF;
-        let small_char = (d >> 12) & 0xFF;
-        let large_fam = (d >> 8) & 0xF;
-        let large_char = d & 0xFF;
-        let mut chosen = pick(self, small_fam, small_char);
-        if let Some(need) = needed {
-            if let Some((_, _, _, h, dd)) = chosen {
-                if h + dd < need {
-                    chosen = pick(self, large_fam, large_char).or(chosen);
-                }
-            }
+        let b = self.var_delimiter(d, style.size_kind(), needed.unwrap_or(0));
+        if needed.is_none() && b.children.len() == 1 {
+            if let Node::Char { .. } = b.children[0] { return b.children; }
         }
-        let (font, ch, w, h, dd) = chosen.unwrap_or_else(|| {
-            let (wn, dn) = style.scale();
-            let (w, h, dd) = self.math_metrics(self.current_font, small_char, wn, dn);
-            (self.current_font, small_char, w, h, dd)
-        });
-        vec![Node::Char {
-            font,
-            charcode: ch,
-            width: w,
-            height: h,
-            depth: dd,
-        }]
+        vec![Node::Box(b)]
     }
 
     /// 按字阶缩放字符度量（M4-1 比例近似；M4-3 换真实 scriptfont）。
