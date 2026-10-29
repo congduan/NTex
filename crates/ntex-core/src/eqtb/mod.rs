@@ -91,10 +91,22 @@ impl Eqtb {
     }
 
     /// 定义宏：已有宏槽则 bump 版本（保持版本单调），否则新建。
+    ///
+    /// **内容不变的重定义保留原槽**（`\def\x{same}` 空转重定义）：版本号不 bump、
+    /// 宏体 `Arc` 身份不动。这是 M5 依赖追踪的两条不变量的落地保证——
+    /// version.rs 头注约定「增必改」（版本递增必须对应内容变化），而此前
+    /// 空转重定义也会 bump，违反约定；同时快照/链偏差判定的 `Arc::ptr_eq`
+    /// 快路径（incremental::snapshot::slot_semantically_equal）得以命中，
+    /// 空转重定义不再触发逐 token 深比较。比较用 `MacroDef::PartialEq`
+    /// （只比参数规格与宏体，不比字节码缓存）= 语义相等。
     pub fn define_macro(&mut self, csid: u32, def: MacroDef) {
         let slot = self.slot_mut(csid);
         match slot {
-            EqSlot::Macro(v) => v.bump(Arc::new(def)),
+            EqSlot::Macro(v) => {
+                if v.value.as_ref() != &def {
+                    v.bump(Arc::new(def));
+                }
+            }
             _ => *slot = EqSlot::Macro(Versioned::new(Arc::new(def))),
         }
     }
@@ -177,9 +189,40 @@ mod tests {
         let mut e = Eqtb::new();
         e.define_macro(1, tiny_def());
         let v1 = e.version_of(1).unwrap();
-        e.define_macro(1, tiny_def());
+        let other = {
+            let mut d = tiny_def();
+            d.body = Arc::from([Token::char(Catcode::Letter, b'B' as u32)]);
+            d
+        };
+        e.define_macro(1, other);
         let v2 = e.version_of(1).unwrap();
         assert!(v2 > v1);
+    }
+
+    /// 内容不变的重定义不 bump 版本（「增必改」不变量；M5 快照判定
+    /// `Arc::ptr_eq` 快路径依赖 Arc 身份保留）。
+    #[test]
+    fn define_macro_noop_redefinition_keeps_slot() {
+        let mut e = Eqtb::new();
+        e.define_macro(1, tiny_def());
+        let v1 = e.version_of(1).unwrap();
+        let before = match e.slot(1) {
+            EqSlot::Macro(m) => Arc::clone(&m.value),
+            _ => panic!("槽应为宏槽"),
+        };
+        e.define_macro(1, tiny_def());
+        let v2 = e.version_of(1).unwrap();
+        assert_eq!(v2, v1);
+        // Arc 身份保留：同内容重定义不换宏体指针
+        match e.slot(1) {
+            EqSlot::Macro(m) => assert!(Arc::ptr_eq(&m.value, &before)),
+            _ => panic!("槽应为宏槽"),
+        }
+        // 内容变化的重定义仍须 bump 且换指针
+        let mut other = tiny_def();
+        other.body = Arc::from([Token::char(Catcode::Letter, b'B' as u32)]);
+        e.define_macro(1, other);
+        assert!(e.version_of(1).unwrap() > v2);
     }
 
     #[test]
