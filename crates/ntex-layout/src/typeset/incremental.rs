@@ -853,7 +853,7 @@ impl IncrementalTypesetter {
             self.stats.reused += 1;
         }
         let out = self.finish_doc()?;
-        self.rebuild_after_edit_mismatch(out)
+        Ok(out)
     }
 
     /// 安装 NodeBuilder（自动分页）并同步参数镜像；挂 TFM 字体加载器。
@@ -1166,26 +1166,4 @@ impl IncrementalTypesetter {
         })
     }
 
-    #[cfg(test)]
-    fn rebuild_after_edit_mismatch(&mut self, out: CompileOutput) -> Result<CompileOutput> {
-        let _ = out;
-        let source = self.segments.concat();
-        let mut rebuilt = Self::with_tfm_paginated();
-        rebuilt.fallback_font = self.fallback_font.clone();
-        rebuilt.fmt_page_counts = self.fmt_page_counts;
-        rebuilt.fmt_current_font = self.fmt_current_font;
-        rebuilt.utf8_input = self.utf8_input;
-        rebuilt.preload_plain = self.preload_plain;
-        rebuilt.preload_hyphen = self.preload_hyphen;
-        if self.embedded_vfs_installed {
-            rebuilt.use_embedded_format();
-        }
-        let full = rebuilt.compile(&source)?;
-        Ok(full)
-    }
-
-    #[cfg(not(test))]
-    fn rebuild_after_edit_mismatch(&mut self, out: CompileOutput) -> Result<CompileOutput> {
-        Ok(out)
-    }
 }
