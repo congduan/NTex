@@ -285,6 +285,16 @@
     （core 597/tripos MD5 逐字节相同/宏包 13/13/审计 27+3/0）；④asset-load-audit.sh
     相对二进制路径 bug 顺手修。
 
+35. **vsplit splittopskip/mark 语义刀**（10-30）：cron 前轮 WIP 主控接管收口——
+    `prune_vsplit_top` 对齐 tex.web `prune_page_top`（删到首个盒/规则、穿透
+    Mark、首盒前插 `max(0, splittopskip−首盒高)` 胶水）+ `\vsplit` marks
+    写入侧（splitfirst/splitbot 按 class 分桶，切分前清、first 保首/bot 覆盖）。
+    GT 对拍真 etex 四探针逐字一致（双类 mark 两次切分/余量高度/负宽钳制/
+    fallback 路径）。review 通道 124×2 登记不可用，主控亲自 review（Rule
+    dimensions 臂/调用点全覆盖/mark 顶层语义/clippy 逐项核过）。layout 344
+    （+3 回归锁）、clippy 0、trip 4/4、tripos 12 页 750B SHA `574045fb` 逐字节
+    相等、宏包 13/13。见 [战报](docs/archive/vsplit-splittopskip-marks-2026-10-30.md)。
+
 **历史刀**（≤ 2026-09-18，全文见 [docs/archive/](docs/archive/README.md)）：
 
 - **第十八刀** 尾递归鞍具校准 → `make check` 797 → **800 全绿**；pdfTeX 对照证明原否定结论有误；
