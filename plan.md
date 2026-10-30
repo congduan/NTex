@@ -424,7 +424,7 @@ Missing number 与 R17 归因表逐条吻合，全部为 TRIP 折磨构造（`\s
 | 主线：LaTeX/expl3 兼容 | ✅ 主墙已越（2026-10-02 口径刷新）；`\documentclass` 最小闭环已通；余长尾见 §0.1/§5 |
 | 输出例程战 | ✅ 刀 1–5 全落（`\outputpenalty`/box255/insert 分配/`\newinsert`/页号链） |
 | 格式预载（G 线） | ✅ G0–G3；剩 G4/G5 |
-| M5 增量计算 | 🟡 阶段一~五完成 + 阶段六第一刀（改正文 0.5x / 改宏体 0.4x，见 §2 M5 阶段六注） |
+| M5 增量计算 | 🟡 阶段一~五完成 + 阶段六第一刀（InsertRegs CoW：改正文 4.3x→5.2x / 改宏体 1.3x→1.6x，见 §2 M5 阶段六注） |
 | M9 中文 | 🟡 刀 1–6 全落（`\char` 扩位 + `\utfinputmode` + 宿主端端到端 + CJK 断点/断字/标点挤压 + 中文粗斜体）；遗留见 §5 P1 |
 | 宏包生态 | 🟡 `ntex-pkg` 解析/契约/取料①② + `--auto-pkg` 引擎接线；13 包 CI 回归 **13/13**（基线 [docs/pkg-regression-baseline.md](docs/pkg-regression-baseline.md)） |
 | M2 字节码 | 🟡 双轨等价全绿；吞吐 **1.01x**，≥2x 结构性不可达 → 转 M7 `.fmt` v2 |
@@ -639,10 +639,22 @@ Missing number 与 R17 归因表逐条吻合，全部为 TRIP 折磨构造（`\s
 **实测（release / 120 段文档）**：改正文 **4.3x**（13.4ms vs 58ms）、改宏体 **1.1x**
 （30.1ms vs 33ms）。目标 100x。
 
+**阶段六第一刀 ✅（2026-10-31，InsertRegs Rc 写时复制）**：段边界检查点
+（`LayoutBoundary`）每段克隆 NodeBuilder 时深拷贝的三根 32768 槽插入寄存器
+向量（counts/dimens/skips，≈1.5MB/份）改 `Rc` CoW——克隆退化引用计数，写侧
+`Rc::make_mut` + 同值 no-op 短路（写频不高于捕获频，模式先例 = 阶段五
+`BoxFile`）。实测（release / 同一 120 段基准 / 2GB VM）：改正文 4.2x→**5.2x**、
+改宏体 1.3x→**1.6x**（均 +~25%）。诊断插桩（已剥离）钉出剩余开销分布：
+A 场景 16ms 中 reinject 页面装配重跑占 10ms——**下一刀靶 = 复用段装配重跑**；
+B 场景 61 段真实重排 21.7ms 为合法开销。回归锁
+`page::insert_regs_tests::insert_regs_cow_semantics`（CoW 四点语义）。
+
 **阶段六待办**（= M5 全部剩余项）：
 
-1. **检查点捕获增量维护** —— 执行段成本 ≈ 全量段成本（每段多付 ~55µs），
-   宏体编辑场景加速比被压到 1.1x 的根因，须在 `ntex-core` 引擎侧解决；
+1. ~~检查点捕获增量维护~~ → 首刀已落（InsertRegs CoW，加速比 4.3x/1.1x →
+   5.2x/1.6x）；**余项 = 复用段 reinject 的页面装配重跑**（A 场景 10ms/16ms，
+   `incremental.rs` edit 循环 append 路径）+ expand 侧 `StateSnapshot::capture`
+   每段两次 ~30µs（`ntex-core` 引擎侧）；
 2. **副作用边界** —— `\output` 例程回放 / `\write` 流内容 / `\input` VFS 注入 /
    marks 语义（当前观测到即保守全量重排）；
 3. `Expand(source, snapshot)` **纯函数化**收尾；

@@ -46,19 +46,89 @@ pub const IGNORE_DEPTH: i64 = -65_536_000;
 
 /// Insert 三联寄存器镜像（`\count` factor / `\dimen` max height /
 /// `\skip` first-insert skip）。TeX 的插入类号与盒寄存器号共用下标。
+///
+/// **M5 阶段六（检查点捕获成本）**：三根向量各 32768 槽（≈1.5MB/份），而
+/// 段边界检查点（`LayoutBoundary`，增量排版器私有）每次捕获都整体克隆
+/// NodeBuilder——深拷贝三根向量曾占单次捕获 ~1ms（RollbackPoint 密度 1/8 时
+/// 一次编辑仍要 ~20 次捕获）。改 `Rc` 写时复制：克隆退化为引用计数，写侧
+/// `Rc::make_mut` 仅在检查点快照仍持有旧副本时才深拷贝一次（随后唯一持有，
+/// 连续写零拷贝）。写频不高于捕获频（`\count<n>` 赋值偶发，`\count0` 页号
+/// 每页一次也仅单向量、按捕获间隔摊薄），净收益为正。
+/// 模式先例：M5 阶段五的 `BoxFile`（盒子寄存器文件 `Rc` 共享）。
 #[derive(Debug, Clone)]
 pub struct InsertRegs {
-    pub counts: Vec<i64>,
-    pub dimens: Vec<i64>,
-    pub skips: Vec<Glue>,
+    counts: std::rc::Rc<Vec<i64>>,
+    dimens: std::rc::Rc<Vec<i64>>,
+    skips: std::rc::Rc<Vec<Glue>>,
 }
 
 impl Default for InsertRegs {
     fn default() -> Self {
         Self {
-            counts: vec![0; REGISTER_COUNT],
-            dimens: vec![0; REGISTER_COUNT],
-            skips: vec![Glue::ZERO; REGISTER_COUNT],
+            counts: std::rc::Rc::new(vec![0; REGISTER_COUNT]),
+            dimens: std::rc::Rc::new(vec![0; REGISTER_COUNT]),
+            skips: std::rc::Rc::new(vec![Glue::ZERO; REGISTER_COUNT]),
+        }
+    }
+}
+
+impl InsertRegs {
+    /// 只读视图（断页成本核算每贡献查询）。
+    pub fn counts(&self) -> &[i64] {
+        &self.counts
+    }
+    pub fn dimens(&self) -> &[i64] {
+        &self.dimens
+    }
+    pub fn skips(&self) -> &[Glue] {
+        &self.skips
+    }
+    /// `\count<n>` 赋值（写时复制：仅当检查点快照仍持旧副本时深拷贝）。
+    pub fn set_count(&mut self, idx: usize, value: i64) {
+        if let Some(slot) = self.counts.get(idx) {
+            if *slot == value {
+                return;
+            }
+            std::rc::Rc::make_mut(&mut self.counts)[idx] = value;
+        }
+    }
+    pub fn set_dimen(&mut self, idx: usize, value: i64) {
+        if let Some(slot) = self.dimens.get(idx) {
+            if *slot == value {
+                return;
+            }
+            std::rc::Rc::make_mut(&mut self.dimens)[idx] = value;
+        }
+    }
+    pub fn set_skip(&mut self, idx: usize, value: Glue) {
+        if let Some(slot) = self.skips.get(idx) {
+            if *slot == value {
+                return;
+            }
+            std::rc::Rc::make_mut(&mut self.skips)[idx] = value;
+        }
+    }
+    /// 从（fmt 快照恢复的）裸向量构造。
+    pub fn from_parts(counts: Vec<i64>, dimens: Vec<i64>, skips: Vec<Glue>) -> Self {
+        debug_assert_eq!(
+            counts.len(),
+            REGISTER_COUNT,
+            "fmt 快照 counts 槽数须为 REGISTER_COUNT"
+        );
+        debug_assert_eq!(
+            dimens.len(),
+            REGISTER_COUNT,
+            "fmt 快照 dimens 槽数须为 REGISTER_COUNT"
+        );
+        debug_assert_eq!(
+            skips.len(),
+            REGISTER_COUNT,
+            "fmt 快照 skips 槽数须为 REGISTER_COUNT"
+        );
+        Self {
+            counts: std::rc::Rc::new(counts),
+            dimens: std::rc::Rc::new(dimens),
+            skips: std::rc::Rc::new(skips),
         }
     }
 }
@@ -614,21 +684,21 @@ impl PageBuilder {
                 // correction glue before the fit/split decision, including
                 // when the insertion must be split.
                 if self.insert_skips_seen.insert(class) {
-                    let correction = inserts.skips.get(class).copied().unwrap_or(Glue::ZERO);
+                    let correction = inserts.skips().get(class).copied().unwrap_or(Glue::ZERO);
                     self.goal = self.goal.saturating_sub(correction.width);
                     self.stretch[correction.stretch_order as usize] += correction.stretch;
                     self.shrink += correction.shrink;
                 }
                 let body_height = body.height + body.depth;
                 let already = *self.insert_heights.get(&class).unwrap_or(&0);
-                let max_for_class = inserts.dimens.get(class).copied().unwrap_or(0);
+                let max_for_class = inserts.dimens().get(class).copied().unwrap_or(0);
                 let accepted_height = if max_for_class > 0 {
                     body_height.min((max_for_class - already).max(0))
                 } else {
                     body_height
                 };
                 let mut debit = accepted_height;
-                let factor = inserts.counts.get(class).copied().unwrap_or(1000);
+                let factor = inserts.counts().get(class).copied().unwrap_or(1000);
                 if factor > 0 {
                     debit = debit.saturating_mul(factor) / 1000;
                 }
@@ -1225,5 +1295,87 @@ mod named_glue_tests {
                 .count(),
             2
         );
+    }
+}
+
+/// M5 阶段六（检查点捕获成本）：InsertRegs 三根 32768 槽向量改 `Rc` 写时
+/// 复制的语义锁（独立 mod——与 `named_glue_tests` 无语义关联）。
+#[cfg(test)]
+mod insert_regs_tests {
+    use super::*;
+
+    /// 检查点快照（`LayoutBoundary` 捕获 = NodeBuilder 整份克隆）不再随边界
+    /// 深拷贝三根向量；写侧 `Rc::make_mut` 仅在快照仍持旧副本时才深拷贝一次，
+    /// 随后唯一持有、连续写零拷贝。
+    ///
+    /// 回归锁四点：
+    /// ① 同值写是 no-op（不触发深拷贝——`strong_count` 保持共享，三根全锁）；
+    /// ② 快照共享期间写 = 深拷贝一次，快照读旧值、活体读新值（CoW 语义）；
+    /// ③ 分离后唯一持有写不复制（此后同段连续写零拷贝的净收益前提）；
+    /// ④ 越界写静默忽略 + `from_parts` 恢复路径可写可读。
+    #[test]
+    fn insert_regs_cow_semantics() {
+        let mut regs = InsertRegs::default();
+        let snap = regs.clone(); // 模拟检查点捕获（共享同一副本）
+        assert_eq!(std::rc::Rc::strong_count(&regs.counts), 2);
+
+        // ① 同值写 no-op：仍共享（三根全锁）。
+        regs.set_count(5, 0);
+        regs.set_dimen(7, 0);
+        regs.set_skip(9, Glue::ZERO);
+        assert_eq!(std::rc::Rc::strong_count(&regs.counts), 2);
+        assert_eq!(std::rc::Rc::strong_count(&regs.dimens), 2);
+        assert_eq!(std::rc::Rc::strong_count(&regs.skips), 2);
+
+        // ② 快照共享期间异值写：CoW——快照持旧值，活体持新值，各独一份。
+        regs.set_count(5, 2026);
+        regs.set_dimen(7, 4096);
+        regs.set_skip(
+            9,
+            Glue {
+                width: 100,
+                ..Glue::ZERO
+            },
+        );
+        assert_eq!(regs.counts()[5], 2026);
+        assert_eq!(snap.counts()[5], 0, "检查点快照必须持旧值");
+        assert_eq!(regs.dimens()[7], 4096);
+        assert_eq!(snap.dimens()[7], 0);
+        assert_eq!(regs.skips()[9].width, 100);
+        assert_eq!(snap.skips()[9].width, 0);
+        // 活体此后唯一持有（后续写零深拷贝）。
+        assert_eq!(std::rc::Rc::strong_count(&regs.counts), 1);
+        assert_eq!(std::rc::Rc::strong_count(&regs.dimens), 1);
+        assert_eq!(std::rc::Rc::strong_count(&regs.skips), 1);
+
+        // ③ 唯一持有后异值写：直接改写，不影响已分离的快照。
+        regs.set_count(5, 2027);
+        assert_eq!(regs.counts()[5], 2027);
+        assert_eq!(snap.counts()[5], 0);
+
+        // ④ 越界写静默忽略（与旧 `get_mut` 守卫语义一致）。
+        regs.set_count(REGISTER_COUNT, 1);
+        regs.set_dimen(REGISTER_COUNT + 1, 1);
+        regs.set_skip(REGISTER_COUNT + 2, Glue::ZERO);
+        // 在界值不受越界写影响（仍是 ②③ 写入的值）。
+        assert_eq!(regs.counts()[5], 2027);
+        assert_eq!(regs.dimens()[7], 4096);
+        assert_eq!(regs.skips()[9].width, 100);
+
+        // ⑤ from_parts（fmt 快照恢复路径）仍全量可写可读。
+        let mut r2 = InsertRegs::from_parts(
+            vec![1; REGISTER_COUNT],
+            vec![2; REGISTER_COUNT],
+            vec![
+                Glue {
+                    width: 3,
+                    ..Glue::ZERO
+                };
+                REGISTER_COUNT
+            ],
+        );
+        assert_eq!(r2.counts()[REGISTER_COUNT - 1], 1);
+        r2.set_count(0, 9);
+        assert_eq!(r2.counts()[0], 9);
     }
 }

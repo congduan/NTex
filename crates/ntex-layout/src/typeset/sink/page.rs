@@ -59,22 +59,16 @@ impl PageSink for NodeBuilder {
     /// `\count<n>` 赋值镜像（输出例程刀 5 页号链）：shipout 页标签与 DVI bop
     /// 计数的取值源（tex.web ship_out L12694 直接读 count(j)）。
     fn count_changed(&mut self, idx: usize, value: i64) -> Result<()> {
-        if let Some(slot) = self.page_state.insert_regs.counts.get_mut(idx) {
-            *slot = value;
-        }
+        self.page_state.insert_regs.set_count(idx, value);
         self.count_changed(idx, value);
         Ok(())
     }
     fn dimen_changed(&mut self, idx: usize, value: i64) -> Result<()> {
-        if let Some(slot) = self.page_state.insert_regs.dimens.get_mut(idx) {
-            *slot = value;
-        }
+        self.page_state.insert_regs.set_dimen(idx, value);
         Ok(())
     }
     fn skip_changed(&mut self, idx: usize, value: ntex_core::Glue) -> Result<()> {
-        if let Some(slot) = self.page_state.insert_regs.skips.get_mut(idx) {
-            *slot = value;
-        }
+        self.page_state.insert_regs.set_skip(idx, value);
         Ok(())
     }
     // ---- ETRIP 冲刺：e-TeX marks 族查询 ----

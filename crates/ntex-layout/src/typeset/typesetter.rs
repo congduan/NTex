@@ -576,11 +576,11 @@ impl Typesetter {
             fmt_page_counts[i] = *c;
         }
         self.fmt_page_counts = fmt_page_counts;
-        self.fmt_insert_regs = InsertRegs {
-            counts: state.registers.counts.to_vec(),
-            dimens: state.registers.dimens.to_vec(),
-            skips: state.registers.skips.to_vec(),
-        };
+        self.fmt_insert_regs = InsertRegs::from_parts(
+            state.registers.counts.to_vec(),
+            state.registers.dimens.to_vec(),
+            state.registers.skips.to_vec(),
+        );
         self.expander.import_state(state);
         // .fmt 不含字体表：按 font_loads 重新加载 TFM（pass1 定义的
         // `\font\trip` 在 pass2 不重跑，字体表需恢复——否则字符悬空字体）
