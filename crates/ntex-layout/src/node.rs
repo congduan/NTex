@@ -616,7 +616,7 @@ fn vpack_adjust_glue(children: &[Node], diff: i64) -> Vec<Node> {
 
 /// `vsplit`（tex.web §1168）：把 vbox 从顶部切出高为 `height` 的部分。
 /// 返回 (顶部结果, 底部余量)。纵向距离累计：盒子/规则按 h+d、胶水/字距按 width。
-pub fn split_vbox(b: BoxNode, height: i64) -> (BoxNode, BoxNode) {
+pub fn split_vbox(b: BoxNode, height: i64, splittopskip: Glue) -> (BoxNode, BoxNode) {
     // `split_vbox` has no parameter snapshot of `\splitmaxdepth`; the engine's
     // existing box path has historically used zero here (the iniTeX default),
     // which also prevents an overfull late breakpoint from masking an earlier
@@ -637,7 +637,7 @@ pub fn split_vbox(b: BoxNode, height: i64) -> (BoxNode, BoxNode) {
         top.pop();
     }
     let mut rest = b.children[split.cut..].to_vec();
-    prune_vsplit_top(&mut rest);
+    prune_vsplit_top(&mut rest, splittopskip);
     // A malformed/no-break list still needs the historic `vsplit` progress
     // guarantee used by the page-box path.  Legal TeX breakpoints always take
     // precedence; this fallback is only q=null.
@@ -656,7 +656,7 @@ pub fn split_vbox(b: BoxNode, height: i64) -> (BoxNode, BoxNode) {
             .map_or(b.children.len(), |i| i + 1);
         top = b.children[..cut].to_vec();
         rest = b.children[cut..].to_vec();
-        prune_vsplit_top(&mut rest);
+        prune_vsplit_top(&mut rest, splittopskip);
     }
     (vpack(top, height, i64::MAX), BoxNode::new_vbox(rest))
 }
@@ -848,16 +848,32 @@ pub(crate) fn vert_break(body: &BoxNode, h: i64, d: i64, eject_at_end: bool) -> 
     }
 }
 
-/// `prune_page_top(q)` for `\vsplit`: discard q's break material and all
-/// following page-top discardables.  The decision is by node class only.
-fn prune_vsplit_top(nodes: &mut Vec<Node>) {
-    while nodes.first().is_some_and(|node| {
-        matches!(
-            node,
-            Node::Glue { .. } | Node::Kern { .. } | Node::Penalty { .. }
-        )
-    }) {
-        nodes.remove(0);
+/// `prune_page_top(q)` for `\vsplit`: discard glue/kern/penalty until the
+/// first box/rule, passing through marks and other dimensionless nodes.
+fn prune_vsplit_top(nodes: &mut Vec<Node>, splittopskip: Glue) {
+    let mut i = 0;
+    while i < nodes.len() {
+        match &nodes[i] {
+            Node::Glue { .. } | Node::Kern { .. } | Node::Penalty { .. } => {
+                nodes.remove(i);
+            }
+            Node::Box(_) | Node::Rule { .. } => {
+                let width = (splittopskip.width - nodes[i].dimensions().height).max(0);
+                nodes.insert(
+                    i,
+                    Node::Glue {
+                        name: Some("splittopskip"),
+                        width,
+                        stretch: splittopskip.stretch,
+                        shrink: splittopskip.shrink,
+                        stretch_order: splittopskip.stretch_order,
+                        shrink_order: splittopskip.shrink_order,
+                    },
+                );
+                break;
+            }
+            _ => i += 1,
+        }
     }
 }
 
@@ -1291,9 +1307,51 @@ mod tests {
             },
             second.clone(),
         ]);
-        let (top, rest) = split_vbox(input, 20);
+        let (top, rest) = split_vbox(input, 20, Glue::new(25, 0, 0));
         assert_eq!(top.children, vec![first]);
-        assert_eq!(rest.children, vec![second]);
+        assert_eq!(rest.children.len(), 2);
+        assert!(matches!(
+            rest.children[0],
+            Node::Glue {
+                name: Some("splittopskip"),
+                width: 5,
+                ..
+            }
+        ));
+        assert_eq!(rest.children[1], second);
+    }
+
+    #[test]
+    fn vsplit_prune_passes_marks_and_inserts_before_first_rule() {
+        let mark = Node::Mark {
+            class: Some(2),
+            text: "kept".into(),
+        };
+        let rule = Node::Rule {
+            width: 0,
+            height: 2,
+            depth: 0,
+        };
+        let mut nodes = vec![
+            Node::Penalty { penalty: -50 },
+            mark.clone(),
+            Node::Kern { width: 3 },
+            rule.clone(),
+        ];
+        prune_vsplit_top(&mut nodes, Glue::new(10, 4, 1));
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(nodes[0], mark);
+        assert!(matches!(
+            nodes[1],
+            Node::Glue {
+                name: Some("splittopskip"),
+                width: 8,
+                stretch: 4,
+                shrink: 1,
+                ..
+            }
+        ));
+        assert_eq!(nodes[2], rule);
     }
 
     #[test]

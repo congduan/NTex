@@ -93,6 +93,8 @@ impl BoxSink for NodeBuilder {
     /// void"）；真 TeX 实测 `\vsplit255 to 10pt` void → `\ifvoid0`=Y、`\ht0`=0、
     /// 255 保持 void、无错误信息。
     fn vsplit(&mut self, idx: usize, to: Option<i64>, spread: Option<i64>) -> Result<()> {
+        self.page_state.marks_split_first.clear();
+        self.page_state.marks_split_bot.clear();
         let Some(b) = self.take_box_at(idx) else {
             // void 盒：cur_box=null（tex.web）→ `\setbox` 目标存空、裸调用不产节点
             if let Some(t) = self.box_state.setbox_target.take() {
@@ -106,7 +108,17 @@ impl BoxSink for NodeBuilder {
             (_, Some(s)) => natural + s,
             _ => natural,
         };
-        let (result, remainder) = split_vbox(b, target);
+        let (result, remainder) = split_vbox(b, target, self.params.splittopskip);
+        for node in &result.children {
+            if let Node::Mark { class, text } = node {
+                let class = class.unwrap_or(0);
+                self.page_state
+                    .marks_split_first
+                    .entry(class)
+                    .or_insert_with(|| text.clone());
+                self.page_state.marks_split_bot.insert(class, text.clone());
+            }
+        }
         // 余量写回寄存器：tex.web `box(n):=vpack(q,natural)`；若 q 为空则原盒
         // 变 void。LaTeX mark 代码依赖 `\vsplit <box> to \maxdimen` 后
         // `\ifvoid<box>` 为真来终止递归。

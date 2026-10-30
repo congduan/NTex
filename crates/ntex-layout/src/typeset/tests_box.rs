@@ -228,6 +228,53 @@ use super::*;
         );
     }
 
+    fn vsplit_marks_transcript() -> String {
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
+        ts.typeset_dvi(concat!(
+            r"\splittopskip=10pt \setbox1=\vbox{",
+            r"\hrule height 2pt \mark{M1}\marks1{A1}\penalty-100 ",
+            r"\hrule height 2pt \mark{M2}\marks1{A2}\penalty-100 ",
+            r"\hrule height 2pt \mark{M3}\marks1{A3}\penalty-100 ",
+            r"\hrule height 2pt \mark{M4}\vfill} ",
+            r"\setbox0=\vsplit1 to 5pt ",
+            r"\message{R1=[\splitfirstmarks0|\splitbotmarks0|\splitfirstmarks1|\splitbotmarks1]} ",
+            r"\setbox0=\vsplit1 to 5pt ",
+            r"\message{R2=[\splitfirstmarks0|\splitbotmarks0|\splitfirstmarks1|\splitbotmarks1]}\end",
+        ))
+        .unwrap();
+        ts.take_transcript()
+    }
+
+    #[test]
+    fn vsplit_first_cut_extracts_first_and_last_marks_per_class() {
+        let transcript = vsplit_marks_transcript();
+        assert!(transcript.contains("R1=[M1|M2|A1|A2]"), "{transcript}");
+    }
+
+    #[test]
+    fn vsplit_second_cut_resets_marks_to_final_top() {
+        let transcript = vsplit_marks_transcript();
+        assert!(transcript.contains("R2=[M3|M3|A3|A3]"), "{transcript}");
+    }
+
+    #[test]
+    fn vsplit_remainder_gets_splittopskip_on_both_cuts() {
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
+        ts.typeset_dvi(concat!(
+            r"\splittopskip=10pt \setbox1=\vbox{",
+            r"\hrule height 2pt \mark{M1}\penalty-100 ",
+            r"\hrule height 2pt \mark{M2}\penalty-100 ",
+            r"\hrule height 2pt \mark{M3}\penalty-100 ",
+            r"\hrule height 2pt \mark{M4}\vfill} ",
+            r"\setbox0=\vsplit1 to 5pt \message{REM1=[\the\ht1]} ",
+            r"\setbox0=\vsplit1 to 5pt \message{REM2=[\the\ht1]}\end",
+        ))
+        .unwrap();
+        let transcript = ts.take_transcript();
+        assert!(transcript.contains("REM1=[12.0pt]"), "{transcript}");
+        assert!(transcript.contains("REM2=[10.0pt]"), "{transcript}");
+    }
+
     #[test]
     fn box255_unvbox_preserves_page_children() {
         // P2 对照（latex.ltx `\@specialoutput` 的 `\global\setbox\@holdpg
