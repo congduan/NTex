@@ -211,9 +211,12 @@ fn tools_call_rejects_empty_source_and_shell_escape() {
     .expect("应有响应");
     assert_eq!(error_code(&shell), code::INVALID_PARAMS);
     let details = shell.get("error").get("data").to_string();
+    // `\write18` 已按 GT pdftex 语义降级（e0d97c8：`runsystem(...)disabled` 转录
+    // 消息、不 fatal、不执行）——不再报错，文档无排版材料 → 走「未产出页面」
+    // 拒答（INVALID_PARAMS）。安全性不变：引擎无 shell 通道，server 无子进程。
     assert!(
-        details.contains("write18"),
-        "应指出 shell 转义被拒：{details}"
+        details.contains("未产出页面"),
+        "shell 转义应降级后因无输出被拒：{details}"
     );
 }
 
