@@ -1225,4 +1225,57 @@ mod incremental_tests {
         }
         Box::new(vfs)
     }
+
+    // ---------- M5 阶段六第二刀：诊断域惰性化回归锁 ----------
+
+    /// `io_state.last_appended` 曾是每节点 `format!("{node:?}")` 的热路径字符串
+    /// （只为喂 20 万节点才打印一次的 watchdog）——长文档每次排版为从未消费的
+    /// 字符串付费。惰性化后必须仍是标量域：谁把 Debug 格式化塞回来（整份
+    /// `format!` / `to_string`）或再加堆字段，尺寸断言必红；`last_char` 的
+    /// `Option<(FontId, u32)>` 类型本身已在编译期钉死堆形态回归。
+    #[test]
+    fn io_state_diagnostic_fields_stay_lazy_scalars() {
+        let mut b = super::NodeBuilder::new(super::Fonts::Fn {
+            metrics: |_, _| (0, 0, 0),
+            space: |_| Glue::ZERO,
+        });
+        // 空态：无 Char → None；计数从 0 起步；last_tag = -1（尚未追加）。
+        assert_eq!(b.io_state.last_char, None);
+        assert_eq!(b.io_state.last_tag, -1);
+        assert_eq!(b.io_state.nodes_appended, 0);
+
+        // 追加一个非 Char 节点：计数自增，last_char 不被污染（只有 Char 采样），
+        // last_tag 刷新为 kern 的 e-TeX 类型码 12（`\lastnodetype` 语义）。
+        b.append(Node::Kern { width: 7 });
+        assert_eq!(b.io_state.last_char, None, "非 Char 节点不得写 last_char");
+        assert_eq!(b.io_state.last_tag, 12, "非 Char 节点须刷新 last_tag");
+        assert_eq!(b.io_state.nodes_appended, 1);
+
+        // 追加 Char 节点：采样字体 + 字符码（标量 copy，无堆分配路径）；tag=0。
+        b.append(Node::Char {
+            font: FontId(3),
+            charcode: b'a' as u32,
+            width: 5,
+            height: 0,
+            depth: 0,
+        });
+        assert_eq!(
+            b.io_state.last_char,
+            Some((FontId(3), b'a' as u32)),
+            "Char 节点须采样 (font, charcode) 两标量"
+        );
+        assert_eq!(b.io_state.last_tag, 0, "Char 的 e-TeX 类型码为 0");
+        assert_eq!(b.io_state.nodes_appended, 2);
+
+        // size_of IoState 封顶（64 位实测 48B = transcript String 24 + u64 8 +
+        // Option<(u32,u32)> 12 + i8 1，按 8 对齐补齐；32 位实测 40B，均 ≤48）。
+        // 旧的 last_appended String 形态 64 位为 56B > 48——热路径 Debug 格式化
+        // 或旁路再加堆字段（String/Vec）一旦回归，此断言必红（+≤4B 小标量仍可过，
+        // 属有意紧封顶）。
+        assert!(
+            std::mem::size_of::<super::IoState>() <= 48,
+            "IoState 应为标量诊断域（≤48B，实际 {}B；format! 热路径字符串回归）",
+            std::mem::size_of::<super::IoState>()
+        );
+    }
 }

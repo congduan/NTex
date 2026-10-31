@@ -649,6 +649,17 @@ A 场景 16ms 中 reinject 页面装配重跑占 10ms——**下一刀靶 = 复�
 B 场景 61 段真实重排 21.7ms 为合法开销。回归锁
 `page::insert_regs_tests::insert_regs_cow_semantics`（CoW 四点语义）。
 
+**阶段六第二刀 ✅（2026-10-31，IoState 诊断域惰性化）**：`NodeBuilder::append`
+热路径上每节点 `format!("{node:?}")`（只为 20 万节点才打印一次的 watchdog 付费）
+改三个 O(1) 标量——`nodes_appended`（既有）、`last_char: Option<(FontId, u32)>`
+（Char 采样）、`last_tag: i8`（e-TeX `\lastnodetype` 类型码，纯 Kern/Glue 挂死时
+恒新鲜）；watchdog 打印移到 push 之后（`last_rank = len−1` 才指向刚追加节点，
+review F1 修正）。实测（release / 同一基准）：改正文 **5.2x→6.5x**（多轮
+5.7~6.5x）、改宏体 ~1.1x（61 段合法重排主导，本刀对 B 场景无实质收益属预期）。
+回归锁 `io_state_diagnostic_fields_stay_lazy_scalars`（标量域 + ≤48B 封顶 +
+last_tag 刷新语义）。CodeBuddy review P-with-fixes 四项（F1 rank 差一位 /
+F2 非 Char 定位 / F3 注释漏字段 / F4 注释算术）全部修复。
+
 **阶段六待办**（= M5 全部剩余项）：
 
 1. ~~检查点捕获增量维护~~ → 首刀已落（InsertRegs CoW，加速比 4.3x/1.1x →

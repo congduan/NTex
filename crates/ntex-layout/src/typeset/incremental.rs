@@ -177,8 +177,8 @@ fn main_above_depth(b: &NodeBuilder) -> InterlineContext {
 ///
 /// 字段清单 = [`NodeBuilder`] 上随执行演化、但不进节点流/页面产出的状态。不进
 /// 快照：`lists`/`list_modes`（主列表）、`page`（页面构建器）、`shipped`（页面
-/// 产出）、`transcript`（转录不参与逐位一致口径）、`nodes_appended`/
-/// `last_appended`（诊断）、`pagination`/`fonts`/`record_main`（配置与共享设施）。
+/// 产出）、`transcript`（转录不参与逐位一致口径）、`nodes_appended`/`last_char`/
+/// `last_tag`（惰性诊断标量）、`pagination`/`fonts`/`record_main`（配置与共享设施）。
 /// **新增 builder 字段时同步 [`NodeBuilder::side_effects`] /
 /// [`NodeBuilder::restore_side_effects`] 两处。**
 ///

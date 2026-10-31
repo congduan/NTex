@@ -1036,10 +1036,16 @@ struct IoState {
     /// ETRIP 冲刺：终端转录累积（`\message`/`\show`/`\write16`）。
     transcript: String,
 
-    /// 诊断：累计追加节点数 + 最近追加节点（layout 侧死循环/OOM 定位用）。
+    /// 诊断：累计追加节点数 + 最近追加的 Char 节点（layout 侧死循环/OOM 定位用）。
     nodes_appended: u64,
 
-    last_appended: String,
+    /// 最近一次追加的 Char 节点（字体 + 字符码；惰性诊断标量，见 append 注释）。
+    last_char: Option<(FontId, u32)>,
+
+    /// 最近追加节点的 e-TeX `\lastnodetype` 类型码（`node_type_code()`，0..=13；
+    /// -1 = 尚未追加）——纯 Kern/Glue 挂死时 `last_char` 可能为 None 或陈旧，
+    /// 类型码恒反映最近一个节点（惰性诊断标量，见 append 注释）。
+    last_tag: i8,
 }
 
 /// 盒子寄存器 255（tex.web `box(255)`）：页面构建器完成页的投递寄存器——
@@ -1226,7 +1232,8 @@ impl NodeBuilder {
             io_state: IoState {
                 transcript: String::new(),
                 nodes_appended: 0,
-                last_appended: String::new(),
+                last_char: None,
+                last_tag: -1,
             },
         }
     }
@@ -1272,17 +1279,16 @@ impl NodeBuilder {
         // 诊断：节点增长监控（TRIP L338 `\halign` 内挂死 = 列表无限增长 OOM；
         // 死循环在 layout 侧不经 process_one，VM 看门狗不计数）。
         self.io_state.nodes_appended += 1;
-        self.io_state.last_appended = format!("{node:?}");
-        if self.io_state.nodes_appended % 200_000 == 0 {
-            eprintln!(
-                "[layout-watchdog] nodes={} mode={:?} lists={} top_len={} groups={} last={:?}",
-                self.io_state.nodes_appended,
-                self.mode(),
-                self.lists.len(),
-                self.lists.last().map_or(0, |l| l.len()),
-                self.groups.len(),
-                self.io_state.last_appended
-            );
+        // 惰性诊断（M5 阶段六第二刀）：原 `format!("{node:?}")` 在热路径上每节点
+        // 同步执行，只为喂 20 万节点才打印一次的 watchdog——长文档（1 万+ 节点）
+        // 每次都要为从未消费的字符串付费。改存三个 O(1) 标量（无堆分配）：
+        // 节点计数、最近 Char 采样 (font, charcode)、最近节点 e-TeX 类型码
+        // `last_tag`（纯 Kern/Glue 挂死时 last_char 可能陈旧/None，类型码恒新鲜）。
+        // watchdog 文案打 last_tag + last_char + last_rank；`last_char` 可能比
+        // `last_rank` 指向的节点旧（中间隔非 Char 节点或连字替换），按 tag 判读。
+        self.io_state.last_tag = node.node_type_code() as i8;
+        if let Node::Char { font, charcode, .. } = &node {
+            self.io_state.last_char = Some((*font, *charcode));
         }
         // tex.web box_end（L20894 `shift_amount(cur_box):=box_context`）：
         // \raise/\lower/\moveleft/\moveright 的位移值对**下一个进入列表的盒子**
@@ -1302,6 +1308,21 @@ impl NodeBuilder {
         }
         self.record_main_node(&node);
         self.lists.last_mut().expect("列表栈非空").push(node);
+        // watchdog 打印须在 push 之后：last_rank = top_len - 1 才指向刚追加的节点
+        // （push 前打印会差一位，review F1）。非 Char 节点也刷新 last_tag，见上。
+        if self.io_state.nodes_appended % 200_000 == 0 {
+            eprintln!(
+                "[layout-watchdog] nodes={} mode={:?} lists={} top_len={} groups={} last_tag={} last_char={:?} last_rank={}",
+                self.io_state.nodes_appended,
+                self.mode(),
+                self.lists.len(),
+                self.lists.last().map_or(0, |l| l.len()),
+                self.groups.len(),
+                self.io_state.last_tag,
+                self.io_state.last_char,
+                self.lists.last().map_or(0, |l| l.len()).saturating_sub(1)
+            );
+        }
         // M3-5-2：顶层垂直模式追加后运行页面构建器（TeX build_page 的触发点）。
         // 增量（feed_one）：每产出一页即暂停——若定义了输出例程，让引擎在 token
         // 边界执行例程（ship box255）后再继续；未定义时页面直通 shipped。
@@ -1808,7 +1829,12 @@ impl NodeBuilder {
     /// d < \lineskiplimit 用 \lineskip，否则用宽度调整为 d 的 \baselineskip）。
     fn push_node(&mut self, node: Node) {
         self.io_state.nodes_appended += 1;
-        self.io_state.last_appended = format!("{node:?}");
+        // 惰性诊断标量与 append 同口径（last_char 采样留 append 专属亦可，此处
+        // 统一维护，避免两入口口径分叉）。
+        self.io_state.last_tag = node.node_type_code() as i8;
+        if let Node::Char { font, charcode, .. } = &node {
+            self.io_state.last_char = Some((*font, *charcode));
+        }
         self.record_main_node(&node);
         self.lists.last_mut().expect("列表栈非空").push(node);
     }
