@@ -693,6 +693,14 @@ F2 非 Char 定位 / F3 注释漏字段 / F4 注释算术）全部修复。
 收窄为「段边界恒 `None`，粘滞值不存在，无需比较」。全链验收（core 606 + layout 346 +
 宏包 13/13 + TRIP 177B/750B SHA 同基线 + clippy 0）与后续登记见
 [战报](docs/archive/m5-stage6-review-fixes-2026-11-01.md)。
+**遗留两靶 ✅ 收口（同日，[战报](docs/archive/engine437-neutral-criteria-2026-11-01.md)）**：
+①`SegmentEngine`（engine.rs ~L454）内联旧两维判据改调 `snapshot_states_equal`
+（与排版层管线同口径，含 `output_visible_equal`）——回归锁
+`end_segment_control_state_rejected_on_chain_delta`（去修复必红已实证）；
+②`transcript()`「单调累积」文档按实现重写（各段缓存转录拼接、edit 回滚后编辑段
+及其后重算/复用、前缀保留）。Codex review（gpt-6-sol 只读）P-with-fixes 两条
+需修/收窄项均已采纳落实。门禁：core 607 + layout 346 + clippy 0 + TRIP
+177B/750B（tripos MD5 `92100387…` 与基线一致）。
 **下一刀靶**：结构性 owned 拷贝——复用段 `contrib.clone()`（缓存节点流每轮深拷贝，
 dev A 场景 ~2.3ms）+ `finish_doc` 的 `shipped.clone()`（全页深拷贝，~3.8ms），二者需
 节点/产出 `Arc` 化才能再削；expand 侧每执行段两次 `StateSnapshot::capture`（ntex-core）。

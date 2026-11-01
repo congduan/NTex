@@ -69,7 +69,7 @@ use crate::token::{Token, TokenKind};
 
 use super::segment::segmentize;
 use super::snapshot::{
-    lex_deps, reads_touch_slots, slots_semantically_equal, state_matches, writes_touch_slots,
+    lex_deps, reads_touch_slots, snapshot_states_equal, state_matches, writes_touch_slots,
     ChainDelta, SegmentDeps, StateSnapshot,
 };
 
@@ -285,6 +285,13 @@ impl SegmentEngine {
     ///
     /// 诊断/回归测试用：段边界上的控制态（如报错锚点）不影响输出 token，
     /// 只能从转录验证。
+    ///
+    /// ⚠ **非单调累积**：`edit` 回滚到段前检查点后，被编辑段及其后各段随重放
+    /// 重新执行，其缓存转录随之重算或复用；回滚点之前的段缓存不动（前缀保留）。
+    /// 因此拼接结果 = 当前链上各段**最近一次执行**的转录，而非首轮 `run` 的
+    /// 原样累积——回归测试可与等价全量 `run` 的转录整体对比（编辑收敛后两者
+    /// 一致，见 `edit_rollback_then_earlier_edit_matches_full`），跨编辑轮次
+    /// 比较则须自行锁定比较区段。
     #[cfg(test)]
     pub(crate) fn transcript(&self) -> String {
         let mut out = String::new();
@@ -446,9 +453,13 @@ impl SegmentEngine {
         let result = self.expander.run();
         let snapshot_post = StateSnapshot::capture(&self.expander);
         let sink = self.expander.take_sink();
-        // 状态中性 = 执行前后状态语义一致（捕获时算一次，判定只查布尔）
-        let state_neutral = slots_semantically_equal(snapshot_pre.eqtb(), snapshot_post.eqtb())
-            && snapshot_pre.value() == snapshot_post.value();
+        // 状态中性 = 执行前后状态语义一致（捕获时算一次，判定只查布尔）。
+        // 口径与排版层管线（ntex-layout `snapshot_states_equal`）同源：值状态
+        // + eqtb 逐槽 + **对输出可见的控制态**（`shown_trace_mode`/追踪抑制/
+        // 诊断行号/`ended` 等）。旧内联两维判据是 P1-1 同款漂移——只改
+        // `ControlState` 输出可见字段的段会被误判中性，复用跳过执行后回滚点
+        // 沿用旧 post，下一轮 `edit` 回滚即转录漂移（见该文件 P1-1 注释）。
+        let state_neutral = snapshot_states_equal(&snapshot_pre, &snapshot_post);
         // 先取转录再消费 token（take_tokens 按值取走 Box）
         let transcript = sink.transcript().to_owned();
         CachedSegment {

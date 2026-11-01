@@ -702,6 +702,24 @@ fn edit_rollback_then_earlier_edit_matches_full() {
 }
 
 #[test]
+fn end_segment_control_state_rejected_on_chain_delta() {
+    // 控制态-only 段（`\end` 置 `ended`，不动值状态/eqtb）不得被旧两维判据
+    // 误判中性：链偏差下复用它 = 跳过执行且不还原 post（复用判定只对状态
+    // 中性段放行），旧 post 快照带着旧控制态继续留在链上，后续回滚/复用
+    // 即转录漂移（P1-1 同款漂移的 expand 层镜像，2026-11）。判定面 =
+    // `snapshot_states_equal`（含 `output_visible_equal`）。
+    let doc = "\\def\\a{X}\n\n\\end\n\nB\n\n";
+    let mut eng = SegmentEngine::new();
+    eng.run(doc);
+    let results = eng.edit(0, "\\def\\a{Y}\n\n").expect("ok");
+    assert!(
+        !results[1].from_cache,
+        "\\end 段有控制态副作用（ended），链偏差下必须重算不能复用：{:?}",
+        eng.last_rejects()
+    );
+}
+
+#[test]
 fn edits_never_restart_engine() {
     // 单路径化：改正文/改宏体/改 catcode/改寄存器都不再重建引擎（restarts 恒 0）。
     let doc = "\\def\\a{A}\n\n\\count0=1\n\n\\catcode`\\@=11\n\nuse \\a \\the\\count0.\n\n";
