@@ -1759,16 +1759,31 @@ impl Expander {
     ///
     /// 换算对照 pdfTeX：`scaled = (int + frac/10^k) * unit_sp`（逐项截断）。
     fn scan_dimen(&mut self) -> Result<i64> {
-        let (v, _) = self.scan_dimen_inner(false, false)?;
-        Ok(self.clamp_dimen(v))
+        // 报错锚点作用域 = 一次完整值扫描（含 clamp）。锚点只给 clamp_dimen 的
+        // "Dimension too large." 回溯用；扫描结束（成功/失败）恢复外层值——顶层
+        // 即 None，成功扫描不留粘滞锚点。保存/恢复还保证嵌套值扫描
+        // （body 的 \gluestretch 等臂内调 scan_glue→scan_dimen）不破坏外层锚点。
+        let saved_anchor = self.error_anchor;
+        let result = match self.scan_dimen_inner(false, false) {
+            Ok((v, _)) => Ok(self.clamp_dimen(v)),
+            Err(e) => Err(e),
+        };
+        self.error_anchor = saved_anchor;
+        result
     }
 
     /// mu 上下文尺寸扫描（`\muskip`/`\muexpr`/`\mskip` 项）：只认 "mu" 单位，
     /// 其他单位（含无单位、fil 阶）→ "! Illegal unit of measure (mu inserted)."
     /// （tex.web L8987-8997 语义）。
     fn scan_dimen_mu(&mut self) -> Result<i64> {
-        let (v, _) = self.scan_dimen_inner(true, false)?;
-        Ok(self.clamp_dimen(v))
+        // 锚点作用域同 scan_dimen。
+        let saved_anchor = self.error_anchor;
+        let result = match self.scan_dimen_inner(true, false) {
+            Ok((v, _)) => Ok(self.clamp_dimen(v)),
+            Err(e) => Err(e),
+        };
+        self.error_anchor = saved_anchor;
+        result
     }
 
     /// 单位非法错误（tex.web L8990-8998）：mu 上下文只认 "mu" 单位，
@@ -1903,7 +1918,9 @@ impl Expander {
 
     fn scan_dimen_body(&mut self, mu: bool, inf: bool) -> Result<(i64, u8)> {
         self.skip_spaces()?;
-        // 报错锚点：值扫描起始位置（clamp_dimen 报错时 pos 已推进——回溯用）
+        // 报错锚点：值扫描起始位置（clamp_dimen 报错时 pos 已推进——回溯用）。
+        // 生命周期 = 本次值扫描：scan_dimen / scan_dimen_mu / glue 的 plus-minus
+        // 扫描在结束处恢复外层锚点（顶层 None），成功扫描不留粘滞值。
         for frame in self.stack.iter().rev() {
             if let InputFrame::Source { pos, .. } = frame {
                 self.error_anchor = Some(*pos);
@@ -3120,7 +3137,12 @@ impl Expander {
                 break;
             };
             // 值 + 无穷阶：stretch/shrink 允许 fil 阶（inf=true，tex.web scan_glue）
-            let (d, order) = self.scan_dimen_inner(mu, true)?;
+            // 锚点作用域同 scan_dimen：扫完恢复外层值（plus/minus 无 clamp，
+            // 锚点仅在本值扫描期间有效）。
+            let saved_anchor = self.error_anchor;
+            let scanned = self.scan_dimen_inner(mu, true);
+            self.error_anchor = saved_anchor;
+            let (d, order) = scanned?;
             if word == "plus" {
                 stretch = d;
                 stretch_order = order;

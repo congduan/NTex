@@ -1015,6 +1015,8 @@ pub struct Expander {
     trace_suppress_defer: bool,
     /// 报错上下文锚点：值扫描起始的 Source pos（clamp_dimen 报错时 pos 已推进
     /// 到下一行——用锚点回溯到值所在行，tex.web l.N 上下文语义）。
+    /// 生命周期 = 一次值扫描：`scan_dimen`/`scan_dimen_mu`/glue plus-minus 在
+    /// 扫描结束恢复外层值（顶层 `None`），成功扫描不留粘滞锚点。
     error_anchor: Option<usize>,
     /// 上一轮注入输出例程时待处理页面的数量（判断例程是否消费了 box255）。
     output_prev_count: usize,

@@ -849,3 +849,48 @@ fn edit_segments_never_run_before_is_error_free() {
         full_text("\\def\\ok{fine}\n\n\\def\\fixed{fixed} \\fixed\n\ntail EDITED \\ok.\n\n"),
     );
 }
+
+// ─── 报错锚点生命周期（Codex review P1，2026-11-01） ─────────────────────────
+
+/// 回归锁：成功值扫描的报错锚点不得跨段粘滞。
+///
+/// 现场：段 1 `\vskip 1pt` 的值扫描把 `error_anchor` 留在本段起始 offset，
+/// 扫描结束后未清。段 2 的无关报错（`\fi`）经 `report_error_context` 读锚点，
+/// 拿**段 2 缓冲区**上的旧 offset 反推行号 → `l.N` 落到段 2 第 1 行（真 TeX
+/// 停在报错现场）。增量下段 1 若被判中性跳过执行（不复原 post），活状态不带
+/// 锚点，段 2 重算时 `l.N` 与全量（段 1 执行过）不同——行号漂移。
+#[test]
+fn stale_error_anchor_does_not_leak_across_segments() {
+    let doc = "\\def\\x{1}\n\n\\vskip 1pt\n\n\\count1=\\x\n\\fi\n";
+    let edited = "\\def\\x{2}\n\n\\vskip 1pt\n\n\\count1=\\x\n\\fi\n";
+    let expected = "l.2 \\fi";
+
+    // 全量（同段切分，逐段执行）：段 2 的 l.N 必须是本段第 2 行。
+    let mut full = SegmentEngine::new();
+    full.run(edited);
+    assert!(
+        full.transcript().contains(expected),
+        "全量上下文行应停在报错现场（{expected}）：{}",
+        full.transcript()
+    );
+
+    // 增量：段 0 改宏体 → 段 1 状态中性复用（跳过值扫描）→ 段 2 依赖 \\x 重算。
+    let mut incr = SegmentEngine::new();
+    incr.run(doc);
+    incr.edit(0, "\\def\\x{2}\n\n").expect("段下标合法");
+    assert!(
+        incr.stats().reused >= 1,
+        "段 1 应被复用（前置条件）：{:?}",
+        incr.stats()
+    );
+    assert!(
+        incr.transcript().contains(expected),
+        "增量上下文行应停在报错现场（{expected}）：{}",
+        incr.transcript()
+    );
+    assert_eq!(
+        incr.transcript(),
+        full.transcript(),
+        "增量与全量转录必须逐字一致（报错锚点生命周期）"
+    );
+}

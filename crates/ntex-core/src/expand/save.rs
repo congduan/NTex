@@ -23,9 +23,6 @@ impl Expander {
                 // → `! Bad interaction mode (-1).` + show_context 两行 + help），
                 // 然后钳制保持当前。
                 if clamped != v {
-                    // 清报错锚点残留（scan_dimen 的锚点会污染 l.N 行号——这里
-                    // 是数值扫描上下文，用当前 pos 反推即可）
-                    self.error_anchor = None;
                     self.sink.report_error(&format!("Bad interaction mode ({v})."));
                     self.report_error_context();
                     self.sink.write16(

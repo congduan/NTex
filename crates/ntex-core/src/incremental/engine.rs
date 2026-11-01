@@ -281,6 +281,19 @@ impl SegmentEngine {
         render_tokens(&self.tokens(), self.expander.intern())
     }
 
+    /// 各段终端转录按段序拼接（复用段计入缓存转录）。
+    ///
+    /// 诊断/回归测试用：段边界上的控制态（如报错锚点）不影响输出 token，
+    /// 只能从转录验证。
+    #[cfg(test)]
+    pub(crate) fn transcript(&self) -> String {
+        let mut out = String::new();
+        for cached in self.cache.iter().flatten() {
+            out.push_str(&cached.transcript);
+        }
+        out
+    }
+
     /// 每段缓存状态报告（验证/基准输出用）。
     pub fn cache_report(&self) -> String {
         let mut lines = Vec::new();

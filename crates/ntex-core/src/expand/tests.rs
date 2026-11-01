@@ -1409,6 +1409,34 @@ I changed this one to zero.
     }
 
     #[test]
+    fn successful_dimen_scan_does_not_leave_stale_error_anchor() {
+        // 根因锁：值扫描（`\vskip 1pt`）成功后不得留下报错锚点。锚点只对
+        // `clamp_dimen` 的 "Dimension too large." 回溯有效，生命周期应止于
+        // 本次扫描；否则下一行的无关报错（`Extra \fi.`）会用旧锚点反推
+        // `l.N`，把上下文行拉回 `\vskip` 所在行（真 TeX 停在报错现场）。
+        let (r, t) = run_transcript("\\vskip 1pt\n\\fi");
+        assert!(r.is_ok(), "Extra \\fi 应恢复继续：{t}");
+        assert!(t.contains("! Extra \\fi."), "应报 Extra \\fi：{t}");
+        assert!(
+            t.contains("l.2 \\fi"),
+            "上下文行应为报错现场第 2 行，而不是值扫描所在第 1 行：{t}"
+        );
+    }
+
+    #[test]
+    fn dimension_too_large_reports_value_line() {
+        // 锚点的唯一合法用途：值扫描完成后 pos 可能已越过行尾，clamp_dimen
+        // 报错须回溯到值所在行（tex.web l.N 上下文）；生命周期修复不得动它。
+        let (r, t) = run_transcript("\\dimen0=16384pt\n\\relax");
+        assert!(r.is_ok(), "Dimension too large 应钳制恢复：{t}");
+        assert!(t.contains("! Dimension too large."), "应报尺寸超限：{t}");
+        assert!(
+            t.contains("l.1 \\dimen0=16384pt"),
+            "上下文行应回溯到值所在第 1 行：{t}"
+        );
+    }
+
+    #[test]
     fn undefined_cs_in_macro_reports_caller_line() {
         // A3：宏体内未定义 cs → 回退到最近的源文件行（宏调用处）
         let (r, t) = run_transcript("\\def\\foo{\\noSuchMacro}\n\\foo");

@@ -104,8 +104,8 @@ impl Expander {
                 let bytes: &[u8] = bytes;
                 // 报错锚点（clamp_dimen 值扫描报错）：pos 已推进到报错后的行，
                 // 用值扫描起始位置回溯（tex.web l.N 上下文停在值所在行）。
-                // 只读（&self）；消费由各报错出口负责（undef 路径自行清除，
-                // report_error_context 出口见下）。
+                // 只读（&self）；生命周期由值扫描入口管理（scan_dimen /
+                // scan_dimen_mu / glue plus-minus 在作用域结束恢复外层值）。
                 let end = self.error_anchor.unwrap_or(*pos).min(bytes.len());
                 let (line_no, line_start, line_end) = Self::locate_line(bytes, line_starts, end);
                 let line = String::from_utf8_lossy(&bytes[line_start..line_end]).into_owned();
@@ -121,7 +121,8 @@ impl Expander {
         if let Some((n, line)) = self.error_context() {
             let _ = self.sink.write16(format!("l.{n} {line}\n"));
         }
-        // 锚点一次性使用（报错上下文输出后清除——后续报错用当前 pos）
+        // 锚点一次性消费（clamp_dimen 报错回溯即用掉）；成功扫描的生命周期
+        // 由 scan_dimen / scan_dimen_mu / glue plus-minus 在作用域结束收口。
         self.error_anchor = None;
     }
 
