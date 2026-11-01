@@ -22,11 +22,12 @@ jobs:
       - name: fmt
         run: cargo fmt --all -- --check
 
-      - name: clippy（-D warnings）
-        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: clippy（-D warnings；ntex-tauri 依赖 glib-sys，CI runner 无
+              pkg-config/glib 系统库——跳过该 crate，与 2GB VM 全量测试同口径）
+        run: cargo clippy --workspace --exclude ntex-tauri --all-targets -- -D warnings
 
       - name: 单元测试
-        run: cargo test --workspace
+        run: cargo test --workspace --exclude ntex-tauri
 
       - name: 冒烟：TRIP 管路（stub 驱动）
         run: cargo run -p ntex-trip -- --driver stub
