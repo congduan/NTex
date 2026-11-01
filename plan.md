@@ -690,7 +690,9 @@ F2 非 Char 定位 / F3 注释漏字段 / F4 注释算术）全部修复。
 （全量）/ `stale_error_anchor_does_not_leak_across_segments`（SegmentEngine 增量 vs
 全量转录一致）/ `dimension_too_large_reports_value_line`（锚点唯一合法用途：clamp
 回溯值所在行）。`ControlState::output_visible_equal` 排除 `error_anchor` 的理由随之
-收窄为「段边界恒 `None`，粘滞值不存在，无需比较」。
+收窄为「段边界恒 `None`，粘滞值不存在，无需比较」。全链验收（core 606 + layout 346 +
+宏包 13/13 + TRIP 177B/750B SHA 同基线 + clippy 0）与后续登记见
+[战报](docs/archive/m5-stage6-review-fixes-2026-11-01.md)。
 **下一刀靶**：结构性 owned 拷贝——复用段 `contrib.clone()`（缓存节点流每轮深拷贝，
 dev A 场景 ~2.3ms）+ `finish_doc` 的 `shipped.clone()`（全页深拷贝，~3.8ms），二者需
 节点/产出 `Arc` 化才能再削；expand 侧每执行段两次 `StateSnapshot::capture`（ntex-core）。
