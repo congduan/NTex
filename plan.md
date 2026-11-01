@@ -424,7 +424,7 @@ Missing number 与 R17 归因表逐条吻合，全部为 TRIP 折磨构造（`\s
 | 主线：LaTeX/expl3 兼容 | ✅ 主墙已越（2026-10-02 口径刷新）；`\documentclass` 最小闭环已通；余长尾见 §0.1/§5 |
 | 输出例程战 | ✅ 刀 1–5 全落（`\outputpenalty`/box255/insert 分配/`\newinsert`/页号链） |
 | 格式预载（G 线） | ✅ G0–G3；剩 G4/G5 |
-| M5 增量计算 | 🟡 阶段一~五完成 + 阶段六第一刀（InsertRegs CoW：改正文 4.3x→5.2x / 改宏体 1.3x→1.6x，见 §2 M5 阶段六注） |
+| M5 增量计算 | 🟡 阶段一~五完成 + 阶段六刀 1–3（InsertRegs CoW / IoState 惰性化 / 装配去深拷贝：改正文 **4.3x→7.9x**，见 §2 M5 阶段六注） |
 | M9 中文 | 🟡 刀 1–6 全落（`\char` 扩位 + `\utfinputmode` + 宿主端端到端 + CJK 断点/断字/标点挤压 + 中文粗斜体）；遗留见 §5 P1 |
 | 宏包生态 | 🟡 `ntex-pkg` 解析/契约/取料①② + `--auto-pkg` 引擎接线；13 包 CI 回归 **13/13**（基线 [docs/pkg-regression-baseline.md](docs/pkg-regression-baseline.md)） |
 | M2 字节码 | 🟡 双轨等价全绿；吞吐 **1.01x**，≥2x 结构性不可达 → 转 M7 `.fmt` v2 |
@@ -660,12 +660,30 @@ review F1 修正）。实测（release / 同一基准）：改正文 **5.2x→6.
 last_tag 刷新语义）。CodeBuddy review P-with-fixes 四项（F1 rank 差一位 /
 F2 非 Char 定位 / F3 注释漏字段 / F4 注释算术）全部修复。
 
+**阶段六第三刀 ✅（2026-11-01，复用段装配重跑去深拷贝）**：`reinject`（复用段节点流
+重注入 = 页面装配重跑）每节点要付的**整棵行盒子树深拷贝**从 3 次削到 1 次，三处：
+① [`PageBuilder::process`](crates/ntex-layout/src/page.rs) 头节点改**盒子摘出**
+（`contrib.remove(0)`）而非 `contrib[0].clone()`——盒臂必定摘头（入页 / 持有后丢弃），
+不存在 fire_up 保头分支；② `package`（tex.web `vpackage`）用 `page.drain(..cut)` 把页内
+贡献的所有权搬进 box255，不再 `to_vec()` 深拷贝（`fire_up` 的余料回收下标随左移 `cut`）；
+③ 回滚点 expand 半边（`RollbackPoint::exp`）与段缓存 `record_post` 改 `Rc<StateSnapshot>`
+共享：执行段之后 / 同步态复用之后，段边界状态**恰好等于**该段 post，故每 8 段一次的
+32768 槽整份 checkpoint 捕获（实测 ~180µs/次）退化为引用计数；只有依赖判定（偏差态）
+复用后活状态带偏差，仍真捕获。实测（同一 release 基准 3 跑取中位）：改正文
+**6.4x→7.9x**（9.92ms→7.14ms，全量 59.0ms）；改宏体 ~1.1–1.3x 两侧同量级（61 段真实
+重排主导，本刀对 B 无实质收益属预期）；dev profile 同基准 7.0x→9.9x（24.22→16.75ms）。
+分相诊断探针（`NTEX_INCR_DIAG`）数据固化后**已剥离**（对齐前两刀收尾形态）。
+**下一刀靶**：结构性 owned 拷贝——复用段 `contrib.clone()`（缓存节点流每轮深拷贝，
+dev A 场景 ~2.3ms）+ `finish_doc` 的 `shipped.clone()`（全页深拷贝，~3.8ms），二者需
+节点/产出 `Arc` 化才能再削；expand 侧每执行段两次 `StateSnapshot::capture`（ntex-core）。
+
 **阶段六待办**（= M5 全部剩余项）：
 
 1. ~~检查点捕获增量维护~~ → 首刀已落（InsertRegs CoW，加速比 4.3x/1.1x →
-   5.2x/1.6x）；**余项 = 复用段 reinject 的页面装配重跑**（A 场景 10ms/16ms，
-   `incremental.rs` edit 循环 append 路径）+ expand 侧 `StateSnapshot::capture`
-   每段两次 ~30µs（`ntex-core` 引擎侧）；
+   5.2x/1.6x）；~~复用段 reinject 的页面装配重跑~~ → 第三刀已落（去三次行盒子树
+   深拷贝，改正文 6.4x→7.9x）。**余项**：结构性 owned 拷贝（`contrib.clone()` /
+   `shipped.clone()`，见第三刀"下一刀靶"）+ expand 侧 `StateSnapshot::capture`
+   每执行段两次 ~30µs（`ntex-core` 引擎侧）；
 2. **副作用边界** —— `\output` 例程回放 / `\write` 流内容 / `\input` VFS 注入 /
    marks 语义（当前观测到即保守全量重排）；
 3. `Expand(source, snapshot)` **纯函数化**收尾；
@@ -832,7 +850,7 @@ CLI `ntex-pkg`（`index`/`provide`/`resolve`/`lock`/`check`/`local`/**`vendor`**
 |---|---|---|---|
 | ① 什么文档都能排 | 任意文本即开即排 | plain TeX 子集；`\documentclass` 未通 | LaTeX 战役（§0.1）；`\halign` 精化 / `\insert` / 数学矩阵（§5 P1） |
 | ② 打开快（冷启动） | ~0ms | plain 毫秒级；latex.ltx 未加载，`.fmt` v1 不含字体表 | M7 `.fmt` v2（§2 M7）；字体按需备料 + 项目级缓存 |
-| ③ 改字快（增量） | 全文重排无感（<16ms） | 改正文 4.3x / 改宏体 1.1x（目标 100x）；预览端仍是 250ms 防抖全量重排 | M5 阶段六全部（§2 M5）；预览三端接线（§2 M8）；M6 并行 |
+| ③ 改字快（增量） | 全文重排无感（<16ms） | 改正文 7.9x / 改宏体 ~1.2x（目标 100x）；预览端仍是 250ms 防抖全量重排 | M5 阶段六全部（§2 M5）；预览三端接线（§2 M8）；M6 并行 |
 | ④ 出错不糊 + 零安装 | 语法错误不挡渲染；零环境依赖 | 单点错误终止全文档；目标机需 TeX Live 备料 | M1-13 错误恢复（§5 P0）；SyncTeX（§2 M8）；panic 审计；宏包管理（§2 M9） |
 
 **关键路径**：
