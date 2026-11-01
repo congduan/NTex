@@ -682,6 +682,15 @@ F2 非 Char 定位 / F3 注释漏字段 / F4 注释算术）全部修复。
 `trace_control_state_rollback_matches_full_transcript`（两轮 edit，第二轮回滚后的探针
 转录尾块与全量逐字节一致）。分相诊断探针（`NTEX_INCR_DIAG`）数据固化后**已剥离**
 （对齐前两刀收尾形态）。
+**P1-1 后续（同日，review 阻塞项收口）**：`error_anchor` 生命周期根治——锚点改为
+**一次值扫描内有效、扫描结束（含 clamp）即恢复外层值**（`scan_dimen` /
+`scan_dimen_mu` / glue plus-minus 三处收口；`scan_dimen_body` 只负责写入）。此前
+成功扫描后锚点粘滞，后续无关报错的 `l.N` 被拉回旧行；增量下复用段跳过扫描时
+锚点与全量不同 → 行号漂移。回归锁 `successful_dimen_scan_does_not_leave_stale_error_anchor`
+（全量）/ `stale_error_anchor_does_not_leak_across_segments`（SegmentEngine 增量 vs
+全量转录一致）/ `dimension_too_large_reports_value_line`（锚点唯一合法用途：clamp
+回溯值所在行）。`ControlState::output_visible_equal` 排除 `error_anchor` 的理由随之
+收窄为「段边界恒 `None`，粘滞值不存在，无需比较」。
 **下一刀靶**：结构性 owned 拷贝——复用段 `contrib.clone()`（缓存节点流每轮深拷贝，
 dev A 场景 ~2.3ms）+ `finish_doc` 的 `shipped.clone()`（全页深拷贝，~3.8ms），二者需
 节点/产出 `Arc` 化才能再削；expand 侧每执行段两次 `StateSnapshot::capture`（ntex-core）。
