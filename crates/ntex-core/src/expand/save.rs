@@ -1254,7 +1254,7 @@ impl Expander {
                 byte,
                 prev.unwrap_or(0)
             ),
-            // tex.web 恢复跟踪不覆盖：FontDimen/HyphenChar/SkewChar/PenaltyArray
+            // tex.web 恢复跟踪不覆盖：HyphenChar/SkewChar/PenaltyArray
             // （参考 trip.log 无对应 restoring 行）。
             _ => String::new(),
         }

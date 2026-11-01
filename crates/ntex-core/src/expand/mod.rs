@@ -763,9 +763,12 @@ pub mod trace {
     }
 
     /// 是否开启（供调用点做昂贵字段构造前的短路判断）。
+    ///
+    /// 走 `sink()`（OnceLock 缓存）而非裸查 env——热路径免 getenv（2026-11-01
+    /// 诊断键收编刀 review 观察项①，语义与「env 有路径即开」等价）。
     #[inline]
     pub fn enabled() -> bool {
-        std::env::var_os("NTEX_TRACE_JSONL").is_some()
+        sink().is_some()
     }
 
     /// 写一条事件。字段全部可选，`None` 的键不出现（保持 JSONL 精简）。
