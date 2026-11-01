@@ -11,7 +11,7 @@ impl Expander {
         let n = def.params.num_params as usize;
         // 第二十刀定位开关（NTEX_ARG_DUMP=1）：调用瞬间 dump 参数文本
         //（cs/char/param 分类）。零成本门控，排查定界/非定界实参失配时开。
-        if std::env::var_os("NTEX_ARG_DUMP").is_some() {
+        if diag_enabled("NTEX_ARG_DUMP") {
             let pt: Vec<String> = def
                 .params
                 .text
@@ -66,7 +66,7 @@ impl Expander {
                 && self.match_input_delim(&def.params.text).is_err()
             {
                 let name = self.intern.name(csid).to_owned();
-                if std::env::var_os("NTEX_DELIM_DBG").is_some() {
+                if diag_enabled("NTEX_DELIM_DBG") {
                     let pt: Vec<String> = def
                         .params
                         .text
@@ -175,7 +175,7 @@ impl Expander {
         if self.match_input_delim(&segments[0]).is_err() {
             // TeX：宏调用与定义不匹配 → "Use of \X doesn't match its definition."
             // 报错恢复（忽略该宏调用，按无参展开；TRIP L332 `\t2` 等）
-            if std::env::var_os("NTEX_DELIM_DBG").is_some() {
+            if diag_enabled("NTEX_DELIM_DBG") {
                 // 失配现场：peek 输入流下一个 token（不动流）
                 let nxt = match self.fetch() {
                     Ok(Some((t, _))) => {
@@ -335,7 +335,7 @@ impl Expander {
             .and_then(|v| v.parse::<u64>().ok())
             .filter(|&v| v > 0)
             .unwrap_or(40_000_000);
-        let dbg_on = std::env::var("NTEX_DELIM_DBG").is_ok();
+        let dbg_on = diag_enabled("NTEX_DELIM_DBG");
         self.diag_trace(format!(
             "DELIM-BEGIN \\{name} dlen={} long={long} floor={}",
             delim.len(),
@@ -629,7 +629,7 @@ impl Expander {
                         None => {
                             // 第二十刀定位开关（NTEX_ARG_EOF=1）：点名实参组扫描
                             // 逃逸到输入末尾的宏与当前行号。
-                            if std::env::var_os("NTEX_ARG_EOF").is_some() {
+                            if diag_enabled("NTEX_ARG_EOF") {
                                 let mut fs = Vec::new();
                                 for f in self.stack.iter().rev().take(5) {
                                     use crate::expand::InputFrame;
@@ -1002,7 +1002,7 @@ impl Expander {
                 body_dbg.join(",")
             );
         }
-        if std::env::var_os("NTEX_HOOK_TRACE").is_some() && cs_name == "__hook_make_name:w" {
+        if diag_enabled("NTEX_HOOK_TRACE") && cs_name == "__hook_make_name:w" {
             let show = |t: &Token| {
                 if let Some(csid) = t.csid() {
                     format!("\\{}", self.intern.name(csid))
@@ -1335,13 +1335,13 @@ impl Expander {
         // 只拍一次 Rust backtrace，指出是谁把这一 token 作为可展开帧推回来的。
         // `NTEX_EREPEAT=1` 才开重复跟踪（默认关：逐步 `tok.clone()` 有实测常数
         // 税，非诊断场景不该付）。
-        let erepeat = std::env::var_os("NTEX_EREPEAT").is_some();
+        let erepeat = diag_enabled("NTEX_EREPEAT");
         let mut prev_tok: Option<Token> = None;
         let mut repeat = 0u64;
         let mut bt_taken = false;
         // `NTEX_QLIVE=1`：环形缓冲记最近 200 个 token，同 token 重复 50 次时
         // 把缓冲 + 后续 60 步一起打出——自定位活锁起点（无需预知哪次调用）。
-        let qlive = std::env::var_os("NTEX_QLIVE").is_some();
+        let qlive = diag_enabled("NTEX_QLIVE");
         let mut ring: std::collections::VecDeque<(u64, String)> =
             std::collections::VecDeque::new();
         let mut live_left = 0u64;
@@ -1482,7 +1482,7 @@ impl Expander {
             }
             // 条件原语：即时求值（优先级与 process_one 相同）
             if let Some(op) = self.cond_op(tok) {
-                if std::env::var_os("NTEX_EDEF_COND_TRACE").is_some() {
+                if diag_enabled("NTEX_EDEF_COND_TRACE") {
                     let nm = match tok.csid() {
                         Some(id) => self.intern.name(id).to_owned(),
                         None => format!("{tok:?}"),
@@ -1498,7 +1498,7 @@ impl Expander {
                 continue;
             }
             if self.is_skipping() {
-                if std::env::var_os("NTEX_EDEF_COND_TRACE").is_some() {
+                if diag_enabled("NTEX_EDEF_COND_TRACE") {
                     let nm = match tok.csid() {
                         Some(id) => format!("\\{}", self.intern.name(id)),
                         None => format!("{tok:?}"),

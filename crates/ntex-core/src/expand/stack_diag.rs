@@ -21,8 +21,8 @@ impl Expander {
     /// 转储三件套的分工：类型直方图回答「哪类帧多」；**帧签名重复度**回答
     /// 「哪一族帧在自复制」（循环主体的直接证据）；逐帧详解给出 token 级现场。
     pub(super) fn dump_input_stack(&mut self, reason: &str) {
-        let kinds_on = std::env::var_os("NTEX_STACK_DUMP").is_some();
-        let frames_on = std::env::var_os("NTEX_STACK_DUMP_FRAMES").is_some();
+        let kinds_on = diag_enabled("NTEX_STACK_DUMP");
+        let frames_on = diag_enabled("NTEX_STACK_DUMP_FRAMES");
         if !kinds_on && !frames_on {
             return;
         }

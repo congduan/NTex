@@ -641,8 +641,7 @@ fn bytecode_guard_limit() -> u64 {
 /// handler 进入轨迹开关。仅定位帧内自旋时开启：记录最近 32 个进入 dispatcher
 /// 的控制序列及其读取下限，待 bytecode 护栏触发时统一转储，避免正常运行刷屏。
 fn handler_trace_enabled() -> bool {
-    static CACHE: OnceLock<bool> = OnceLock::new();
-    *CACHE.get_or_init(|| std::env::var_os("NTEX_HANDLER_TRACE").is_some())
+    diag_enabled("NTEX_HANDLER_TRACE")
 }
 
 /// 把字节偏移吸附到不超过它的最近字符边界（已在边界上则原样返回）。
@@ -673,6 +672,13 @@ pub(crate) fn set_max_steps_override(v: Option<u64>) {
 }
 
 /// [`diag_enabled`] 认识的全部诊断开关。
+///
+/// 纪律（2026-11-01 健康审计）：热路径诊断开关一律走本表 + [`diag_enabled`]
+/// （OnceLock 进程级缓存），禁止裸查 `std::env`——缓存按表初始化，不在表里的
+/// 键恒 false。配置值类读取（`NTEX_MAX_STEPS`/`NTEX_DELIM_GUARD`/`NTEX_EDEF_PROG`
+/// 等带数值语义的）不在本表，各自 init 期一次性读取。layout/pdf/trip 等其他
+/// crate 的少量裸查因本函数 `pub(crate)` 暂未收编（余项登记
+/// KNOWN-SIMPLIFICATIONS）。
 const DIAG_KEYS: &[&str] = &[
     "NTEX_COND_TRACE",
     "NTEX_IFNUM_TRACE",
@@ -688,6 +694,22 @@ const DIAG_KEYS: &[&str] = &[
     "NTEX_CSNAME_STATS",
     "NTEX_HASH_SCAN_DBG",
     "NTEX_SENTINEL_DBG",
+    // ---- 2026-11-01 收编（原 ~20 处裸查，热路径免 getenv）----
+    "NTEX_HANDLER_TRACE",
+    "NTEX_R8_DIAG",
+    "NTEX_BREAK17",
+    "NTEX_ARG_DUMP",
+    "NTEX_DELIM_DBG",
+    "NTEX_ARG_EOF",
+    "NTEX_HOOK_TRACE",
+    "NTEX_EDEF_COND_TRACE",
+    "NTEX_EREPEAT",
+    "NTEX_QLIVE",
+    "NTEX_END_DBG",
+    "NTEX_NUM_TRACE",
+    "NTEX_STACK_DUMP",
+    "NTEX_STACK_DUMP_FRAMES",
+    "NTEX_OUTER_SITE",
 ];
 
 /// 结构化 trace 通道（JSONL）——**挂死/膨胀类定位的核心设施**。
@@ -1589,7 +1611,7 @@ impl Expander {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            if std::env::var_os("NTEX_BREAK17").is_none() {
+            if !diag_enabled("NTEX_BREAK17") {
                 return;
             }
             if let Some(wd) = &self.watchdog {
@@ -1955,7 +1977,7 @@ impl Expander {
     /// 丢弃该盒。\end 的续行冲页可再次点火，直到 dead-cycle 门限默认出货。
     /// 空 `\output={}` 在赋值时已变为未定义，直接走默认出货。
     fn maybe_inject_output(&mut self) -> Result<bool> {
-        let r8_diag = std::env::var_os("NTEX_R8_DIAG").is_some();
+        let r8_diag = diag_enabled("NTEX_R8_DIAG");
         // tex.web ship_out clears dead_cycles even when no further page is
         // pending. Do this before the early return below.
         let shipped = self.sink.take_page_shipped();

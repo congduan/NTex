@@ -412,7 +412,7 @@ impl Expander {
     pub(super) fn report_missing_number(&mut self) {
         // 第二十刀定位开关：NTEX_NUM_TRACE——现场打出输入栈摘要 + 宏调用链 +
         // 最近 token，用于锁定「数字扫描读到哪个 token、从哪条宏链进来」。
-        if std::env::var_os("NTEX_NUM_TRACE").is_some() {
+        if diag_enabled("NTEX_NUM_TRACE") {
             fn show(intern: &crate::intern::InternTable, t: &Token) -> String {
                 if let Some(csid) = t.csid() {
                     format!("\\{}", intern.name(csid))

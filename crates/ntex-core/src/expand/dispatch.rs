@@ -368,7 +368,7 @@ impl Expander {
                             // cur_cmd=active 走 active 臂；plain \outer\def^^L
                             // 的槽残留 outer 不影响 ^^L active 使用——expl3
                             // L9320-9321 依赖此语义重定义 ^^L）
-                            if std::env::var_os("NTEX_OUTER_SITE").is_some() {
+                            if diag_enabled("NTEX_OUTER_SITE") {
                                 eprintln!(
                                     "[OUTER-EXPAND] cs={} status={:?}",
                                     self.intern.name(csid),
@@ -654,7 +654,7 @@ impl Expander {
                     self.misplaced_alignment_tab();
                     return Ok(());
                 }
-                if std::env::var_os("NTEX_HOOK_TRACE").is_some() {
+                if diag_enabled("NTEX_HOOK_TRACE") {
                     if let Some(ch) = tok.charcode().and_then(char::from_u32) {
                         if matches!(ch, 'p' | 'a' | 'r' | '/' | ',' | '0') {
                             let calls = self
