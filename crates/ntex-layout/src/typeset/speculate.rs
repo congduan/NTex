@@ -369,15 +369,19 @@ impl IncrementalTypesetter {
         // 3) 段缓存（与顺序 execute_segment 同构）：段状态中性 ⇒ record_exp ==
         //    record_post == 采纳时的活状态（执行不改状态）；entry_ctx 取注入前
         //    的活上下文（= 顺序执行同一位置的上下文）。
-        if r.shaped_entry && r.shaped_exit {
-            let state = StateSnapshot::capture(&self.expander);
+        let state = if r.shaped_entry && r.shaped_exit {
+            Some(std::rc::Rc::new(StateSnapshot::capture(&self.expander)))
+        } else {
+            None
+        };
+        if let Some(state) = &state {
             let deps =
                 lex_deps(source).attach_versions(self.expander.intern(), self.expander.eqtb());
             self.cache[j] = Some(SegmentCache {
                 contrib: full,
                 entry_ctx,
-                record_exp: state.clone(),
-                record_post: state,
+                record_exp: std::rc::Rc::clone(state),
+                record_post: std::rc::Rc::clone(state),
                 deps,
                 state_neutral: true,
             });
@@ -385,7 +389,8 @@ impl IncrementalTypesetter {
             // 跨段构造（进入或退出时不干净）：不建立缓存（顺序路径同款判定）。
             self.cache[j] = None;
         }
-        self.capture_boundary(j + 1, false);
+        // 中性段：活 expand 状态即录制的 post，边界共享同一快照（免整份捕获）。
+        self.capture_boundary(j + 1, false, state);
         self.stats.executed += 1;
         self.stats.adopted += 1;
         Ok(())

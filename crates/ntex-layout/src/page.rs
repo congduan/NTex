@@ -461,7 +461,17 @@ impl PageBuilder {
         params: &Params,
         inserts: &InsertRegs,
     ) -> Outcome {
-        let node = contrib[0].clone();
+        // 头节点所有权：**盒子走摘出、不走克隆**。盒臂必定摘头（入页 / 持有后
+        // 丢弃），不存在 fire_up 保头分支，故可先 `remove(0)` 再按值用；`BoxNode`
+        // 的 `children` 是整棵行盒子树，深拷贝是页面装配的热点（段节点流重注入
+        // 时每行盒必付一次，M5 阶段六第三刀）。其余节点保留 clone：insert/glue
+        // 等臂在 fire_up 时需要头节点仍在贡献列表前端（`try_break` 失败即返回），
+        // 且它们无堆负载或本就按值回投，克隆代价可忽略。
+        let node = if matches!(contrib.first(), Some(Node::Box(_))) {
+            contrib.remove(0)
+        } else {
+            contrib[0].clone()
+        };
         // tex.web build_page updates these *before* deciding whether the
         // contribution enters the page, is discarded, or fires a break.
         self.last_contribution = match &node {
@@ -504,7 +514,6 @@ impl PageBuilder {
                 if !self.has_box && b.is_zero_empty() && !std::mem::take(&mut self.keep_zero_empty)
                 {
                     self.held_zero_empty = Some(Node::Box(b));
-                    contrib.remove(0);
                     return Outcome::Continue;
                 }
                 let suppress_topskip =
@@ -547,7 +556,6 @@ impl PageBuilder {
                 } else if !self.has_box {
                     self.freeze(params);
                 }
-                contrib.remove(0);
                 self.page.push(Node::Box(b));
                 self.add_box_dims();
                 self.last_is_box = true;
@@ -1101,7 +1109,9 @@ impl PageBuilder {
         // 余下节点拼回贡献列表前端（触发节点之前）。若最佳断点来自此前
         // 已压入 page 的 glue/kern/penalty，该断点节点本身已经被 TeX 的
         // page builder 消费，不能在 insert 重试时再次作为下一页贡献处理。
-        contrib.splice(0..0, self.page.drain(resume..));
+        // `package` 已把 `page[0..cut]` 的所有权搬进 box255（无深拷贝），故
+        // 此处页内下标整体左移 `cut`：`resume - cut` ∈ {0,1}。
+        contrib.splice(0..0, self.page.drain((resume - cut)..));
         self.start_new_page();
         // tex.web 在 start_new_page 后把 hold_head 接回 page_head；这里等价为
         // 新页贡献的前缀，顺序在触发断点及原有剩余材料之前。
@@ -1132,11 +1142,10 @@ impl PageBuilder {
     /// 累加自然宽度、`(height−自然高)` 落在页尾——正是真 TeX 例程重打包后尾 fil
     /// 吸收余量的几何（\raggedbottom），故这里只定高度/深度/宽度，不动子节点。
     fn package(&mut self, cut: usize) -> BoxNode {
-        let children = &self.page[0..cut];
-        // 页深（\boxmaxdepth 钳制）与宽度
+        // 维度统计须在 drain 前完成（drain 后页内节点已归盒）。
         let mut d = 0i64;
         let mut width = 0i64;
-        for c in children {
+        for c in &self.page[0..cut] {
             match c {
                 Node::Box(b) => {
                     d = b.depth;
@@ -1172,16 +1181,21 @@ impl PageBuilder {
                 | Node::MathOff { .. } => {}
             }
         }
-        if d > self.max_depth {
-            d = self.max_depth;
-        }
+        let d = if d > self.max_depth {
+            self.max_depth
+        } else {
+            d
+        };
         BoxNode {
             kind: BoxKind::VBox,
             width,
             height: self.best_size,
             depth: d,
             shift: 0,
-            children: children.to_vec(),
+            // 页前 `cut` 个贡献的所有权直接移入 box255（`drain`），不再 `to_vec()`
+            // 深拷贝——`BoxNode::children` 是整棵行盒子树，每页一次全量深拷贝
+            // 是页面装配的主要开销（M5 阶段六第三刀）。
+            children: self.page.drain(..cut).collect(),
         }
     }
 

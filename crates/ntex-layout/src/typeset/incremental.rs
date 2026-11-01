@@ -317,7 +317,8 @@ impl LayoutBoundary {
 /// 阶段五把"每段边界"拆成两档：
 /// - **排版半边 [`SideEffects`]**：每段必捕获——复用判定（段前上下文闸）与
 ///   复用后副作用字段推进都以它为准，是链数据，便宜（~1µs）；
-/// - **回滚点**（expand 检查点 + builder 整份克隆，~65µs）：只按
+/// - **回滚点**（expand 检查点 + builder 整份克隆，~65µs；其中 expand 半边自
+///   阶段六第三刀起通常与段缓存共享 `Rc`，见 [`RollbackPoint`]）：只按
 ///   [`ROLLBACK_EVERY`] 间隔 + 末段刷新。后续 `edit` 回滚到**最近的回滚点**、
 ///   中间段随重放补齐（复用段重注入 / 执行段重算）——多回滚的段重放是
 ///   有界代价（≤ [`ROLLBACK_EVERY`] 段），换掉的是每段一次的整份克隆。
@@ -328,9 +329,15 @@ struct DocBoundary {
 }
 
 /// 回滚点：expand 半边 + 排版半边整份克隆。
+///
+/// `exp` 走 `Rc` 共享（M5 阶段六第三刀）：段边界处的 expand 状态在"执行段
+/// 刚录完"与"同步态复用"两条路径上都**恰好等于**该段缓存的 `record_post`，
+/// 此时回滚点与段缓存共用同一份快照（克隆 = 引用计数），省掉每 8 段一次的
+/// 整份 checkpoint 捕获（32768 槽，实测 ~180µs/次，占 edit 的 ~11%）。
+/// 只有依赖判定（偏差态）复用这条路径的状态与缓存 post 不同，才真捕获。
 #[derive(Debug, Clone)]
 struct RollbackPoint {
-    exp: StateSnapshot,
+    exp: std::rc::Rc<StateSnapshot>,
     layout: LayoutBoundary,
 }
 
@@ -361,8 +368,8 @@ const ROLLBACK_EVERY: usize = 8;
 struct SegmentCache {
     contrib: Vec<Node>,
     entry_ctx: InterlineContext,
-    record_exp: StateSnapshot,
-    record_post: StateSnapshot,
+    record_exp: std::rc::Rc<StateSnapshot>,
+    record_post: std::rc::Rc<StateSnapshot>,
     deps: SegmentDeps,
     state_neutral: bool,
 }
@@ -695,7 +702,7 @@ impl IncrementalTypesetter {
         // LaTeX fmt 路径的断字表补种（与 `Typesetter` 同序：同属段 0 之前的
         // 边界状态，且必须在 install_builder 之后——`\patterns` 事件要有 sink）。
         self.run_preload_hyphen()?;
-        self.capture_boundary(0, true);
+        self.capture_boundary(0, true, None);
         if self.spec_enabled {
             // M6 投机窗口路径（RFC-5 §3）：输出与下方顺序路径逐位一致。
             self.run_segments_speculative()?;
@@ -849,7 +856,18 @@ impl IncrementalTypesetter {
             // 段后边界刷新为活状态：排版半边断页点已变；偏差路径下 expand 半边
             // 也随活状态走——旧链快照不再是当前文档状态，后续 `edit` 回滚到它
             // 会丢掉偏差槽新值（回滚点按间隔稀疏化，见 [`DocBoundary`]）。
-            self.capture_boundary(j + 1, false);
+            //
+            // 同步态：活 expand 状态即缓存段 post（上面已推进到它 / 中性态本就
+            // 相等），边界 expand 半边直接共享该快照，免一次整份捕获；偏差态
+            // 活状态带偏差、与 post 不同，必须真捕获。
+            let exp_hint = if verdict == ReuseVerdict::Synced {
+                Some(std::rc::Rc::clone(
+                    &self.cache[j].as_ref().expect("已判可复用").record_post,
+                ))
+            } else {
+                None
+            };
+            self.capture_boundary(j + 1, false, exp_hint);
             self.stats.reused += 1;
         }
         let out = self.finish_doc()?;
@@ -997,10 +1015,23 @@ impl IncrementalTypesetter {
     /// 排版半边快照每段必capture（复用判定的对齐源/闸比较面）；回滚点按
     /// [`ROLLBACK_EVERY`] 间隔 + 末段刷新（`force` 用于段 0 与需要精确回滚点的
     /// 场景）。
-    fn capture_boundary(&mut self, at: usize, force: bool) {
+    ///
+    /// `exp_hint`：调用方**已知**该边界处的 expand 状态等于某份既有快照时传入
+    /// （执行段之后 = 该段 `record_post`；同步态复用 = 缓存段的 `record_post`
+    /// ——两者同源），回滚点直接共享引用，免一次整份 checkpoint 捕获。依赖判定
+    /// （偏差态）复用后活状态与缓存 post 不同，传 `None` 走真捕获。
+    fn capture_boundary(
+        &mut self,
+        at: usize,
+        force: bool,
+        exp_hint: Option<std::rc::Rc<StateSnapshot>>,
+    ) {
         let side = sink_builder(&mut self.expander).side_effects();
         let rollback = if force || at % ROLLBACK_EVERY == 0 || at == self.segments.len() {
-            let exp = StateSnapshot::capture(&self.expander);
+            let exp = match exp_hint {
+                Some(s) => s,
+                None => std::rc::Rc::new(StateSnapshot::capture(&self.expander)),
+            };
             let layout = LayoutBoundary::capture(self.builder_mut());
             Some(RollbackPoint { exp, layout })
         } else {
@@ -1026,7 +1057,7 @@ impl IncrementalTypesetter {
         // 还原编辑必须回到基线）。
         let dirty_entry = !self.builder_shaped();
         let entry_ctx = main_above_depth(sink_builder(&mut self.expander));
-        let record_exp = StateSnapshot::capture(&self.expander);
+        let record_exp = std::rc::Rc::new(StateSnapshot::capture(&self.expander));
         let source = self.segments[j].clone();
         // 词法读/写依赖（超近似；`read_versions` 仅诊断留痕）。
         let deps = lex_deps(&source).attach_versions(self.expander.intern(), self.expander.eqtb());
@@ -1039,11 +1070,13 @@ impl IncrementalTypesetter {
         result?;
         // 段后快照（与 `record_exp` 同源成对：同步态复用推进 + 状态中性判定都用它；
         // 独立于 `bounds[j+1]`——边界会被偏差路径复用刷新成当轮活状态）。
-        let record_post = StateSnapshot::capture(&self.expander);
+        let record_post = std::rc::Rc::new(StateSnapshot::capture(&self.expander));
         let dirty_exit = !self.builder_shaped();
         // 状态中性 = 执行前后 expand 状态语义一致（捕获时算一次，判定只查布尔；
         // 有链偏差时它是"跳过执行且不还原旧 post"的健全前提）。
         let state_neutral = snapshot_states_equal(&record_exp, &record_post);
+        // 段后边界的 expand 半边复用该段 post（状态刚录到同一处，无需再捕获）。
+        let exp_hint = std::rc::Rc::clone(&record_post);
         self.cache[j] = if dirty_entry || dirty_exit {
             None
         } else {
@@ -1056,7 +1089,7 @@ impl IncrementalTypesetter {
                 state_neutral,
             })
         };
-        self.capture_boundary(j + 1, false);
+        self.capture_boundary(j + 1, false, Some(exp_hint));
         if self.builder_mut().page_state.output_defined {
             self.output_routine = true;
         }
