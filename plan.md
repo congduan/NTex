@@ -667,12 +667,21 @@ F2 非 Char 定位 / F3 注释漏字段 / F4 注释算术）全部修复。
 不存在 fire_up 保头分支；② `package`（tex.web `vpackage`）用 `page.drain(..cut)` 把页内
 贡献的所有权搬进 box255，不再 `to_vec()` 深拷贝（`fire_up` 的余料回收下标随左移 `cut`）；
 ③ 回滚点 expand 半边（`RollbackPoint::exp`）与段缓存 `record_post` 改 `Rc<StateSnapshot>`
-共享：执行段之后 / 同步态复用之后，段边界状态**恰好等于**该段 post，故每 8 段一次的
-32768 槽整份 checkpoint 捕获（实测 ~180µs/次）退化为引用计数；只有依赖判定（偏差态）
-复用后活状态带偏差，仍真捕获。实测（同一 release 基准 3 跑取中位）：改正文
+共享：执行段之后段边界状态精确等于该段 post；同步态复用要分两档——**非中性**段先
+`restore_to(post)` 整体推进（活状态 = post），**中性**段（`state_neutral` 口径现已含
+对输出可见的控制态，见下条 P1-1）跳过执行不改状态、与 post 输出等价，两档才可共享。
+每 8 段一次的 32768 槽整份 checkpoint 捕获（实测 ~180µs/次）退化为引用计数；只有
+依赖判定（偏差态）复用后活状态带偏差，仍真捕获。实测（同一 release 基准 3 跑取中位）：改正文
 **6.4x→7.9x**（9.92ms→7.14ms，全量 59.0ms）；改宏体 ~1.1–1.3x 两侧同量级（61 段真实
 重排主导，本刀对 B 无实质收益属预期）；dev profile 同基准 7.0x→9.9x（24.22→16.75ms）。
-分相诊断探针（`NTEX_INCR_DIAG`）数据固化后**已剥离**（对齐前两刀收尾形态）。
+**P1-1 修复（2026-11-01，review 收口）**：中性口径只比 `ValueState` + eqtb 时，
+`\tracingcommands` 改 `shown_trace_mode` 的段被判中性 → 不还原、回滚点却共享旧 post；
+下一轮 `edit` 回滚恢复旧段的转录模式记忆，转录与全量不一致。修法：`snapshot_states_equal`
+补**对输出可见的控制态**比较（`shown_trace_mode`/追踪抑制/诊断行号/`ended` 等；排除
+每 token 必变的 `last_tok` 与结构帧），见 `ControlState::output_visible_equal`。回归锁
+`trace_control_state_rollback_matches_full_transcript`（两轮 edit，第二轮回滚后的探针
+转录尾块与全量逐字节一致）。分相诊断探针（`NTEX_INCR_DIAG`）数据固化后**已剥离**
+（对齐前两刀收尾形态）。
 **下一刀靶**：结构性 owned 拷贝——复用段 `contrib.clone()`（缓存节点流每轮深拷贝，
 dev A 场景 ~2.3ms）+ `finish_doc` 的 `shipped.clone()`（全页深拷贝，~3.8ms），二者需
 节点/产出 `Arc` 化才能再削；expand 侧每执行段两次 `StateSnapshot::capture`（ntex-core）。
