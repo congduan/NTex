@@ -1145,14 +1145,6 @@ impl Expander {
                 self.output_toks = prev;
                 let _ = self.sink.output_defined(self.output_toks.is_some());
             }
-            SavedValue::FontDimen { font, num, prev } => match prev {
-                Some(v) => {
-                    self.fontdimens.insert(font, num, v);
-                }
-                None => {
-                    self.fontdimens.remove(font, num);
-                }
-            },
             // 当前字体回滚（tex.web cur_font_loc 是 eqtb 字，随组恢复）。
             // 只改 expander 镜像：排版侧 NodeBuilder 有自己的 font_stack
             // （sink.rs group_begin/group_end 同语义），不再发 font_selected

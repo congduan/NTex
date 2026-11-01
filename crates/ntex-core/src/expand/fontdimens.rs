@@ -42,29 +42,6 @@ impl FontDimens {
         }
     }
 
-    /// 删除一个覆盖项（tex.web 无此操作；仅 save-stack 回滚走这里）。
-    /// 若移除的正是当前最大值，才重算该字体的最大参数号。
-    pub(crate) fn remove(&mut self, font: u32, num: u32) {
-        if self.map.remove(&(font, num)).is_none() {
-            return;
-        }
-        if self.max_num.get(&font).copied() == Some(num) {
-            let rest = self
-                .map
-                .keys()
-                .filter_map(|&(f, n)| (f == font).then_some(n))
-                .max();
-            match rest {
-                Some(m) => {
-                    self.max_num.insert(font, m);
-                }
-                None => {
-                    self.max_num.remove(&font);
-                }
-            }
-        }
-    }
-
     pub(crate) fn clear(&mut self) {
         self.map.clear();
         self.max_num.clear();
@@ -108,30 +85,6 @@ mod fontdimens_tests {
         assert_eq!(fd.max_num(2), 5);
         assert_eq!(fd.max_num(3), 0);
         assert_eq!(fd.get(1, 9), Some(90));
-    }
-
-    #[test]
-    fn remove_recomputes_only_on_max_removal() {
-        let mut fd = FontDimens::new();
-        fd.insert(1, 3, 30);
-        fd.insert(1, 9, 90);
-        // 移除非最大值：缓存不动
-        fd.remove(1, 3);
-        assert_eq!(fd.max_num(1), 9);
-        // 移除最大值：重算到次大
-        fd.remove(1, 9);
-        assert_eq!(fd.max_num(1), 0);
-        assert_eq!(fd.iter().count(), 0);
-    }
-
-    #[test]
-    fn remove_absent_key_is_noop() {
-        let mut fd = FontDimens::new();
-        fd.insert(1, 3, 30);
-        fd.remove(1, 4);
-        fd.remove(2, 3);
-        assert_eq!(fd.max_num(1), 3);
-        assert_eq!(fd.get(1, 3), Some(30));
     }
 
     #[test]

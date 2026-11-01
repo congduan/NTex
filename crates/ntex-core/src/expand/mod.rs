@@ -309,13 +309,6 @@ pub(crate) enum SavedValue {
     Output {
         prev: Option<TokenArray>,
     },
-    /// `\fontdimen`：字体参数覆盖（仅旧实现路径构造；tex.web 语义恒全局，
-    /// 活跃路径不进 save stack——见 primitive_font.rs exec_fontdimen 臂注）。
-    FontDimen {
-        font: u32,
-        num: u32,
-        prev: Option<i64>,
-    },
     /// 当前字体（tex.web `cur_font_loc`，它**是 eqtb 字**：`define(cur_font_loc,…)`
     /// 随组保存/恢复）。
     ///

@@ -501,33 +501,6 @@ impl Expander {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    fn exec_fontdimen_old(&mut self) -> Result<()> {
-        let num = self.scan_number()?;
-        let num = u32::try_from(num).map_err(|_| Error::invalid_input("\\fontdimen 参数号越界"))?;
-        let font = self.scan_font_ident()?;
-        if num >= 13 {
-            self.report_error("Font \\FONT? has only 13 fontdimen parameters.");
-            if self.expect_equals().is_ok() {
-                let _ = self.scan_dimen();
-            }
-            return Ok(());
-        }
-        self.expect_equals()?;
-        let value = self.scan_dimen()?;
-        let prev = self.fontdimens.get(font, num);
-        let global = self.is_global();
-        if !global && self.group_level > 0 {
-            self.save_stack.push((
-                self.group_level,
-                SavedValue::FontDimen { font, num, prev },
-            ));
-        }
-        self.fontdimens.insert(font, num, value);
-        self.finish_assignment();
-        Ok(())
-    }
-
     /// TeX `scan_font_ident` 的 "Missing font identifier" 报错恢复：
     /// 报错后用当前字体继续（TRIP L404 `\fontdimen 1000=20\varunit`——`=` 非字体）。
     fn missing_font_ident(&mut self) -> Result<u32> {
