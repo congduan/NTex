@@ -375,3 +375,10 @@ demo1 六刀 + 输出例程刀 2/3/5 的修复登记；全部已提交，留作�
   主控复测）**：补种值收进「槽本次装载刚补注册」分支，fmt 自带定义（含显式 0）
   一律不动。锁 a（显式 0 存活）/锁 b（缺原语补注册+1in）双测试；
   core 601 绿 / clippy 0 / trip 177B + tripos 12 页 750B 复测一致。
+
+## 2026-11-01 诊断键收编刀遗留：ntex-layout 跨 crate 裸查未收编
+- `ntex-layout/src/typesetter.rs` 约 883/917/979 三处 `NTEX_R8_DIAG` 仍裸查
+  `std::env::var_os`（每步调用点）——`ntex-core::expand::diag_enabled` 为
+  `pub(crate)` 无法跨 crate 复用。值语义不受影响（同 env 同判），待
+  `diag_enabled` 提升 `pub` 或下沉共享模块时一并收编。
+  来源：2026-11-01 收编刀 review 观察项③（子 agent 只读 review，结论 P）。
