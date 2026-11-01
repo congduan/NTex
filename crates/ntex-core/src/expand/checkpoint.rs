@@ -147,6 +147,39 @@ pub(crate) struct ControlState {
     pub(crate) debug_expand_caller: &'static str,
 }
 
+impl ControlState {
+    /// 对**后续可观察输出**可见的控制状态是否一致（转录格式 / 诊断行号 /
+    /// 错误恢复快照 / 作业终结标志）。
+    ///
+    /// 用途：段状态中性判定（[`crate::incremental::snapshot_states_equal`]）。
+    /// `ValueState` + eqtb 比较覆盖不到这些字段，但它们在段执行中被改写后
+    /// **不会**改 eqtb——只比前两者会把"转录格式已漂移"的段误判为中性，
+    /// 复用时不推进活状态、回滚点又沿用旧 `post`，下一轮 `edit` 回滚即恢复
+    /// 出旧段的 `shown_trace_mode`（`\tracingcommands` 的模式前缀记忆），
+    /// 后续转录与全量不一致（2026-11 P1-1）。
+    ///
+    /// **刻意排除**：
+    /// - `last_tok` / `debug_expand_caller`：纯看门狗/调试观测，不进入任何
+    ///   输出；`last_tok` 每 token 必变，纳入即把所有段判成非中性（复用与
+    ///   投机全军覆没）。
+    /// - `error_anchor`：`scan_dimen_body` 每次值扫描都会**无条件**写它且成功
+    ///   路径不清除（粘滞位置），纳入会让所有"扫过尺寸"的段变非中性；它只在
+    ///   错误上下文行 `l.N` 起作用，而错误路径从活状态现场生成。
+    /// - 结构帧（输入栈/组栈/条件栈/对齐/悬挂前缀等）：它们的差异要么已由
+    ///   `ValueState`/eqtb 反映，要么由复用前的 `boundary_is_clean` 闸挡掉；
+    ///   把脏 `post` 的结构帧还原到干净活状态反而是错的。
+    pub(crate) fn output_visible_equal(&self, other: &Self) -> bool {
+        self.shown_trace_mode == other.shown_trace_mode
+            && self.trace_suppress == other.trace_suppress
+            && self.trace_suppress_defer == other.trace_suppress_defer
+            && self.output_trigger_line == other.output_trigger_line
+            && self.output_prev_count == other.output_prev_count
+            && self.err_snapshot == other.err_snapshot
+            && self.section_label == other.section_label
+            && self.ended == other.ended
+    }
+}
+
 impl Expander {
     /// 捕获完整状态检查点（只读；M5 阶段二段级回滚 / 阶段三排版层管线用）。
     pub fn capture_checkpoint(&self) -> EngineCheckpoint {

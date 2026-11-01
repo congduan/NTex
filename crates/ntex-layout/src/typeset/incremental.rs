@@ -331,10 +331,12 @@ struct DocBoundary {
 /// 回滚点：expand 半边 + 排版半边整份克隆。
 ///
 /// `exp` 走 `Rc` 共享（M5 阶段六第三刀）：段边界处的 expand 状态在"执行段
-/// 刚录完"与"同步态复用"两条路径上都**恰好等于**该段缓存的 `record_post`，
-/// 此时回滚点与段缓存共用同一份快照（克隆 = 引用计数），省掉每 8 段一次的
-/// 整份 checkpoint 捕获（32768 槽，实测 ~180µs/次，占 edit 的 ~11%）。
-/// 只有依赖判定（偏差态）复用这条路径的状态与缓存 post 不同，才真捕获。
+/// 刚录完"与"同步态复用"两条路径上都**恰好等于**该段缓存的 `record_post`
+/// （非中性段已 `restore_to(post)` 整体推进；中性段按 `state_neutral` 口径
+/// 含控制态，与 post 输出等价），此时回滚点与段缓存共用同一份快照（克隆 =
+/// 引用计数），省掉每 8 段一次的整份 checkpoint 捕获（32768 槽，实测
+/// ~180µs/次，占 edit 的 ~11%）。只有依赖判定（偏差态）复用这条路径的状态与
+/// 缓存 post 不同，才真捕获。
 #[derive(Debug, Clone)]
 struct RollbackPoint {
     exp: std::rc::Rc<StateSnapshot>,
@@ -363,7 +365,10 @@ const ROLLBACK_EVERY: usize = 8;
 /// `deps` / `state_neutral`（阶段四）：词法读/写依赖（超近似）与状态中性标记
 /// ——同步态（活状态与 `record_exp` 精确一致）之外的第二条复用通道：偏差不触及
 /// 该段依赖且跳过执行不动状态时，缓存节点流同样成立（见
-/// [`IncrementalTypesetter::reuse_verdict`]）。
+/// [`IncrementalTypesetter::reuse_verdict`]）。中性口径含**对输出可见的控制态**
+/// （`shown_trace_mode`/追踪抑制/诊断行号等，见 `snapshot_states_equal`）：
+/// 只比值状态 + eqtb 会把"只改 `\tracingcommands` 模式记忆"的段误判中性，
+/// 回滚点共享旧 post 后第二轮 edit 的转录与全量不一致（P1-1）。
 #[derive(Debug, Clone)]
 struct SegmentCache {
     contrib: Vec<Node>,
@@ -833,8 +838,16 @@ impl IncrementalTypesetter {
                 if verdict == ReuseVerdict::Synced {
                     // 同步态：活状态与录制时段前状态精确一致 → 执行必然复现，推进
                     // 到**录制时**的段后状态。段状态中性（pre ≈ post，执行本不改
-                    // 状态）时活状态已是对的状态，整体还原是纯开销——expand 层
-                    // 同款短路。链偏差随之归零（活状态 == 旧链下一段的段前状态）。
+                    // 状态——含对输出可见的控制态）时活状态已是对的状态，整体还原
+                    // 是纯开销——expand 层同款短路。链偏差随之归零（活状态 == 旧链
+                    // 下一段的段前状态）。
+                    //
+                    // 中性口径必须覆盖控制态（P1-1）：只比值状态 + eqtb 时，
+                    // `\tracingcommands` 改 `shown_trace_mode` 的段会被判中性 →
+                    // 不还原 → 活控制态停在旧值，而下方 `exp_hint` 仍把旧
+                    // `record_post` 塞进回滚点，下一轮 edit 回滚即恢复旧段的转录
+                    // 模式记忆。纳入控制态后，此类段非中性 → 这里把活状态整体
+                    // 还原成 post（控制态一并推进），回滚点共享才是精确的。
                     let (neutral, post) = {
                         let c = self.cache[j].as_ref().expect("已判可复用");
                         (c.state_neutral, &c.record_post)
@@ -857,9 +870,9 @@ impl IncrementalTypesetter {
             // 也随活状态走——旧链快照不再是当前文档状态，后续 `edit` 回滚到它
             // 会丢掉偏差槽新值（回滚点按间隔稀疏化，见 [`DocBoundary`]）。
             //
-            // 同步态：活 expand 状态即缓存段 post（上面已推进到它 / 中性态本就
-            // 相等），边界 expand 半边直接共享该快照，免一次整份捕获；偏差态
-            // 活状态带偏差、与 post 不同，必须真捕获。
+            // 同步态：非中性段已在上面整体还原成 post、中性段与 post 输出等价
+            // （控制态亦同，见 `state_neutral` 口径），边界 expand 半边直接共享
+            // 该快照，免一次整份捕获；偏差态活状态带偏差、与 post 不同，必须真捕获。
             let exp_hint = if verdict == ReuseVerdict::Synced {
                 Some(std::rc::Rc::clone(
                     &self.cache[j].as_ref().expect("已判可复用").record_post,
@@ -1018,8 +1031,9 @@ impl IncrementalTypesetter {
     ///
     /// `exp_hint`：调用方**已知**该边界处的 expand 状态等于某份既有快照时传入
     /// （执行段之后 = 该段 `record_post`；同步态复用 = 缓存段的 `record_post`
-    /// ——两者同源），回滚点直接共享引用，免一次整份 checkpoint 捕获。依赖判定
-    /// （偏差态）复用后活状态与缓存 post 不同，传 `None` 走真捕获。
+    /// ——非中性段已整体还原、中性段与其输出等价（含控制态），两者同源），
+    /// 回滚点直接共享引用，免一次整份 checkpoint 捕获。依赖判定（偏差态）复用后
+    /// 活状态与缓存 post 不同，传 `None` 走真捕获。
     fn capture_boundary(
         &mut self,
         at: usize,

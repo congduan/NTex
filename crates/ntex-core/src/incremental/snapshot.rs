@@ -64,14 +64,23 @@ pub fn state_matches(value: &ValueState, eqtb: &[EqSlot], snap: &StateSnapshot) 
     value == snap.value() && slots_semantically_equal(eqtb, snap.eqtb())
 }
 
-/// 两份快照的状态是否语义一致（口径同 [`state_matches`]：值状态精确相等 +
-/// eqtb 逐槽语义相等）。
+/// 两份快照的状态是否语义一致（值状态精确相等 + eqtb 逐槽语义相等 +
+/// **可观察输出面**的控制状态一致）。
 ///
 /// 排版层管线（ntex-layout）用它做**段状态中性**判定：段执行前/后快照一致 ⇒
 /// 跳过该段的执行不动状态——有链偏差时这是"免执行且不还原旧 post"的健全前提
 /// （旧 post 会把偏差槽的新值冲掉，不能整体还原）。
+///
+/// 控制状态维度（2026-11 P1-1）：`\tracingcommands` 等只改
+/// `ControlState::shown_trace_mode` 而不动值/eqtb 的段，若按前两维判中性，
+/// 跳过执行会让活状态停留在旧值，而同步态复用仍把旧 `record_post` 共享进
+/// 回滚点——下一轮 `edit` 回滚即恢复旧段的转录模式记忆，后续转录与全量
+/// 不一致。比较面只取对输出可见的字段（见 `ControlState` 文档的排除项），
+/// 逐字段比较无克隆，捕获段时算一次、不进 `edit` 热路径。
 pub fn snapshot_states_equal(a: &StateSnapshot, b: &StateSnapshot) -> bool {
-    a.value() == b.value() && slots_semantically_equal(a.eqtb(), b.eqtb())
+    a.value() == b.value()
+        && slots_semantically_equal(a.eqtb(), b.eqtb())
+        && a.cp.control.output_visible_equal(&b.cp.control)
 }
 
 /// 活状态相对参照快照的偏差（一次全量扫描的产物，供各段廉价判定）。

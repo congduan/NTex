@@ -1278,4 +1278,87 @@ mod incremental_tests {
             std::mem::size_of::<super::IoState>()
         );
     }
+
+    // ---- 回归锁：P1-1 控制态（shown_trace_mode）随同步态复用回滚 ----
+    //
+    // 现场：`\tracingcommands=1` 下，段执行只改 `ControlState::shown_trace_mode`
+    // （转录模式前缀记忆），值状态/eqtb 不变 → 旧 `snapshot_states_equal` 判中性
+    // → 同步态复用不还原、回滚点却共享旧 `record_post`。第二轮 edit 从该回滚点
+    // 恢复出旧段的 shown_trace_mode，与全量转录不一致（模式前缀多/少一段）。
+    //
+    // 段布局（18 段）：段 0 开追踪；段 7 用 `\noindent` 强制段末的空白行 `\par`
+    // 在 horizontal 模式下被追踪（不依赖字体度量：无 TFM 时普通文本不建段落），
+    // 使它的 post 里 shown = horizontal；段 9 是 `\vskip 1pt`（段末 shown =
+    // vertical）；段 10 是探针（首字母 z，末行关追踪，使探针转录块即转录尾块，
+    // 可与全量逐字节比）。
+    // edit #1 改段 1（正文，状态中性）→ 其后各段同步态复用，边界 8 的回滚点
+    // 拿到段 7 的旧 post（horizontal）；edit #2 改段 10 → 回滚到边界 8，探针
+    // 在恢复出的 horizontal 控制态下执行（全量为 vertical），首行前缀露馅。
+    fn trace_probe_doc() -> String {
+        let mut s = String::new();
+        s.push_str("\\hsize 300pt\n\\vsize 320pt\n");
+        s.push_str(&font_preamble());
+        s.push_str("\\tracingcommands=1\n\n");
+        for i in 1..18 {
+            match i {
+                7 => s.push_str("\\noindent engine boundary\n\n"),
+                9 => s.push_str("\\vskip 1pt\n\n"),
+                10 => s.push_str("zebra probe paragraph one.\n\\tracingcommands=0\n\n"),
+                _ => {
+                    s.push_str(&body(i, false));
+                    s.push_str("\n\n");
+                }
+            }
+        }
+        s
+    }
+
+    /// 从首条含 `needle` 的行到转录末尾的字节切片（探针段关追踪后即为尾块）。
+    fn transcript_tail_from<'a>(t: &'a str, needle: &str) -> &'a str {
+        let at = t
+            .find(needle)
+            .unwrap_or_else(|| panic!("转录中找不到 {needle:?}：\n{t}"));
+        // 回退到该行行首（find 落在 "letter z" 上，行首是 '{'）。
+        let start = t[..at].rfind('\n').map_or(0, |i| i + 1);
+        &t[start..]
+    }
+
+    #[test]
+    fn trace_control_state_rollback_matches_full_transcript() {
+        let doc = trace_probe_doc();
+        let mut it = IncrementalTypesetter::with_tfm_paginated();
+        let _ = it.compile(&doc).expect("compile");
+        let segs = it.segments().to_vec();
+        assert!(segs.len() > 17, "文档应有 18 段以上，实际 {}", segs.len());
+
+        // edit #1：改段 1 正文（状态中性）→ 其后缓存段同步态复用。
+        let new1 = format!("{}\n", body(1, true));
+        let _ = it.edit(1, &new1).expect("edit 1");
+        assert!(
+            it.stats().reused > 0,
+            "第一次 edit 应复用其后各段缓存（实际 {:?}）",
+            it.stats()
+        );
+
+        // edit #2：改段 10（探针）→ 回滚到最近回滚点（8），段 8/9 复用续走。
+        let new10 = "zebra probe paragraph one revised.\n\\tracingcommands=0\n\n";
+        let _ = it.edit(10, new10).expect("edit 2");
+        assert_eq!(
+            it.stats().executed,
+            1,
+            "第二次 edit 只应执行被编辑段（其余复用以覆盖回滚后同步态复用）：{:?}",
+            it.stats()
+        );
+
+        // 增量转录 vs 全量编译同一文档的转录尾块逐字节一致。
+        let incr_tail = transcript_tail_from(it.transcript(), "letter z").to_owned();
+        let doc2 = replace_segment(&doc, &segs, 10, new10);
+        let mut full = IncrementalTypesetter::with_tfm_paginated();
+        let _ = full.compile(&doc2).expect("full compile");
+        let full_tail = transcript_tail_from(full.transcript(), "letter z").to_owned();
+        assert_eq!(
+            incr_tail, full_tail,
+            "第二轮 edit 回滚后的探针转录应与全量一致（控制态 shown_trace_mode 漂移）"
+        );
+    }
 }
