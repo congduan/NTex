@@ -715,12 +715,22 @@ impl IncrementalTypesetter {
             // M6 投机窗口路径（RFC-5 §3）：输出与下方顺序路径逐位一致。
             self.run_segments_speculative()?;
         } else {
+            // 段 0 的 pre 与**刚捕获**的段 0 回滚点 expand 半边是同一状态，直接
+            // 共享（M5 阶段六第五刀）；此后每段的 pre 共享上一执行段的 post——
+            // 段背靠背执行，二者是同一条活状态线，免掉每段一次整份捕获。
+            let mut prev_post = self.bounds[0]
+                .as_ref()
+                .and_then(|b| b.rollback.as_ref())
+                .map(|rp| std::rc::Rc::clone(&rp.exp));
             for j in 0..n {
-                if let Err(e) = self.execute_segment(j) {
-                    // 段执行出错：本轮止于此段，其后各段边界不再反映当前文档状态
-                    // ——撤销它们的回滚点（后续 `edit` 退到更早的回滚点重放）。
-                    self.invalidate_rollback_after(j);
-                    return Err(e);
+                match self.execute_segment_with(j, prev_post.take()) {
+                    Ok(post) => prev_post = Some(post),
+                    Err(e) => {
+                        // 段执行出错：本轮止于此段，其后各段边界不再反映当前文档状态
+                        // ——撤销它们的回滚点（后续 `edit` 退到更早的回滚点重放）。
+                        self.invalidate_rollback_after(j);
+                        return Err(e);
+                    }
                 }
             }
         }
@@ -781,6 +791,12 @@ impl IncrementalTypesetter {
         let mut delta = self.cache[start]
             .as_ref()
             .map(|c| ChainDelta::capture(&self.expander, &c.record_exp));
+        // 活状态的共享快照（"下一执行段的 pre"）：段背靠背执行 ⇒ 上一执行段的
+        // `record_post` 就是本段的段前状态，直接 `Rc` 共享，免一次整份捕获
+        // （M5 阶段六第五刀）。入口不给 hint——回滚后活状态虽等于回滚点快照，
+        // 但那一步的"还原 ≡ 快照"不在本刀承诺面内，保守捕获一次（每轮至多
+        // 一次，正确性优先）。
+        let mut prev_post: Option<std::rc::Rc<StateSnapshot>> = None;
         for j in start..n {
             // 判定：被编辑段 / 观测到输出例程 / 无缓存 → 必算；其余按复用判定。
             let outcome: std::result::Result<ReuseVerdict, &'static str> = if j == index {
@@ -808,12 +824,15 @@ impl IncrementalTypesetter {
                                 .and_then(|c| c.as_ref())
                                 .map(|c| c.record_exp.clone())
                         });
-                    if let Err(e) = self.execute_segment(j) {
-                        // 段执行出错：本轮重放止于此段，其后各段边界不再反映
-                        // 当前文档状态——撤销它们的回滚点，后续 `edit` 退到更早
-                        // 的回滚点重放（不会用到过期状态）。
-                        self.invalidate_rollback_after(j);
-                        return Err(e);
+                    match self.execute_segment_with(j, prev_post.take()) {
+                        Ok(post) => prev_post = Some(post),
+                        Err(e) => {
+                            // 段执行出错：本轮重放止于此段，其后各段边界不再反映
+                            // 当前文档状态——撤销它们的回滚点，后续 `edit` 退到更早
+                            // 的回滚点重放（不会用到过期状态）。
+                            self.invalidate_rollback_after(j);
+                            return Err(e);
+                        }
                     }
                     delta = reference
                         .as_ref()
@@ -857,6 +876,9 @@ impl IncrementalTypesetter {
                     };
                     if !neutral {
                         post.clone().restore_to(&mut self.expander);
+                        // 活状态此刻 == 该段旧 post：下一执行段的 pre 直接共享它
+                        // （中性段不还原，活状态本就未变，`prev_post` 继续成立）。
+                        prev_post = Some(std::rc::Rc::clone(post));
                     }
                     // `ChainDelta::empty` 是 ntex-core 的 crate 内构造器；这里按
                     // 公开字段直接构造零偏差（值状态一致 + 无变化槽）。
@@ -875,13 +897,15 @@ impl IncrementalTypesetter {
             //
             // 同步态：非中性段已在上面整体还原成 post、中性段与 post 输出等价
             // （控制态亦同，见 `state_neutral` 口径），边界 expand 半边直接共享
-            // 该快照，免一次整份捕获；偏差态活状态带偏差、与 post 不同，必须真捕获。
+            // 该快照；偏差路径（依赖判定通过）执行本不改状态，活状态 == 上一执行
+            // 段的 `record_post`（`prev_post`），同样直接共享。两者都免一次整份
+            // 捕获（M5 阶段六第五刀）。
             let exp_hint = if verdict == ReuseVerdict::Synced {
                 Some(std::rc::Rc::clone(
                     &self.cache[j].as_ref().expect("已判可复用").record_post,
                 ))
             } else {
-                None
+                prev_post.clone()
             };
             self.capture_boundary(j + 1, false, exp_hint);
             self.stats.reused += 1;
@@ -1034,9 +1058,10 @@ impl IncrementalTypesetter {
     ///
     /// `exp_hint`：调用方**已知**该边界处的 expand 状态等于某份既有快照时传入
     /// （执行段之后 = 该段 `record_post`；同步态复用 = 缓存段的 `record_post`
-    /// ——非中性段已整体还原、中性段与其输出等价（含控制态），两者同源），
-    /// 回滚点直接共享引用，免一次整份 checkpoint 捕获。依赖判定（偏差态）复用后
-    /// 活状态与缓存 post 不同，传 `None` 走真捕获。
+    /// ——非中性段已整体还原、中性段与其输出等价（含控制态），两者同源；
+    /// 依赖判定复用 = 上一执行段的 `record_post`，活状态未变），回滚点直接共享
+    /// 引用，免一次整份 checkpoint 捕获。无共享源（本轮尚未执行过任何段）时才
+    /// 传 `None` 走真捕获。
     fn capture_boundary(
         &mut self,
         at: usize,
@@ -1064,8 +1089,23 @@ impl IncrementalTypesetter {
         }
     }
 
-    /// 执行第 `j` 段：录制主列表节点流 → 缓存 → 捕获段后边界。
+    /// 执行第 `j` 段：录制主列表节点流 → 缓存 → 捕获段后边界（无 `pre` 共享
+    /// 提示的入口——投机路径与自愈路径用，段前状态照旧整份捕获）。
     fn execute_segment(&mut self, j: usize) -> Result<()> {
+        self.execute_segment_with(j, None).map(|_| ())
+    }
+
+    /// 执行第 `j` 段，返回该段执行后的 `record_post`（供下一执行段作 `pre`
+    /// 共享源）。
+    ///
+    /// `pre_hint`：调用方**已知**段前活状态等于某份既有快照时传入（上一执行
+    /// 段的 `record_post`、`compile` 的段 0 回滚点）——直接共享引用，免一次
+    /// 整份 checkpoint 捕获（M5 阶段六第五刀）。`record_post` 恒真捕获。
+    fn execute_segment_with(
+        &mut self,
+        j: usize,
+        pre_hint: Option<std::rc::Rc<StateSnapshot>>,
+    ) -> Result<std::rc::Rc<StateSnapshot>> {
         // 段缓存只对该段"自含贡献"有效：段执行进入时须无悬挂构造（否则本段是
         // 在吸收前段未闭合段落——录制流跨段，不能代表本段），退出时须回到干净
         // 段边界（否则本段留下的开放段落在后续段才闭合，录制流同样跨段）。
@@ -1074,7 +1114,8 @@ impl IncrementalTypesetter {
         // 还原编辑必须回到基线）。
         let dirty_entry = !self.builder_shaped();
         let entry_ctx = main_above_depth(sink_builder(&mut self.expander));
-        let record_exp = std::rc::Rc::new(StateSnapshot::capture(&self.expander));
+        let record_exp =
+            pre_hint.unwrap_or_else(|| std::rc::Rc::new(StateSnapshot::capture(&self.expander)));
         let source = self.segments[j].clone();
         // 词法读/写依赖（超近似；`read_versions` 仅诊断留痕）。
         let deps = lex_deps(&source).attach_versions(self.expander.intern(), self.expander.eqtb());
@@ -1094,6 +1135,8 @@ impl IncrementalTypesetter {
         let state_neutral = snapshot_states_equal(&record_exp, &record_post);
         // 段后边界的 expand 半边复用该段 post（状态刚录到同一处，无需再捕获）。
         let exp_hint = std::rc::Rc::clone(&record_post);
+        // 返回值：调用方用作下一执行段的 pre 共享源（`Rc` 克隆，非快照复制）。
+        let post_out = std::rc::Rc::clone(&record_post);
         self.cache[j] = if dirty_entry || dirty_exit {
             None
         } else {
@@ -1111,7 +1154,7 @@ impl IncrementalTypesetter {
             self.output_routine = true;
         }
         self.stats.executed += 1;
-        Ok(())
+        Ok(post_out)
     }
 
     /// 收尾冲页（与 [`super::Typesetter::finish`] 步骤 1-4 同序的镜像实现，

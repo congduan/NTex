@@ -61,6 +61,8 @@
 //! - **文本级切段**：跨段构造（未闭合 `\if`/`{`/`$`）的语义本就不可切段，
 //!   需引擎级 checkpoint（在线切段）取代。
 
+use std::rc::Rc;
+
 use crate::error::{Error, Result};
 use crate::expand::Expander;
 use crate::intern::InternTable;
@@ -76,10 +78,12 @@ use super::snapshot::{
 /// 缓存的段：输出 + 失效判定所需信息。
 #[derive(Debug, Clone)]
 struct CachedSegment {
-    /// 执行前快照。
-    snapshot_pre: StateSnapshot,
-    /// 执行后快照（同步态复用非中性段时还原它——"复用 = 缓存输出 + 缓存后状态"）。
-    snapshot_post: StateSnapshot,
+    /// 执行前快照（M5 阶段六第五刀：`Rc` 共享——段背靠背执行，本段 `pre` 与
+    /// 上一执行段的 `post` 是同一状态，直接共享引用，免一次整份捕获）。
+    snapshot_pre: Rc<StateSnapshot>,
+    /// 执行后快照（同步态复用非中性段时还原它——"复用 = 缓存输出 + 缓存后状态"；
+    /// 也是下一执行段 `pre` 的共享源）。
+    snapshot_post: Rc<StateSnapshot>,
     /// 词法依赖（读/写 cs、`\csname` 标记、读依赖版本）。
     deps: SegmentDeps,
     /// 该段是否状态中性（执行前后状态语义一致 = 无净状态副作用）。
@@ -210,7 +214,8 @@ impl SegmentEngine {
         self.segments = segmentize(source);
         self.cache = self.segments.iter().map(|_| None).collect();
         self.stats = SegmentStats::default();
-        self.replay(0, false, None)
+        // 全量首轮无缓存链，首段 `pre` 无共享源（照旧捕获）。
+        self.replay(0, false, None, None)
     }
 
     /// 编辑第 `index` 段并增量重算（单路径：回滚到段前 → 重放）。
@@ -259,12 +264,13 @@ impl SegmentEngine {
             self.expander = Expander::new();
             self.segments[index] = new_source.to_owned();
             self.cache = self.segments.iter().map(|_| None).collect();
-            return Ok(self.replay(0, false, None));
+            return Ok(self.replay(0, false, None, None));
         }
         self.segments[index] = new_source.to_owned();
         self.cache[index] = None;
-        // 入口即同步：活状态已被还原成 pre(target) 本身。
-        Ok(self.replay(target, true, expect))
+        // 入口即同步：活状态已被还原成 pre(target) 本身 → 首个执行段的 `pre`
+        // 可直接共享该快照（M5 阶段六第五刀）。
+        Ok(self.replay(target, true, expect, Some(restore)))
     }
 
     /// 汇总输出 token（已执行段按序拼接）。
@@ -342,6 +348,8 @@ impl SegmentEngine {
     /// 全量 `run` 为假——无缓存链期望可言）。`expect` 是编辑段的 `(段下标, 旧
     /// post)`——该段执行后的链偏差基准；其余执行段用各自缓存里的旧 `post`，其
     /// 下一段的 `pre` 与之相同（段是背靠背执行的），故等价可用。
+    /// `entry_pre` 是入口活状态的快照（`edit` 回滚目标；全量 `run` 为 `None`）
+    /// ——首个执行段可直接共享它作 `pre`（M5 阶段六第五刀）。
     ///
     /// 链偏差在**每次执行段之后**重算一次（[`ChainDelta::capture`]，一次全量
     /// 扫描），后续各缓存段的失效判定只查偏差集 ∩ 依赖（见模块头注释）。复用
@@ -351,7 +359,8 @@ impl SegmentEngine {
         &mut self,
         from: usize,
         entry_synced: bool,
-        mut expect: Option<(usize, StateSnapshot)>,
+        mut expect: Option<(usize, Rc<StateSnapshot>)>,
+        entry_pre: Option<Rc<StateSnapshot>>,
     ) -> Vec<SegmentResult> {
         // 本轮重算过的段（`from_cache` 标记用；BTreeSet 保持结果组装顺序无关）
         let mut recomputed = std::collections::BTreeSet::<usize>::new();
@@ -364,6 +373,11 @@ impl SegmentEngine {
         } else {
             None
         };
+        // 活状态的共享快照（"下一执行段的 pre"）。段背靠背执行 ⇒ 上一执行段的
+        // `post` 就是本段的 `pre`：直接 `Rc` 共享，免一次整份捕获（M5 阶段六
+        // 第五刀）。复用段推进规则见下方两处赋值；无法确定时置 `None`（保守
+        // 捕获，正确性优先）。
+        let mut prev_post = entry_pre;
         for idx in from..self.segments.len() {
             if self.cache[idx].is_some() {
                 let reason = match delta.as_ref() {
@@ -387,7 +401,11 @@ impl SegmentEngine {
                         // 冲掉，不能整体还原。
                         let post = cached.snapshot_post.clone();
                         self.expander.restore_checkpoint(&post.cp);
+                        // 活状态此刻 == 该段 post：下一执行段的 pre 可直接共享。
+                        prev_post = Some(post);
                     }
+                    // 中性段复用：执行本就不改状态，活状态仍等于 `prev_post`
+                    // （含 `None`），保持不变。
                     if cached.error.is_some() {
                         // 复用的出错段同样终止后续段（全量语义：出错即停）
                         failed_at = Some(idx);
@@ -397,8 +415,9 @@ impl SegmentEngine {
                 }
             }
             // 执行该段，然后重算链偏差（一次全量扫描；基准 = 该段旧 post，缺省
-            // 用下一段的 pre——二者都是旧链上"下一段执行前"的状态）
-            let reference: Option<StateSnapshot> =
+            // 用下一段的 pre——二者都是旧链上"下一段执行前"的状态）。基准是
+            // **旧**链的 post（跨编辑轮语义），与 `prev_post`（活状态）两回事。
+            let reference: Option<Rc<StateSnapshot>> =
                 if expect.as_ref().is_some_and(|(at, _)| *at == idx) {
                     expect.take().map(|(_, p)| p)
                 } else {
@@ -410,8 +429,9 @@ impl SegmentEngine {
                         .and_then(|c| c.as_ref())
                         .map(|c| c.snapshot_pre.clone())
                 });
-            let cached = self.execute_segment(idx);
+            let cached = self.execute_segment(idx, prev_post.take());
             let failed = cached.error.is_some();
+            prev_post = Some(Rc::clone(&cached.snapshot_post));
             self.stats.executed += 1;
             recomputed.insert(idx);
             self.cache[idx] = Some(cached);
@@ -444,14 +464,23 @@ impl SegmentEngine {
     }
 
     /// 执行第 `idx` 段：先记前/后快照与依赖，再喂入运行并取回段输出。
-    fn execute_segment(&mut self, idx: usize) -> CachedSegment {
+    ///
+    /// `pre_hint`：调用方**已知**活状态等于某份既有快照时传入（上一执行段的
+    /// `post`，或 `edit` 回滚目标）——直接共享引用，免一次整份 checkpoint 捕获
+    /// （M5 阶段六第五刀）。无法确定时为 `None`，照旧捕获。
+    fn execute_segment(
+        &mut self,
+        idx: usize,
+        pre_hint: Option<Rc<StateSnapshot>>,
+    ) -> CachedSegment {
         let source = self.segments[idx].clone();
         let deps = lex_deps(&source).attach_versions(self.expander.intern(), self.expander.eqtb());
-        let snapshot_pre = StateSnapshot::capture(&self.expander);
+        let snapshot_pre =
+            pre_hint.unwrap_or_else(|| Rc::new(StateSnapshot::capture(&self.expander)));
         self.expander.set_sink(Box::new(VecSink::default()));
         self.expander.feed_source(source);
         let result = self.expander.run();
-        let snapshot_post = StateSnapshot::capture(&self.expander);
+        let snapshot_post = Rc::new(StateSnapshot::capture(&self.expander));
         let sink = self.expander.take_sink();
         // 状态中性 = 执行前后状态语义一致（捕获时算一次，判定只查布尔）。
         // 口径与排版层管线（ntex-layout `snapshot_states_equal`）同源：值状态

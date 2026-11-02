@@ -1411,6 +1411,53 @@ mod incremental_tests {
         );
     }
 
+    // ---------- M5 阶段六第五刀：expand 侧快照捕获背靠背共享 ----------
+
+    /// 回归锁：相邻执行段的段前快照**共享**上一段的段后快照（同一 `Rc`）。
+    ///
+    /// 段是背靠背执行的——执行段 j 的 post 即执行段 j+1 的 pre（同一条活状态
+    /// 线），第五刀让 j+1 的 `record_exp` 直接 `Rc::clone` j 的 `record_post`，
+    /// 免掉每段一次整份 checkpoint 捕获。这里用「改 `\hsize`」制造值状态偏差
+    /// （未做槽级归因 → 全局失效），其后**每段都重算**，是共享窗口的完整样本；
+    /// 改回「每次新捕获」时 `ptr_eq` 必红（自证见提交说明）。
+    ///
+    /// 语义锁只锁「同一份快照」这一事实（`ptr_eq`），不锁字段名之外的实现细节；
+    /// 同时保留三重逐位一致口径，确保共享没有改变增量结果。
+    #[test]
+    fn adjacent_executed_segments_share_pre_post_snapshot() {
+        let doc = build_doc(24);
+        let (mut it, dvi0) = pipeline_compile(&doc);
+        assert_eq!(dvi0, full_path(&doc), "口径 3：管线全量 != 引擎全量");
+        let segments = it.segments().to_vec();
+        let pre = segments[0].clone();
+        let new_preamble = pre.replace("\\hsize 300pt", "\\hsize 320pt");
+        assert_ne!(new_preamble, pre, "导言应含 \\hsize 待改");
+        let out = it.edit(0, &new_preamble).expect("编辑段 0（改 \\hsize）");
+        let doc_edited = replace_segment(&doc, &segments, 0, &new_preamble);
+        assert_doc_eq(
+            &out,
+            &full_path(&doc_edited),
+            "第五刀：增量 != 全量（改 \\hsize 触发全段重算）".to_string(),
+        );
+        // 前置条件：值状态偏差使其后各段全部重算（无复用段隔断的连续执行窗口）。
+        assert!(
+            it.stats().executed >= segments.len() - 1,
+            "值状态偏差应使其后各段全部重算（实际执行 {} / 共 {} 段）",
+            it.stats().executed,
+            segments.len()
+        );
+        for j in 1..segments.len() {
+            let prev = it.cache[j - 1].as_ref().expect("前段应有缓存");
+            let cur = it.cache[j].as_ref().expect("后段应有缓存");
+            assert!(
+                std::rc::Rc::ptr_eq(&cur.record_exp, &prev.record_post),
+                "段 {j} 的 record_exp 未与段 {} 的 record_post 共享（ptr_eq 失败：\
+                 背靠背捕获未削掉）",
+                j - 1
+            );
+        }
+    }
+
     // ---------- M5 待办#5：随机编辑模糊测试（增量 vs 全量逐位一致常驻 CI） ----------
     //
     // 既有编辑用例全是固定位置/固定内容（首/中/末段、连续编辑、错误恢复）。
