@@ -8,7 +8,7 @@
 // - neutral 段（纯文本 / 公式 / 列表）→ 采纳路径；
 // - 非 neutral 段（`\def` / 寄存器赋值 / `\setbox`）→ 窗口终止 + 主线程顺序执行；
 // - taint 段（`\lastbox` / `\unskip` / marks）→ 静态黑名单 + 运行时兜底；
-// - `\output` 例程文档 → 投机整体关闭（保守口径）；
+// - `\output` 例程文档 → 可采纳中性段，输出与顺序路径一致；
 // - 合并段（编辑文本不以空行收尾）→ 跨段构造不投机；
 // - 投机编译后的缓存必须与 M5 `edit` 兼容（增量编辑结果仍与全量一致）。
 
@@ -203,7 +203,7 @@ mod spec_tests {
         assert_same(&seq, &seqt, &spe, &spet, "taint 段");
     }
 
-    /// `\output` 例程文档：投机整体关闭（保守口径），输出仍与顺序一致。
+    /// `\output` 例程文档：采纳中性段后输出仍与顺序一致。
     #[test]
     fn speculative_matches_with_output_routine() {
         let mut doc = String::from(
@@ -284,13 +284,8 @@ mod spec_tests {
     /// 真实 LaTeX 文档（发行 `latex.fmt` + TeX 树资产）下的投机一致性：
     /// `\documentclass{article}` + 多章节 + 多段正文 + 显示公式。
     ///
-    /// 这是最接近产品口径的用例：preamble 段与结构宏段都是非 neutral（窗口
-    /// 终止 + 顺序执行），正文段是 neutral。**当前 LaTeX 路径的投机面为 0**
-    /// ——发行 `latex.fmt` 已定义 `\output` 例程（`\@outputpage`），而
-    /// [`IncrementalTypesetter::spec_window_open`] 观测到例程即关闭投机
-    /// （RFC-5 保守口径）。本用例锁的是**两条路径输出逐位一致**这一不变式
-    /// （无论投机面多少都必须成立）；投机面统计以 `eprintln` 输出，供 M6 的
-    /// "`\output` 例程边界"专项验证时对照。资产缺失即跳过。
+    /// 导言、章节与正文宏段走顺序路径；独立竖直间距段可采纳。
+    /// 大间距覆盖更频繁的断页场景，锁定输出例程的采纳时机。
     #[test]
     fn speculative_matches_on_real_latex_document() {
         let Some((root, state)) = latex_assets() else {
@@ -298,7 +293,8 @@ mod spec_tests {
         };
         let mut src = String::from("\\documentclass{article}\n\\begin{document}\n");
         for i in 0..12 {
-            src.push_str(&format!("\\section{{Section {i}}}\n"));
+            src.push_str("\\vskip 120pt\n\n");
+            src.push_str(&format!("\\section{{Section {i}}}\n\n"));
             src.push_str(&body(i));
             src.push_str("\n\n");
             if i % 3 == 1 {
@@ -320,9 +316,10 @@ mod spec_tests {
         }
         assert_eq!(a.page_counts, b.page_counts, "页号链");
         assert_eq!(a.fonts.len(), b.fonts.len(), "字体表规模");
+        assert_eq!(format!("{:?}", a.fonts), format!("{:?}", b.fonts), "字体表");
         assert_eq!(seq.transcript(), spe.transcript(), "转录");
-        // 投机面统计（不断言：LaTeX 路径当前因 `\output` 例程而为 0；见函数文档）
         eprintln!("[spec] LaTeX 文档投机统计 = {:?}", spe.stats());
+        assert!(spe.stats().adopted > 0, "LaTeX 文档应有投机采纳段");
     }
 
     /// 载入发行 LaTeX 资产（`assets/fmt/latex.fmt` + `assets/tex-minimal/tex`）；

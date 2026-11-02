@@ -538,7 +538,7 @@ Missing number 与 R17 归因表逐条吻合，全部为 TRIP 折磨构造（`\s
 | M3 | 排版核心 | 节点/盒子/胶水/Knuth-Plass/TFM/断页/DVI | ✅ 核心完成 | DVI 与真实 TeX 逐字节一致 |
 | M4 | 数学 + e-TeX | 数学模式 / e-TeX 原语 / 断字 / 错误模型 | ✅ 功能完成；ETRIP 收尾中 | **ETRIP 通过**（逐字节口径已降级，见 §2 M4） |
 | M5 | 增量计算 | 求值图 / 依赖追踪 / 副作用隔离 / VFS | 🟡 阶段一~五 | 改 1 处仅重算受影响段落（目标 100x；实测 4.3x/1.1x） |
-| M6 | 并行 | 段落级并行展开 / 布局 / 整形 | 🟡 投机原语 + 窗口调度器落地（M6-1/2）；真并行待 `Send` 化 | 8 核加速比 ≥ 3x（300 页基准）；plain 实测采纳率 ≈50%，LaTeX 路径待开（`\output` 例程边界） |
+| M6 | 并行 | 段落级并行展开 / 布局 / 整形 | 🟡 投机原语 + 窗口调度器落地（M6-1/2）；`\output` 例程边界已收口（LaTeX 投机面打开）；真并行待 `Send` 化 | 8 核加速比 ≥ 3x（300 页基准）；plain 实测采纳率 ≈50%，LaTeX 投机面已打开（逐位一致测试锁定） |
 | M7 | `.fmt` v2 | 三层 fmt + 部分求值 + 项目级 fmt | ⬜ 未开始（v1 已可用） | `latex.ltx` 加载 <200ms；ctex 300 页冷编 <10s |
 | M8 | 渲染 / 输出 | PDF 后端 + GPU 渲染 + WASM 预览 | 🟢 主体可用 | 简单文档 L2 逐字节一致；WASM 增量预览流畅 |
 | M9 | 生态冲刺 | ctex/xeCJK/OpenType/CJK 捷径 | 🟡 中文刀 1–6 落地；宏包管理解析/契约层落地（`ntex-pkg`）+ `--auto-pkg` 接线；13 包 CI 回归 **13/13** | 目标宏包 CI 回归全绿 |
@@ -744,11 +744,13 @@ dev A 场景 ~2.3ms）+ `finish_doc` 的 `shipped.clone()`（全页深拷贝，~
 
 **待办（按价值排序）**：
 
-1. 🔴 **`\output` 例程边界（阻塞 LaTeX 路径）**：发行 `latex.fmt` 必定义 `\output`
-   （`\@outputpage`），当前 `spec_window_open` 观测到例程即关闭投机 ⇒ **LaTeX 文档
-   投机面 = 0**（实测）。需验证"采纳路径把例程延迟到 `finish_doc` 补跑"是否逐位
-   等价：一次实验即可判定（临时去掉 `spec_window_open` 的 `output_routine` 条件跑
-   LaTeX 对照）；等价则放开，不等价则实现"采纳注入后立即 `run_pending_output`"。
+1. ✅ **`\output` 例程边界（2026-11-02 收口）**：机制 = 投机 fork 实例在 token
+   边界跳过输出例程注入（`Expander::defer_output_injection` 旗标，默认 false
+   顺序路径零差异），fork 只收集节点；例程由主实例采纳后在断页边界照常注入——
+   例程副作用从不在投机实例内发生。`spec_window_open` 删 `output_routine` 条件，
+   真实 LaTeX 文档测试收紧为 `adopted > 0` 断言（7/7 绿）。display-math（`$$`）
+   段静态预过滤转顺序执行（fork 自旧窗口态会经 file-hook 宏递归）。
+   全录 `docs/archive/m6-output-routine-speculation-2026-11-02.md`。
 2. **真并行（M6-3）**：rayon 工作池 + 结果槽。前置是 `Send` 化改造：
    - `NodeBuilder.boxes`：`Rc<Vec<...>>` → `Arc<Vec<...>>`；
    - `Fonts::Tfm(Rc<RefCell<Vec<FontMetrics>>>)` → `Arc<Mutex<...>>`（波及

@@ -1038,6 +1038,8 @@ pub struct Expander {
     error_anchor: Option<usize>,
     /// 上一轮注入输出例程时待处理页面的数量（判断例程是否消费了 box255）。
     output_prev_count: usize,
+    /// 投机 fork 只收集节点；输出例程由主实例在采纳后处理。
+    defer_output_injection: bool,
     /// 是否启用字节码轨道（M2；解释器轨道用于双轨等价验证）。
     use_bytecode: bool,
     /// VFS（RFC-3）：文件读写唯一入口。
@@ -1258,6 +1260,7 @@ impl Expander {
             shown_trace_mode: None,
             trace_suppress: 0,
             output_prev_count: usize::MAX,
+            defer_output_injection: false,
             use_bytecode,
             vfs: Box::new(LocalVfs),
             read_streams: Vec::new(),
@@ -1539,6 +1542,7 @@ impl Expander {
         self.output_group_level = None;
         self.output_boundary_yield = false;
         self.output_prev_count = usize::MAX;
+        self.defer_output_injection = false;
         self.immediate_pending = false;
         self.pdf_last_obj = 0;
         self.pdf_last_xform = 0;
@@ -1816,7 +1820,10 @@ impl Expander {
             // 出错时先写 `l.N` 上下文行到转录，再上抛（TeX error() 的上下文行）。
             let step = (|| -> Result<bool> {
                 // 输出例程激活期间（例程帧在栈上）不重复注入
-                if !self.output_active && self.maybe_inject_output()? {
+                if !self.defer_output_injection
+                    && !self.output_active
+                    && self.maybe_inject_output()?
+                {
                     return Ok(true);
                 }
                 // RFC-3：页面真正输出（shipout 边界）时 flush 延迟写流。
@@ -1952,6 +1959,11 @@ impl Expander {
             })
             .collect::<Vec<_>>()
             .join(" | ")
+    }
+
+    /// 投机 fork 跳过 token 边界的输出例程注入。
+    pub fn set_defer_output_injection(&mut self, defer: bool) {
+        self.defer_output_injection = defer;
     }
 
     /// 输入耗尽后的收尾：执行所有待执行的输出例程（`finish` 冲页产生）。

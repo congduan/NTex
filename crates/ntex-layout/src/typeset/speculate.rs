@@ -92,6 +92,8 @@ const SPEC_BLACKLIST: &[&str] = &[
     "font",
     "patterns",
     "hyphenation",
+    // LaTeX class loading expands into file probes before reaching `\input`.
+    "documentclass",
 ];
 
 /// 投机执行的 VFS 哨兵：任何文件访问都标记 taint（段作废），且**不接触**真实
@@ -191,6 +193,7 @@ fn speculate_segment(
         ),
     };
     let mut e = expander.fork_isolated(Box::new(SpeculationVfs(taint_flag.clone())), loader);
+    e.set_defer_output_injection(true);
     let mut b = s0_builder.clone();
     b.fonts = spec_fonts;
     b.spec_mode = Some(SpecMode::default());
@@ -231,15 +234,11 @@ impl IncrementalTypesetter {
         2 * threads
     }
 
-    /// 开窗条件（RFC-5 §3.1）：投机开关打开、无 `\output` 例程、活状态干净。
+    /// 开窗条件（RFC-5 §3.1）：投机开关打开、活状态干净。
     ///
-    /// `\output` 例程一旦观测到就关闭投机（M5 同口径的保守处置）：例程在断页
-    /// 边界由 core 注入执行，而采纳路径是主线程直接 `append` 节点（不经 token
-    /// 循环），例程要等到 `finish_doc` 才补跑——时机差异是否影响逐位一致
-    /// **未经验证**（LaTeX 文档必然定义 `\output`，故 LaTeX 路径当前完全不走
-    /// 投机；见 [`IncrementalStats::adopted`] 与 plan.md M6 的待办）。
+    /// `\output` 的采纳后执行时机由真实 LaTeX 文档的逐位一致测试约束。
     fn spec_window_open(&mut self) -> bool {
-        if !self.spec_enabled || self.output_routine {
+        if !self.spec_enabled {
             return false;
         }
         // CJK 回落档（wasm/工作台）：回落装载路径写字体表，虽已隔离到私有副本，
@@ -252,6 +251,11 @@ impl IncrementalTypesetter {
 
     /// 该段能否进窗口（静态预过滤，见 [`SPEC_BLACKLIST`]）。
     fn spec_candidate(&self, j: usize) -> bool {
+        // A standalone LaTeX display-math segment forked from an older window
+        // state can recurse through file-hook macros; execute it in order.
+        if self.segments[j].trim_start().starts_with("$$") {
+            return false;
+        }
         let deps = lex_deps(&self.segments[j]);
         !deps.dynamic_cs
             && !deps
