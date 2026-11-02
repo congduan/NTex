@@ -106,9 +106,9 @@ impl Type1Font {
 ///
 /// 备用根目录兜底的取舍：查找链中 kpathsea（kpsewhich）在精简环境可能
 /// 缺失、TeX Live 常规安装路径也可能不存在，此时扫描仓库随行资产
-/// `assets/type1`（26 件，见其 README）是唯一无需用户配置即可拿到 CM
-/// 全家族 PFB 的路径，代价是每个未命中字体多几次 `exists()` 探测（字体数
-/// ≤ 数十，可忽略）。仓库根同时按 CWD 与构建期 `CARGO_MANIFEST_DIR` 推出，
+/// `assets/type1`（26 件最小集，见其 README）是唯一无需用户配置即可拿到
+/// CM 系 PFB 的路径，代价是每个未命中字体多几次 `exists()` 探测（字体数
+/// ≤ 数十，可忽略）。仓库根同时按构建期 `CARGO_MANIFEST_DIR` 与 CWD 推出，
 /// 覆盖 CLI（仓库根运行）与 `cargo test`（crate 目录运行）两种入口。
 pub fn find_pfb(name: &str) -> Option<std::path::PathBuf> {
     use std::path::PathBuf;
@@ -140,16 +140,17 @@ pub fn find_pfb(name: &str) -> Option<std::path::PathBuf> {
         }
     }
     // 备用根兜底：
-    // 1. 仓库随行资产 `assets/type1`（CWD 为仓库根，`make`/CI/README 入口均如此）；
-    // 2. 同一资产目录的构建期绝对路径——`cargo test` 的 CWD 是 crate 目录，
-    //    仅此路径可用（二进制搬到别处后自动失效，由后续兜底接管）；
+    // 1. 同一资产目录的构建期绝对路径——`cargo test` 的 CWD 是 crate 目录，
+    //    仅此路径可用（二进制搬到别处后自动失效，由后续兜底接管）；**先于**
+    //    CWD 相对路径，避免从仓库外运行时误中同名 `assets/type1`；
+    // 2. 仓库随行资产 `assets/type1`（CWD 为仓库根，`make`/CI/README 入口均如此）；
     // 3. 工作区本地字体暂存目录（.gitignore；HOME 只读时按 `make fixture-extras`
     //    说明拷入）；
     // 4. 调研期临时备料树。
     let repo_assets = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/type1");
     for root in [
-        PathBuf::from("assets/type1"),
         repo_assets,
+        PathBuf::from("assets/type1"),
         PathBuf::from(".local-fonts"),
         PathBuf::from("/tmp/latexsurvey/fonts/type1/public/amsfonts/cm"),
     ] {
