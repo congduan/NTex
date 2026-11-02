@@ -593,7 +593,7 @@ pub fn diag_enabled(key: &'static str) -> bool {
         .get_or_init(|| {
             DIAG_KEYS
                 .iter()
-                .map(|&k| (k, std::env::var(k).is_ok()))
+                .map(|&k| (k, std::env::var_os(k).is_some()))
                 .collect()
         })
         .get(key)

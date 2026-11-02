@@ -381,8 +381,9 @@ demo1 六刀 + 输出例程刀 2/3/5 的修复登记；全部已提交，留作�
 - 原状：`ntex-layout/src/typeset/typesetter.rs` 883/917/979 三处 `NTEX_R8_DIAG`
   每步裸查 `std::env::var_os`——`ntex-core::expand::diag_enabled` 为 `pub(crate)`
   无法跨 crate 复用。
-- **→ ✅ 已收口（2026-11-02，`f4d695d`）**：`diag_enabled` 提升 `pub` 并加跨 crate 入口
-  doc；三处改 `ntex_core::expand::diag_enabled("NTEX_R8_DIAG")`。值语义不变
-  （"设为空串也算开启"两边一致；仅非 UTF-8 环境值在 `var_os().is_some()` 与
-  `var().is_ok()` 之间有理论差异，shell 无法正常产生，实测不可达）。R8 诊断
-  现与 core 同走 OnceLock 缓存，进程内不再有"缓存/实时"两套读数。
+- **→ ✅ 已收口（2026-11-02，`f4d695d` + review 必修）**：`diag_enabled` 提升 `pub`
+  并加跨 crate 入口 doc；三处改 `ntex_core::expand::diag_enabled("NTEX_R8_DIAG")`。
+  值语义严格等价：缓存判定用 `var_os(k).is_some()`（Codex review 指出初版
+  `var(k).is_ok()` 在非 UTF-8 环境值（bash `$'\xff'` 可产生）下漏判，已按原
+  `var_os` 口径修正）。R8 诊断现与 core 同走 OnceLock 缓存，进程内不再有
+  "缓存/实时"两套读数。
