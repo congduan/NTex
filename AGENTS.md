@@ -10,7 +10,7 @@
 ```
 NTex/
 ├── crates/            Rust workspace（引擎全部实现，见 §2）
-├── assets/            发行资产：latex.fmt / TFM / tex-minimal 最小 TeX 宏文件集（见 assets/tex-minimal/README.md）
+├── assets/            发行资产：latex.fmt / TFM / Type1 PFB 最小集 / tex-minimal 最小 TeX 宏文件集（见 assets/{type1,tex-minimal}/README.md）
 ├── fixtures/          测试 fixtures：TRIP/ETRIP、差分样例、l3kernel 官方套件、corpus 探针用例
 ├── samples/           端到端样张（demo / demo-multi / demo-cjk / resume-plain / latex-sample2e-slim 等）
 ├── probes/            最小复现探针（fp-load 载入探针、perf 基准脚本）
@@ -96,6 +96,7 @@ TeX/LaTeX 源码 → 0.输入层(ntex-io VFS) → 1.TeX VM 求值(ntex-core) →
 | 位置 | 内容 |
 |---|---|
 | `assets/tex-minimal/README.md` | 发行资产清单与搜索链约定 |
+| `assets/type1/README.md` | 随行 Type1（PFB）最小集：清单、来源、许可、补件 |
 | `assets/tfm/README.wasm-fonts.md` | wasm 内嵌 TFM 来源 |
 | `fixtures/README.md` | 对照 fixtures 状态表与抓取约定 |
 | `fixtures/repro/README.md` | 复现用例 |
