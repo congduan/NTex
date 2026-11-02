@@ -798,19 +798,21 @@ nav {
 
 /* ---------- 文档 / Footer ---------- */
 
-.doc-links {
+.docs-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 18px;
 }
 
 @media (max-width: 820px) {
-  .doc-links {
+  .docs-grid {
     grid-template-columns: 1fr;
   }
 }
 
-.doc-card {
+/* 模板用 `card doc` 组合：这里覆盖通用 .card 的间距与 hover 位移，
+   保持文档卡片的轻量视觉（不投影、位移 2px）。 */
+.card.doc {
   display: block;
   padding: 22px;
   border: 1px solid var(--border);
@@ -819,23 +821,24 @@ nav {
   transition: border-color 0.2s ease, transform 0.2s ease;
 }
 
-.doc-card:hover {
+.card.doc:hover {
   border-color: var(--border-strong);
   transform: translateY(-2px);
+  box-shadow: none;
 }
 
-.doc-card .tag {
+.doc-tag {
   font-family: var(--mono);
   font-size: 11.5px;
   color: var(--accent-2);
 }
 
-.doc-card h4 {
+.card.doc h3 {
   margin: 8px 0 6px;
   font-size: 15px;
 }
 
-.doc-card p {
+.card.doc p {
   margin: 0;
   color: var(--muted);
   font-size: 13px;
