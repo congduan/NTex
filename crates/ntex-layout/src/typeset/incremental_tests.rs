@@ -1361,4 +1361,253 @@ mod incremental_tests {
             "第二轮 edit 回滚后的探针转录应与全量一致（控制态 shown_trace_mode 漂移）"
         );
     }
+
+    // ---------- M5 待办#5：随机编辑模糊测试（增量 vs 全量逐位一致常驻 CI） ----------
+    //
+    // 既有编辑用例全是固定位置/固定内容（首/中/末段、连续编辑、错误恢复）。
+    // 本模块补随机化：固定种子表的确定性 PRNG 生成随机编辑序列，每轮 `edit`
+    // 后与「编辑后文档全新全量排版」逐位对拍（口径 1，与 `assert_edit_matches_full`
+    // 同一条铁律）。种子固定 ⇒ 失败可复现；`fuzz_oracle_detects_deliberate_divergence`
+    // 自证对拍函数不是恒真（「去修复必红」的模糊测试前提）。
+    mod incremental_fuzz {
+        use super::*;
+        use crate::node::Node;
+        use crate::typeset::CompileOutput;
+
+        /// 种子表：小值 / 大值 / 常见常量（覆盖 PRNG 高位与低位路径）。
+        const SEEDS: [u64; 8] = [
+            0x9E37_79B9,
+            1,
+            2,
+            3,
+            0xDEAD_BEEF,
+            0x1234_5678_9ABC_DEF0,
+            42,
+            0xFFFF_FFFF,
+        ];
+        /// `build_doc` 的段参数（切出的段数随段边界浮动，见 `run_seed`）。
+        const N_PARA: usize = 16;
+        /// 每个种子的编辑轮数。
+        const ROUNDS: usize = 12;
+
+        /// xorshift64（Marsaglia 1993）：零依赖、确定性、同种子同序列。
+        /// 状态非零 ⇒ 周期 2^64−1；`new` 把 0 映射到非零常量。
+        struct Rng(u64);
+
+        impl Rng {
+            fn new(seed: u64) -> Self {
+                Self(if seed == 0 {
+                    0x2545_F491_4F6C_DD1D
+                } else {
+                    seed
+                })
+            }
+
+            fn next_u64(&mut self) -> u64 {
+                let mut x = self.0;
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                self.0 = x;
+                x
+            }
+
+            /// `[0, n)` 取数（n > 0；取模偏差对测试无影响）。
+            fn below(&mut self, n: usize) -> usize {
+                (self.next_u64() % n as u64) as usize
+            }
+        }
+
+        /// 从 `WORDS` 拼 `n` 个词（空格分隔，不带句读）。
+        fn random_sentence(rng: &mut Rng, n: usize) -> String {
+            let mut s = String::new();
+            for i in 0..n {
+                if i > 0 {
+                    s.push(' ');
+                }
+                s.push_str(WORDS[rng.below(WORDS.len())]);
+            }
+            s
+        }
+
+        /// 随机替换文本：多数是随机词句，另含边界形态（纯注释段 / 空段 /
+        /// 行内数学 / `\hbox` / 超长词）——它们改变段内换行与盒形状，是增量
+        /// 页面装配最容易偏离全量的地方。一律以空行收尾，保持"边界行归前段"
+        /// 的段切分形状。
+        fn random_text(rng: &mut Rng) -> String {
+            match rng.below(8) {
+                0 => "  % only a comment in this paragraph\n\n".to_string(),
+                // 空段：整段的排版内容消失（只剩段落分隔）。
+                1 => "\n\n".to_string(),
+                2 => "Math $x^2 + y^2 = z^2$ opens the paragraph.\n\n".to_string(),
+                3 => "A \\hbox{boxed words} sits between the text.\n\n".to_string(),
+                // 无空格超长词：必然 Overfull，考验折行失败后的行装配。
+                4 => "Supercalifragilisticexpialidociousandthensomemoreletters\
+                      toforceanoverfullline\n\n"
+                    .to_string(),
+                5 => format!(
+                    "{} $a_{{i}} + b_{{i}} = c_{{i}}$\n\n",
+                    random_sentence(rng, 6)
+                ),
+                _ => {
+                    let mut s = String::new();
+                    for _ in 0..1 + rng.below(3) {
+                        let n = 3 + rng.below(10);
+                        s.push_str(&random_sentence(rng, n));
+                        s.push_str(". ");
+                    }
+                    s.push_str("\n\n");
+                    s
+                }
+            }
+        }
+
+        /// 对拍 oracle：页面列表 + 字体表逐位一致——`write_dvi(pages, fonts)` 的
+        /// 全部输入，二者一致 ⇒ DVI 字节一致。
+        fn doc_matches(out: &CompileOutput, reference: &Doc) -> bool {
+            out.pages == reference.0 && out.fonts == reference.1
+        }
+
+        /// 编辑后文档的全量参考（口径 1：现有全量路径）。不复用 `full_path`：
+        /// 随机编辑可能把文档缩到 1 页，其 "≥2 页" 前置断言会误红——逐位一致
+        /// 与页数无关（基线页数在 `run_seed` 里单独断言）。
+        fn full_reference(src: &str) -> Doc {
+            let mut ts = Typesetter::with_tfm_paginated();
+            ts.typeset_dvi(src).expect("参考全量排版")
+        }
+
+        /// 把页面树里第一个 `Char` 的 charcode 翻转最低位（故意注入 1 位分歧）。
+        fn flip_first_page_char(pages: &mut [crate::node::BoxNode]) -> bool {
+            for page in pages.iter_mut() {
+                if flip_first_char(&mut page.children) {
+                    return true;
+                }
+            }
+            false
+        }
+
+        fn flip_first_char(nodes: &mut [Node]) -> bool {
+            for node in nodes.iter_mut() {
+                match node {
+                    Node::Char { charcode, .. } => {
+                        *charcode ^= 1;
+                        return true;
+                    }
+                    Node::Box(b) => {
+                        if flip_first_char(&mut b.children) {
+                            return true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            false
+        }
+
+        /// 跑一个种子的完整编辑序列，返回每轮输出（确定性断言复用）。
+        fn run_seed(seed: u64) -> Vec<CompileOutput> {
+            let doc = build_doc(N_PARA);
+            let mut it = IncrementalTypesetter::with_tfm_paginated();
+            let first = it.compile(&doc).expect("模糊测试基线编译");
+            let baseline = full_reference(&doc);
+            assert!(
+                baseline.0.len() >= 2,
+                "基线文档应是多页真实排版（实际 {} 页）",
+                baseline.0.len()
+            );
+            assert_eq!(
+                (first.pages, first.fonts),
+                baseline,
+                "seed={seed:#x} 基线：管线全量 != 引擎全量"
+            );
+
+            // 管线段列表即当前文档（拼接不变式）。段 0 是导言（\hsize/\font/
+            // \def），替换它会丢掉字体与版心、参考不可比，故随机范围从 1 起。
+            let mut current = it.segments().to_vec();
+            assert!(current.len() > 1, "文档应切成多段，实际 {}", current.len());
+
+            let mut rng = Rng::new(seed);
+            let mut outs = Vec::with_capacity(ROUNDS);
+            for round in 0..ROUNDS {
+                let k = 1 + rng.below(current.len() - 1);
+                let text = random_text(&mut rng);
+                let out = it
+                    .edit(k, &text)
+                    .unwrap_or_else(|e| panic!("seed={seed:#x} 第 {round} 轮编辑段 {k} 报错：{e}"));
+                current[k] = text;
+                let reference = full_reference(&current.concat());
+                assert!(
+                    doc_matches(&out, &reference),
+                    "seed={seed:#x} 第 {round} 轮编辑段 {k} 后：增量 != 全量（{} 段 / {} 页）",
+                    current.len(),
+                    out.pages.len()
+                );
+                outs.push(out);
+            }
+            outs
+        }
+
+        /// 主靶：五个种子的随机编辑序列，每轮增量 == 全量（逐位）。
+        #[test]
+        fn incremental_fuzz_random_edits_match_full() {
+            for seed in SEEDS {
+                let outs = run_seed(seed);
+                assert_eq!(outs.len(), ROUNDS, "seed={seed:#x} 轮数不符");
+                assert!(
+                    !outs.last().expect("非空").pages.is_empty(),
+                    "seed={seed:#x} 末轮无页面"
+                );
+            }
+        }
+
+        /// 稳定性：同种子两次运行逐轮输出一致——防时钟/哈希序/并行非确定性
+        /// 混进"模糊"结果（那样的失败不可复现，等于没测）。
+        #[test]
+        fn incremental_fuzz_same_seed_is_deterministic() {
+            let a = run_seed(SEEDS[0]);
+            let b = run_seed(SEEDS[0]);
+            for (round, (x, y)) in a.iter().zip(&b).enumerate() {
+                assert_eq!(
+                    x.pages, y.pages,
+                    "seed 同值第 {round} 轮页面不一致（非确定性）"
+                );
+                assert_eq!(x.fonts, y.fonts, "seed 同值第 {round} 轮字体表不一致");
+            }
+        }
+
+        /// 自证锁：oracle 必须能抓到「一侧被篡改」的分歧，否则逐位断言是
+        /// 恒真伪证（模糊测试的「去修复必红」前提）。
+        #[test]
+        fn fuzz_oracle_detects_deliberate_divergence() {
+            let doc = build_doc(12);
+            let mut it = IncrementalTypesetter::with_tfm_paginated();
+            it.compile(&doc).expect("基线编译");
+            let mut current = it.segments().to_vec();
+            let k = current.len() - 1;
+            let text = random_text(&mut Rng::new(7));
+            let out = it.edit(k, &text).expect("编辑");
+            current[k] = text;
+            let reference = full_reference(&current.concat());
+            assert!(doc_matches(&out, &reference), "未篡改时 oracle 应判等");
+
+            // 参考侧：翻转首个 Char 的 charcode 一位（真·1 位分歧）。
+            let mut tampered = reference.clone();
+            assert!(
+                flip_first_page_char(&mut tampered.0),
+                "参考页面树应含 Char 节点"
+            );
+            assert!(
+                !doc_matches(&out, &tampered),
+                "oracle 未发现参考侧 1 位篡改（对拍恒真，模糊测试无效）"
+            );
+
+            // 增量侧：少一页（结构性分歧）也必须被抓到。
+            let mut tampered = out.clone();
+            tampered.pages.pop();
+            assert!(
+                !doc_matches(&tampered, &reference),
+                "oracle 未发现增量侧页面数分歧"
+            );
+        }
+    }
 }
