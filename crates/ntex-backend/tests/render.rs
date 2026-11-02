@@ -208,8 +208,11 @@ fn end_to_end_typeset_source_to_png() {
     let source = "\\hsize 200pt\\vsize 100pt\\font\\cmr=cmr10\\cmr Hello NTex rendering.\\par\\cmr Second page line.\\end";
     let (pages, fonts) = ts.typeset_dvi(source).expect("排版不应失败");
     assert!(!pages.is_empty());
+    // 渲染后端 trait 仍取 `&[BoxNode]`：排版产物是共享页句柄（Rc），端到端
+    // 用例在边界摊平一次（非热路径）。
+    let owned: Vec<ntex_layout::node::BoxNode> = pages.iter().map(|p| (**p).clone()).collect();
     let pngs = TinySkiaBackend
-        .render_pngs(&pages, &fonts, &RenderOptions::default())
+        .render_pngs(&owned, &fonts, &RenderOptions::default())
         .expect("渲染不应失败");
     assert_eq!(pngs.len(), pages.len());
     for png in &pngs {

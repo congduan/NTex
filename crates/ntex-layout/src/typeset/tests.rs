@@ -1292,8 +1292,8 @@ mod tests {
 
     // ---------- M3-5-3 \output 例程 + box255 ----------
 
-    /// 分页排版（fn 指针度量 + 词间距）；返回 \shipout 页面。
-    fn paginated(src: &str) -> Result<Vec<BoxNode>> {
+    /// 分页排版（fn 指针度量 + 词间距）；返回 \shipout 页面（共享句柄）。
+    fn paginated(src: &str) -> Result<Vec<std::rc::Rc<BoxNode>>> {
         let mut ts = Typesetter::with_metrics(metrics)
             .with_space(|_| Glue::new(1000, 500, 300))
             .plain_params();
@@ -1441,7 +1441,7 @@ mod tests {
         let mut ts3 = Typesetter::with_tfm().plain_params();
         let (pages3, _) = ts3.typeset_dvi(&format!("{preamble} {doc}")).unwrap();
 
-        let text_of = |pages: &[BoxNode]| {
+        let text_of = |pages: &[std::rc::Rc<BoxNode>]| {
             let mut s = String::new();
             for p in pages {
                 collect_text(p, &mut s);

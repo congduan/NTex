@@ -210,6 +210,9 @@ fn main() -> ExitCode {
         ..RenderOptions::default()
     };
     let backend_name = if use_vello { "vello(gpu)" } else { "软光栅" };
+    // 渲染后端入口仍取 `&[BoxNode]`（trait 面不动）：排版产物自 M5 阶段六第四刀
+    // 起是共享页句柄，演示 CLI 非热路径，在此摊平成自有页表（每页一次深拷贝）。
+    let pages: Vec<ntex_layout::node::BoxNode> = pages.iter().map(|p| (**p).clone()).collect();
     let pngs = if use_vello {
         #[cfg(feature = "vello")]
         {

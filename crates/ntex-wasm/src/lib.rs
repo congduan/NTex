@@ -478,7 +478,10 @@ pub struct Compiled {
     pub transcript: String,
     /// 逐页整页盒（`\shipout` 产物，与 `ntex_dvi::write_dvi` 输入同源）——
     /// B 档渲染的事实源（直接走盒树渲染，不经 DVI 反解析）。
-    pub pages: Vec<ntex_layout::node::BoxNode>,
+    ///
+    /// 共享页句柄（M5 阶段六第四刀）：排版侧 `CompileOutput` 直接给出 `Rc`，
+    /// 本结构持有同一份分配，不再整页树克隆。
+    pub pages: Vec<std::rc::Rc<ntex_layout::node::BoxNode>>,
     /// 排版字体度量表（`FontId` 下标引用；渲染字形度量/占位方框尺寸用）。
     pub font_metrics: Vec<ntex_font::FontMetrics>,
     /// 用到的字体名（DVI 字体表，id 0 的 nullfont 占位已剔除）。
@@ -769,7 +772,7 @@ impl CompileResult {
 /// 由参数覆盖。`glyphs = true` 走真字形轮廓填充（字体需先经
 /// [`set_glyph_font`] 注册，未注册字体回落占位方框，见模块文档偏差 4）。
 fn render_page_core(
-    pages: &[ntex_layout::node::BoxNode],
+    pages: &[std::rc::Rc<ntex_layout::node::BoxNode>],
     fonts: &[ntex_font::FontMetrics],
     index: u32,
     dpi: f64,
@@ -787,7 +790,7 @@ fn render_page_core(
         ..Default::default()
     };
     let mut pages = ntex_backend::TinySkiaBackend
-        .render(std::slice::from_ref(page), fonts, &opts)
+        .render(std::slice::from_ref(&**page), fonts, &opts)
         .map_err(|e| format!("渲染第 {index} 页失败：{e}"))?;
     match pages.pop() {
         Some(pm) => Ok(pm),
@@ -884,7 +887,7 @@ fn render_project_images(
 /// 翻页/调 dpi/切 overlay 只调 [`Document::render_page`]。
 #[wasm_bindgen]
 pub struct Document {
-    pages: Vec<ntex_layout::node::BoxNode>,
+    pages: Vec<std::rc::Rc<ntex_layout::node::BoxNode>>,
     font_metrics: Vec<ntex_font::FontMetrics>,
     font_names: Vec<String>,
     transcript: String,

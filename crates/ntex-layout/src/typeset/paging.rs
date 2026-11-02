@@ -146,7 +146,9 @@ impl NodeBuilder {
         // trace_shipout 已先行，showbox 转录保持 tex.web 形态（leaders 节点）。
         crate::node::materialize_leaders(&mut p);
         self.page_state.shipped_counts.push(self.page_state.page_counts);
-        self.page_state.shipped.push(p);
+        // 页面以共享句柄入队（M5 阶段六第四刀）：此后页树只读，交付/回滚截断
+        // 都在 `Rc` 上做引用计数。
+        self.page_state.shipped.push(Rc::new(p));
     }
 
     /// 各页面 shipout 边界的 `\count0..9` 快照（与 [`Self::shipped`] 一一对应）。

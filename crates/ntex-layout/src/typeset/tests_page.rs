@@ -274,7 +274,7 @@ fn tracingoutput_shipout_embeds_label_in_title_without_duplicate_line() {
                 }
                 other => panic!("首子节点应为 Header hbox，得到 {other:?}"),
             }
-            assert_eq!(&p.children[1], &Node::Box(d.clone()), "box255 应为原页面");
+            assert_eq!(&p.children[1], &Node::Box((**d).clone()), "box255 应为原页面");
         }
     }
 

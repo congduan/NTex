@@ -33,7 +33,11 @@ const DVI_DEN: u32 = 473_628_672;
 /// bop 计数：无 `\count0..9` 快照时的回落——count0 = 页序号（plain 的
 /// `\advancepageno` 语义），count1..9 = 0。携带快照用
 /// [`write_dvi_with_counts`]（输出例程刀 5）。
-pub fn write_dvi(pages: &[BoxNode], fonts: &[FontMetrics]) -> Vec<u8> {
+///
+/// `pages` 的元素接受任何 `Borrow<BoxNode>`：既有的 `&[BoxNode]` 调用不变，
+/// 增量排版产物（共享句柄 `&[Rc<BoxNode>]`，M5 阶段六第四刀）可直接传入，
+/// 不必为写出 DVI 摊平成自有页表。
+pub fn write_dvi<P: std::borrow::Borrow<BoxNode>>(pages: &[P], fonts: &[FontMetrics]) -> Vec<u8> {
     let synthetic: Vec<[i64; 10]> = (1..=pages.len() as i64)
         .map(|n| {
             let mut c = [0i64; 10];
@@ -49,8 +53,8 @@ pub fn write_dvi(pages: &[BoxNode], fonts: &[FontMetrics]) -> Vec<u8> {
 /// 不截断——截断只发生在 log/终端的 `[...]` 页标签，tex.web L12694-12699）。
 ///
 /// - `counts`：与 `pages` 一一对应；不足处（调用方快照缺失）按 0 补齐。
-pub fn write_dvi_with_counts(
-    pages: &[BoxNode],
+pub fn write_dvi_with_counts<P: std::borrow::Borrow<BoxNode>>(
+    pages: &[P],
     counts: &[[i64; 10]],
     fonts: &[FontMetrics],
 ) -> Vec<u8> {
@@ -61,6 +65,7 @@ pub fn write_dvi_with_counts(
     let mut max_h = 0i64; // post 的 l = max(页高+深)
     let mut max_w = 0i64; // post 的 u = max 页宽
     for (i, page) in pages.iter().enumerate() {
+        let page = page.borrow();
         let pos = w.out.len() as i64;
         let page_counts = counts.get(i).copied().unwrap_or([0i64; 10]);
         w.page(page, prev_bop, &page_counts);
@@ -761,7 +766,8 @@ mod tests {
 
     #[test]
     fn empty_dvi_has_structural_markers() {
-        let dvi = write_dvi(&[], &[]);
+        // 空页表：泛型参数（`Borrow<BoxNode>`）无元素可推断，显式标注。
+        let dvi = write_dvi::<BoxNode>(&[], &[]);
         assert_eq!(dvi[0], 247, "pre");
         assert_eq!(dvi[1], 2, "pre 版本");
         // 文件必须以 02 + 4×223 哨兵恰好结尾（dvipdfmx 严格校验，无尾随 nop）

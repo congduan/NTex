@@ -248,7 +248,10 @@ pub struct Typesetter {
     /// finish 的 take_sink 会把 NodeBuilder 摘走，先在此留档）。
     last_transcript: String,
     /// `finish` 收走的 `\shipout` 页面（DVI 统计行：页数）。
-    shipped: Vec<BoxNode>,
+    ///
+    /// 共享句柄（M5 阶段六第四刀）：与 builder 侧 shipped 同源 `Rc`，`finish`
+    /// 留档只付引用计数，不再整树克隆。
+    shipped: Vec<Rc<BoxNode>>,
     /// CLI TeX jobs must leave residual material unshipped on bare EOF.
     /// Embedded callers historically accept EOF as an implicit \end.
     strict_eof_stop: bool,
@@ -826,7 +829,10 @@ impl Typesetter {
     /// 排版源码并取回 `\shipout` 页面（DVI 输出，M3-5）：
     /// 返回 (页面列表, 字体表快照)。需 [`Self::with_tfm`] 模式（否则字体表为空）。
     /// 启用 M3-5-2 断页：顶层垂直列表经页面构建器自动分页（`\vsize`），
-    pub fn typeset_dvi(&mut self, text: &str) -> Result<(Vec<BoxNode>, Vec<FontMetrics>)> {
+    /// 页面以共享句柄（`Rc<BoxNode>`）返回（M5 阶段六第四刀）：
+    /// `ntex_dvi::write_dvi` 泛型化到 `Borrow<BoxNode>` 可直接消费，
+    /// 只接受 `&[BoxNode]` 的边缘入口（渲染 trait）在调用边界摊平。
+    pub fn typeset_dvi(&mut self, text: &str) -> Result<(Vec<Rc<BoxNode>>, Vec<FontMetrics>)> {
         self.install_font_loader();
         self.install_builder(NodeBuilder::with_pagination(self.fonts.clone(), true));
         self.apply_utf8_input_default();
@@ -843,7 +849,10 @@ impl Typesetter {
     }
 
     /// 排版结束后取回已 shipout 的页面列表（[`Self::finish`] 已执行时有效）。
-    pub fn shipped_pages(&self) -> &[BoxNode] {
+    ///
+    /// 元素是共享句柄（`Rc<BoxNode>`）：页树只读，可零拷贝交给
+    /// `ntex_dvi::write_dvi`（`Borrow<BoxNode>` 泛型）。
+    pub fn shipped_pages(&self) -> &[Rc<BoxNode>] {
         &self.shipped
     }
 
@@ -1054,7 +1063,8 @@ impl Typesetter {
 /// （各页 `\count0..9` 快照随 `Typesetter::shipped_page_counts` 取用，不在此传递。）
 struct FinishOutput {
     main: Vec<Node>,
-    shipped: Vec<BoxNode>,
+    /// 共享页句柄（`Rc`）：`Typesetter::shipped` 留档与返回值同源，不留深拷贝。
+    shipped: Vec<Rc<BoxNode>>,
     fonts: Vec<FontMetrics>,
 }
 

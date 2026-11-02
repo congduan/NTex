@@ -314,7 +314,7 @@ use super::*;
             // 改写后页面 = vbox{ 原页整体 , \vfil }（真 TeX NEW-HT:31.94444pt
             // = 30.0 + 1.94444 —— 原页作为整体盒嵌套，高度为其自然高）
             assert_eq!(p.children.len(), 2, "应为 [原页, vfil]：{p:?}");
-            assert_eq!(&p.children[0], &Node::Box(d.clone()), "原页应整体嵌套");
+            assert_eq!(&p.children[0], &Node::Box((**d).clone()), "原页应整体嵌套");
             match p.children.last() {
                 Some(Node::Glue {
                     stretch_order: GLUE_ORDER_FIL,

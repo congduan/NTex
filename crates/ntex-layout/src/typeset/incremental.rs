@@ -410,7 +410,10 @@ pub struct IncrementalStats {
 /// 端到端增量编译结果：已 shipout 页面 + 字体表快照（DVI 输入）。
 #[derive(Debug, Clone)]
 pub struct CompileOutput {
-    pub pages: Vec<BoxNode>,
+    /// 已 shipout 页面（共享句柄：`finish_doc` 只克隆 `Rc`，不复制盒树——
+    /// M5 阶段六第四刀）。`ntex_dvi::write_dvi` 已泛型化到 `Borrow<BoxNode>`，
+    /// 可直接传入本列表；只接受 `&[BoxNode]` 的边缘入口在调用边界摊平。
+    pub pages: Vec<Rc<BoxNode>>,
     /// 各页面 shipout 边界的 `\count0..9` 快照（与 `pages` 一一对应；输出例程刀 5）。
     pub page_counts: Vec<[i64; 10]>,
     pub fonts: Vec<FontMetrics>,
@@ -1198,8 +1201,10 @@ impl IncrementalTypesetter {
         }
         // RFC-3：排版结束收尾 flush 残留延迟写流（TeX \end final_cleanup 语义）。
         self.expander.flush_writes()?;
-        // 页面**克隆**给调用方（不摘走）：builder 里的 shipped 是下一次 `edit`
-        // 回滚截断的基准（前缀页面的逐位一致由它保证）。
+        // 页面**共享**给调用方（不摘走）：builder 里的 shipped 是下一次 `edit`
+        // 回滚截断的基准（前缀页面的逐位一致由它保证）。页树入队后只读，
+        // 故交付的是 `Rc` 句柄——每次 compile/edit 只付 21 个引用计数，
+        // 不再整页树深拷贝（M5 阶段六第四刀）。
         let pages = self.builder_mut().page_state.shipped.clone();
         let page_counts = self.builder_mut().shipped_page_counts().to_vec();
         let fonts = match &self.fonts {

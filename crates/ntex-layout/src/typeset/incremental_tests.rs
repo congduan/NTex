@@ -124,7 +124,10 @@ mod incremental_tests {
     /// 二者一致 ⇒ DVI 字节一致（确定性纯函数）。字节级铁律另由 ntex-dvi 的
     /// `tests/incremental_dvi.rs` 直接比较 DVI 字节（dev 依赖环使本模块不能
     /// 链接 ntex-dvi：lib 会被构建两次、类型不互通）。
-    type Doc = (Vec<crate::node::BoxNode>, Vec<ntex_font::FontMetrics>);
+    type Doc = (
+        Vec<std::rc::Rc<crate::node::BoxNode>>,
+        Vec<ntex_font::FontMetrics>,
+    );
 
     /// 节点层逐位一致断言。
     fn assert_doc_eq(out: &super::CompileOutput, reference: &Doc, ctx: String) {
@@ -266,6 +269,52 @@ mod incremental_tests {
         let out = it.edit(last, &new_text).expect("编辑末段");
         let doc_edited = replace_segment(&doc, &segments, last, &new_text);
         assert_doc_eq(&out, &full_path(&doc_edited), "末段编辑：增量 != 全量".to_string());
+    }
+
+    /// M5 阶段六第四刀回归锁：已 shipout 页面以**共享句柄**交付，不是深拷贝。
+    ///
+    /// 两条断言分别锁住两种退化：
+    /// - 交付后仍有第二份引用（builder 侧 shipped 与 `CompileOutput` 同源分配）；
+    /// - 编辑后未被回滚截断覆盖的前缀页与上一轮输出**指针相同**（复用路径上
+    ///   没有重新分配整页树）。
+    #[test]
+    fn shipped_pages_shared_not_deep_copied() {
+        let doc = build_doc(60);
+        let mut it = IncrementalTypesetter::with_tfm_paginated();
+        let first = it.compile(&doc).expect("管线编译");
+        assert!(first.pages.len() >= 2, "文档应产出多页");
+        for (i, p) in first.pages.iter().enumerate() {
+            assert!(
+                std::rc::Rc::strong_count(p) >= 2,
+                "第 {i} 页应是共享句柄（builder 与输出同源），实得引用计数 {}",
+                std::rc::Rc::strong_count(p)
+            );
+        }
+
+        let segments = it.segments().to_vec();
+        let mid = segments.len() / 2;
+        let new_text = format!("{}\n", body(mid, true));
+        assert_ne!(new_text, segments[mid], "中段替换文本应与原文不同");
+        let out = it.edit(mid, &new_text).expect("编辑中段");
+
+        let shared = first
+            .pages
+            .iter()
+            .zip(out.pages.iter())
+            .filter(|(a, b)| std::rc::Rc::ptr_eq(a, b))
+            .count();
+        assert!(
+            shared > 0,
+            "编辑后未复用任何共享页（前缀页应共享同一分配）"
+        );
+
+        // 共享不影响语义：仍与全量逐位一致。
+        let doc_edited = replace_segment(&doc, &segments, mid, &new_text);
+        assert_doc_eq(
+            &out,
+            &full_path(&doc_edited),
+            "共享页：增量 != 全量".to_string(),
+        );
     }
 
     #[test]
@@ -1477,9 +1526,12 @@ mod incremental_tests {
         }
 
         /// 把页面树里第一个 `Char` 的 charcode 翻转最低位（故意注入 1 位分歧）。
-        fn flip_first_page_char(pages: &mut [crate::node::BoxNode]) -> bool {
+        ///
+        /// 页面是共享句柄（`Rc`），篡改须先 `make_mut` 摘出独占副本——参考侧
+        /// 与增量侧不同源，此处不影响被测产物。
+        fn flip_first_page_char(pages: &mut [std::rc::Rc<crate::node::BoxNode>]) -> bool {
             for page in pages.iter_mut() {
-                if flip_first_char(&mut page.children) {
+                if flip_first_char(&mut std::rc::Rc::make_mut(page).children) {
                     return true;
                 }
             }

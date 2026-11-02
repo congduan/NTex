@@ -896,7 +896,13 @@ struct PageState {
     shipout_next: bool,
 
     /// 已 \\shipout 的页面（按顺序）。
-    shipped: Vec<BoxNode>,
+    ///
+    /// **共享句柄**（M5 阶段六第四刀）：页树入队后不再被改写（进队前
+    /// [`crate::node::materialize_leaders`] 已物化引导符；唯一的后续操作是
+    /// 回滚 `truncate`——只动 Vec 长度，不碰元素），故交付给调用方的是
+    /// `Rc` 共享引用而非整棵盒树深拷贝（增量 `finish_doc` / 全量 `finish`
+    /// 都只付引用计数）。
+    shipped: Vec<Rc<BoxNode>>,
 
     /// 各页面 shipout 边界的 `\count0..9` 快照（与 [`Self::shipped`] 一一对应；
     /// 输出例程刀 5：DVI bop 的 10 计数字取值源，由调用方 `write_dvi_with_counts`

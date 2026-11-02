@@ -431,7 +431,7 @@ Missing number 与 R17 归因表逐条吻合，全部为 TRIP 折磨构造（`\s
 | 主线：LaTeX/expl3 兼容 | ✅ 主墙已越（2026-10-02 口径刷新）；`\documentclass` 最小闭环已通；余长尾见 §0.1/§5 |
 | 输出例程战 | ✅ 刀 1–5 全落（`\outputpenalty`/box255/insert 分配/`\newinsert`/页号链） |
 | 格式预载（G 线） | ✅ G0–G3；剩 G4/G5 |
-| M5 增量计算 | 🟡 阶段一~五完成 + 阶段六刀 1–3（InsertRegs CoW / IoState 惰性化 / 装配去深拷贝：改正文 **4.3x→7.9x**，见 §2 M5 阶段六注） |
+| M5 增量计算 | 🟡 阶段一~五完成 + 阶段六刀 1–4（InsertRegs CoW / IoState 惰性化 / 装配去深拷贝 / shipped 页面 Rc 共享：改正文 4.3x→7.9x、增量墙钟再 −20%，见 §2 M5 阶段六注） |
 | M9 中文 | 🟡 刀 1–6 全落（`\char` 扩位 + `\utfinputmode` + 宿主端端到端 + CJK 断点/断字/标点挤压 + 中文粗斜体）；遗留见 §5 P1 |
 | 宏包生态 | 🟡 `ntex-pkg` 解析/契约/取料①② + `--auto-pkg` 引擎接线；13 包 CI 回归 **13/13**（基线 [docs/pkg-regression-baseline.md](docs/pkg-regression-baseline.md)） |
 | M2 字节码 | 🟡 双轨等价全绿；吞吐 **1.01x**，≥2x 结构性不可达 → 转 M7 `.fmt` v2 |
@@ -712,13 +712,32 @@ F2 非 Char 定位 / F3 注释漏字段 / F4 注释算术）全部修复。
 dev A 场景 ~2.3ms）+ `finish_doc` 的 `shipped.clone()`（全页深拷贝，~3.8ms），二者需
 节点/产出 `Arc` 化才能再削；expand 侧每执行段两次 `StateSnapshot::capture`（ntex-core）。
 
+**阶段六第四刀 ✅（2026-11-02，shipped 页面 Rc 化）**：`page_state.shipped`
+`Vec<BoxNode>` → `Vec<Rc<BoxNode>>`（`push_shipped` 入队处包 `Rc`），`CompileOutput.pages`
+/ `Typesetter::shipped` / `FinishOutput.shipped` 同步改共享句柄——`finish_doc` 与
+`finish` 的整页树克隆退化为引用计数；回滚截断（`LayoutBoundary::restore_full`）仍只
+`truncate` 队列，元素不动（页树入队后只读 = 安全性前提）。下游 `&[BoxNode]` 入口：
+`ntex-dvi::write_dvi`/`write_dvi_with_counts` 泛型化为
+`P: Borrow<BoxNode>`（源兼容，`&[]` 一处显式标注 `write_dvi::<BoxNode>`）；
+`ntex-backend` 渲染 trait 不动，演示 CLI / 端到端用例在边界摊平一次。
+**实测（本机 release，HEAD 对照 worktree 交错 4 轮）**：改正文增量
+**8.92–9.55ms → 7.11–7.37ms（−20%）**、加速 7.6–7.9x → 7.5–7.8x（全量同幅下降
+66–80ms → 55ms，正是去掉的两处全页深拷贝）；改宏体 30.5–32.6ms → 28.8–29.7ms
+（−7%，无回退）。本机绝对墙钟约为第三刀记录环境的 1.4 倍（同 commit 对照），
+故以对照差值而非绝对值判读。回归锁 `shipped_pages_shared_not_deep_copied`
+（交付后 `Rc::strong_count ≥ 2` + 编辑后前缀页 `Rc::ptr_eq` 仍共享 + 与全量逐位一致）。
+**副刀（复用段 `contrib` 共享）判无收益，保留 `clone`**：探针实测缓存节点流深拷贝
+0.46ms/轮（1026 节点 × 50 轮 = 23.18ms），而 `append` 必须 owned——`append_ref`
+逐字段拷贝对 Box/Vec 变体同样是深拷贝，只能省外层 Vec 缓冲与一次搬运（≤0.05ms，
+<1%），不足以抵消新增 API 与借用面，故不做。
+
 **阶段六待办**（= M5 全部剩余项）：
 
 1. ~~检查点捕获增量维护~~ → 首刀已落（InsertRegs CoW，加速比 4.3x/1.1x →
    5.2x/1.6x）；~~复用段 reinject 的页面装配重跑~~ → 第三刀已落（去三次行盒子树
-   深拷贝，改正文 6.4x→7.9x）。**余项**：结构性 owned 拷贝（`contrib.clone()` /
-   `shipped.clone()`，见第三刀"下一刀靶"）+ expand 侧 `StateSnapshot::capture`
-   每执行段两次 ~30µs（`ntex-core` 引擎侧）；
+   深拷贝，改正文 6.4x→7.9x）；~~结构性 owned 拷贝~~ → 第四刀已落（shipped 页面
+   Rc 共享；`contrib.clone()` 实测无收益保留，见上）。**余项**：expand 侧
+   `StateSnapshot::capture` 每执行段两次 ~30µs（`ntex-core` 引擎侧）；
 2. **副作用边界** —— `\output` 例程回放 / `\write` 流内容 / `\input` VFS 注入 /
    marks 语义（当前观测到即保守全量重排）；
 3. `Expand(source, snapshot)` **纯函数化**收尾；
