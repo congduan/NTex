@@ -66,10 +66,12 @@ pub struct Type1Font {
     /// 原始 PFB 字节（PDF `/FontFile` 流内容）。
     pub pfb: Vec<u8>,
     /// 内建编码表：码位 → 字形名（下标即码位，0..=255；`None` = 未定义）。
-    /// 取自 PFB ASCII 段的 `/Encoding 256 array … dup N /Name put` 程序。
-    /// 写出端据此生成 `/Encoding << /Differences … >>`——实测 CoreGraphics
-    /// 对无 `/Encoding` 的 Type1 按 StandardEncoding 兜底，TeX 编码里落在
-    /// 控制区的字形（cmsy10 的 `\cdot`=0x01、bullet=0x0F）会画成 notdef。
+    /// 取自 PFB ASCII 段的 `/Encoding 256 array … dup N /Name put` 程序；
+    /// 内建 `StandardEncoding` 的 TS1 族（cm-super `sfrm*`/`sfti*` 等）则
+    /// 回落到 [`TS1_ENCODING`]。写出端据此生成 `/Encoding << /Differences … >>`
+    /// ——实测 CoreGraphics 对无 `/Encoding` 的 Type1 按 StandardEncoding 兜底，
+    /// TeX 编码里落在控制区的字形（cmsy10 的 `\cdot`=0x01、bullet=0x0F）会画成
+    /// notdef；TS1 槽位布局同样与 StandardEncoding 不同（引号、剑标等全错位）。
     pub encoding: Vec<Option<String>>,
 }
 
@@ -78,7 +80,13 @@ impl Type1Font {
     /// 两条来源（注册表/文件系统）共用，保证 `/BaseFont` 命名口径一致。
     fn from_pfb(tex_name: &str, pfb: Vec<u8>) -> Self {
         let name = extract_font_name(&pfb).unwrap_or_else(|| tex_name.to_ascii_uppercase());
-        let encoding = extract_encoding(&pfb);
+        let mut encoding = extract_encoding(&pfb);
+        // cm-super 的 TS1 字形程序（sfrm1095 等）内建 `/Encoding StandardEncoding
+        // def`，没有 `dup` 程序可提取；TS1 槽位与 StandardEncoding 不同，必须按
+        // cm-super-ts1.enc 补 `/Differences`，否则引号/剑标/角度括号等全错位。
+        if encoding.iter().all(Option::is_none) && is_ts1_family(tex_name) {
+            encoding = ts1_encoding();
+        }
         Self {
             name,
             pfb,
@@ -232,6 +240,86 @@ fn extract_font_name(pfb: &[u8]) -> Option<String> {
     Some(name.trim().to_owned())
 }
 
+/// TS1（Cork Text Companion）编码向量：槽位 → PFB 字形名（`.notdef` = 空槽）。
+///
+/// 逐字节照抄 cm-super 0.3.4 的 `dvips/cm-super-ts1.enc`（GPL-2.0-or-later +
+/// 字体嵌入例外）；同包 `dvips/cm-super-ts1.map` 的对应行即
+/// `tcrm1095 SFRM1095 "TS1Encoding ReEncodeFont" <cm-super-ts1.enc <sfrm1095.pfb`
+/// ——TS1 字形程序内建 StandardEncoding，必须由驱动按本向量重编码。
+/// 128 个非 `.notdef` 名已逐个对照 `afm/sfrm1095.afm` 的 `N` 项，无缺项。
+///
+/// EC「TC」族前缀清单与 `ntex-backend/src/glyphs.rs::is_ts1_family` 同源
+/// （该表是渲染侧 TS1 判定的单一事实源，此处只为 PDF 侧复写一份前缀集合）。
+/// 表按源文件 8 项一行排布，`rustfmt::skip` 保住与 `.enc` 的逐行对应。
+#[rustfmt::skip]
+const TS1_ENCODING: [&str; 256] = [
+    "Grave", "Acute", "Circumflex", "Tilde", "Dieresis", "Hungarumlaut", "Ring", "Caron",
+    "Breve", "Macron", "Dotaccent", "cedilla", "ogonek", "quotesinglbase.ts1", ".notdef", ".notdef",
+    ".notdef", ".notdef", "quotedblbase.ts1", ".notdef", ".notdef", "twelveudash", "threequartersemdash", "afii61664.cap",
+    "arrowleft", "arrowright", "tieaccentlowercase", "tieaccentcapital", "tieaccentlowercase.new", "tieaccentcapital.new", ".notdef", "afii61664.asc",
+    "uni2422", ".notdef", ".notdef", ".notdef", "dollar", ".notdef", ".notdef", "quotesingle",
+    ".notdef", ".notdef", "asteriskmath", ".notdef", "comma", "hyphendbl", "period", "fraction",
+    "zerooldstyle", "oneoldstyle", "twooldstyle", "threeoldstyle", "fouroldstyle", "fiveoldstyle", "sixoldstyle", "sevenoldstyle",
+    "eightoldstyle", "nineoldstyle", ".notdef", ".notdef", "angleleft", "minus", "angleright", ".notdef",
+    ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef",
+    ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", "uni2127", ".notdef", "circle",
+    ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", "Omega",
+    ".notdef", ".notdef", ".notdef", "uni301A", ".notdef", "uni301B", "arrowup", "arrowdown",
+    "grave.ts1", ".notdef", "born", "divorced", "died", ".notdef", ".notdef", ".notdef",
+    ".notdef", ".notdef", ".notdef", ".notdef", "leaf", "married", "musicalnote", ".notdef",
+    ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef",
+    ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", "tildelow", "hyphendbl.alt",
+    "breve.ts1", "caron.ts1", "hungarumlaut.ts1", "dblgrave.ts1", "dagger", "daggerdbl", "uni2016", "perthousand",
+    "bullet", "uni2103", "dollaroldstyle", "centoldstyle", "florin", "colonmonetary", "uni20A9", "uni20A6",
+    "guarani", "peso", "lira", "recipe", "uni203D", "gnaborretni", "dong", "trademark",
+    "uni2031", "paragraph.alt", "uni0E3F", "afii61352", "discount", "estimated", "openbullet", "uni2120",
+    "uni2045", "uni2046", "cent", "sterling", "currency", "yen", "brokenbar", "section",
+    "dieresis.ts1", "copyright", "ordfeminine", "copyleft", "logicalnot", "uni2117", "registered", "macron.ts1",
+    "degree", "plusminus", "twosuperior", "threesuperior", "acute.ts1", "mu", "paragraph", "periodcentered",
+    "uni203B", "onesuperior", "ordmasculine", "radical", "onequarter", "onehalf", "threequarters", "Euro",
+    ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef",
+    ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef",
+    ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", "multiply", ".notdef",
+    ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef",
+    ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef",
+    ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef",
+    ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", "divide", ".notdef",
+    ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef", ".notdef",
+];
+
+/// TS1 族 TeX 名判定：剥掉末尾尺寸数字（`tcrm1095` → `tcrm`）后对照前缀表。
+fn is_ts1_family(tex_name: &str) -> bool {
+    let family = tex_name.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
+    matches!(
+        family,
+        "tcrm"
+            | "tcsl"
+            | "tcti"
+            | "tcbx"
+            | "tcrb"
+            | "tcbi"
+            | "tcbl"
+            | "tcui"
+            | "tcss"
+            | "tcsi"
+            | "tcsx"
+            | "tcso"
+            | "tctt"
+            | "tcst"
+            | "tcit"
+            | "tcvt"
+            | "tcvi"
+    )
+}
+
+/// [`TS1_ENCODING`] → 与 [`extract_encoding`] 同形的码位表。
+fn ts1_encoding() -> Vec<Option<String>> {
+    TS1_ENCODING
+        .iter()
+        .map(|g| (*g != ".notdef").then(|| (*g).to_owned()))
+        .collect()
+}
+
 /// 从 PFB ASCII 段解析 `/Encoding` 的 `dup N /Name put` 序列。
 ///
 /// CM 系列 PFB 的写法固定为 `/Encoding 256 array 0 1 255 {…put} for` 后跟
@@ -358,6 +446,57 @@ mod tests {
         assert_eq!(font.encoding[0].as_deref(), Some("minus"));
         assert_eq!(font.encoding[15].as_deref(), Some("bullet"));
         assert!(font.encoding[1].is_none(), "未列码位应保持 None");
+    }
+
+    #[test]
+    fn tcrm1095_is_cm_super_sfrm_with_ts1_encoding() {
+        // 回归（2026-11-02）：先前把 cm-super 的 SFTC1095（TCSC，打字机
+        // 大小写）当 tcrm1095 入库；官方 `cm-super-ts1.map` 指定
+        // `tcrm1095 → SFRM1095`，且 TS1 字形程序内建 StandardEncoding，
+        // 必须补 cm-super-ts1.enc 的 `/Differences`。
+        let Ok(font) = load_pfb("tcrm1095") else {
+            eprintln!("未找到 tcrm1095.pfb，跳过");
+            return;
+        };
+        assert_eq!(font.name, "SFRM1095", "/FontName 应为 sfrm1095 的 SFRM1095");
+        assert_eq!(
+            font.encoding[0x27].as_deref(),
+            Some("quotesingle"),
+            "TS1 0x27 = 直单引号"
+        );
+        assert_eq!(
+            font.encoding[0x3D].as_deref(),
+            Some("minus"),
+            "TS1 0x3D = 减号"
+        );
+        assert_eq!(
+            font.encoding[0x84].as_deref(),
+            Some("dagger"),
+            "TS1 0x84 = 剑标"
+        );
+        assert_eq!(font.encoding[0x85].as_deref(), Some("daggerdbl"));
+        assert_eq!(font.encoding[0x00].as_deref(), Some("Grave"));
+        assert!(
+            font.encoding[0x0E].is_none(),
+            "TS1 空槽应保持 notdef（不写 Differences）"
+        );
+        // 字母槽在 TS1 里是空槽：切不可回落到 StandardEncoding 的字形名。
+        assert!(font.encoding[0x41].is_none(), "TS1 0x41 不是 'A'");
+    }
+
+    #[test]
+    fn ts1_family_detection_and_table_shape() {
+        assert!(is_ts1_family("tcrm1095"));
+        assert!(is_ts1_family("tcti1000"));
+        assert!(is_ts1_family("tctt0800"));
+        assert!(!is_ts1_family("cmr10"), "OT1 CM 不是 TS1");
+        assert!(!is_ts1_family("ecrm1000"), "T1 EC 不是 TS1");
+        assert_eq!(TS1_ENCODING.len(), 256);
+        assert_eq!(
+            TS1_ENCODING.iter().filter(|g| **g != ".notdef").count(),
+            128,
+            "cm-super-ts1.enc 的 128 个实槽"
+        );
     }
 
     #[test]
