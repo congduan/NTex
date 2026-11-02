@@ -582,7 +582,12 @@ fn now_millis() -> u64 {
 /// 位于每条件/每原语执行的热路径上——原实现每次 `std::env::var`（getenv +
 /// String 分配，实测占展开吞吐 1~3%）。进程内环境不变，缓存首次读取结果，
 /// 语义不变（含"设为空串也算开启"）。
-pub(crate) fn diag_enabled(key: &'static str) -> bool {
+///
+/// **跨 crate 诊断查询入口**（2026-11-02 起 `pub`）：layout/pdf/trip 等下游
+/// crate 的每步热路径开关一律调本函数，禁止再裸查 `std::env`——否则同一诊断键
+/// 在进程内会有"缓存 / 实时"两套读数。键必须登记在 [`DIAG_KEYS`]，表外键恒
+/// `false`。
+pub fn diag_enabled(key: &'static str) -> bool {
     static CACHE: OnceLock<HashMap<&'static str, bool>> = OnceLock::new();
     CACHE
         .get_or_init(|| {
@@ -670,8 +675,8 @@ pub(crate) fn set_max_steps_override(v: Option<u64>) {
 /// （OnceLock 进程级缓存），禁止裸查 `std::env`——缓存按表初始化，不在表里的
 /// 键恒 false。配置值类读取（`NTEX_MAX_STEPS`/`NTEX_DELIM_GUARD`/`NTEX_EDEF_PROG`
 /// 等带数值语义的）不在本表，各自 init 期一次性读取。layout/pdf/trip 等其他
-/// crate 的少量裸查因本函数 `pub(crate)` 暂未收编（余项登记
-/// KNOWN-SIMPLIFICATIONS）。
+/// crate 的裸查经 `pub` 的 [`diag_enabled`] 逐个收编（layout 的
+/// `NTEX_R8_DIAG` 已于 2026-11-02 收口，余项登记 KNOWN-SIMPLIFICATIONS）。
 const DIAG_KEYS: &[&str] = &[
     "NTEX_COND_TRACE",
     "NTEX_IFNUM_TRACE",

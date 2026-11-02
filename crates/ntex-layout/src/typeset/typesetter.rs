@@ -880,7 +880,7 @@ impl Typesetter {
         //    （tex.web final_end：`(\end occurred inside a group at level N)`，
         //    trip.log L7293），仅纯 EOF 缺 `\end` 才报错。
         let ended = self.expander.is_ended();
-        if std::env::var_os("NTEX_R8_DIAG").is_some() {
+        if ntex_core::expand::diag_enabled("NTEX_R8_DIAG") {
             eprintln!("[R8] finish ended={ended}");
         }
         {
@@ -914,7 +914,7 @@ impl Typesetter {
             let groups_unclosed = !builder.groups.is_empty();
             let math_unclosed = !builder.math_state.math.is_empty();
             let ended_inside_output = builder.groups.iter().any(|g| g.kind == GroupKind::Output);
-            if std::env::var_os("NTEX_R8_DIAG").is_some() {
+            if ntex_core::expand::diag_enabled("NTEX_R8_DIAG") {
                 eprintln!("[R8] finish mode={:?} groups={} page_empty={} contrib={} shipped={}", builder.mode(), builder.groups.len(), builder.page_state.page.is_empty(), builder.lists[0].len(), builder.page_state.shipped.len());
             }
             if groups_unclosed {
@@ -976,7 +976,7 @@ impl Typesetter {
             // has returned without shipping. Each replay contributes an
             // eject tail, allowing fire_up to reach the dead-cycle gate.
             let retry_end = ended && self.expander.params_ref().misc[25] > 0;
-            if std::env::var_os("NTEX_R8_DIAG").is_some() {
+            if ntex_core::expand::diag_enabled("NTEX_R8_DIAG") {
                 eprintln!("[R8] its_all_over retry_end={retry_end} dead_cycles={}", self.expander.params_ref().misc[25]);
             }
             let ejected = {
