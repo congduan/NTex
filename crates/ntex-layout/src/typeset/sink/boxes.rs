@@ -433,7 +433,7 @@ impl BoxSink for NodeBuilder {
         self.box_state.pending_shift = Some(amount);
         Ok(())
     }
-    /// `\moveleft<dimen>`：记录盒子水平左移（下一个封装盒子生效；TRIP 冲刺简化）。
+    /// `\moveleft<dimen>`：接收正尺寸并转为负 shift（与 core 的正值传参成对）。
     fn move_left(&mut self, amount: i64) -> Result<()> {
         self.box_state.pending_hshift = Some(-amount);
         Ok(())

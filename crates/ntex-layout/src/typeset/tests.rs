@@ -159,6 +159,131 @@ mod tests {
     }
 
     #[test]
+    fn vbox_move_shifts_affect_width_as_tex_vpackage() {
+        // GT tex -interaction=nonstopmode ml2.tex: moveleft -> shifted -10.0,
+        // vbox width stays at the first line; moveright -> shifted 10.0,
+        // vbox width grows by 10pt beyond the second line.
+        for (command, shift) in [
+            ("moveleft", -10 * SP_PER_PT),
+            ("moveright", 10 * SP_PER_PT),
+        ] {
+            let src = format!("\\vbox{{\\hbox{{aa}}\\{command} 10pt \\hbox{{bb}}}}");
+            let main = typeset(&src).unwrap();
+            let outer = as_box(&main[0]);
+            let boxes: Vec<_> = outer.children.iter().filter_map(|n| match n {
+                Node::Box(b) => Some(b),
+                _ => None,
+            }).collect();
+            let second = boxes[1];
+            assert_eq!(second.shift, shift, "{command}");
+            assert_eq!(outer.width, boxes[0].width.max(second.width + shift), "{command}: {outer:?}");
+            if shift < 0 {
+                assert_eq!(outer.width, boxes[0].width);
+            } else {
+                assert_eq!(outer.width, second.width + shift);
+            }
+        }
+    }
+
+    #[test]
+    fn vsplit_width_uses_vlist_width_with_child_shift() {
+        // GT（plain，/tmp/blade-moveleft-fix/gt.tex；tex 3.141592653）：
+        //   题面探针 `\setbox0=\vbox{\hbox{aa}\moveleft 10pt \hbox{bbb}}`
+        //   + `\vsplit0 to 10pt` → W=[10.00003pt][6.66672pt]
+        //   （余量 = bbb 16.66672pt − 10pt，shift 必须计宽）；
+        //   同形正偏移 `\moveright 10pt` 首行 → B=[20.00003pt][16.66672pt]
+        //   （顶部 = aa 10.00003pt + 10pt）。
+        // 即 \vsplit 走 vpackage 同口径：子盒 shift 计宽、行间 glue 不计宽。
+        fn tall(_font: FontId, ch: u32) -> (i64, i64, i64) {
+            (1000 + i64::from(ch), 20 * SP_PER_PT, 0)
+        }
+        let mut ts = Typesetter::with_metrics(tall).plain_params();
+        ts.typeset(concat!(
+            r"\setbox0=\vbox{\moveright 10pt \hbox{aa}\hbox{bbb}}",
+            r"\setbox1=\vsplit0 to 20pt ",
+            r"\dimen0=\wd1 \dimen1=\wd0 ",
+            r"\showthe\dimen0 \showthe\dimen1",
+        ))
+        .unwrap();
+        let t = ts.take_transcript();
+        let dims = showthe_dimens(&t, "dimen");
+        assert_eq!(dims.len(), 2, "应有两组 \\wd 探针：{t:?}");
+        // aa = 2×(1000+97) = 2194sp；moveright 10pt = 655360sp。
+        let top_expected = (2194 + 10 * SP_PER_PT) as f64 / SP_PER_PT as f64;
+        let rest_expected = (3 * (1000 + 98)) as f64 / SP_PER_PT as f64;
+        assert!(
+            (dims[0] - top_expected).abs() < 1e-4,
+            "\\vsplit 顶部 \\wd 应 = aa 宽 + 10pt = {top_expected}：{dims:?} {t:?}"
+        );
+        assert!(
+            (dims[1] - rest_expected).abs() < 1e-4,
+            "\\vsplit 余量 \\wd 应 = bbb 宽 = {rest_expected}：{dims:?} {t:?}"
+        );
+    }
+
+    #[test]
+    fn page_box_width_ignores_vertical_glue() {
+        // tex.web fire_up：box255:=vpackage(link(page_head),...)——页盒宽度
+        // 与 vpack 同口径，竖直 glue 只推进高度、不是横向占用。
+        // 页内容 = 一个 hbox{aa}（宽 2194sp）+ \vskip 500000sp。
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
+        ts.typeset_dvi(concat!(
+            r"\hsize=1000000sp \vsize=1000000sp \topskip=0pt ",
+            r"\output={\dimen0=\wd255\showthe\dimen0\shipout\box255\relax}",
+            r"\hbox{aa}\vskip 500000sp \penalty-10000 \end",
+        ))
+        .unwrap();
+        let t = ts.take_transcript();
+        let dims = showthe_dimens(&t, "dimen");
+        assert_eq!(dims.len(), 1, "应有一组 \\wd255 探针：{t:?}");
+        let expected = 2194.0 / SP_PER_PT as f64;
+        assert!(
+            (dims[0] - expected).abs() < 1e-4,
+            "页盒 \\wd 应只取子盒宽 {expected}（\\vskip 500000sp 不计宽）：{dims:?} {t:?}"
+        );
+    }
+
+    #[test]
+    fn insert_accumulator_width_recomputed_from_appended_body() {
+        // tex.web fire_up：box(n):=vpackage(...)——插入累积盒在追加体子树后
+        // 重算宽度，且竖直 glue 不计宽（A 宽 1065sp；\vskip 500000sp 不计）。
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
+        ts.typeset_dvi(concat!(
+            r"\hsize=1000000sp \vsize=1000000sp \topskip=0pt ",
+            r"\output={\dimen0=\wd150\showthe\dimen0\shipout\box255\relax}",
+            r"\hbox{X}\insert150{\hbox{A}\vskip 500000sp}\penalty-10000 \end",
+        ))
+        .unwrap();
+        let t = ts.take_transcript();
+        let dims = showthe_dimens(&t, "dimen");
+        assert_eq!(dims.len(), 1, "应有一组 \\wd150 探针：{t:?}");
+        let expected = 1065.0 / SP_PER_PT as f64;
+        assert!(
+            (dims[0] - expected).abs() < 1e-4,
+            "插入累积盒 \\wd 应为体内容盒宽 {expected}：{dims:?} {t:?}"
+        );
+    }
+
+    #[test]
+    fn hbox_raise_uses_shift_for_height_and_depth() {
+        // tex.web hpackage: h=max(height-shift), d=max(depth+shift).
+        let main = typeset(r"\hbox{\raise 5pt \hbox{x}\lower 3pt \hbox{y}}").unwrap();
+        let outer = as_box(&main[0]);
+        assert_eq!(outer.height, 6000 + 5 * SP_PER_PT);
+        assert_eq!(outer.depth, 1500 + 3 * SP_PER_PT);
+    }
+
+    #[test]
+    fn moveleft_in_restricted_horizontal_mode_reports_tex_error() {
+        // GT /tmp/pgv/ml2.log: ! You can't use `\moveleft' in restricted horizontal mode.
+        let mut ts = Typesetter::with_metrics(metrics).plain_params();
+        ts.typeset(r"\hbox{\moveleft 5pt \hbox{x}}").unwrap();
+        assert!(ts.take_transcript().contains(
+            "You can't use `\\moveleft' in restricted horizontal mode."
+        ));
+    }
+
+    #[test]
     fn nested_hbox() {
         let main = typeset(r"\hbox{a\hbox{b}c}").unwrap();
         let outer = as_box(&main[0]);

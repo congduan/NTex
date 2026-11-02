@@ -21,9 +21,11 @@
 //! **hbox**：`width` = 子节点 width 之和；`height` = 有纵向维度的子节点
 //! （char/box/rule/leaders）height 最大值；`depth` = 同集合 depth 最大值。
 //!
-//! **vbox**：`width` = 子节点 width 最大值；`height + depth` 总和 =
-//! 有纵向维度的子节点各自 `height + depth` 之和；`height` = 第一个有纵向维度
-//! 的子节点的 height（无则 0）；`depth` = 总和 − height。
+//! **vbox**：`width` = 竖直列表里 box/rule/leaders 的横向占用最大值
+//! （见 [`vlist_width`]：子盒 `width + shift`、规则 `width`、leaders 取被重复
+//! 盒宽）；`height + depth` 总和 = 有纵向维度的子节点各自 `height + depth`
+//! 之和（glue/kern 只推进自然高）；`height` = 第一个有纵向维度的子节点的
+//! height（无则 0）；`depth` = 总和 − height。
 //!
 //! 胶水/字距/惩罚不参与 height/depth：水平列表里它们有 width，垂直列表里无维度。
 
@@ -422,16 +424,34 @@ pub fn hbox_dimensions(children: &[Node]) -> BoxDimensions {
     dims
 }
 
-/// 注意（与 GT 的偏差登记）：tex.web §13203 `<Incorporate box dimensions...>`
-/// 规定 vlist 子盒的 `shift_amount` 是**横向**偏移且计入 vbox 宽度
-/// （`if type(p)>=rule_node then s:=0 else s:=shift_amount(p)`），本函数目前
-/// **不计**——数学脚本 combo（上标 `shift=delta`）因此偏窄。它与 `make_op` 的
-/// "有下标且非 limits 时算符盒宽减 delta"（tex.web §14695）是同一处语义的两半：
-/// 两半一起补才对齐 GT；单独补一半会把 display 大算符既有的字宽偏差
-/// （12pt 下 `$\displaystyle\int$`：NTex 5.55557pt vs GT 10.00002pt）
-/// 从"互相掩盖"变成"叠加偏离"。见 docs/archive/breadth-2026-09-23.md #26。
+/// 竖直列表宽度（tex.web `vpackage` L13201-13206
+/// `<Incorporate box dimensions...>`）：**只有 box/rule/leaders** 贡献宽度，
+/// 竖直 glue/kern 只推进自然高（L13209/L13196），其 `width` 不是横向占用。
+///
+/// - box：`width + shift_amount`（shift 是 vlist 里的横向偏移）；
+/// - rule：`width`（`type(p)>=rule_node` 时 `s:=0`，规则无 shift）；
+/// - leaders：被重复的 `leader_ptr` 盒宽 `width(g)`（tex.web L13216-13218
+///   glue 归并块内），不是承载它的胶水宽度；
+/// - 其余节点（glue/kern/penalty/ins/mark/…）：0。
+///
+/// 这是 `vpack` / `\vsplit` / 插入体 / 页盒装配的**单一宽度口径**。
+pub fn vlist_width(children: &[Node]) -> i64 {
+    let mut width = 0;
+    for c in children {
+        let w = match c {
+            Node::Box(b) => b.width + b.shift,
+            Node::Rule { width, .. } => *width,
+            Node::Leaders { inner, .. } => inner.dimensions().width,
+            _ => 0,
+        };
+        width = width.max(w);
+    }
+    width
+}
+
 /// vbox 维度计算（tex.web `vpackage` L13175-13211 的自然维度归并）：
-/// `width` = max 子节点 width；纵向用 (x, d) 二元组推进——
+/// `width` 走 [`vlist_width`]（box/rule/leaders 的横向占用）；纵向用 (x, d)
+/// 二元组推进——
 ///
 /// - 盒/规则：`x += d + height; d = depth`（把上一件的挂起深度结转进自然高）；
 /// - **glue/kern**：`x += d + width; d = 0`（tex.web L13196/L13209——胶水宽度
@@ -443,12 +463,10 @@ pub fn hbox_dimensions(children: &[Node]) -> BoxDimensions {
 /// `height` = x（自然高，不含末件挂起深度）；`depth` = d（最后一件的深度）。
 /// 空列表 → 零维度。
 pub fn vbox_dimensions(children: &[Node]) -> BoxDimensions {
-    let mut width = 0;
     let mut x = 0; // 已结转的自然高（tex.web 的 x）
     let mut d = 0; // 挂起深度（tex.web 的 d：最后一件的 depth，下一件到来时结转）
     for c in children {
         let dims = c.dimensions();
-        width = width.max(dims.width);
         match c {
             Node::Box(b) => {
                 x += d + b.height;
@@ -479,7 +497,7 @@ pub fn vbox_dimensions(children: &[Node]) -> BoxDimensions {
         }
     }
     BoxDimensions {
-        width,
+        width: vlist_width(children),
         height: x,
         depth: d,
     }
@@ -1187,9 +1205,49 @@ mod tests {
     }
 
     #[test]
-    fn vbox_width_is_max() {
-        let d = vbox_dimensions(&[char_of(10, 5, 0), char_of(40, 5, 0), glue(25)]);
-        assert_eq!(d.width, 40);
+    fn vbox_width_is_max_of_box_rule_leader() {
+        // tex.web vpackage L13201-13206：宽度只由 box/rule/leaders 贡献。
+        let b1 = BoxNode::new_hbox(vec![char_of(10, 5, 0)]);
+        let b2 = BoxNode::new_hbox(vec![char_of(40, 5, 0)]);
+        let d = vbox_dimensions(&[Node::Box(b1), glue(90), Node::Box(b2)]);
+        assert_eq!(d.width, 40, "竖直 glue 的 width 不是横向占用");
+        // 子盒 shift 计入 vlist 宽度（\moveleft 为负、\moveright 为正）。
+        let mut shifted = BoxNode::new_hbox(vec![char_of(40, 5, 0)]);
+        shifted.shift = 10;
+        let d = vbox_dimensions(&[glue(90), Node::Box(shifted)]);
+        assert_eq!(d.width, 50);
+    }
+
+    #[test]
+    fn vlist_width_ignores_glue_kern_and_counts_shift_and_leaders() {
+        // 规则无 shift（tex.web `if type(p)>=rule_node then s:=0`）。
+        assert_eq!(
+            vlist_width(&[glue(500), kern(400), Node::Penalty { penalty: 0 }]),
+            0
+        );
+        assert_eq!(
+            vlist_width(&[
+                Node::Rule {
+                    width: 30,
+                    height: 1,
+                    depth: 0,
+                },
+                glue(500),
+            ]),
+            30
+        );
+        // leaders 取被重复盒的宽度（leader_ptr），不是承载胶水 width。
+        let inner = BoxNode::new_hbox(vec![char_of(12, 3, 4)]);
+        let leaders = Node::Leaders {
+            kind: LeadersKind::Leaders,
+            inner: Box::new(Node::Box(inner)),
+            width: 120,
+            stretch: 0,
+            shrink: 0,
+            stretch_order: 0,
+            shrink_order: 0,
+        };
+        assert_eq!(vlist_width(&[leaders, glue(500)]), 12);
     }
 
     #[test]
@@ -1209,7 +1267,7 @@ mod tests {
         // 回归背景：旧实现胶水不占高，\vtop 内多行中文的行间 glue 归零、
         // 行盒贴死（resume-plain.tex 现场报告）。
         let d = vbox_dimensions(&[glue(10), kern(5), Node::Penalty { penalty: 0 }]);
-        assert_eq!(d.width, 10);
+        assert_eq!(d.width, 0, "glue/kern 只推进自然高，不计 vlist 宽度");
         assert_eq!(d.height, 15);
         assert_eq!(d.depth, 0);
     }
@@ -1240,7 +1298,9 @@ mod tests {
         assert_eq!(hb.shift, 0);
         assert_eq!(hb.kind, BoxKind::HBox);
 
-        let vb = BoxNode::new_vbox(vec![char_of(8, 9, 1), char_of(8, 2, 2)]);
+        let v1 = BoxNode::new_hbox(vec![char_of(8, 9, 1)]);
+        let v2 = BoxNode::new_hbox(vec![char_of(8, 2, 2)]);
+        let vb = BoxNode::new_vbox(vec![Node::Box(v1), Node::Box(v2)]);
         assert_eq!(vb.width, 8);
         // 结转算法：x = 9 + (1+2) = 12，d = 2。
         assert_eq!(vb.height, 12);

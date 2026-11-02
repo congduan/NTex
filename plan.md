@@ -34,18 +34,25 @@
 | `\documentclass` / article.cls | ✅ 最小闭环已通 | **主控实测（fae2350，2026-10-02）**：small2e **0 错** 1 页、sample2e **0 错**（原 Missing number ×2，第十九刀 `scan_dimen` mu 参数内部量臂 + 正号小数臂清零，b497294 同日先修 `\read` 未开流臂）、testpage `\read` 未开流已对齐 GT（Emergency stop 语义，GT nonstop 同 fatal，销账）；transformer-standalone **18 页/87 字体/49245B 与基线一致**、40 错（hypertext/URL 域字符为主） |
 | 结构宏（`\maketitle`/`\section`）+ NFSS 字体 | 🟡 主体已通 | `\section`/`\maketitle`/`\LaTeX` 徽标/字号代换链已通（09-24/25 现场四连）；余 NFSS 长尾（`\ifdim` size range、`try@simples`）见 §5 P1 |
 
-**近期进展**（2026-10-09 ~ 10-11，新在下）：
+**近期进展**（2026-11-02，新在上）：
 
-1. **expl3 载入闭包补件**（`76d11bb`，10-09）：fixtures 51 件缺件（5 `enc.def` + 41 base `*.fd` +
+1. **vlist 宽度口径对齐 tex.web vpackage**（2026-11-02）：竖直列表宽度从「max 全部子节点
+   width」修正为 tex.web `vpackage`（L13187-13218）口径——只有 box（width+shift）/rule/
+   leaders（取 leader_ptr 宽）贡献宽度，竖直 glue/kern 只推进自然高；下沉为 node.rs
+   `vlist_width()` 单一 helper，`vpack`/`\vsplit`/插入体/页盒装配全部收敛（页盒 fire_up
+   box255:=vpackage 同口径）。GT 铁证 `\vsplit` 探针 shift 计宽/胶不计宽逐点一致；
+   回归锁 6 把；core 605 + layout 全绿、tripos 12页/750B、宏包 13/13。
+   全录 [docs/archive/vlist-width-vpackage-2026-11-02.md](docs/archive/vlist-width-vpackage-2026-11-02.md)。
+2. **expl3 载入闭包补件**（`76d11bb`，10-09）：fixtures 51 件缺件（5 `enc.def` + 41 base `*.fd` +
    hyphen/zerohyph + utf8 系）补齐后 `latex_probe` `pass1 OK, dumped=true`，载入终点
    **89.4% → l.38446（95%+）**，残 1 错（`Missing number @38446`）可恢复。
-2. **`--auto-pkg` 引擎接线**（`3f09883`，10-09）：typeset 前 quick-scan 包名单，VFS miss 项走
+3. **`--auto-pkg` 引擎接线**（`3f09883`，10-09）：typeset 前 quick-scan 包名单，VFS miss 项走
    `ntex-pkg` resolve → `SourceChain` 取料注入；缺包报错含包名 + 反查指引。
    实测 enumitem 零手工备料 0 错出 DVI。
-3. **错误恢复刀A/C**（`0f271ee` / `c0849ed`，10-09~10）：`fetch()` 向扫描语境暴露 Source EOF +
+4. **错误恢复刀A/C**（`0f271ee` / `c0849ed`，10-09~10）：`fetch()` 向扫描语境暴露 Source EOF +
    定界参数 EOF 恢复臂（插 `\par`、废弃坏宏调用）；`\errhelp` 消费链（interaction 门控 + 组作用域）
    + `\errmessage`/`\message` 实参展开吞错修复 + error_anchor 跨扫描污染修复。
-4. **宏包 CI 回归集 13/13 全绿**（刀D~I，10-10 ~ 10-11）：`scripts/pkg-regression.py` 13 包矩阵；
+5. **宏包 CI 回归集 13/13 全绿**（刀D~I，10-10 ~ 10-11）：`scripts/pkg-regression.py` 13 包矩阵；
    刀D 首跑 **9/13** → 刀E/F/G（`\ifdim` 谓词展开臂 / `scan_dimen` 循环展开臂 / `^^` 置换 reswitch）**12/13**
    → 刀H（pdfTeX protrusion 原语族 `\rpcode`/`\lpcode`/`\pdfmatch`/`\pdffontexpand`）
    → 刀I（`\pdfprotrudechars`/`\pdfadjustspacing`）**13/13 收官**；基线
@@ -54,7 +61,7 @@
    0→114 锁 FAIL——worktree 逐提交二分定责刀P二轮 `recover_groups_to_math_scope`
    误伤 align inline math；收窄触发条件后 0 错 PASS，**13/13 维持**（教训：守卫修复
    必须同时验「漏」与「误伤」两把锁，远端合流后必跑全量回归集）。
-5. **TRIP/ETRIP 语义收口五连**（刀J~N，10-11）：`\the parshape` 内部量臂 + pass2 fatal 三连
+6. **TRIP/ETRIP 语义收口五连**（刀J~N，10-11）：`\the parshape` 内部量臂 + pass2 fatal 三连
    （`b0913c6`）、`\end` 救济语义（`e207209`）、halign preamble 展开臂（`a331a66`）、
    `\message` 恢复边界（`5179b89`）、`\let` 别名原语两阶段执行语义
    （`f46432d`，**TRIP endgame 打通**）。
@@ -66,7 +73,7 @@
    生命周期（`6c58296`，`\end` 例程内可恢复）、断页重启动 yield（`638f65a`）、
    畸形 math/alignment 恢复组态（`0f15264`）。现状：**9 页/0 Engine error、
    deadcycles/Output loop 链与 GT 同构**，残差收敛中（GT 16 页）。
-6. **wasm 裸 trap 根因修复**（2026-10-11，工作区未提交）：`edef` 探针里**无条件** `Instant::now()`
+7. **wasm 裸 trap 根因修复**（2026-10-11，工作区未提交）：`edef` 探针里**无条件** `Instant::now()`
    （`e1a5bb33` 起）在 wasm32 无 OS 时钟 → `panic = abort` 下成无位置裸 trap；`\edef`/`\xdef`
    是全部 LaTeX 文档的必经路径 ⇒ 工作台 LaTeX 模式一编译即炸（native 单测 / 深 fuzz 全绿照不出）。
    修：`prog_start` 改惰性 `prog.then(Instant::now)` + `tests_wasm_clock` 回归锁；

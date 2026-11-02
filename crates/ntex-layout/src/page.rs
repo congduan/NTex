@@ -23,7 +23,7 @@ use std::collections::{HashMap, HashSet};
 use ntex_core::param::Params;
 use ntex_core::register::{Glue, REGISTER_COUNT};
 
-use crate::node::{vert_break, BoxKind, BoxNode, Node};
+use crate::node::{vert_break, vlist_width, BoxKind, BoxNode, Node};
 
 /// tex.web's `last_glue`, `last_kern`, and `last_penalty` for the most
 /// recently processed contribution. Only one node kind is active at a time.
@@ -1144,29 +1144,19 @@ impl PageBuilder {
     fn package(&mut self, cut: usize) -> BoxNode {
         // 维度统计须在 drain 前完成（drain 后页内节点已归盒）。
         let mut d = 0i64;
-        let mut width = 0i64;
         for c in &self.page[0..cut] {
             match c {
                 Node::Box(b) => {
                     d = b.depth;
-                    width = width.max(b.width + b.shift);
                 }
-                Node::Rule {
-                    width: w, depth, ..
-                } => {
+                Node::Rule { depth, .. } => {
                     d = *depth;
-                    width = width.max(*w);
                 }
-                Node::Glue { width: w, .. } | Node::Kern { width: w } => {
+                Node::Glue { .. } | Node::Kern { .. } => {
                     d = 0;
-                    width = width.max(*w);
                 }
-                Node::Leaders {
-                    width: w, inner, ..
-                } => {
-                    let dims = inner.dimensions();
-                    d = dims.depth;
-                    width = width.max(*w);
+                Node::Leaders { inner, .. } => {
+                    d = inner.dimensions().depth;
                 }
                 Node::Char { .. }
                 | Node::Ligature { .. }
@@ -1181,6 +1171,9 @@ impl PageBuilder {
                 | Node::MathOff { .. } => {}
             }
         }
+        // tex.web fire_up：box(255):=vpackage(page_head,...)——页盒宽度与
+        // vpack 同一口径（box/rule/leaders 计宽；竖直 glue/kern 只推进高度）。
+        let width = vlist_width(&self.page[0..cut]);
         let d = if d > self.max_depth {
             self.max_depth
         } else {

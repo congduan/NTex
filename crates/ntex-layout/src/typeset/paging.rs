@@ -101,8 +101,10 @@ impl NodeBuilder {
                 _ => BoxNode::new_vbox(Vec::new()),
             };
             b.children.extend(body.children);
-            // 体子树换过（多个 insert / 同页多次 insert）→ 重算自然高深
+            // 体子树换过（多个 insert / 同页多次 insert）→ 重算自然高深与宽度
+            // （tex.web fire_up：box(n):=vpackage(...)——与 vpack 同一宽度口径）
             let d = vbox_dimensions(&b.children);
+            b.width = d.width;
             b.height = d.height;
             b.depth = d.depth;
             // 裸写不入组级日志（tex.web：页面构建器对 box(n) 的写不走 set_box）

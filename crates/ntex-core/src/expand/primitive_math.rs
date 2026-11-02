@@ -92,25 +92,24 @@ impl Expander {
                 self.sink.raise(amount)
             }
             // TRIP 冲刺：\moveleft/\moveright<dimen><box>（盒子水平位移）
-            // tex.web L20859-20861 符号规则：moveleft(chr=1)→+cur_val、
-            // moveright(chr=0)→-cur_val（box_context 直写 shift_amount；
-            // trip.log 参考实测 \moveleft20pt\copy200 → shifted -20.0，
-            // \moveright20pt\hbox → shifted 20.0——hmove 的位移最终以
-            // "盒内内容的坐标偏移"形式表现，与 vmove 方向约定相反）。
-            // tex.web：\moveleft/\moveright 仅垂直模式合法（vmode），数学模式
-            // 报 "You can't use ..." 且**不扫参数**（l.395 误报修复：此前先 scan_dimen
-            // 导致 \lastbox 被当尺寸报 Missing number）。水平模式（2/5）暂不拦截——
-            // NTex 的 \vskip 尚未实现"水平模式隐式结束段落"（l.316 场景），
-            // 拦截会暴露该系统性缺口，待 \vskip 修好后再补。
+            // sink 接收正的扫描尺寸；move_left 在布局侧转为负 shift，
+            // move_right 保持正 shift（GT：shifted -20.0 / 20.0）。
+            // tex.web：\moveleft/\moveright 仅垂直模式合法；其余模式
+            // 报 "You can't use ..." 且不扫尺寸或后续盒子 token。
             Primitive::MoveLeft | Primitive::MoveRight => {
                 let mode = self.sink.mode_code();
-                if matches!(mode, 3 | 6) {
+                if matches!(mode, 2 | 3 | 5 | 6) {
                     let name = if prim == Primitive::MoveLeft {
                         "moveleft"
                     } else {
                         "moveright"
                     };
-                    let what = "math mode";
+                    let what = match mode {
+                        2 => "horizontal mode",
+                        5 => "restricted horizontal mode",
+                        6 => "display math mode",
+                        _ => "math mode",
+                    };
                     self.write_error_help_no_read_again(
                         &format!("You can't use `\\{name}' in {what}."),
                         "Sorry, but I'm not programmed to handle this case;\n\
@@ -127,7 +126,7 @@ impl Expander {
                 self.pending_box_arg = true;
                 self.pending_box_arg_mode = self.sink.mode_code();
                 if prim == Primitive::MoveLeft {
-                    self.sink.move_left(-d)
+                    self.sink.move_left(d)
                 } else {
                     self.sink.move_right(d)
                 }
