@@ -719,6 +719,56 @@ fn end_segment_control_state_rejected_on_chain_delta() {
     );
 }
 
+// ─── 链偏差的控制态维（Codex review P1，2026-11-03） ──────────────────────────
+
+/// 回归锁：编辑段**只**改变输出可见控制态（`\end` 置 `ended`）时，链偏差必须
+/// 带控制态维（[`ChainDelta::control_differs`]）。
+///
+/// `\end` 不动 `ValueState`、不动 eqtb 槽，只置 `ControlState::ended`——旧两维
+/// 判据下"编辑段去掉 `\end`"之后链偏差仍判空，其后缓存段被 `delta.is_empty()`
+/// 判同步态复用：`\end` 之后录制的空输出/空转录被原样注入（等价全量此时应继续
+/// 产出），同步态复用共享的旧 `post` 又带着 `ended=true`——下一轮 `edit` 回滚到
+/// 该边界即整段静默。这是 2026-11-01 P1-1（段级中性判定漏控制态）的同款缺口在
+/// 链偏差层的复发。
+///
+/// 两处断言分别锁"编辑轮 + 回滚轮"：去掉 `control_differs` 的捕获或判定，两处
+/// 必红（自证见提交说明）。
+#[test]
+fn control_only_edit_does_not_reuse_cached_segment() {
+    let doc = "\\def\\a{X}\n\n\\a\\end\n\n\\message{tail}\\a\n\n";
+    let mut eng = SegmentEngine::new();
+    eng.run(doc);
+    assert_eq!(eng.segments().len(), 3, "{:?}", eng.segments());
+    assert!(
+        !eng.text().contains("tail"),
+        "前置条件：\\end 之后的段不产出：{:?}",
+        eng.text()
+    );
+
+    // edit #1：段 1 去掉 \end —— 状态只差 ControlState::ended。
+    eng.edit(1, "\\a\n\n").expect("段下标合法");
+    let mut full = SegmentEngine::new();
+    full.run("\\def\\a{X}\n\n\\a\n\n\\message{tail}\\a\n\n");
+    assert_eq!(eng.text(), full.text(), "输出 token 必须与等价全量一致");
+    assert_eq!(
+        eng.transcript(),
+        full.transcript(),
+        "\\end 之后的段不得复用旧（空）转录"
+    );
+
+    // edit #2：改段 2 正文 → 回滚到段前检查点。回滚点不得带回 ended=true。
+    eng.edit(2, "\\message{tail}\\a revised\n\n")
+        .expect("段下标合法");
+    let mut full2 = SegmentEngine::new();
+    full2.run("\\def\\a{X}\n\n\\a\n\n\\message{tail}\\a revised\n\n");
+    assert_eq!(eng.text(), full2.text(), "第二次编辑后输出必须与全量一致");
+    assert_eq!(
+        eng.transcript(),
+        full2.transcript(),
+        "回滚后转录必须与全量逐字一致（旧 post 的 ended 不得写回）"
+    );
+}
+
 #[test]
 fn edits_never_restart_engine() {
     // 单路径化：改正文/改宏体/改 catcode/改寄存器都不再重建引擎（restarts 恒 0）。

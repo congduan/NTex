@@ -516,13 +516,19 @@ impl SegmentEngine {
     fn cache_reject_reason_inner(&self, idx: usize, delta: &ChainDelta) -> Option<&'static str> {
         let cached = self.cache[idx].as_ref()?;
         // 段边界被跨段构造污染：语义无法由"段前状态 + 段源码"还原 → 一律不复用
-        // （控制状态不进偏差集，"边界干净"是它唯一可判的等价口径）
+        // （结构帧不在偏差集的输出可见控制态维里，"边界干净"是它唯一可判的
+        // 等价口径）
         if !self.expander.boundary_is_clean() {
             return Some("段边界不干净（跨段构造：未闭合组/条件/数学/参数扫描）");
         }
         // 值状态偏差（寄存器/参数/catcode/编码表/流）：不做槽级归因，全局失效
         if delta.value_differs {
             return Some("值状态变化（寄存器/参数/catcode/编码表/流，未做槽级归因）");
+        }
+        // 输出可见控制态偏差（转录模式/追踪抑制/诊断行号/`ended`）：缓存转录
+        // 按旧控制态录制，复用即转录漂移；同样不做段级归因，全局失效
+        if delta.control_differs {
+            return Some("输出可见控制态变化（\\tracingcommands 等转录模式，未做段级归因）");
         }
         if cached.deps.dynamic_cs {
             return Some("段含 \\csname（动态 cs 名，保守失效）");

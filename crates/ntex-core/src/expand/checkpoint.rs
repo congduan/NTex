@@ -168,6 +168,10 @@ impl ControlState {
     /// - 结构帧（输入栈/组栈/条件栈/对齐/悬挂前缀等）：它们的差异要么已由
     ///   `ValueState`/eqtb 反映，要么由复用前的 `boundary_is_clean` 闸挡掉；
     ///   把脏 `post` 的结构帧还原到干净活状态反而是错的。
+    ///
+    /// **字段清单与 [`Expander::control_output_visible_equal`] 必须同步**：后者
+    /// 是"活状态 vs 快照控制态"的同口径版本（链偏差判定用，不能先克隆整份
+    /// `ControlState`），两处逐字段镜像，改动任一处都要同步另一处。
     pub(crate) fn output_visible_equal(&self, other: &Self) -> bool {
         self.shown_trace_mode == other.shown_trace_mode
             && self.trace_suppress == other.trace_suppress
@@ -181,6 +185,30 @@ impl ControlState {
 }
 
 impl Expander {
+    /// 活状态的**输出可见控制态**是否等于 `other`（快照里的控制状态）。
+    ///
+    /// 用途：[`crate::incremental::snapshot::ChainDelta::capture`] —— 链偏差的
+    /// 第三维。`shown_trace_mode`（`\tracingcommands` 的模式前缀记忆）、追踪
+    /// 抑制、`output_trigger_line`、`err_snapshot`、`section_label`、`ended`
+    /// 这些字段只活在 `ControlState` 里，**既不进** `ValueState` **也不进**
+    /// eqtb 槽；只比前两维会把"编辑段只改了这些字段"的链偏差判成同步态 → 其后
+    /// 缓存段跳过执行、回滚点却共享旧 `post`（带旧控制态）→ 下一轮 `edit`
+    /// 回滚后转录漂移。
+    ///
+    /// 字段清单**逐项镜像** [`ControlState::output_visible_equal`]（含同样的
+    /// 排除项，见该函数文档）；`ControlState` 是 crate 内类型，此处逐字段比较
+    /// 免一次整份克隆。两处清单必须同步，改动任一处都要同步另一处。
+    pub(crate) fn control_output_visible_equal(&self, other: &ControlState) -> bool {
+        self.shown_trace_mode == other.shown_trace_mode
+            && self.trace_suppress == other.trace_suppress
+            && self.trace_suppress_defer == other.trace_suppress_defer
+            && self.output_trigger_line == other.output_trigger_line
+            && self.output_prev_count == other.output_prev_count
+            && self.err_snapshot == other.err_snapshot
+            && self.section_label == other.section_label
+            && self.ended == other.ended
+    }
+
     /// 捕获完整状态检查点（只读；M5 阶段二段级回滚 / 阶段三排版层管线用）。
     pub fn capture_checkpoint(&self) -> EngineCheckpoint {
         EngineCheckpoint {

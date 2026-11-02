@@ -95,6 +95,15 @@ pub struct ChainDelta {
     pub value_differs: bool,
     /// 语义有偏差的 eqtb 槽（含槽规模变化时多出的尾部槽）。
     pub slots: HashSet<u32>,
+    /// **输出可见控制态**有偏差（转录模式/追踪抑制/诊断行号/`ended`）。
+    ///
+    /// 2026-11 P1（P1-1 的同款缺口在链偏差层复发）：`shown_trace_mode`
+    /// （`\tracingcommands` 的模式前缀记忆）等字段只活在 `ControlState` 里，
+    /// 既不在 `ValueState` 也不在 eqtb 槽。编辑段只动这些字段时前两维都判
+    /// "无偏差"→ 其后缓存段被当同步态复用（跳过执行，旧转录留在链上）、回滚点
+    /// 共享旧 `post`（旧控制态）→ 下一轮 `edit` 回滚即转录漂移。该维度**不做
+    /// 段级归因**（保守全局失效）。
+    pub control_differs: bool,
 }
 
 impl ChainDelta {
@@ -103,6 +112,7 @@ impl ChainDelta {
         Self {
             value_differs: false,
             slots: HashSet::new(),
+            control_differs: false,
         }
     }
 
@@ -112,6 +122,10 @@ impl ChainDelta {
     /// 变化——"未驻留"即 `Undefined`，与已有槽不等。
     pub fn capture(e: &Expander, reference: &StateSnapshot) -> Self {
         let value_differs = e.value_state() != *reference.value();
+        // 输出可见控制态：只比字段（免整份 `ControlState` 克隆），口径见
+        // `Expander::control_output_visible_equal`（与 `snapshot_states_equal`
+        // 的 `ControlState::output_visible_equal` 同一字段清单）。
+        let control_differs = !e.control_output_visible_equal(&reference.cp.control);
         let cur = e.eqtb().slots();
         let snap = reference.eqtb();
         let common = cur.len().min(snap.len());
@@ -127,12 +141,13 @@ impl ChainDelta {
         Self {
             value_differs,
             slots,
+            control_differs,
         }
     }
 
-    /// 是否无偏差（值状态一致 + 无变化槽）。
+    /// 是否无偏差（值状态一致 + 无变化槽 + 输出可见控制态一致）。
     pub fn is_empty(&self) -> bool {
-        !self.value_differs && self.slots.is_empty()
+        !self.value_differs && self.slots.is_empty() && !self.control_differs
     }
 }
 

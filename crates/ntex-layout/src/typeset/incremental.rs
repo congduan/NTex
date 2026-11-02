@@ -881,10 +881,12 @@ impl IncrementalTypesetter {
                         prev_post = Some(std::rc::Rc::clone(post));
                     }
                     // `ChainDelta::empty` 是 ntex-core 的 crate 内构造器；这里按
-                    // 公开字段直接构造零偏差（值状态一致 + 无变化槽）。
+                    // 公开字段直接构造零偏差（值状态一致 + 无变化槽 + 输出可见
+                    // 控制态一致）。
                     delta = Some(ChainDelta {
                         value_differs: false,
                         slots: std::collections::HashSet::new(),
+                        control_differs: false,
                     });
                 }
                 // 偏差路径（依赖判定通过）：段状态中性（判定已闸）→ 执行本不改
@@ -968,6 +970,7 @@ impl IncrementalTypesetter {
     ///    （[`ReuseVerdict::Synced`]，执行必然复现同一输出）；
     /// 3. 偏差非空 → **依赖四闸**（expand 层 `cache_reject_reason_inner` 同款）：
     ///    值状态偏差（寄存器/参数/catcode/编码表/流，未做槽级归因）全局失效；
+    ///    输出可见控制态偏差（转录模式/追踪抑制/诊断行号/`ended`）全局失效；
     ///    段含 `\csname`（动态 cs 名）保守失效；读依赖闭包触及变化槽（该段引用
     ///    的宏被改动）失效；写集触及变化槽失效（跳过会让本应重写的值停留在被改
     ///    值）；段非状态中性失效（偏差下跳过执行不还原旧 post，只有"执行也不改
@@ -1006,6 +1009,12 @@ impl IncrementalTypesetter {
         }
         if delta.value_differs {
             return Err("值状态变化（寄存器/参数/catcode/编码表/流，未做槽级归因）");
+        }
+        // 输出可见控制态偏差（转录模式/追踪抑制/诊断行号/`ended`）：缓存转录
+        // 按旧控制态录制（expand 层 `cache_reject_reason_inner` 同款闸），复用
+        // 即漂移；不做段级归因，全局失效
+        if delta.control_differs {
+            return Err("输出可见控制态变化（\\tracingcommands 等转录模式，未做段级归因）");
         }
         if cache.deps.dynamic_cs {
             return Err("段含 \\csname（动态 cs 名，保守失效）");

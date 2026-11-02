@@ -1411,6 +1411,39 @@ mod incremental_tests {
         );
     }
 
+    // ---- 回归锁：链偏差的控制态维（Codex review P1，2026-11-03） ----
+    //
+    // 现场：段只改输出可见控制态（`shown_trace_mode` 的模式记忆）时，链偏差
+    // 只比值状态/eqtb 会判"空" → 其后缓存段按同步态复用（跳过执行、缓存转录
+    // 照抄），而全量在同一文档下的转录前缀取决于**当前**模式记忆。
+    //
+    // 段 9 的 `\vskip 1pt` 使段末空白行的 `\par` 在 vertical 模式被追踪
+    // （post 的 shown = vertical）；改成 `\noindent` 后该 `\par` 落在
+    // horizontal（shown = horizontal）——misc 参数、值状态、eqtb 全不变。探针
+    // 段 10 的首个 token 在 vertical 模式派发，模式记忆为 horizontal 时带
+    // `{vertical mode: ...}` 前缀，为 vertical 时无前缀：复用旧转录即漂移。
+    #[test]
+    fn control_only_edit_rejects_cached_transcript() {
+        let doc = trace_probe_doc();
+        let (mut it, base) = pipeline_compile(&doc);
+        assert_eq!(base, full_path(&doc), "口径 3：管线全量 != 引擎全量");
+        let segs = it.segments().to_vec();
+        assert_eq!(segs[9], "\\vskip 1pt\n\n", "前置条件：段 9 是 vskip 段");
+
+        // 只保留 `\vskip 1pt`、末尾加 `\noindent`：页面几何不变，仅段末空白行
+        // 的 `\par` 从 vertical 模式改到 horizontal 模式被追踪。
+        let new9 = "\\vskip 1pt \\noindent\n\n";
+        let out = it.edit(9, new9).expect("编辑段 9（只改控制态）");
+        let doc2 = replace_segment(&doc, &segs, 9, new9);
+        let (full, full_out) = pipeline_compile(&doc2);
+        assert_doc_eq(&out, &full_out, "控制态-only 编辑：增量 != 全量".to_string());
+        assert_eq!(
+            transcript_tail_from(it.transcript(), "letter z"),
+            transcript_tail_from(full.transcript(), "letter z"),
+            "编辑段只改控制态 → 其后缓存段不得复用旧转录"
+        );
+    }
+
     // ---------- M5 阶段六第五刀：expand 侧快照捕获背靠背共享 ----------
 
     /// 回归锁：相邻执行段的段前快照**共享**上一段的段后快照（同一 `Rc`）。
