@@ -729,7 +729,8 @@ dev A 场景 ~2.3ms）+ `finish_doc` 的 `shipped.clone()`（全页深拷贝，~
 **副刀（复用段 `contrib` 共享）判无收益，保留 `clone`**：探针实测缓存节点流深拷贝
 0.46ms/轮（1026 节点 × 50 轮 = 23.18ms），而 `append` 必须 owned——`append_ref`
 逐字段拷贝对 Box/Vec 变体同样是深拷贝，只能省外层 Vec 缓冲与一次搬运（≤0.05ms，
-<1%），不足以抵消新增 API 与借用面，故不做。
+<1%），不足以抵消新增 API 与借用面，故不做。逐刀全录
+[战报](docs/archive/m5-stage6-blade4-shipped-rc-2026-11-03.md)。
 
 **阶段六待办**（= M5 全部剩余项）：
 
