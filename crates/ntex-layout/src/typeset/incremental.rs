@@ -240,11 +240,17 @@ struct SideEffects {
     muskip_params: [ntex_core::Glue; 3],
     muskip_is_mu: [bool; 3],
     marks_top: std::collections::HashMap<i64, String>,
+    marks_top_tokens: std::collections::HashMap<i64, Vec<ntex_core::Token>>,
     marks_first: std::collections::HashMap<i64, String>,
+    marks_first_tokens: std::collections::HashMap<i64, Vec<ntex_core::Token>>,
     marks_bot: std::collections::HashMap<i64, String>,
+    marks_bot_tokens: std::collections::HashMap<i64, Vec<ntex_core::Token>>,
     marks_split_top: std::collections::HashMap<i64, String>,
+    marks_split_top_tokens: std::collections::HashMap<i64, Vec<ntex_core::Token>>,
     marks_split_first: std::collections::HashMap<i64, String>,
+    marks_split_first_tokens: std::collections::HashMap<i64, Vec<ntex_core::Token>>,
     marks_split_bot: std::collections::HashMap<i64, String>,
+    marks_split_bot_tokens: std::collections::HashMap<i64, Vec<ntex_core::Token>>,
     lastbox_hold: Option<BoxNode>,
 }
 

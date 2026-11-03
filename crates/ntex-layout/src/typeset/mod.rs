@@ -952,19 +952,25 @@ struct PageState {
     /// ETRIP 冲刺：e-TeX marks 族状态（断页轮转）。
     /// `\topmarks<c>`：继承自上一页 botmarks<c>（初始空）。
     marks_top: std::collections::HashMap<i64, String>,
+    marks_top_tokens: std::collections::HashMap<i64, Vec<ntex_core::Token>>,
 
     /// 当前页第一个出现的 marks<c>（断页新页开始时清空）。
     marks_first: std::collections::HashMap<i64, String>,
+    marks_first_tokens: std::collections::HashMap<i64, Vec<ntex_core::Token>>,
 
     /// 当前页最后一个出现的 marks<c>（断页新页开始时保留继承值，后续新 marks 覆盖）。
     marks_bot: std::collections::HashMap<i64, String>,
+    marks_bot_tokens: std::collections::HashMap<i64, Vec<ntex_core::Token>>,
 
     /// \vsplit 产生的拆分 marks（暂未实现 vsplit 全语义；留空）。
     marks_split_top: std::collections::HashMap<i64, String>,
+    marks_split_top_tokens: std::collections::HashMap<i64, Vec<ntex_core::Token>>,
 
     marks_split_first: std::collections::HashMap<i64, String>,
+    marks_split_first_tokens: std::collections::HashMap<i64, Vec<ntex_core::Token>>,
 
     marks_split_bot: std::collections::HashMap<i64, String>,
+    marks_split_bot_tokens: std::collections::HashMap<i64, Vec<ntex_core::Token>>,
 }
 
 /// 数学域状态（R1b 分组；对齐 R1 的 [`MathSink`] 域）：数学列表栈、当前样式与
@@ -1203,11 +1209,17 @@ impl NodeBuilder {
                 page_shipped: false,
                 output_consumed_count: 0,
                 marks_top: std::collections::HashMap::new(),
+                marks_top_tokens: std::collections::HashMap::new(),
                 marks_first: std::collections::HashMap::new(),
+                marks_first_tokens: std::collections::HashMap::new(),
                 marks_bot: std::collections::HashMap::new(),
+                marks_bot_tokens: std::collections::HashMap::new(),
                 marks_split_top: std::collections::HashMap::new(),
+                marks_split_top_tokens: std::collections::HashMap::new(),
                 marks_split_first: std::collections::HashMap::new(),
+                marks_split_first_tokens: std::collections::HashMap::new(),
                 marks_split_bot: std::collections::HashMap::new(),
+                marks_split_bot_tokens: std::collections::HashMap::new(),
             },
             math_state: MathState {
                 math: Vec::new(),
@@ -1265,10 +1277,13 @@ impl NodeBuilder {
     fn rotate_marks(&mut self) {
         // marks_top：承接上一页 botmarks（继承）
         self.page_state.marks_top = self.page_state.marks_bot.clone();
+        self.page_state.marks_top_tokens = self.page_state.marks_bot_tokens.clone();
         // marks_first：新页第一个 marks 清空
         self.page_state.marks_first.clear();
+        self.page_state.marks_first_tokens.clear();
         // marks_bot：初始等于继承的 marks_top（若无新 marks 则 bot==top）
         self.page_state.marks_bot = self.page_state.marks_top.clone();
+        self.page_state.marks_bot_tokens = self.page_state.marks_top_tokens.clone();
     }
 
     /// TeX `\unhbox`/`\unvbox` 不可拆盒的错误恢复：写转录并继续
@@ -1545,11 +1560,17 @@ impl NodeBuilder {
             muskip_params: self.math_state.muskip_params,
             muskip_is_mu: self.math_state.muskip_is_mu,
             marks_top: self.page_state.marks_top.clone(),
+            marks_top_tokens: self.page_state.marks_top_tokens.clone(),
             marks_first: self.page_state.marks_first.clone(),
+            marks_first_tokens: self.page_state.marks_first_tokens.clone(),
             marks_bot: self.page_state.marks_bot.clone(),
+            marks_bot_tokens: self.page_state.marks_bot_tokens.clone(),
             marks_split_top: self.page_state.marks_split_top.clone(),
+            marks_split_top_tokens: self.page_state.marks_split_top_tokens.clone(),
             marks_split_first: self.page_state.marks_split_first.clone(),
+            marks_split_first_tokens: self.page_state.marks_split_first_tokens.clone(),
             marks_split_bot: self.page_state.marks_split_bot.clone(),
+            marks_split_bot_tokens: self.page_state.marks_split_bot_tokens.clone(),
             lastbox_hold: self.box_state.lastbox_hold.clone(),
         }
     }
@@ -1611,11 +1632,17 @@ impl NodeBuilder {
         self.math_state.muskip_params = s.muskip_params;
         self.math_state.muskip_is_mu = s.muskip_is_mu;
         self.page_state.marks_top = s.marks_top.clone();
+        self.page_state.marks_top_tokens = s.marks_top_tokens.clone();
         self.page_state.marks_first = s.marks_first.clone();
+        self.page_state.marks_first_tokens = s.marks_first_tokens.clone();
         self.page_state.marks_bot = s.marks_bot.clone();
+        self.page_state.marks_bot_tokens = s.marks_bot_tokens.clone();
         self.page_state.marks_split_top = s.marks_split_top.clone();
+        self.page_state.marks_split_top_tokens = s.marks_split_top_tokens.clone();
         self.page_state.marks_split_first = s.marks_split_first.clone();
+        self.page_state.marks_split_first_tokens = s.marks_split_first_tokens.clone();
         self.page_state.marks_split_bot = s.marks_split_bot.clone();
+        self.page_state.marks_split_bot_tokens = s.marks_split_bot_tokens.clone();
         self.box_state.lastbox_hold = s.lastbox_hold.clone();
     }
 

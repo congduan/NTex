@@ -229,6 +229,7 @@ pub enum Node {
     Mark {
         class: Option<i64>,
         text: String,
+        tokens: Vec<ntex_core::Token>,
     },
     /// insert 节点（`\insert<num>{...}`；无维度）：class 为插入寄存器号。
     ///
@@ -1386,6 +1387,7 @@ mod tests {
         let mark = Node::Mark {
             class: Some(2),
             text: "kept".into(),
+            tokens: Vec::new(),
         };
         let rule = Node::Rule {
             width: 0,

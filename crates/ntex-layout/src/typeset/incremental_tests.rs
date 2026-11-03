@@ -800,7 +800,7 @@ mod incremental_tests {
             }
             Kern { width } => format!("{i}:Kern({width})"),
             Penalty { penalty } => format!("{i}:Pen({penalty})"),
-            Mark { class, text } => format!("{i}:Mark({class:?},{text})"),
+            Mark { class, text, .. } => format!("{i}:Mark({class:?},{text})"),
             other => format!("{i}:{other:?}"),
         };
         if let Box(b) = n {

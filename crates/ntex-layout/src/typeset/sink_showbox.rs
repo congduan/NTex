@@ -218,7 +218,7 @@ fn showbox_format_node(
             };
             out.push_str(&format!("{p}\\{name}\n"));
         }
-        Node::Mark { class, text } => match class {
+        Node::Mark { class, text, .. } => match class {
             Some(c) => out.push_str(&format!("{p}\\marks{c}{{{text}}}\n")),
             None => out.push_str(&format!("{p}\\mark{{{text}}}\n")),
         },

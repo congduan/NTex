@@ -121,9 +121,7 @@ impl Expander {
             }
             // \vadjust{<vertical material>}（tex.web begin_insert_or_adjust）：
             // 不在 VM 侧吞 general text，交给排版器开内部垂直组执行组体。
-            Primitive::VAdjust => {
-                self.sink.vadjust(Vec::new())
-            }
+            Primitive::VAdjust => self.sink.vadjust(Vec::new()),
             // M4-5：\crcr 到达 dispatcher = Misplaced（raw 的 \crcr 由
             // align_on_token 拦截；行边界冗余 \crcr 由 align_peek_next 忽略）
             Primitive::CrCr => {
@@ -182,14 +180,32 @@ impl Expander {
                 } else {
                     None
                 };
-                let toks = self.scan_group_contents(None)?;
-                let text = self.expand_to_string(&toks)?;
-                self.sink.mark(class, text)
+                // tex.web make_mark uses scan_toks(false,true): expand during
+                // scanning, then retain the resulting tokens and their catcodes.
+                self.scan_left_brace()?;
+                self.unread(Token::char(Catcode::BeginGroup, b'{' as u32));
+                let toks = self.scan_group_contents_xpand(true)?;
+                // The text is only for showbox diagnostics; never expand again.
+                let mut shown = Vec::new();
+                for &tok in &toks {
+                    detokenize_token(
+                        tok,
+                        &self.intern,
+                        self.params.misc[34],
+                        &self.catcodes,
+                        &mut shown,
+                    );
+                }
+                let text: String = shown
+                    .into_iter()
+                    .filter_map(|t| t.charcode().and_then(char::from_u32))
+                    .collect();
+                self.sink.mark_tokens(class, toks, text)
             }
             // ETRIP 冲刺：e-TeX marks 族查询原语（可展开）。主循环/\edef 等执行上下文
             // 走此处（emit_tokens 压回输入流）；扫描上下文（宏参数收集/\edef 等）由
             // expand_once 的同构分支处理——两处语义一致：scan_number 取 class →
-            // sink 查询 → 文本转字符 token（空格 → Space，其余 → Other）。
+            // sink 查询 → 原样回流所存 token 列表。
             Primitive::TopMarks
             | Primitive::FirstMarks
             | Primitive::BotMarks
@@ -197,27 +213,16 @@ impl Expander {
             | Primitive::SplitTopMarks
             | Primitive::SplitBotMarks => {
                 let class = self.scan_number()?;
-                let text = match prim {
-                    Primitive::TopMarks => self.sink.topmarks(class),
-                    Primitive::FirstMarks => self.sink.firstmarks(class),
-                    Primitive::BotMarks => self.sink.botmarks(class),
-                    Primitive::SplitFirstMarks => self.sink.splitfirstmarks(class),
-                    Primitive::SplitTopMarks => self.sink.splittopmarks(class),
-                    Primitive::SplitBotMarks => self.sink.splitbotmarks(class),
+                let tokens = match prim {
+                    Primitive::TopMarks => self.sink.topmarks_tokens(class),
+                    Primitive::FirstMarks => self.sink.firstmarks_tokens(class),
+                    Primitive::BotMarks => self.sink.botmarks_tokens(class),
+                    Primitive::SplitFirstMarks => self.sink.splitfirstmarks_tokens(class),
+                    Primitive::SplitTopMarks => self.sink.splittopmarks_tokens(class),
+                    Primitive::SplitBotMarks => self.sink.splitbotmarks_tokens(class),
                     _ => unreachable!("marks 族已在上层 match 穷举"),
                 };
-                self.emit_tokens(
-                    text.bytes()
-                        .map(|b| {
-                            let cat = if b == b' ' {
-                                Catcode::Space
-                            } else {
-                                Catcode::Other
-                            };
-                            Token::char(cat, u32::from(b))
-                        })
-                        .collect(),
-                )
+                self.emit_tokens(tokens)
             }
             // TRIP 补全批次：TeX 版 marks 查询（\topmark 等，无 class 参数，class 0）
             Primitive::TopMark
@@ -225,26 +230,14 @@ impl Expander {
             | Primitive::BotMark
             | Primitive::SplitFirstMark
             | Primitive::SplitBotMark => {
-                let text = match prim {
-                    Primitive::TopMark => self.sink.topmarks(0),
-                    Primitive::FirstMark => self.sink.firstmarks(0),
-                    Primitive::BotMark => self.sink.botmarks(0),
-                    Primitive::SplitFirstMark => self.sink.splitfirstmarks(0),
-                    _ => self.sink.splitbotmarks(0),
+                let tokens = match prim {
+                    Primitive::TopMark => self.sink.topmarks_tokens(0),
+                    Primitive::FirstMark => self.sink.firstmarks_tokens(0),
+                    Primitive::BotMark => self.sink.botmarks_tokens(0),
+                    Primitive::SplitFirstMark => self.sink.splitfirstmarks_tokens(0),
+                    _ => self.sink.splitbotmarks_tokens(0),
                 };
-                self.emit_tokens(
-                    text.bytes()
-                        .map(|b| {
-                            let cat = if b == b' ' {
-                                Catcode::Space
-                            } else {
-                                Catcode::Other
-                            };
-                            Token::char(cat, u32::from(b))
-                        })
-                        .collect(),
-                )?;
-                Ok(())
+                self.emit_tokens(tokens)
             }
             other => Err(Error::internal(format!(
                 "未接入 dispatch_align 的原语 {other:?}"

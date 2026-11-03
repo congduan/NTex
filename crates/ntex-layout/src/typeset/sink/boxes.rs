@@ -95,6 +95,8 @@ impl BoxSink for NodeBuilder {
     fn vsplit(&mut self, idx: usize, to: Option<i64>, spread: Option<i64>) -> Result<()> {
         self.page_state.marks_split_first.clear();
         self.page_state.marks_split_bot.clear();
+        self.page_state.marks_split_first_tokens.clear();
+        self.page_state.marks_split_bot_tokens.clear();
         let Some(b) = self.take_box_at(idx) else {
             // void 盒：cur_box=null（tex.web）→ `\setbox` 目标存空、裸调用不产节点
             if let Some(t) = self.box_state.setbox_target.take() {
@@ -110,13 +112,25 @@ impl BoxSink for NodeBuilder {
         };
         let (result, remainder) = split_vbox(b, target, self.params.splittopskip);
         for node in &result.children {
-            if let Node::Mark { class, text } = node {
+            if let Node::Mark {
+                class,
+                text,
+                tokens,
+            } = node
+            {
                 let class = class.unwrap_or(0);
                 self.page_state
                     .marks_split_first
                     .entry(class)
                     .or_insert_with(|| text.clone());
                 self.page_state.marks_split_bot.insert(class, text.clone());
+                self.page_state
+                    .marks_split_first_tokens
+                    .entry(class)
+                    .or_insert_with(|| tokens.clone());
+                self.page_state
+                    .marks_split_bot_tokens
+                    .insert(class, tokens.clone());
             }
         }
         // 余量写回寄存器：tex.web `box(n):=vpack(q,natural)`；若 q 为空则原盒

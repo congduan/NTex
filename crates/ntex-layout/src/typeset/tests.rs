@@ -2014,6 +2014,17 @@ mod tests {
     }
 
     #[test]
+    fn mark_query_keeps_control_sequence_tokens_out_of_text() {
+        // scan_toks(false,true) expands \noexpand once and stores the resulting
+        // control sequence. A string round trip would print its name as text.
+        let main = typeset(r"\def\payload{SAFE}\mark{\noexpand\payload}\botmark").unwrap();
+        let mut chars = Vec::new();
+        collect_chars(&main, &mut chars);
+        let visible: String = chars.into_iter().filter_map(char::from_u32).collect();
+        assert_eq!(visible, "SAFE", "mark content lost or leaked: {visible:?}");
+    }
+
+    #[test]
     fn rotate_marks_inherits_bot_as_top() {
         let mut b = marks_builder();
         b.mark(Some(1), "p1-first".into()).unwrap();

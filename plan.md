@@ -864,6 +864,7 @@ CLI `ntex-pkg`（`index`/`provide`/`resolve`/`lock`/`check`/`local`/**`vendor`**
 - [ ] ~~中文粗体/斜体（刀 4）~~ ✅（2026-10-01，见上表；遗留引擎级 family fallback 与 FandolHei-Bold，见 KNOWN-SIMPLIFICATIONS §5）；`\catcode` >255 赋值扩展（A5 全量收口）
 - [ ] ~~CJK 标点挤压~~ ✅（M9 中文刀 6，2026-10-01：`\cjkbreakmode` 挤压面——行尾闭标点让半格/连续闭标点压半格/汉字邻接源内空格吞掉；zh-paper gap 方差 −95%、最大 5.86→0.62pt，见 KNOWN-SIMPLIFICATIONS §5；遗留行首开括号挤压与 PunctStyle 可配置）；HarfBuzz 整形与整形缓存、**CJK 整形捷径**（无复杂特性时跳过 HarfBuzz 直读 hmtx，目标 5~10x）
 - [ ] ctex/xeCJK 宏兼容（从 xeCJK 最小子集起步）；OpenType fontspec 路径
+- [ ] **ctexart mark 页眉泄漏（2026-11-03 WIP）**：已定位为 mark 扫描后把 token 列表压成 String、查询再重造普通字符；token 保真改动使 3 行 `ctex-mark` 零错且文本层与 xelatex 实测同构。`ctexart-zh` 仍被独立的 `\MakeUppercase`×CJK active UTF-8 展开失败阻断（6 错、无页），故未提交。诊断和原始输出见 [战报](docs/archive/ctexart-mark-leak-2026-11-03.md)。
 - [ ] 宏包 CI 回归集：geometry / amsmath / hyperref / biblatex / tikz / ctex
 - [x] **宏包管理·解析/契约层**（2026-09-19，`ntex-pkg` crate，§6.2 第 8/9 条落地）：
   TLPDB 解析 + 文件反查索引 + `\usepackage`/`\documentclass`→包解析 + 依赖闭包 +

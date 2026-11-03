@@ -621,10 +621,10 @@ impl Expander {
                     self.csname_define_relax(csid);
                     out.push((Token::control_sequence(csid), false));
                 }
-                // ETRIP 冲刺：e-TeX marks 族查询（可展开，返回字符 token 文本）
+                // e-TeX marks 族查询：保留插入时的 token 类别与控制序列。
                 // \topmarks<n> / \firstmarks<n> / \botmarks<n> / \splitfirstmarks<n> /
                 // \splittopmarks<n> / \splitbotmarks<n>：扫描 class 号，向 sink 查询，
-                // 返回内容转为字符 token（空内容输出空）。
+                // 返回原 token 列表（空内容输出空）。
                 EqSlot::Primitive(
                     p @ (Primitive::TopMarks
                     | Primitive::FirstMarks
@@ -634,23 +634,16 @@ impl Expander {
                     | Primitive::SplitBotMarks),
                 ) => {
                     let class = self.scan_number()?;
-                    let text = match p {
-                        Primitive::TopMarks => self.sink.topmarks(class),
-                        Primitive::FirstMarks => self.sink.firstmarks(class),
-                        Primitive::BotMarks => self.sink.botmarks(class),
-                        Primitive::SplitFirstMarks => self.sink.splitfirstmarks(class),
-                        Primitive::SplitTopMarks => self.sink.splittopmarks(class),
-                        Primitive::SplitBotMarks => self.sink.splitbotmarks(class),
+                    let tokens = match p {
+                        Primitive::TopMarks => self.sink.topmarks_tokens(class),
+                        Primitive::FirstMarks => self.sink.firstmarks_tokens(class),
+                        Primitive::BotMarks => self.sink.botmarks_tokens(class),
+                        Primitive::SplitFirstMarks => self.sink.splitfirstmarks_tokens(class),
+                        Primitive::SplitTopMarks => self.sink.splittopmarks_tokens(class),
+                        Primitive::SplitBotMarks => self.sink.splitbotmarks_tokens(class),
                         _ => unreachable!("marks 族已在上层 match 穷举"),
                     };
-                    out.extend(text.bytes().map(|b| {
-                        let cat = if b == b' ' {
-                            Catcode::Space
-                        } else {
-                            Catcode::Other
-                        };
-                        (Token::char(cat, u32::from(b)), false)
-                    }));
+                    out.extend(tokens.into_iter().map(|t| (t, false)));
                 }
                 // TRIP 补全批次：TeX 版 marks（\topmark 等，class 0 不扫描）
                 EqSlot::Primitive(
@@ -660,21 +653,14 @@ impl Expander {
                     | Primitive::SplitFirstMark
                     | Primitive::SplitBotMark),
                 ) => {
-                    let text = match p {
-                        Primitive::TopMark => self.sink.topmarks(0),
-                        Primitive::FirstMark => self.sink.firstmarks(0),
-                        Primitive::BotMark => self.sink.botmarks(0),
-                        Primitive::SplitFirstMark => self.sink.splitfirstmarks(0),
-                        _ => self.sink.splitbotmarks(0),
+                    let tokens = match p {
+                        Primitive::TopMark => self.sink.topmarks_tokens(0),
+                        Primitive::FirstMark => self.sink.firstmarks_tokens(0),
+                        Primitive::BotMark => self.sink.botmarks_tokens(0),
+                        Primitive::SplitFirstMark => self.sink.splitfirstmarks_tokens(0),
+                        _ => self.sink.splitbotmarks_tokens(0),
                     };
-                    out.extend(text.bytes().map(|b| {
-                        let cat = if b == b' ' {
-                            Catcode::Space
-                        } else {
-                            Catcode::Other
-                        };
-                        (Token::char(cat, u32::from(b)), false)
-                    }));
+                    out.extend(tokens.into_iter().map(|t| (t, false)));
                 }
                 // fuzz 挂死修复（2026-08-28）：以下原语在 is_expandable() 白名单中，
                 // 但此前此处无分支 → 落 `_` 原样保留。扫描循环（scan_dimen_inner/

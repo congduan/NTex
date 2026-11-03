@@ -124,6 +124,54 @@ impl PageSink for NodeBuilder {
             .cloned()
             .unwrap_or_default()
     }
+    fn topmarks_tokens(&self, class: i64) -> Vec<ntex_core::Token> {
+        self.mark_spec_taint();
+        self.page_state
+            .marks_top_tokens
+            .get(&class)
+            .cloned()
+            .unwrap_or_default()
+    }
+    fn firstmarks_tokens(&self, class: i64) -> Vec<ntex_core::Token> {
+        self.mark_spec_taint();
+        self.page_state
+            .marks_first_tokens
+            .get(&class)
+            .cloned()
+            .unwrap_or_default()
+    }
+    fn botmarks_tokens(&self, class: i64) -> Vec<ntex_core::Token> {
+        self.mark_spec_taint();
+        self.page_state
+            .marks_bot_tokens
+            .get(&class)
+            .cloned()
+            .unwrap_or_default()
+    }
+    fn splitfirstmarks_tokens(&self, class: i64) -> Vec<ntex_core::Token> {
+        self.mark_spec_taint();
+        self.page_state
+            .marks_split_first_tokens
+            .get(&class)
+            .cloned()
+            .unwrap_or_default()
+    }
+    fn splittopmarks_tokens(&self, class: i64) -> Vec<ntex_core::Token> {
+        self.mark_spec_taint();
+        self.page_state
+            .marks_split_top_tokens
+            .get(&class)
+            .cloned()
+            .unwrap_or_default()
+    }
+    fn splitbotmarks_tokens(&self, class: i64) -> Vec<ntex_core::Token> {
+        self.mark_spec_taint();
+        self.page_state
+            .marks_split_bot_tokens
+            .get(&class)
+            .cloned()
+            .unwrap_or_default()
+    }
     /// `\insert<num>{`：下一个组为 insert 组（tex.web group_code=insert_group=11）。
     ///
     /// tex.web `begin_insert_or_adjust`：`scan_eight_bit_int` → `saved(0):=cur_val`
@@ -154,19 +202,45 @@ impl PageSink for NodeBuilder {
         self.box_state.pending_kind = Some(GroupKind::Output);
         Ok(())
     }
-    /// `\mark`/`\marks<n>`：mark 节点追加到当前列表（无维度）。
-    /// 同步更新当前页 marks_first/marks_bot（class=None 映射到 0，即 \mark=\marks0）。
+    /// Store both the diagnostic spelling and the exact mark token list.
     fn mark(&mut self, class: Option<i64>, text: String) -> Result<()> {
-        // TeX 语义：\mark 等价于 \marks0（class 0）。
+        let tokens = text
+            .chars()
+            .map(|ch| {
+                ntex_core::Token::char(
+                    if ch == ' ' {
+                        ntex_core::Catcode::Space
+                    } else {
+                        ntex_core::Catcode::Other
+                    },
+                    ch as u32,
+                )
+            })
+            .collect();
+        self.mark_tokens(class, tokens, text)
+    }
+    fn mark_tokens(
+        &mut self,
+        class: Option<i64>,
+        tokens: Vec<ntex_core::Token>,
+        text: String,
+    ) -> Result<()> {
         let c = class.unwrap_or(0);
-        // marks_first：该 class 在当前页第一次出现时设置。
         self.page_state
             .marks_first
             .entry(c)
             .or_insert_with(|| text.clone());
-        // marks_bot：每次出现都更新（最后一次出现）。
         self.page_state.marks_bot.insert(c, text.clone());
-        self.append(Node::Mark { class, text });
+        self.page_state
+            .marks_first_tokens
+            .entry(c)
+            .or_insert_with(|| tokens.clone());
+        self.page_state.marks_bot_tokens.insert(c, tokens.clone());
+        self.append(Node::Mark {
+            class,
+            text,
+            tokens,
+        });
         Ok(())
     }
     fn take_write_flush_pending(&mut self) -> bool {

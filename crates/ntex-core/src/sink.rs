@@ -23,6 +23,21 @@ use crate::param::{ParamKind, ParamValue};
 use crate::register::Glue;
 use crate::token::Token;
 
+fn mark_string_tokens(text: &str) -> Vec<Token> {
+    text.chars()
+        .map(|ch| {
+            Token::char(
+                if ch == ' ' {
+                    crate::catcode::Catcode::Space
+                } else {
+                    crate::catcode::Catcode::Other
+                },
+                ch as u32,
+            )
+        })
+        .collect()
+}
+
 /// TeXXeT 方向节点种类（e-TeX `\beginL`/`\endL`/`\beginR`/`\endR`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DirectionKind {
@@ -600,6 +615,26 @@ pub trait PageSink {
     fn splitbotmarks(&self, _class: i64) -> String {
         String::new()
     }
+    /// Token-preserving mark queries used by the expansion engine. The default
+    /// keeps existing sinks source compatible; layout overrides these methods.
+    fn topmarks_tokens(&self, class: i64) -> Vec<Token> {
+        mark_string_tokens(&self.topmarks(class))
+    }
+    fn firstmarks_tokens(&self, class: i64) -> Vec<Token> {
+        mark_string_tokens(&self.firstmarks(class))
+    }
+    fn botmarks_tokens(&self, class: i64) -> Vec<Token> {
+        mark_string_tokens(&self.botmarks(class))
+    }
+    fn splitfirstmarks_tokens(&self, class: i64) -> Vec<Token> {
+        mark_string_tokens(&self.splitfirstmarks(class))
+    }
+    fn splittopmarks_tokens(&self, class: i64) -> Vec<Token> {
+        mark_string_tokens(&self.splittopmarks(class))
+    }
+    fn splitbotmarks_tokens(&self, class: i64) -> Vec<Token> {
+        mark_string_tokens(&self.splitbotmarks(class))
+    }
     /// `\insert<num>{`：下一个组为 insert 组（tex.web insert_group=11；组体在
     /// 内部垂直模式由主循环排版，`}` 处 vpack(natural) 挂 ins_node）。
     fn insert_begin(&mut self, _class: usize) -> Result<()> {
@@ -617,6 +652,12 @@ pub trait PageSink {
     /// `\mark`/`\marks<n>`：mark 节点（class：`\marks` 的寄存器号，`\mark` 为 None）。
     fn mark(&mut self, _class: Option<i64>, _text: String) -> Result<()> {
         Ok(())
+    }
+    /// Preserve the token list produced by `scan_toks(false,true)`, including
+    /// control sequences, group boundaries, and catcodes.
+    fn mark_tokens(&mut self, class: Option<i64>, tokens: Vec<Token>, text: String) -> Result<()> {
+        let _ = tokens;
+        self.mark(class, text)
     }
     /// RFC-3：页面真正输出（`\shipout` 边界）时置位；Expander 在 token 边界
     /// 检查并 flush 延迟写流。默认 sink（纯展开轨道）不置位 → 无副作用。
