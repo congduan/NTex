@@ -888,9 +888,11 @@ impl Expander {
     fn ifx_meaning(&self, tok: Token, noexpand: bool) -> MeaningKey {
         if noexpand {
             if let Some(csid) = tok.csid() {
-                let expandable = match self.eqtb.slot(csid).clone() {
+                let expandable = match self.eqtb.slot(self.deref_alias_chain(csid)).clone() {
                     EqSlot::Macro(_) => true,
-                    EqSlot::Primitive(p) => p.is_expandable(),
+                    // TeX assigns if_test/fi_or_else commands to the expandable
+                    // range even though NTex dispatches them through cond_op.
+                    EqSlot::Primitive(p) => p.is_expandable() || self.cond_op(tok).is_some(),
                     _ => false,
                 };
                 if expandable {

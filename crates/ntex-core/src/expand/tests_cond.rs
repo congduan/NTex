@@ -46,6 +46,14 @@ use super::*;
     }
 
     #[test]
+    fn edef_text_expand_conditional_token_uses_expandable_if_meaning() {
+        // l3text tests a candidate with \ifx\noexpand#1#1 before expanding it.
+        // A conditional primitive has TeX's expandable meaning in this test.
+        let src = r"\catcode`\:=11 \def\text_expand:n#1{\split #1\stop}\def\split#1#2\stop{\expandafter\ifx\noexpand#1#1 F\else #1#2\fi}\edef\R{\text_expand:n{\iftrue A\fi}}\R";
+        assert_eq!(expand(src).unwrap(), "A");
+    }
+
+    #[test]
     fn if_mode_conditions() {
         // 纯展开轨道 sink 恒为垂直模式：\ifvmode 真、\ifhmode/\ifmmode 假
         assert_eq!(expand("\\ifvmode yes\\else no\\fi").unwrap(), "yes");
