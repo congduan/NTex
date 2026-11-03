@@ -640,43 +640,22 @@ pub fn split_vbox(b: BoxNode, height: i64, splittopskip: Glue) -> (BoxNode, BoxN
     // existing box path has historically used zero here (the iniTeX default),
     // which also prevents an overfull late breakpoint from masking an earlier
     // legal one.
-    let split = vert_break(&b, height, 0, false);
+    let split = vert_break(&b, height, 0);
     // `vert_break` returns q, the breakpoint itself.  q is not linked into the
     // extracted list (tex.web `prune_page_top` owns it), so a breakpoint
     // penalty/glue/kern cannot leak into the split box.
-    let mut top = b.children[..split.cut].to_vec();
-    // The material immediately before q is page-break discardable too.  It is
-    // neither part of the extracted box nor of the pruned remainder.
-    while top.last().is_some_and(|node| {
-        matches!(
-            node,
-            Node::Glue { .. } | Node::Kern { .. } | Node::Penalty { .. }
-        )
-    }) {
-        top.pop();
-    }
+    let top = b.children[..split.cut].to_vec();
+    // tex.web vsplit 的顶盒 = marks 采集循环截断到 q 的 `p` 链（L19084-19101，
+    // `link(p)=q → link(p):=null`）：紧邻断点前的 glue/kern/penalty **保留在
+    // 顶盒**（GT 铁证 vk2 探针：`\vbox{A\kern3pt\penalty-10000 B}` 切 5pt，
+    // 真 TeX 顶盒 showbox 含 `.\kern 3.0`）。`prune_page_top` 只作用于余量
+    // 侧 q 起（L19062），不得提前到顶盒。
     let mut rest = b.children[split.cut..].to_vec();
     prune_vsplit_top(&mut rest, splittopskip);
-    // A malformed/no-break list still needs the historic `vsplit` progress
-    // guarantee used by the page-box path.  Legal TeX breakpoints always take
-    // precedence; this fallback is only q=null.
-    if split.cut == b.children.len()
-        && height < b.height.saturating_add(b.depth)
-        && !b.children.is_empty()
-    {
-        let mut acc = 0;
-        let cut = b
-            .children
-            .iter()
-            .position(|node| {
-                acc += node.dimensions().total();
-                acc >= height
-            })
-            .map_or(b.children.len(), |i| i + 1);
-        top = b.children[..cut].to_vec();
-        rest = b.children[cut..].to_vec();
-        prune_vsplit_top(&mut rest, splittopskip);
-    }
+    // tex.web L19060-19064：q=null ⇒ `box(n):=null`（余量整个置空），切出的顶盒
+    // 仍是 vpackage(p,h,exactly)。没有「按尺寸累计硬切」的兜底——列表末尾的
+    // eject 候选永远参与竞争（见 vert_break 尾注），q=null 即「全部进顶盒、
+    // 余量置空」（GT 铁证 mk1/mk3 探针）。
     (vpack(top, height, i64::MAX), BoxNode::new_vbox(rest))
 }
 
@@ -700,7 +679,7 @@ const DEPLORABLE: i64 = 100_000;
 /// Find TeX's least-cost vertical breakpoint.  This is shared by insertion
 /// splitting and `\vsplit`, whose difference is only what the caller does
 /// with q afterwards.
-pub(crate) fn vert_break(body: &BoxNode, h: i64, d: i64, eject_at_end: bool) -> VertBreak {
+pub(crate) fn vert_break(body: &BoxNode, h: i64, d: i64) -> VertBreak {
     let mut cur_height = 0i64;
     let mut prev_dp = 0i64;
     // tex.web `active_height[2..6]`: vertical breaking measures natural
@@ -846,7 +825,13 @@ pub(crate) fn vert_break(body: &BoxNode, h: i64, d: i64, eject_at_end: bool) -> 
     } else {
         b_raw
     };
-    if eject_at_end && b <= least_cost {
+    // tex.web `vert_break` 总是以 p=null（列表末尾）收尾：pi:=eject_penalty
+    // （tex.web L18977 + L18945），它与既有候选同规则竞争冠军（b<=least_cost），
+    // 赢则 best_place=null 返回——调用方据此判 q=null（`\vsplit` 余量置空 /
+    // 页构建器记 eject_penalty）。不存在「末尾候选可选」参数；该候选必须永远
+    // 参与（GT 铁证：`\vsplit\tb to \maxdimen` 中部 penalty100 列表，真 TeX
+    // 余量为空——末尾 eject 胜出）。
+    if b <= least_cost {
         VertBreak {
             penalty: None,
             taken: cur_height + prev_dp,
@@ -869,7 +854,7 @@ pub(crate) fn vert_break(body: &BoxNode, h: i64, d: i64, eject_at_end: bool) -> 
 
 /// `prune_page_top(q)` for `\vsplit`: discard glue/kern/penalty until the
 /// first box/rule, passing through marks and other dimensionless nodes.
-fn prune_vsplit_top(nodes: &mut Vec<Node>, splittopskip: Glue) {
+pub(crate) fn prune_vsplit_top(nodes: &mut Vec<Node>, splittopskip: Glue) {
     let mut i = 0;
     while i < nodes.len() {
         match &nodes[i] {
@@ -1369,7 +1354,19 @@ mod tests {
             second.clone(),
         ]);
         let (top, rest) = split_vbox(input, 20, Glue::new(25, 0, 0));
-        assert_eq!(top.children, vec![first]);
+        // GT 铁证（Knuth tex, vk3 探针 2026-11-04）：断点 q **之前**的 penalty
+        // 链保留在顶盒（\vsplit 打包循环 `while link(p)≠q` 只收 q 前材料）；
+        // q 本身不入顶盒——本例最低成本断点恰是 penalty -1000（pi 最负），
+        // 故顶盒 = hbox A + (-101) + (-100)，-1000 是 q 被排除。
+        // 旧期望「顶盒 pop 掉 penalties」是余量侧 prune 的误提前，被 GT 反证。
+        assert_eq!(
+            top.children,
+            vec![
+                first,
+                Node::Penalty { penalty: -101 },
+                Node::Penalty { penalty: -100 },
+            ]
+        );
         assert_eq!(rest.children.len(), 2);
         assert!(matches!(
             rest.children[0],
@@ -1417,6 +1414,76 @@ mod tests {
     }
 
     #[test]
+    fn vsplit_to_maxdimen_voids_remainder_despite_interior_penalty() {
+        // GT（Knuth tex, mk1/mk3 探针 2026-11-03）：`\vsplit\tb to \maxdimen`
+        // 对 `mark{kern hbox mark kern hbox penalty100 hbox}` 形状的列表，
+        // 末尾的隐式 eject 断点（pi=-10000）成本必然 ≤ 中部 penalty 候选
+        // （b(underfull)=10000 + 100 = 10100 或 deplorable），故 q=null ——
+        // 全部材料进顶盒、余量**置空**（tex.web L19060-19064 box(n):=null）。
+        // 回归：曾用非 tex.web 的 eject_at_end=false 丢弃末尾候选 + 按尺寸
+        // 累计硬切兜底，余量残留 hbox C（mk3 探针 STEP2 tb ht=10pt≠GT 0pt）。
+        let a = BoxNode::new_hbox(vec![char_of(10, 20, 0)]);
+        let b = BoxNode::new_hbox(vec![char_of(10, 20, 0)]);
+        let c = BoxNode::new_hbox(vec![char_of(10, 20, 0)]);
+        let input = BoxNode::new_vbox(vec![
+            Node::Mark {
+                class: None,
+                text: "M1".into(),
+                tokens: Vec::new(),
+            },
+            Node::Box(a),
+            Node::Mark {
+                class: None,
+                text: "M2".into(),
+                tokens: Vec::new(),
+            },
+            Node::Box(b),
+            Node::Penalty { penalty: 100 },
+            Node::Box(c),
+        ]);
+        let maxdimen = 1_073_741_823i64; // tex.web \maxdimen（sp）
+        let (top, rest) = split_vbox(input, maxdimen, Glue::new(10, 0, 0));
+        // 顶盒含全部三盒（mark 不计尺寸）
+        let boxes_in_top = top
+            .children
+            .iter()
+            .filter(|n| matches!(n, Node::Box(_)))
+            .count();
+        assert_eq!(boxes_in_top, 3, "all boxes go to the split-off top");
+        // 余量置空（q=null ⇒ box(n):=null）
+        assert!(
+            rest.children.is_empty(),
+            "remainder must be void when the end-of-list eject wins, got {:?}",
+            rest.children
+        );
+    }
+
+    #[test]
+    fn vsplit_top_keeps_discardables_adjacent_to_breakpoint() {
+        // GT（Knuth tex, vk2 探针 2026-11-04）：tex.web vsplit 的顶盒是 marks
+        // 采集循环截断到 q 的链（L19084-19101），紧邻断点前的 kern **保留在
+        // 顶盒**——`\vbox{hbox{A}\kern3pt\penalty-10000 hbox{B}}` 切 5pt，
+        // 真 TeX showbox 顶盒含 `.\kern 3.0`；prune_page_top 只作用余量侧。
+        // 回归：曾在顶盒尾部 pop 掉 glue/kern/penalty（把余量侧的 prune 误提前
+        // 到顶盒），顶盒丢 kern。
+        let a = BoxNode::new_hbox(vec![char_of(10, 20, 0)]);
+        let b = BoxNode::new_hbox(vec![char_of(10, 20, 0)]);
+        let input = BoxNode::new_vbox(vec![
+            Node::Box(a),
+            Node::Kern { width: 3 * 65_536 },
+            Node::Penalty { penalty: -10_000 },
+            Node::Box(b),
+        ]);
+        let (top, rest) = split_vbox(input, 5 * 65_536, Glue::new(10, 0, 0));
+        // 顶盒 = [hbox A, kern 3pt]：kern 紧邻断点 penalty 之前，必须保留
+        assert_eq!(top.children.len(), 2, "top keeps kern adjacent to break");
+        assert!(matches!(top.children[1], Node::Kern { .. }));
+        // 余量 = [hbox B]（断点 penalty 本身不进任何一侧，prune 已插 splittopskip）
+        assert_eq!(rest.children.len(), 2);
+        assert!(matches!(rest.children[1], Node::Box(_)));
+    }
+
+    #[test]
     fn insertion_vert_break_keeps_taken_unscaled_after_vfil() {
         // TRIP L122--128: count100=2000 scales page-goal debit only.  The
         // break machine still traverses this original vlist at w=803pt, and
@@ -1448,7 +1515,7 @@ mod tests {
             Node::Penalty { penalty: -1000 },
         ]);
 
-        let split = vert_break(&body, 803 * pt, -2 * pt, true);
+        let split = vert_break(&body, 803 * pt, -2 * pt);
         assert_eq!(split.penalty, Some(-101));
         assert_eq!(split.taken, 2677 * pt / 10);
         assert_eq!(split.cut, 2, "q is the -101 penalty itself");

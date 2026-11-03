@@ -23,7 +23,7 @@ use std::collections::{HashMap, HashSet};
 use ntex_core::param::Params;
 use ntex_core::register::{Glue, REGISTER_COUNT};
 
-use crate::node::{vert_break, vlist_width, BoxKind, BoxNode, Node};
+use crate::node::{prune_vsplit_top, vert_break, vlist_width, BoxKind, BoxNode, Node};
 
 /// tex.web's `last_glue`, `last_kern`, and `last_penalty` for the most
 /// recently processed contribution. Only one node kind is active at a time.
@@ -755,7 +755,7 @@ impl PageBuilder {
                     if w > w_cap {
                         w = w_cap;
                     }
-                    let split = vert_break(body, w, split_max_depth, true);
+                    let split = vert_break(body, w, split_max_depth);
                     let split_pen = split.penalty;
                     let taken = split.taken;
                     if self.tracing {
@@ -804,34 +804,11 @@ impl PageBuilder {
                         float_cost,
                     };
                     let mut remainder = body.children[split.cut..].to_vec();
-                    // tex.web `prune_page_top(q)`：断点 penalty、页首 glue/kern
-                    // 都不成为 holdover 内容；这只按节点类别，不看罚分数值。
-                    while remainder.first().is_some_and(|n| {
-                        matches!(
-                            n,
-                            Node::Glue { .. } | Node::Kern { .. } | Node::Penalty { .. }
-                        )
-                    }) {
-                        remainder.remove(0);
-                    }
-                    // `prune_page_top` 在首个盒前补 split_top_skip，并以该盒的
-                    // 高度抵消其自然宽度；因此它也是 remainder 的结构，不是页
-                    // 目标的计账项。
-                    if let Some(first) = remainder.first() {
-                        let mut split_glue = split_top_skip;
-                        split_glue.width = (split_glue.width - first.dimensions().height).max(0);
-                        remainder.insert(
-                            0,
-                            Node::Glue {
-                                name: Some("splittopskip"),
-                                width: split_glue.width,
-                                stretch: split_glue.stretch,
-                                shrink: split_glue.shrink,
-                                stretch_order: split_glue.stretch_order,
-                                shrink_order: split_glue.shrink_order,
-                            },
-                        );
-                    }
+                    // tex.web `prune_page_top(q)`（L18869-18886）：余量侧删 glue/
+                    // kern/penalty、跳过 whatsit/mark/ins，在首个 box/rule 前补
+                    // split_top_skip——与 `\vsplit` 的 `prune_vsplit_top` 同一台
+                    // 机器，两处必须同口径。
+                    prune_vsplit_top(&mut remainder, split_top_skip);
                     contrib.remove(0);
                     if params.misc[50] > 0 {
                         // fire_up leaves the original insertion node in
