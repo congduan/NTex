@@ -83,10 +83,11 @@
 //
 // ## 仍存边界（离 M5 目标还差什么）
 //
-// - **执行段成本 ≈ 全量段成本**：被编辑段及其引用段照常执行，每段多付两次
-//   expand 检查点捕获 + 词法依赖提取（~55µs/段）——改宏体场景执行段占多数时
-//   加速比被压在 ~1.1x。要再上台阶须把检查点捕获做成增量维护（ntex-core 引擎
-//   侧，非本阶段范围）。
+// - **执行段成本 ≈ 全量段成本**：被编辑段及其引用段照常执行。阶段六第五刀已
+//   共享相邻段的 pre 检查点；第六刀插桩测得 post 捕获 ~33µs/执行段，链偏差
+//   重扫 ~28µs/执行段，layout 回滚点 ~10µs/执行段（16/61 个）。旧文档的
+//   「两次捕获 + 词法依赖 ~55µs/段」已不适用。第六刀在旧、新段均状态中性
+//   时沿用前一段链偏差，61 次重扫降为 1 次；post 仍须精确捕获以供回滚。
 // - **副作用边界**：`\output` 例程（页面改道 box255+例程产出，注入路径不执行
 //   例程——观测到即禁用复用，保守全量重排）、`\write` 流内容、`\input`（本
 //   管线未注入 VFS）不在逐位一致口径内；字体表随管线单调增长（编辑删除
@@ -105,6 +106,58 @@ use ntex_core::incremental::snapshot::{
     lex_deps, reads_touch_slots, snapshot_states_equal, writes_touch_slots, ChainDelta,
     SegmentDeps, StateSnapshot,
 };
+
+// Test-only phase clock. The release library has no clock reads or counter writes.
+#[cfg(test)]
+thread_local! {
+    static INCR_PROFILE_ENABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static INCR_PHASES: std::cell::RefCell<[(u128, u32); 9]> =
+        const { std::cell::RefCell::new([(0, 0); 9]) };
+}
+
+#[cfg(test)]
+fn incr_phase_reset() {
+    INCR_PHASES.with(|p| *p.borrow_mut() = [(0, 0); 9]);
+    INCR_PROFILE_ENABLED.with(|enabled| enabled.set(true));
+}
+
+#[cfg(test)]
+fn incr_phase_report() {
+    INCR_PROFILE_ENABLED.with(|enabled| enabled.set(false));
+    const NAMES: [&str; 9] = [
+        "pre snapshot", "lex deps", "expand run", "post snapshot", "neutral compare",
+        "side boundary", "layout rollback", "reuse verdict", "chain delta",
+    ];
+    INCR_PHASES.with(|p| {
+        for (name, (ns, count)) in NAMES.iter().zip(p.borrow().iter()) {
+            println!("phase {name}: {ns} ns / {count} calls");
+        }
+    });
+}
+
+#[cfg(test)]
+macro_rules! incr_timed {
+    ($id:expr, $expr:expr) => {{
+        if INCR_PROFILE_ENABLED.with(|enabled| enabled.get()) {
+            let start = std::time::Instant::now();
+            let value = $expr;
+            let ns = start.elapsed().as_nanos();
+            INCR_PHASES.with(|p| {
+                let mut phases = p.borrow_mut();
+                phases[$id].0 += ns;
+                phases[$id].1 += 1;
+            });
+            value
+        } else {
+            $expr
+        }
+    }};
+}
+
+#[cfg(not(test))]
+macro_rules! incr_timed {
+    ($id:expr, $expr:expr) => {{ $expr }};
+}
 
 // DVI 写出由调用方完成（`ntex-dvi` 依赖本 crate，不能反向依赖）：
 // `write_dvi(&output.pages, &output.fonts)`。
@@ -813,7 +866,7 @@ impl IncrementalTypesetter {
                 Err("无缓存（合并段 / 前轮执行止于此段之前）")
             } else {
                 match delta.as_ref() {
-                    Some(d) => self.reuse_verdict(j, d),
+                    Some(d) => incr_timed!(7, self.reuse_verdict(j, d)),
                     None => Err("无链偏差基准（此前各段无旧缓存，保守重算）"),
                 }
             };
@@ -821,6 +874,7 @@ impl IncrementalTypesetter {
                 Ok(v) => v,
                 Err(reason) => {
                     self.rejects[j] = Some(reason);
+                    let old_neutral = self.cache[j].as_ref().is_some_and(|c| c.state_neutral);
                     let reference = self.cache[j]
                         .as_ref()
                         .map(|c| c.record_post.clone())
@@ -840,9 +894,18 @@ impl IncrementalTypesetter {
                             return Err(e);
                         }
                     }
-                    delta = reference
-                        .as_ref()
-                        .map(|r| ChainDelta::capture(&self.expander, r));
+                    // Both old and newly executed segments are state neutral in the
+                    // value/slot/output-visible control dimensions used by ChainDelta.
+                    // The live-vs-old-chain difference therefore stays unchanged.
+                    // Keep the old post reference fallback for missing caches.
+                    if !(old_neutral
+                        && self.cache[j].as_ref().is_some_and(|c| c.state_neutral)
+                        && delta.is_some())
+                    {
+                        delta = reference.as_ref().map(|r| {
+                            incr_timed!(8, ChainDelta::capture(&self.expander, r))
+                        });
+                    }
                     continue;
                 }
             };
@@ -1083,13 +1146,13 @@ impl IncrementalTypesetter {
         force: bool,
         exp_hint: Option<std::rc::Rc<StateSnapshot>>,
     ) {
-        let side = sink_builder(&mut self.expander).side_effects();
+        let side = incr_timed!(5, sink_builder(&mut self.expander).side_effects());
         let rollback = if force || at % ROLLBACK_EVERY == 0 || at == self.segments.len() {
             let exp = match exp_hint {
                 Some(s) => s,
                 None => std::rc::Rc::new(StateSnapshot::capture(&self.expander)),
             };
-            let layout = LayoutBoundary::capture(self.builder_mut());
+            let layout = incr_timed!(6, LayoutBoundary::capture(self.builder_mut()));
             Some(RollbackPoint { exp, layout })
         } else {
             None
@@ -1129,25 +1192,26 @@ impl IncrementalTypesetter {
         // 还原编辑必须回到基线）。
         let dirty_entry = !self.builder_shaped();
         let entry_ctx = main_above_depth(sink_builder(&mut self.expander));
-        let record_exp =
-            pre_hint.unwrap_or_else(|| std::rc::Rc::new(StateSnapshot::capture(&self.expander)));
+        let record_exp = pre_hint.unwrap_or_else(|| {
+            incr_timed!(0, std::rc::Rc::new(StateSnapshot::capture(&self.expander)))
+        });
         let source = self.segments[j].clone();
         // 词法读/写依赖（超近似；`read_versions` 仅诊断留痕）。
-        let deps = lex_deps(&source).attach_versions(self.expander.intern(), self.expander.eqtb());
+        let deps = incr_timed!(1, lex_deps(&source).attach_versions(self.expander.intern(), self.expander.eqtb()));
         self.builder_mut().record_main = Some(Vec::new());
         self.expander.feed_source(source);
-        let result = self.expander.run();
+        let result = incr_timed!(2, self.expander.run());
         let contrib = self.builder_mut().record_main.take().unwrap_or_default();
         // 出错即终止后续段（与全量 `run_source` 语义一致）；出错段的边界/缓存
         // 不更新——管线停在错误前状态，下次 `compile` 重建。
         result?;
         // 段后快照（与 `record_exp` 同源成对：同步态复用推进 + 状态中性判定都用它；
         // 独立于 `bounds[j+1]`——边界会被偏差路径复用刷新成当轮活状态）。
-        let record_post = std::rc::Rc::new(StateSnapshot::capture(&self.expander));
+        let record_post = incr_timed!(3, std::rc::Rc::new(StateSnapshot::capture(&self.expander)));
         let dirty_exit = !self.builder_shaped();
         // 状态中性 = 执行前后 expand 状态语义一致（捕获时算一次，判定只查布尔；
         // 有链偏差时它是"跳过执行且不还原旧 post"的健全前提）。
-        let state_neutral = snapshot_states_equal(&record_exp, &record_post);
+        let state_neutral = incr_timed!(4, snapshot_states_equal(&record_exp, &record_post));
         // 段后边界的 expand 半边复用该段 post（状态刚录到同一处，无需再捕获）。
         let exp_hint = std::rc::Rc::clone(&record_post);
         // 返回值：调用方用作下一执行段的 pre 共享源（`Rc` 克隆，非快照复制）。

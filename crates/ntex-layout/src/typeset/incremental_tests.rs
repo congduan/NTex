@@ -450,7 +450,7 @@ mod incremental_tests {
     /// 阶段五的削减点：盒子寄存器文件 `Rc` 共享 + 写时复制（32768 槽不再随
     /// 边界克隆/副作用对齐/闸比较每段复制）、链偏差跨段携带（逐段全量扫描 →
     /// 执行段后一次）、段边界两档化（每段只留副作用字段快照，回滚点按 1/8 密度）。
-    /// B 的剩余大头是执行段本身的排版 + 两次 expand 检查点捕获（见模块头
+    /// B 的剩余大头是执行段本身的排版 + post expand 检查点捕获（见模块头
     /// "仍存边界"）。
     #[test]
     #[ignore]
@@ -512,9 +512,16 @@ mod incremental_tests {
             let full = t.elapsed();
             let (mut it, _) = pipeline_compile(&macro_doc);
             let seg_count = it.segments().len();
+            let profile = std::env::var_os("NTEX_INCR_PROFILE").is_some();
+            if profile {
+                super::incr_phase_reset();
+            }
             let t = Instant::now();
             let out = it.edit(0, &new_preamble).expect("增量编辑宏体段");
             let inc = t.elapsed();
+            if profile {
+                super::incr_phase_report();
+            }
             assert_eq!(&out.pages, &reference.0, "基准口径 B：增量 != 全量（页面）");
             assert_eq!(&out.fonts, &reference.1, "基准口径 B：增量 != 全量（字体表）");
             let n_pages = out.pages.len();
@@ -539,8 +546,8 @@ mod incremental_tests {
                 rejected
             );
             println!(
-                "剩余开销（阶段五未动，见模块头\"仍存边界\"）：执行段的排版本身 + 每段两次 \
-                 expand 检查点捕获与词法依赖提取、注入节点的页面装配重跑。"
+                "剩余开销（见模块头\"仍存边界\"）：执行段的排版本身 + post expand \
+                 检查点捕获、注入节点的页面装配重跑。"
             );
         }
         println!("──────────────────────────────────────────────────");
