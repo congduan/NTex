@@ -76,6 +76,14 @@ impl ProtrusionCodes {
         slot.insert((font, ch), value);
     }
 
+    /// 清空两表（fmt 加载 = 新文档起点：凸出量不随快照持久化，同实例旧值
+    /// 不得泄漏过界）。与所有写路径一样经 `Rc::make_mut`。
+    pub(crate) fn clear(&mut self) {
+        let inner = Rc::make_mut(&mut self.inner);
+        inner.right.clear();
+        inner.left.clear();
+    }
+
     /// 检查点整体替换（M5 增量）：共享目标的 `Rc`（O(1)），两侧此后的
     /// 首个写路径经 `Rc::make_mut` 自动分离——语义与逐项复制等价。
     pub(crate) fn replace_from(&mut self, other: &Self) {

@@ -768,6 +768,21 @@ B 与全量同幅波动（噪声带）。TRIP 验证口径勘误：251B/1 页 = 
 自动预载），`--no-plain --dump` 两步跑的是全本 4015B/9 页——blade8 战报两形态
 混写已在此勘正。见 [战报](docs/archive/m5-stage6-blade9-font-tables-exact-2026-11-04.md)。
 
+**阶段六第十刀 ✅（2026-11-05，`4e111af` + review 必修，fontdimens/protrusions
+迁 ValueState 精确比较 + Rc 写时复制）**：post 捕获最后一座大表成本山头——
+expl3 intarray 场景 34931 条 fontdimens 时 capture 93.9µs/段（digest 逐项哈希
+79.6µs 占 85%）→ **3.4µs（27.9×）**，与空表打平。`FontDimens`/`ProtrusionCodes`
+内部 Rc 化（第七刀同形态：写路径必经 `Rc::make_mut`、`replace_from` 共享分配），
+两表迁入 `ValueState` 精确比较（`Rc::ptr_eq` 快路径 188ns + 深比较兜底，拒绝
+「指针身份进 digest」——地址复用假相等）；**顺手收口预存正确性洞**：protrusions
+此前既不在 digest 也不在 ValueState（比较面盲区，缓存错复用），迁移锁旧 HEAD
+即红。**Codex review 抓到 1 项需修（主控落码）**：`import_state` 重建 fontdimens
+却不清 protrusions——凸出量不随 fmt 持久化，同实例旧 `\rpcode` 泄漏过界；补
+`ProtrusionCodes::clear()` + import 清空 + 回归锁（去修复必红实证）。
+门禁：core 616 + layout 362 全绿 / clippy 0 / trip 251B golden + 全本 4015B/9 页 +
+tripos 750B/12 页逐字节一致 / 宏包 13/13。见
+[战报](docs/archive/m5-stage6-blade10-fontdimens-exact-2026-11-05.md)。
+
 **阶段六待办**（= M5 全部剩余项）：
 
 1. ~~检查点捕获增量维护~~ → 首刀已落（InsertRegs CoW，加速比 4.3x/1.1x →

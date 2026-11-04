@@ -1522,6 +1522,10 @@ impl Expander {
         for (f, n, v) in state.fontdimens {
             self.fontdimens.insert(f, n, v);
         }
+        // 凸出量表不随 fmt 持久化（刀H 登记），同 fontdimens 属「运行时覆盖表」：
+        // 加载新 fmt = 新文档起点，同实例已有的 \rpcode/\lpcode 不得泄漏过界
+        // （fontdimens 侧既有 clear+重建对齐；review 4e111af 需修项）。
+        self.protrusions.clear();
         self.hyphenchars = state.hyphenchars.iter().copied().collect();
         // v26：`\\skewchar` 覆盖表随快照恢复（数学重音 skew 定位；fmt 生成期
         // plain.tex/fontmath.ltx 的赋值不经 pass2 事件重放）。

@@ -2192,6 +2192,29 @@ I changed this one to zero.
     }
 
     #[test]
+    fn fmt_import_clears_stale_protrusions() {
+        // review 4e111af 需修项（review 抓到，主控落码）：凸出量表不随 fmt
+        // 持久化，import_state 必须清空同实例已写入的 \rpcode/\lpcode——
+        // 否则「同实例先排一篇带 microtype 凸出的文档 → 换载新 fmt 排第二篇」
+        // 时第一篇的凸出量泄漏进第二篇。fontdimens 侧既有 clear+重建同款对齐。
+        let mut e = Expander::new();
+        e.run_source(r"\rpcode\nullfont 97=50 \lpcode\nullfont 98=30").unwrap();
+        assert_eq!(e.protrusions.get(ProtrudeSide::Right, 0, 97), 50);
+
+        let state = Expander::new().export_state(); // 新 fmt：不含凸出量
+        e.import_state(state);
+
+        assert_eq!(
+            e.protrusions.get(ProtrudeSide::Right, 0, 97),
+            0,
+            "import_state 后旧 \\rpcode 必须清空（不得泄漏过界）"
+        );
+        assert_eq!(e.protrusions.get(ProtrudeSide::Left, 0, 98), 0);
+        // fontdimens 侧语义不回退：fmt 自带条目仍存活。
+        assert_eq!(e.fontdimens.get(0, 12), None, "新 fmt 无 fontdimen 覆盖");
+    }
+
+    #[test]
     fn fmt_import_keeps_explicit_zero_pdfhorigin() {
         // 锁 a：fmt 自带定义（含合法显式 0）不得被陈旧 fmt 补种守卫改回 1in。
         // 现场：用户 `\pdfhorigin=0pt \pdfvorigin=0pt` 后 dump 的 fmt，装载时
