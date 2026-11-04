@@ -613,6 +613,10 @@ fn checkpoint_roundtrip_restores_value_state() {
         "\\hsize=100pt \\tolerance=99 \\parindent=1pt \\vsize=500pt \\topskip=12pt",
         "\\parshape 2 0pt 10pt 1pt 9pt \\interlinepenalties 2 10 20",
         "\\thinmuskip=3mu \\output{\\relax}",
+        // 第十刀：\fontdimen 覆盖表与凸出量表（Rc CoW + 精确比较）——
+        // 捕获 → 泥沙 → 还原必须逐位复原（表走 ValueExtras 真值通道）。
+        "\\fontdimen12\\nullfont=13pt",
+        "\\rpcode\\nullfont 97=50",
     ];
     // 泥沙：把每个状态类别都改成"捕获值以外的值"（与 snippets 中的值均不同）
     let mud = "\\count0=1 \\dimen1=2pt \\skip2=4pt \\toks4={m} \\catcode`\\@=12 \
@@ -620,7 +624,8 @@ fn checkpoint_roundtrip_restores_value_state() {
                \\delcode`\\|=111 \\everypar{Q} \\everymath{Q} \\everyhbox{Q} \\everyvbox{Q} \
                \\everycr{Q} \\everydisplay{Q} \\errhelp{Q} \\hsize=1pt \\tolerance=1 \
                \\parindent=2pt \\vsize=3pt \\topskip=4pt \\parshape 1 2pt 3pt \
-               \\interlinepenalties 1 7 \\thinmuskip=5mu \\output{}";
+               \\interlinepenalties 1 7 \\thinmuskip=5mu \\output{} \
+               \\fontdimen12\\nullfont=1pt \\rpcode\\nullfont 97=1";
     for src in snippets {
         let mut e = Expander::new();
         let _ = e.run_source(src);

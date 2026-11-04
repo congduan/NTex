@@ -20,10 +20,11 @@
 //
 // 引擎可变字段分三类：
 // 1. **比较 + 还原**：`eqtb`、[`ValueState`]（catcode/sfcode/lccode/uccode、
-//    内部参数、输出例程、寄存器影子表、字体表与数学字体族）；
+//    内部参数、输出例程、寄存器影子表、字体表与数学字体族、
+//    `\fontdimen` 覆盖表与凸出量表——第十刀迁入，`Rc` 化后捕获/比较皆 O(1)）；
 // 2. **其余值字段**：由 `runtime_digest` 指纹比较，真值由 [`ValueExtras`]
-//    携带供还原；精确比较字段中的内部参数、lccode/uccode 与字体表
-//    也保留在其中供还原；
+//    携带供还原；精确比较字段中的内部参数、lccode/uccode、字体表与
+//    fontdimens/protrusions 也保留在其中供还原；
 // 3. **控制状态**（输入栈/组栈/条件栈/悬挂前缀）→ [`ControlState`]。不进指纹
 //    （段边界干净时均为空/默认），脏边界段的回滚靠它才能正确。
 //
@@ -84,6 +85,7 @@ pub(crate) struct ValueExtras {
     pub(crate) uccodes: [i64; 256],
     pub(crate) mathcodes: HashMap<u32, u32>,
     pub(crate) delcodes: HashMap<u32, u32>,
+    /// `\fontdimen` 覆盖表（第十刀 Rc 化：clone = 引用计数，restore 共享）。
     pub(crate) fontdimens: FontDimens,
     /// 刀H：\rpcode/\lpcode 凸出量表（赋值恒全局，与 fontdimens 同族）。
     pub(crate) protrusions: ProtrusionCodes,
@@ -449,6 +451,11 @@ impl Expander {
 //   在 `ptr_eq` 断言处红；
 // - 把 `Eqtb::slot_mut` 的 `Rc::make_mut` 换成对共享缓冲区就地写 →
 //   `fork_isolated_eqtb_cow_isolation` 在"fork 侧写污染主实例"处红。
+//
+// 第十刀（fontdimens/protrusions 同形态）：共享锁
+// `checkpoint_capture_shares_fontdimens_and_protrusions` 防"悄悄退回深拷贝"
+// （expl3 intarray 数万条场景 capture 每段 ~6µs 回退且不报错）；其写侧
+// make_mut 分离断言防"共享后忘记分离"（检查点被污染 = 语义错）。
 #[cfg(test)]
 mod cow_tests {
     use super::*;
@@ -537,5 +544,82 @@ mod cow_tests {
             fork.eqtb.slot(csid),
             "主实例写入应只影响自身"
         );
+    }
+
+    /// 共享锁（第十刀）：捕获后 fontdimens/protrusions 与活引擎共享同一
+    /// `Rc` 分配（计数 ≥ 2、指针相等），活引擎写入经 `make_mut` 分离——
+    /// 检查点视图不被污染，还原后回到旧值并重新共享。
+    ///
+    /// 「指针相同 ⇒ 内容必同」铁律的活体证明：本锁的 ptr_eq 断言在
+    /// 「捕获走深拷贝」（性能回退）与「写路径漏 make_mut」（检查点被污染，
+    /// 末段还原值断言红）两个方向都必红。
+    #[test]
+    fn checkpoint_capture_shares_fontdimens_and_protrusions() {
+        let mut e = Expander::new();
+        let _ = e.run_source("\\fontdimen12\\nullfont=13pt\\rpcode\\nullfont 97=50");
+        let (font, num, val) = e.fontdimens.to_vec().pop().expect("写入应有一项");
+
+        let cp = e.capture_checkpoint();
+        {
+            assert!(
+                Rc::ptr_eq(&e.fontdimens.inner, &cp.extras.fontdimens.inner),
+                "捕获必须共享 fontdimens 内部分配（深拷贝 = 本刀修复被撤销）"
+            );
+            assert!(
+                Rc::ptr_eq(&e.protrusions.inner, &cp.extras.protrusions.inner),
+                "捕获必须共享 protrusions 内部分配"
+            );
+            // 持有者 ≥ 引擎 + 检查点 extras + 检查点 ValueState。
+            assert!(
+                Rc::strong_count(&e.fontdimens.inner) >= 2,
+                "捕获后分配应被引擎与检查点共同持有"
+            );
+        }
+
+        // 活引擎写：make_mut 分离，检查点保持捕获时刻的值。
+        let _ = e.run_source("\\fontdimen12\\nullfont=20pt\\rpcode\\nullfont 97=90");
+        assert_eq!(
+            cp.extras.fontdimens.get(font, num),
+            Some(val),
+            "检查点 fontdimens 被活引擎写污染（make_mut 缺失）"
+        );
+        assert_eq!(cp.extras.protrusions.get(ProtrudeSide::Right, font, 97), 50);
+        assert_eq!(e.fontdimens.get(font, num), Some(20 * 65536));
+
+        // 还原：回到旧值，并与检查点重新共享。
+        e.restore_checkpoint(&cp);
+        assert_eq!(e.fontdimens.get(font, num), Some(val));
+        assert!(
+            Rc::ptr_eq(&e.fontdimens.inner, &cp.extras.fontdimens.inner),
+            "还原后引擎与检查点应重新共享（replace_from = Rc 共享）"
+        );
+    }
+
+    /// fork 隔离锁（第十刀）：`fork_isolated` 的 restore 与主实例共享
+    /// fontdimens/protrusions 分配，fork 侧 `\fontdimen`/`\rpcode` 写入经
+    /// `make_mut` 分离——主实例的表不受影响。
+    #[test]
+    fn fork_isolated_fontdimens_protrusions_cow_isolation() {
+        let mut main = Expander::new();
+        let _ = main.run_source("\\fontdimen12\\nullfont=13pt");
+
+        let mut fork = main.fork_isolated(Box::new(MemVfs::new()), Box::new(NoFontLoader));
+        assert!(
+            Rc::ptr_eq(&fork.fontdimens.inner, &main.fontdimens.inner),
+            "fork 的 restore 应与主实例共享 fontdimens 分配"
+        );
+
+        let _ = fork.run_source("\\fontdimen12\\nullfont=20pt\\rpcode\\nullfont 97=7");
+        assert_eq!(
+            fork.fontdimens.get(0, 12),
+            Some(20 * 65536),
+            "fork 侧写应生效于自己的表"
+        );
+        assert_eq!(
+            main.fontdimens.get(0, 12),
+            Some(13 * 65536),
+            "fork 侧写泄漏到主实例（make_mut 缺失）"
+        );
+        assert_eq!(main.protrusions.get(ProtrudeSide::Right, 0, 97), 0);
     }
 }

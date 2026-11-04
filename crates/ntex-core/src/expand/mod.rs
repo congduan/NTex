@@ -2115,11 +2115,11 @@ impl Expander {
 ///
 /// `.fmt` 快照（[`FmtState`]）覆盖宏定义/寄存器/参数主干，但**不含**若干运行时
 /// 字段（`\everypar` 等 token 列表、`\mathcode`/`\lccode` 等编码表、`\parshape`、
-/// e-TeX 惩罚数组、字体参数覆盖、读写流）。段级缓存的失效判定必须看到**全部**
+/// e-TeX 惩罚数组、读写流）。段级缓存的失效判定必须看到**全部**
 /// 影响输出的状态，否则会把"缓存仍有效"判错（M5 风险项：副作用漏追踪 → 缓存错）。
 ///
 /// 组成：可精确比较的部分（catcode/sfcode/lccode/uccode 表、内部参数、
-/// `\output` 例程、寄存器版本戳、字体表与数学字体族）
+/// `\output` 例程、寄存器版本戳、字体表与数学字体族、`\fontdimen`/凸出量表）
 /// + `runtime_digest` 指纹（其余状态；HashMap 逐项哈希后累加，与迭代顺序无关）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ValueState {
@@ -2146,6 +2146,13 @@ pub struct ValueState {
     pub font_cs_names: Vec<Option<String>>,
     /// 数学字体族。
     pub math_fonts: [[u32; 16]; 3],
+    /// `\fontdimen` 覆盖表（第十刀迁出指纹：内部 `Rc`，捕获 = 引用计数，
+    /// 比较走 `Rc::ptr_eq` 快路径——未触表的段 O(1) 判等；expl3 intarray
+    /// 场景数万条逐项哈希 ~80µs/段是 post 捕获剩余大头）。
+    pub fontdimens: FontDimens,
+    /// 凸出量表（第十刀：此前**比较面盲区**——既不在指纹也不在精确比较，
+    /// 只改 \rpcode/\lpcode 的段会被判「状态未变」；同 FontDimens 迁入）。
+    pub protrusions: ProtrusionCodes,
     /// 其余运行时状态指纹（`Expander::runtime_digest`）。
     pub runtime_digest: u64,
 }
@@ -2284,6 +2291,9 @@ impl Expander {
             font_names: self.font_names.clone(),
             font_cs_names: self.font_cs_names.clone(),
             math_fonts: self.math_fonts,
+            // Rc 化后为引用计数 +1（~ns 级）；比较走 ptr_eq 快路径（第十刀）。
+            fontdimens: self.fontdimens.clone(),
+            protrusions: self.protrusions.clone(),
             runtime_digest: self.runtime_digest(),
         }
     }
@@ -2321,10 +2331,11 @@ impl Expander {
     /// 其余运行时状态的 FNV-1a 指纹（64 位）。
     ///
     /// 覆盖 `.fmt` 快照未含、但影响后续输出的字段：`\everypar` 等 token 列表、
-    /// mathcode/delcode、parshape、e-TeX 惩罚数组、
-    /// `\fontdimen`/`\hyphenchar`/`\skewchar` 覆盖、读写流位置、
-    /// dump/数学模式标志。内部参数、lccode/uccode 表、字体表与数学字体族
-    /// 由 ValueState 精确比较。
+    /// mathcode/delcode、parshape、e-TeX 惩罚数组、`\hyphenchar`/`\skewchar`
+    /// 覆盖、读写流位置、dump/数学模式标志。内部参数、lccode/uccode 表、
+    /// 字体表与数学字体族、`\fontdimen`/凸出量表由 ValueState 精确比较
+    /// （第十刀：fontdimens 数万条时逐项哈希 ~80µs/段，是 post 捕获剩余
+    /// 大头；小表——mathcodes/hyphenchars/skewchars 实测 ~ns 级，留指纹）。
     /// **不含**诊断性状态（`last_tok`/`error_anchor`/`output_trigger_line` 等
     /// 只影响错误消息位置，不影响输出 token）。
     fn runtime_digest(&self) -> u64 {
@@ -2358,12 +2369,8 @@ impl Expander {
                 .iter()
                 .map(|(k, v)| (u64::from(*k), u64::from(*v))),
         );
-        digest_pairs(
-            &mut h,
-            self.fontdimens
-                .iter()
-                .map(|(k, v)| ((u64::from(k.0) << 32) | u64::from(k.1), *v as u64)),
-        );
+        // \fontdimen 覆盖表与凸出量表：第十刀迁入 ValueState 精确比较
+        // （Rc::ptr_eq 快路径），不再逐项哈希。
         digest_pairs(
             &mut h,
             self.hyphenchars

@@ -32,6 +32,48 @@ mod tests {
         assert_ne!(e.value_state(), before);
     }
 
+    /// 第十刀迁移锁：\fontdimen/凸出量写入**不进指纹**（`runtime_digest` 不变）
+    /// 但必被 ValueState 精确比较捕获（`value_state` ≠ before）。
+    ///
+    /// 双向防回退：写路径若退回逐项哈希 → 第一组断言红（性能回退不报错）；
+    /// 字段若从比较面漏掉 → 第二组断言红（缓存错复用 = 正确性洞）。
+    /// protrusions 段在第十刀前的 HEAD 上即红：该表当时**两处都不在**——
+    /// 只改 \rpcode 的段被增量判定为「状态未变」，属预存盲区，本刀收口。
+    #[test]
+    fn fontdimens_and_protrusions_compared_exactly_outside_runtime_digest() {
+        let mut e = Expander::new();
+        let _ = e.run_source("\\fontdimen12\\nullfont=13pt");
+        let before_fd = e.value_state();
+        let digest_with_fd = e.runtime_digest();
+
+        // \fontdimen 写入：指纹不变，精确比较面必变。
+        let _ = e.run_source("\\fontdimen12\\nullfont=14pt");
+        assert_eq!(
+            e.runtime_digest(),
+            digest_with_fd,
+            "fontdimens 已迁出指纹（第十刀）——退回逐项哈希即性能回退"
+        );
+        assert_ne!(e.value_state(), before_fd, "fontdimens 必须留在比较面");
+
+        // \rpcode 写入（此前比较面盲区）：同理。
+        let before_pc = e.value_state();
+        let _ = e.run_source("\\rpcode\\nullfont 97=50");
+        assert_eq!(
+            e.runtime_digest(),
+            digest_with_fd,
+            "protrusions 走精确比较面（第十刀）"
+        );
+        assert_ne!(e.value_state(), before_pc, "protrusions 写入必须被比较面看到");
+
+        // 深比较兜底：内容等价的两份独立分配仍判等（Rc::ptr_eq 只是快路径，
+        // 不是唯一判据——fork/restore 各自写回同值时不得误判失效）。
+        let mut f = Expander::new();
+        let _ = f.run_source("\\fontdimen12\\nullfont=13pt");
+        let mut g = Expander::new();
+        let _ = g.run_source("\\fontdimen12\\nullfont=13pt");
+        assert_eq!(f.value_state().fontdimens, g.value_state().fontdimens);
+    }
+
     /// 运行源码（**双轨等价**）：字节码与解释器轨道各跑一次并断言输出一致，
     /// 返回字节码轨道结果。全部用例自动覆盖 M2 双轨验证。
     fn expand(src: &str) -> Result<String> {
@@ -2380,3 +2422,5 @@ I changed this one to zero.
     // 刀M：\message 必选 `{` 位条件就地求值 + 消息文本 xpand 构成（TRIP l.419）。
     mod tests_message_scan { include!("tests_message_scan.rs"); }
 }
+
+
