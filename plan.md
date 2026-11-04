@@ -755,6 +755,19 @@ golden 逐字节一致（**177B 为 vsize 修正前陈旧口径**，blade4 战�
 gpt-6-sol 实施、主控收口+review（自查纠正 FmtState/ValueState 落点错位一处）。
 见 [战报](docs/archive/m5-stage6-blade8-digest-migration-2026-11-04.md)。
 
+**阶段六第九刀 ✅（2026-11-04，font_loads/name 表/math_fonts 迁 ValueState 精确比较）**：
+第八刀点名的「可精确比较却进指纹」最大嫌疑成分落地——`font_loads`（Debug 串
+格式化）+ `font_names`/`font_cs_names`/`math_fonts` 四字段从 `runtime_digest()`
+摘除，迁入 `ValueState` 精确比较（第八刀同形态）；回归锁
+`font_tables_are_compared_exactly_outside_runtime_digest`（digest 恒等 + ValueState
+必变双向断言）。**Codex gpt-6-sol 额度耗尽首实战**：实施完成后退出（无 commit），
+主控接管 diff 审查 + 全量验证收口（review 缺席事实在案）。门禁：core 610
+（+1 新锁）+ layout 362 全绿 / clippy 0 / TRIP 251B golden + tripos 750B/12 页
+逐字节一致 / fmt 冒烟 3373B = 基线。基准 A 增量最小 7.05ms（基线 7.71ms），
+B 与全量同幅波动（噪声带）。TRIP 验证口径勘误：251B/1 页 = 直接跑（plain
+自动预载），`--no-plain --dump` 两步跑的是全本 4015B/9 页——blade8 战报两形态
+混写已在此勘正。见 [战报](docs/archive/m5-stage6-blade9-font-tables-exact-2026-11-04.md)。
+
 **阶段六待办**（= M5 全部剩余项）：
 
 1. ~~检查点捕获增量维护~~ → 首刀已落（InsertRegs CoW，加速比 4.3x/1.1x →
@@ -762,9 +775,11 @@ gpt-6-sol 实施、主控收口+review（自查纠正 FmtState/ValueState 落点
    深拷贝，改正文 6.4x→7.9x）；~~结构性 owned 拷贝~~ → 第四刀已落（shipped 页面
    Rc 共享；`contrib.clone()` 实测无收益保留，见上）；~~eqtb 槽向量整份拷贝~~
    → 第七刀已落（Rc CoW，post 45.1→42.1µs）；~~runtime_digest params/lcc/ucc
-   Debug 串与表循环~~ → 第八刀已落（迁精确比较，基准 A 5.8x）。**余项**：
-   digest 剩余成分（font_loads Debug 串 / 五 HashMap 逐项哈希）或改脏标记路线，
-   与 pre 侧捕获（每执行段两次 `StateSnapshot::capture`）；
+   Debug 串与表循环~~ → 第八刀已落（迁精确比较，基准 A 5.8x）；~~font_loads
+   Debug 串/name 表/math_fonts~~ → 第九刀已落（迁精确比较）。**余项**：
+   digest 剩余成分（五 HashMap 逐项哈希 / parshape / penalty_arrays / 流状态——
+   fontdimens 大表 clone 换哈希可能反亏，建议脏标记或 CoW+ptr_eq 路线），
+   与 record_post 恒真捕获；
 2. **副作用边界** —— `\output` 例程回放 / `\write` 流内容 / `\input` VFS 注入 /
    marks 语义（当前观测到即保守全量重排）；
 3. `Expand(source, snapshot)` **纯函数化**收尾；
