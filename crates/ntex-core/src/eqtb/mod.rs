@@ -5,6 +5,7 @@
 //! - 宏定义槽版本化（[`Versioned`]），供 M5 增量依赖追踪；
 //! - `\let` 走 [`EqSlot::Alias`] 间接（不复制宏体）。
 
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::catcode::Catcode;
@@ -42,9 +43,20 @@ pub enum StreamKind {
 }
 
 /// eqtb：按 csid 索引的等价槽数组。
+///
+/// **槽向量写时复制（M5 阶段六第七刀）**：`slots` 是 `Rc<Vec<EqSlot>>`，
+/// 段边界检查点捕获（[`crate::expand::Expander::capture_checkpoint`]）只加
+/// 一次引用计数，不再整份深拷贝（实测 465 槽：6.8µs → 0.11µs/次捕获，随槽量
+/// 线性放大）。写路径一律经 `Rc::make_mut`：捕获后有写才克隆一次，本次写完
+/// 引擎独占、下次捕获再 O(1)。语义与裸 `Vec` 完全等价——「拷贝变引用计数」
+/// 是唯一变化，不含任何「相等⇒跳过」的优化。
+///
+/// 线程前提：M6 投机是 `fork_isolated` 的 fork 式顺序执行（无真线程）；
+/// 将来真并行时这条路径升 `Arc` + 写侧锁（`Arc::make_mut` 需要 `Clone`，
+/// 语义同形），届时 `levels` 与 `slots` 的一致性需同一把锁保护。
 #[derive(Debug, Clone, Default)]
 pub struct Eqtb {
-    slots: Vec<EqSlot>,
+    slots: Rc<Vec<EqSlot>>,
     /// 每槽"当前含义的层级"（tex.web eq_level，仅两档）：
     /// 0 = 全局（tex.web level_one；初值/`.fmt` 载入后均为此），
     /// 1 = 组内局部赋值后的当前值。unsave 恢复时层级为 0 的槽 **retain**
@@ -62,8 +74,10 @@ impl Eqtb {
 
     /// 确保 csid 槽存在（自动扩展为 `Undefined`）。
     fn ensure(&mut self, csid: u32) {
-        while (self.slots.len() as u32) <= csid {
-            self.slots.push(EqSlot::Undefined);
+        // 写时复制：共享中的槽向量在此分离一次（`make_mut` 在唯一持有时零开销）。
+        let slots = Rc::make_mut(&mut self.slots);
+        while (slots.len() as u32) <= csid {
+            slots.push(EqSlot::Undefined);
             self.levels.push(0);
         }
     }
@@ -84,10 +98,10 @@ impl Eqtb {
         self.levels[csid as usize] = level;
     }
 
-    /// 可变槽（自动扩展）。
+    /// 可变槽（自动扩展；写时复制分离在 [`Self::ensure`] 内完成）。
     pub fn slot_mut(&mut self, csid: u32) -> &mut EqSlot {
         self.ensure(csid);
-        &mut self.slots[csid as usize]
+        &mut Rc::make_mut(&mut self.slots)[csid as usize]
     }
 
     /// 定义宏：已有宏槽则 bump 版本（保持版本单调），否则新建。
@@ -146,14 +160,28 @@ impl Eqtb {
 
     /// 全部槽（`.fmt` 快照：导出用）。
     pub fn slots(&self) -> &[EqSlot] {
-        &self.slots
+        self.slots.as_slice()
+    }
+
+    /// 槽向量的共享句柄（M5 阶段六第七刀：段边界检查点捕获 = 一次引用计数）。
+    pub(crate) fn slots_shared(&self) -> Rc<Vec<EqSlot>> {
+        Rc::clone(&self.slots)
     }
 
     /// 整体替换槽（`.fmt` 快照：加载用）。层级全部复位为全局——
     /// dump 后的槽语义上等同初表原语（tex.web level_one）。
     pub fn replace_slots(&mut self, slots: Vec<EqSlot>) {
+        self.levels = vec![0; slots.len()];
+        self.slots = Rc::new(slots);
+    }
+
+    /// 整体替换槽（共享句柄；检查点还原用）。层级复位语义同 [`Self::replace_slots`]。
+    ///
+    /// 还原后引擎与检查点共享同一份槽向量：引擎下次写经 `Rc::make_mut` 自动
+    /// 分离，检查点持有旧副本不被污染。
+    pub(crate) fn replace_slots_shared(&mut self, slots: Rc<Vec<EqSlot>>) {
+        self.levels = vec![0; slots.len()];
         self.slots = slots;
-        self.levels = vec![0; self.slots.len()];
     }
 }
 

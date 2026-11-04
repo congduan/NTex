@@ -732,13 +732,28 @@ dev A 场景 ~2.3ms）+ `finish_doc` 的 `shipped.clone()`（全页深拷贝，~
 <1%），不足以抵消新增 API 与借用面，故不做。逐刀全录
 [战报](docs/archive/m5-stage6-blade4-shipped-rc-2026-11-03.md)。
 
+**阶段六第七刀 ✅（2026-11-04，eqtb 槽向量 Rc 写时复制）**：`Eqtb.slots`
+`Vec<EqSlot>` → `Rc<Vec<EqSlot>>`，`ensure`/`slot_mut` 走 `Rc::make_mut`；检查点
+`EngineCheckpoint.eqtb` 改 `Rc<Vec<EqSlot>>`——捕获 = 引用计数、还原 = 共享（下次写
+自动分离），`slots()`/`restore_slots` 语义不变、fmt 格式不动。回归锁两把
+（共享锁 + fork 隔离锁），去修复必红已实证。
+**实测（release，HEAD 对照 worktree 交错 3 组共 15 轮）**：post 捕获最小
+**45.1 → 42.1µs/段（−6.6%）**，与本刀削掉的 eqtb 分量一致（instrumented：
+`to_vec` 6.8µs → `Rc::clone` 0.11µs，465 槽）。**本机 `nproc=2` 且实测期 load 14.4，
+墙钟不可判读（场景 A 7.44→7.41ms、场景 B 22.6→23.2ms，噪声内，无回退）**。
+**⚠ 刀靶前提被证伪**：post 的真大头是 `value_state()` 的 `runtime_digest()`
+（~35µs/段，占 90%+），不是 `eqtb.to_vec`；`<10µs` 需下一刀动 digest，见
+[战报](docs/archive/m5-stage6-blade7-eqtb-cow-2026-11-04.md)。
+
 **阶段六待办**（= M5 全部剩余项）：
 
 1. ~~检查点捕获增量维护~~ → 首刀已落（InsertRegs CoW，加速比 4.3x/1.1x →
    5.2x/1.6x）；~~复用段 reinject 的页面装配重跑~~ → 第三刀已落（去三次行盒子树
    深拷贝，改正文 6.4x→7.9x）；~~结构性 owned 拷贝~~ → 第四刀已落（shipped 页面
-   Rc 共享；`contrib.clone()` 实测无收益保留，见上）。**余项**：expand 侧
-   `StateSnapshot::capture` 每执行段两次 ~30µs（`ntex-core` 引擎侧）；
+   Rc 共享；`contrib.clone()` 实测无收益保留，见上）；~~eqtb 槽向量整份拷贝~~
+   → 第七刀已落（Rc CoW，post 45.1→42.1µs）。**余项**：post 捕获的
+   `runtime_digest()`（~35µs/段，第七刀实测证伪了"eqtb 拷贝是大头"的原判），
+   与 pre 侧捕获（每执行段两次 `StateSnapshot::capture`）；
 2. **副作用边界** —— `\output` 例程回放 / `\write` 流内容 / `\input` VFS 注入 /
    marks 语义（当前观测到即保守全量重排）；
 3. `Expand(source, snapshot)` **纯函数化**收尾；

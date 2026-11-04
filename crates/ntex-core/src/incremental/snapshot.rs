@@ -42,9 +42,10 @@ impl StateSnapshot {
         &self.cp.value
     }
 
-    /// eqtb 全部槽（浅拷贝：宏体 `Arc` 共享；槽级比较支持"只失效受影响段"）。
+    /// eqtb 全部槽（共享句柄 `Rc`，不再浅拷贝；宏体 `Arc` 共享；槽级比较
+    /// 支持"只失效受影响段"）。
     pub(crate) fn eqtb(&self) -> &[EqSlot] {
-        &self.cp.eqtb
+        self.cp.eqtb.as_slice()
     }
 
     /// 整体还原检查点（M5 阶段三排版层管线的跨 crate 回滚入口——检查点字段

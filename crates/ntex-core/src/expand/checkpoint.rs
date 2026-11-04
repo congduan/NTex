@@ -41,11 +41,15 @@
 /// 捕获/还原通道；构造与字段访问仍留在本 crate 内。
 #[derive(Debug, Clone)]
 pub struct EngineCheckpoint {
-    /// eqtb 全部槽（比较 + 还原；宏体 `Arc` 共享，克隆廉价）。
+    /// eqtb 全部槽（比较 + 还原）。
+    ///
+    /// `Rc` 共享（M5 阶段六第七刀）：捕获 = 引用计数 +1，不复制槽向量；
+    /// 活引擎此后首个 eqtb 写经 `Rc::make_mut` 分离（检查点这份不被污染）。
+    /// 宏体 `Arc` 共享不变。
     ///
     /// 还原用整体替换：段执行期间新驻留的 cs 槽被截掉——它们在段前确实未定义；
     /// 名字仍在驻留表里，重放该段时按同一 csid 重建同值槽。
-    pub(crate) eqtb: Vec<EqSlot>,
+    pub(crate) eqtb: Rc<Vec<EqSlot>>,
     /// 值状态（比较口径 = [`ValueState::PartialEq`]：catcode/sfcode 表、
     /// `\output` 例程、寄存器影子表、其余值字段指纹）。
     pub(crate) value: ValueState,
@@ -212,7 +216,7 @@ impl Expander {
     /// 捕获完整状态检查点（只读；M5 阶段二段级回滚 / 阶段三排版层管线用）。
     pub fn capture_checkpoint(&self) -> EngineCheckpoint {
         EngineCheckpoint {
-            eqtb: self.eqtb.slots().to_vec(),
+            eqtb: self.eqtb.slots_shared(),
             value: self.value_state(),
             extras: ValueExtras {
                 params: self.params,
@@ -293,7 +297,7 @@ impl Expander {
     /// 逐字段赋值，与 [`Self::capture_checkpoint`] 镜像；不触碰的字段见文件头
     /// 注释（intern 追加型、sink 每段各自换新、vfs/字体加载器为配置）。
     pub fn restore_checkpoint(&mut self, cp: &EngineCheckpoint) {
-        self.eqtb.replace_slots(cp.eqtb.clone());
+        self.eqtb.replace_slots_shared(Rc::clone(&cp.eqtb));
         self.catcodes = cp.value.catcodes.clone();
         self.catcode_tables = cp.value.catcode_tables.clone();
         self.sfcodes = cp.value.sfcodes;
@@ -428,5 +432,108 @@ impl Expander {
         e.output_group_level = self.output_group_level;
         e.output_boundary_yield = self.output_boundary_yield;
         e
+    }
+}
+
+// ---------- 回归锁：eqtb 槽向量 Rc 写时复制（M5 阶段六第七刀） ----------
+//
+// 两把锁锁住本刀的**唯一**前提：捕获 = 共享（不是深拷贝），写 = 分离（不是
+// 就地改共享副本）。前者防"悄悄退回深拷贝"（性能回退且不报错），后者防
+// "共享后忘记 make_mut"（检查点/派生引擎被污染 = 语义错）。
+//
+// 「去修复必红」实证（本地手工验证后已还原）：
+// - 把 `capture_checkpoint` 的 `eqtb: self.eqtb.slots_shared()` 换回
+//   `self.eqtb.slots().to_vec().into()` → `checkpoint_capture_shares_eqtb_slots`
+//   在 `ptr_eq` 断言处红；
+// - 把 `Eqtb::slot_mut` 的 `Rc::make_mut` 换成对共享缓冲区就地写 →
+//   `fork_isolated_eqtb_cow_isolation` 在"fork 侧写污染主实例"处红。
+#[cfg(test)]
+mod cow_tests {
+    use super::*;
+    use ntex_io::MemVfs;
+
+    /// 共享锁：捕获后检查点与活引擎指向同一份槽向量（`Rc` 计数 ≥ 2、指针相等），
+    /// 且捕获后活引擎写 eqtb 走 `make_mut` 分离——检查点视图不被污染，还原回旧值。
+    #[test]
+    fn checkpoint_capture_shares_eqtb_slots() {
+        let mut e = Expander::new();
+        let _ = e.run_source("\\def\\cow{old}");
+        let csid = e.intern.lookup("cow").expect("cow 应已驻留");
+        let before = e.eqtb.slot(csid).clone();
+
+        let cp = e.capture_checkpoint();
+        {
+            let live = e.eqtb.slots_shared();
+            assert!(
+                Rc::ptr_eq(&live, &cp.eqtb),
+                "捕获必须共享槽向量（深拷贝 = 本刀修复被撤销）"
+            );
+            assert!(
+                Rc::strong_count(&live) >= 2,
+                "捕获后槽向量应被引擎与检查点共同持有"
+            );
+        }
+
+        // 活引擎写 eqtb：首次写触发一次 make_mut 分离。
+        let _ = e.run_source("\\def\\cow{new}");
+        assert!(
+            Rc::strong_count(&cp.eqtb) == 1,
+            "活引擎写后应与检查点分离（检查点独占旧副本）"
+        );
+        assert_eq!(
+            cp.eqtb[csid as usize], before,
+            "检查点视图被活引擎写污染（make_mut 缺失）"
+        );
+        assert_ne!(e.eqtb.slot(csid), &before, "活引擎应持有新值");
+
+        // 还原：回到旧值，并重新共享同一份槽向量。
+        e.restore_checkpoint(&cp);
+        assert_eq!(e.eqtb.slot(csid), &before, "还原后应回到捕获时刻的值");
+        assert!(
+            Rc::ptr_eq(&e.eqtb.slots_shared(), &cp.eqtb),
+            "还原后引擎与检查点应重新共享"
+        );
+    }
+
+    /// fork 隔离锁：`fork_isolated` 后两侧共享槽向量（`Rc`），fork 侧 `\def`
+    /// 经 `make_mut` 分离——主实例的槽与后续展开都不受影响。
+    ///
+    /// 深拷贝实现下本锁天然绿；CoW 下绿即证明"共享 ⇒ 写侧分离"链路完整。
+    #[test]
+    fn fork_isolated_eqtb_cow_isolation() {
+        let mut main = Expander::new();
+        let _ = main.run_source("\\def\\cow{main}");
+        let csid = main.intern.lookup("cow").expect("cow 应已驻留");
+        let before = main.eqtb.slot(csid).clone();
+
+        let mut fork = main.fork_isolated(Box::new(MemVfs::new()), Box::new(NoFontLoader));
+        assert!(
+            Rc::ptr_eq(&fork.eqtb.slots_shared(), &main.eqtb.slots_shared()),
+            "fork 应共享主实例的槽向量"
+        );
+
+        let _ = fork.run_source("\\def\\cow{fork}\\def\\fresh{f}");
+        assert_ne!(
+            fork.eqtb.slot(csid),
+            &before,
+            "fork 侧写应生效于 fork 自己的槽"
+        );
+        assert_eq!(
+            main.eqtb.slot(csid),
+            &before,
+            "fork 侧写泄漏到主实例（make_mut 缺失）"
+        );
+        assert!(
+            main.intern.lookup("fresh").is_none(),
+            "fork 的 intern 是独立副本"
+        );
+
+        // 主实例继续写自己的值：与 fork 的槽仍独立。
+        let _ = main.run_source("\\def\\cow{main2}");
+        assert_ne!(
+            main.eqtb.slot(csid),
+            fork.eqtb.slot(csid),
+            "主实例写入应只影响自身"
+        );
     }
 }

@@ -17,6 +17,8 @@
 //! - 空行 → `\par` 已实现（`scan_token` 行状态机，A2）。
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
+// eqtb 槽向量写时复制（M5 阶段六第七刀）：检查点捕获共享 `Rc`，与目标平台无关。
+use std::rc::Rc;
 // 原子量/Mutex 仅线程看门狗用（M8-A WASM 骨架线：wasm32 下看门狗整段门控，
 // 随之不导入，免 wasm 构建出现 unused import 警告）。
 #[cfg(not(target_arch = "wasm32"))]
