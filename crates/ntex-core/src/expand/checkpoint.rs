@@ -19,9 +19,10 @@
 // ## 字段清单（新增引擎状态字段时同步这里）
 //
 // 引擎可变字段分三类：
-// 1. **比较 + 还原**：`eqtb`、[`ValueState`]（catcode/sfcode/`\output`/寄存器影子表）；
-// 2. **只进指纹的值字段** → [`ValueExtras`]（真值载体；指纹不可逆，没有真值
-//    就无法还原）。字段集与 `runtime_digest` 一一对应；
+// 1. **比较 + 还原**：`eqtb`、[`ValueState`]（catcode/sfcode/lccode/uccode、
+//    内部参数、输出例程、寄存器影子表）；
+// 2. **其余值字段**：由 `runtime_digest` 指纹比较，真值由 [`ValueExtras`]
+//    携带供还原；内部参数与 lccode/uccode 也保留在其中供还原；
 // 3. **控制状态**（输入栈/组栈/条件栈/悬挂前缀）→ [`ControlState`]。不进指纹
 //    （段边界干净时均为空/默认），脏边界段的回滚靠它才能正确。
 //
@@ -50,19 +51,19 @@ pub struct EngineCheckpoint {
     /// 还原用整体替换：段执行期间新驻留的 cs 槽被截掉——它们在段前确实未定义；
     /// 名字仍在驻留表里，重放该段时按同一 csid 重建同值槽。
     pub(crate) eqtb: Rc<Vec<EqSlot>>,
-    /// 值状态（比较口径 = [`ValueState::PartialEq`]：catcode/sfcode 表、
-    /// `\output` 例程、寄存器影子表、其余值字段指纹）。
+    /// 值状态（比较口径 = [`ValueState::PartialEq`]：catcode/sfcode/lccode/uccode 表、
+    /// 内部参数、输出例程、寄存器影子表、其余值字段指纹）。
     pub(crate) value: ValueState,
-    /// 指纹覆盖字段的真值（还原用；见 [`ValueExtras`]）。
+    /// 运行时值字段的真值（还原用；见 [`ValueExtras`]）。
     pub(crate) extras: ValueExtras,
     /// 控制状态（见 [`ControlState`]）。
     pub(crate) control: ControlState,
 }
 
-/// 指纹覆盖字段的真值载体（M5 阶段二还原用）。
+/// 运行时值字段的真值载体（M5 阶段二还原用）。
 ///
-/// 字段集与 `Expander::runtime_digest` 一一对应：指纹覆盖到的每一个字段在这里
-/// 都有真值——否则回滚后指纹对不上（被 `checkpoint_roundtrip` 测试捕获）。
+/// 指纹覆盖到的每个字段在这里都有真值；内部参数和 lccode/uccode 也保留
+/// 真值供还原，但由 `ValueState` 精确比较。还原遗漏由 `checkpoint_roundtrip` 捕获。
 #[derive(Debug, Clone)]
 pub(crate) struct ValueExtras {
     pub(crate) params: Params,

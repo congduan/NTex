@@ -2118,7 +2118,8 @@ impl Expander {
 /// e-TeX 惩罚数组、字体参数覆盖、读写流）。段级缓存的失效判定必须看到**全部**
 /// 影响输出的状态，否则会把"缓存仍有效"判错（M5 风险项：副作用漏追踪 → 缓存错）。
 ///
-/// 组成：可精确比较的部分（catcode/sfcode 表、`\output` 例程、寄存器版本戳）
+/// 组成：可精确比较的部分（catcode/sfcode/lccode/uccode 表、内部参数、
+/// `\output` 例程、寄存器版本戳）
 /// + `runtime_digest` 指纹（其余状态；HashMap 逐项哈希后累加，与迭代顺序无关）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ValueState {
@@ -2128,6 +2129,12 @@ pub struct ValueState {
     pub catcode_tables: Vec<Option<CatcodeTable>>,
     /// `\sfcode` 表。
     pub sfcodes: [u32; 256],
+    /// 内部参数。
+    pub params: Params,
+    /// lccode 表。
+    pub lccodes: [i64; 256],
+    /// uccode 表。
+    pub uccodes: [i64; 256],
     /// `\output` 例程 token 列表（None = 未定义）。
     pub output_toks: Option<TokenArray>,
     /// 已写入寄存器槽的影子表（`Registers::dirty`；未写槽恒为零值 →
@@ -2262,6 +2269,9 @@ impl Expander {
             catcodes: self.catcodes.clone(),
             catcode_tables: self.catcode_tables.clone(),
             sfcodes: self.sfcodes,
+            params: self.params,
+            lccodes: self.lccodes,
+            uccodes: self.uccodes,
             output_toks: self.output_toks.clone(),
             registers: self.registers.dirty().clone(),
             runtime_digest: self.runtime_digest(),
@@ -2301,9 +2311,9 @@ impl Expander {
     /// 其余运行时状态的 FNV-1a 指纹（64 位）。
     ///
     /// 覆盖 `.fmt` 快照未含、但影响后续输出的字段：`\everypar` 等 token 列表、
-    /// `\mathcode`/`\delcode`/`\lccode`/`\uccode`、`\parshape`、e-TeX 惩罚数组、
+    /// mathcode/delcode、parshape、e-TeX 惩罚数组、
     /// `\fontdimen`/`\hyphenchar`/`\skewchar` 覆盖、字体名表、读写流位置、
-    /// `\dump`/数学模式标志、内部参数（Debug 串字段级覆盖）。
+    /// dump/数学模式标志。内部参数与 lccode/uccode 表由 ValueState 精确比较。
     /// **不含**诊断性状态（`last_tok`/`error_anchor`/`output_trigger_line` 等
     /// 只影响错误消息位置，不影响输出 token）。
     fn runtime_digest(&self) -> u64 {
@@ -2322,14 +2332,8 @@ impl Expander {
         ] {
             digest_toks(&mut h, toks);
         }
-        // catcode/sfcode 表与 `\output` 例程**不**入指纹：`ValueState` 已对它们做
-        // 精确比较，这里重复混入只会加倍每段判定的开销。
-        for v in self.lccodes {
-            digest_u64(&mut h, v as u64);
-        }
-        for v in self.uccodes {
-            digest_u64(&mut h, v as u64);
-        }
+        // catcode/sfcode/lccode/uccode 表、内部参数与输出例程由 ValueState 精确比较。
+        // 此处无需重复混入指纹。
         digest_pairs(
             &mut h,
             self.mathcodes
@@ -2405,8 +2409,6 @@ impl Expander {
                 | u64::from(self.in_math) << 1
                 | u64::from(self.output_active) << 2,
         );
-        // 内部参数（Debug 串覆盖全部字段；新增字段自动进入指纹）
-        digest_bytes(&mut h, format!("{:?}", self.params).as_bytes());
         h
     }
 }
