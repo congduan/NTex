@@ -745,14 +745,25 @@ dev A 场景 ~2.3ms）+ `finish_doc` 的 `shipped.clone()`（全页深拷贝，~
 （~35µs/段，占 90%+），不是 `eqtb.to_vec`；`<10µs` 需下一刀动 digest，见
 [战报](docs/archive/m5-stage6-blade7-eqtb-cow-2026-11-04.md)。
 
+**阶段六第八刀 ✅（2026-11-04，runtime_digest 成分迁移至精确比较）**：`params` /
+`lccodes`/`uccodes` 三字段从 `runtime_digest()` 摘除迁入 `ValueState` 精确比较
+（削 params Debug 串 ~30µs + lcc/ucc 循环 ~4µs/段）；digest_diag 勘察插桩剥离，
+`ValueExtras` 还原通道不变。基准场景 A **5.8x**（5.50ms，全量 32.07ms）、场景 B
+1.3x（17.94ms，本机 2 核高负载噪声带，与 HEAD 同幅波动无回退）。core 609 +
+layout 362、clippy 0、fmt 冒烟 3373B、trip 251B 与 `fixtures/trip/trip.dvi`
+golden 逐字节一致（**177B 为 vsize 修正前陈旧口径**，blade4 战报有案）。Codex
+gpt-6-sol 实施、主控收口+review（自查纠正 FmtState/ValueState 落点错位一处）。
+见 [战报](docs/archive/m5-stage6-blade8-digest-migration-2026-11-04.md)。
+
 **阶段六待办**（= M5 全部剩余项）：
 
 1. ~~检查点捕获增量维护~~ → 首刀已落（InsertRegs CoW，加速比 4.3x/1.1x →
    5.2x/1.6x）；~~复用段 reinject 的页面装配重跑~~ → 第三刀已落（去三次行盒子树
    深拷贝，改正文 6.4x→7.9x）；~~结构性 owned 拷贝~~ → 第四刀已落（shipped 页面
    Rc 共享；`contrib.clone()` 实测无收益保留，见上）；~~eqtb 槽向量整份拷贝~~
-   → 第七刀已落（Rc CoW，post 45.1→42.1µs）。**余项**：post 捕获的
-   `runtime_digest()`（~35µs/段，第七刀实测证伪了"eqtb 拷贝是大头"的原判），
+   → 第七刀已落（Rc CoW，post 45.1→42.1µs）；~~runtime_digest params/lcc/ucc
+   Debug 串与表循环~~ → 第八刀已落（迁精确比较，基准 A 5.8x）。**余项**：
+   digest 剩余成分（font_loads Debug 串 / 五 HashMap 逐项哈希）或改脏标记路线，
    与 pre 侧捕获（每执行段两次 `StateSnapshot::capture`）；
 2. **副作用边界** —— `\output` 例程回放 / `\write` 流内容 / `\input` VFS 注入 /
    marks 语义（当前观测到即保守全量重排）；
