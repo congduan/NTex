@@ -2119,7 +2119,7 @@ impl Expander {
 /// 影响输出的状态，否则会把"缓存仍有效"判错（M5 风险项：副作用漏追踪 → 缓存错）。
 ///
 /// 组成：可精确比较的部分（catcode/sfcode/lccode/uccode 表、内部参数、
-/// `\output` 例程、寄存器版本戳）
+/// `\output` 例程、寄存器版本戳、字体表与数学字体族）
 /// + `runtime_digest` 指纹（其余状态；HashMap 逐项哈希后累加，与迭代顺序无关）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ValueState {
@@ -2140,6 +2140,12 @@ pub struct ValueState {
     /// 已写入寄存器槽的影子表（`Registers::dirty`；未写槽恒为零值 →
     /// 只比较此表即**精确**等于整份寄存器文件，且与引擎实例无关、可跨重建比较）。
     pub registers: BTreeMap<(u8, usize), RegisterValue>,
+    /// 字体加载记录、字体外部名与控制序列名。
+    pub font_loads: Vec<Option<FontLoad>>,
+    pub font_names: Vec<Option<String>>,
+    pub font_cs_names: Vec<Option<String>>,
+    /// 数学字体族。
+    pub math_fonts: [[u32; 16]; 3],
     /// 其余运行时状态指纹（`Expander::runtime_digest`）。
     pub runtime_digest: u64,
 }
@@ -2274,6 +2280,10 @@ impl Expander {
             uccodes: self.uccodes,
             output_toks: self.output_toks.clone(),
             registers: self.registers.dirty().clone(),
+            font_loads: self.font_loads.clone(),
+            font_names: self.font_names.clone(),
+            font_cs_names: self.font_cs_names.clone(),
+            math_fonts: self.math_fonts,
             runtime_digest: self.runtime_digest(),
         }
     }
@@ -2312,8 +2322,9 @@ impl Expander {
     ///
     /// 覆盖 `.fmt` 快照未含、但影响后续输出的字段：`\everypar` 等 token 列表、
     /// mathcode/delcode、parshape、e-TeX 惩罚数组、
-    /// `\fontdimen`/`\hyphenchar`/`\skewchar` 覆盖、字体名表、读写流位置、
-    /// dump/数学模式标志。内部参数与 lccode/uccode 表由 ValueState 精确比较。
+    /// `\fontdimen`/`\hyphenchar`/`\skewchar` 覆盖、读写流位置、
+    /// dump/数学模式标志。内部参数、lccode/uccode 表、字体表与数学字体族
+    /// 由 ValueState 精确比较。
     /// **不含**诊断性状态（`last_tok`/`error_anchor`/`output_trigger_line` 等
     /// 只影响错误消息位置，不影响输出 token）。
     fn runtime_digest(&self) -> u64 {
@@ -2332,7 +2343,8 @@ impl Expander {
         ] {
             digest_toks(&mut h, toks);
         }
-        // catcode/sfcode/lccode/uccode 表、内部参数与输出例程由 ValueState 精确比较。
+        // catcode/sfcode/lccode/uccode 表、内部参数、输出例程、字体表与数学字体族
+        // 由 ValueState 精确比较。
         // 此处无需重复混入指纹。
         digest_pairs(
             &mut h,
@@ -2364,22 +2376,6 @@ impl Expander {
                 .iter()
                 .map(|(k, v)| (u64::from(*k), *v as u64)),
         );
-        // 字体表与数学字体族
-        digest_bytes(&mut h, format!("{:?}", self.font_loads).as_bytes());
-        for names in [&self.font_names, &self.font_cs_names] {
-            digest_u64(&mut h, names.len() as u64);
-            for n in names.iter() {
-                match n {
-                    Some(s) => digest_bytes(&mut h, s.as_bytes()),
-                    None => digest_u64(&mut h, u64::MAX),
-                }
-            }
-        }
-        for row in &self.math_fonts {
-            for v in row {
-                digest_u64(&mut h, u64::from(*v));
-            }
-        }
         // 段落形状 / e-TeX 惩罚数组
         for (i, w) in &self.parshape {
             digest_u64(&mut h, *i as u64);

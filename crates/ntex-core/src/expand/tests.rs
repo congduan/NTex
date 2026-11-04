@@ -7,6 +7,31 @@ mod tests {
     use ntex_io::MemVfs;
     use crate::sink::{AlignSink, BoxSink, CoreSink, FontSink, IoSink, MathSink, PageSink};
 
+    #[test]
+    fn font_tables_are_compared_exactly_outside_runtime_digest() {
+        let mut e = Expander::new();
+        let before = e.value_state();
+
+        e.font_loads.push(Some(("cmr10".into(), None, None)));
+        assert_eq!(e.runtime_digest(), before.runtime_digest);
+        assert_ne!(e.value_state(), before);
+        e.font_loads.clear();
+
+        e.font_names.push(Some("cmr10".into()));
+        assert_eq!(e.runtime_digest(), before.runtime_digest);
+        assert_ne!(e.value_state(), before);
+        e.font_names.clear();
+
+        e.font_cs_names.push(Some("tenrm".into()));
+        assert_eq!(e.runtime_digest(), before.runtime_digest);
+        assert_ne!(e.value_state(), before);
+        e.font_cs_names.clear();
+
+        e.math_fonts[0][0] = 1;
+        assert_eq!(e.runtime_digest(), before.runtime_digest);
+        assert_ne!(e.value_state(), before);
+    }
+
     /// 运行源码（**双轨等价**）：字节码与解释器轨道各跑一次并断言输出一致，
     /// 返回字节码轨道结果。全部用例自动覆盖 M2 双轨验证。
     fn expand(src: &str) -> Result<String> {
