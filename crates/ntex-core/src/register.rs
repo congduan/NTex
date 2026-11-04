@@ -232,21 +232,32 @@ impl Registers {
         self.dirty.insert((4, idx), RegisterValue::Toks(v));
     }
 
-    /// 从影子表还原（M5 阶段二段级回滚）：未写槽归零、已写槽按影子表重放。
+    /// 从影子表还原（M5 阶段二段级回滚）：撤销活脏槽，再按快照重放。
     ///
     /// 寄存器文件 32768×5 槽整份入快照 ~3MB 不可行，快照只携带 [`Self::dirty`]；
-    /// 未写入槽恒为零值（`ValueState` 比较口径的前提），故还原 = 整份复位后按
-    /// 影子表重放，结果与"从未写过这些槽再逐个赋值"精确一致。类别号与上方
+    /// 未写入槽恒为零值（`ValueState` 比较口径的前提），且影子表只在此处整体
+    /// 替换：活脏键覆盖所有可能非零的槽。先把这些槽归零，再替换影子表并直接
+    /// 重放快照值，等价于从全零寄存器重建，开销只随脏键数增长。类别号与上方
     /// `set_*` 的 insert 键一致（0=count/1=dimen/2=skip/3=muskip/4=toks）。
     pub fn restore_dirty(&mut self, dirty: &BTreeMap<(u8, usize), RegisterValue>) {
-        *self = Self::new();
+        for &(kind, idx) in self.dirty.keys() {
+            match kind {
+                0 => self.counts[idx] = 0,
+                1 => self.dimens[idx] = 0,
+                2 => self.skips[idx] = Glue::ZERO,
+                3 => self.muskip[idx] = Glue::ZERO,
+                4 => self.toks[idx] = Arc::from([]),
+                _ => {} // 类别号与影子表同源产生，不可达
+            }
+        }
+        self.dirty = dirty.clone();
         for (&(kind, idx), value) in dirty {
             match (kind, value) {
-                (0, RegisterValue::Int(v)) => self.set_count(idx, *v),
-                (1, RegisterValue::Int(v)) => self.set_dimen(idx, *v),
-                (2, RegisterValue::Glue(v)) => self.set_skip(idx, *v),
-                (3, RegisterValue::Glue(v)) => self.set_muskip(idx, *v),
-                (4, RegisterValue::Toks(v)) => self.set_toks(idx, v.clone()),
+                (0, RegisterValue::Int(v)) => self.counts[idx] = *v,
+                (1, RegisterValue::Int(v)) => self.dimens[idx] = *v,
+                (2, RegisterValue::Glue(v)) => self.skips[idx] = *v,
+                (3, RegisterValue::Glue(v)) => self.muskip[idx] = *v,
+                (4, RegisterValue::Toks(v)) => self.toks[idx] = v.clone(),
                 _ => {} // 类别号与影子表同源产生，不可达
             }
         }
@@ -406,6 +417,8 @@ pub fn format_mu_glue(g: Glue) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catcode::Catcode;
+    use crate::token::Token;
 
     #[test]
     fn unit_conversions_match_tex() {
@@ -464,5 +477,123 @@ mod tests {
         assert_eq!(r.count(1), 42);
         assert_eq!(r.dimen(2), 65_536);
         assert_eq!(r.skip(3), Glue::new(1, 2, 3));
+    }
+
+    #[test]
+    fn registers_restore_dirty_matches_fresh_replay() {
+        let mut r = Registers::new();
+        let old_toks: TokenArray = Arc::from([Token::char(Catcode::Letter, b'A' as u32)]);
+        let new_toks: TokenArray = Arc::from([Token::char(Catcode::Letter, b'B' as u32)]);
+        let old_skip = Glue {
+            stretch_order: 1,
+            shrink_order: 2,
+            ..Glue::new(11, 12, 13)
+        };
+        let old_muskip = Glue {
+            stretch_order: 3,
+            shrink_order: 1,
+            ..Glue::new(21, 22, 23)
+        };
+        r.set_count(0, 41);
+        r.set_count(32767, -7);
+        r.set_dimen(1, 65_536);
+        r.set_dimen(32766, -1);
+        r.set_skip(2, old_skip);
+        r.set_skip(50, Glue::new(1, 2, 3));
+        r.set_muskip(3, old_muskip);
+        r.set_muskip(51, Glue::new(4, 5, 6));
+        r.set_toks(4, old_toks.clone());
+        r.set_toks(52, old_toks.clone());
+        let snapshot = r.dirty().clone();
+
+        r.set_count(0, 99);
+        r.set_count(10, 100);
+        r.set_dimen(1, 99);
+        r.set_dimen(11, 100);
+        r.set_skip(2, Glue::new(99, 99, 99));
+        r.set_skip(12, Glue::new(100, 100, 100));
+        r.set_muskip(3, Glue::new(99, 99, 99));
+        r.set_muskip(13, Glue::new(100, 100, 100));
+        r.set_toks(4, new_toks.clone());
+        r.set_toks(14, new_toks);
+
+        let mut expected = Registers::new();
+        for (&(kind, idx), value) in &snapshot {
+            match (kind, value) {
+                (0, RegisterValue::Int(v)) => expected.set_count(idx, *v),
+                (1, RegisterValue::Int(v)) => expected.set_dimen(idx, *v),
+                (2, RegisterValue::Glue(v)) => expected.set_skip(idx, *v),
+                (3, RegisterValue::Glue(v)) => expected.set_muskip(idx, *v),
+                (4, RegisterValue::Toks(v)) => expected.set_toks(idx, v.clone()),
+                _ => unreachable!(),
+            }
+        }
+        r.restore_dirty(&snapshot);
+        assert_eq!(r.counts, expected.counts);
+        assert_eq!(r.dimens, expected.dimens);
+        assert_eq!(r.skips, expected.skips);
+        assert_eq!(r.muskip, expected.muskip);
+        assert_eq!(r.toks, expected.toks);
+        assert_eq!(r.count(10), 0);
+        assert_eq!(r.dimen(11), 0);
+        assert_eq!(r.skip(12), Glue::ZERO);
+        assert_eq!(r.muskip(13), Glue::ZERO);
+        assert!(r.toks(14).is_empty());
+        assert_eq!(r.count(0), 41);
+        assert_eq!(r.toks(4), old_toks);
+    }
+
+    #[test]
+    fn registers_restore_dirty_replaces_shadow_table() {
+        let mut r = Registers::new();
+        r.set_count(1, 0);
+        r.set_toks(2, Arc::from([Token::char(Catcode::Letter, b'X' as u32)]));
+        let snapshot = r.dirty().clone();
+        r.set_count(1, 12);
+        r.set_dimen(3, 10);
+        r.set_toks(4, Arc::from([Token::char(Catcode::Letter, b'Y' as u32)]));
+        r.restore_dirty(&snapshot);
+        assert_eq!(r.dirty().len(), snapshot.len());
+        for (key, value) in &snapshot {
+            assert_eq!(r.dirty().get(key), Some(value));
+        }
+        assert_eq!(r.dirty(), &snapshot);
+    }
+
+    #[test]
+    fn registers_restore_dirty_preserves_all_glue_fields() {
+        let mut r = Registers::new();
+        let skip = Glue {
+            width: 11,
+            stretch: 12,
+            shrink: 13,
+            stretch_order: 2,
+            shrink_order: 3,
+        };
+        let muskip = Glue {
+            width: 21,
+            stretch: 22,
+            shrink: 23,
+            stretch_order: 3,
+            shrink_order: 1,
+        };
+        r.set_skip(5, skip);
+        r.set_muskip(6, muskip);
+        let snapshot = r.dirty().clone();
+        r.set_skip(5, Glue::ZERO);
+        r.set_muskip(6, Glue::ZERO);
+        r.restore_dirty(&snapshot);
+        assert_eq!(r.skip(5), skip);
+        assert_eq!(r.skip(5).width, 11);
+        assert_eq!(r.skip(5).stretch, 12);
+        assert_eq!(r.skip(5).shrink, 13);
+        assert_eq!(r.skip(5).stretch_order, 2);
+        assert_eq!(r.skip(5).shrink_order, 3);
+        assert_eq!(r.muskip(6), muskip);
+        assert_eq!(r.muskip(6).width, 21);
+        assert_eq!(r.muskip(6).stretch, 22);
+        assert_eq!(r.muskip(6).shrink, 23);
+        assert_eq!(r.muskip(6).stretch_order, 3);
+        assert_eq!(r.muskip(6).shrink_order, 1);
     }
 }
