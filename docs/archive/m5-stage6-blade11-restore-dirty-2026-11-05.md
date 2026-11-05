@@ -47,6 +47,16 @@
 - 宏包回归 **13/13 PASS**；资产审计 27 PASS / 3 ENGINE-GATE / 0 ERROR；
 - 工作区遗留勘察探针已剥离（上一轮 cron 的场景 A 计时插桩，数据已消费）。
 
+## Codex review（gpt-6-sol，只读）
+
+**结论：可继续，无必修项**（2026-11-05 次轮 cron 补做——bb45c12 提交时未及 review）。
+五项定向核查：①撤销臂完备（`set_*` 只 insert，无 `dirty.clear()/remove()/retain()`
+路径，快照独有键走重放臂；fmt 导入直写数组为既有路径非本刀面）；②空 toks 用
+`Arc::from([])` 与 `new()` 同构、Arc 指针身份不参与判等；③重放臂无 set_* 隐藏
+副作用依赖；④影子表 clone 在满脏时规模相关成本 → 登记性能观察项（不阻塞）；
+⑤`self.dirty = dirty.clone()` 是调用方 ValueState 失效判定的正确性所需副作用，
+当前实现满足。④已并入阶段六余项观察。
+
 ## 阶段六余项（不变）
 
 digest 剩余成分（五 HashMap 逐项哈希 / parshape / penalty_arrays / 流状态——
