@@ -145,6 +145,13 @@
     全部 3,932 个主名覆盖，资产校验加入 `make check`。最小 WASM 加载/出页
     **19 PASS / 10 ERROR / 1 TIMEOUT**，兼容限制与复现范围见
     [归档](docs/archive/default-tex-assets-2026-10-20.md)。
+    **✅ 10 ERROR 家族收官（2026-11-05 复核，HEAD `bb45c12`）**：`scripts/asset-load-audit.sh`
+    CLI 通道全矩阵重跑 = **27 PASS / 3 ENGINE-GATE / 0 ERROR / 0 TIMEOUT**——
+    8e506b2 的 10 ERROR（biblatex/beamer/minted/tikz/pgfplots/standalone/ctex/
+    ctexart/xeCJK/fontspec/unicode-math）已由后续各刀（pdfmdfivesum/pdfliteral 族/
+    pdfpageattr/pdffilemoddate/fandol 分支等）全部消费；仅剩 xeCJK/fontspec/
+    unicode-math 三项 XeTeX 系引擎门（pdfTeX 语义下 by-design 拒绝，与真 pdfLaTeX
+    同构，非缺陷）。**资产审计专项收官**，队列②完成。
 
 15. **真实文档验收收尾**（10-21）：`\mathop{...}\nolimits` 形成的 `Classed(Op)`
     现按 tex.web `op_noad` 接受 limit 控制并保留上下限布局 subtype；`figure` 后直接
@@ -431,7 +438,7 @@ Missing number 与 R17 归因表逐条吻合，全部为 TRIP 折磨构造（`\s
 | 主线：LaTeX/expl3 兼容 | ✅ 主墙已越（2026-10-02 口径刷新）；`\documentclass` 最小闭环已通；余长尾见 §0.1/§5 |
 | 输出例程战 | ✅ 刀 1–5 全落（`\outputpenalty`/box255/insert 分配/`\newinsert`/页号链） |
 | 格式预载（G 线） | ✅ G0–G3；剩 G4/G5 |
-| M5 增量计算 | 🟡 阶段一~五完成 + 阶段六刀 1–4（InsertRegs CoW / IoState 惰性化 / 装配去深拷贝 / shipped 页面 Rc 共享：改正文 4.3x→7.9x、增量墙钟再 −20%，见 §2 M5 阶段六注） |
+| M5 增量计算 | 🟡 阶段一~五完成 + 阶段六刀 1–4、7–11（最新：restore_dirty 撤销活脏键+影子表重放，SegmentEngine 场景 A 再 ~5.4×；见 §2 M5 阶段六注） |
 | M9 中文 | 🟡 刀 1–6 全落（`\char` 扩位 + `\utfinputmode` + 宿主端端到端 + CJK 断点/断字/标点挤压 + 中文粗斜体）；遗留见 §5 P1 |
 | 宏包生态 | 🟡 `ntex-pkg` 解析/契约/取料①② + `--auto-pkg` 引擎接线；13 包 CI 回归 **13/13**（基线 [docs/pkg-regression-baseline.md](docs/pkg-regression-baseline.md)） |
 | M2 字节码 | 🟡 双轨等价全绿；吞吐 **1.01x**，≥2x 结构性不可达 → 转 M7 `.fmt` v2 |
@@ -782,6 +789,14 @@ expl3 intarray 场景 34931 条 fontdimens 时 capture 93.9µs/段（digest 逐�
 门禁：core 616 + layout 362 全绿 / clippy 0 / trip 251B golden + 全本 4015B/9 页 +
 tripos 750B/12 页逐字节一致 / 宏包 13/13。见
 [战报](docs/archive/m5-stage6-blade10-fontdimens-exact-2026-11-05.md)。
+
+**阶段六第十一刀 ✅（2026-11-05，`bb45c12`，战报归档次轮补齐）**：`Registers::restore_dirty`
+整份重分配（`*self = Self::new()`，32768×5 槽五大数组 ~1.2MB 级）改「撤销活脏键 +
+影子表直接重放」——利用「未写槽恒为零值」+「影子表只在此处整体替换」两不变量，
+开销从随寄存器文件总量降为随脏键数。**A/B 实测（本轮交错复测）**：SegmentEngine
+场景 A edit 3.9ms→0.71ms（**~5.4×**），全量 run 持平（噪声对照排除机器漂移）。
+回归锁两把（fresh_replay 等价 + 影子表整体替换）。见
+[战报](docs/archive/m5-stage6-blade11-restore-dirty-2026-11-05.md)。
 
 **阶段六待办**（= M5 全部剩余项）：
 
